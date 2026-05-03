@@ -226,6 +226,7 @@ export interface LoginResponse {
 export interface AuthConfigResponse {
   local: { enabled: boolean };
   oidc:  { enabled: boolean; displayName?: string };
+  demo?: { enabled: boolean; email?: string; password?: string };
 }
 
 export interface MetricQueryParams {

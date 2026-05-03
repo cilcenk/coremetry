@@ -33,6 +33,11 @@ type AuthConfig struct {
 	InitialAdmin    string        `yaml:"initial_admin"`     // email — seeded if users table is empty
 	InitialPassword string        `yaml:"initial_password"`  // bcrypted on first boot
 	OIDC            OIDCConfig    `yaml:"oidc"`
+
+	// Demo only — when true, /api/auth/config exposes the initial admin
+	// credentials so the login page can pre-fill them. NEVER enable in
+	// production: anyone hitting /api/auth/config gets the admin password.
+	DemoMode bool `yaml:"demo_mode"`
 }
 
 // OIDCConfig is fully optional — when Enabled is false, only local
@@ -146,6 +151,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("QMETRY_OIDC_REDIRECT_URL"); v != "" {
 		cfg.Auth.OIDC.RedirectURL = v
+	}
+	if v := os.Getenv("QMETRY_DEMO_MODE"); v == "true" || v == "1" {
+		cfg.Auth.DemoMode = true
 	}
 	if v := os.Getenv("QMETRY_REDIS_URL"); v != "" {
 		cfg.Redis.URL = v

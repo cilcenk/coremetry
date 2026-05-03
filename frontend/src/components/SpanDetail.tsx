@@ -1,10 +1,14 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { SpanRow, ProfileRow, LogRow } from '@/lib/types';
 import { tsLong, tsShort, sevName, sevClass } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { CopyButton } from './CopyButton';
+
+const PANEL_MIN = 300;
+const PANEL_MAX = 1100;
+const PANEL_STORAGE_KEY = 'qmetry-span-panel-w';
 
 export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => void }) {
   const attrs = Object.entries(span.attributes ?? {});
@@ -41,8 +45,57 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
       .catch(() => setSpanLogs([]));
   }, [span.spanId, span.traceId]);
 
+  // ── Resize handle ────────────────────────────────────────────────────────
+  // Panel width persists in localStorage so navigating away and back
+  // doesn't reset to the default. Initial render reads it before the
+  // first paint to avoid a flash from default → restored size.
+  const [panelW, setPanelW] = useState<number>(() => {
+    if (typeof window === 'undefined') return 340;
+    const raw = parseInt(window.localStorage.getItem(PANEL_STORAGE_KEY) ?? '', 10);
+    return Number.isFinite(raw) && raw >= PANEL_MIN && raw <= PANEL_MAX ? raw : 340;
+  });
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const onResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startW: panelW };
+    document.body.style.cursor = 'col-resize';
+    // Suppress text selection on the rest of the page while dragging.
+    document.body.style.userSelect = 'none';
+  };
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      // Dragging the LEFT edge — moving the cursor left makes the panel
+      // wider (it's pinned to the right side of the trace layout).
+      const dx = dragRef.current.startX - e.clientX;
+      const next = Math.max(PANEL_MIN, Math.min(PANEL_MAX, dragRef.current.startW + dx));
+      setPanelW(next);
+    };
+    const onUp = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.localStorage.setItem(PANEL_STORAGE_KEY, String(panelW));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [panelW]);
+  const onResetWidth = () => {
+    setPanelW(340);
+    window.localStorage.setItem(PANEL_STORAGE_KEY, '340');
+  };
+
   return (
-    <div id="span-panel">
+    <div id="span-panel" style={{ width: panelW }}>
+      <div className="span-panel-resizer"
+           title="Drag to resize · double-click to reset"
+           onMouseDown={onResizeStart}
+           onDoubleClick={onResetWidth} />
       <div id="span-panel-head">
         <div className="ps-title">
           {span.name}{' '}

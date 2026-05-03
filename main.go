@@ -125,6 +125,10 @@ func main() {
 
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, webFS, authSvc, oidcSvc, cacheImpl, notifier)
+	if cfg.Auth.DemoMode {
+		srv.EnableDemoMode(cfg.Auth.InitialAdmin, cfg.Auth.InitialPassword)
+		log.Printf("[auth] DEMO MODE — login page will display + pre-fill admin credentials. DO NOT use in production.")
+	}
 	go func() {
 		if err := srv.Start(); err != nil {
 			log.Fatalf("[http] %v", err)

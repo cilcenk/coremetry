@@ -32,10 +32,25 @@ type Server struct {
 	oidc   *auth.OIDCService // nil when SSO disabled
 	cache  cache.Cache       // Noop when Redis isn't configured
 	notify *notify.Notifier
+
+	// Demo deployments only — when true, /api/auth/config returns
+	// initial admin credentials so the login page can pre-fill them.
+	demoMode      bool
+	demoEmail     string
+	demoPassword  string
 }
 
 func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, c cache.Cache, n *notify.Notifier) *Server {
 	return &Server{addr: addr, store: store, ing: ing, webFS: webFS, auth: authSvc, oidc: oidcSvc, cache: c, notify: n}
+}
+
+// EnableDemoMode wires the demo credentials returned by /api/auth/config.
+// Loud no-op when called with empty credentials so a misconfigured demo
+// flag doesn't silently expose nothing.
+func (s *Server) EnableDemoMode(email, password string) {
+	s.demoMode = true
+	s.demoEmail = email
+	s.demoPassword = password
 }
 
 func (s *Server) Start() error {
@@ -522,16 +537,34 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 
 // authConfig describes which auth methods the UI should offer. Public on
 // purpose — the login page must be able to call it before the user signs in.
+//
+// When demo mode is on the response also includes the bootstrap admin
+// credentials so the login form can pre-fill them. That is intentionally
+// public — anyone with the demo URL is meant to log in as the demo user.
 func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "auth-config", 60*time.Second, func() (any, error) {
+	// Cache key includes demoMode so flipping it doesn't keep serving stale
+	// auth config to the login page.
+	key := "auth-config"
+	if s.demoMode {
+		key = "auth-config:demo"
+	}
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		resp := map[string]interface{}{
 			"local": map[string]bool{"enabled": true},
 			"oidc":  map[string]interface{}{"enabled": false},
+			"demo":  map[string]interface{}{"enabled": false},
 		}
 		if s.oidc.Enabled() {
 			resp["oidc"] = map[string]interface{}{
 				"enabled":     true,
 				"displayName": s.oidc.DisplayName(),
+			}
+		}
+		if s.demoMode {
+			resp["demo"] = map[string]interface{}{
+				"enabled":  true,
+				"email":    s.demoEmail,
+				"password": s.demoPassword,
 			}
 		}
 		return resp, nil

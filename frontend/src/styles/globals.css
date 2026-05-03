@@ -198,7 +198,10 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 .wf-row.wf-sel .wf-bar { outline: 1px solid rgba(255,255,255,.3); }
 
 /* Span detail panel */
-#span-panel { width: 340px; flex-shrink: 0; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; overflow: auto; display: flex; flex-direction: column; }
+#span-panel { width: 340px; flex-shrink: 0; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; overflow: auto; display: flex; flex-direction: column; position: relative; }
+.span-panel-resizer { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 10; background: transparent; transition: background .12s; }
+.span-panel-resizer:hover { background: var(--accent); opacity: .6; }
+.span-panel-resizer:active { background: var(--accent); }
 #span-panel-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; position: sticky; top: 0; background: var(--bg1); z-index: 5; }
 .ps-title { font-size: 13px; font-weight: 600; word-break: break-word; flex: 1; padding-right: 8px; }
 .ps-close { cursor: pointer; color: var(--text2); font-size: 16px; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; border-radius: 3px; flex-shrink: 0; background: transparent; border: none; padding: 0; }

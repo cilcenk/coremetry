@@ -11,9 +11,16 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [config, setConfig] = useState<AuthConfigResponse | null>(null);
 
-  // Pull auth config so we know whether to show the SSO button.
+  // Pull auth config so we know whether to show the SSO button + handle
+  // demo-mode prefill.
   useEffect(() => {
-    api.authConfig().then(setConfig).catch(() => setConfig({
+    api.authConfig().then(c => {
+      setConfig(c);
+      if (c.demo?.enabled && c.demo.email && c.demo.password) {
+        setEmail(c.demo.email);
+        setPassword(c.demo.password);
+      }
+    }).catch(() => setConfig({
       local: { enabled: true }, oidc: { enabled: false },
     }));
   }, []);
@@ -43,6 +50,7 @@ export default function LoginPage() {
 
   const oidcEnabled = !!config?.oidc.enabled;
   const oidcLabel = config?.oidc.displayName || 'SSO';
+  const demoEnabled = !!config?.demo?.enabled;
 
   return (
     <div style={{
@@ -61,6 +69,18 @@ export default function LoginPage() {
             Sign in to continue
           </div>
         </div>
+
+        {demoEnabled && (
+          <div style={{
+            marginBottom: 14, padding: '8px 12px', borderRadius: 6,
+            background: 'rgba(63,185,80,0.10)',
+            border: '1px solid rgba(63,185,80,0.35)',
+            color: 'var(--text2)', fontSize: 12, lineHeight: 1.4,
+          }}>
+            <b style={{ color: 'var(--ok)' }}>Demo mode</b> — credentials are pre-filled,
+            just hit <i>Sign in</i>. Anyone with this URL has the same access.
+          </div>
+        )}
 
         {oidcEnabled && (
           <>

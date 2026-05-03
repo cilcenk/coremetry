@@ -45,6 +45,9 @@ services:
       # table is empty). Override before exposing publicly.
       QMETRY_INITIAL_ADMIN: "${QMETRY_INITIAL_ADMIN:-admin@qmetry.local}"
       QMETRY_INITIAL_PASSWORD: "${QMETRY_INITIAL_PASSWORD:-admin}"
+      # Demo deployments only — exposes admin credentials on the login
+      # page. NEVER set this on a real deployment.
+      QMETRY_DEMO_MODE: "${QMETRY_DEMO_MODE:-}"
       # Hot-cache + distributed lock backend. Comment out to fall back to
       # single-instance mode (no cache, always-leader background workers).
       QMETRY_REDIS_URL: "redis://redis:6379/0"

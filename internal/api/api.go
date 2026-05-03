@@ -67,6 +67,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/profiles/by-span", s.profilesForSpan)
 	mux.HandleFunc("GET /api/profiles/{id}", s.getProfile)
 	mux.HandleFunc("GET    /api/exceptions",               s.listExceptions)
+	// Errors Inbox — stateful exception groups (read = any, write = admin)
+	mux.HandleFunc("GET    /api/exception-groups",                s.listExceptionGroups)
+	mux.HandleFunc("GET    /api/exception-groups/{fp}/samples",   s.getExceptionGroupSamples)
+	mux.HandleFunc("POST   /api/exception-groups/{fp}/state",     auth.RequireRole(auth.RoleAdmin, s.setExceptionGroupState))
+	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign",    auth.RequireRole(auth.RoleAdmin, s.assignExceptionGroup))
 	mux.HandleFunc("GET    /api/services/{name}/callers",  s.svcCallers)
 	mux.HandleFunc("GET    /api/services/{name}/callees",  s.svcCallees)
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
@@ -982,6 +987,56 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Exceptions / Errors page ─────────────────────────────────────────────────
+
+// ── Errors Inbox ─────────────────────────────────────────────────────────────
+
+func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	out, err := s.store.ListExceptionGroups(r.Context(), chstore.ExceptionGroupFilter{
+		State:    q.Get("state"),
+		Service:  q.Get("service"),
+		Assignee: q.Get("assignee"),
+		Limit:    parseInt(q.Get("limit"), 200),
+	})
+	if err != nil { writeErr(w, err); return }
+	writeJSON(w, out)
+}
+
+func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request) {
+	limit := parseInt(r.URL.Query().Get("limit"), 10)
+	out, err := s.store.GetExceptionGroupSamples(r.Context(), r.PathValue("fp"), limit)
+	if err != nil { writeErr(w, err); return }
+	writeJSON(w, out)
+}
+
+func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) {
+	var body struct{ State string `json:"state"` }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest); return
+	}
+	switch body.State {
+	case chstore.ExStateNew, chstore.ExStateAcknowledged,
+		chstore.ExStateResolved, chstore.ExStateIgnored:
+		// ok
+	default:
+		http.Error(w, `{"error":"invalid state"}`, http.StatusBadRequest); return
+	}
+	if err := s.store.SetExceptionGroupState(r.Context(), r.PathValue("fp"), body.State); err != nil {
+		writeErr(w, err); return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) assignExceptionGroup(w http.ResponseWriter, r *http.Request) {
+	var body struct{ Assignee string `json:"assignee"` }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest); return
+	}
+	if err := s.store.AssignExceptionGroup(r.Context(), r.PathValue("fp"), body.Assignee); err != nil {
+		writeErr(w, err); return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
 
 func (s *Server) listExceptions(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

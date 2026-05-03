@@ -170,6 +170,22 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
 
+		`CREATE TABLE IF NOT EXISTS exception_groups (
+			fingerprint    String,                              -- sha1(type|message|service)
+			ex_type        String,
+			ex_message     String,
+			service        LowCardinality(String),
+			state          LowCardinality(String) DEFAULT 'new', -- new | acknowledged | resolved | ignored
+			assignee       String       DEFAULT '',              -- user id, or '' for unassigned
+			first_seen     DateTime64(9),
+			last_seen      DateTime64(9),
+			resolved_at    Nullable(DateTime64(9)),
+			occurrences    UInt64       DEFAULT 0,
+			notes          String       DEFAULT '',
+			version        UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY fingerprint`,
+
 		`CREATE TABLE IF NOT EXISTS slos (
 			id            String,
 			name          String,

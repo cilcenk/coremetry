@@ -96,6 +96,12 @@ func main() {
 	// ── Anomaly detector (Watchdog-style baseline check) ─────────────────────
 	go anomaly.New(store, 2*time.Minute, lockImpl, notifier).Start(ctx)
 
+	// ── Exception inbox refresher ────────────────────────────────────────────
+	// Scans recent exception events every minute and upserts each distinct
+	// (type, message, service) into exception_groups. Leader-gated so
+	// multiple replicas don't redo the same scan.
+	go runExceptionRefresher(ctx, store, lockImpl)
+
 	// ── Auth (JWT issuer + initial admin seed) ────────────────────────────────
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
 	if err := seedInitialAdmin(ctx, store, cfg.Auth); err != nil {
@@ -137,6 +143,48 @@ func main() {
 	logConsumer.Stop()
 	metricConsumer.Stop()
 	log.Println("Bye.")
+}
+
+// runExceptionRefresher polls recent exception events and keeps the
+// exception_groups inbox in sync. Cheap (one CH GROUP BY per minute) and
+// safe to run while the user is also driving the inbox UI.
+func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache.Lock) {
+	const lockKey = "qmetry:lock:exception-refresher"
+	const interval = 60 * time.Second
+	// First pass scans the last 24h so an existing install backfills.
+	// Subsequent ticks scan a 5-minute trailing window — generous overlap
+	// to catch ingest lag, harmless because UpsertExceptionGroup is idempotent.
+	since := time.Now().Add(-24 * time.Hour)
+	tick := func() {
+		ok, err := lock.TryAcquire(ctx, lockKey, 2*interval)
+		if err == nil && !ok {
+			return
+		}
+		if err == nil {
+			defer lock.Release(ctx, lockKey)
+		}
+		n, err := store.RefreshExceptionGroups(ctx, since)
+		if err != nil {
+			log.Printf("[errors-inbox] refresh: %v", err)
+			return
+		}
+		if n > 0 {
+			log.Printf("[errors-inbox] refreshed %d groups", n)
+		}
+		since = time.Now().Add(-5 * time.Minute)
+	}
+
+	tick() // immediate backfill on boot
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			tick()
+		}
+	}
 }
 
 // seedInitialAdmin creates the bootstrap admin if the users table is empty.

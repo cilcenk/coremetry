@@ -187,6 +187,38 @@ export interface ServiceEdgeStats {
   p99Ms: number;
 }
 
+// ── Errors Inbox ────────────────────────────────────────────────────────────
+
+export type ExceptionGroupState =
+  | 'new'
+  | 'acknowledged'
+  | 'resolved'
+  | 'regressed'    // auto-flipped from resolved when it occurs again
+  | 'ignored';
+
+export interface ExceptionGroup {
+  fingerprint: string;
+  type: string;
+  message: string;
+  service: string;
+  state: ExceptionGroupState;
+  assignee: string;       // user id; '' = unassigned
+  firstSeen: number;      // unix ns
+  lastSeen: number;       // unix ns
+  resolvedAt?: number;    // unix ns, present only when state was/is resolved
+  occurrences: number;
+  notes: string;
+}
+
+export interface ExceptionSample {
+  traceId: string;
+  spanId: string;
+  time: number;          // unix ns
+  stacktrace: string;    // raw, may be empty
+  spanName: string;      // operation that errored
+  statusMsg: string;
+}
+
 // ── Settings + notifications ─────────────────────────────────────────────────
 
 export interface SMTPSettings {

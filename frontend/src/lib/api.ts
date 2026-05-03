@@ -5,6 +5,7 @@ import type {
   AlertRule, Problem, ServiceEdgeStats, Exception,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
+  ExceptionGroup, ExceptionGroupState, ExceptionSample,
 } from './types';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
@@ -79,6 +80,24 @@ export const api = {
 
   exceptions: (params: { service?: string; groupBy?: string; from?: number; to?: number; limit?: number }) =>
     get<Exception[] | null>(`/api/exceptions?${qs(params)}`),
+
+  // Errors Inbox (state-tracked exception groups)
+  exceptionGroups: (params: { state?: string; service?: string; assignee?: string; limit?: number }) =>
+    get<ExceptionGroup[] | null>(`/api/exception-groups?${qs(params)}`),
+  exceptionGroupSamples: (fingerprint: string, limit = 10) =>
+    get<ExceptionSample[] | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
+  setExceptionGroupState: (fingerprint: string, state: ExceptionGroupState) =>
+    request<void>(`/api/exception-groups/${fingerprint}/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    }),
+  assignExceptionGroup: (fingerprint: string, assignee: string) =>
+    request<void>(`/api/exception-groups/${fingerprint}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignee }),
+    }),
 
   problems: (params: { status?: string; service?: string; severity?: string; limit?: number }) =>
     get<Problem[] | null>(`/api/problems?${qs(params)}`),

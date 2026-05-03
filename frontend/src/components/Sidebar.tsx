@@ -22,6 +22,13 @@ const NAV = [
   { href: '/slos',       label: 'SLOs',         icon: '◉' },
 ];
 
+const SIDEBAR_WIDTH_KEY     = 'qmetry-sidebar-w';
+const SIDEBAR_COLLAPSED_KEY = 'qmetry-sidebar-collapsed';
+const COLLAPSED_W = 56;
+const MIN_W = 160;
+const MAX_W = 360;
+const MOBILE_BP = 768;
+
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -31,6 +38,64 @@ export function Sidebar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [showChangePw, setShowChangePw] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Width + collapsed state hydrate from localStorage on mount only;
+  // initial render uses safe defaults so SSR + client agree.
+  const [width, setWidth] = useState(196);
+  const [collapsed, setCollapsed] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => {
+    const w = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? '', 10);
+    if (Number.isFinite(w) && w >= MIN_W && w <= MAX_W) setWidth(w);
+    setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
+  }, []);
+  // Track viewport so we can switch to mobile drawer mode below the breakpoint.
+  useEffect(() => {
+    const apply = () => setIsMobile(window.innerWidth < MOBILE_BP);
+    apply();
+    window.addEventListener('resize', apply);
+    return () => window.removeEventListener('resize', apply);
+  }, []);
+
+  // ── Drag-to-resize ────────────────────────────────────────────────────────
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const onResizeStart = (e: React.MouseEvent) => {
+    if (collapsed || isMobile) return;
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startW: width };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const next = Math.max(MIN_W, Math.min(MAX_W,
+        dragRef.current.startW + (e.clientX - dragRef.current.startX)));
+      setWidth(next);
+    };
+    const onUp = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [width]);
+  const toggleCollapsed = () => {
+    setCollapsed(c => {
+      const next = !c;
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      return next;
+    });
+    setMenuOpen(false);
+  };
 
   useEffect(() => {
     api.health()
@@ -60,82 +125,156 @@ export function Sidebar() {
     return () => document.removeEventListener('mousedown', onDoc);
   }, [menuOpen]);
 
+  // Close mobile drawer on route change.
+  useEffect(() => { setDrawerOpen(false); }, [pathname]);
+
+  // ── Effective layout values ──────────────────────────────────────────────
+  // On mobile: sidebar is an off-canvas overlay (full label expanded), shown
+  // only when the user taps the hamburger. On desktop: in-flow column whose
+  // width depends on the collapsed flag and the drag-resized width.
+  const showLabels = isMobile || !collapsed;
+  const computedWidth = isMobile ? 240 : (collapsed ? COLLAPSED_W : width);
+
   return (
-    <nav id="sidebar">
-      <div id="sidebar-header">
-        <span className="logo">⬡</span>
-        <span className="title">Qmetry</span>
-        <span style={{ marginLeft: 'auto' }}><ThemeToggle /></span>
-      </div>
-      <div id="nav">
-        {NAV.map(n => (
-          <Link key={n.href} href={n.href} className={isActive(pathname, n.href) ? 'active' : ''}>
-            <span className="icon">{n.icon}</span> {n.label}
-            {n.href === '/problems' && openProblems > 0 && (
-              <span className="nav-badge">{openProblems}</span>
-            )}
-          </Link>
-        ))}
-      </div>
-      {user && (
-        <div ref={menuRef} id="user-menu" style={{
-          position: 'relative',
-          padding: '8px 14px', borderTop: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 8,
-          cursor: 'pointer',
-        }} onClick={() => setMenuOpen(o => !o)}>
-          <div style={{
-            width: 26, height: 26, borderRadius: '50%',
-            background: 'var(--accent)', color: '#fff',
-            display: 'grid', placeItems: 'center',
-            fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+    <>
+      {isMobile && (
+        <button onClick={() => setDrawerOpen(true)} aria-label="Open menu"
+          style={{
+            position: 'fixed', top: 10, left: 10, zIndex: 60,
+            width: 36, height: 36, padding: 0,
+            background: 'var(--bg2)', color: 'var(--text)',
+            border: '1px solid var(--border)', borderRadius: 6,
+            fontSize: 18, lineHeight: '32px',
           }}>
-            {user.email[0]}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontSize: 12, color: 'var(--text2)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }} title={user.email}>{user.email}</div>
-            <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase' }}>
-              {user.role}
-            </div>
-          </div>
-          <span style={{ color: 'var(--text3)', fontSize: 10 }}>{menuOpen ? '▾' : '▸'}</span>
+          ☰
+        </button>
+      )}
+      {isMobile && drawerOpen && (
+        <div onClick={() => setDrawerOpen(false)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 40,
+        }} />
+      )}
 
-          {menuOpen && (
-            <div onClick={e => e.stopPropagation()} style={{
-              position: 'absolute', bottom: '100%', left: 8, right: 8, marginBottom: 4,
-              background: 'var(--bg2)', border: '1px solid var(--border)',
-              borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
-              padding: 4, zIndex: 50,
-            }}>
-              {user.role === 'admin' && (
-                <>
-                  <MenuItem onClick={() => { setMenuOpen(false); router.push('/users'); }}>
-                    ◯ Manage users
-                  </MenuItem>
-                  <MenuItem onClick={() => { setMenuOpen(false); router.push('/settings'); }}>
-                    ⚙ Settings
-                  </MenuItem>
-                </>
-              )}
-              <MenuItem onClick={() => { setMenuOpen(false); setShowChangePw(true); }}>
-                ⚿ Change password
-              </MenuItem>
-              <MenuItem onClick={() => { setMenuOpen(false); logout(); }}>
-                ⏻ Sign out
-              </MenuItem>
-            </div>
-          )}
+      <nav id="sidebar"
+        data-collapsed={collapsed && !isMobile ? 'true' : 'false'}
+        data-mobile={isMobile ? 'true' : 'false'}
+        data-open={isMobile && drawerOpen ? 'true' : 'false'}
+        style={{
+          width: computedWidth,
+          ...(isMobile ? {
+            position: 'fixed', top: 0, bottom: 0, left: 0, zIndex: 50,
+            transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)',
+            transition: 'transform .2s ease',
+            boxShadow: drawerOpen ? '4px 0 20px rgba(0,0,0,0.4)' : 'none',
+          } : {}),
+        }}>
+        <div id="sidebar-header">
+          <span className="logo">⬡</span>
+          {showLabels && <span className="title">Qmetry</span>}
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+            {showLabels && <ThemeToggle />}
+            {!isMobile && (
+              <button onClick={toggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                style={{
+                  width: 24, height: 24, padding: 0, fontSize: 12,
+                  background: 'transparent', color: 'var(--text2)',
+                  border: '1px solid var(--border)', borderRadius: 4,
+                }}>
+                {collapsed ? '»' : '«'}
+              </button>
+            )}
+          </span>
         </div>
-      )}
-      <div id="nav-footer">{health}</div>
+        <div id="nav">
+          {NAV.map(n => (
+            <Link key={n.href} href={n.href}
+              className={isActive(pathname, n.href) ? 'active' : ''}
+              title={!showLabels ? n.label : undefined}
+              style={!showLabels ? { justifyContent: 'center', padding: '10px 0' } : undefined}>
+              <span className="icon">{n.icon}</span>
+              {showLabels && <span className="nav-label">{n.label}</span>}
+              {showLabels && n.href === '/problems' && openProblems > 0 && (
+                <span className="nav-badge">{openProblems}</span>
+              )}
+              {!showLabels && n.href === '/problems' && openProblems > 0 && (
+                <span className="nav-dot" title={`${openProblems} open problems`} />
+              )}
+            </Link>
+          ))}
+        </div>
+        {user && (
+          <div ref={menuRef} id="user-menu" style={{
+            position: 'relative',
+            padding: showLabels ? '8px 14px' : '8px 0',
+            borderTop: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center',
+            justifyContent: showLabels ? 'flex-start' : 'center',
+            gap: 8, cursor: 'pointer',
+          }} onClick={() => setMenuOpen(o => !o)}>
+            <div style={{
+              width: 26, height: 26, borderRadius: '50%',
+              background: 'var(--accent)', color: '#fff',
+              display: 'grid', placeItems: 'center', flexShrink: 0,
+              fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+            }} title={!showLabels ? user.email : undefined}>
+              {user.email[0]}
+            </div>
+            {showLabels && (
+              <>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12, color: 'var(--text2)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }} title={user.email}>{user.email}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase' }}>
+                    {user.role}
+                  </div>
+                </div>
+                <span style={{ color: 'var(--text3)', fontSize: 10 }}>{menuOpen ? '▾' : '▸'}</span>
+              </>
+            )}
 
-      {showChangePw && (
-        <ChangePasswordModal onClose={() => setShowChangePw(false)} />
-      )}
-    </nav>
+            {menuOpen && (
+              <div onClick={e => e.stopPropagation()} style={{
+                position: 'absolute', bottom: '100%', left: showLabels ? 8 : 4,
+                right: showLabels ? 8 : 4, marginBottom: 4, minWidth: 180,
+                background: 'var(--bg2)', border: '1px solid var(--border)',
+                borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                padding: 4, zIndex: 50,
+              }}>
+                {user.role === 'admin' && (
+                  <>
+                    <MenuItem onClick={() => { setMenuOpen(false); router.push('/users'); }}>
+                      ◯ Manage users
+                    </MenuItem>
+                    <MenuItem onClick={() => { setMenuOpen(false); router.push('/settings'); }}>
+                      ⚙ Settings
+                    </MenuItem>
+                  </>
+                )}
+                <MenuItem onClick={() => { setMenuOpen(false); setShowChangePw(true); }}>
+                  ⚿ Change password
+                </MenuItem>
+                <MenuItem onClick={() => { setMenuOpen(false); logout(); }}>
+                  ⏻ Sign out
+                </MenuItem>
+              </div>
+            )}
+          </div>
+        )}
+        {showLabels && <div id="nav-footer">{health}</div>}
+
+        {!collapsed && !isMobile && (
+          <div className="sidebar-resizer"
+            title="Drag to resize"
+            onMouseDown={onResizeStart} />
+        )}
+
+        {showChangePw && (
+          <ChangePasswordModal onClose={() => setShowChangePw(false)} />
+        )}
+      </nav>
+    </>
   );
 }
 
@@ -155,7 +294,6 @@ function MenuItem({ children, onClick }: { children: React.ReactNode; onClick: (
 
 function isActive(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
-  // Special cases for "list/detail" pairs that share a base name.
   if (href === '/traces'     && pathname.startsWith('/trace'))     return true;
   if (href === '/dashboards' && pathname.startsWith('/dashboard')) return true;
   return pathname === href || pathname === href + '/';

@@ -64,36 +64,61 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 
 /* Layout */
 #app { display: flex; height: 100vh; overflow: hidden; }
-#sidebar { width: 196px; flex-shrink: 0; background: var(--bg1); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+#sidebar {
+  /* width is set inline by the component (resizable + collapsible) */
+  flex-shrink: 0; background: var(--bg1);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  position: relative;
+}
 #sidebar-header {
   padding: 14px 16px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 10px;
   background: linear-gradient(135deg, rgba(227,6,19,.10) 0%, transparent 100%);
+  min-height: 0;
 }
+#sidebar[data-collapsed="true"] #sidebar-header { padding: 14px 0; justify-content: center; }
 #sidebar-header .logo { color: var(--brand); font-size: 22px; }
 #sidebar-header .title { font-weight: 800; font-size: 15px; letter-spacing: .02em; }
-#nav { flex: 1; padding: 6px 0; }
+#nav { flex: 1; padding: 6px 0; overflow-y: auto; overflow-x: hidden; }
 #nav a {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 16px; color: var(--text2); font-size: 13px;
   transition: background .1s, color .1s; border-left: 2px solid transparent;
+  white-space: nowrap;
 }
 #nav a:hover { background: var(--bg2); color: var(--text); text-decoration: none; }
 #nav a.active { background: var(--bg2); color: var(--accent2); border-left-color: var(--accent); }
-#nav a .icon { width: 16px; text-align: center; font-size: 14px; }
+#nav a .icon { width: 16px; text-align: center; font-size: 14px; flex-shrink: 0; }
+.nav-label { overflow: hidden; text-overflow: ellipsis; }
 .nav-badge {
   margin-left: auto; background: var(--err); color: #fff;
   font-size: 10px; font-weight: 700; padding: 1px 6px;
   border-radius: 10px; min-width: 18px; text-align: center;
 }
+.nav-dot {
+  position: absolute; top: 4px; right: 4px;
+  width: 8px; height: 8px; background: var(--err); border-radius: 50%;
+}
+#nav a { position: relative; }
 #nav-footer { padding: 12px 16px; font-size: 11px; color: var(--text3); border-top: 1px solid var(--border); }
+
+/* Resizer handle on the sidebar's right edge */
+.sidebar-resizer {
+  position: absolute; right: -3px; top: 0; bottom: 0;
+  width: 6px; cursor: col-resize; z-index: 10;
+  background: transparent; transition: background .12s;
+}
+.sidebar-resizer:hover { background: var(--accent); opacity: .6; }
+.sidebar-resizer:active { background: var(--accent); }
 
 #main { flex: 1; overflow: auto; display: flex; flex-direction: column; min-width: 0; }
 #topbar {
   padding: 10px 20px; border-bottom: 1px solid var(--border);
   background: var(--bg1); display: flex; align-items: center; gap: 12px; flex-shrink: 0;
 }
-#topbar h1 { font-size: 15px; font-weight: 600; flex: 1; }
+#topbar h1 { font-size: 15px; font-weight: 600; flex: 1; min-width: 0;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #content { flex: 1; padding: 20px; overflow: auto; }
 
 /* Controls */
@@ -128,7 +153,7 @@ button.sec:hover { background: var(--bg2); }
 .card-stat .v.ok { color: var(--ok); } .card-stat .v.err { color: var(--err); } .card-stat .v.warn { color: var(--warn); }
 
 /* Table */
-.table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; overflow-y: hidden; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 thead th {
   background: var(--bg2); padding: 8px 12px; text-align: left;
@@ -485,4 +510,44 @@ canvas { max-width: 100%; }
   background: rgba(255,82,82,.08); border: 1px solid rgba(255,82,82,.4);
   color: var(--err); padding: 6px 8px; border-radius: 4px;
   font-size: 11px;
+}
+
+/* ── Mobile responsive (< 768px) ──────────────────────────────────────────
+   The sidebar's component code switches to off-canvas drawer mode on
+   small viewports; everything below adjusts page chrome to avoid the
+   hamburger overlap and to make tables/controls survive narrow widths. */
+@media (max-width: 767px) {
+  /* Make room for the hamburger toggle pinned at top-left */
+  #topbar { padding: 10px 12px 10px 56px; }
+
+  /* Tighter content padding so cards don't get clipped */
+  #content { padding: 12px; }
+
+  /* Stack control rows; full-width inputs */
+  .controls { gap: 6px; }
+  .controls input, .controls select { min-width: 0; }
+
+  /* Tables: scroll horizontally rather than blow up the layout */
+  table { font-size: 11px; }
+  thead th, tbody td { padding: 6px 8px; }
+
+  /* Trace detail view: side-by-side waterfall + panel becomes stacked */
+  #td-outer { flex-direction: column; }
+  #span-panel {
+    width: 100% !important;
+    max-height: 50vh;
+  }
+  .span-panel-resizer { display: none; }
+
+  /* Topbar title room */
+  #topbar h1 { font-size: 13px; }
+
+  /* TimeRangePicker bits — let preset chips wrap rather than overflow */
+  .trp-presets { flex-wrap: wrap; }
+}
+
+/* iPhone SE / very narrow viewports */
+@media (max-width: 380px) {
+  #topbar { padding-left: 52px; }
+  #topbar h1 { font-size: 12px; }
 }

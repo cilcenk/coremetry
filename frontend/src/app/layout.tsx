@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { AuthProvider } from '@/components/AuthProvider';
 import { AppShell } from '@/components/AppShell';
 import '@/styles/globals.css';
@@ -6,6 +6,13 @@ import '@/styles/globals.css';
 export const metadata: Metadata = {
   title: 'Qmetry',
   description: 'Enterprise OpenTelemetry APM',
+};
+
+// Mobile-friendly defaults — without this iOS Safari renders pages at
+// "desktop width" and shrinks-to-fit, defeating the responsive CSS.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
 };
 
 // Inline boot script applies the saved theme before paint, preventing the

@@ -1,0 +1,84 @@
+# OpenTelemetry Collector configuration for Qmetry.
+#
+# Pipeline:
+#   apps  ──▶ otel-collector (OTLP gRPC :4317 / HTTP :4318)
+#         ──▶ batch + memory_limiter
+#         ──▶ otlp exporter to qmetry:4317
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 32
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins: ["*"]
+
+processors:
+  # Drop data if memory pressure is high (back-pressure).
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Batch before forwarding to reduce request count.
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+  # Tag every record so we can tell what came through the collector.
+  resource:
+    attributes:
+      - key: telemetry.processed_by
+        value: otel-collector
+        action: upsert
+
+exporters:
+  # Send everything to Qmetry over OTLP/gRPC (insecure inside the docker network).
+  otlp/qmetry:
+    endpoint: qmetry:4317
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+
+  # Useful for debugging — toggle verbosity to "detailed" to see payloads.
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+service:
+  extensions: [health_check, pprof]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters:  [otlp/qmetry]
+    metrics:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters:  [otlp/qmetry]
+    logs:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters:  [otlp/qmetry]

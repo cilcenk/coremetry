@@ -1,0 +1,52 @@
+listen:
+  http: ":8088"   # Web UI + REST API + direct OTLP/HTTP fallback
+  grpc: ":4317"   # OTLP/gRPC ingest (collector forwards here)
+
+clickhouse:
+  addr: "127.0.0.1:9000"
+  database: "qmetry"
+  username: "default"
+  password: ""
+  max_open_conns: 10
+  dial_timeout: "5s"
+
+retention:
+  spans_days: 30
+  logs_days: 30
+  metrics_days: 7
+
+ingestion:
+  batch_size: 10000
+  buffer_size: 100000
+  flush_interval: "5s"
+  workers: 4
+
+# Optional. Empty url = single-instance mode (no cache, always-leader lock).
+# Set this to enable hot caching of frequently-polled endpoints AND to make
+# background workers safe to run across multiple Qmetry replicas.
+redis:
+  url: ""   # e.g. "redis://localhost:6379/0"
+
+
+auth:
+  # Set jwt_secret to a long random string in production. If left empty
+  # one is generated on startup but rotates on every restart, invalidating
+  # all sessions.
+  jwt_secret: ""
+  token_ttl: "24h"
+  initial_admin: "admin@qmetry.local"
+  initial_password: "admin"     # change after first login
+
+  # ── Optional: OIDC / SSO ─────────────────────────────────────────────────
+  # Local username/password is always available even when OIDC is on, so
+  # admins keep a fallback if the IdP becomes unreachable.
+  oidc:
+    enabled: false
+    issuer_url: ""              # e.g. https://accounts.google.com
+    client_id: ""
+    client_secret: ""
+    redirect_url: ""            # e.g. https://qmetry.example.com/api/auth/oidc/callback
+    scopes: ["openid", "email", "profile"]
+    display_name: "SSO"         # text shown on the login button
+    default_role: "viewer"      # role given to first-time OIDC users
+    allowed_domains: []         # optional whitelist, e.g. ["acme.com"]

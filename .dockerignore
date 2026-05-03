@@ -1,0 +1,10 @@
+.git
+.gitignore
+*.md
+*.db
+qmetry
+demo
+frontend/node_modules
+frontend/.next
+frontend/out
+.DS_Store

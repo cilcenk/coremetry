@@ -1,0 +1,30 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: java-demo
+  datasource:
+    url: jdbc:h2:mem:demo;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create
+    defer-datasource-initialization: true
+    show-sql: false
+  sql:
+    init:
+      mode: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+demo:
+  self-base-url: http://localhost:8080
+  scenario-delay-ms: 300

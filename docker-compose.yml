@@ -1,0 +1,139 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: qmetry-clickhouse
+    ports:
+      - "9000:9000"   # native protocol
+      - "8123:8123"   # HTTP
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qmetry:
+    build: .
+    container_name: qmetry
+    # The OTel Collector handles OTLP/HTTP for apps now, so qmetry only
+    # exposes its web/API port externally. OTLP/gRPC stays internal — the
+    # collector forwards over the docker network.
+    ports:
+      - "8088:8088"   # Web UI + REST API + direct OTLP/HTTP fallback
+    environment:
+      QMETRY_CH_ADDR: "clickhouse:9000"
+      # Hot-cache + distributed lock backend. Comment out to fall back to
+      # single-instance mode (no cache, always-leader background workers).
+      QMETRY_REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # Hot cache (services list, metric names, sidebar problem count) +
+  # distributed lock for the evaluator/anomaly workers. Lightweight —
+  # appendonly disabled because all data here is rebuildable from CH.
+  redis:
+    image: redis:7-alpine
+    container_name: qmetry-redis
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # OpenTelemetry Collector — apps send here, collector forwards to qmetry.
+  # Standard OTLP ports (4317/4318) are exposed on the host as 14317/14318
+  # so they don't clash with qmetry's direct ports.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    container_name: qmetry-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "14317:4317"   # OTLP gRPC (apps connect here)
+      - "14318:4318"   # OTLP HTTP
+      - "13133:13133"  # health check
+    depends_on:
+      qmetry:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Grafana: Qmetry pre-wired as a Tempo datasource ─────────────────────────
+  # Open http://localhost:3000 (admin/admin) → Explore → Qmetry (Tempo).
+  # Disable with `docker compose up -d` (omit profile).
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: qmetry-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Editor
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - qmetry
+    restart: unless-stopped
+    profiles: ["grafana", "demo"]
+
+  # ── Java demo: zero-code OTel auto-instrumentation ──────────────────────────
+  # Spring Boot app, no OTel imports in source. The javaagent injects all
+  # traces/metrics/logs at JVM startup; async-profiler pushes CPU profiles.
+  java-demo:
+    build:
+      context: ./java-demo
+    container_name: qmetry-java-demo
+    environment:
+      OTEL_SERVICE_NAME: java-demo
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=demo,host.name=java-demo-1,service.version=0.1.0"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: "true"
+      OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_ENABLED: "true"
+      OTEL_METRIC_EXPORT_INTERVAL: "10000"
+      # Profile pusher (sidecar shell script — not OTel)
+      QMETRY_URL: "http://qmetry:8088"
+      PROFILE_INTERVAL_SEC: "15"
+      PROFILE_WINDOW_SEC: "10"
+      PROFILE_ENGINE: wall   # wallclock sampling — captures all threads, no kernel perms needed
+    ports:
+      - "8080:8080"
+    depends_on:
+      - otel-collector
+      - qmetry
+    restart: unless-stopped
+
+  # ── Optional Go demo (kept for direct OTLP testing) ──────────────────────────
+  go-demo:
+    build: .
+    container_name: qmetry-go-demo
+    entrypoint: ["./demo"]
+    command: ["-endpoint", "http://otel-collector:4318", "-rps", "3"]
+    depends_on:
+      - otel-collector
+    restart: unless-stopped
+    profiles: ["go-demo"]
+
+volumes:
+  clickhouse-data:
+  grafana-data:

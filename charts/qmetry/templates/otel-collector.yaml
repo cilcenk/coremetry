@@ -1,0 +1,90 @@
+{{- if .Values.otelCollector.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qmetry.fullname" . }}-otelcol
+  labels:
+    {{- include "qmetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: 0.0.0.0:4317 }
+          http: { endpoint: 0.0.0.0:4318, cors: { allowed_origins: ["*"] } }
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 512
+        spike_limit_mib: 128
+      batch:
+        timeout: 5s
+        send_batch_size: 1000
+    exporters:
+      otlp/qmetry:
+        endpoint: {{ include "qmetry.fullname" . }}:{{ .Values.service.grpcPort }}
+        tls: { insecure: true }
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 5000 }
+        retry_on_failure: { enabled: true, initial_interval: 1s, max_interval: 30s }
+    service:
+      pipelines:
+        traces:  { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/qmetry] }
+        metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/qmetry] }
+        logs:    { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/qmetry] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "qmetry.fullname" . }}-otelcol
+  labels:
+    {{- include "qmetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "qmetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  template:
+    metadata:
+      labels:
+        {{- include "qmetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+    spec:
+      containers:
+        - name: otelcol
+          image: "{{ .Values.otelCollector.image.repository }}:{{ .Values.otelCollector.image.tag }}"
+          args: ["--config=/etc/otelcol/config.yaml"]
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+          resources: {{- toYaml .Values.otelCollector.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "qmetry.fullname" . }}-otelcol
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "qmetry.fullname" . }}-otelcol
+  labels:
+    {{- include "qmetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: {{ .Values.otelCollector.service.type }}
+  selector:
+    {{- include "qmetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.otelCollector.service.grpcPort }}
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: {{ .Values.otelCollector.service.httpPort }}
+      targetPort: otlp-http
+{{- end -}}

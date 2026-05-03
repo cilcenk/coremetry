@@ -1,0 +1,17 @@
+apiVersion: v2
+name: qmetry
+description: Enterprise OpenTelemetry APM — traces, metrics, logs, profiles on ClickHouse
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/cenk/qmetry
+keywords:
+  - apm
+  - opentelemetry
+  - observability
+  - tracing
+  - clickhouse
+maintainers:
+  - name: Qmetry maintainers
+sources:
+  - https://github.com/cenk/qmetry

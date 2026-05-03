@@ -1,0 +1,55 @@
+# Built binaries
+/qmetry
+/demo
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test + coverage
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go
+go.work
+go.work.sum
+vendor/
+
+# Frontend (frontend/.gitignore covers the rest)
+frontend/out/
+frontend/.next/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+
+# Java demo build outputs
+java-demo/target/
+java-demo/.mvn/
+*.class
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs + tmp
+*.log
+tmp/
+logs/
+
+# Helm
+charts/*.tgz
+charts/*/charts/
+
+# Local data dirs that some compose runs leave behind
+data/
+clickhouse-data/
+grafana-data/

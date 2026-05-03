@@ -1,0 +1,48 @@
+Qmetry has been installed.
+
+1. Wait for the pods to be ready:
+     kubectl --namespace {{ .Release.Namespace }} rollout status deploy/{{ include "qmetry.fullname" . }}
+
+2. Access the UI:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+     http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+     kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "qmetry.fullname" . }} 8088:{{ .Values.service.httpPort }}
+     # then open http://localhost:8088
+{{- end }}
+
+3. Sign in with the bootstrap admin (rotate the password immediately):
+     email:    {{ .Values.config.auth.initialAdmin }}
+     password: (the value of secrets.initialAdminPassword — default "admin")
+
+4. Point your apps at the OTel Collector:
+{{- if .Values.otelCollector.enabled }}
+     OTEL_EXPORTER_OTLP_ENDPOINT=http://{{ include "qmetry.fullname" . }}-otelcol:{{ .Values.otelCollector.service.grpcPort }}
+{{- else }}
+     # Collector disabled — point apps directly at qmetry's gRPC service:
+     OTEL_EXPORTER_OTLP_ENDPOINT=http://{{ include "qmetry.fullname" . }}:{{ .Values.service.grpcPort }}
+{{- end }}
+
+{{- $redisURL := include "qmetry.redisURL" . }}
+{{- if not $redisURL }}
+
+⚠ Redis is disabled. Background workers run on every replica which can
+  cause duplicate Problems if you scale this Deployment > 1.
+  Either set redis.enabled=true or configure redis.external.url.
+{{- end }}
+
+{{- if eq .Values.secrets.initialAdminPassword "admin" }}
+
+⚠ The initial admin password is the chart default ("admin"). Override
+  secrets.initialAdminPassword (or use secrets.existingSecret) before
+  exposing this install.
+{{- end }}
+
+{{- if not .Values.secrets.jwtSecret }}
+
+⚠ jwt_secret is empty — Qmetry will generate a random one at boot, but it
+  rotates on every restart and invalidates all sessions. Set
+  secrets.jwtSecret to a long random string for production.
+{{- end }}

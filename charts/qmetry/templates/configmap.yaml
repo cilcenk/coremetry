@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qmetry.fullname" . }}-config
+  labels: {{- include "qmetry.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    listen:
+      http: ":8088"
+      grpc: ":4317"
+
+    clickhouse:
+      addr: "{{ .Values.clickhouse.addr }}"
+      database: "{{ .Values.clickhouse.database }}"
+      username: "{{ .Values.clickhouse.username }}"
+      max_open_conns: {{ .Values.clickhouse.maxOpenConns }}
+      dial_timeout: "5s"
+
+    retention:
+      spans_days: {{ .Values.config.retention.spansDays }}
+      logs_days: {{ .Values.config.retention.logsDays }}
+      metrics_days: {{ .Values.config.retention.metricsDays }}
+
+    ingestion:
+      batch_size: {{ .Values.config.ingestion.batchSize }}
+      buffer_size: {{ .Values.config.ingestion.bufferSize }}
+      flush_interval: "{{ .Values.config.ingestion.flushInterval }}"
+      workers: {{ .Values.config.ingestion.workers }}
+
+    redis:
+      url: ""   # always wired via QMETRY_REDIS_URL env so we don't bake it in here
+
+    auth:
+      jwt_secret: ""           # comes from secret
+      token_ttl: "{{ .Values.config.auth.tokenTTL }}"
+      initial_admin: "{{ .Values.config.auth.initialAdmin }}"
+      initial_password: ""     # comes from secret
+      oidc:
+        enabled: {{ .Values.config.auth.oidc.enabled }}
+        issuer_url: "{{ .Values.config.auth.oidc.issuerUrl }}"
+        client_id: "{{ .Values.config.auth.oidc.clientId }}"
+        client_secret: ""      # comes from secret
+        redirect_url: "{{ .Values.config.auth.oidc.redirectUrl }}"
+        scopes: {{ toJson .Values.config.auth.oidc.scopes }}
+        display_name: "{{ .Values.config.auth.oidc.displayName }}"
+        default_role: "{{ .Values.config.auth.oidc.defaultRole }}"
+        allowed_domains: {{ toJson .Values.config.auth.oidc.allowedDomains }}

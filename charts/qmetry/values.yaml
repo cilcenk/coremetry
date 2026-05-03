@@ -1,0 +1,140 @@
+## Qmetry default values
+## Override anything here with --set or a custom values file.
+
+image:
+  repository: ghcr.io/cenk/qmetry
+  tag: ""               # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+replicaCount: 1         # safe to scale up — Redis lock arbitrates background workers
+
+# Pod-level options
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities: { drop: ["ALL"] }
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+service:
+  type: ClusterIP
+  httpPort: 8088        # Web UI + REST API + direct OTLP/HTTP fallback
+  grpcPort: 4317        # OTLP/gRPC ingest (apps + collector forward here)
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: qmetry.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: qmetry-tls
+  #   hosts: [qmetry.example.com]
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ── Qmetry config block ───────────────────────────────────────────────────────
+# Mirrors config.yaml. Anything here is rendered into a ConfigMap and mounted.
+# Sensitive fields (jwtSecret, ClickHouse password, OIDC client secret,
+# initialAdmin password) come from the Secret instead — see `secrets:` below.
+config:
+  retention:
+    spansDays: 30
+    logsDays: 30
+    metricsDays: 7
+  ingestion:
+    batchSize: 10000
+    bufferSize: 100000
+    flushInterval: "5s"
+    workers: 4
+  auth:
+    tokenTTL: "24h"
+    initialAdmin: "admin@qmetry.local"
+    oidc:
+      enabled: false
+      issuerUrl: ""
+      clientId: ""
+      redirectUrl: ""
+      scopes: ["openid", "email", "profile"]
+      displayName: "SSO"
+      defaultRole: "viewer"
+      allowedDomains: []
+
+# Sensitive values land in a Secret. Override these or point existingSecret
+# at a pre-created Secret with the same keys.
+secrets:
+  jwtSecret: ""             # leave empty in dev → Qmetry generates an ephemeral key
+  clickHousePassword: ""
+  oidcClientSecret: ""
+  initialAdminPassword: "admin"
+  existingSecret: ""        # if set, Qmetry reads JWT/CH/OIDC/init-admin from it instead
+
+# ── External dependencies ─────────────────────────────────────────────────────
+# ClickHouse: production deployments should use a managed CH cluster (Altinity
+# Operator, ClickHouse Cloud). This chart only references it — point addr at
+# the right host:port and provide credentials.
+clickhouse:
+  addr: "clickhouse:9000"
+  database: "qmetry"
+  username: "default"
+  # password comes from secret.clickHousePassword (or existingSecret)
+  maxOpenConns: 20
+
+# Redis (cache + distributed lock). Setting `enabled: true` creates a small
+# in-cluster Deployment good for dev/small prod. For high-throughput
+# deployments use a managed Redis and set `external.url` instead.
+redis:
+  enabled: true
+  external:
+    url: ""               # e.g. "redis://my-redis.svc:6379/0" — overrides in-cluster
+  image:
+    repository: redis
+    tag: 7-alpine
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+
+# OTel Collector — runs as a sidecar deployment, accepts OTLP from apps,
+# forwards to qmetry over gRPC. Disable if you already operate a collector
+# elsewhere and point apps directly at qmetry's gRPC service.
+otelCollector:
+  enabled: true
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.111.0"
+  service:
+    type: ClusterIP
+    grpcPort: 4317
+    httpPort: 4318
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: "1",  memory: 512Mi }
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""

@@ -1,0 +1,141 @@
+package chstore
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// InsertProfile stores a single pprof profile.
+func (s *Store) InsertProfile(ctx context.Context, p *Profile) error {
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO profiles")
+	if err != nil {
+		return fmt.Errorf("prepare profiles: %w", err)
+	}
+	if err := batch.Append(
+		p.ProfileID, p.ServiceName, p.HostName, p.ProfileType,
+		p.StartTime, p.DurationNs, string(p.PprofData), p.SampleCount,
+		p.LabelsKeys, p.LabelsValues,
+	); err != nil {
+		return fmt.Errorf("append profile: %w", err)
+	}
+	return batch.Send()
+}
+
+type ProfileFilter struct {
+	Service     string
+	ProfileType string
+	From, To    time.Time
+	Limit       int
+}
+
+// ListProfiles returns recent profiles matching the filter (without payload).
+func (s *Store) ListProfiles(ctx context.Context, f ProfileFilter) ([]ProfileRow, error) {
+	var wc whereClause
+	if !f.From.IsZero() {
+		wc.add("start_time >= ?", f.From)
+	}
+	if !f.To.IsZero() {
+		wc.add("start_time <= ?", f.To)
+	}
+	if f.Service != "" {
+		wc.add("service_name = ?", f.Service)
+	}
+	if f.ProfileType != "" {
+		wc.add("profile_type = ?", f.ProfileType)
+	}
+	if f.Limit == 0 {
+		f.Limit = 100
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT profile_id, service_name, host_name, profile_type,
+		       start_time, duration_ns, sample_count
+		FROM profiles `+wc.sql()+`
+		ORDER BY start_time DESC
+		LIMIT ?`, append(wc.args, f.Limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProfileRow
+	for rows.Next() {
+		var p ProfileRow
+		var t time.Time
+		var durNs int64
+		if err := rows.Scan(&p.ProfileID, &p.ServiceName, &p.HostName, &p.ProfileType,
+			&t, &durNs, &p.SampleCount); err != nil {
+			return nil, err
+		}
+		p.StartTime = t.UnixNano()
+		p.DurationMs = durNs / 1_000_000
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetProfileBytes returns the raw pprof payload for a profile id.
+func (s *Store) GetProfileBytes(ctx context.Context, id string) ([]byte, *ProfileRow, error) {
+	// ClickHouse driver scans `String` columns into Go strings; convert after.
+	var dataStr string
+	var t time.Time
+	var meta ProfileRow
+	var durNs int64
+	err := s.conn.QueryRow(ctx, `
+		SELECT profile_id, service_name, host_name, profile_type,
+		       start_time, duration_ns, sample_count, pprof_data
+		FROM profiles WHERE profile_id = ? LIMIT 1`, id).
+		Scan(&meta.ProfileID, &meta.ServiceName, &meta.HostName, &meta.ProfileType,
+			&t, &durNs, &meta.SampleCount, &dataStr)
+	if err != nil {
+		return nil, nil, err
+	}
+	meta.StartTime = t.UnixNano()
+	meta.DurationMs = durNs / 1_000_000
+	return []byte(dataStr), &meta, nil
+}
+
+// FindProfilesForSpan returns profiles related to a span's time window.
+//
+// Two cases:
+//   - Ranged profiles (cpu, etc., duration_ns > 0): true overlap test
+//     between [profile.start, profile.start+duration_ns] and [spanStart, spanEnd].
+//   - Instantaneous profiles (heap, goroutine, alloc, duration_ns = 0):
+//     the snapshot has no inherent window, so we pick those captured
+//     within ±tolerance of the span — most recent first.
+const profileSnapshotTolerance = 30 * time.Second
+
+func (s *Store) FindProfilesForSpan(ctx context.Context, service string, spanStart, spanEnd time.Time) ([]ProfileRow, error) {
+	tolStart := spanStart.Add(-profileSnapshotTolerance)
+	tolEnd := spanEnd.Add(profileSnapshotTolerance)
+
+	rows, err := s.conn.Query(ctx, `
+		SELECT profile_id, service_name, host_name, profile_type,
+		       start_time, duration_ns, sample_count
+		FROM profiles
+		WHERE service_name = ?
+		  AND (
+		    (duration_ns >  0 AND start_time <= ? AND addNanoseconds(start_time, duration_ns) >= ?)
+		    OR
+		    (duration_ns =  0 AND start_time >= ? AND start_time <= ?)
+		  )
+		ORDER BY start_time DESC
+		LIMIT 20`, service, spanEnd, spanStart, tolStart, tolEnd)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProfileRow
+	for rows.Next() {
+		var p ProfileRow
+		var t time.Time
+		var durNs int64
+		if err := rows.Scan(&p.ProfileID, &p.ServiceName, &p.HostName, &p.ProfileType,
+			&t, &durNs, &p.SampleCount); err != nil {
+			return nil, err
+		}
+		p.StartTime = t.UnixNano()
+		p.DurationMs = durNs / 1_000_000
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

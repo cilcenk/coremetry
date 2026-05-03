@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "qmetry.fullname" . }}
+  labels: {{- include "qmetry.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "qmetry.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "qmetry.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+      annotations:
+        # Roll the pods whenever the rendered config or secret changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.secrets.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "qmetry.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: qmetry
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8088
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+          env:
+            - name: QMETRY_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "qmetry.secretName" . }}
+                  key: jwt-secret
+                  optional: true
+            - name: QMETRY_CH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "qmetry.secretName" . }}
+                  key: clickhouse-password
+                  optional: true
+            - name: QMETRY_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "qmetry.secretName" . }}
+                  key: initial-admin-password
+                  optional: true
+            {{- if .Values.config.auth.oidc.enabled }}
+            - name: QMETRY_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "qmetry.secretName" . }}
+                  key: oidc-client-secret
+            {{- end }}
+            {{- $redisURL := include "qmetry.redisURL" . }}
+            {{- if $redisURL }}
+            - name: QMETRY_REDIS_URL
+              value: {{ $redisURL | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            # Static binary needs a writable /tmp; the rest of root is read-only.
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 15
+            failureThreshold: 4
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "qmetry.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,26 @@
+# Grafana datasource provisioning — Qmetry exposed as a Tempo backend.
+#
+# Once Grafana starts it automatically picks this up:
+#   • Explore → "Qmetry (Tempo)" — search traces, view trace timeline
+#   • Trace ID lookup, tag filtering, basic TraceQL all supported
+#
+apiVersion: 1
+
+datasources:
+  - name: Qmetry (Tempo)
+    type: tempo
+    access: proxy
+    uid: qmetry-tempo
+    # Inside the docker network the qmetry container is reachable as `qmetry`.
+    # The /tempo prefix is the Tempo-compatible API exposed by Qmetry.
+    url: http://qmetry:8088/tempo
+    isDefault: true
+    jsonData:
+      httpMethod: GET
+      tracesToLogs:
+        datasourceUid: qmetry-tempo
+        tags: ['service.name']
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false

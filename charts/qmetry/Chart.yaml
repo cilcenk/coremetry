@@ -4,14 +4,20 @@ description: Enterprise OpenTelemetry APM — traces, metrics, logs, profiles on
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/cenk/qmetry
+home: https://github.com/cilcenk/qmetry
 keywords:
   - apm
   - opentelemetry
   - observability
   - tracing
   - clickhouse
+  - openshift
+annotations:
+  category: Observability
+  charts.openshift.io/name: Qmetry
+  charts.openshift.io/provider: Qmetry
 maintainers:
-  - name: Qmetry maintainers
+  - name: Jane Doe
+    email: cil.cenk@gmail.com
 sources:
-  - https://github.com/cenk/qmetry
+  - https://github.com/cilcenk/qmetry

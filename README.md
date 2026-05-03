@@ -180,6 +180,12 @@ an optional in-cluster Redis and OTel Collector. **ClickHouse is external** —
 use the [Altinity Operator](https://github.com/Altinity/clickhouse-operator)
 or ClickHouse Cloud.
 
+The default image (`ghcr.io/cilcenk/qmetry`) is published as a public
+multi-arch image (linux/amd64 + linux/arm64) by the release workflow on
+every `v*.*.*` tag. No image pull secret needed.
+
+### Vanilla Kubernetes
+
 ```bash
 helm install qmetry ./charts/qmetry \
   --namespace qmetry --create-namespace \
@@ -191,6 +197,51 @@ helm install qmetry ./charts/qmetry \
   --set ingress.hosts[0].host=qmetry.example.com \
   --set ingress.hosts[0].paths[0].path=/ \
   --set ingress.hosts[0].paths[0].pathType=Prefix
+```
+
+### OpenShift
+
+The chart is **drop-in compatible with OpenShift's `restricted-v2` SCC**:
+no fixed `runAsUser`, no privileged caps, `seccompProfile: RuntimeDefault`,
+read-only root with a writable `/tmp` emptyDir. The image's USER is the
+non-root `nonroot` (UID 65532) and `/app` is group-readable so the random
+UID OpenShift assigns at admission can still execute the binary.
+
+Use a **Route** instead of Ingress — the OCP router handles edge TLS with
+the cluster wildcard cert, no cert-manager needed:
+
+```bash
+oc new-project qmetry
+
+helm install qmetry ./charts/qmetry --namespace qmetry \
+  --set clickhouse.addr=ch-cluster.databases.svc:9000 \
+  --set secrets.clickHousePassword=$CH_PASSWORD \
+  --set secrets.jwtSecret=$(openssl rand -hex 32) \
+  --set secrets.initialAdminPassword=$INITIAL_PW \
+  --set route.enabled=true
+  # `route.host` empty → OCP router auto-generates qmetry-qmetry.apps.<cluster>
+```
+
+Verify the Route URL:
+
+```bash
+oc get route qmetry-qmetry -n qmetry -o jsonpath='{.spec.host}'
+```
+
+Pod admission errors that suggest you need to lift SCC restrictions are
+almost always avoidable by overriding chart values rather than granting
+extra privilege — open an issue with the error if you hit one.
+
+### Switching to Quay.io
+
+GHCR is the default because the release workflow already pushes there.
+To pull from Quay (or any registry) instead, mirror the image and override:
+
+```bash
+helm install qmetry ./charts/qmetry \
+  --set image.repository=quay.io/yourorg/qmetry \
+  --set image.tag=0.1.0 \
+  ...
 ```
 
 After install, the chart's NOTES print port-forward / ingress URLs and warn

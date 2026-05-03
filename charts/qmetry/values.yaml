@@ -2,7 +2,9 @@
 ## Override anything here with --set or a custom values file.
 
 image:
-  repository: ghcr.io/cenk/qmetry
+  # Built and pushed by .github/workflows/release.yml on every v*.*.* tag.
+  # Public on GHCR — no pullSecrets needed.
+  repository: ghcr.io/cilcenk/qmetry
   tag: ""               # defaults to .Chart.appVersion
   pullPolicy: IfNotPresent
   pullSecrets: []
@@ -12,13 +14,21 @@ replicaCount: 1         # safe to scale up — Redis lock arbitrates background 
 # Pod-level options
 podAnnotations: {}
 podLabels: {}
+# Pod-level SC. Empty by default so OpenShift's restricted-v2 SCC can pick
+# its own UID + fsGroup at admission time. Override only if you need to
+# pin a UID (you'll then need an SCC binding to allow it).
 podSecurityContext: {}
+
+# Container-level SC. Conforms to "restricted-v2" (OpenShift) and
+# "restricted" PSS — no explicit runAsUser so the platform assigns one
+# from its allocated range; keeps the chart drop-in for OpenShift.
 securityContext:
   runAsNonRoot: true
-  runAsUser: 65532
   readOnlyRootFilesystem: true
   allowPrivilegeEscalation: false
   capabilities: { drop: ["ALL"] }
+  seccompProfile:
+    type: RuntimeDefault
 nodeSelector: {}
 tolerations: []
 affinity: {}
@@ -49,6 +59,18 @@ ingress:
   tls: []
   # - secretName: qmetry-tls
   #   hosts: [qmetry.example.com]
+
+# OpenShift native Route — preferred over Ingress on OCP because the
+# router handles edge TLS automatically with the cluster cert. Use either
+# `ingress.enabled` (vanilla k8s) OR `route.enabled` (OpenShift), not both.
+route:
+  enabled: false
+  host: ""             # leave empty → OpenShift router auto-generates one
+  annotations: {}
+  tls:
+    enabled: true
+    termination: edge  # edge | reencrypt | passthrough
+    insecureEdgeTerminationPolicy: Redirect
 
 autoscaling:
   enabled: false

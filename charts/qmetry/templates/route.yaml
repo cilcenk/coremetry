@@ -1,0 +1,31 @@
+{{- if .Values.route.enabled -}}
+# OpenShift Route — created when route.enabled=true. Routes are cluster-
+# managed proxies; if `host` is empty the router synthesises one from the
+# project + domain pattern. With `tls.termination: edge` the router
+# terminates TLS using the cluster's wildcard certificate, so the chart
+# doesn't need cert-manager or a TLS Secret.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "qmetry.fullname" . }}
+  labels: {{- include "qmetry.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.route.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "qmetry.fullname" . }}
+    weight: 100
+  port:
+    targetPort: http
+  {{- if .Values.route.tls.enabled }}
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end -}}

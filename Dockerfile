@@ -18,9 +18,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o qmetry . && \
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && \
+    # Group 0 ownership + g+rwX so OpenShift's random-UID rootless model
+    # can read these files: every assigned UID is in the root group,
+    # so making the install dir group-readable removes the "permission
+    # denied" pitfall without granting world access.
+    addgroup -S -g 65532 nonroot 2>/dev/null || true && \
+    adduser  -S -u 65532 -G nonroot -h /app nonroot 2>/dev/null || true
 WORKDIR /app
 COPY --from=go-builder /app/qmetry /app/demo ./
 COPY config.yaml .
+RUN chown -R nonroot:0 /app && chmod -R g+rX /app
+USER 65532
 EXPOSE 4317 8088
 ENTRYPOINT ["./qmetry"]

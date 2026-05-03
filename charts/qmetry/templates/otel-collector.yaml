@@ -55,6 +55,13 @@ spec:
       containers:
         - name: otelcol
           image: "{{ .Values.otelCollector.image.repository }}:{{ .Values.otelCollector.image.tag }}"
+          # SCC-friendly — same restricted-v2 profile as the main app.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
           args: ["--config=/etc/otelcol/config.yaml"]
           ports:
             - { name: otlp-grpc, containerPort: 4317 }

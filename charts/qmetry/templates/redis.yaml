@@ -22,16 +22,38 @@ spec:
       containers:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          # SCC-friendly: no fixed UID, no privileged caps. The official
+          # redis image refuses to start as root; with restricted-v2 the
+          # platform assigns a high non-root UID — that works because we
+          # never persist anything (appendonly + RDB off below).
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
           # All cached/locked data is rebuildable from ClickHouse, so
           # appendonly + RDB are off. Treat this Redis as ephemeral.
           args: ["redis-server", "--appendonly", "no", "--save", ""]
           ports:
             - name: redis
               containerPort: 6379
+          # /tmp is mounted writable for redis's runtime sockets/PID file
+          # so readOnlyRootFilesystem doesn't break startup.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
           readinessProbe:
             tcpSocket: { port: redis }
             periodSeconds: 5
           resources: {{- toYaml .Values.redis.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

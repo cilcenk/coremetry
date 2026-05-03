@@ -227,13 +227,14 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 canvas { max-width: 100%; }
 
 /* Service Graph */
-#graph-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-#graph-svg { display: block; width: 100%; cursor: grab; }
+#graph-wrap { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+[data-theme="light"] #graph-wrap { background: #f4f6fa; }
+#graph-svg { display: block; width: 100%; cursor: grab; user-select: none; }
 #graph-svg:active { cursor: grabbing; }
 .graph-node { cursor: pointer; }
-.graph-node circle { transition: r .15s, filter .15s; }
-.graph-node:hover circle { filter: brightness(1.2); }
-.graph-tooltip { position: fixed; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; pointer-events: none; z-index: 100; max-width: 220px; }
+.graph-node rect { transition: stroke .15s, filter .15s; }
+.graph-node:hover rect { filter: brightness(1.25); }
+.graph-tooltip { position: fixed; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; pointer-events: none; z-index: 100; max-width: 240px; white-space: pre-line; font-family: monospace; }
 
 /* Empty state */
 .empty { text-align: center; padding: 60px 20px; color: var(--text2); }

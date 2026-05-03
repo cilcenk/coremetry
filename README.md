@@ -14,12 +14,64 @@ apps ──▶ OTel Collector ──▶ Qmetry (gRPC :4317)
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/trace-waterfall.png" alt="Trace waterfall — span timeline with stacktraces" width="100%">
+  <br><sub><em>Tempo-style trace waterfall — span timeline, attributes, events, and inline stacktraces.</em></sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/services.png" alt="Services list with Apdex"><br>
+      <sub><b>Services</b> — Apdex, error rate, P99 latency, sortable</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/dashboard.png" alt="Custom dashboard"><br>
+      <sub><b>Dashboards</b> — metric / span-aggregation / stat / markdown panels</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/service-graph.png" alt="Service graph"><br>
+      <sub><b>Service Graph</b> — auto-discovered topology with call rates and error stains</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/problems.png" alt="Problems with anomaly badges"><br>
+      <sub><b>Problems</b> — rule-based + Watchdog-style anomaly detection</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/slos.png" alt="SLOs with error budget burn rate"><br>
+      <sub><b>SLOs</b> — availability / latency SLIs with error-budget burn down</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/profiling.png" alt="Continuous profiling flame graph"><br>
+      <sub><b>Profiling</b> — async-profiler / pprof flame graphs, trace-to-profile drill-down</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/trace-stacktrace.png" alt="Trace span with exception stacktrace"><br>
+      <sub><b>Span detail</b> — exception events with full stack frames, log correlation</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/login.png" alt="Login screen with optional SSO"><br>
+      <sub><b>Login</b> — local username/password + optional OIDC SSO button</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Quick start (Docker Compose, recommended for local + small prod)
 
 Requires Docker + Docker Compose plugin.
 
 ```bash
-git clone https://github.com/cenk/qmetry.git
+git clone https://github.com/cilcenk/qmetry.git
 cd qmetry
 docker compose up -d
 ```

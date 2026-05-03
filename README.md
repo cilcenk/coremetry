@@ -21,6 +21,11 @@ apps ──▶ OTel Collector ──▶ Qmetry (gRPC :4317)
   <br><sub><em>Tempo-style trace waterfall — span timeline, attributes, events, and inline stacktraces.</em></sub>
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/grafana-tempo.png" alt="Qmetry as a Tempo datasource in Grafana" width="100%">
+  <br><sub><em>Qmetry exposed as a native Tempo datasource — query traces from Grafana Explore, with node graph and trace-to-logs jumps.</em></sub>
+</p>
+
 <table>
   <tr>
     <td width="50%">

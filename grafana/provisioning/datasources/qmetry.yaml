@@ -4,7 +4,14 @@
 #   • Explore → "Qmetry (Tempo)" — search traces, view trace timeline
 #   • Trace ID lookup, tag filtering, basic TraceQL all supported
 #
+# `deleteDatasources` runs first on every startup, so config changes here
+# (URL, jsonData, etc.) actually take effect on existing installs instead
+# of being shadowed by Grafana's first-write cache in its sqlite db.
 apiVersion: 1
+
+deleteDatasources:
+  - name: Qmetry (Tempo)
+    orgId: 1
 
 datasources:
   - name: Qmetry (Tempo)
@@ -15,6 +22,7 @@ datasources:
     # The /tempo prefix is the Tempo-compatible API exposed by Qmetry.
     url: http://qmetry:8088/tempo
     isDefault: true
+    editable: false
     jsonData:
       httpMethod: GET
       tracesToLogs:

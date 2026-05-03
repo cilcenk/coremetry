@@ -187,13 +187,20 @@ The chart lives in [`charts/qmetry`](charts/qmetry). It deploys:
 - **OTel Collector** (`otelCollector.enabled: true`, default) —
   upstream collector for apps to point their OTLP exporter at.
 
-The image (`ghcr.io/cilcenk/qmetry`) is published as a public image by
-the release workflow on every `v*.*.*` tag. No image pull secret needed.
+Both the **Docker image** and the **Helm chart** are published to GHCR
+on every `v*.*.*` tag. No registry secret needed — both are public.
+
+| Artifact | Pull URL |
+|---|---|
+| Docker image | `ghcr.io/cilcenk/qmetry:<version>` |
+| Helm chart (OCI) | `oci://ghcr.io/cilcenk/charts/qmetry --version <version>` |
+
+Browse versions at <https://github.com/cilcenk?tab=packages>.
 
 ### Vanilla Kubernetes — bundled CH (one-command demo)
 
 ```bash
-helm install qmetry ./charts/qmetry \
+helm install qmetry oci://ghcr.io/cilcenk/charts/qmetry --version 0.1.2 \
   --namespace qmetry --create-namespace \
   --set secrets.jwtSecret=$(openssl rand -hex 32) \
   --set secrets.initialAdminPassword=$INITIAL_PW \
@@ -202,6 +209,8 @@ helm install qmetry ./charts/qmetry \
   --set ingress.hosts[0].paths[0].path=/ \
   --set ingress.hosts[0].paths[0].pathType=Prefix
 ```
+
+(Or clone the repo and use `./charts/qmetry` for a local checkout.)
 
 That installs everything — qmetry, CH, Redis, OTel Collector — on a
 single namespace. Storage: ~20 GiB PVC for CH (override via
@@ -249,7 +258,8 @@ One-command install (bundled CH + Redis + Collector + Route on HTTPS):
 ```bash
 oc new-project qmetry
 
-helm install qmetry ./charts/qmetry --namespace qmetry \
+helm install qmetry oci://ghcr.io/cilcenk/charts/qmetry --version 0.1.2 \
+  --namespace qmetry \
   --set secrets.jwtSecret=$(openssl rand -hex 32) \
   --set secrets.initialAdminPassword=$INITIAL_PW \
   --set route.enabled=true
@@ -264,7 +274,8 @@ oc get route qmetry-qmetry -n qmetry -o jsonpath='https://{.spec.host}{"\n"}'
 External CH on OpenShift looks the same, just override the toggles:
 
 ```bash
-helm install qmetry ./charts/qmetry --namespace qmetry \
+helm install qmetry oci://ghcr.io/cilcenk/charts/qmetry --version 0.1.2 \
+  --namespace qmetry \
   --set clickhouse.enabled=false \
   --set clickhouse.external.addr=ch.databases.svc:9000 \
   --set secrets.clickHousePassword=$CH_PASSWORD \

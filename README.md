@@ -201,7 +201,7 @@ Browse versions at <https://github.com/cilcenk?tab=packages>.
 ### Vanilla Kubernetes — bundled CH (one-command demo)
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.2 \
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
   --namespace coremetry --create-namespace \
   --set secrets.jwtSecret=$(openssl rand -hex 32) \
   --set secrets.initialAdminPassword=$INITIAL_PW \
@@ -256,55 +256,108 @@ route:
     insecureEdgeTerminationPolicy: Redirect # ← HTTP auto-redirects to HTTPS
 ```
 
-One-command install (bundled CH + Redis + Collector + Route on HTTPS):
+#### One-command install (bundled CH + Redis + Collector + Route on HTTPS)
 
 ```bash
 oc new-project coremetry
 
-# If your CH bundled SCC needs anyuid (almost always on OpenShift):
-oc adm policy add-scc-to-user anyuid -z coremetry-coremetry -n coremetry
-
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.5 \
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
   --namespace coremetry \
-  --set secrets.jwtSecret=$(openssl rand -hex 32) \
-  --set secrets.initialAdminPassword=$INITIAL_PW \
-  --set route.enabled=true
+  --set route.enabled=true \
+  --set secrets.jwtSecret="$(openssl rand -hex 32)" \
+  --set secrets.initialAdminPassword="$(openssl rand -base64 16)" \
+  --set 'config.auth.initialAdmin=admin@coremetry.local'
 ```
 
-Air-gapped clusters that mirror images into an internal registry add
-one flag:
+If you're testing unreleased changes from a working tree (e.g. you just
+cloned the repo to add a feature), install from the local chart instead
+of the OCI registry:
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.5 \
-  --namespace coremetry \
+helm install coremetry ./charts/coremetry \
+  -n coremetry \
+  --set route.enabled=true \
+  --set secrets.jwtSecret="$(openssl rand -hex 32)" \
+  --set secrets.initialAdminPassword="$(openssl rand -base64 16)"
+```
+
+> **ClickHouse + restricted-v2:** the bundled ClickHouse image runs as
+> fixed UID 101, which the default OpenShift SCC rejects. Two paths:
+>   1. **Recommended for prod** — point at an external CH (next snippet).
+>   2. **Quick demo** — bind `anyuid` to the chart's CH service account
+>     *after* the first failed install creates it:
+>
+>     ```bash
+>     oc adm policy add-scc-to-user anyuid \
+>       -z coremetry-clickhouse -n coremetry
+>     oc rollout restart statefulset/coremetry-clickhouse -n coremetry
+>     ```
+
+#### External Elasticsearch as the logs backend
+
+If you already ship logs to ES (Filebeat / Logstash / OTel Collector ES
+exporter) and want Coremetry's UI to query them directly:
+
+```bash
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
+  -n coremetry \
+  --set route.enabled=true \
+  --set secrets.jwtSecret="$(openssl rand -hex 32)" \
+  --set secrets.initialAdminPassword="$(openssl rand -base64 16)" \
+  --set logs.backend=elasticsearch \
+  --set 'logs.elasticsearch.addresses={https://es.your-cluster.com:9200}' \
+  --set logs.elasticsearch.index='logs-otel-*' \
+  --set secrets.esApiKey="$YOUR_BASE64_ES_API_KEY" \
+  --set logs.elasticsearch.insecureSkipVerify=false
+```
+
+The API key value is the **base64 `id:api_key` string** — the `encoded`
+field returned by `POST /_security/api_key`. Coremetry's ingest path
+keeps writing logs to ClickHouse; only the read side flips to ES, so
+this is reversible with one env-var change. See
+[External Elasticsearch logs backend (optional)](#external-elasticsearch-logs-backend-optional)
+for the field-shape table and a least-privilege API-key example.
+
+#### External ClickHouse (the right answer for prod on OpenShift)
+
+```bash
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
+  -n coremetry \
+  --set route.enabled=true \
+  --set clickhouse.enabled=false \
+  --set clickhouse.external.addr=ch-cluster.databases.svc:9000 \
+  --set clickhouse.database=coremetry \
+  --set secrets.clickHousePassword="$CH_PASSWORD" \
+  --set secrets.jwtSecret="$(openssl rand -hex 32)" \
+  --set secrets.initialAdminPassword="$(openssl rand -base64 16)"
+```
+
+#### Air-gapped clusters
+
+Mirror the images into your internal registry, then point the chart at
+it with one flag — no per-image overrides needed:
+
+```bash
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
+  -n coremetry \
+  --set route.enabled=true \
   --set global.imageRegistry=registry.example.com \
   --set 'global.imagePullSecrets={registry-pull-cred}' \
-  --set secrets.jwtSecret=$(openssl rand -hex 32) \
-  --set secrets.initialAdminPassword=$INITIAL_PW \
-  --set route.enabled=true
+  --set secrets.jwtSecret="$(openssl rand -hex 32)" \
+  --set secrets.initialAdminPassword="$(openssl rand -base64 16)"
 ```
 
-That single `global.imageRegistry` flag rewrites the registry of all
-four images (coremetry, ClickHouse, Redis, OTel Collector) — see the
-**Air-gapped / private mirror** section below for the upstream → mirror
-path mapping.
+`global.imageRegistry` rewrites the registry of all four images
+(coremetry, ClickHouse, Redis, OTel Collector) in one place. See
+[Air-gapped / private mirror](#air-gapped--private-mirror-globalimageregistry)
+below for the upstream → mirror path mapping.
 
-That's it — get the URL:
-
-```bash
-oc get route coremetry-coremetry -n coremetry -o jsonpath='https://{.spec.host}{"\n"}'
-```
-
-External CH on OpenShift looks the same, just override the toggles:
+#### Post-install verify
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.2 \
-  --namespace coremetry \
-  --set clickhouse.enabled=false \
-  --set clickhouse.external.addr=ch.databases.svc:9000 \
-  --set secrets.clickHousePassword=$CH_PASSWORD \
-  --set secrets.jwtSecret=$(openssl rand -hex 32) \
-  --set route.enabled=true
+oc rollout status deploy/coremetry -n coremetry
+oc get route coremetry -n coremetry -o jsonpath='https://{.spec.host}{"\n"}'
+# Login: admin@coremetry.local / <the password from above>
 ```
 
 Pod admission errors that suggest you need to lift SCC restrictions are
@@ -318,7 +371,7 @@ If your cluster already runs a Collector (e.g. OpenShift's
 point your existing collector's exporter at coremetry's gRPC service:
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.5 \
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
   -n coremetry \
   --set otelCollector.enabled=false \
   --set route.enabled=true ...
@@ -351,6 +404,84 @@ Cross-namespace works too — qualify the host with the coremetry namespace
 (`coremetry-coremetry.<namespace>.svc.cluster.local`). For OCP NetworkPolicy
 clusters allow ingress on TCP/4317 to coremetry from the collector's NS.
 
+### External Elasticsearch logs backend (optional)
+
+Coremetry's ingest path always writes logs to ClickHouse. The **read** side
+of `/api/logs` can be redirected to an external Elasticsearch cluster
+that your existing shipping pipeline (Filebeat, Logstash, OTel Collector
+ES exporter) already populates — no re-indexing, no double-storage.
+
+The bundled `docker compose` stack already wires this up: a local ES
+container, the collector's `elasticsearch` exporter in `mapping.mode: ecs`,
+and `COREMETRY_LOGS_BACKEND=elasticsearch` on the coremetry container.
+Everything below describes how to point Coremetry at a *real*
+production / test ES cluster.
+
+**Document field shape** — defaults match the OTel Collector ES exporter
+in ECS mode:
+
+| Path           | Purpose                                |
+|----------------|----------------------------------------|
+| `@timestamp`   | log time (RFC 3339 nanos)              |
+| `trace.id`     | hex trace ID — used by `?traceId=…`    |
+| `span.id`      | hex span ID — used by `?spanId=…`      |
+| `service.name` | service filter dropdown                |
+| `message`      | log body                               |
+| `log.level`    | severity text (info / warn / error / …) |
+
+Override per-deployment in the chart's `logs.elasticsearch.fields.*` block
+if your shipper uses different paths.
+
+**Authentication.** Three modes, picked in this precedence order:
+
+| Mode | Set | When to use |
+|------|-----|-------------|
+| API key | `COREMETRY_ES_API_KEY` | **Preferred for prod / test.** Scoped to a single index pattern, rotatable without touching user accounts. |
+| HTTP basic | `COREMETRY_ES_USERNAME` + `COREMETRY_ES_PASSWORD` | Quick path when the cluster only exposes built-in users. |
+| None | _(leave all empty)_ | Only sane for `xpack.security.enabled: false` clusters (the bundled local ES). |
+
+The API key value is the **base64 `id:api_key` string** — the `encoded`
+field returned by `POST /_security/api_key`. To create one with
+read-only access to a single index pattern:
+
+```bash
+curl -u elastic:$ES_PASSWORD -X POST "https://es.example.com/_security/api_key" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "coremetry-logs-reader",
+    "role_descriptors": {
+      "logs-read": {
+        "indices": [{ "names": ["logs-otel-*"], "privileges": ["read", "view_index_metadata"] }]
+      }
+    }
+  }'
+# Response includes "encoded": "<base64-string>" — that string is COREMETRY_ES_API_KEY.
+```
+
+Set `COREMETRY_ES_INSECURE=true` if the cluster's TLS cert is self-signed
+(common in staging) — chain verification will be skipped for that
+client only. Do **not** set it against a public / production cluster.
+
+**Helm install pointing at a managed ES cluster:**
+
+```bash
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
+  -n coremetry \
+  --set logs.backend=elasticsearch \
+  --set 'logs.elasticsearch.addresses={https://es.example.com:9200}' \
+  --set logs.elasticsearch.index='logs-otel-*' \
+  --set secrets.esApiKey="$(cat my-api-key.b64)" \
+  --set logs.elasticsearch.insecureSkipVerify=false \
+  --set route.enabled=true ...
+```
+
+`secrets.esApiKey` lands in the chart-managed Kubernetes Secret, so
+rotating the key later is `kubectl edit secret … -n coremetry` followed
+by a pod restart — no `helm upgrade` needed.
+
+If you maintain your own pre-existing Secret (e.g. from External Secrets
+Operator), set `secrets.existingSecret: my-secret` and put the same keys
+(`es-password`, `es-api-key`) in it.
+
 ### Java demo (optional)
 
 Spring Boot demo app with zero-code OTel auto-instrumentation +
@@ -358,7 +489,7 @@ async-profiler sidecar. Off by default; enable to see traces / metrics /
 profiles flow end-to-end with no app code to write:
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.5 \
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
   -n coremetry \
   --set javaDemo.enabled=true \
   --set route.enabled=true ...
@@ -387,7 +518,7 @@ Mirror these four upstream images into your registry first:
 Then install with the override:
 
 ```bash
-helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.1.4 \
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry --version 0.2.2 \
   -n coremetry \
   --set global.imageRegistry=registry.example.com \
   --set 'global.imagePullSecrets={registry-pull-cred}' \

@@ -17,7 +17,7 @@ const TYPES = [
 ];
 
 export default function ProfilingPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '24h' });
+  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
   const [service, setService] = useState('');
   const [ptype, setPtype] = useState('');
   const [services, setServices] = useState<string[]>([]);

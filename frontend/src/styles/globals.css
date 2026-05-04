@@ -168,6 +168,10 @@ thead th .sort-arrow { margin-left: 4px; opacity: .7; }
 tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; transition: background .08s; }
 tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--bg2); }
+/* Aggregate "All" row at the top of a list table — sticky-bordered + slight tint
+   so the totals are visually distinct from per-row entries. */
+tbody tr.agg-row { background: var(--bg2); border-bottom: 2px solid var(--border); cursor: default; }
+tbody tr.agg-row:hover { background: var(--bg2); }
 tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Badges */
@@ -234,21 +238,24 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 #span-panel-body { padding: 12px 14px; }
 .ps-sec { margin-bottom: 14px; }
 .ps-sec-title { font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-.ps-kv { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ps-kv { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
 .ps-kv td { padding: 3px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .ps-kv td:first-child { color: var(--text2); white-space: nowrap; width: 110px; }
-.ps-kv td:last-child { font-family: monospace; word-break: break-all; }
+.ps-kv td:last-child { font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 .ps-event { margin: 3px 0; padding: 5px 8px; background: var(--bg2); border-radius: 4px; font-size: 12px; }
 
 /* Trace layout */
 #td-outer { display: flex; gap: 10px; min-height: 400px; height: calc(100vh - 185px); }
 #td-wf { flex: 1; overflow: auto; min-width: 0; }
 
-/* KV table */
-.kv-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* KV table — fixed layout so the value cell can never push the table
+   past its container, pre-wrap so multi-line values (SQL, stack frames,
+   process command args) keep their structure, overflow-wrap: anywhere
+   so a long unbreakable token still wraps instead of overflowing. */
+.kv-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
 .kv-table td { padding: 3px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .kv-table td:first-child { color: var(--text2); white-space: nowrap; width: 180px; }
-.kv-table td:last-child { font-family: monospace; word-break: break-all; }
+.kv-table td:last-child { font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 
 /* Metrics */
 #metric-chart-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 14px; }

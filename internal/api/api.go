@@ -18,6 +18,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/profileconv"
@@ -26,6 +27,7 @@ import (
 type Server struct {
 	addr   string
 	store  *chstore.Store
+	logs   logstore.Store    // read-side abstraction; CH or external ES
 	ing    *otlp.Ingester
 	webFS  embed.FS
 	auth   *auth.Service
@@ -40,8 +42,8 @@ type Server struct {
 	demoPassword  string
 }
 
-func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, c cache.Cache, n *notify.Notifier) *Server {
-	return &Server{addr: addr, store: store, ing: ing, webFS: webFS, auth: authSvc, oidc: oidcSvc, cache: c, notify: n}
+func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, c cache.Cache, n *notify.Notifier) *Server {
+	return &Server{addr: addr, store: store, logs: logs, ing: ing, webFS: webFS, auth: authSvc, oidc: oidcSvc, cache: c, notify: n}
 }
 
 // EnableDemoMode wires the demo credentials returned by /api/auth/config.
@@ -68,6 +70,7 @@ func (s *Server) Start() error {
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
 	mux.HandleFunc("GET /api/services/graph", s.getServiceGraph)
+	mux.HandleFunc("GET /api/services/sparklines", s.getServiceSparklines)
 	mux.HandleFunc("GET /api/operations", s.getOperations)
 	mux.HandleFunc("GET /api/traces", s.getTraces)
 	mux.HandleFunc("GET /api/traces/aggregate", s.getTraceAggregate)
@@ -87,6 +90,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/exception-groups/{fp}/samples",   s.getExceptionGroupSamples)
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/state",     auth.RequireRole(auth.RoleAdmin, s.setExceptionGroupState))
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign",    auth.RequireRole(auth.RoleAdmin, s.assignExceptionGroup))
+	mux.HandleFunc("GET    /api/services/{name}/operations", s.svcOperationSummary)
 	mux.HandleFunc("GET    /api/services/{name}/callers",  s.svcCallers)
 	mux.HandleFunc("GET    /api/services/{name}/callees",  s.svcCallees)
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
@@ -152,9 +156,70 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
 	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
-	key := fmt.Sprintf("services:since=%s:from=%s:to=%s", q.Get("since"), q.Get("from"), q.Get("to"))
+	// Top-N cap. The default keeps pages responsive at 10s of thousands
+	// of services; the UI offers a "Load all" affordance for users who
+	// genuinely need the long tail.
+	limit := parseInt(q.Get("limit"), 50)
+	if limit > 5000 {
+		limit = 5000
+	}
+	if from.IsZero() {
+		from = time.Now().Add(-since)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	// MV-backed fast path. The MV writes a row every 5 minutes, so windows
+	// shorter than ~5 min would return empty — fall through to the raw
+	// scan in that case (small window = small scan, also fast).
+	useMV := to.Sub(from) >= 5*time.Minute
+	key := fmt.Sprintf("services:mv=%t:limit=%d:since=%s:from=%s:to=%s",
+		useMV, limit, q.Get("since"), q.Get("from"), q.Get("to"))
 	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
+		if useMV {
+			return s.store.GetServicesAgg(r.Context(), from, to, limit)
+		}
 		return s.store.GetServices(r.Context(), since, from, to)
+	})
+}
+
+// getServiceSparklines returns one bucket array per service for the
+// requested window, sourced from the 5-minute summary MV. Used by the
+// services list to render thumbnail charts next to each row without a
+// separate round-trip per service.
+//
+// Response shape:
+//   { "<service>": [ { "t": <unix ns>, "spans": N, "errs": N,
+//                      "avgMs": F, "p99Ms": F }, ... ] }
+func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	since := parseDuration(q.Get("since"), 24*time.Hour)
+	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
+	if from.IsZero() {
+		from = time.Now().Add(-since)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	key := fmt.Sprintf("services-spark:from=%s:to=%s", q.Get("from"), q.Get("to"))
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		rows, err := s.store.GetServiceSummary5m(r.Context(), "", from, to)
+		if err != nil {
+			return nil, err
+		}
+		// Group by service. Map insertion preserves nothing on Go's side,
+		// but the front-end indexes by name so order doesn't matter.
+		out := map[string][]map[string]any{}
+		for _, b := range rows {
+			out[b.Service] = append(out[b.Service], map[string]any{
+				"t":     b.BucketStart,
+				"spans": b.SpanCount,
+				"errs":  b.ErrorCount,
+				"avgMs": b.AvgMs,
+				"p99Ms": b.P99Ms,
+			})
+		}
+		return out, nil
 	})
 }
 
@@ -205,12 +270,27 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.Filters = filters
-	traces, total, err := s.store.GetTraces(r.Context(), f)
+	// count mode — opt-in for the expensive count(DISTINCT trace_id):
+	//   skip   (default) — no count; UI shows ">=N+1" when the page is full
+	//   approx           — count over top N+1 trace_ids only (fast)
+	//   exact            — full scan (the legacy behaviour, 30s+ at scale)
+	f.CountMode = q.Get("count")
+	if f.CountMode == "" {
+		f.CountMode = "skip"
+	}
+	traces, total, hasMore, err := s.store.GetTraces(r.Context(), f)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]interface{}{"total": total, "traces": traces})
+	resp := map[string]interface{}{"traces": traces, "hasMore": hasMore}
+	// Only emit `total` when the caller actually computed one — clients
+	// distinguish "unknown total" from "zero total" by the field's
+	// presence, not its value.
+	if f.CountMode != "skip" {
+		resp["total"] = total
+	}
+	writeJSON(w, resp)
 }
 
 func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +335,7 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sev, _ := strconv.Atoi(q.Get("severity"))
-	f := chstore.LogFilter{
+	f := logstore.Filter{
 		Service:     q.Get("service"),
 		Search:      q.Get("search"),
 		From:        parseTime(q.Get("from")),
@@ -266,12 +346,12 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		Limit:       parseInt(q.Get("limit"), 100),
 		Offset:      parseInt(q.Get("offset"), 0),
 	}
-	logs, total, err := s.store.GetLogs(r.Context(), f)
+	page, err := s.logs.Search(r.Context(), f)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]interface{}{"total": total, "logs": logs})
+	writeJSON(w, map[string]interface{}{"total": page.Total, "logs": page.Logs})
 }
 
 func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
@@ -1085,6 +1165,20 @@ func (s *Server) listExceptions(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Service backtrace ────────────────────────────────────────────────────────
+
+// svcOperationSummary returns per-operation aggregates for a single
+// service. Drives the Operations table on the service detail page.
+func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	svc := r.PathValue("name")
+	since := parseDuration(q.Get("since"), 24*time.Hour)
+	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
+	key := fmt.Sprintf("svc-ops:svc=%s:since=%s:from=%s:to=%s",
+		svc, q.Get("since"), q.Get("from"), q.Get("to"))
+	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
+		return s.store.GetOperationSummary(r.Context(), svc, since, from, to)
+	})
+}
 
 func (s *Server) svcCallers(w http.ResponseWriter, r *http.Request) {
 	since := parseDuration(r.URL.Query().Get("since"), 24*time.Hour)

@@ -2,10 +2,23 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// splitCSV trims whitespace and drops empty entries.
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 type Config struct {
 	Listen     ListenConfig    `yaml:"listen"`
@@ -14,6 +27,31 @@ type Config struct {
 	Ingestion  IngestionConfig `yaml:"ingestion"`
 	Auth       AuthConfig      `yaml:"auth"`
 	Redis      RedisConfig     `yaml:"redis"`
+	Logs       LogsConfig      `yaml:"logs"`
+}
+
+// LogsConfig picks which read backend serves /api/logs. Ingest still
+// always writes to ClickHouse — this only changes the read path so an
+// operator can point Coremetry at an external ES that their existing
+// shipping pipeline already populates, without re-indexing.
+//
+//	backend: clickhouse  → query the local CH `logs` table (default)
+//	backend: elasticsearch → query Elasticsearch via Elastic.Addresses
+type LogsConfig struct {
+	Backend       string   `yaml:"backend"` // "clickhouse" (default) | "elasticsearch"
+	Elasticsearch ESConfig `yaml:"elasticsearch"`
+}
+
+// ESConfig mirrors logstore.ESConfig. Kept here so the config package
+// stays the single source of truth for env-var bindings; main.go copies
+// these fields into the logstore.ESConfig at construction time.
+type ESConfig struct {
+	Addresses          []string `yaml:"addresses"`
+	Username           string   `yaml:"username"`
+	Password           string   `yaml:"password"`
+	APIKey             string   `yaml:"api_key"`
+	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"`
+	Index              string   `yaml:"index"`
 }
 
 // RedisConfig is fully optional. When URL is empty Coremetry runs in
@@ -157,6 +195,28 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_REDIS_URL"); v != "" {
 		cfg.Redis.URL = v
+	}
+	if v := os.Getenv("COREMETRY_LOGS_BACKEND"); v != "" {
+		cfg.Logs.Backend = v
+	}
+	if v := os.Getenv("COREMETRY_ES_ADDRESSES"); v != "" {
+		// Comma-separated list, e.g. "http://es-0:9200,http://es-1:9200".
+		cfg.Logs.Elasticsearch.Addresses = splitCSV(v)
+	}
+	if v := os.Getenv("COREMETRY_ES_USERNAME"); v != "" {
+		cfg.Logs.Elasticsearch.Username = v
+	}
+	if v := os.Getenv("COREMETRY_ES_PASSWORD"); v != "" {
+		cfg.Logs.Elasticsearch.Password = v
+	}
+	if v := os.Getenv("COREMETRY_ES_API_KEY"); v != "" {
+		cfg.Logs.Elasticsearch.APIKey = v
+	}
+	if v := os.Getenv("COREMETRY_ES_INDEX"); v != "" {
+		cfg.Logs.Elasticsearch.Index = v
+	}
+	if v := os.Getenv("COREMETRY_ES_INSECURE"); v == "true" || v == "1" {
+		cfg.Logs.Elasticsearch.InsecureSkipVerify = true
 	}
 	if cfg.Auth.TokenTTL == 0 {
 		cfg.Auth.TokenTTL = defaults.Auth.TokenTTL

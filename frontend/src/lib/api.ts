@@ -6,6 +6,7 @@ import type {
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
   ExceptionGroup, ExceptionGroupState, ExceptionSample,
+  SparklineBucket, OperationSummary,
 } from './types';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
@@ -41,10 +42,12 @@ async function get<T>(path: string): Promise<T> { return request<T>(path); }
 export interface RangeParams { from: number; to: number }
 
 export const api = {
-  services:   (r: RangeParams) =>
-    get<Service[] | null>(`/api/services?${qs(r)}`),
+  services:   (r: RangeParams, limit?: number) =>
+    get<Service[] | null>(`/api/services?${qs({ ...r, limit })}`),
   graph:      (r: RangeParams, service?: string) =>
     get<ServiceEdge[] | null>(`/api/services/graph?${qs({ ...r, service })}`),
+  serviceSparklines: (r: RangeParams) =>
+    get<Record<string, SparklineBucket[]> | null>(`/api/services/sparklines?${qs(r)}`),
   operations: (service: string, r: RangeParams) =>
     get<string[] | null>(`/api/operations?${qs({ ...r, service })}`),
 
@@ -73,6 +76,8 @@ export const api = {
   profilesForSpan: (service: string, startNs: number, endNs: number) =>
     get<ProfileRow[] | null>(`/api/profiles/by-span?service=${encodeURIComponent(service)}&start=${startNs}&end=${endNs}`),
 
+  serviceOperations: (svc: string, r: RangeParams) =>
+    get<OperationSummary[] | null>(`/api/services/${encodeURIComponent(svc)}/operations?${qs(r)}`),
   serviceCallers: (svc: string, since: string) =>
     get<ServiceEdgeStats[] | null>(`/api/services/${encodeURIComponent(svc)}/callers?since=${since}`),
   serviceCallees: (svc: string, since: string) =>
@@ -289,6 +294,10 @@ export interface TracesParams {
   order?: SortOrder;
   limit?: number;
   offset?: number;
+  // count = "skip" (default — fast, no DISTINCT) | "approx" | "exact".
+  // The UI defaults to "skip" and surfaces a "Show total" link for the
+  // user to opt into the expensive count when they want it.
+  count?: 'skip' | 'approx' | 'exact';
 }
 
 export interface LogsParams {

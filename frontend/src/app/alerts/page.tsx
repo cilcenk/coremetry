@@ -29,7 +29,7 @@ const WINDOWS = [
 ];
 
 export default function AlertsPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '24h' });
+  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
   const [rules, setRules] = useState<AlertRule[] | undefined>(undefined);
   const [services, setServices] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);

@@ -136,7 +136,13 @@ secrets:
   clickHousePassword: ""
   oidcClientSecret: ""
   initialAdminPassword: "admin"
-  existingSecret: ""        # if set, Coremetry reads JWT/CH/OIDC/init-admin from it instead
+  # External Elasticsearch credentials (only consulted when logs.backend ==
+  # "elasticsearch"). Set ONE of esApiKey OR (esUsername in logs block +
+  # esPassword here). API key is preferred — it can be scoped to a single
+  # index pattern and rotated without touching user accounts.
+  esPassword: ""            # for HTTP basic auth (paired with logs.elasticsearch.username)
+  esApiKey: ""              # base64 "id:api_key" — the `encoded` field from POST /_security/api_key
+  existingSecret: ""        # if set, Coremetry reads JWT/CH/OIDC/init-admin/es from it instead
 
 # ── ClickHouse ───────────────────────────────────────────────────────────────
 #
@@ -184,6 +190,33 @@ clickhouse:
     nativePort: 9000        # CH native protocol — coremetry connects here
     httpPort: 8123          # Useful for ad-hoc clickhouse-client / debugging
   podSecurityContext: {}    # OpenShift assigns UID + fsGroup automatically
+
+# ── Logs read backend ───────────────────────────────────────────────────────
+#
+# Coremetry's ingest pipeline always writes logs to ClickHouse. This block
+# only changes the READ side — pick "elasticsearch" to point /api/logs at
+# an external ES cluster that your existing shipping pipeline already
+# populates (Filebeat / Logstash / OTel Collector ES exporter), without
+# re-indexing.
+#
+# Auth precedence (per https://github.com/elastic/go-elasticsearch):
+#   1. apiKey   — preferred for prod; scoped + rotatable
+#   2. username + password (basic auth)
+#   3. no auth  — only sane for `xpack.security.enabled: false` clusters
+#
+# In all cases the field paths inside each ES document default to the OTel
+# Collector ES exporter's ECS mapping (trace.id, span.id, service.name,
+# message, log.level, @timestamp). Override per-deployment if your
+# shipping pipeline uses a different shape.
+logs:
+  backend: clickhouse        # "clickhouse" (default) | "elasticsearch"
+  elasticsearch:
+    addresses: []            # e.g. ["https://es.example.com:9200"]
+    index: "logs-otel-default"
+    username: ""             # leave empty when using apiKey or no auth
+    insecureSkipVerify: false # true only for self-signed certs in dev/test
+    # password / apiKey come from the Secret (secrets.esPassword,
+    # secrets.esApiKey) so they don't end up in `helm get values` output.
 
 # Redis (cache + distributed lock). Setting `enabled: true` creates a small
 # in-cluster Deployment good for dev/small prod. For high-throughput

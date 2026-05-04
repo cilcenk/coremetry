@@ -9,6 +9,30 @@ export interface Service {
   apdexThresholdMs: number; // T (default 200)
 }
 
+// One row of the per-operation aggregate on the service detail page.
+// Matches chstore.OperationSummary.
+export interface OperationSummary {
+  name: string;
+  spanCount: number;
+  errorCount: number;
+  errorRate: number;
+  avgDurationMs: number;
+  p50DurationMs: number;
+  p95DurationMs: number;
+  p99DurationMs: number;
+  apdex: number;
+}
+
+// One 5-minute bucket from the service_summary_5m MV — used to render
+// the sparkline thumbnails next to each service row.
+export interface SparklineBucket {
+  t: number;       // unix ns (bucket start)
+  spans: number;
+  errs: number;
+  avgMs: number;
+  p99Ms: number;
+}
+
 export interface Exception {
   type: string;
   message: string;
@@ -38,8 +62,13 @@ export interface TraceRow {
 }
 
 export interface TracesResponse {
-  total: number;
+  // Absent in the default ("skip") count mode — clients should treat
+  // missing-or-undefined as "unknown" and rely on `hasMore` for paging.
+  total?: number;
   traces: TraceRow[];
+  // True when the backend pulled Limit+1 rows and the extra row was
+  // dropped — i.e. "there's at least one more page after this one".
+  hasMore?: boolean;
 }
 
 export interface SpanEvent {

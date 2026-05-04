@@ -1,5 +1,5 @@
 'use client';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Topbar } from '@/components/Topbar';
@@ -7,7 +7,8 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceStructure } from '@/components/ServiceStructure';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
-import type { Service, ServiceEdgeStats, Problem, TimeRange } from '@/lib/types';
+import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
+import type { Service, ServiceEdgeStats, Problem, TimeRange, OperationSummary } from '@/lib/types';
 
 const SINCE_MAP: Record<string, string> = {
   '5m': '5m', '15m': '15m', '30m': '30m',
@@ -19,27 +20,31 @@ function ServiceDetailInner() {
   const searchParams = useSearchParams();
   const svc = searchParams.get('name') ?? '';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '24h' });
+  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
   const [info, setInfo] = useState<Service | null>(null);
   const [callers, setCallers] = useState<ServiceEdgeStats[]>([]);
   const [callees, setCallees] = useState<ServiceEdgeStats[]>([]);
   const [problems, setProblems] = useState<Problem[]>([]);
+  const [operations, setOperations] = useState<OperationSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!svc) return;
     setLoading(true);
     const since = SINCE_MAP[range.preset] ?? '24h';
+    const r = timeRangeToNs(range);
     Promise.all([
-      api.services(timeRangeToNs(range)),
+      api.services(r),
       api.serviceCallers(svc, since),
       api.serviceCallees(svc, since),
       api.problems({ service: svc, limit: 50 }),
-    ]).then(([all, up, down, probs]) => {
+      api.serviceOperations(svc, r),
+    ]).then(([all, up, down, probs, ops]) => {
       setInfo((all ?? []).find(s => s.name === svc) ?? null);
       setCallers(up ?? []);
       setCallees(down ?? []);
       setProblems(probs ?? []);
+      setOperations(ops ?? []);
     }).finally(() => setLoading(false));
   }, [svc, range]);
 
@@ -98,6 +103,8 @@ function ServiceDetailInner() {
           <>
             <ServiceStructure service={svc} callers={callers} callees={callees} />
 
+            <OperationsTable service={svc} rows={operations} range={range} />
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <DependencyTable
                 title="Upstream callers"
@@ -131,6 +138,178 @@ function KPI({ label, value, cls }: { label: string; value: string; cls?: string
           : cls === 'ok' ? 'var(--ok)' : 'var(--text)',
       }}>{value}</b>
     </div>
+  );
+}
+
+// OperationsTable — per-operation aggregate (count / err / avg / p50 /
+// p95 / p99 / apdex). Click an operation to drill into Explore with
+// `name = <op>` pre-filtered alongside the service. Sortable; aggregate
+// "All" row at the top mirrors the services page so totals are visible
+// without scrolling.
+type OpSortKey = 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99' | 'apdex';
+const OP_NATURAL_DIR: Record<OpSortKey, 'asc' | 'desc'> = {
+  name: 'asc', spanCount: 'desc', errorRate: 'desc',
+  avg: 'desc', p99: 'desc', apdex: 'asc',
+};
+
+function OperationsTable({ service, rows, range }: { service: string; rows: OperationSummary[]; range: TimeRange }) {
+  const [sortBy, setSortBy] = useState<OpSortKey>('spanCount');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  // Drill-down to Explore with both service.name + name pre-filtered.
+  // Same pattern as the services-page sparkline click-throughs so the
+  // user lands in a familiar view.
+  const opHref = (op: string) => {
+    const q = buildQuery([
+      ['range', encodeRange(range)],
+      ['filters', encodeFilters([
+        { k: 'service.name', op: '=', v: [service] },
+        { k: 'name',         op: '=', v: [op] },
+      ])],
+      ['result', 'traces'],
+    ]);
+    return `/explore?${q}`;
+  };
+
+  const sorted = useMemo(() => {
+    const cmp = (a: OperationSummary, b: OperationSummary): number => {
+      switch (sortBy) {
+        case 'name':      return a.name.localeCompare(b.name);
+        case 'spanCount': return a.spanCount - b.spanCount;
+        case 'errorRate': return a.errorRate - b.errorRate;
+        case 'avg':       return a.avgDurationMs - b.avgDurationMs;
+        case 'p99':       return a.p99DurationMs - b.p99DurationMs;
+        case 'apdex':     return (a.apdex ?? 0) - (b.apdex ?? 0);
+      }
+    };
+    const arr = [...rows].sort(cmp);
+    return sortDir === 'desc' ? arr.reverse() : arr;
+  }, [rows, sortBy, sortDir]);
+
+  // Same weighted-aggregate scheme as the services page totals row:
+  // sum spans/errs, weight avg/apdex by span count, take max for p99.
+  const agg = useMemo(() => {
+    if (rows.length === 0) return null;
+    let totalSpans = 0, totalErrs = 0, wAvg = 0, wApdex = 0, maxP99 = 0;
+    for (const r of rows) {
+      totalSpans += r.spanCount;
+      totalErrs += r.errorCount;
+      wAvg += r.avgDurationMs * r.spanCount;
+      wApdex += (r.apdex ?? 0) * r.spanCount;
+      if (r.p99DurationMs > maxP99) maxP99 = r.p99DurationMs;
+    }
+    return {
+      spans: totalSpans, errs: totalErrs,
+      errorRate: totalSpans > 0 ? (totalErrs / totalSpans) * 100 : 0,
+      avgMs: totalSpans > 0 ? wAvg / totalSpans : 0,
+      p99Ms: maxP99,
+      apdex: totalSpans > 0 ? wApdex / totalSpans : 0,
+    };
+  }, [rows]);
+
+  const toggleSort = (col: OpSortKey) => {
+    if (sortBy === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortBy(col); setSortDir(OP_NATURAL_DIR[col]); }
+  };
+
+  if (rows.length === 0) {
+    return (
+      <div style={{ marginTop: 18 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>⊙ Operations</h3>
+        <div className="empty" style={{ padding: 30 }}>No operations seen in this window</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700 }}>⊙ Operations</h3>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          {rows.length} distinct span name{rows.length === 1 ? '' : 's'} in {service}
+        </span>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <OpSortTh col="name"      label="Operation"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
+              <OpSortTh col="spanCount" label="Calls"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
+              <OpSortTh col="errorRate" label="Err %"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
+              <OpSortTh col="avg"       label="Avg"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
+              <th style={{ textAlign: 'right' }}>P50</th>
+              <th style={{ textAlign: 'right' }}>P95</th>
+              <OpSortTh col="p99"       label="P99"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
+              <OpSortTh col="apdex"     label="Apdex"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
+            </tr>
+          </thead>
+          <tbody>
+            {agg && (
+              <tr className="agg-row">
+                <td><span style={{ fontWeight: 700 }}>All ({rows.length})</span></td>
+                <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(agg.spans)}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>
+                  <span className={`badge b-${agg.errorRate > 5 ? 'err' : agg.errorRate > 0 ? 'warn' : 'ok'}`}>
+                    {agg.errorRate.toFixed(2)}%
+                  </span>
+                </td>
+                <td className="mono" style={{ textAlign: 'right' }}>{agg.avgMs.toFixed(1)}ms</td>
+                <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
+                <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{agg.p99Ms.toFixed(1)}ms</td>
+                <td className="mono" style={{ textAlign: 'right' }}>
+                  {isFinite(agg.apdex) ? agg.apdex.toFixed(2) : '—'}
+                </td>
+              </tr>
+            )}
+            {sorted.map(op => {
+              const errCls = op.errorRate > 5 ? 'err' : op.errorRate > 0 ? 'warn' : 'ok';
+              return (
+                <tr key={op.name}>
+                  <td>
+                    <Link
+                      href={opHref(op.name)}
+                      style={{ fontWeight: 500 }}
+                      title="Open this operation in Explore — service + name pre-filtered"
+                    >{op.name}</Link>
+                  </td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(op.spanCount)}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>
+                    <span className={`badge b-${errCls === 'err' ? 'err' : errCls === 'warn' ? 'warn' : 'ok'}`}>
+                      {op.errorRate.toFixed(2)}%
+                    </span>
+                  </td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{op.avgDurationMs.toFixed(1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{op.p50DurationMs.toFixed(1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{op.p95DurationMs.toFixed(1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{op.p99DurationMs.toFixed(1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>
+                    {isFinite(op.apdex) ? op.apdex.toFixed(2) : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function OpSortTh({ col, label, sort, dir, onSort, align }: {
+  col: OpSortKey; label: string;
+  sort: OpSortKey; dir: 'asc' | 'desc';
+  onSort: (c: OpSortKey) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sort === col;
+  return (
+    <th className={`sortable${active ? ' sorted' : ''}`}
+        onClick={() => onSort(col)}
+        style={{ textAlign: align ?? 'left' }}>
+      {label}
+      <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
+    </th>
   );
 }
 

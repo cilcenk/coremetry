@@ -109,6 +109,40 @@ spec:
             - name: COREMETRY_REDIS_URL
               value: {{ $redisURL | quote }}
             {{- end }}
+            {{- if eq (default "clickhouse" .Values.logs.backend) "elasticsearch" }}
+            # External Elasticsearch read-backend wiring. Ingest still
+            # writes to ClickHouse; only /api/logs reads come from ES.
+            - name: COREMETRY_LOGS_BACKEND
+              value: "elasticsearch"
+            - name: COREMETRY_ES_ADDRESSES
+              value: {{ join "," .Values.logs.elasticsearch.addresses | quote }}
+            - name: COREMETRY_ES_INDEX
+              value: {{ .Values.logs.elasticsearch.index | quote }}
+            {{- if .Values.logs.elasticsearch.username }}
+            - name: COREMETRY_ES_USERNAME
+              value: {{ .Values.logs.elasticsearch.username | quote }}
+            {{- end }}
+            {{- if .Values.logs.elasticsearch.insecureSkipVerify }}
+            - name: COREMETRY_ES_INSECURE
+              value: "true"
+            {{- end }}
+            # Password + API key always referenced; empty Secret values
+            # are harmless at runtime, and the indirection means rotating
+            # an API key is `kubectl edit secret` + pod restart, no chart
+            # bump.
+            - name: COREMETRY_ES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" . }}
+                  key: es-password
+                  optional: true
+            - name: COREMETRY_ES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" . }}
+                  key: es-api-key
+                  optional: true
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /app/config.yaml

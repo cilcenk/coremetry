@@ -119,6 +119,69 @@ func (s *Store) GetServices(ctx context.Context, since time.Duration, from, to t
 	return out, rows.Err()
 }
 
+// GetOperationSummary returns per-operation aggregates for a single
+// service: count, error rate, p50/p95/p99 latency, apdex. Drives the
+// "Operations" table on the service detail page. Rows ordered by span
+// count desc so the heaviest operations surface first; the front-end
+// applies its own sort if the user clicks a column header.
+//
+// Pass `since` for a relative window OR a non-zero from/to for an
+// absolute one (matches GetServices semantics). Service name is required;
+// passing "" returns all operations across all services, which is rarely
+// useful but mirrors the existing GetOperations behaviour.
+func (s *Store) GetOperationSummary(ctx context.Context, service string, since time.Duration, from, to time.Time) ([]OperationSummary, error) {
+	var wc whereClause
+	if !from.IsZero() {
+		wc.add("time >= ?", from)
+		if !to.IsZero() {
+			wc.add("time <= ?", to)
+		}
+	} else {
+		wc.add("time >= ?", time.Now().Add(-since))
+	}
+	if service != "" {
+		wc.add("service_name = ?", service)
+	}
+	const apdexT = 200.0
+	rows, err := s.conn.Query(ctx, `
+		SELECT name,
+		       count()                                       AS span_count,
+		       countIf(status_code = 'error')                AS error_count,
+		       avg(duration) / 1e6                           AS avg_ms,
+		       quantile(0.50)(duration) / 1e6                AS p50_ms,
+		       quantile(0.95)(duration) / 1e6                AS p95_ms,
+		       quantile(0.99)(duration) / 1e6                AS p99_ms,
+		       (countIf(duration <= ? * 1e6)
+		         + countIf(duration > ? * 1e6 AND duration <= ? * 1e6) / 2)
+		         / nullIf(count(), 0)                        AS apdex
+		FROM spans `+wc.sql()+`
+		GROUP BY name
+		ORDER BY span_count DESC
+		LIMIT 500`,
+		append([]any{apdexT, apdexT, apdexT * 4}, wc.args...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []OperationSummary{}
+	for rows.Next() {
+		var r OperationSummary
+		var apdex *float64 // nullable when count()=0 (shouldn't happen with GROUP BY, but defensive)
+		if err := rows.Scan(&r.Name, &r.SpanCount, &r.ErrorCount,
+			&r.AvgMs, &r.P50Ms, &r.P95Ms, &r.P99Ms, &apdex); err != nil {
+			return nil, err
+		}
+		if r.SpanCount > 0 {
+			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
+		}
+		if apdex != nil {
+			r.Apdex = *apdex
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // GetOperations returns the distinct span names ("operations") seen in the
 // given window, optionally filtered by service. Ordered by call count desc,
 // so the most common operations appear first in the autocomplete list.
@@ -240,9 +303,24 @@ type TraceFilter struct {
 	Order    string       // "asc" | "desc"
 	Limit    int
 	Offset   int
+	// CountMode controls the cost/accuracy of the total-rows badge:
+	//
+	//	"skip"    no DISTINCT count at all — the cheapest path. The caller
+	//	          gets `hasMore=true` when the result is full, so the UI
+	//	          can paginate without ever paying the count.
+	//	"approx"  count only the first Limit+1 trace_ids (LIMIT-bounded
+	//	          subquery). Caps the scan so the worst case is bounded
+	//	          even at scale.
+	//	"exact"   full count(DISTINCT trace_id) — the legacy behaviour;
+	//	          can be 10s+ on multi-billion-span tables.
+	//
+	// Empty string is treated as "exact" by GetTraces for back-compat
+	// with internal callers; the HTTP layer overrides the default to
+	// "skip".
+	CountMode string
 }
 
-func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, error) {
+func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	var wc whereClause
 	if !f.From.IsZero() {
 		wc.add("time >= ?", f.From)
@@ -279,11 +357,33 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		f.Limit = 50
 	}
 
-	// total count
-	countSQL := "SELECT count(DISTINCT trace_id) FROM spans " + wc.sql()
+	// Total-count cost is bounded by the user's choice. Default for
+	// internal callers (and back-compat) is "exact"; the HTTP layer flips
+	// to "skip" so the UI never blocks on a multi-billion-row DISTINCT.
 	var total uint64
-	if err := s.conn.QueryRow(ctx, countSQL, wc.args...).Scan(&total); err != nil {
-		return nil, 0, err
+	switch f.CountMode {
+	case "skip":
+		// no-op; caller infers fullness from len(rows) vs Limit
+	case "approx":
+		// Cap the count at 10× page size — bounded scan, surfaces "lots
+		// of results" without paying a full DISTINCT.
+		cap := f.Limit * 10
+		if cap < 100 {
+			cap = 100
+		}
+		approxSQL := fmt.Sprintf(
+			"SELECT count() FROM (SELECT trace_id FROM spans %s GROUP BY trace_id LIMIT %d) SETTINGS max_execution_time = 15",
+			wc.sql(), cap,
+		)
+		if err := s.conn.QueryRow(ctx, approxSQL, wc.args...).Scan(&total); err != nil {
+			return nil, 0, false, err
+		}
+	default: // "exact" (and "" for back-compat)
+		countSQL := "SELECT count(DISTINCT trace_id) FROM spans " + wc.sql() +
+			" SETTINGS max_execution_time = 30"
+		if err := s.conn.QueryRow(ctx, countSQL, wc.args...).Scan(&total); err != nil {
+			return nil, 0, false, err
+		}
 	}
 
 	// SAFE: sort key is whitelisted, never user-supplied SQL.
@@ -304,6 +404,11 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		order = "ASC"
 	}
 
+	// Pull Limit+1 rows so we know whether there's another page without
+	// having to count. Cheap — same query plan, one extra row's worth of
+	// bytes. This is what powers the "Page N · 50+" badge when CountMode
+	// is "skip".
+	pageLimit := f.Limit + 1
 	// Note: use if() not ternary ? : — ClickHouse treats ? as a param placeholder
 	querySQL := `
 		SELECT trace_id,
@@ -317,28 +422,36 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		FROM spans ` + wc.sql() + `
 		GROUP BY trace_id
 		ORDER BY ` + sortCol + ` ` + order + `
-		LIMIT ? OFFSET ?`
+		LIMIT ? OFFSET ?
+		SETTINGS max_execution_time = 30`
 
-	args := append(wc.args, f.Limit, f.Offset)
+	args := append(wc.args, pageLimit, f.Offset)
 	rows, err := s.conn.Query(ctx, querySQL, args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	defer rows.Close()
 
-	var out []TraceRow
+	out := []TraceRow{}
 	for rows.Next() {
 		var t TraceRow
 		var hasErr uint8
 		var ts time.Time
 		if err := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts, &t.DurationMs, &t.SpanCount, &hasErr); err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 		t.StartTime = ts.UnixNano()
 		t.HasError = hasErr == 1
 		out = append(out, t)
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	hasMore := len(out) > f.Limit
+	if hasMore {
+		out = out[:f.Limit]
+	}
+	return out, total, hasMore, nil
 }
 
 // GetTraceAggregate buckets traces by an attribute (operation/service) and

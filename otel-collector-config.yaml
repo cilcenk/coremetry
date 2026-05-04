@@ -3,7 +3,8 @@
 # Pipeline:
 #   apps  ──▶ otel-collector (OTLP gRPC :4317 / HTTP :4318)
 #         ──▶ batch + memory_limiter
-#         ──▶ otlp exporter to coremetry:4317
+#         ─┬─▶ otlp/coremetry (traces + metrics; logs too, for fallback)
+#          └─▶ elasticsearch  (logs only — Coremetry's UI reads from ES)
 
 receivers:
   otlp:
@@ -52,6 +53,27 @@ exporters:
       max_interval: 30s
       max_elapsed_time: 5m
 
+  # Logs sink — writes one document per LogRecord to a fixed index.
+  # `mapping.mode: ecs` puts trace.id / span.id / service.name at canonical
+  # ECS paths, which matches Coremetry's ES backend default field map so
+  # /api/logs?traceId=... correlates without any extra config.
+  elasticsearch:
+    endpoints: ["http://elasticsearch:9200"]
+    logs_index: "logs-otel-default"
+    mapping:
+      mode: ecs
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 5000
+    # ES exporter uses `retry`, not the standard `retry_on_failure` block,
+    # and accepts only enabled/max_requests/initial_interval/max_interval.
+    retry:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_requests: 5
+
   # Useful for debugging — toggle verbosity to "detailed" to see payloads.
   debug:
     verbosity: basic
@@ -78,7 +100,10 @@ service:
       receivers:  [otlp]
       processors: [memory_limiter, resource, batch]
       exporters:  [otlp/coremetry]
+    # Logs go to BOTH sinks: ES is the read source for the Coremetry UI when
+    # COREMETRY_LOGS_BACKEND=elasticsearch; otlp/coremetry keeps the
+    # ClickHouse path warm so flipping the backend back is one env flip.
     logs:
       receivers:  [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters:  [otlp/coremetry]
+      exporters:  [otlp/coremetry, elasticsearch]

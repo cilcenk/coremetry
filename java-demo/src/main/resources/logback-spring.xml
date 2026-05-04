@@ -1,7 +1,20 @@
 <configuration>
+    <!--
+      The OTel Java agent's logback-mdc instrumentation (enabled by default)
+      stuffs the active trace context into MDC under these three keys:
+        - trace_id     32-char hex
+        - span_id      16-char hex
+        - trace_flags  hex (e.g. 01)
+      Including them in the pattern means every console log line carries
+      the trace ID inline — useful when grepping container logs by hand,
+      and as a last-resort fallback if the OTLP log appender is down and
+      logs are scraped from stdout instead. The OTel-shipped log records
+      ALSO carry these IDs as separate fields, so this is purely about
+      what humans see in the rendered text.
+    -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{30} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{30} trace_id=%X{trace_id:-} span_id=%X{span_id:-} - %msg%n</pattern>
         </encoder>
     </appender>
     <root level="INFO">

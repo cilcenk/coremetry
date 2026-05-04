@@ -343,8 +343,14 @@ func (s *Store) migrate(ctx context.Context) error {
 	// service_summary_5m: per-(service, 5min) counts + duration quantiles.
 	// Used by /services and the anomaly baseline scan to avoid touching the
 	// raw spans table for time-bucketed queries that span hours/days.
+	// Apdex thresholds — keep in sync with the raw-spans path in
+	// repo.go (GetServices). 200ms satisfied / 800ms tolerating is the
+	// industry-standard default; making them MV-baked means /api/services
+	// can serve 10s of thousands of services in sub-second time.
+	const apdexT = 200 * 1_000_000   // ns
+	const apdex4T = 800 * 1_000_000  // ns
 	mvs := []string{
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS service_summary_5m
+		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS service_summary_5m
 		 ENGINE = AggregatingMergeTree
 		 PARTITION BY toDate(time_bucket)
 		 ORDER BY (service_name, time_bucket)
@@ -352,17 +358,43 @@ func (s *Store) migrate(ctx context.Context) error {
 		 SETTINGS index_granularity = 8192
 		 AS SELECT
 		   service_name,
-		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
 		   countState()                                AS span_count_state,
 		   countIfState(status_code = 'error')         AS error_count_state,
 		   sumState(duration)                          AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)   AS duration_q_state
+		   quantilesState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   countIfState(duration <= %d)                AS apdex_satisfied_state,
+		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
 		 FROM spans
-		 GROUP BY service_name, time_bucket`,
+		 GROUP BY service_name, time_bucket`, apdexT, apdexT, apdex4T),
 	}
 	for _, q := range mvs {
 		if err := s.conn.Exec(ctx, q); err != nil {
 			return fmt.Errorf("create MV: %w\nSQL: %.140s", err, q)
+		}
+	}
+	// Forward-compat: ClickHouse doesn't support ADD COLUMN on
+	// MaterializedView storage, so on an upgrade from a pre-apdex MV we
+	// detect the missing column and drop+recreate. The raw `spans` table
+	// still has every source row, so the MV repopulates from new ingest
+	// immediately; old buckets are gone but a one-time backfill via
+	// `INSERT INTO service_summary_5m SELECT ... FROM spans WHERE
+	// time < <cutoff>` can restore them if the operator wants.
+	var hasApdex uint8
+	probeSQL := `
+		SELECT count() > 0
+		FROM system.columns
+		WHERE database = currentDatabase()
+		  AND table    = 'service_summary_5m'
+		  AND name     = 'apdex_satisfied_state'`
+	if err := s.conn.QueryRow(ctx, probeSQL).Scan(&hasApdex); err == nil && hasApdex == 0 {
+		log.Println("[chstore] upgrading service_summary_5m MV (adding apdex states) — past summary buckets will be dropped")
+		if err := s.conn.Exec(ctx, `DROP TABLE IF EXISTS service_summary_5m`); err != nil {
+			return fmt.Errorf("drop old MV for upgrade: %w", err)
+		}
+		// Re-run the create (mvs[0] from above) now that the old one is gone.
+		if err := s.conn.Exec(ctx, mvs[0]); err != nil {
+			return fmt.Errorf("recreate MV with apdex: %w", err)
 		}
 	}
 	log.Println("[chstore] migrations complete")

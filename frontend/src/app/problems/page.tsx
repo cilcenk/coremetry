@@ -25,7 +25,7 @@ const NATURAL_DIR: Record<SortKey, SortDir> = {
 };
 
 export default function ProblemsPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '24h' });
+  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
   const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>('open');
   const [data, setData] = useState<Problem[] | null | undefined>(undefined);
   const [sortBy, setSortBy] = useState<SortKey>('started');

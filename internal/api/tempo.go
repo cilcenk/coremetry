@@ -78,11 +78,13 @@ func (s *Server) tempoSearch(w http.ResponseWriter, r *http.Request) {
 	tqlFilters, tqlService, tqlName := parseSimpleTraceQL(q.Get("q"))
 	filters = append(filters, tqlFilters...)
 
-	tracesResp, _, err := s.store.GetTraces(r.Context(), chstore.TraceFilter{
+	tracesResp, _, _, err := s.store.GetTraces(r.Context(), chstore.TraceFilter{
 		From: from, To: to, MinMs: minMs, MaxMs: maxMs,
 		Service: tqlService, Search: tqlName,
 		Filters: filters,
 		Limit: limit, Sort: "time", Order: "desc",
+		// Tempo /search just needs the rows; don't pay the count cost.
+		CountMode: "skip",
 	})
 	if err != nil { writeErr(w, err); return }
 

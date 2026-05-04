@@ -73,6 +73,22 @@ type MetricPoint struct {
 
 // ── API response types ────────────────────────────────────────────────────────
 
+// OperationSummary is one row of the per-operation aggregate shown on
+// the service detail page. Same shape as ServiceSummary but keyed by
+// span name within a single service. Apdex is computed against the same
+// 200ms threshold used by GetServices so the numbers are comparable.
+type OperationSummary struct {
+	Name       string  `json:"name"`
+	SpanCount  uint64  `json:"spanCount"`
+	ErrorCount uint64  `json:"errorCount"`
+	ErrorRate  float64 `json:"errorRate"`
+	AvgMs      float64 `json:"avgDurationMs"`
+	P50Ms      float64 `json:"p50DurationMs"`
+	P95Ms      float64 `json:"p95DurationMs"`
+	P99Ms      float64 `json:"p99DurationMs"`
+	Apdex      float64 `json:"apdex"`
+}
+
 type ServiceSummary struct {
 	Name       string  `json:"name"`
 	SpanCount  uint64  `json:"spanCount"`

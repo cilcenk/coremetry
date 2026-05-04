@@ -11,7 +11,7 @@ import type { Service, ServiceEdge, TimeRange } from '@/lib/types';
 
 export default function GraphPage() {
   const router = useRouter();
-  const [range, setRange] = useState<TimeRange>({ preset: '24h' });
+  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
   const [filter, setFilter] = useState('');
   const [edges, setEdges] = useState<ServiceEdge[] | null | undefined>(undefined);
   const [services, setServices] = useState<Service[]>([]);

@@ -26,7 +26,7 @@ function TracesPageInner() {
   // All these hydrate from URL on first render so the back button
   // restores filters / sort / page intact after viewing a trace detail.
   const [range, setRange] = useState<TimeRange>(
-    () => decodeRange(searchParams.get('range'), { preset: '24h' }));
+    () => decodeRange(searchParams.get('range'), { preset: '1h' }));
   const [view, setView] = useState<View>(
     () => (searchParams.get('view') === 'aggregate' ? 'aggregate' : 'list'));
 
@@ -104,6 +104,11 @@ function TracesPageInner() {
       .catch(() => setOperations([]));
   }, [draft.service, range]);
 
+  // Total-count opt-in. Off by default for speed at scale (full DISTINCT
+  // over a multi-billion-span table can take 10s+); the user can flip it
+  // on with the "Show total" affordance in the pager.
+  const [showTotal, setShowTotal] = useState(false);
+
   // ── List fetch ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (view !== 'list') return;
@@ -121,8 +126,11 @@ function TracesPageInner() {
       maxMs: filter.maxMs || undefined,
       hasError: filter.hasError || undefined,
       filters: advFilters.length ? JSON.stringify(advFilters) : undefined,
+      // "exact" only when the user explicitly asked. Pinned trace IDs
+      // skip the toggle — count of 1 is implicit.
+      count: showTotal && !tid ? 'exact' : 'skip',
     }).then(setData).catch(() => setData(null));
-  }, [view, range, sort, order, page, filter, advFilters]);
+  }, [view, range, sort, order, page, filter, advFilters, showTotal]);
 
   // ── Aggregate fetch ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -160,7 +168,8 @@ function TracesPageInner() {
   };
 
   const traces = data?.traces ?? [];
-  const total = data?.total ?? 0;
+  const total = data?.total;             // undefined when count was skipped
+  const hasMore = data?.hasMore ?? false;
 
   return (
     <>
@@ -268,8 +277,28 @@ function TracesPageInner() {
             </div>
             <div className="pager">
               <button className="sec" onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0}>← Prev</button>
-              <span>Page {page + 1} · {total} total · sorted by <b>{sort}</b> {order}</span>
-              <button className="sec" onClick={() => setPage(page + 1)} disabled={(page + 1) * 50 >= total}>Next →</button>
+              <span>
+                Page {page + 1}
+                {' · '}
+                {total !== undefined ? (
+                  <>{total.toLocaleString()} total</>
+                ) : (
+                  <>
+                    showing {traces.length}{hasMore ? '+' : ''}
+                    {' · '}
+                    <a href="#" onClick={e => { e.preventDefault(); setShowTotal(true); }}
+                       title="Run an exact count(DISTINCT trace_id) — can be slow at scale">
+                      Show total
+                    </a>
+                  </>
+                )}
+                {' · '}sorted by <b>{sort}</b> {order}
+              </span>
+              <button className="sec"
+                onClick={() => setPage(page + 1)}
+                disabled={total !== undefined ? (page + 1) * 50 >= total : !hasMore}>
+                Next →
+              </button>
             </div>
           </>
         )}

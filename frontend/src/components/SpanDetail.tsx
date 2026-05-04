@@ -199,7 +199,7 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
                     {tsShort(l.timestamp)}
                   </span>
                 </div>
-                <div style={{ fontSize: 11, marginTop: 2, wordBreak: 'break-word' }}>{l.body}</div>
+                <div style={{ fontSize: 11, marginTop: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{l.body}</div>
               </div>
             ))
           )}

@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -20,6 +21,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/evaluator"
+	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
 )
@@ -123,8 +125,18 @@ func main() {
 		}
 	}
 
+	// ── Logs read backend (CH default, ES opt-in) ────────────────────────────
+	// Ingest still always writes to CH; this only changes /api/logs's read
+	// path. ES failure here is fatal so a misconfigured external cluster
+	// surfaces at boot, not at the first user query.
+	logsStore, err := buildLogStore(cfg, store)
+	if err != nil {
+		log.Fatalf("logs backend: %v", err)
+	}
+	log.Printf("[logs] read backend: %s", logsStore.Backend())
+
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
-	srv := api.NewServer(cfg.Listen.HTTP, ing, store, webFS, authSvc, oidcSvc, cacheImpl, notifier)
+	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, cacheImpl, notifier)
 	if cfg.Auth.DemoMode {
 		srv.EnableDemoMode(cfg.Auth.InitialAdmin, cfg.Auth.InitialPassword)
 		log.Printf("[auth] DEMO MODE — login page will display + pre-fill admin credentials. DO NOT use in production.")
@@ -147,6 +159,29 @@ func main() {
 	logConsumer.Stop()
 	metricConsumer.Stop()
 	log.Println("Bye.")
+}
+
+// buildLogStore picks the read backend for /api/logs based on config.
+// Default is CH (same table the ingest pipeline writes to). When the
+// operator selects "elasticsearch" we wrap the external cluster — pings
+// it once at construction so a misconfigured ES surfaces immediately.
+func buildLogStore(cfg *config.Config, ch *chstore.Store) (logstore.Store, error) {
+	switch cfg.Logs.Backend {
+	case "", "clickhouse":
+		return logstore.NewCH(ch), nil
+	case "elasticsearch":
+		es := cfg.Logs.Elasticsearch
+		return logstore.NewES(logstore.ESConfig{
+			Addresses:          es.Addresses,
+			Username:           es.Username,
+			Password:           es.Password,
+			APIKey:             es.APIKey,
+			InsecureSkipVerify: es.InsecureSkipVerify,
+			Index:              es.Index,
+		})
+	default:
+		return nil, fmt.Errorf("unknown logs backend %q (want clickhouse|elasticsearch)", cfg.Logs.Backend)
+	}
 }
 
 // runExceptionRefresher polls recent exception events and keeps the

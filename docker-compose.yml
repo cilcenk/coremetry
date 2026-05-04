@@ -51,6 +51,32 @@ services:
       # Hot-cache + distributed lock backend. Comment out to fall back to
       # single-instance mode (no cache, always-leader background workers).
       COREMETRY_REDIS_URL: "redis://redis:6379/0"
+      # Logs read backend. "clickhouse" (default) keeps the existing path;
+      # "elasticsearch" makes /api/logs query ES directly so logs shipped
+      # by the collector's ES exporter are searchable in the Coremetry UI.
+      COREMETRY_LOGS_BACKEND: "elasticsearch"
+      COREMETRY_ES_ADDRESSES: "http://elasticsearch:9200"
+      COREMETRY_ES_INDEX: "logs-otel-default"
+      # Authentication — the bundled local ES has security disabled so
+      # nothing is needed here. Test / prod clusters typically require
+      # one of:
+      #
+      #   COREMETRY_ES_API_KEY:  base64 "id:api_key" (the `encoded`
+      #                          field returned by POST /_security/api_key
+      #                          in Kibana / the ES API). Preferred —
+      #                          can be scoped to a single index pattern
+      #                          and rotated without touching user accounts.
+      #
+      #   COREMETRY_ES_USERNAME + COREMETRY_ES_PASSWORD: HTTP basic auth.
+      #                          Set both; either alone is ignored.
+      #
+      # Set ONE of the two — if both are present the API key wins. If
+      # the cluster's certificate is self-signed (most test envs),
+      # COREMETRY_ES_INSECURE=true skips chain verification.
+      # COREMETRY_ES_API_KEY: "${COREMETRY_ES_API_KEY:-}"
+      # COREMETRY_ES_USERNAME: "${COREMETRY_ES_USERNAME:-}"
+      # COREMETRY_ES_PASSWORD: "${COREMETRY_ES_PASSWORD:-}"
+      # COREMETRY_ES_INSECURE: "${COREMETRY_ES_INSECURE:-}"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     depends_on:
@@ -58,6 +84,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      elasticsearch:
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Cloudflare Tunnel (publish the UI to a public HTTPS URL) ────────────────
@@ -119,6 +147,27 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
+  # ── Elasticsearch (logs sink) ──────────────────────────────────────────────
+  # Single-node, security-disabled — for local development only. The OTel
+  # Collector's elasticsearch exporter writes logs here in ECS mode (so
+  # trace.id / span.id / service.name end up at canonical ECS paths), and
+  # Coremetry's ES log backend reads from the same index.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: coremetry-elasticsearch
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health | grep -E '\"status\":\"(yellow|green)\"' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
   # OpenTelemetry Collector — apps send here, collector forwards to coremetry.
   # Standard OTLP ports (4317/4318) are exposed on the host as 14317/14318
   # so they don't clash with coremetry's direct ports.
@@ -135,6 +184,8 @@ services:
     depends_on:
       coremetry:
         condition: service_started
+      elasticsearch:
+        condition: service_healthy
     restart: unless-stopped
 
   # ── Grafana: Coremetry pre-wired as a Tempo datasource ─────────────────────────

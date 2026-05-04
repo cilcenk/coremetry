@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -142,9 +143,17 @@ func (s *Server) Start() error {
 	// Tempo-compatible API (Grafana datasource integration)
 	s.registerTempoRoutes(mux)
 
-	// Web UI (embedded Next.js static export)
+	// Web UI (embedded Next.js static export). Custom handler instead of
+	// http.FileServer so we can:
+	//   • Serve `<path>/index.html` directly without a 301 to `<path>/`
+	//     (the redirect breaks behind some OpenShift / load-balancer
+	//     setups where X-Forwarded-Proto isn't propagated and the
+	//     redirect Location ends up with the wrong scheme).
+	//   • Provide a SPA fallback for deep-links and unknown routes by
+	//     serving the root index.html — the Next.js client router then
+	//     mounts the right page from the current URL.
 	sub, _ := fs.Sub(s.webFS, "frontend/out")
-	mux.Handle("/", http.FileServer(http.FS(sub)))
+	mux.Handle("/", spaHandler(sub))
 
 	log.Printf("[api] HTTP listening on %s", s.addr)
 	return http.ListenAndServe(s.addr, cors(s.auth.Middleware(mux)))
@@ -1387,6 +1396,77 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Middleware & helpers ───────────────────────────────────────────────────────
+
+// spaHandler serves the embedded Next.js static export. Two behaviours
+// that diverge from the stdlib http.FileServer:
+//
+//  1. For a request like `/logs` (no trailing slash) where the export
+//     contains `logs/index.html`, FileServer returns a 301 redirect to
+//     `/logs/`. Behind a TLS-terminating proxy where `X-Forwarded-Proto`
+//     isn't propagated, the redirect's Location header carries `http://`
+//     and the client either follows it back to the http virtual host
+//     (which may not exist) or hits a strict-https policy. spaHandler
+//     resolves the trailing-slash case in-process and serves the
+//     content directly — no redirect, no scheme guessing.
+//
+//  2. For an unknown path that isn't a static asset (no file extension)
+//     spaHandler falls back to the root `index.html` so the Next.js
+//     client router can mount the right page from the URL. That covers
+//     deep-links to dynamic routes that don't have a pre-rendered
+//     directory in the export.
+func spaHandler(root fs.FS) http.Handler {
+	const indexHTML = "index.html"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strip the leading "/" — fs.FS paths are relative.
+		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if p == "" {
+			p = indexHTML
+		}
+
+		// Try the literal path first — covers static assets like
+		// /_next/static/chunks/foo.js and the explicit /404.html.
+		if f, err := root.Open(p); err == nil {
+			defer f.Close()
+			info, _ := f.Stat()
+			if info != nil && !info.IsDir() {
+				http.ServeFileFS(w, r, root, p)
+				return
+			}
+			// It's a directory — try its index.html.
+			if idx := path.Join(p, indexHTML); fileExists(root, idx) {
+				http.ServeFileFS(w, r, root, idx)
+				return
+			}
+		}
+
+		// Path not found as-is; check if it maps to a Next.js
+		// trailingSlash-style directory index (e.g. /logs → logs/index.html).
+		if idx := path.Join(p, indexHTML); fileExists(root, idx) {
+			http.ServeFileFS(w, r, root, idx)
+			return
+		}
+
+		// SPA fallback: anything without a file extension and not under
+		// /api or /v1 (those are matched by mux before reaching here)
+		// gets the root index.html so the client router can take over.
+		// Paths with extensions are real 404s — no point shipping HTML
+		// for a missing /favicon.png or /chunks/missing.js.
+		if path.Ext(p) == "" && fileExists(root, indexHTML) {
+			http.ServeFileFS(w, r, root, indexHTML)
+			return
+		}
+		http.NotFound(w, r)
+	})
+}
+
+func fileExists(root fs.FS, p string) bool {
+	f, err := root.Open(p)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
 
 func cors(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -6,7 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Combobox } from '@/components/Combobox';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { api } from '@/lib/api';
-import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
+import { tsShort, timeRangeToNs, fmtNum, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import type { TracesResponse, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
 
@@ -263,7 +263,9 @@ function TracesPageInner() {
                 </tr></thead>
                 <tbody>
                   {traces.map(t => (
-                    <tr key={t.traceId} onClick={() => router.push(`/trace?id=${t.traceId}`)}>
+                    <tr key={t.traceId}
+                        {...rowClickHandlers(`/trace?id=${t.traceId}`,
+                                             () => router.push(`/trace?id=${t.traceId}`))}>
                       <td className="mono">{tsShort(t.startTime)}</td>
                       <td><SvcBadge name={t.serviceName} /></td>
                       <td title={t.rootName}>{t.rootName || '—'}</td>

@@ -9,7 +9,7 @@ import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { ShareButton } from '@/components/ShareButton';
 import { api } from '@/lib/api';
-import { timeRangeToNs, fmtNum, tsLong } from '@/lib/utils';
+import { timeRangeToNs, fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import type { TimeRange, FilterExpr, SpanMetricSeries, SpanAgg, TraceRow } from '@/lib/types';
 
@@ -406,7 +406,8 @@ name ~ checkout`}
                 <tbody>
                   {traces.map(t => (
                     <tr key={t.traceId}
-                        onClick={() => router.push(`/trace?id=${t.traceId}`)}
+                        {...rowClickHandlers(`/trace?id=${t.traceId}`,
+                                             () => router.push(`/trace?id=${t.traceId}`))}
                         style={{ cursor: 'pointer' }}>
                       <td className="mono">
                         <Link href={`/trace?id=${t.traceId}`}

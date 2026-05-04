@@ -1,3 +1,4 @@
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { TimeRange } from './types';
 
 // Quick-range presets in seconds, ordered for the dropdown panel.
@@ -81,4 +82,37 @@ export function sevClass(n: number): string {
   if (n >= 9)  return 's-info';
   if (n >= 5)  return 's-debug';
   return 's-trace';
+}
+
+// rowClickHandlers: spread onto a row element to make it behave like a
+// real anchor for `href` — left-click navigates SPA-style via `navigate`,
+// middle-click or Cmd/Ctrl/Shift+click opens in a new tab. Plain
+// router.push doesn't honor middle-click because the table row isn't
+// an <a>; this restores the browser convention without restructuring the
+// table layout.
+//
+//   <tr {...rowClickHandlers(`/trace?id=${t.traceId}`,
+//                             () => router.push(`/trace?id=${t.traceId}`))}>
+export function rowClickHandlers(href: string, navigate: () => void) {
+  return {
+    onClick: (e: ReactMouseEvent) => {
+      // Left-click with a modifier → new tab. Match what an <a href> does.
+      if (e.metaKey || e.ctrlKey || e.shiftKey) {
+        window.open(href, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      navigate();
+    },
+    // Middle button. preventDefault on mousedown stops Chrome's
+    // auto-scroll widget; auxclick fires after and is what we react to.
+    onAuxClick: (e: ReactMouseEvent) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        window.open(href, '_blank', 'noopener,noreferrer');
+      }
+    },
+    onMouseDown: (e: ReactMouseEvent) => {
+      if (e.button === 1) e.preventDefault();
+    },
+  };
 }

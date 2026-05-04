@@ -1463,11 +1463,22 @@ func spaHandler(root fs.FS) http.Handler {
 			return
 		}
 
-		// SPA fallback: anything without a file extension and not under
-		// /api or /v1 (those are matched by mux before reaching here)
-		// gets the root index.html so the client router can take over.
-		// Paths with extensions are real 404s — no point shipping HTML
-		// for a missing /favicon.png or /chunks/missing.js.
+		// SPA fallback: anything without a file extension gets the root
+		// index.html so the client router can take over. Two carve-outs:
+		//
+		//   • Paths with file extensions are real 404s — no point
+		//     shipping HTML for a missing /favicon.png or /chunks/foo.js.
+		//
+		//   • /api/* and /v1/* must NEVER fall back to HTML. Mux only
+		//     reaches this handler for genuinely unmatched API paths
+		//     (typo, removed route); the API contract is "JSON or
+		//     error", and silently returning HTML to a fetch caller
+		//     causes JSON.parse failures and downstream state corruption
+		//     (we hit this — broke the auth-redirect loop on /logs).
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/v1/") {
+			http.NotFound(w, r)
+			return
+		}
 		if path.Ext(p) == "" && fileExists(root, indexHTML) {
 			http.ServeFileFS(w, r, root, indexHTML)
 			return

@@ -6,7 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Combobox } from '@/components/Combobox';
 import { Sparkline } from '@/components/Sparkline';
 import { api } from '@/lib/api';
-import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { fmtNum, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 
@@ -279,7 +279,9 @@ export default function ServicesPage() {
                     const errCls = s.errorRate > 5 ? 'err' : s.errorRate > 0 ? 'warn' : 'ok';
                     const buckets = sparklines[s.name] ?? [];
                     return (
-                      <tr key={s.name} onClick={() => goToService(s.name)}>
+                      <tr key={s.name}
+                          {...rowClickHandlers(`/service?name=${encodeURIComponent(s.name)}`,
+                                               () => goToService(s.name))}>
                         <td>
                           <span style={{ fontWeight: 600 }}>{s.name}</span>
                         </td>

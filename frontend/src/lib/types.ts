@@ -9,6 +9,21 @@ export interface Service {
   apdexThresholdMs: number; // T (default 200)
 }
 
+// One row of the system status grid on /status. Mirrors the
+// componentStatus / systemStatus types in internal/api.
+export type ComponentHealth = 'operational' | 'degraded' | 'outage';
+export interface StatusComponent {
+  name: string;
+  status: ComponentHealth;
+  message?: string;
+  latencyMs?: number;
+}
+export interface SystemStatus {
+  status: ComponentHealth;
+  checkedAt: string;       // RFC 3339
+  components: StatusComponent[];
+}
+
 // One row of the per-operation aggregate on the service detail page.
 // Matches chstore.OperationSummary.
 export interface OperationSummary {

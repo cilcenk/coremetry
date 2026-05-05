@@ -57,6 +57,10 @@ func (r *redisCache) Del(ctx context.Context, key string) error {
 	return r.cli.Del(ctx, key).Err()
 }
 
+func (r *redisCache) Ping(ctx context.Context) error {
+	return r.cli.Ping(ctx).Err()
+}
+
 // ── Lock ────────────────────────────────────────────────────────────────────
 
 // releaseScript ensures we only delete the key if the value still matches

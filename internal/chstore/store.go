@@ -102,6 +102,10 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 func (s *Store) Close() error { return s.conn.Close() }
 func (s *Store) Conn() driver.Conn { return s.conn }
 
+// Ping reports CH liveness. Used by /api/status — wraps the driver's
+// own Ping so we don't expose the driver type to callers.
+func (s *Store) Ping(ctx context.Context) error { return s.conn.Ping(ctx) }
+
 func (s *Store) migrate(ctx context.Context) error {
 	sd, ld, md := s.ret.SpansDays, s.ret.LogsDays, s.ret.MetricsDays
 	if sd == 0 { sd = 30 }

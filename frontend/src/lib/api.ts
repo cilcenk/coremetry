@@ -7,6 +7,7 @@ import type {
   SMTPSettings, NotificationChannel,
   ExceptionGroup, ExceptionGroupState, ExceptionSample,
   SparklineBucket, OperationSummary,
+  SystemStatus,
 } from './types';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
@@ -65,6 +66,7 @@ export const api = {
   metrics:     (params: MetricsParams) => get<MetricPoint[] | null>(`/api/metrics?${qs(params)}`),
 
   health: ()                         => get<HealthInfo>(`/api/health`),
+  status: ()                         => get<SystemStatus>(`/api/status`),
 
   spanMetric: (params: SpanMetricParams) =>
     get<SpanMetricSeries[] | null>(`/api/spans/metric?${qs(params)}`),

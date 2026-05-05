@@ -17,6 +17,10 @@ func NewCH(store *chstore.Store) *CHStore { return &CHStore{store: store} }
 
 func (s *CHStore) Backend() string { return "clickhouse" }
 
+// Ping delegates to the wrapped chstore — the same CH connection the
+// rest of the app uses, so no separate liveness contract.
+func (s *CHStore) Ping(ctx context.Context) error { return s.store.Ping(ctx) }
+
 func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	rows, total, err := s.store.GetLogs(ctx, chstore.LogFilter{
 		Service:     f.Service,

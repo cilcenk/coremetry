@@ -61,4 +61,9 @@ type Store interface {
 	// Backend returns a short identifier shown in /api/health so an operator
 	// can tell at a glance which log source is wired in.
 	Backend() string
+
+	// Ping reports liveness of the underlying backend. Used by /api/status
+	// to surface "logs backend is down" before the user runs into an
+	// empty-result query.
+	Ping(ctx context.Context) error
 }

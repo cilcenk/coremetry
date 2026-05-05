@@ -22,6 +22,10 @@ type Cache interface {
 	Get(ctx context.Context, key string) ([]byte, bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Del(ctx context.Context, key string) error
+	// Ping reports liveness of the underlying cache. Noop returns nil
+	// (treats cache-disabled mode as healthy — there's no remote to be
+	// down). Used by the status page.
+	Ping(ctx context.Context) error
 }
 
 // Lock is a best-effort distributed lock. TryAcquire returns ok=false
@@ -45,6 +49,7 @@ func NewNoop() (Cache, Lock) { return noopCache{}, noopLock{} }
 func (noopCache) Get(context.Context, string) ([]byte, bool, error)   { return nil, false, nil }
 func (noopCache) Set(context.Context, string, []byte, time.Duration) error { return nil }
 func (noopCache) Del(context.Context, string) error                   { return nil }
+func (noopCache) Ping(context.Context) error                          { return nil }
 
 // Noop lock = always-leader. Correct for single-instance deployments
 // because there's no one to contend with.

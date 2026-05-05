@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -100,6 +101,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /api/alert-rules/{id}",          auth.RequireRole(auth.RoleAdmin, s.deleteAlertRule))
 	mux.HandleFunc("POST   /api/alert-rules/{id}/enable",   auth.RequireRole(auth.RoleAdmin, s.enableAlertRule))
 	mux.HandleFunc("GET /api/health", s.getHealth)
+	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// Auth
 	mux.HandleFunc("GET  /api/auth/config",   s.authConfig)
@@ -1410,6 +1412,138 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"metrics_queued": s.ing.Metrics.QueueLen(),
 		"spans_dropped": s.ing.Spans.Dropped(),
 	})
+}
+
+// getStatus drives the public-style status page: probes every dependency
+// in parallel with a 2s per-component timeout, returns a structured
+// list of components with operational | degraded | outage. Overall
+// status is the worst component status, the same way statuspage.io and
+// other industry-standard pages compute it.
+//
+// Cached for 5s — the /status page polls every 30s but a refresh-spammy
+// user shouldn't be able to hammer the underlying systems with probes.
+func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "system-status", 5*time.Second, func() (any, error) {
+		return s.collectStatus(r.Context()), nil
+	})
+}
+
+type componentStatus struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"` // operational | degraded | outage
+	Message   string `json:"message,omitempty"`
+	LatencyMs int64  `json:"latencyMs,omitempty"`
+}
+
+type systemStatus struct {
+	Status      string             `json:"status"` // worst of the components
+	CheckedAt   string             `json:"checkedAt"`
+	Components  []componentStatus  `json:"components"`
+}
+
+func (s *Server) collectStatus(ctx context.Context) systemStatus {
+	probe := func(name string, fn func(context.Context) error) componentStatus {
+		// 2s budget per component — enough for a remote ping over a
+		// laggy network, short enough that a single dead dependency
+		// can't make the whole page hang.
+		pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		start := time.Now()
+		err := fn(pctx)
+		ms := time.Since(start).Milliseconds()
+		c := componentStatus{Name: name, LatencyMs: ms}
+		if err == nil {
+			c.Status = "operational"
+			return c
+		}
+		// Timeout vs hard failure → outage either way for now;
+		// "degraded" is reserved for capacity warnings (queue depth).
+		c.Status = "outage"
+		c.Message = err.Error()
+		return c
+	}
+
+	// Run probes concurrently — sequential serialisation would make a
+	// page load >2s if any single component is slow.
+	type result struct {
+		idx int
+		c   componentStatus
+	}
+	probes := []struct {
+		name string
+		fn   func(context.Context) error
+	}{
+		{"ClickHouse",     s.store.Ping},
+		{"Cache (Redis)",  s.cache.Ping},
+		{"Logs backend",   s.logs.Ping},
+	}
+	out := make([]componentStatus, len(probes))
+	results := make(chan result, len(probes))
+	for i, p := range probes {
+		i, p := i, p
+		go func() { results <- result{i, probe(p.name, p.fn)} }()
+	}
+	for range probes {
+		r := <-results
+		out[r.idx] = r.c
+	}
+
+	// API + Ingest queues — synchronous, in-process, no timeout needed.
+	out = append(out,
+		componentStatus{Name: "HTTP API", Status: "operational"},
+		queueStatus("Spans ingest",   s.ing.Spans),
+		queueStatus("Logs ingest",    s.ing.Logs),
+		queueStatus("Metrics ingest", s.ing.Metrics),
+	)
+	// Annotate the logs-backend row with which backend is wired so a
+	// glance at the page tells the operator the configured topology.
+	for i := range out {
+		if out[i].Name == "Logs backend" {
+			if out[i].Message == "" {
+				out[i].Message = "backend: " + s.logs.Backend()
+			}
+			break
+		}
+	}
+
+	// Worst-of aggregation. Operational < Degraded < Outage.
+	rank := map[string]int{"operational": 0, "degraded": 1, "outage": 2}
+	worst := "operational"
+	for _, c := range out {
+		if rank[c.Status] > rank[worst] {
+			worst = c.Status
+		}
+	}
+	return systemStatus{
+		Status:     worst,
+		CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+		Components: out,
+	}
+}
+
+// queueStatus inspects an ingest queue and reports degraded once it's
+// past 80% full, outage once it's past 95% (where back-pressure starts
+// dropping records).
+func queueStatus(name string, q interface{ QueueLen() int; Dropped() int64 }) componentStatus {
+	const cap = 100_000 // matches Ingestion.BufferSize default in config
+	depth := q.QueueLen()
+	dropped := q.Dropped()
+	c := componentStatus{Name: name, Status: "operational"}
+	if dropped > 0 {
+		c.Status = "outage"
+		c.Message = fmt.Sprintf("dropped %d records — queue full", dropped)
+		return c
+	}
+	if depth > cap*95/100 {
+		c.Status = "outage"
+		c.Message = fmt.Sprintf("queue %d / %d (>95%%)", depth, cap)
+	} else if depth > cap*80/100 {
+		c.Status = "degraded"
+		c.Message = fmt.Sprintf("queue %d / %d (>80%%)", depth, cap)
+	} else if depth > 0 {
+		c.Message = fmt.Sprintf("queue %d / %d", depth, cap)
+	}
+	return c
 }
 
 // ── Middleware & helpers ───────────────────────────────────────────────────────

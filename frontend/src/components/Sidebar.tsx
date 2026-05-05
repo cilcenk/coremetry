@@ -21,6 +21,7 @@ const NAV = [
   { href: '/profiling',  label: 'Profiling',    icon: '🔥' },
   { href: '/alerts',     label: 'Alerts',       icon: '🔔' },
   { href: '/slos',       label: 'SLOs',         icon: '◉' },
+  { href: '/status',     label: 'Status',       icon: '◐' },
 ];
 
 const SIDEBAR_WIDTH_KEY     = 'coremetry-sidebar-w';

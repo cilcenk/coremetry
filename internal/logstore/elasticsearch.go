@@ -109,6 +109,21 @@ func NewES(cfg ESConfig) (*ESStore, error) {
 
 func (s *ESStore) Backend() string { return "elasticsearch" }
 
+// Ping checks ES cluster availability via the lightweight Info API
+// (same endpoint NewES uses at startup). 2-second timeout enforced by
+// the caller's context.
+func (s *ESStore) Ping(ctx context.Context) error {
+	res, err := s.cli.Info(s.cli.Info.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return fmt.Errorf("ES info: %s", res.Status())
+	}
+	return nil
+}
+
 func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	limit := f.Limit
 	if limit <= 0 || limit > 1000 {

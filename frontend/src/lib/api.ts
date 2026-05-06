@@ -11,6 +11,7 @@ import type {
   Monitor, MonitorResult, MonitorRow,
   Incident, IncidentEvent,
   StatusPageConfig, StatusComponent, StatusSubscriber,
+  RetentionSpec,
 } from './types';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
@@ -58,6 +59,12 @@ export const api = {
   serviceNames: (q?: string, limit = 200, offset = 0) =>
     get<{ names: string[]; total: number; hasMore: boolean }>(
       `/api/service-names?${qs({ q, limit, offset })}`),
+  // Distinct attribute keys observed on recent spans — drives the
+  // FilterBuilder autocomplete so custom attrs (function_code etc.)
+  // surface as suggestions in addition to the hardcoded list.
+  attributeKeys: (since = '1h', limit = 500) =>
+    get<{ scope: 'span' | 'resource'; key: string; count: number }[] | null>(
+      `/api/attribute-keys?since=${since}&limit=${limit}`),
   operations: (service: string, r: RangeParams) =>
     get<string[] | null>(`/api/operations?${qs({ ...r, service })}`),
 
@@ -73,6 +80,14 @@ export const api = {
 
   health: ()                         => get<HealthInfo>(`/api/health`),
   status: ()                         => get<SystemStatus>(`/api/status`),
+
+  // Runtime settings: data retention
+  getRetention: () => get<RetentionSpec>(`/api/settings/retention`),
+  putRetention: (sp: RetentionSpec) =>
+    request<RetentionSpec>(`/api/settings/retention`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sp),
+    }),
 
   // AI Copilot
   copilotConfig:         () => get<{ enabled: boolean }>(`/api/copilot/config`),

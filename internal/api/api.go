@@ -93,6 +93,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/graph", s.getServiceGraph)
 	mux.HandleFunc("GET /api/services/sparklines", s.getServiceSparklines)
 	mux.HandleFunc("GET /api/service-names",       s.getServiceNames)
+	mux.HandleFunc("GET /api/attribute-keys",      s.getAttributeKeys)
 	mux.HandleFunc("GET /api/operations", s.getOperations)
 	mux.HandleFunc("GET /api/traces", s.getTraces)
 	mux.HandleFunc("GET /api/traces/aggregate", s.getTraceAggregate)
@@ -137,6 +138,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/status-page/subscribers",  auth.RequireRole(auth.RoleAdmin, s.statusPageListSubscribers))
 	mux.HandleFunc("DELETE /api/status-page/subscribers",  auth.RequireRole(auth.RoleAdmin, s.statusPageDeleteSubscriber))
 	mux.HandleFunc("PUT    /api/status-page/incidents/{id}/publish", auth.RequireRole(auth.RoleAdmin, s.statusPagePublishIncident))
+
+	// ── Runtime settings (admin) ───────────────────────────────────
+	mux.HandleFunc("GET /api/settings/retention", auth.RequireRole(auth.RoleAdmin, s.getRetention))
+	mux.HandleFunc("PUT /api/settings/retention", auth.RequireRole(auth.RoleAdmin, s.putRetention))
 
 	// ── AI Copilot ─────────────────────────────────────────────────
 	mux.HandleFunc("GET    /api/copilot/config",            s.copilotConfig)
@@ -352,6 +357,61 @@ func (s *Server) getServiceNames(w http.ResponseWriter, r *http.Request) {
 			"total":   total,
 			"hasMore": offset+len(names) < total,
 		}, nil
+	})
+}
+
+// getAttributeKeys returns the distinct attribute keys observed on
+// recent spans, both span- and resource-scoped, with usage counts.
+// Drives the FilterBuilder autocomplete so the operator's custom
+// attributes (function_code, channel_code, ...) surface as picker
+// suggestions instead of relying on the hardcoded list.
+//
+// Query window defaults to the last 1h (cheap on the indexed time
+// column) and the result is capped server-side at 500 keys total.
+// Cached 60s — distinct-keys tend not to change minute-to-minute.
+func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	since := parseDuration(q.Get("since"), time.Hour)
+	limit := parseInt(q.Get("limit"), 500)
+	if limit > 1000 {
+		limit = 1000
+	}
+	key := fmt.Sprintf("attr-keys:since=%s:limit=%d", q.Get("since"), limit)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		// One query unions span + resource keys; the scope tag tells
+		// the UI which prefix (span. / resource.) to apply when
+		// inserting the chosen key into a filter expression.
+		rows, err := s.store.Conn().Query(r.Context(), `
+			SELECT scope, k, count() AS c FROM (
+				SELECT 'span'     AS scope, arrayJoin(attr_keys) AS k FROM coremetry.spans
+				WHERE time >= now() - toIntervalSecond(?)
+				UNION ALL
+				SELECT 'resource' AS scope, arrayJoin(res_keys)  AS k FROM coremetry.spans
+				WHERE time >= now() - toIntervalSecond(?)
+			)
+			GROUP BY scope, k
+			ORDER BY c DESC
+			LIMIT ?
+			SETTINGS max_execution_time = 10`,
+			int64(since.Seconds()), int64(since.Seconds()), limit)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		type keyRow struct {
+			Scope string `json:"scope"` // span | resource
+			Key   string `json:"key"`
+			Count uint64 `json:"count"`
+		}
+		out := []keyRow{}
+		for rows.Next() {
+			var r keyRow
+			if err := rows.Scan(&r.Scope, &r.Key, &r.Count); err != nil {
+				return nil, err
+			}
+			out = append(out, r)
+		}
+		return out, rows.Err()
 	})
 }
 
@@ -1553,6 +1613,31 @@ func (s *Server) statusPagePublishIncident(w http.ResponseWriter, r *http.Reques
 	p.IncidentID = id
 	if err := s.store.SetIncidentPublished(r.Context(), p); err != nil { writeErr(w, err); return }
 	writeJSON(w, p)
+}
+
+// ── Runtime settings: data retention ────────────────────────────────────────
+
+// getRetention returns the live override values (or empty fields when
+// no override is set, in which case the table is on whatever TTL the
+// config-file default seeded). The UI renders empty fields as
+// placeholders showing the config defaults.
+func (s *Server) getRetention(w http.ResponseWriter, r *http.Request) {
+	sp, err := s.store.GetRetention(r.Context())
+	if err != nil { writeErr(w, err); return }
+	writeJSON(w, sp)
+}
+
+// putRetention applies new TTLs via ALTER TABLE and persists the new
+// values to system_settings so a restart picks them up.
+func (s *Server) putRetention(w http.ResponseWriter, r *http.Request) {
+	var sp chstore.RetentionSpec
+	if err := json.NewDecoder(r.Body).Decode(&sp); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest); return
+	}
+	if err := s.store.SetRetention(r.Context(), sp, actorOf(r)); err != nil {
+		writeErr(w, err); return
+	}
+	writeJSON(w, sp)
 }
 
 // ── AI Copilot ──────────────────────────────────────────────────────────────

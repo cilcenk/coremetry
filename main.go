@@ -125,6 +125,15 @@ func main() {
 		log.Printf("[chstore] seed preset dashboards: %v", err)
 	}
 
+	// ── Re-apply admin-set retention overrides ──────────────────────────────
+	// The retention TTLs were set at table-create time from config.yaml,
+	// but operators can override them live via the UI. Re-running ALTER
+	// MODIFY TTL on boot ensures a restart doesn't silently fall back
+	// to the config defaults.
+	if err := store.ApplyPersistedRetention(ctx); err != nil {
+		log.Printf("[chstore] apply persisted retention: %v", err)
+	}
+
 	// ── Optional OIDC ─────────────────────────────────────────────────────────
 	// Discovery failure is non-fatal: we keep local auth working and surface
 	// the issue in the log. Operators can fix config and restart.

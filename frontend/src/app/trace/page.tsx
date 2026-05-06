@@ -43,24 +43,6 @@ function TraceDetailInner() {
   const totalNs = maxT - minT;
   const hasErr = spans?.some(s => s.statusCode === 'error') ?? false;
 
-  // W3C Trace Context propagation health check: any span whose parent_id
-  // is set but doesn't resolve to a span in this trace is an "orphan" —
-  // it means the propagation chain broke (likely the calling service
-  // sent a different traceparent header, or a non-OTel-instrumented
-  // hop in between dropped it). Surfacing this loudly because silent
-  // disconnected traces are the single biggest debugging time-sink.
-  const orphans: SpanRow[] = [];
-  if (spans && spans.length > 0) {
-    const seen = new Set(spans.map(s => s.spanId));
-    for (const s of spans) {
-      if (s.parentSpanId && !seen.has(s.parentSpanId)) orphans.push(s);
-    }
-    // The trace's true root is the only legitimate "no parent" span;
-    // remove it from orphans so we don't false-positive on the entry point.
-    // (Roots have parentSpanId === '' which already skips them above.)
-  }
-  // Deduplicate orphan source services so the warning is short.
-  const orphanServices = Array.from(new Set(orphans.map(o => o.serviceName))).sort();
 
   return (
     <>
@@ -98,25 +80,6 @@ function TraceDetailInner() {
         {spans && spans.length === 0 && <Empty icon="⋮" title="Trace not found" />}
         {spans && spans.length > 0 && (
           <>
-            {orphans.length > 0 && (
-              <div style={{
-                marginBottom: 10, padding: '10px 14px', borderRadius: 6,
-                background: 'rgba(245,159,0,.10)',
-                border: '1px solid rgba(245,159,0,.35)',
-                color: 'var(--text)', fontSize: 12, lineHeight: 1.5,
-              }}>
-                <b style={{ color: 'var(--warn)' }}>⚠ {orphans.length} orphan span{orphans.length === 1 ? '' : 's'}</b>
-                {' '} — parent_id refers to a span not in this trace, meaning W3C
-                trace context propagation broke before it reached
-                {orphanServices.length === 1
-                  ? <> <code>{orphanServices[0]}</code>.</>
-                  : <> these services: {orphanServices.map(s => <code key={s} style={{ marginRight: 6 }}>{s}</code>)}.</>
-                }
-                {' '}Check that every service in the chain sets{' '}
-                <code>OTEL_PROPAGATORS=tracecontext,baggage</code>
-                {' '}and forwards the <code>traceparent</code> header.
-              </div>
-            )}
             <div style={{ marginBottom: 10 }}>
               <CopilotExplain kind="trace" id={id} label="🤖 Explain this trace" />
             </div>

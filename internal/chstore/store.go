@@ -369,6 +369,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY problem_id`,
 
+		// ── Runtime settings (key/value, admin-set overrides) ───────
+		// Holds anything the operator can change live without a config
+		// reload — currently retention TTLs per signal table. Schema
+		// is intentionally generic so adding new keys later doesn't
+		// need a migration.
+		`CREATE TABLE IF NOT EXISTS system_settings (
+			key        String,
+			value      String,
+			updated_at DateTime64(9) DEFAULT now64(9),
+			updated_by String        DEFAULT '',
+			version    UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY key`,
+		// Forward-compat: add updated_by to installs that pre-date it.
+		// Idempotent — IF NOT EXISTS makes re-running a no-op.
+		`ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS updated_by String DEFAULT ''`,
+
 		// ── Public status page ──────────────────────────────────────
 		// Single-row config table — operator-customizable header for
 		// the public /public-status page. ID always 'default'.

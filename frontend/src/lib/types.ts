@@ -39,6 +39,18 @@ export interface IncidentEvent {
   refId?: string;
 }
 
+// ── Runtime settings ─────────────────────────────────────────────────────────
+
+// Data-retention override per signal, expressed as "<n>h" or "<n>d".
+// Empty / unset field = preserve the existing value (config default
+// or prior override). Server validates the format on PUT.
+export interface RetentionSpec {
+  spans?: string;
+  logs?: string;
+  metrics?: string;
+  profiles?: string;
+}
+
 // ── Public status page (admin types) ─────────────────────────────────────────
 
 export interface StatusPageConfig {

@@ -1,6 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Combobox } from './Combobox';
+import { api } from '@/lib/api';
 import type { FilterExpr, FilterOp } from '@/lib/types';
 
 // Suggested attribute keys for the autocomplete. Users can type anything else
@@ -47,6 +48,34 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
 }) {
   const [draft, setDraft] = useState<FilterExpr | null>(null);
 
+  // Live-load attribute keys actually observed in the last hour and
+  // merge with the static suggestion list. Custom attrs (function_code,
+  // channel_code, etc.) emitted by the operator's collector now surface
+  // as picker suggestions instead of relying on the operator typing the
+  // exact key from memory. Resource-scoped keys are prefixed with
+  // "resource." so they slot into the right backend lookup.
+  const [observedKeys, setObservedKeys] = useState<string[]>([]);
+  useEffect(() => {
+    api.attributeKeys('1h', 500)
+      .then(rows => setObservedKeys(
+        (rows ?? []).map(r => r.scope === 'resource' ? `resource.${r.key}` : r.key)
+      ))
+      .catch(() => setObservedKeys([]));
+  }, []);
+  const allKeys = useMemo(() => {
+    // Union + dedupe; preserve static keys first so the most-common
+    // OTel semconv ones lead the dropdown, then live keys (which the
+    // browser's substring filter narrows down as the operator types).
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const k of [...SUGGESTED_KEYS, ...observedKeys]) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(k);
+    }
+    return out;
+  }, [observedKeys]);
+
   const addOrUpdate = (next: FilterExpr) => {
     if (!next.k.trim()) return;
     const out = [...value];
@@ -89,17 +118,19 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
           onSave={addOrUpdate}
           onCancel={() => setDraft(null)}
           suggestedValues={suggestedValues}
+          keyOptions={allKeys}
         />
       )}
     </div>
   );
 }
 
-function DraftEditor({ draft, onSave, onCancel, suggestedValues }: {
+function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions }: {
   draft: FilterExpr;
   onSave: (f: FilterExpr) => void;
   onCancel: () => void;
   suggestedValues?: Record<string, string[]>;
+  keyOptions: string[];
 }) {
   const [local, setLocal] = useState<FilterExpr>(draft);
   const valueOptions = suggestedValues?.[local.k] ?? [];
@@ -122,7 +153,7 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues }: {
         <label>
           <span>Attribute</span>
           <Combobox value={local.k} onChange={k => setLocal({ ...local, k })}
-            options={SUGGESTED_KEYS} placeholder="e.g. http.status_code" width={220}
+            options={keyOptions} placeholder="e.g. http.status_code or function_code" width={260}
             onEnter={submit} />
         </label>
         <label>

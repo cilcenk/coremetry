@@ -456,6 +456,21 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY email`,
 
+		// Trace snapshots — Grafana-style "share publicly" links for
+		// the trace detail page. Each row mints a URL-safe token that
+		// resolves to a trace_id, gated by `expires_at`. Public route
+		// (no auth) reads by token. Token is the primary key so we can
+		// revoke or list per-trace cheaply.
+		`CREATE TABLE IF NOT EXISTS trace_snapshots (
+			token        String,
+			trace_id     String,
+			created_by   String        DEFAULT '',
+			created_at   DateTime64(9) DEFAULT now64(9),
+			expires_at   DateTime64(9),
+			version      UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY token`,
+
 		// Marks an existing incident as visible on the public status
 		// page. Operator toggles via the admin UI. Kept as a separate
 		// table so the existing incidents row schema stays untouched

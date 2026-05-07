@@ -107,6 +107,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/traces", s.getTraces)
 	mux.HandleFunc("GET /api/traces/aggregate", s.getTraceAggregate)
 	mux.HandleFunc("GET /api/traces/{id}", s.getTrace)
+	// Public-share endpoints — POST mints a token (any signed-in
+	// user); GET resolves it without auth (the auth middleware's
+	// SkipPath allowlist lets it through).
+	mux.HandleFunc("POST /api/traces/{id}/share", s.createTraceSnapshot)
+	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
@@ -556,6 +561,84 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"traceId": id, "spans": spans})
+}
+
+// createTraceSnapshot mints a public-share token for the requested
+// trace. Any authenticated user can mint one; the public viewer
+// endpoint is gated only by token possession + expiry. Default
+// lifetime 24h; client can pass `?ttlHours=N` (capped to 7 days)
+// for longer-lived shares.
+func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "trace id required", http.StatusBadRequest); return
+	}
+	// Validate the trace actually exists before issuing a token —
+	// stops users from minting share links for typos.
+	spans, err := s.store.GetTrace(r.Context(), id)
+	if err != nil { writeErr(w, err); return }
+	if len(spans) == 0 {
+		http.Error(w, "trace not found", http.StatusNotFound); return
+	}
+	ttlHours := parseInt(r.URL.Query().Get("ttlHours"), 24)
+	if ttlHours <= 0   { ttlHours = 24 }
+	if ttlHours > 24*7 { ttlHours = 24 * 7 }
+
+	c := auth.FromContext(r.Context())
+	creator := ""
+	if c != nil {
+		creator = c.Email
+	}
+	snap := chstore.TraceSnapshot{
+		TraceID:   id,
+		CreatedBy: creator,
+		ExpiresAt: time.Now().Add(time.Duration(ttlHours) * time.Hour).UnixNano(),
+	}
+	snap.Token = chstore.NewSnapshotToken()
+	if err := s.store.CreateTraceSnapshot(r.Context(), snap); err != nil {
+		writeErr(w, err); return
+	}
+	// Build the absolute URL the client should hand out. Honour the
+	// X-Forwarded-Proto / X-Forwarded-Host headers so proxy / Route
+	// /Ingress setups produce the public-facing host, not the
+	// in-cluster one.
+	scheme := "http"
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		scheme = v
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		host = v
+	}
+	publicURL := fmt.Sprintf("%s://%s/public/trace?token=%s", scheme, host, snap.Token)
+	writeJSON(w, map[string]any{
+		"token":     snap.Token,
+		"url":       publicURL,
+		"expiresAt": snap.ExpiresAt,
+	})
+}
+
+// getPublicTrace resolves a public-share token and returns the
+// associated trace's span list. No auth — token possession + non-
+// expiry is the boundary. 404 covers both "no such token" and
+// "expired" so we don't help an attacker enumerate.
+func (s *Server) getPublicTrace(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	snap, err := s.store.GetTraceSnapshot(r.Context(), token)
+	if err != nil { writeErr(w, err); return }
+	if snap == nil {
+		http.Error(w, "snapshot not found or expired", http.StatusNotFound); return
+	}
+	spans, err := s.store.GetTrace(r.Context(), snap.TraceID)
+	if err != nil { writeErr(w, err); return }
+	writeJSON(w, map[string]any{
+		"traceId":   snap.TraceID,
+		"spans":     spans,
+		"expiresAt": snap.ExpiresAt,
+		"createdBy": snap.CreatedBy,
+	})
 }
 
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {

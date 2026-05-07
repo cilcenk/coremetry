@@ -120,6 +120,14 @@ export const api = {
       body: JSON.stringify({ email, role }),
     }),
 
+  // Public trace snapshot — Grafana-style "share publicly" link.
+  // POST mints a token; the GET form is on the public page (no
+  // auth) so we don't need a client method for the read side.
+  shareTrace: (id: string, ttlHours = 24) =>
+    request<{ token: string; url: string; expiresAt: number }>(
+      `/api/traces/${id}/share?ttlHours=${ttlHours}`,
+      { method: 'POST' }),
+
   // AI Copilot
   copilotConfig:         () => get<{ enabled: boolean }>(`/api/copilot/config`),
   copilotExplainTrace:   (id: string) =>

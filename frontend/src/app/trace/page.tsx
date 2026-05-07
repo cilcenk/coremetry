@@ -1,5 +1,5 @@
 'use client';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -31,10 +31,6 @@ function TraceDetailInner() {
   const [tab, setTab] = useState<'trace' | 'logs'>(
     () => (searchParams.get('tab') === 'logs' ? 'logs' : 'trace'));
   const [logs, setLogs] = useState<LogRow[] | null | undefined>(undefined);
-  // Share-button feedback. Flips to 'copied' for 2s after a click,
-  // then resets — gives the user visible confirmation without
-  // pulling in a toast library.
-  const [shared, setShared] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -94,14 +90,7 @@ function TraceDetailInner() {
               <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {fmtNs(totalNs)}</span>
               {root && <span style={{ color: 'var(--text3)', fontSize: 12 }}>{tsLong(root.startTime)}</span>}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                <button className="sec"
-                  onClick={() => shareTrace(setShared)}
-                  title="Copy a shareable link to this trace (current selected span + tab + time range preserved)"
-                  style={{ fontSize: 12, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: 6,
-                           color: shared ? 'var(--ok)' : undefined }}>
-                  {shared ? <IconCheck /> : <IconLink />}
-                  <span>{shared ? 'Link copied' : 'Share'}</span>
-                </button>
+                <SharePopover traceId={id} />
                 <button className="sec"
                   onClick={() => exportTraceJSON(id, spans)}
                   title="Download this trace as JSON (full span list with attributes + events)"
@@ -233,25 +222,155 @@ export default function TraceDetailPage() {
   );
 }
 
-// shareTrace copies the current full URL (including span/tab/range
-// query params, which the page already mirrors via replaceState) to
-// the clipboard, then pings the caller's setShared(true) for a 2s
-// "✓ Link copied" affordance on the button. No backend round-trip —
-// the URL is the share artifact.
-function shareTrace(setShared: (v: boolean) => void) {
-  const url = typeof window !== 'undefined' ? window.location.href : '';
-  if (!url) return;
-  const reset = () => setTimeout(() => setShared(false), 2000);
-  // Modern path — Clipboard API requires a secure context (HTTPS or
-  // localhost). Falls back to a hidden textarea + execCommand for
-  // older browsers / non-secure dev hosts.
+// copyToClipboard handles the async Clipboard API + a hidden-textarea
+// fallback for non-secure dev hosts (Clipboard API requires HTTPS or
+// localhost). Returns a Promise so the caller can flip a UI state on
+// completion.
+async function copyToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(url).then(() => { setShared(true); reset(); })
-      .catch(() => { fallbackCopy(url); setShared(true); reset(); });
-    return;
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch { /* fall through to legacy */ }
   }
-  fallbackCopy(url);
-  setShared(true); reset();
+  fallbackCopy(text);
+}
+
+// SharePopover — Grafana-style two-tab share popover. Internal link
+// is the current URL (preserves span/tab/range from the page state
+// mirror). Public link mints a 24h time-boxed token via
+// /api/traces/{id}/share that resolves to a no-auth /public/trace
+// page; useful for handing a trace to support, customers, or anyone
+// outside Coremetry without giving them an account.
+function SharePopover({ traceId }: { traceId: string }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [internalCopied, setInternalCopied] = useState(false);
+  const [publicURL, setPublicURL] = useState<string | null>(null);
+  const [publicCopied, setPublicCopied] = useState(false);
+  const [publicExpiresAt, setPublicExpiresAt] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Click-outside to close.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const copyInternal = async () => {
+    if (typeof window === 'undefined') return;
+    await copyToClipboard(window.location.href);
+    setInternalCopied(true);
+    setTimeout(() => setInternalCopied(false), 2000);
+  };
+
+  const generatePublic = async () => {
+    setBusy(true); setError(null);
+    try {
+      const res = await api.shareTrace(traceId, 24);
+      setPublicURL(res.url);
+      setPublicExpiresAt(res.expiresAt);
+      // Auto-copy on generate so the common case is one-click.
+      await copyToClipboard(res.url);
+      setPublicCopied(true);
+      setTimeout(() => setPublicCopied(false), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to mint share link');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyPublic = async () => {
+    if (!publicURL) return;
+    await copyToClipboard(publicURL);
+    setPublicCopied(true);
+    setTimeout(() => setPublicCopied(false), 2000);
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <button className="sec"
+        onClick={() => setOpen(o => !o)}
+        title="Share this trace"
+        style={{ fontSize: 12, padding: '3px 10px',
+                 display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <IconLink /> <span>Share</span>
+      </button>
+      {open && (
+        <div role="dialog" style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60,
+          width: 380, padding: 12,
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.30)',
+        }}>
+          {/* Internal link section */}
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)',
+                        textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 6 }}>
+            Internal link
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.5 }}>
+            For Coremetry users — preserves your selected span, tab, and time range.
+          </div>
+          <button onClick={copyInternal} className="sec"
+            style={{ width: '100%', fontSize: 12, padding: '6px 10px',
+                     display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+                     color: internalCopied ? 'var(--ok)' : undefined }}>
+            {internalCopied ? <IconCheck /> : <IconLink />}
+            <span>{internalCopied ? 'Copied' : 'Copy current URL'}</span>
+          </button>
+
+          {/* Divider */}
+          <div style={{ borderTop: '1px solid var(--border)', margin: '14px -12px' }} />
+
+          {/* Public link section */}
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)',
+                        textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 6 }}>
+            Public link
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.5 }}>
+            Anyone with this URL can view a read-only snapshot — no Coremetry account needed.
+            Expires in 24 hours.
+          </div>
+          {!publicURL ? (
+            <button onClick={generatePublic} disabled={busy}
+              style={{ width: '100%', fontSize: 12, padding: '6px 10px',
+                       display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
+              <IconLink /> <span>{busy ? 'Generating…' : 'Generate public link'}</span>
+            </button>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input value={publicURL} readOnly
+                  onClick={e => (e.target as HTMLInputElement).select()}
+                  style={{ flex: 1, fontSize: 11, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }} />
+                <button onClick={copyPublic} className="sec"
+                  style={{ fontSize: 11, padding: '4px 10px',
+                           display: 'inline-flex', alignItems: 'center', gap: 4,
+                           color: publicCopied ? 'var(--ok)' : undefined }}>
+                  {publicCopied ? <IconCheck /> : <IconLink />}
+                  <span>{publicCopied ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+              {publicExpiresAt && (
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                  Expires {tsLong(publicExpiresAt)}
+                </div>
+              )}
+            </>
+          )}
+          {error && (
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--err)' }}>{error}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function fallbackCopy(text: string) {

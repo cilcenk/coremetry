@@ -153,6 +153,12 @@ func SkipPath(method, path string) bool {
 		strings.HasPrefix(path, "/v1/profiles") {
 		return true
 	}
+	// Trace snapshots — Grafana-style "share publicly" links. The
+	// random token in the path is the security boundary; same
+	// threat model as the heartbeat ingest below.
+	if strings.HasPrefix(path, "/api/public/trace/") {
+		return true
+	}
 	// Heartbeat ingest is unauth'd by design — cron jobs / batch
 	// scripts hit this with `curl ${URL}` and the random token in
 	// the path is the security boundary. Same threat model as a

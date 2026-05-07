@@ -6,8 +6,9 @@
 
 // Routes that render WITHOUT the operator sidebar/topbar AND don't
 // require auth. /public-status is the customer-facing status page;
-// /login is the gatekeeper for everything else.
-const PUBLIC_PATHS = new Set<string>(['/login', '/public-status']);
+// /login is the gatekeeper for everything else; /public/trace is the
+// share-link viewer (token in the URL is the security boundary).
+const PUBLIC_PATHS = new Set<string>(['/login', '/public-status', '/public/trace']);
 
 export function normalizePath(p: string): string {
   if (!p) return '/';

@@ -202,6 +202,68 @@ func (s *Store) LastMonitorStatus(ctx context.Context) (map[string]MonitorResult
 	return out, rows.Err()
 }
 
+// MonitorStats is the rollup the /monitors page renders next to each
+// card — uptime percentage over the last 1h and 24h, plus average
+// latency over the same windows. Computed in a single CH query so a
+// big fleet of monitors doesn't fan out into N round-trips.
+type MonitorStats struct {
+	Uptime1h        float64 `json:"uptime1h"`        // 0..100
+	Uptime24h       float64 `json:"uptime24h"`       // 0..100
+	AvgLatencyMs1h  int64   `json:"avgLatencyMs1h"`
+	AvgLatencyMs24h int64   `json:"avgLatencyMs24h"`
+	Probes24h       int64   `json:"probes24h"`       // sample size for 24h numbers
+}
+
+// MonitorStatsAll returns the rollup for every monitor that has at
+// least one probe result in the last 24h, keyed by monitor ID. Map
+// is keyed sparsely — monitors with no recent results don't appear,
+// so callers should treat a missing key as "no data yet" rather than
+// "down".
+func (s *Store) MonitorStatsAll(ctx context.Context) (map[string]MonitorStats, error) {
+	// `degraded` counts as "up" for the uptime percentage — it's a
+	// soft signal (slow but reachable), not a real outage. Consumers
+	// who want to be strict can read raw timeline rows and recompute.
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+			monitor_id,
+			countIf(time >= now() - INTERVAL 1 HOUR)                                                AS p1,
+			countIf(time >= now() - INTERVAL 1 HOUR AND status IN ('up','degraded'))                AS u1,
+			countIf(time >= now() - INTERVAL 24 HOUR)                                               AS p24,
+			countIf(time >= now() - INTERVAL 24 HOUR AND status IN ('up','degraded'))               AS u24,
+			toInt64(round(avgIf(latency_ms, time >= now() - INTERVAL 1 HOUR  AND latency_ms > 0)))  AS lat1,
+			toInt64(round(avgIf(latency_ms, time >= now() - INTERVAL 24 HOUR AND latency_ms > 0)))  AS lat24
+		FROM monitor_results
+		WHERE time >= now() - INTERVAL 24 HOUR
+		GROUP BY monitor_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]MonitorStats{}
+	for rows.Next() {
+		var (
+			id                              string
+			p1, u1, p24, u24, lat1, lat24   int64
+		)
+		if err := rows.Scan(&id, &p1, &u1, &p24, &u24, &lat1, &lat24); err != nil {
+			return nil, err
+		}
+		st := MonitorStats{
+			AvgLatencyMs1h:  lat1,
+			AvgLatencyMs24h: lat24,
+			Probes24h:       p24,
+		}
+		if p1 > 0 {
+			st.Uptime1h = float64(u1) / float64(p1) * 100
+		}
+		if p24 > 0 {
+			st.Uptime24h = float64(u24) / float64(p24) * 100
+		}
+		out[id] = st
+	}
+	return out, rows.Err()
+}
+
 // MonitorTimeline returns the result history for one monitor (newest
 // first), capped at `limit` rows. Drives the per-monitor status timeline.
 func (s *Store) MonitorTimeline(ctx context.Context, monitorID string, limit int) ([]MonitorResult, error) {

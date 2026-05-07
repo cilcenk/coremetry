@@ -5,7 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
-import type { Monitor, MonitorRow, MonitorResult } from '@/lib/types';
+import type { Monitor, MonitorRow, MonitorResult, MonitorStats } from '@/lib/types';
 
 // /monitors — synthetic uptime + heartbeat dashboard.
 //
@@ -128,6 +128,13 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
         {showTimeline && <Timeline monitorId={m.id} />}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+        {/* Uptime % rollup — 1h / 24h side-by-side. Coloured by
+            health: ≥99.9% green, ≥99% amber, below = red. Standard
+            SLO three-band visual signal. Hidden when no probe data
+            yet (fresh monitor). */}
+        {m.stats && m.stats.probes24h > 0 && (
+          <UptimeChip stats={m.stats} />
+        )}
         {m.lastResult?.latencyMs !== undefined && m.lastResult.latencyMs > 0 && (
           <span style={{ color: 'var(--text3)', fontSize: 11, fontFamily: 'monospace' }} title="Last probe latency">
             {m.lastResult.latencyMs}ms
@@ -148,6 +155,41 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
         )}
       </div>
     </div>
+  );
+}
+
+// UptimeChip — 1h / 24h uptime percentages displayed side-by-side
+// next to the status pill. Uses a three-band SLO visual: ≥99.9%
+// green (operational), ≥99% amber (degraded), below = red. The
+// breakpoints match the de-facto industry convention (Pingdom /
+// BetterStack / UptimeRobot all use the same 99 / 99.9 split).
+function UptimeChip({ stats }: { stats: MonitorStats }) {
+  const fmt = (v: number) => {
+    if (v >= 99.99) return '100%';
+    if (v >= 99)    return `${v.toFixed(2)}%`;
+    return `${v.toFixed(1)}%`;
+  };
+  const tone = (v: number) =>
+    v >= 99.9 ? 'var(--ok)' :
+    v >= 99   ? 'var(--warn)' :
+                'var(--err)';
+  return (
+    <span title={`Uptime · 1h ${fmt(stats.uptime1h)} · 24h ${fmt(stats.uptime24h)}\n` +
+                 `Avg latency · 1h ${stats.avgLatencyMs1h}ms · 24h ${stats.avgLatencyMs24h}ms\n` +
+                 `Sample (24h): ${stats.probes24h} probes`}
+          style={{
+            display: 'inline-flex', alignItems: 'baseline', gap: 8,
+            padding: '2px 8px', borderRadius: 4,
+            background: 'var(--bg3)', border: '1px solid var(--border)',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontVariantNumeric: 'tabular-nums', fontSize: 11,
+          }}>
+      <span style={{ color: 'var(--text3)', fontSize: 9, fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase' }}>1h</span>
+      <span style={{ color: tone(stats.uptime1h), fontWeight: 600 }}>{fmt(stats.uptime1h)}</span>
+      <span style={{ color: 'var(--border)' }}>·</span>
+      <span style={{ color: 'var(--text3)', fontSize: 9, fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase' }}>24h</span>
+      <span style={{ color: tone(stats.uptime24h), fontWeight: 600 }}>{fmt(stats.uptime24h)}</span>
+    </span>
   );
 }
 
@@ -184,6 +226,15 @@ function MonitorModal({ initial, onClose, onSaved }: {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Advanced section is collapsed by default for new monitors so the
+  // form stays approachable; auto-expand when editing an existing
+  // monitor that has non-default advanced values.
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    if (!initial) return false;
+    return initial.method !== 'GET'
+        || initial.expectedStatus !== 200
+        || initial.timeoutSec !== 5;
+  });
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -238,24 +289,41 @@ function MonitorModal({ initial, onClose, onSaved }: {
                   onChange={e => setM({ ...m, url: e.target.value })}
                   placeholder="https://api.example.com/health" style={{ width: '100%' }} />
               </Field>
-              <Row>
-                <Field label="Method" flex={1}>
-                  <select value={m.method ?? 'GET'}
-                    onChange={e => setM({ ...m, method: e.target.value })}>
-                    {['GET', 'HEAD', 'POST'].map(x => <option key={x} value={x}>{x}</option>)}
-                  </select>
-                </Field>
-                <Field label="Expected status" flex={1}>
-                  <input type="number" min={100} max={599} value={m.expectedStatus ?? 200}
-                    onChange={e => setM({ ...m, expectedStatus: Number(e.target.value) })}
-                    style={{ width: '100%' }} />
-                </Field>
-                <Field label="Timeout (sec)" flex={1}>
-                  <input type="number" min={1} max={60} value={m.timeoutSec ?? 5}
-                    onChange={e => setM({ ...m, timeoutSec: Number(e.target.value) })}
-                    style={{ width: '100%' }} />
-                </Field>
-              </Row>
+
+              {/* Advanced section — Method / Expected status / Timeout
+                  hidden by default to keep the basic form short. The
+                  reveal toggle keeps "the simple case is one URL +
+                  one interval" as the default UX. */}
+              <button type="button" onClick={() => setShowAdvanced(s => !s)}
+                style={{
+                  marginTop: 12, padding: '4px 0', background: 'transparent',
+                  border: 'none', color: 'var(--text2)', fontSize: 12,
+                  fontWeight: 600, letterSpacing: '0.3px', textTransform: 'uppercase',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                <span style={{ fontSize: 9 }}>{showAdvanced ? '▼' : '▶'}</span>
+                Advanced settings
+              </button>
+              {showAdvanced && (
+                <Row>
+                  <Field label="Method" flex={1}>
+                    <select value={m.method ?? 'GET'}
+                      onChange={e => setM({ ...m, method: e.target.value })}>
+                      {['GET', 'HEAD', 'POST'].map(x => <option key={x} value={x}>{x}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Expected status" flex={1}>
+                    <input type="number" min={100} max={599} value={m.expectedStatus ?? 200}
+                      onChange={e => setM({ ...m, expectedStatus: Number(e.target.value) })}
+                      style={{ width: '100%' }} />
+                  </Field>
+                  <Field label="Timeout (sec)" flex={1}>
+                    <input type="number" min={1} max={60} value={m.timeoutSec ?? 5}
+                      onChange={e => setM({ ...m, timeoutSec: Number(e.target.value) })}
+                      style={{ width: '100%' }} />
+                  </Field>
+                </Row>
+              )}
             </>
           )}
           {m.type === 'heartbeat' && (

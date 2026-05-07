@@ -157,10 +157,23 @@ export interface MonitorResult {
   message?: string;
 }
 
-// List API rolls the latest result into the row so the list page renders
-// without an extra round-trip per monitor.
+// Per-monitor rollup over the last 1h / 24h windows. Returned by
+// the list endpoint so the page can render uptime % + avg latency
+// next to each card without a per-row round-trip. Missing on a
+// monitor that hasn't produced a probe in the last 24h.
+export interface MonitorStats {
+  uptime1h: number;        // 0..100
+  uptime24h: number;       // 0..100
+  avgLatencyMs1h: number;
+  avgLatencyMs24h: number;
+  probes24h: number;       // sample size for the 24h numbers
+}
+
+// List API rolls the latest result + stats into the row so the list
+// page renders without an extra round-trip per monitor.
 export interface MonitorRow extends Monitor {
   lastResult?: MonitorResult;
+  stats?: MonitorStats;
 }
 
 export type ComponentHealth = 'operational' | 'degraded' | 'outage';

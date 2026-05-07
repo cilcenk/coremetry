@@ -2168,17 +2168,30 @@ func (s *Server) listMonitors(w http.ResponseWriter, r *http.Request) {
 	if err != nil { writeErr(w, err); return }
 	last, err := s.store.LastMonitorStatus(r.Context())
 	if err != nil { writeErr(w, err); return }
-	// Combine definition + last status in the response so the list
-	// page renders without a per-row roundtrip.
+	// Single rollup query for uptime % + avg latency over 1h/24h —
+	// cheaper than the alternative (browser fetches 500-row
+	// timelines per monitor and computes client-side). Empty map on
+	// error so the list keeps rendering.
+	stats, err := s.store.MonitorStatsAll(r.Context())
+	if err != nil {
+		log.Printf("[api] monitor stats: %v", err)
+		stats = map[string]chstore.MonitorStats{}
+	}
+	// Combine definition + last status + 1h/24h rollups in the
+	// response so the list page renders without a per-row roundtrip.
 	type row struct {
 		chstore.Monitor
 		LastResult *chstore.MonitorResult `json:"lastResult,omitempty"`
+		Stats      *chstore.MonitorStats  `json:"stats,omitempty"`
 	}
 	out := make([]row, 0, len(monitors))
 	for _, m := range monitors {
 		r := row{Monitor: m}
 		if lr, ok := last[m.ID]; ok {
 			r.LastResult = &lr
+		}
+		if st, ok := stats[m.ID]; ok {
+			r.Stats = &st
 		}
 		out = append(out, r)
 	}

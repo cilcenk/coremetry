@@ -73,37 +73,32 @@ export function tsLong(ns: number): string {
 // Order is hue-stepped so consecutive services in a hash collision
 // chain don't end up neighbouring on the colour wheel — you still
 // get visually distinct services even on small traces.
-// Tempo-inspired distribution: a balanced mix across cool / purple /
-// warm / neutral so a multi-service trace doesn't feel
-// monochromatic. No pinks/magentas (user pref), and the blue band is
-// trimmed to three entries — earlier iterations leaned too heavy on
-// blue once cyan was added.
-//
-// Hue distribution: 3 blue/cyan · 3 purple-violet · 4 warm earth ·
-// 4 cool gray. All in the same low-mid saturation band so they read
-// as a curated palette on a dark UI.
+// Hue distribution per user request: turquoise · gray · light
+// purple · orange. Four groups, balanced — no blues (other than the
+// cyan-leaning turquoise band), no pinks/magentas, no greens. Light
+// violet stays clearly purple, not lilac.
 const COLORS = [
-  // Cool blue / cyan
-  '#5b8def',  // sky blue
+  // Turkuaz / cyan
   '#4fb6c5',  // turquoise
   '#5fa39a',  // teal
+  '#6cc4cc',  // light aqua
 
-  // Mor — purple-violet family
-  '#9b87f5',  // soft violet
-  '#7e6bd9',  // indigo violet
-  '#8b6cb1',  // muted purple
+  // Açık mor — light purple/violet
+  '#a48cf2',  // light violet
+  '#b39ff5',  // light lavender
+  '#b78cf0',  // medium violet
+  '#c8b3f0',  // pale violet
 
-  // Warm earth
-  '#c89651',  // amber-tan
-  '#d97c5f',  // terracotta
-  '#b88547',  // burnt sienna
-  '#a39187',  // taupe
+  // Turuncu
+  '#e89456',  // soft orange
+  '#d97c3a',  // burnt orange
+  '#f0a868',  // peach
 
-  // Cool grays
-  '#7e8ea1',  // slate
-  '#8a9aa8',  // cool gray
-  '#5d8484',  // teal-gray
-  '#6b7a8a',  // steel
+  // Gri
+  '#8b95a3',  // slate
+  '#9aa3ad',  // neutral gray
+  '#7d8693',  // darker slate
+  '#aab3bb',  // light gray
 ];
 export function hashColor(s: string): string {
   let h = 5381;

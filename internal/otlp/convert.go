@@ -78,7 +78,7 @@ func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName strin
 	}
 
 	return &chstore.Span{
-		TraceID: hexID(sp.TraceId), SpanID: hexID(sp.SpanId), ParentID: hexID(sp.ParentSpanId),
+		TraceID: hexID(sp.TraceId), SpanID: hexID(sp.SpanId), ParentID: parentID(sp.ParentSpanId),
 		Name: sp.Name, Kind: kind,
 		ServiceName: svcName, HostName: hostName, DeployEnv: deployEnv,
 		StatusCode: statusCode, StatusMsg: statusMsg,
@@ -223,6 +223,28 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 
 func hexID(b []byte) string {
 	if len(b) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+// parentID is hexID specialised for parent_span_id: also treats an
+// all-zero byte slice as empty. OTel SDKs disagree on the wire
+// format for "no parent" — some send nil bytes (length 0), others
+// send 8 zero bytes. Both must round-trip to "" so the downstream
+// 'parent_id = ""' root check works regardless of sender.
+func parentID(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	allZero := true
+	for _, x := range b {
+		if x != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
 		return ""
 	}
 	return hex.EncodeToString(b)

@@ -62,7 +62,7 @@ func (s *Store) ServiceCallers(
 		  FROM spans
 		  WHERE service_name = ?
 		    AND time >= ? AND time <= ?
-		    AND parent_id != ''
+		    AND parent_id != '' AND parent_id != '0000000000000000'
 		)
 		SELECT
 		  p.service_name AS caller_service,

@@ -459,7 +459,7 @@ type TraceFilter struct {
 	TraceID  string // exact match or prefix (16+ hex chars)
 	From, To time.Time
 	HasError bool
-	// RootOnly hides traces where the root span (parent_id = '') was
+	// RootOnly hides traces where the root span ((parent_id = '' OR parent_id = '0000000000000000')) was
 	// never ingested — typically partial / fragmented traces where
 	// only sub-spans landed in storage. The list view exposes this
 	// as a "Root traces" checkbox alongside "Errors only".
@@ -565,14 +565,23 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	}
 
 	// HAVING fragments applied after GROUP BY trace_id:
-	//   - RootOnly: requires the root span (parent_id = '') landed
+	//   - RootOnly: requires the root span ((parent_id = '' OR parent_id = '0000000000000000')) landed
 	//   - RequireServices: each listed service must have ≥1 span in
 	//     the trace, so a (caller, callee) pair must literally
 	//     co-occur — what the backtrace 'Traces' drill-in needs.
 	havingParts := []string{}
 	havingArgs := []any{}
 	if f.RootOnly {
-		havingParts = append(havingParts, "countIf(parent_id = '') > 0")
+		// "Root traces only" — strict: a real root span must
+		// be present AND complete. A complete root has:
+		//   • parent_id empty (handles both wire formats)
+		//   • a non-empty name
+		//   • a non-empty service_name
+		// This excludes Tempo-style "root not available" partial
+		// traces where some orphan child span happens to have an
+		// empty parent_id but isn't actually the trace's root.
+		havingParts = append(havingParts,
+			"countIf((parent_id = '' OR parent_id = '0000000000000000') AND name != '' AND service_name != '') > 0")
 	}
 	for _, svc := range f.RequireServices {
 		if svc == "" {
@@ -689,8 +698,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// Note: use if() not ternary ? : — ClickHouse treats ? as a param placeholder
 	querySQL := `
 		SELECT trace_id,
-		       anyIf(name, parent_id = '')             AS root_name,
-		       anyIf(service_name, parent_id = '')     AS root_svc,
+		       anyIf(name, (parent_id = '' OR parent_id = '0000000000000000'))             AS root_name,
+		       anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))     AS root_svc,
 		       min(time)                               AS trace_start,
 		       (max(toUnixTimestamp64Nano(time) + duration) -
 		        toUnixTimestamp64Nano(min(time))) / 1e6 AS dur_ms,
@@ -805,7 +814,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	}
 
 	// Pick the grouping expression. Every form uses anyIf to grab
-	// the root span's value (parent_id = ''), matching Uptrace-
+	// the root span's value ((parent_id = '' OR parent_id = '0000000000000000')), matching Uptrace-
 	// style "group traces by root attributes".
 	//
 	// group_extra surfaces the service alongside the bucket name so
@@ -833,19 +842,19 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		groupExpr = "anyIf(coalesce(" +
 			"nullIf(attr_values[indexOf(attr_keys, ?)], ''), " +
 			"nullIf(res_values[indexOf(res_keys, ?)], '')" +
-			"), parent_id = '')"
-		extraExpr = "anyIf(service_name, parent_id = '')"
+			"), (parent_id = '' OR parent_id = '0000000000000000'))"
+		extraExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
 		groupArgs = append(groupArgs, f.GroupAttr, f.GroupAttr)
 	case f.GroupBy == "service":
-		groupExpr = "anyIf(service_name, parent_id = '')"
+		groupExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
 		extraExpr = "''"
 	default:
 		col, ok := groupBuiltin[f.GroupBy]
 		if !ok {
 			col = "name" // default = operation
 		}
-		groupExpr = "anyIf(" + col + ", parent_id = '')"
-		extraExpr = "anyIf(service_name, parent_id = '')"
+		groupExpr = "anyIf(" + col + ", (parent_id = '' OR parent_id = '0000000000000000'))"
+		extraExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
 	}
 
 	// Whitelist sort key.

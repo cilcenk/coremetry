@@ -15,12 +15,34 @@ import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } fr
 import type { TracesResponse, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
 
 type View = 'list' | 'aggregate';
-type GroupBy = 'operation' | 'service';
-type AggSort = 'count' | 'errorRate' | 'avg' | 'p50' | 'p95' | 'p99' | 'max' | 'name';
+// Group-by dimensions match the server-side whitelist + a special
+// 'attr' bucket meaning 'use the custom attribute key in the
+// adjacent input'. Adding new dimensions is server-side only —
+// frontend just renders one more option.
+type GroupBy =
+  | 'operation' | 'service' | 'kind' | 'status'
+  | 'http_method' | 'http_route' | 'http_status'
+  | 'host' | 'deploy_env' | 'scope' | 'attr';
+
+const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
+  { value: 'operation',   label: 'Operation' },
+  { value: 'service',     label: 'Service' },
+  { value: 'kind',        label: 'Kind' },
+  { value: 'status',      label: 'Status' },
+  { value: 'http_method', label: 'HTTP method' },
+  { value: 'http_route',  label: 'HTTP route' },
+  { value: 'http_status', label: 'HTTP status' },
+  { value: 'host',        label: 'Host' },
+  { value: 'deploy_env',  label: 'Deploy env' },
+  { value: 'scope',       label: 'Scope' },
+  { value: 'attr',        label: 'Attribute…' },
+];
+
+type AggSort = 'count' | 'perMin' | 'errorRate' | 'avg' | 'p50' | 'p95' | 'p99' | 'max' | 'name';
 
 const AGG_NATURAL: Record<AggSort, SortOrder> = {
-  count: 'desc', errorRate: 'desc', avg: 'desc', p50: 'desc',
-  p95: 'desc', p99: 'desc', max: 'desc', name: 'asc',
+  count: 'desc', perMin: 'desc', errorRate: 'desc', avg: 'desc',
+  p50: 'desc', p95: 'desc', p99: 'desc', max: 'desc', name: 'asc',
 };
 
 function TracesPageInner() {
@@ -51,8 +73,13 @@ function TracesPageInner() {
     () => parseInt(searchParams.get('page') ?? '0', 10) || 0);
 
   // Aggregate view sort + group-by
-  const [groupBy, setGroupBy] = useState<GroupBy>(
-    () => (searchParams.get('groupBy') === 'service' ? 'service' : 'operation'));
+  const [groupBy, setGroupBy] = useState<GroupBy>(() => {
+    const v = searchParams.get('groupBy') as GroupBy | null;
+    return GROUP_OPTIONS.some(o => o.value === v) ? (v as GroupBy) : 'operation';
+  });
+  // Custom attribute key when groupBy === 'attr'. Persisted in URL
+  // so a saved link restores the exact group expression.
+  const [groupAttr, setGroupAttr] = useState<string>(() => searchParams.get('groupAttr') ?? '');
   const [aggSort, setAggSort] = useState<AggSort>(
     () => (searchParams.get('aggSort') as AggSort) || 'count');
   const [aggOrder, setAggOrder] = useState<SortOrder>(
@@ -97,6 +124,7 @@ function TracesPageInner() {
       ['order',    order !== 'desc' ? order : ''],
       ['page',     page > 0 ? page : ''],
       ['groupBy',  view === 'aggregate' && groupBy !== 'operation' ? groupBy : ''],
+      ['groupAttr', view === 'aggregate' && groupBy === 'attr' ? groupAttr : ''],
       ['aggSort',  view === 'aggregate' && aggSort !== 'count' ? aggSort : ''],
       ['aggOrder', view === 'aggregate' && aggOrder !== 'desc' ? aggOrder : ''],
       ['service',  filter.service],
@@ -114,7 +142,7 @@ function TracesPageInner() {
     if (typeof window !== 'undefined' && next !== window.location.search) {
       router.replace(`/traces${next}`, { scroll: false });
     }
-  }, [range, view, sort, order, page, groupBy, aggSort, aggOrder, filter, advFilters, router]);
+  }, [range, view, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, router]);
 
   // Autocomplete option lists
   const [services, setServices] = useState<string[]>([]);
@@ -168,8 +196,15 @@ function TracesPageInner() {
     if (view !== 'aggregate') return;
     setAgg(undefined);
     const { from, to } = timeRangeToNs(range);
+    // groupBy = 'attr' is the special "use the custom attribute
+    // key" sentinel — we collapse it back to 'operation' on the
+    // server (default) and pass groupAttr instead, which takes
+    // precedence in the backend.
+    const safeGroup = groupBy === 'attr' ? 'operation' : groupBy;
+    const safeAttr  = groupBy === 'attr' ? groupAttr.trim() : '';
     api.tracesAggregate({
-      groupBy, sort: aggSort, order: aggOrder, limit: 200, from, to,
+      groupBy: safeGroup, sort: aggSort, order: aggOrder, limit: 200, from, to,
+      groupAttr: safeAttr || undefined,
       service: filter.service || undefined,
       search: filter.search || undefined,
       hasError: filter.hasError || undefined,
@@ -177,7 +212,7 @@ function TracesPageInner() {
       maxMs: filter.maxMs || undefined,
       filters: advFilters.length ? JSON.stringify(advFilters) : undefined,
     }).then(setAgg).catch(() => setAgg(null));
-  }, [view, range, groupBy, aggSort, aggOrder, filter, advFilters]);
+  }, [view, range, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters]);
 
   const apply = () => {
     const tid = draft.traceId.trim().toLowerCase();
@@ -245,9 +280,17 @@ function TracesPageInner() {
             <>
               <span style={{ color: 'var(--text2)', fontSize: 12 }}>Group by:</span>
               <select value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)}>
-                <option value="operation">Operation</option>
-                <option value="service">Service</option>
+                {GROUP_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
+              {groupBy === 'attr' && (
+                <input placeholder="attribute key (e.g. user.id)"
+                  value={groupAttr}
+                  onChange={e => setGroupAttr(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  style={{ width: 200 }} />
+              )}
             </>
           )}
 
@@ -443,9 +486,10 @@ function TracesPageInner() {
             <div className="table-wrap">
               <table>
                 <thead><tr>
-                  <AggHeader col="name"      label={groupBy === 'service' ? 'Service' : 'Operation'} sort={aggSort} order={aggOrder} onSort={toggleAggSort} />
-                  {groupBy === 'operation' && <th>Service</th>}
+                  <AggHeader col="name"      label={groupLabel(groupBy, groupAttr)} sort={aggSort} order={aggOrder} onSort={toggleAggSort} />
+                  {groupBy !== 'service' && <th>Service</th>}
                   <AggHeader col="count"     label="Traces"    sort={aggSort} order={aggOrder} onSort={toggleAggSort} align="right" />
+                  <AggHeader col="perMin"    label="Per min"   sort={aggSort} order={aggOrder} onSort={toggleAggSort} align="right" />
                   <AggHeader col="errorRate" label="Error %"   sort={aggSort} order={aggOrder} onSort={toggleAggSort} align="right" />
                   <AggHeader col="avg"       label="Avg"       sort={aggSort} order={aggOrder} onSort={toggleAggSort} align="right" />
                   <AggHeader col="p50"       label="P50"       sort={aggSort} order={aggOrder} onSort={toggleAggSort} align="right" />
@@ -456,14 +500,21 @@ function TracesPageInner() {
                 <tbody>
                   {agg.map(a => {
                     const errCls = a.errorRate > 5 ? 'b-err' : a.errorRate > 0 ? 'b-warn' : 'b-ok';
-                    // Click row → drill into List view filtered to this op/service
+                    // Click row → drill into List view. For
+                    // operation/service rows we narrow by the
+                    // matching field; for the other dimensions we
+                    // narrow by service only (we don't have a
+                    // first-class span-attribute filter here yet).
                     const onClick = () => {
                       if (groupBy === 'service') {
                         setFilter({ ...filter, service: a.groupKey });
                         setDraft({ ...draft, service: a.groupKey });
-                      } else {
+                      } else if (groupBy === 'operation') {
                         setFilter({ ...filter, search: a.groupKey, service: a.groupExtra ?? filter.service });
                         setDraft({ ...draft, search: a.groupKey, service: a.groupExtra ?? draft.service });
+                      } else if (a.groupExtra) {
+                        setFilter({ ...filter, service: a.groupExtra });
+                        setDraft({ ...draft, service: a.groupExtra });
                       }
                       setView('list');
                       setPage(0);
@@ -471,8 +522,11 @@ function TracesPageInner() {
                     return (
                       <tr key={`${a.groupKey}|${a.groupExtra}`} onClick={onClick}>
                         <td><b>{a.groupKey || '—'}</b></td>
-                        {groupBy === 'operation' && <td><SvcBadge name={a.groupExtra ?? ''} /></td>}
+                        {groupBy !== 'service' && <td><SvcBadge name={a.groupExtra ?? ''} /></td>}
                         <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(a.traceCount)}</td>
+                        <td className="mono" style={{ textAlign: 'right' }} title="Traces per minute">
+                          {fmtPerMin(a.perMin)}
+                        </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <span className={`badge ${errCls}`}>{a.errorRate.toFixed(2)}%</span>
                         </td>
@@ -529,6 +583,18 @@ function SvcBadge({ name }: { name: string }) {
       {name || 'unknown'}
     </span>
   );
+}
+
+function groupLabel(g: GroupBy, attr: string): string {
+  if (g === 'attr') return attr ? `Attr · ${attr}` : 'Attribute…';
+  return GROUP_OPTIONS.find(o => o.value === g)?.label ?? 'Group';
+}
+
+function fmtPerMin(n: number): string {
+  if (!n || n < 0) return '0/m';
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k/m`;
+  if (n >= 10)   return `${n.toFixed(0)}/m`;
+  return `${n.toFixed(2)}/m`;
 }
 
 

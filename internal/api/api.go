@@ -840,18 +840,26 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	// Custom attribute group-by key — strict allow-list keeps the
+	// value safe to flow into the SQL via a `?` parameter (the
+	// groupExpr also threads it as a parameter, never inlined).
+	groupAttr := strings.TrimSpace(q.Get("groupAttr"))
+	if groupAttr != "" && !isSafeAttrKey(groupAttr) {
+		groupAttr = ""
+	}
 	f := chstore.AggregateFilter{
-		GroupBy:  q.Get("groupBy"),
-		Service:  q.Get("service"),
-		Search:   q.Get("search"),
-		From:     parseTime(q.Get("from")),
-		To:       parseTime(q.Get("to")),
-		HasError: q.Get("hasError") == "true",
-		MinMs:    parseFloat(q.Get("minMs")),
-		MaxMs:    parseFloat(q.Get("maxMs")),
-		Sort:     q.Get("sort"),
-		Order:    q.Get("order"),
-		Limit:    parseInt(q.Get("limit"), 100),
+		GroupBy:   q.Get("groupBy"),
+		GroupAttr: groupAttr,
+		Service:   q.Get("service"),
+		Search:    q.Get("search"),
+		From:      parseTime(q.Get("from")),
+		To:        parseTime(q.Get("to")),
+		HasError:  q.Get("hasError") == "true",
+		MinMs:     parseFloat(q.Get("minMs")),
+		MaxMs:     parseFloat(q.Get("maxMs")),
+		Sort:      q.Get("sort"),
+		Order:     q.Get("order"),
+		Limit:     parseInt(q.Get("limit"), 100),
 	}
 	filters, ferr := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
 	if ferr != nil {

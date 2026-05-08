@@ -464,8 +464,18 @@ export interface SpanMetricParams {
   step?: number;        // bucket size in seconds (auto if omitted)
 }
 
+// Aggregation grouping dimensions accepted by /api/traces/aggregate.
+// Mirrors the server-side whitelist; anything else is rejected.
+export type AggregateGroup =
+  | 'operation' | 'service' | 'kind' | 'status'
+  | 'http_method' | 'http_route' | 'http_status'
+  | 'host' | 'deploy_env' | 'scope';
+
 export interface AggregateParams {
-  groupBy?: 'operation' | 'service';
+  groupBy?: AggregateGroup;
+  // groupAttr overrides groupBy with a custom attribute key
+  // (e.g. 'user.id', 'tenant', 'order.id'). Server sanitises.
+  groupAttr?: string;
   service?: string;
   search?: string;
   hasError?: boolean;

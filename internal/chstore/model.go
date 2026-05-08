@@ -222,17 +222,21 @@ type FlameNode struct {
 // AggregateRow is one bucket in the trace aggregate view (group-by operation
 // or service). Counts are number of distinct traces (not spans).
 type AggregateRow struct {
-	GroupKey    string  `json:"groupKey"`
-	GroupExtra  string  `json:"groupExtra,omitempty"` // e.g. service name when grouping by operation
-	TraceCount  uint64  `json:"traceCount"`
-	ErrorCount  uint64  `json:"errorCount"`
-	ErrorRate   float64 `json:"errorRate"`
-	AvgMs       float64 `json:"avgMs"`
-	P50Ms       float64 `json:"p50Ms"`
-	P95Ms       float64 `json:"p95Ms"`
-	P99Ms       float64 `json:"p99Ms"`
-	MaxMs       float64 `json:"maxMs"`
-	LastSeen    int64   `json:"lastSeen"` // unix nanos
+	GroupKey   string  `json:"groupKey"`
+	GroupExtra string  `json:"groupExtra,omitempty"` // e.g. service name when grouping by operation
+	TraceCount uint64  `json:"traceCount"`
+	// PerMin is traces per minute over the requested window —
+	// Uptrace-style perMin(count()) so the operator can compare
+	// throughput across windows of different lengths.
+	PerMin     float64 `json:"perMin"`
+	ErrorCount uint64  `json:"errorCount"`
+	ErrorRate  float64 `json:"errorRate"`
+	AvgMs      float64 `json:"avgMs"`
+	P50Ms      float64 `json:"p50Ms"`
+	P95Ms      float64 `json:"p95Ms"`
+	P99Ms      float64 `json:"p99Ms"`
+	MaxMs      float64 `json:"maxMs"`
+	LastSeen   int64   `json:"lastSeen"` // unix nanos
 }
 
 type ServiceEdge struct {

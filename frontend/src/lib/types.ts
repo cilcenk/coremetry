@@ -493,6 +493,7 @@ export interface AggregateRow {
   groupKey: string;
   groupExtra?: string;
   traceCount: number;
+  perMin: number; // traces per minute (Uptrace-style perMin(count()))
   errorCount: number;
   errorRate: number;
   avgMs: number;

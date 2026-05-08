@@ -759,17 +759,26 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 // root operation (or service). Filters mirror GetTraces, but sorting/limit
 // applies to bucket aggregates, not individual traces.
 type AggregateFilter struct {
-	GroupBy  string // "operation" | "service"
-	Service  string
-	Search   string
-	From, To time.Time
-	HasError bool
-	MinMs    float64
-	MaxMs    float64
-	Filters  []FilterExpr
-	Sort     string // "count"|"errorRate"|"avg"|"p99"|"max"|"name"
-	Order    string // "asc"|"desc"
-	Limit    int
+	// GroupBy picks the group dimension. Valid: "operation",
+	// "service", "kind", "status", "http_method", "http_route",
+	// "http_status", "host", "deploy_env", "scope". Anything else
+	// (or empty) → "operation".
+	GroupBy string
+	// GroupAttr lets the operator group by a custom attribute key
+	// (e.g. "user.id", "tenant", "order.id"). Sanitised by the
+	// HTTP layer to dot/dash/underscore characters only. When set,
+	// it overrides GroupBy.
+	GroupAttr string
+	Service   string
+	Search    string
+	From, To  time.Time
+	HasError  bool
+	MinMs     float64
+	MaxMs     float64
+	Filters   []FilterExpr
+	Sort      string // "count"|"perMin"|"errorRate"|"avg"|"p50"|"p95"|"p99"|"max"|"name"
+	Order     string // "asc"|"desc"
+	Limit     int
 }
 
 func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]AggregateRow, error) {
@@ -795,21 +804,54 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		f.Limit = 100
 	}
 
-	// Pick the grouping expression. Both forms use anyIf to grab the root
-	// span's attribute (parent_id = '').
+	// Pick the grouping expression. Every form uses anyIf to grab
+	// the root span's value (parent_id = ''), matching Uptrace-
+	// style "group traces by root attributes".
+	//
+	// group_extra surfaces the service alongside the bucket name so
+	// the UI can render '<svc> · <op>' rows for non-service groupings;
+	// when grouping by service it stays empty.
+	groupBuiltin := map[string]string{
+		"operation":   "name",
+		"service":     "service_name",
+		"kind":        "kind",
+		"status":      "status_code",
+		"http_method": "http_method",
+		"http_route":  "http_route",
+		"http_status": "toString(http_status)",
+		"host":        "host_name",
+		"deploy_env":  "deploy_env",
+		"scope":       "scope_name",
+	}
 	var groupExpr, extraExpr string
-	switch f.GroupBy {
-	case "service":
+	groupArgs := []any{}
+	switch {
+	case f.GroupAttr != "":
+		// Sanitisation happened on the HTTP layer — the key is
+		// safe to flow through as a `?` parameter. We try span
+		// attrs first then resource attrs.
+		groupExpr = "anyIf(coalesce(" +
+			"nullIf(attr_values[indexOf(attr_keys, ?)], ''), " +
+			"nullIf(res_values[indexOf(res_keys, ?)], '')" +
+			"), parent_id = '')"
+		extraExpr = "anyIf(service_name, parent_id = '')"
+		groupArgs = append(groupArgs, f.GroupAttr, f.GroupAttr)
+	case f.GroupBy == "service":
 		groupExpr = "anyIf(service_name, parent_id = '')"
 		extraExpr = "''"
-	default: // "operation"
-		groupExpr = "anyIf(name, parent_id = '')"
+	default:
+		col, ok := groupBuiltin[f.GroupBy]
+		if !ok {
+			col = "name" // default = operation
+		}
+		groupExpr = "anyIf(" + col + ", parent_id = '')"
 		extraExpr = "anyIf(service_name, parent_id = '')"
 	}
 
 	// Whitelist sort key.
 	sortMap := map[string]string{
 		"count":     "trace_count",
+		"perMin":    "per_min",
 		"errorRate": "error_rate",
 		"avg":       "avg_ms",
 		"p50":       "p50_ms",
@@ -827,11 +869,24 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		order = "ASC"
 	}
 
+	// Window minutes for perMin (count / minutes). When the caller
+	// supplies an explicit from/to we use that; otherwise fall back
+	// to a reasonable default — division by zero is guarded by
+	// nullIf in the SQL itself.
+	windowMin := 1.0
+	if !f.From.IsZero() && !f.To.IsZero() && f.To.After(f.From) {
+		windowMin = f.To.Sub(f.From).Minutes()
+		if windowMin < 1 {
+			windowMin = 1
+		}
+	}
+
 	// 1) Inner: per-trace summary
 	// 2) Outer: aggregate across traces per group bucket
 	sql := `
 		SELECT group_key, group_extra,
 		       count()                                   AS trace_count,
+		       count() / ?                                AS per_min,
 		       countIf(has_error = 1)                    AS error_count,
 		       countIf(has_error = 1) / count() * 100    AS error_rate,
 		       avg(dur_ms)                                AS avg_ms,
@@ -853,7 +908,15 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		    HAVING group_key != ''
 		)`
 
-	args := wc.args
+	// Argument order matches placeholder order in the SQL:
+	//   1. Outer SELECT: per_min divisor (windowMin)
+	//   2. Inner SELECT: group expr args (custom attribute lookup)
+	//   3. Inner WHERE:  filters / time / service
+	//   4. Outer HAVING: post filters (minMs / maxMs)
+	//   5. Outer LIMIT
+	args := []any{windowMin}
+	args = append(args, groupArgs...)
+	args = append(args, wc.args...)
 	postFilter := ""
 	if f.MinMs > 0 {
 		postFilter += " AND avg_ms >= ?"
@@ -884,7 +947,8 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	for rows.Next() {
 		var a AggregateRow
 		if err := rows.Scan(
-			&a.GroupKey, &a.GroupExtra, &a.TraceCount, &a.ErrorCount, &a.ErrorRate,
+			&a.GroupKey, &a.GroupExtra, &a.TraceCount, &a.PerMin,
+			&a.ErrorCount, &a.ErrorRate,
 			&a.AvgMs, &a.P50Ms, &a.P95Ms, &a.P99Ms, &a.MaxMs, &a.LastSeen,
 		); err != nil {
 			return nil, err

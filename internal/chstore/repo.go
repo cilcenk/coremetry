@@ -248,7 +248,20 @@ func (s *Store) GetOperations(ctx context.Context, service string, since time.Du
 // they're network-layer identifiers that change on every restart and
 // would create spurious nodes for sidecars / proxies / load balancers.
 // service_name + the application-layer attributes above are stable.
+// GetServiceGraph signature kept narrow for callers; the topN cap is
+// passed via GetServiceGraphTopN below. The original entry point
+// keeps the legacy "no cap" behaviour for non-UI consumers (tests,
+// SLO eval, etc.) — at scale the HTTP handler should always go
+// through the capped variant.
 func (s *Store) GetServiceGraph(ctx context.Context, service string, since time.Duration, from, to time.Time) ([]ServiceEdge, error) {
+	return s.GetServiceGraphTopN(ctx, service, since, from, to, 0)
+}
+
+// GetServiceGraphTopN returns at most `topN` highest-traffic edges
+// (by call count). topN <= 0 disables the cap. Without a cap, a
+// large fleet (>500 services) regularly produces 5k+ edges, which
+// the SPA can't lay out in real time.
+func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since time.Duration, from, to time.Time, topN int) ([]ServiceEdge, error) {
 	var startTime, endTime time.Time
 	if !from.IsZero() {
 		startTime = from
@@ -354,6 +367,9 @@ func (s *Store) GetServiceGraph(ctx context.Context, service string, since time.
 		WHERE 1=1` + svcWhere + `
 		GROUP BY source, target
 		ORDER BY calls DESC`
+	if topN > 0 {
+		sql += fmt.Sprintf("\n\t\tLIMIT %d", topN)
+	}
 
 	args := append([]any{}, timeArgsBase...) // joined CTE timeP
 	args = append(args, timeArgsBase...)     // peered CTE timeP

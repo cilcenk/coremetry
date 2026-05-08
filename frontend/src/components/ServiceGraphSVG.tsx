@@ -44,9 +44,52 @@ const KIND_STYLE: Record<NodeKind, { fill: string; stroke: string; subtitle: str
 // service graph (<30 nodes). Memoized on the (sorted) names + edges signature
 // so re-renders don't re-shuffle the diagram.
 
+// FR_THRESHOLD: above this node count we abandon the O(n²) force-
+// directed layout for a deterministic O(n) circular layout. With
+// 300+ services FR takes 2-5s on a desktop browser and routinely
+// hangs the main thread on lower-spec laptops; the circular layout
+// renders instantly and is honest about what it's showing — a
+// "service inventory" rather than a topology diagram.
+const FR_THRESHOLD = 200;
+
+// frIterations scales the FR iteration count to the input size so
+// total work stays bounded. Per-iteration cost is dominated by the
+// O(n²) repulsion pass; total work ≈ ITER × n² capped to ~4M ops.
+function frIterations(n: number): number {
+  if (n <= 30)  return 160;
+  if (n <= 80)  return 100;
+  if (n <= 150) return 60;
+  return 40;
+}
+
+// circularLayout positions nodes on a single concentric ring, sized
+// to the viewport. Used for FR_THRESHOLD-busting graphs (200+
+// services) where the eye can't trace edges anyway — the value of
+// the canvas at that scale is "scan the ring, click the service you
+// need", and that works regardless of geometry.
+function circularLayout(names: string[], w: number, h: number) {
+  const n = names.length;
+  if (n === 0) return new Map<string, { x: number; y: number }>();
+  const cx = w / 2, cy = h / 2;
+  const r = Math.min(w, h) * 0.42;
+  const out = new Map<string, { x: number; y: number }>();
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    out.set(names[i], { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+  }
+  return out;
+}
+
 function layoutFR(names: string[], edges: ServiceEdge[], w: number, h: number) {
   const n = names.length;
   if (n === 0) return new Map<string, { x: number; y: number }>();
+
+  // Big-graph short-circuit. Honest about not running FR — caller
+  // sees a circular ring which is far more useful at scale than a
+  // half-converged FR mess.
+  if (n > FR_THRESHOLD) {
+    return circularLayout(names, w, h);
+  }
 
   const k = Math.sqrt((w * h) / Math.max(n, 1)) * 0.9; // ideal edge length
   const idx = new Map(names.map((nm, i) => [nm, i]));
@@ -64,7 +107,7 @@ function layoutFR(names: string[], edges: ServiceEdge[], w: number, h: number) {
   }
   const disp = pos.map(() => ({ x: 0, y: 0 }));
 
-  const ITER = 160;
+  const ITER = frIterations(n);
   let temp = w / 8;       // simulated annealing — cools each step
   for (let it = 0; it < ITER; it++) {
     // Repulsion between every pair
@@ -179,7 +222,11 @@ export function ServiceGraphSVG({ services, edges, onNodeClick, highlightService
   }), [names, positions, services, incoming, w, nodeOffsets]);
 
   const nodeMap = new Map(nodes.map(n => [n.name, n]));
-  const maxCalls = Math.max(...edges.map(e => e.callCount), 1);
+  // Reduce-loop instead of `Math.max(...arr)` — the spread form
+  // throws "Maximum call stack size exceeded" past ~50k args, and
+  // a multi-thousand-edge graph can hit that ceiling on
+  // service-saturated environments.
+  const maxCalls = edges.reduce((m, e) => e.callCount > m ? e.callCount : m, 1);
 
   // Neighbour set of the hovered node — used to dim non-related edges
   // and nodes the same way Uptrace does on hover. Empty when nothing

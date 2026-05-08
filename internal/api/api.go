@@ -543,7 +543,14 @@ func (s *Server) getServiceGraph(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), time.Hour)
 	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
-	edges, err := s.store.GetServiceGraph(r.Context(), q.Get("service"), since, from, to)
+	// Cap the response to the top-N highest-traffic edges. At ~500+
+	// services the SPA's force-directed layout chokes on the full
+	// edge set, so the default tops out at 300 and the operator can
+	// override via ?topN= for occasional deep dives.
+	topN := parseInt(q.Get("topN"), 300)
+	if topN < 1   { topN = 300 }
+	if topN > 5000 { topN = 5000 }
+	edges, err := s.store.GetServiceGraphTopN(r.Context(), q.Get("service"), since, from, to, topN)
 	if err != nil {
 		writeErr(w, err)
 		return

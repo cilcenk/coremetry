@@ -234,19 +234,20 @@ export function TraceWaterfall({ spans, selectedId, onSelect }: {
                     </button>
                   : <div className="wf-leaf" />}
                 <span className="wf-kind" title={s.kind || 'internal'}>{kindIcon(s.kind)}</span>
-                {/* Service badge first — Uptrace/SigNoz convention. The
-                    eye scans down the leftmost column and immediately
-                    sees which service each span belongs to, instead of
-                    having to mentally separate `rpc.service` (which the
-                    operation name often starts with) from the actual
-                    `service.name`. */}
-                <span className="wf-svc" title={`service.name: ${s.serviceName}`}
-                      style={{ background: color, color: '#fff' }}>
+                {/* Service identifier — Tempo-style soft underline.
+                    The service name reads as plain text with a 2px
+                    underline in the per-service hash colour, so the
+                    scan-down-the-column "this is service X" signal
+                    survives without a high-contrast filled chip
+                    competing with the operation name. */}
+                <span className="wf-svc"
+                      title={`service.name: ${s.serviceName}`}
+                      style={{ borderBottomColor: color }}>
                   {s.serviceName}
                 </span>
                 {cat && (
                   <span className="wf-cat" title={`Category: ${cat.tag}`}
-                        style={{ background: cat.color, color: '#0a0e14' }}>
+                        style={{ color: cat.color, borderColor: cat.color }}>
                     {cat.tag}
                   </span>
                 )}

@@ -293,13 +293,17 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 .wf-row:last-child { border-bottom: none; }
 .wf-row:hover { background: var(--bg2); }
 .wf-row.wf-sel { background: rgba(56,139,253,.10); }
-.wf-row.wf-sel .wf-stripe { width: 4px; filter: brightness(1.25); }
+.wf-row.wf-sel .wf-stripe { width: 3px; filter: brightness(1.25); opacity: 0.95; }
 .wf-row.wf-err .wf-name { color: var(--err); }
 
 /* Service-color stripe down the left edge — Tempo's primary signal for
    identifying which service this span belongs to. Always visible, fixed
    width. Selected row widens it slightly. */
-.wf-stripe { flex-shrink: 0; width: 3px; transition: width .07s, filter .07s; }
+/* Left stripe — softened to 2px + 60% opacity so it nudges the eye
+   without competing with the new service-underline. The selected
+   row pumps it back up to 3px @ 95% (see .wf-sel above) for a
+   clear focused-row signal. */
+.wf-stripe { flex-shrink: 0; width: 2px; opacity: 0.55; transition: width .07s, opacity .07s, filter .07s; }
 
 .wf-row-name { flex-shrink: 0; position: relative; display: flex; align-items: center; border-right: 1px solid var(--border); overflow: hidden; }
 .wf-row-name-inner { display: flex; align-items: center; gap: 2px; flex: 1; padding-right: 8px; min-width: 0; }
@@ -314,35 +318,44 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
    gRPC spans often display their `rpc.service` (e.g. "Greeter") as
    the operation name, which used to crowd out the actual
    service.name in the row. */
+/* Service name — Tempo-style "soft underline" identifier. The
+   service name renders as plain muted text; a 2px underline in the
+   per-service hash colour (set inline) gives the scan-down-the-
+   column signal without a filled chip competing with the operation
+   name. Far easier on the eye than the previous solid-pill chip. */
 .wf-svc {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   flex-shrink: 0;
-  max-width: 140px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin: 0 6px 0 4px;
-  padding: 1px 7px;
-  border-radius: 10px;
-  letter-spacing: 0.1px;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15);
+  margin: 0 8px 0 4px;
+  padding-bottom: 1px;
+  border-bottom: 2px solid; /* colour set inline */
+  line-height: 1.1;
 }
 
-/* Span category chip — DB / HTTP / RPC / MQ. Tighter than wf-svc and
-   uses fixed category palette colours (background set inline in the
-   component). Reads as a categorical tag rather than an identifier. */
+/* Span category chip — DB / HTTP / RPC / MQ. Outlined-pill instead
+   of filled; same low-contrast band as the new service style so the
+   row stays calm. Background transparent; border + foreground take
+   the per-category colour set inline by the component. */
 .wf-cat {
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.6px;
   flex-shrink: 0;
-  padding: 1px 6px;
+  padding: 0 5px;
   border-radius: 3px;
-  margin-right: 6px;
+  margin-right: 8px;
   text-transform: uppercase;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: transparent;
+  border: 1px solid;     /* colour set inline */
+  line-height: 1.4;
 }
 
 /* Trace → Logs side tab. Uptrace-style: timestamp · sev · service ·

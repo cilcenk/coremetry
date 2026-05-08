@@ -668,6 +668,47 @@ export interface CallerRow {
   lastSeenNs: number;
 }
 
+// Meta-observability snapshot — what /admin/stats renders. All
+// fields are optional so a partial / lagging payload still parses.
+export interface SystemStats {
+  snapshot: {
+    spans24h: number;
+    spans7d: number;
+    spansAllTime: number;
+    errors24h: number;
+    logs24h: number;
+    logsAllTime: number;
+    metrics24h: number;
+    metricsAllTime: number;
+    profiles24h: number;
+    profilesAllTime: number;
+    services24h: number;
+    operations24h: number;
+    totalDiskBytes: number;
+  };
+  tables: {
+    table: string;
+    rows: number;
+    bytesOnDisk: number;
+    compressedBytes: number;
+    uncompressedBytes: number;
+    parts: number;
+    oldestNs: number;
+    newestNs: number;
+  }[];
+  history: {
+    day: string;
+    spans: number;
+    errors: number;
+    services: number;
+  }[];
+  ingest: {
+    spansPerSec: number;
+    logsPerSec: number;
+    metricsPerSec: number;
+  };
+}
+
 export interface AggSpanNode {
   service: string;
   operation: string;

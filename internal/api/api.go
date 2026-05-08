@@ -99,6 +99,7 @@ func (s *Server) Start() error {
 
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
+	mux.HandleFunc("GET /api/admin/system-stats", s.getSystemStats)
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)
 	mux.HandleFunc("GET /api/services/{name}/neighbors", s.getServiceNeighbors)
 	mux.HandleFunc("GET /api/services/{name}/backtrace", s.getServiceBacktrace)
@@ -292,6 +293,16 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 			return s.store.GetServicesAggFiltered(r.Context(), from, to, nameMatch, limit)
 		}
 		return s.store.GetServicesFiltered(r.Context(), since, from, to, nameMatch)
+	})
+}
+
+// getSystemStats returns the meta-observability snapshot — today's
+// volume KPIs, per-table storage, 30-day history, live ingest rate.
+// Backed by ClickHouse system.parts metadata + the 5m span aggregate
+// MV so it stays sub-second even at 40M traces / day. Cached 60s.
+func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "system-stats", 60*time.Second, func() (any, error) {
+		return s.store.GetSystemStats(r.Context())
 	})
 }
 

@@ -57,6 +57,10 @@ export const api = {
     get<Service[] | null>(`/api/services?${qs({ ...r, limit, name })}`),
   graph:      (r: RangeParams, service?: string) =>
     get<ServiceEdge[] | null>(`/api/services/graph?${qs({ ...r, service })}`),
+  // Coremetry meta-observability snapshot — drives /admin/stats.
+  systemStats: () =>
+    get<import('./types').SystemStats>('/api/admin/system-stats'),
+
   // Multi-trace path-aggregated structure for a service. Returns a
   // tree of (service, operation, count, avgMs, maxMs, errorCount)
   // nodes — Grafana-Drilldown style. Each unique `(parent_path,

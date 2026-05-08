@@ -167,12 +167,25 @@ func (s *Store) AggregateServiceStructure(
 		for _, sp := range ts {
 			byID[sp.SpanID] = sp
 		}
-		var localRoots []*SpanRow
 		for _, sp := range ts {
 			if sp.ParentSpanID != "" && byID[sp.ParentSpanID] != nil {
 				kids[sp.ParentSpanID] = append(kids[sp.ParentSpanID], sp)
-			} else {
-				localRoots = append(localRoots, sp)
+			}
+		}
+		// Entry points are the spans BELONGING to `service` whose
+		// parent is either outside this trace, the absolute root, or
+		// emitted by a different service. Anything else (an upstream
+		// caller higher up in the trace) is intentionally excluded —
+		// the structure view is "what does THIS service do", not
+		// "the full trace topology that happens to involve it".
+		var entryPoints []*SpanRow
+		for _, sp := range ts {
+			if sp.ServiceName != service {
+				continue
+			}
+			parent := byID[sp.ParentSpanID]
+			if parent == nil || parent.ServiceName != service {
+				entryPoints = append(entryPoints, sp)
 			}
 		}
 		// Sort each parent's children chronologically so the
@@ -183,14 +196,17 @@ func (s *Store) AggregateServiceStructure(
 				return kids[k][i].StartTime < kids[k][j].StartTime
 			})
 		}
-		sort.Slice(localRoots, func(i, j int) bool {
-			return localRoots[i].StartTime < localRoots[j].StartTime
+		sort.Slice(entryPoints, func(i, j int) bool {
+			return entryPoints[i].StartTime < entryPoints[j].StartTime
 		})
-		// trace-relative offset baseline = earliest span start.
+		// Offset baseline = earliest entry point of this service in
+		// the trace, so the leftmost bar starts at 0 instead of
+		// reflecting how much upstream work happened before the
+		// service was called.
 		var minT int64 = math.MaxInt64
-		for _, sp := range ts {
-			if sp.StartTime < minT {
-				minT = sp.StartTime
+		for _, ep := range entryPoints {
+			if ep.StartTime < minT {
+				minT = ep.StartTime
 			}
 		}
 
@@ -228,7 +244,7 @@ func (s *Store) AggregateServiceStructure(
 				dfs(node, c)
 			}
 		}
-		for _, r := range localRoots {
+		for _, r := range entryPoints {
 			dfs(nil, r)
 		}
 	}

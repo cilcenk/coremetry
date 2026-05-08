@@ -329,6 +329,25 @@ func scenarioUserLogin() *Trace {
 		kv("db.system", "postgresql", "db.name", "auth", "db.statement",
 			"SELECT id, password_hash FROM users WHERE email=$1",
 			"peer.service", "postgres"), true, "")
+	// On a successful sign-in from a new device, user-service fires
+	// off an alert to notification-service. notification-service
+	// now has two upstream entry points (kafka consumer for events +
+	// rpc from user-service for live alerts) — exercises fan-in
+	// across transport types in the consumer view.
+	if !authFail && mrand.IntN(100) < 35 {
+		notifDur := dur(20, 60)
+		t.Add("user-service", "notification-service/SendLoginAlert", tracepb.Span_SPAN_KIND_CLIENT,
+			userSpan, 30*time.Millisecond, notifDur,
+			kv("rpc.system", "grpc", "rpc.method", "SendLoginAlert",
+				"peer.service", "notification-service"), true, "")
+		notifSpan := t.Add("notification-service", "NotificationService.SendLoginAlert", tracepb.Span_SPAN_KIND_SERVER,
+			userSpan, 32*time.Millisecond, notifDur-4*time.Millisecond,
+			kv("rpc.system", "grpc", "rpc.method", "SendLoginAlert"), true, "")
+		t.Add("notification-service", "email-service/Send", tracepb.Span_SPAN_KIND_CLIENT,
+			notifSpan, 34*time.Millisecond, dur(15, 45),
+			kv("rpc.system", "grpc", "rpc.method", "Send",
+				"peer.service", "email-service"), true, "")
+	}
 	return t
 }
 
@@ -388,6 +407,33 @@ func scenarioCheckout() *Trace {
 		apiSpan, orderStart, orderDur, kv("order.id", fmt.Sprintf("ord-%d", mrand.IntN(99999)),
 			"order.amount", mrand.Float64()*500+10, "peer.service", "order-service"),
 		!payFail, ifErr(payFail, "payment service error"))
+
+	// Pre-order fraud screen — order-service asks fraud-service for
+	// a quick green-light before persisting the order. fraud-service
+	// now has two upstream callers (order-service here, plus the
+	// deeper card-side check inside payment-service below).
+	t.Add("order-service", "fraud-service/PreScreen", tracepb.Span_SPAN_KIND_CLIENT,
+		orderSpan, orderStart+3*time.Millisecond, dur(8, 28),
+		kv("rpc.system", "grpc", "rpc.method", "PreScreen",
+			"peer.service", "fraud-service"), true, "")
+	t.Add("fraud-service", "FraudService.PreScreen", tracepb.Span_SPAN_KIND_SERVER,
+		orderSpan, orderStart+4*time.Millisecond, dur(6, 24),
+		kv("rpc.system", "grpc", "rpc.method", "PreScreen",
+			"fraud.score", mrand.Float64()*0.5), true, "")
+
+	// Final pricing / discount validation. pricing-service has
+	// cart-service (live cart total) + order-service (final
+	// discount apply) as upstreams now.
+	t.Add("order-service", "pricing-service/ApplyDiscounts", tracepb.Span_SPAN_KIND_CLIENT,
+		orderSpan, orderStart+4*time.Millisecond, dur(6, 18),
+		kv("rpc.system", "grpc", "rpc.method", "ApplyDiscounts",
+			"peer.service", "pricing-service"), true, "")
+	priceSpan := t.Add("pricing-service", "PricingService.ApplyDiscounts", tracepb.Span_SPAN_KIND_SERVER,
+		orderSpan, orderStart+5*time.Millisecond, dur(4, 14),
+		kv("rpc.system", "grpc", "rpc.method", "ApplyDiscounts"), true, "")
+	t.Add("pricing-service", "redis.GET discounts:active", tracepb.Span_SPAN_KIND_CLIENT,
+		priceSpan, orderStart+6*time.Millisecond, dur(1, 3),
+		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
 
 	// DB insert
 	t.Add("order-service", "db.INSERT orders", tracepb.Span_SPAN_KIND_CLIENT,
@@ -481,6 +527,24 @@ func scenarioSearch() *Trace {
 		kv("db.system", "elasticsearch", "db.statement",
 			fmt.Sprintf(`{"query":{"match":{"name":"%s"}}}`, query),
 			"peer.service", "elasticsearch"), true, "")
+	// Semantic re-ranking: search-service hands the top hits to
+	// ml-service for a vector-similarity rerank. ml-service now
+	// has two distinct upstream callers (recommendation-service +
+	// search-service), exercising the fan-in case in the
+	// backtrace view.
+	rerankStart := totalDur - 25*time.Millisecond
+	rerankDur := dur(8, 25)
+	t.Add("search-service", "ml-service/Rerank", tracepb.Span_SPAN_KIND_CLIENT,
+		searchSpan, rerankStart, rerankDur,
+		kv("rpc.system", "grpc", "rpc.method", "Rerank",
+			"peer.service", "ml-service"), true, "")
+	mlSpan := t.Add("ml-service", "MLService.Rerank", tracepb.Span_SPAN_KIND_SERVER,
+		searchSpan, rerankStart+1*time.Millisecond, rerankDur-2*time.Millisecond,
+		kv("rpc.system", "grpc", "rpc.method", "Rerank",
+			"ml.model", "rerank-v2", "search.query", query), true, "")
+	t.Add("ml-service", "redis.GET emb:query", tracepb.Span_SPAN_KIND_CLIENT,
+		mlSpan, rerankStart+3*time.Millisecond, dur(1, 4),
+		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
 	return t
 }
 
@@ -646,6 +710,23 @@ func scenarioProductDetail() *Trace {
 		kv("rpc.system", "grpc", "rpc.method", "CheckStock"), true, "")
 	t.Add("inventory-service", "redis.GET stock:sku", tracepb.Span_SPAN_KIND_CLIENT,
 		invSpan, 25*time.Millisecond, dur(1, 4),
+		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
+	// Related-products fan-out — recommendation-service now has a
+	// second upstream (api-gateway from the home page + product-
+	// service from the product detail page), so the consumer view
+	// for recommendation-service shows real fan-in.
+	relStart := 24 * time.Millisecond
+	relDur := dur(20, 60)
+	t.Add("product-service", "recommendation-service/RelatedProducts", tracepb.Span_SPAN_KIND_CLIENT,
+		prodSpan, relStart, relDur,
+		kv("rpc.system", "grpc", "rpc.method", "RelatedProducts",
+			"peer.service", "recommendation-service"), true, "")
+	relSpan := t.Add("recommendation-service", "RecommendationService.RelatedProducts", tracepb.Span_SPAN_KIND_SERVER,
+		prodSpan, relStart+2*time.Millisecond, relDur-4*time.Millisecond,
+		kv("rpc.system", "grpc", "rpc.method", "RelatedProducts",
+			"product.id", productID), true, "")
+	t.Add("recommendation-service", "redis.GET related:product", tracepb.Span_SPAN_KIND_CLIENT,
+		relSpan, relStart+4*time.Millisecond, dur(1, 5),
 		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
 	return t
 }

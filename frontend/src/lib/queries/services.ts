@@ -61,6 +61,17 @@ export function useServiceRuntime(svc: string) {
   });
 }
 
+// Batch variant — fetches every service's runtime in one
+// request. Used by the /services listing to show a per-row
+// badge without fanning out N requests.
+export function useAllServiceRuntimes() {
+  return useQuery<Record<string, ServiceRuntime>>({
+    queryKey: ['services', 'runtimes', 'all'],
+    queryFn: () => api.allServiceRuntimes(),
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useServiceNeighbors(svc: string, since: string, samples: number) {
   return useQuery({
     queryKey: keys.services.neighbors(svc, since, samples),

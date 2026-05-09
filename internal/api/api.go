@@ -134,6 +134,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/{name}/backtrace", s.getServiceBacktrace)
 	mux.HandleFunc("GET /api/services/{name}/infra",     s.getServiceInfraMetrics)
 	mux.HandleFunc("GET /api/services/{name}/runtime",   s.getServiceRuntime)
+	mux.HandleFunc("GET /api/services-runtimes",         s.getAllServiceRuntimes)
 	mux.HandleFunc("GET /api/services/graph", s.getServiceGraph)
 	mux.HandleFunc("GET /api/services/sparklines", s.getServiceSparklines)
 	mux.HandleFunc("GET /api/service-names",       s.getServiceNames)
@@ -486,6 +487,19 @@ func (s *Server) getServiceRuntime(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("service-runtime:svc=%s", name)
 	s.serveCached(w, r, key, 5*time.Minute, func() (any, error) {
 		return s.store.GetServiceRuntime(r.Context(), name)
+	})
+}
+
+// getAllServiceRuntimes returns the runtime fingerprint map
+// for every service with recent traffic. Powers the runtime
+// badge on the /services listing — one CH query (argMax over
+// the last hour, grouped by service_name) replaces N
+// per-service requests the listing would otherwise fan out.
+//
+// Cached 5 min — runtime changes only on deploy.
+func (s *Server) getAllServiceRuntimes(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "all-service-runtimes", 5*time.Minute, func() (any, error) {
+		return s.store.GetAllServiceRuntimes(r.Context())
 	})
 }
 

@@ -26,6 +26,61 @@ type ServiceRuntime struct {
 	Service         string `json:"service"`                   // pass-through
 }
 
+// GetAllServiceRuntimes returns the technology fingerprint
+// for every service that emitted spans in the last hour.
+// Single CH query using argMax(field, time) to extract the
+// latest res_keys / res_values per service in one pass —
+// avoids the N-services × N-requests fan-out the /services
+// listing page would otherwise hit.
+//
+// Output is a map keyed by service name. Missing services
+// (e.g. one that hasn't shipped a span in the lookback)
+// simply absent from the map; callers render the badge only
+// for the names that exist.
+func (s *Store) GetAllServiceRuntimes(ctx context.Context) (map[string]ServiceRuntime, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+		  service_name,
+		  argMax(res_keys,   time) AS keys,
+		  argMax(res_values, time) AS vals
+		FROM spans
+		WHERE time >= now() - INTERVAL 1 HOUR
+		  AND service_name != ''
+		GROUP BY service_name
+		LIMIT 500
+		SETTINGS max_execution_time = 10`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]ServiceRuntime, 64)
+	for rows.Next() {
+		var name string
+		var keys, vals []string
+		if err := rows.Scan(&name, &keys, &vals); err != nil {
+			return nil, err
+		}
+		rt := ServiceRuntime{Service: name}
+		pick := func(k string) string {
+			for i := range keys {
+				if i < len(vals) && keys[i] == k {
+					return strings.TrimSpace(vals[i])
+				}
+			}
+			return ""
+		}
+		rt.Language       = pick("telemetry.sdk.language")
+		rt.SDKVersion     = pick("telemetry.sdk.version")
+		rt.RuntimeName    = pick("process.runtime.name")
+		rt.RuntimeVersion = pick("process.runtime.version")
+		rt.RuntimeDesc    = pick("process.runtime.description")
+		rt.Host           = pick("host.name")
+		rt.OS             = pick("os.type")
+		out[name] = rt
+	}
+	return out, rows.Err()
+}
+
 // GetServiceRuntime returns the technology fingerprint for one
 // service. Reads the latest span's resource attributes — the
 // OTel SDK stamps these on every span so we just need one

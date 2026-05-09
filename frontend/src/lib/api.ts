@@ -122,6 +122,14 @@ export const api = {
     get<import('./types').ServiceRuntime>(
       `/api/services/${encodeURIComponent(svc)}/runtime`),
 
+  // Batch runtime fingerprints — { [serviceName]: ServiceRuntime }.
+  // Single CH query (argMax) on the backend; replaces the
+  // N-services × N-requests fan-out that a per-row badge on
+  // the /services listing would otherwise trigger.
+  allServiceRuntimes: () =>
+    get<Record<string, import('./types').ServiceRuntime>>(
+      '/api/services-runtimes'),
+
   // Global service-level topology graph — nodes + directed edges
   // derived from sampled recent traces. Powers the /service-map
   // page; 30s server-side cache.

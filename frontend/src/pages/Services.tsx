@@ -4,6 +4,9 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
+import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
+import { useAllServiceRuntimes } from '@/lib/queries';
+import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
@@ -28,6 +31,10 @@ export default function ServicesPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
   const [data, setData] = useState<Service[] | null | undefined>(undefined);
   const [sparklines, setSparklines] = useState<Record<string, SparklineBucket[]>>({});
+  // Batch runtime fetch — one query for every service in the
+  // listing, server-cached 5 min. The component renders per-row
+  // ServiceRuntimeBadge inside the name cell.
+  const runtimes = useAllServiceRuntimes().data;
   const [sortBy, setSortBy] = useState<SortKey>('errorRate');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Page-based pagination — 50 services per page, ranked by span
@@ -185,6 +192,12 @@ export default function ServicesPage() {
   const goToService = (svc: string) =>
     navigate(`/service?name=${encodeURIComponent(svc)}`);
 
+  // j/k row navigation. Enter / o opens the service detail.
+  const tableNav = useTableNav<Service>(sorted ?? [], {
+    pageId: 'services',
+    onOpen: (svc) => goToService(svc.name),
+  });
+
   // Click-through from a sparkline → Explore, pre-filtered to the
   // service and aggregating the matching metric. Stops row propagation
   // so the user doesn't end up on /service when they meant to drill
@@ -312,15 +325,30 @@ export default function ServicesPage() {
                       </td>
                     </tr>
                   )}
-                  {sorted.map(s => {
+                  {sorted.map((s, i) => {
                     const errCls = s.errorRate > 5 ? 'err' : s.errorRate > 0 ? 'warn' : 'ok';
                     const buckets = sparklines[s.name] ?? [];
+                    const isSelected = tableNav.selected === i;
                     return (
                       <tr key={s.name}
+                          data-row-idx={i}
+                          className={isSelected ? 'row-selected' : undefined}
+                          onMouseEnter={() => tableNav.setSelected(i)}
                           {...rowClickHandlers(`/service?name=${encodeURIComponent(s.name)}`,
                                                () => goToService(s.name))}>
                         <td>
                           <span style={{ fontWeight: 600 }}>{s.name}</span>
+                          {/* Runtime fingerprint pill — pulled from
+                              the per-list batch fetch (one query
+                              for every service vs N queries per
+                              row). Compact mode = small font, no
+                              glyph, just the language-coloured
+                              text. Hidden when the SDK didn't
+                              emit usable resource attributes. */}
+                          {runtimes && runtimes[s.name] && (
+                            <ServiceRuntimeBadge rt={runtimes[s.name]} compact
+                                                 style={{ marginLeft: 8 }} />
+                          )}
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <SparkCell value={fmtNum(s.spanCount)}

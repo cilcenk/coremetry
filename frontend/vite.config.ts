@@ -32,7 +32,8 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('react-router')) return 'router';
-            if (id.includes('chart.js') || id.includes('react-chartjs-2')) return 'charts';
+            if (id.includes('@tanstack')) return 'tanstack';
+            if (id.includes('uplot')) return 'charts';
             return 'vendor';
           }
         },

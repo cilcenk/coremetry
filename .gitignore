@@ -56,3 +56,4 @@ charts/*/charts/
 data/
 clickhouse-data/
 grafana-data/
+frontend/dist/bundle-analysis.html

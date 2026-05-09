@@ -1,13 +1,31 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { visualizer } from 'rollup-plugin-visualizer';
 import path from 'path';
 
 // Vite config — pure SPA build, output to dist/ which the Go
 // binary embeds via //go:embed all:frontend/dist. Dev-only API
 // proxy mirrors the Next.js rewrite that pointed /api at the Go
 // backend on localhost:8088 (production has the same origin).
+// ANALYZE=1 npm run build → renders dist/bundle-analysis.html
+// with a treemap of every chunk + raw / gzip sizes per file.
+// The default sunburst view is more compact than treemap for
+// our chunk sizes; switch by changing template below.
+const analyze = process.env.ANALYZE === '1' || process.env.ANALYZE === 'true';
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    ...(analyze ? [
+      visualizer({
+        filename: 'dist/bundle-analysis.html',
+        template: 'treemap',
+        gzipSize: true,
+        brotliSize: true,
+        open: false,
+      }),
+    ] : []),
+  ],
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src') },
   },

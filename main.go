@@ -61,7 +61,18 @@ func main() {
 	// this once as a Job or initContainer; web pods boot with
 	// COREMETRY_SKIP_MIGRATE=1 to avoid re-running.
 	migrateOnly     := flag.Bool("migrate-only", false, "Run ClickHouse schema migration only, then exit. Use as a Kubernetes initContainer / one-shot Job before web pods roll out.")
+	// DESTRUCTIVE: drops the configured CH database (every table:
+	// spans, logs, metrics, dashboards, audit log, anomaly history,
+	// users, …) and exits. Designed for the Helm pre-install /
+	// pre-upgrade hook so an operator pointing at an existing
+	// external CH can re-deploy "as if from scratch". Honours
+	// COREMETRY_CH_RESET_SCHEMA=1 as an env-var alias for ergonomic
+	// container args. Idempotent — DROP DATABASE IF EXISTS.
+	resetSchema     := flag.Bool("reset-schema", false, "DROP the configured CH database and exit. Destroys ALL coremetry data — use only for fresh install hooks.")
 	flag.Parse()
+	if v := os.Getenv("COREMETRY_CH_RESET_SCHEMA"); v == "1" || v == "true" {
+		*resetSchema = true
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -70,6 +81,20 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Reset-schema runs BEFORE chstore.New() — that constructor
+	// opens a connection to the target database and re-runs every
+	// migration, which would defeat the whole point of dropping.
+	// We open our own setup connection, drop, exit. The next pod
+	// (the regular coremetry container, not this Job) will boot
+	// normally and recreate everything.
+	if *resetSchema {
+		log.Printf("[reset-schema] DESTRUCTIVE: about to drop database %q on %s", cfg.ClickHouse.Database, cfg.ClickHouse.Addr)
+		if err := chstore.ResetSchema(ctx, cfg.ClickHouse); err != nil {
+			log.Fatalf("[reset-schema] %v", err)
+		}
+		return
+	}
 
 	// ── ClickHouse ────────────────────────────────────────────────────────────
 	store, err := chstore.New(cfg.ClickHouse, cfg.Retention)

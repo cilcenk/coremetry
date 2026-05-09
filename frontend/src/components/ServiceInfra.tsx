@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Sparkline } from './Sparkline';
 import { api } from '@/lib/api';
 import type { InfraMetricSeries } from '@/lib/types';
@@ -39,7 +40,7 @@ export function ServiceInfra({ service, since = '15m' }: {
           Infra (last {since})
         </span>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-          process / pod metrics correlated with span timeline
+          process / pod metrics correlated with span timeline · click a tile to drill into the metric explorer
         </span>
       </div>
       <div style={{
@@ -48,23 +49,32 @@ export function ServiceInfra({ service, since = '15m' }: {
         gap: 12,
       }}>
         {data.map(s => (
-          <InfraTile key={s.metric} s={s} />
+          <InfraTile key={s.metric} s={s} service={service} />
         ))}
       </div>
     </div>
   );
 }
 
-function InfraTile({ s }: { s: InfraMetricSeries }) {
+function InfraTile({ s, service }: { s: InfraMetricSeries; service: string }) {
   const last = s.points.length > 0 ? s.points[s.points.length - 1].v : 0;
   const max  = s.points.length > 0 ? Math.max(...s.points.map(p => p.v)) : 0;
   const min  = s.points.length > 0 ? Math.min(...s.points.map(p => p.v)) : 0;
   const label = LABELS[s.metric] ?? s.metric.toUpperCase();
+  // Drill-down to the metrics explorer with this exact source
+  // metric pre-loaded for the same service. The explorer reads
+  // ?source/?service/?metric on mount (see /explore page).
+  const href = `/explore?source=metrics&service=${encodeURIComponent(service)}&metric=${encodeURIComponent(s.source)}`;
   return (
-    <div style={{
-      padding: 10, border: '1px solid var(--border)',
-      borderRadius: 6, background: 'var(--bg2)',
-    }}>
+    <Link href={href} title={`Open ${s.source} in metric explorer`}
+      style={{
+        padding: 10, border: '1px solid var(--border)',
+        borderRadius: 6, background: 'var(--bg2)',
+        textDecoration: 'none', color: 'inherit',
+        display: 'block', cursor: 'pointer',
+        transition: 'border-color 120ms, background 120ms',
+      }}
+      className="infra-tile">
       <div style={{
         fontSize: 10, color: 'var(--text3)',
         textTransform: 'uppercase', letterSpacing: 0.4,
@@ -88,9 +98,9 @@ function InfraTile({ s }: { s: InfraMetricSeries }) {
         <span>max {fmtValue(max, s.metric, s.unit)}</span>
       </div>
       <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }} title={s.source}>
-        src: {s.source}
+        src: {s.source} ↗
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -99,6 +109,7 @@ const LABELS: Record<string, string> = {
   memory:  'Memory',
   rps:     'Requests',
   runtime: 'Runtime',
+  heap:    'Heap',
 };
 
 const COLORS: Record<string, string> = {
@@ -106,6 +117,7 @@ const COLORS: Record<string, string> = {
   memory:  'var(--accent)',
   rps:     'var(--accent2)',
   runtime: 'var(--text2)',
+  heap:    'var(--err)',
 };
 
 function fmtValue(v: number, slot: string, unit: string): string {
@@ -115,7 +127,7 @@ function fmtValue(v: number, slot: string, unit: string): string {
     if (v >= 1) return `${v.toFixed(1)}%`;
     return `${(v * 100).toFixed(1)}%`;
   }
-  if (slot === 'memory' || unit === 'bytes') {
+  if (slot === 'memory' || slot === 'heap' || unit === 'bytes') {
     return fmtBytes(v);
   }
   if (slot === 'rps' || unit === '/s') {

@@ -13,13 +13,19 @@ import type { ExploreSeries, MetricInfo, TimeRange } from '@/lib/types';
 // flowing for the selected service (or all services), then
 // renders the time-series via the chosen viz. Compare-period
 // overlays the previous window as faded twin series.
-export function MetricsExplorer({ range, viz, compare }: {
+export function MetricsExplorer({ range, viz, compare, initialService = '', initialMetric = '' }: {
   range: TimeRange;
   viz: ExploreVizKind;
   compare: boolean;
+  // When the explorer is opened from a deep-link (infra tile,
+  // anomaly card, etc.) these pre-fill the picker so the chart
+  // renders immediately. Empty defaults preserve the standalone
+  // "operator picks from scratch" flow.
+  initialService?: string;
+  initialMetric?: string;
 }) {
-  const [service, setService] = useState('');
-  const [metric, setMetric]   = useState('');
+  const [service, setService] = useState(initialService);
+  const [metric, setMetric]   = useState(initialMetric);
   const [names, setNames]     = useState<MetricInfo[]>([]);
   const [series, setSeries]   = useState<ExploreSeries[] | null | undefined>(undefined);
 

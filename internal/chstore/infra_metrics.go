@@ -63,6 +63,23 @@ var infraSlots = []infraSlot{
 		"jvm.thread.count",
 		"jvm.gc.duration",
 	}, ""},
+	// Heap is intentionally separate from "memory" (which is RSS /
+	// pod working set). Each runtime has its own canonical heap
+	// metric — the slot lists them in priority order so the panel
+	// surfaces whichever the service actually emits without
+	// requiring a runtime hint from the operator.
+	//   Java semconv 1.27+ → jvm.memory.heap.used
+	//   Java legacy        → process.runtime.jvm.memory.usage
+	//   Go runtime         → process.runtime.go.mem.heap_alloc
+	//   .NET runtime       → process.runtime.dotnet.gc.heap.size
+	//   Node.js runtime    → process.runtime.nodejs.memory.heap.used
+	{"heap", []string{
+		"jvm.memory.heap.used",
+		"process.runtime.jvm.memory.usage",
+		"process.runtime.go.mem.heap_alloc",
+		"process.runtime.dotnet.gc.heap.size",
+		"process.runtime.nodejs.memory.heap.used",
+	}, "bytes"},
 }
 
 // GetInfraMetrics returns the curated set of timeseries for one

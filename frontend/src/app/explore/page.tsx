@@ -297,7 +297,9 @@ function ExploreInner() {
             workspace + viz; Spans keeps its full legacy UI
             below this fork. */}
         {source === 'metrics' && (
-          <MetricsExplorer range={range} viz={viz} compare={compare} />
+          <MetricsExplorer range={range} viz={viz} compare={compare}
+            initialService={searchParams.get('service') ?? ''}
+            initialMetric={searchParams.get('metric') ?? ''} />
         )}
         {source === 'logs' && (
           <LogsExplorer range={range} viz={viz} compare={compare} />

@@ -158,6 +158,20 @@ secrets:
 # StatefulSet immediately (use Pause Deletion / two-step migration).
 clickhouse:
   enabled: true
+
+  # DESTRUCTIVE: when true, a Helm pre-install + pre-upgrade Job
+  # runs `coremetry --reset-schema` against the configured CH
+  # (in-cluster or external) BEFORE the app pod starts. Drops the
+  # whole database — every span, log, metric, dashboard, audit
+  # event — so the install proceeds against a clean slate. Useful
+  # for a "redeploy from scratch" against a long-lived external
+  # CH that you don't want to manually wipe with clickhouse-client.
+  #
+  # Idempotent (DROP DATABASE IF EXISTS), but every helm upgrade
+  # while this stays true will re-wipe the database. Flip back to
+  # false after the first install or you will keep losing data.
+  resetSchema: false
+
   external:
     # Single host: "ch.databases.svc:9000"
     # Multi-node external cluster: comma-separated seeds — the driver

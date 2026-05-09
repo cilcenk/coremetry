@@ -24,21 +24,11 @@ const SEV_OPTIONS = [
 
 function LogsInner() {
   const searchParams = useSearchParams();
-  const initTraceId = searchParams.get('traceId') ?? '';
-  const initSpanId  = searchParams.get('spanId')  ?? '';
-  // /anomalies and /service deep-link into /logs with these
-  // pre-applied so the operator lands on the exact slice that
-  // triggered the click (e.g., the service emitting an anomaly
-  // pattern), instead of a global "all logs" view.
-  const initService  = searchParams.get('service') ?? '';
-  const initSearch   = searchParams.get('q') ?? searchParams.get('search') ?? '';
 
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState({
-    service: initService, search: initSearch, severity: 0,
-    traceId: initTraceId,
-    spanId: initSpanId,
+    service: '', search: '', severity: 0, traceId: '', spanId: '',
   });
   const [draft, setDraft] = useState(filter);
   const [data, setData] = useState<LogsResponse | null | undefined>(undefined);
@@ -46,6 +36,28 @@ function LogsInner() {
   const [services, setServices] = useState<string[]>([]);
   // Live tail (HyperDX-style): poll every 2s, prepend new rows.
   const [live, setLive] = useState(false);
+
+  // Sync filter state from URL params on every URL change. This
+  // covers two cases that useState's lazy init does not handle
+  // reliably: (a) static-prerender → CSR hydration, where useState
+  // initializes against empty searchParams during SSG and never
+  // re-runs even though the client sees real params; (b) in-app
+  // navigations that update the URL without remounting the page.
+  // Anomaly + service drill-down links rely on this — they pass
+  // ?service=<svc>&q=<token> and expect the page to land already
+  // scoped instead of showing the global all-logs view.
+  useEffect(() => {
+    const next = {
+      service:  searchParams.get('service') ?? '',
+      search:   searchParams.get('q') ?? searchParams.get('search') ?? '',
+      severity: 0,
+      traceId:  searchParams.get('traceId') ?? '',
+      spanId:   searchParams.get('spanId')  ?? '',
+    };
+    setFilter(next);
+    setDraft(next);
+    setPage(0);
+  }, [searchParams]);
 
   useEffect(() => {
     api.services(timeRangeToNs(range))

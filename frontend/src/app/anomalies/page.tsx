@@ -790,7 +790,16 @@ function LogPatternsSection({ items, onMute }: {
                 : <span className="badge b-err"  style={{ fontSize: 10 }}>SPIKE ×{a.ratio.toFixed(1)}</span>}
               <span style={{ fontWeight: 600, fontSize: 12 }}>{a.pattern}</span>
               <span style={{ flex: 1 }} />
-              <Link href={`/logs?service=${encodeURIComponent(a.service)}&q=${encodeURIComponent(a.regex)}`}
+              {/* Drill-down to logs scoped to this service. We
+                  intentionally do NOT pass the pattern regex as
+                  ?q= because the /logs search uses substring
+                  match (multiSearchAnyCaseInsensitive on the
+                  tokenbf_v1 index), and a regex like
+                  "ORA-[0-9]+" never substring-matches a real log
+                  body. Operator gets the right service + can
+                  type a token themselves if they want to narrow
+                  further. */}
+              <Link href={`/logs?service=${encodeURIComponent(a.service)}`}
                     style={{ fontSize: 11, color: 'var(--accent2)' }}>
                 logs ↗
               </Link>

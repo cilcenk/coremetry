@@ -1,0 +1,135 @@
+package chstore
+
+import (
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"time"
+)
+
+// AnomalyEvent is one continuously-occurring anomaly tracked over
+// time. Same fingerprint (kind, pattern, service) keeps re-using
+// the row — last_seen advances on every detection, started_at and
+// peak_ratio capture history. An event is "active" iff last_seen
+// is recent; the "cleared" status is derived in the query layer
+// from last_seen freshness so we don't need a separate sweep.
+type AnomalyEvent struct {
+	ID            string  `json:"id"`
+	Kind          string  `json:"kind"`     // "log_pattern" | "trace_op"
+	Pattern       string  `json:"pattern"`  // pattern name (logs) or operation name (trace ops)
+	Service       string  `json:"service"`
+	StartedAt     int64   `json:"startedAt"`     // unix ns — first observation
+	LastSeen      int64   `json:"lastSeen"`      // unix ns — most recent observation
+	PeakRatio     float64 `json:"peakRatio"`     // worst ratio seen during the event
+	CurrentRatio  float64 `json:"currentRatio"`  // ratio at last_seen
+	CurrentCount  uint64  `json:"currentCount"`
+	Sample        string  `json:"sample"`
+	// Status is computed in the query, not stored. "active" while
+	// last_seen >= now() - 10m, otherwise "cleared".
+	Status        string `json:"status"`
+}
+
+// FingerprintAnomaly stitches the same (kind, pattern, service)
+// detections into one event row across detector ticks. Stable
+// across process restarts — sha1 is deterministic.
+func FingerprintAnomaly(kind, pattern, service string) string {
+	h := sha1.New()
+	h.Write([]byte(kind))
+	h.Write([]byte("|"))
+	h.Write([]byte(pattern))
+	h.Write([]byte("|"))
+	h.Write([]byte(service))
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// UpsertAnomalyEvent records (or refreshes) an event. ReplacingMergeTree
+// picks the latest version on read. peak_ratio is monotonic — we
+// pass max(prev, new) in the application layer because CH lacks an
+// atomic max-on-upsert primitive on this engine.
+func (s *Store) UpsertAnomalyEvent(ctx context.Context, e AnomalyEvent) error {
+	// Look up the previous peak_ratio + started_at — if the event
+	// already exists we keep the original started_at (so the row
+	// represents a single continuous anomaly span) and only bump
+	// peak_ratio if the new ratio is higher.
+	var prevStartedAt time.Time
+	var prevPeak float64
+	row := s.conn.QueryRow(ctx,
+		`SELECT started_at, peak_ratio FROM anomaly_events FINAL WHERE id = ?`, e.ID)
+	if err := row.Scan(&prevStartedAt, &prevPeak); err != nil {
+		// "no rows" → first sighting; use the current values.
+		prevStartedAt = time.Unix(0, e.StartedAt)
+		prevPeak = e.CurrentRatio
+	}
+	if e.CurrentRatio > prevPeak {
+		prevPeak = e.CurrentRatio
+	}
+
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO anomaly_events")
+	if err != nil {
+		return err
+	}
+	if err := batch.Append(
+		e.ID, e.Kind, e.Pattern, e.Service,
+		prevStartedAt,
+		time.Unix(0, e.LastSeen),
+		prevPeak, e.CurrentRatio, e.CurrentCount, e.Sample,
+	); err != nil {
+		return err
+	}
+	return batch.Send()
+}
+
+// ListAnomalyEventsFilter is the read-side cut. SinceNs filters by
+// last_seen >= … so a 24h window returns both currently-active
+// events and ones that cleared up to 24h ago.
+type ListAnomalyEventsFilter struct {
+	SinceNs   int64   // unix ns; 0 = last 24h default
+	ActiveAge time.Duration // last_seen freshness for "active" status; 0 = 10m default
+	Limit     int
+}
+
+func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter) ([]AnomalyEvent, error) {
+	if f.Limit == 0 {
+		f.Limit = 200
+	}
+	if f.ActiveAge == 0 {
+		f.ActiveAge = 10 * time.Minute
+	}
+	since := f.SinceNs
+	if since == 0 {
+		since = time.Now().Add(-24 * time.Hour).UnixNano()
+	}
+
+	rows, err := s.conn.Query(ctx, `
+		SELECT id, kind, pattern, service,
+		       toUnixTimestamp64Nano(started_at),
+		       toUnixTimestamp64Nano(last_seen),
+		       peak_ratio, current_ratio, current_count, sample,
+		       if(last_seen >= now64() - INTERVAL ? SECOND, 'active', 'cleared') AS status
+		FROM anomaly_events FINAL
+		WHERE toUnixTimestamp64Nano(last_seen) >= ?
+		ORDER BY status DESC, last_seen DESC
+		LIMIT ?`,
+		int64(f.ActiveAge.Seconds()),
+		since,
+		f.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AnomalyEvent
+	for rows.Next() {
+		var e AnomalyEvent
+		if err := rows.Scan(
+			&e.ID, &e.Kind, &e.Pattern, &e.Service,
+			&e.StartedAt, &e.LastSeen,
+			&e.PeakRatio, &e.CurrentRatio, &e.CurrentCount, &e.Sample,
+			&e.Status,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

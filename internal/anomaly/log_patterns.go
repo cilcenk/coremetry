@@ -61,9 +61,16 @@ var patterns = []logPattern{
 }
 
 // DetectLogPatterns runs each pattern against the raw `logs` CH
-// table over a 2-window range (the current window + the trailing
-// baseline of the same length). Returns only the patterns that
-// changed significantly: brand new, or 2x+ over baseline.
+// table over a current window + a much longer trailing baseline
+// (default: 5-min current vs 1-hour trailing). Returns only the
+// patterns that changed significantly: brand new, or 2x+ over the
+// per-window-length baseline rate.
+//
+// The asymmetric windows keep an anomaly visible for ~1 hour
+// after it first fires — a 5m-vs-5m comparison has the spike fall
+// into baseline within minutes, which makes the anomaly section
+// flicker. With a 1h baseline the same spike stays visible until
+// the baseline absorbs it.
 //
 // Performance:
 //   - One query per pattern (combines current + baseline via
@@ -80,7 +87,17 @@ var patterns = []logPattern{
 func DetectLogPatterns(ctx context.Context, store *chstore.Store, window time.Duration) ([]LogPatternAnomaly, error) {
 	now := time.Now()
 	curStart := now.Add(-window)
-	baseStart := now.Add(-2 * window)
+	// Trailing baseline = 1h (or the longer of 1h vs 12×window).
+	// Cap the lookback so a freshly deployed instance doesn't try
+	// to scan more than a day on the first call.
+	baseLookback := time.Hour
+	if 12*window > baseLookback {
+		baseLookback = 12 * window
+	}
+	if baseLookback > 24*time.Hour {
+		baseLookback = 24 * time.Hour
+	}
+	baseStart := now.Add(-baseLookback)
 
 	conn := store.Conn()
 
@@ -135,20 +152,29 @@ func DetectLogPatterns(ctx context.Context, store *chstore.Store, window time.Du
 				return
 			}
 
+			// Normalise the trailing baseline to the same window
+			// length as `cur` so a spike is "current rate is 2x+
+			// the trailing-window rate" regardless of how long
+			// the baseline lookback is. Without this, a 12x
+			// longer baseline window inflates `base` by 12x and
+			// the spike check would never fire.
+			windowRatio := float64(window) / float64(baseLookback)
+			basePerWindow := float64(base) * windowRatio
+
 			var (
 				ratio float64
 				kind  string
 			)
 			switch {
-			case base == 0 && cur >= 3:
+			case basePerWindow == 0 && cur >= 3:
 				// Brand-new pattern this window. cur >= 3 floor
 				// suppresses single-line noise (a one-off OOM in
 				// a quiet hour rarely needs a page) without
 				// requiring sustained volume to register.
 				ratio = float64(cur)
 				kind = "new"
-			case base > 0 && float64(cur)/float64(base) >= 2.0:
-				ratio = float64(cur) / float64(base)
+			case basePerWindow > 0 && float64(cur)/basePerWindow >= 2.0:
+				ratio = float64(cur) / basePerWindow
 				kind = "spike"
 			default:
 				return
@@ -156,11 +182,14 @@ func DetectLogPatterns(ctx context.Context, store *chstore.Store, window time.Du
 
 			results[i] = result{
 				anomaly: LogPatternAnomaly{
-					Pattern:       p.Name,
-					Regex:         p.Regex,
-					Kind:          kind,
-					CurrentCount:  cur,
-					BaselineCount: base,
+					Pattern: p.Name,
+					Regex:   p.Regex,
+					Kind:    kind,
+					CurrentCount: cur,
+					// Rendered to the operator as the
+					// per-window-equivalent baseline rate so
+					// the UI's "cur vs base" reads intuitively.
+					BaselineCount: uint64(basePerWindow),
 					Ratio:         ratio,
 					Service:       service,
 					Sample:        truncateSample(sample, 240),

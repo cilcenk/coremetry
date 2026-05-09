@@ -175,6 +175,14 @@ export const api = {
     get<import('./types').TraceOpAnomaly[]>(`/api/anomalies/trace-ops`),
   metricAnomalies:     () =>
     get<import('./types').Problem[]>(`/api/anomalies/metric`),
+  // Persistent anomaly history — every log-pattern + trace-op
+  // detection the recorder has observed in the requested window
+  // (default 24h). Each row carries an "active" or "cleared"
+  // status, so the operator can tell at a glance whether an
+  // event is ongoing or has subsided. Backed by the
+  // anomaly_events ReplacingMergeTree.
+  anomalyEvents:       (since = '24h', limit = 200) =>
+    get<import('./types').AnomalyEvent[]>(`/api/anomalies/events?since=${since}&limit=${limit}`),
 
   // Runtime settings: data retention
   getRetention: () => get<RetentionSpec>(`/api/settings/retention`),

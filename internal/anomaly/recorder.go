@@ -1,0 +1,129 @@
+package anomaly
+
+import (
+	"context"
+	"log"
+	"time"
+
+	"github.com/cilcenk/coremetry/internal/cache"
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
+
+// Recorder is the persistence side of the anomaly system. The
+// existing detectors (log_patterns.go, trace_ops.go) are pure
+// readers that compute "what looks anomalous in the last 5
+// minutes". This recorder runs them on a tick and upserts an
+// AnomalyEvent row per detection so the operator can later
+// answer "what fired in the last hour, even if it cleared".
+//
+// Events go through ReplacingMergeTree keyed on the
+// (kind, pattern, service) fingerprint — same pattern firing
+// across two consecutive ticks updates the same row, advancing
+// last_seen and tracking peak_ratio. "Cleared" status is
+// derived in the query layer from last_seen freshness, so we
+// don't need a separate sweep job.
+type Recorder struct {
+	store    *chstore.Store
+	interval time.Duration
+	window   time.Duration
+	lock     cache.Lock // for multi-replica deployments
+}
+
+const recorderLockKey = "coremetry:lock:anomaly-recorder"
+
+// NewRecorder builds a recorder that ticks every `interval` and
+// each tick scans `window` of recent data. Default 60s tick is
+// fine for the human-grade "anomalies in the last hour" UX —
+// faster ticks just multiply CH load with no operator benefit.
+func NewRecorder(store *chstore.Store, interval, window time.Duration, lock cache.Lock) *Recorder {
+	if interval == 0 {
+		interval = 60 * time.Second
+	}
+	if window == 0 {
+		window = 5 * time.Minute
+	}
+	return &Recorder{store: store, interval: interval, window: window, lock: lock}
+}
+
+// Start kicks the recorder into a goroutine. Caller cancels via
+// the supplied context. Multi-replica deployments use the lock
+// to elect a single writer per tick — the lock TTL is generous
+// (the interval × 2) so a slow CH doesn't kill liveness.
+func (r *Recorder) Start(ctx context.Context) {
+	go func() {
+		// First tick after a short stagger so the system has
+		// time to ingest some logs / spans before the first
+		// detection runs against an empty window.
+		time.Sleep(15 * time.Second)
+		r.tick(ctx)
+
+		t := time.NewTicker(r.interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				r.tick(ctx)
+			}
+		}
+	}()
+}
+
+func (r *Recorder) tick(ctx context.Context) {
+	// Lease the recorder leadership so multiple replicas don't
+	// fan out the same Upserts. Released on next tick implicitly
+	// via TTL — the lock is best-effort, an extra Upsert is
+	// harmless under ReplacingMergeTree(version).
+	got, err := r.lock.TryAcquire(ctx, recorderLockKey, 2*r.interval)
+	if err != nil || !got {
+		return
+	}
+	defer r.lock.Release(ctx, recorderLockKey)
+
+	now := time.Now()
+
+	// ── Log-pattern anomalies ─────────────────────────────────
+	logHits, err := DetectLogPatterns(ctx, r.store, r.window)
+	if err != nil {
+		log.Printf("[anomaly-recorder] log patterns: %v", err)
+	}
+	for _, a := range logHits {
+		ev := chstore.AnomalyEvent{
+			ID:           chstore.FingerprintAnomaly("log_pattern", a.Pattern, a.Service),
+			Kind:         "log_pattern",
+			Pattern:      a.Pattern,
+			Service:      a.Service,
+			StartedAt:    now.UnixNano(),
+			LastSeen:     a.LastSeenNs,
+			CurrentRatio: a.Ratio,
+			CurrentCount: a.CurrentCount,
+			Sample:       a.Sample,
+		}
+		if err := r.store.UpsertAnomalyEvent(ctx, ev); err != nil {
+			log.Printf("[anomaly-recorder] upsert log-pattern %s: %v", a.Pattern, err)
+		}
+	}
+
+	// ── Trace-op anomalies ────────────────────────────────────
+	traceHits, err := DetectTraceOpAnomalies(ctx, r.store, r.window)
+	if err != nil {
+		log.Printf("[anomaly-recorder] trace ops: %v", err)
+	}
+	for _, a := range traceHits {
+		ev := chstore.AnomalyEvent{
+			ID:           chstore.FingerprintAnomaly("trace_op", a.Operation, a.Service),
+			Kind:         "trace_op",
+			Pattern:      a.Operation,
+			Service:      a.Service,
+			StartedAt:    now.UnixNano(),
+			LastSeen:     a.LastSeenNs,
+			CurrentRatio: a.Ratio,
+			CurrentCount: a.CurrentErrors,
+			Sample:       a.SampleTraceID,
+		}
+		if err := r.store.UpsertAnomalyEvent(ctx, ev); err != nil {
+			log.Printf("[anomaly-recorder] upsert trace-op %s/%s: %v", a.Service, a.Operation, err)
+		}
+	}
+}

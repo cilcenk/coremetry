@@ -9,7 +9,7 @@ import { api, type UserRow } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample,
-  LogPatternAnomaly, TraceOpAnomaly, Problem,
+  LogPatternAnomaly, TraceOpAnomaly, Problem, AnomalyEvent,
 } from '@/lib/types';
 
 // State buckets shown as tabs along the top of the page.
@@ -47,11 +47,15 @@ export default function AnomaliesPage() {
   // Expanded fingerprint(s) — multiple groups can be open at once for compare-and-contrast.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Anomaly signals — independently fetched + 60s cached server
-  // side. All refresh alongside the exception inbox.
+  // Anomaly signals — independently fetched + 30-60s cached on
+  // the server. All refresh alongside the exception inbox.
   const [logPatterns, setLogPatterns] = useState<LogPatternAnomaly[] | undefined>(undefined);
   const [traceOps,    setTraceOps]    = useState<TraceOpAnomaly[]    | undefined>(undefined);
   const [metrics,     setMetrics]     = useState<Problem[]           | undefined>(undefined);
+  // Anomaly history (active + cleared from last 24h) — persisted
+  // by the background recorder so the operator can answer "did
+  // this fire today, even if it has subsided".
+  const [history, setHistory]         = useState<AnomalyEvent[]      | undefined>(undefined);
 
   const refresh = () => {
     setData(undefined);
@@ -61,6 +65,7 @@ export default function AnomaliesPage() {
     api.logPatternAnomalies().then(p => setLogPatterns(p ?? [])).catch(() => setLogPatterns([]));
     api.traceOpAnomalies().then(t => setTraceOps(t ?? [])).catch(() => setTraceOps([]));
     api.metricAnomalies().then(m => setMetrics(m ?? [])).catch(() => setMetrics([]));
+    api.anomalyEvents().then(h => setHistory(h ?? [])).catch(() => setHistory([]));
     api.exceptionGroups({ state: tab, service: service || undefined, limit: 200 })
       .then(d => setData(d ?? [])).catch(() => setData(null));
   };
@@ -142,6 +147,12 @@ export default function AnomaliesPage() {
         <LogPatternsSection items={logPatterns} />
         <TraceOpsSection    items={traceOps} />
         <MetricSection      items={metrics} />
+
+        {/* Persistent history — every detection the recorder
+            saw in the last 24h, with status. Lets the operator
+            answer "did this fire earlier today, even though
+            it has stopped now". */}
+        <HistorySection items={history} />
 
         <div className="tab-strip">
           {TABS.map(t => (
@@ -548,6 +559,62 @@ function MetricSection({ items }: { items: Problem[] | undefined }) {
             </div>
           </div>
         ))}
+      </div>
+    </AnomalyShell>
+  );
+}
+
+// HistorySection renders the persistent log + trace-op anomaly
+// timeline from the last 24 hours. Each row shows whether the
+// event is still active or has cleared, when it started, when
+// it was last seen, and its peak ratio. The operator gets a
+// chronological view of "what's been wrong today" without
+// having to monitor the live sections continuously.
+function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
+  if (items === undefined || items.length === 0) return null;
+  const active  = items.filter(e => e.status === 'active');
+  const cleared = items.filter(e => e.status === 'cleared');
+  return (
+    <AnomalyShell
+      title="Anomaly history (last 24h)"
+      hint={`${active.length} active · ${cleared.length} cleared`}
+      count={items.length}>
+      <div className="table-wrap">
+        <table>
+          <thead><tr>
+            <th style={{ width: 70 }}>Status</th>
+            <th>Pattern</th>
+            <th>Service</th>
+            <th>Kind</th>
+            <th className="num">Peak ×</th>
+            <th>Started</th>
+            <th>Last seen</th>
+          </tr></thead>
+          <tbody>
+            {items.map(e => (
+              <tr key={e.id}>
+                <td>
+                  <span className={`badge ${e.status === 'active' ? 'b-err' : 'b-ok'}`} style={{ fontSize: 10 }}>
+                    {e.status === 'active' ? 'ACTIVE' : 'CLEARED'}
+                  </span>
+                </td>
+                <td style={{ fontWeight: 600 }}>{e.pattern}</td>
+                <td>
+                  <Link href={`/service?name=${encodeURIComponent(e.service)}`}
+                        style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                    {e.service || '—'}
+                  </Link>
+                </td>
+                <td style={{ fontSize: 11, color: 'var(--text2)' }}>
+                  {e.kind === 'log_pattern' ? 'log' : 'trace op'}
+                </td>
+                <td className="num mono">{e.peakRatio.toFixed(1)}</td>
+                <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(e.startedAt)}</td>
+                <td className="mono" style={{ fontSize: 11 }}>{tsLong(e.lastSeen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </AnomalyShell>
   );

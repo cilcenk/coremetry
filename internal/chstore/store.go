@@ -297,6 +297,30 @@ func (s *Store) migrate(ctx context.Context) error {
 		// pre-date the Grafana-style variable system.
 		`ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS variables String DEFAULT '[]' CODEC(ZSTD(3))`,
 
+		// anomaly_events: persistent record of detected log-pattern
+		// + trace-op anomalies. ReplacingMergeTree(version) keeps
+		// only the latest row per id; the recorder upserts on every
+		// detector tick so last_seen advances continuously while a
+		// pattern is firing. The /anomalies page derives "active"
+		// vs "cleared" status from last_seen freshness in the query
+		// layer — no separate sweep needed.
+		`CREATE TABLE IF NOT EXISTS anomaly_events (
+			id            String,
+			kind          LowCardinality(String),     -- log_pattern | trace_op
+			pattern       String,                      -- pattern name OR operation name
+			service       LowCardinality(String),
+			started_at    DateTime64(9),
+			last_seen     DateTime64(9),
+			peak_ratio    Float64,
+			current_ratio Float64,
+			current_count UInt64,
+			sample        String        DEFAULT '',
+			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toDate(started_at)
+		ORDER BY id
+		TTL toDate(started_at) + INTERVAL 30 DAY`,
+
 		`CREATE TABLE IF NOT EXISTS alert_rules (
 			id           String,
 			name         String,

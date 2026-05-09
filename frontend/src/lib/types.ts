@@ -642,6 +642,26 @@ export type SortOrder = 'asc' | 'desc';
 // observed across the sampled traces; siblings repeating the exact
 // same triple collapse into a single row carrying count + avg/max
 // duration + error count.
+// One row of the anomaly history — every log-pattern + trace-op
+// detection the recorder has observed in the requested window.
+// Status is derived in the backend query from last_seen freshness:
+// "active" while still firing in the last 10 min, "cleared"
+// otherwise. Lets the operator answer "did this fire today, even
+// if it has stopped".
+export interface AnomalyEvent {
+  id: string;
+  kind: 'log_pattern' | 'trace_op';
+  pattern: string;
+  service: string;
+  startedAt: number;     // unix ns — first observation
+  lastSeen: number;      // unix ns — most recent observation
+  peakRatio: number;
+  currentRatio: number;
+  currentCount: number;
+  sample: string;
+  status: 'active' | 'cleared';
+}
+
 // Per-operation error anomaly — a (service, operation) tuple
 // that is either failing for the first time in the window or
 // whose error count just doubled.

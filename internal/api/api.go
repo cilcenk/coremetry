@@ -159,6 +159,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/anomalies/log-patterns", s.getLogPatternAnomalies)
 	mux.HandleFunc("GET /api/anomalies/trace-ops",    s.getTraceOpAnomalies)
 	mux.HandleFunc("GET /api/anomalies/metric",       s.getMetricAnomalies)
+	mux.HandleFunc("GET /api/anomalies/events",       s.getAnomalyEvents)
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────
@@ -2977,6 +2978,26 @@ func (s *Server) getTraceOpAnomalies(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("anomaly:trace-ops:window=%s", window)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		return anomaly.DetectTraceOpAnomalies(r.Context(), s.store, window)
+	})
+}
+
+// getAnomalyEvents returns the persistent history: every
+// log-pattern + trace-op anomaly the recorder has observed in
+// the requested window, currently-active and cleared alike.
+// Status is computed in CH from last_seen freshness so a single
+// query covers both. Default window is 24h. Cached 30s — the
+// recorder upserts every 60s, so a 30s freshness ceiling means
+// at most one tick of staleness.
+func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	since := parseDuration(q.Get("since"), 24*time.Hour)
+	limit := parseInt(q.Get("limit"), 200)
+	key := fmt.Sprintf("anomaly:events:since=%s:limit=%d", since, limit)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.ListAnomalyEvents(r.Context(), chstore.ListAnomalyEventsFilter{
+			SinceNs: time.Now().Add(-since).UnixNano(),
+			Limit:   limit,
+		})
 	})
 }
 

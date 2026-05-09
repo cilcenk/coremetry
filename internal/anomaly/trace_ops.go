@@ -26,21 +26,44 @@ type TraceOpAnomaly struct {
 }
 
 // DetectTraceOpAnomalies finds per-operation error spikes over
-// the last `window`. Two qualifying conditions:
-//   - baseline_errors == 0 AND current_errors >= 3
+// the last `window` against a longer trailing baseline (1h or
+// 12×window, whichever is larger). Two qualifying conditions
+// using the per-window-equivalent baseline:
+//   - baseline_per_window == 0 AND current_errors >= 3
 //     ("new error pattern", i.e. an op that started failing now)
-//   - baseline_errors > 0 AND ratio >= 2
+//   - baseline_per_window > 0 AND ratio >= 2
 //     (existing op whose error rate just doubled)
 //
-// One CH query that LEFT JOINs the current and trailing windows
-// over the (service_name, name) primary-key prefix, so even at
-// 1B spans/day the scan is bounded to the matching slice.
+// The asymmetric baseline (5-min current vs 1-hour trailing)
+// keeps fresh spikes visible for ~1 hour — a 5m-vs-5m comparison
+// would have the spike fall into baseline within minutes,
+// flickering the anomaly section as windows slide.
+//
+// One CH query LEFT JOINs the current and trailing windows over
+// the (service_name, name) primary-key prefix, so even at 1B
+// spans/day the scan is bounded to the matching slice.
 func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window time.Duration) ([]TraceOpAnomaly, error) {
 	conn := store.Conn()
 	now := time.Now()
 	curStart := now.Add(-window)
-	baseStart := now.Add(-2 * window)
+	baseLookback := time.Hour
+	if 12*window > baseLookback {
+		baseLookback = 12 * window
+	}
+	if baseLookback > 24*time.Hour {
+		baseLookback = 24 * time.Hour
+	}
+	baseStart := now.Add(-baseLookback)
+	// Normalisation factor: ratio of current window length to
+	// baseline lookback. We compare current_errors against
+	// baseline_errors × this factor, so e.g. 5m vs 1h needs the
+	// raw baseline divided by 12.
+	windowRatio := float64(window) / float64(baseLookback)
 
+	// `?` placeholders carry windowRatio in the spots where we
+	// normalise the trailing baseline to the same window length
+	// as `cur`. Otherwise a 12× longer baseline would inflate
+	// base.errs and the spike check would never fire.
 	rows, err := conn.Query(ctx, `
 		WITH cur AS (
 		  SELECT service_name, name,
@@ -63,21 +86,25 @@ func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window ti
 		  cur.service_name,
 		  cur.name,
 		  cur.errs,
-		  ifNull(base.errs, 0)                                      AS base_errs,
+		  toUInt64(ifNull(base.errs, 0) * ?)                        AS base_errs_per_window,
 		  cur.sample,
 		  toUnixTimestamp64Nano(cur.last_at)                        AS last_ns,
-		  if(base_errs = 0, toFloat64(cur.errs), cur.errs / base_errs) AS ratio
+		  if(base_errs_per_window = 0,
+		     toFloat64(cur.errs),
+		     cur.errs / base_errs_per_window)                       AS ratio
 		FROM cur
 		LEFT JOIN base
 		  ON cur.service_name = base.service_name AND cur.name = base.name
 		WHERE
-		  (ifNull(base.errs, 0) = 0  AND cur.errs >= 3) OR
-		  (ifNull(base.errs, 0) > 0  AND cur.errs / base.errs >= 2)
+		  (ifNull(base.errs, 0) = 0 AND cur.errs >= 3) OR
+		  (ifNull(base.errs, 0) > 0 AND cur.errs / (ifNull(base.errs, 0) * ?) >= 2)
 		ORDER BY ratio DESC, cur.errs DESC
 		LIMIT 50
 		SETTINGS max_execution_time = 30`,
 		curStart, now,
 		baseStart, curStart,
+		windowRatio,
+		windowRatio,
 	)
 	if err != nil {
 		return nil, err

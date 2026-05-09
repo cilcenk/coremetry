@@ -151,6 +151,13 @@ func main() {
 	// ── Anomaly detector (Watchdog-style baseline check) ─────────────────────
 	go anomaly.New(store, 2*time.Minute, lockImpl, notifier).Start(ctx)
 
+	// ── Anomaly recorder ─────────────────────────────────────────────────────
+	// Persists log-pattern + trace-op detections into anomaly_events
+	// so the operator can later answer "did this fire in the last
+	// hour, even if it has cleared". Without this the /anomalies
+	// page only ever shows the live snapshot.
+	anomaly.NewRecorder(store, time.Minute, 5*time.Minute, lockImpl).Start(ctx)
+
 	// ── Synthetic monitor runner (HTTP probes + heartbeat absence) ───────────
 	// Lock-gated so HA replicas don't double-probe; emits state-change
 	// problems through the same notifier path as alert-rule firings.

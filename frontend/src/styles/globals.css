@@ -159,6 +159,15 @@ button.lg { padding: 8px 18px; font-size: 14px; }
 }
 .card-tight { padding: 10px; border-radius: 6px; background: var(--bg2); }
 
+/* Dashboard listing card hover — used by /dashboards. Subtle
+   border-tint so the link target is obvious without flipping
+   the whole tile colour. */
+.dashboard-card:hover {
+  border-color: var(--accent);
+  background: var(--bg3);
+  text-decoration: none !important;
+}
+
 /* ── Modal / dialog primitive ──────────────────────────────────
    Centred overlay with backdrop. Used by the Modal component
    (components/ui/Modal.tsx) which adds focus-trap + ESC. The

@@ -1,24 +1,53 @@
 import { useEffect, useState, FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
+import { Modal, Field, Button, Stack } from '@/components/ui';
+import { Sparkline } from '@/components/Sparkline';
 import { api } from '@/lib/api';
-import { tsLong } from '@/lib/utils';
+import { tsLong, fmtNum } from '@/lib/utils';
 import type { DashboardSummary } from '@/lib/types';
 
 export default function DashboardsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [items, setItems] = useState<DashboardSummary[] | null | undefined>(undefined);
   const [showNew, setShowNew] = useState(false);
 
-  const refresh = () => {
-    setItems(undefined);
-    api.listDashboards().then(d => setItems(d ?? [])).catch(() => setItems(null));
-  };
-  useEffect(refresh, []);
+  const dashboardsQ = useQuery<DashboardSummary[]>({
+    queryKey: ['dashboards', 'list'],
+    queryFn: async () => (await api.listDashboards()) ?? [],
+    staleTime: 60_000,
+  });
+  const items = dashboardsQ.isLoading
+    ? undefined
+    : dashboardsQ.isError
+      ? null
+      : dashboardsQ.data ?? [];
+
+  // Single global "spans/min over last 1h" series. Every card
+  // renders the same sparkline because the metric is system-
+  // wide; fetching once and sharing avoids N parallel requests
+  // when the dashboard list is long. Refresh every minute.
+  const activityQ = useQuery({
+    queryKey: ['dashboards', 'activity'],
+    queryFn: async () => {
+      const now = Date.now() * 1e6;
+      const from = now - 60 * 60 * 1e9; // last 1h
+      const series = await api.spanMetric({
+        agg: 'count',
+        from, to: now,
+        step: 60, // 1-min buckets, ~60 points
+      });
+      return series?.[0]?.points ?? [];
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  const activity = (activityQ.data ?? []).map(p => p.value);
+  const totalSpans = activity.reduce((a, b) => a + b, 0);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
 
@@ -44,23 +73,49 @@ export default function DashboardsPage() {
         {items && items.length > 0 && (
           <div style={{
             display: 'grid', gap: 12,
-            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
           }}>
             {items.map(d => (
-              <Link key={d.id} to={`/dashboard?id=${d.id}`} style={{
-                display: 'block', padding: 16, borderRadius: 8,
+              <Link key={d.id} to={`/dashboard?id=${d.id}`} className="dashboard-card" style={{
+                display: 'flex', flexDirection: 'column',
+                padding: 14, borderRadius: 8,
                 background: 'var(--bg2)', border: '1px solid var(--border)',
                 color: 'inherit', textDecoration: 'none',
+                transition: 'border-color 120ms, background 120ms',
+                gap: 8,
               }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{d.name}</div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{d.name}</div>
                 {d.description && (
-                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8,
+                  <div style={{ fontSize: 12, color: 'var(--text2)',
                                 overflow: 'hidden', textOverflow: 'ellipsis',
                                 display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                     {d.description}
                   </div>
                 )}
-                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                {/* Activity thumbnail: shared spans/min sparkline so
+                    a glance at the card list shows whether traffic
+                    is steady, ramping, or quiet. Same data across
+                    cards because the metric is system-wide; per-
+                    dashboard scoping would need backend support. */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  paddingTop: 6, borderTop: '1px solid var(--border)',
+                }}>
+                  {activity.length > 1 ? (
+                    <Sparkline values={activity}
+                               width={140} height={28}
+                               title={`Spans/min · last 1h · total ${fmtNum(totalSpans)}`} />
+                  ) : (
+                    <span style={{ width: 140, height: 28, display: 'inline-block', color: 'var(--text3)', fontSize: 11 }}>
+                      —
+                    </span>
+                  )}
+                  <span style={{ flex: 1 }} />
+                  <span style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'right' }}>
+                    {fmtNum(totalSpans)} spans/h
+                  </span>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text3)' }}>
                   Updated {tsLong(d.updatedAt)}
                 </div>
               </Link>
@@ -100,35 +155,35 @@ function NewDashboardModal({ onClose, onCreated }: {
   };
 
   return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-      display: 'grid', placeItems: 'center', zIndex: 100,
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: 380, padding: 24, borderRadius: 8,
-        background: 'var(--bg2)', border: '1px solid var(--border)',
-      }}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 14 }}>New dashboard</div>
-        <form onSubmit={submit}>
-          <label style={{ display: 'block', marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Name</div>
-            <input required autoFocus value={name}
-              onChange={e => setName(e.target.value)} style={{ width: '100%' }} />
-          </label>
-          <label style={{ display: 'block', marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Description (optional)</div>
-            <input value={description}
-              onChange={e => setDescription(e.target.value)} style={{ width: '100%' }} />
-          </label>
+    <Modal
+      open={true}
+      onClose={onClose}
+      title="New dashboard"
+      size="sm"
+      initialFocus="input[name=name]"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" form="new-dashboard-form" loading={busy}>Create</Button>
+        </>
+      }>
+      <form id="new-dashboard-form" onSubmit={submit}>
+        <Stack gap={3}>
+          <Field
+            label="Name"
+            name="name"
+            required
+            value={name}
+            onChange={e => setName(e.target.value)} />
+          <Field
+            label="Description (optional)"
+            value={description}
+            onChange={e => setDescription(e.target.value)} />
           {error && (
-            <div style={{ color: 'var(--err)', fontSize: 12, marginBottom: 8 }}>{error}</div>
+            <div style={{ color: 'var(--err)', fontSize: 12 }}>{error}</div>
           )}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button type="button" className="sec" onClick={onClose}>Cancel</button>
-            <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </Stack>
+      </form>
+    </Modal>
   );
 }

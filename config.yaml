@@ -9,6 +9,14 @@ clickhouse:
   password: ""
   max_open_conns: 10
   dial_timeout: "5s"
+  # Distributed-CH mode (optional). Set cluster_name to the
+  # <remote_servers> entry on every CH node — Coremetry then
+  # creates Replicated*MergeTree per shard + Distributed wrappers
+  # automatically. Leave empty for single-node deployments. See
+  # docs/clickhouse-cluster.md for the operator setup.
+  # cluster_name: "coremetry_cluster"
+  # replica_path: "/clickhouse/tables"     # default ZK path prefix
+  # shard_key: "rand()"                    # or cityHash64(trace_id)
 
 retention:
   spans_days: 30
@@ -17,9 +25,9 @@ retention:
 
 ingestion:
   batch_size: 10000
-  buffer_size: 100000
-  flush_interval: "5s"
-  workers: 4
+  buffer_size: 500000      # 10s of headroom at 50k spans/sec burst
+  flush_interval: "2s"
+  workers: 8                # parallel flushers; honored as of v0.2.59
 
 # Optional. Empty url = single-instance mode (no cache, always-leader lock).
 # Set this to enable hot caching of frequently-polled endpoints AND to make

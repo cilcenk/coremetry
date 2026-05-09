@@ -133,6 +133,30 @@ type CHConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"` // self-signed CA escape hatch
 	MaxOpenConns       int    `yaml:"max_open_conns"`
 	DialTimeout        string `yaml:"dial_timeout"`
+
+	// ClusterName turns on Distributed-CH mode. When non-empty:
+	//   - All DDL gets `ON CLUSTER <ClusterName>` so schema is
+	//     applied across every node in the named ZK-coordinated
+	//     cluster (cluster definition lives in CH's remote_servers).
+	//   - High-volume tables (spans, logs, metric_points, profiles)
+	//     are created as `<name>_local` ReplicatedMergeTree on each
+	//     shard plus a `<name>` Distributed wrapper that fans out
+	//     inserts and queries.
+	//   - Materialized views feed the *_local tables; their
+	//     Distributed wrappers re-export.
+	// When empty (default), single-node MergeTree behaviour is
+	// preserved exactly — existing deployments keep working.
+	ClusterName string `yaml:"cluster_name"`
+	// ReplicaPath is the ZooKeeper / Keeper prefix used for
+	// ReplicatedMergeTree path argument. {shard}/{replica} macros
+	// are appended automatically. Default: "/clickhouse/tables".
+	ReplicaPath string `yaml:"replica_path"`
+	// ShardKey: the SQL expression used as the Distributed shard
+	// key. Defaults to "rand()" — even distribution, no locality
+	// guarantee. Set to "cityHash64(trace_id)" if you want all
+	// spans of a trace to land on the same shard (faster joins,
+	// at the cost of slightly less even rows-per-shard).
+	ShardKey string `yaml:"shard_key"`
 }
 
 // Hosts splits Addr on commas and trims surrounding whitespace, so

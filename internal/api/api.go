@@ -3092,6 +3092,7 @@ func (s *Server) collectStatus(ctx context.Context) systemStatus {
 // as 0; subsequent samples are accurate.
 type counter interface {
 	QueueLen() int
+	Capacity() int
 	Dropped() int64
 	Accepted() int64
 }
@@ -3119,7 +3120,7 @@ func (s *Server) queueStatusWithRate(name string, q counter) componentStatus {
 	if c.Info == nil {
 		c.Info = map[string]string{}
 	}
-	c.Info["queue"] = fmt.Sprintf("%d / %d", q.QueueLen(), 100_000)
+	c.Info["queue"] = fmt.Sprintf("%d / %d", q.QueueLen(), q.Capacity())
 	if q.Dropped() > 0 {
 		c.Info["dropped"] = fmt.Sprintf("%d", q.Dropped())
 	}
@@ -3128,9 +3129,10 @@ func (s *Server) queueStatusWithRate(name string, q counter) componentStatus {
 
 // queueStatus inspects an ingest queue and reports degraded once it's
 // past 80% full, outage once it's past 95% (where back-pressure starts
-// dropping records).
-func queueStatus(name string, q interface{ QueueLen() int; Dropped() int64 }) componentStatus {
-	const cap = 100_000 // matches Ingestion.BufferSize default in config
+// dropping records). Capacity is read off the consumer so the status
+// stays accurate when the operator tunes BufferSize via config.
+func queueStatus(name string, q interface{ QueueLen() int; Capacity() int; Dropped() int64 }) componentStatus {
+	cap := q.Capacity()
 	depth := q.QueueLen()
 	dropped := q.Dropped()
 	c := componentStatus{Name: name, Status: "operational"}
@@ -3139,14 +3141,16 @@ func queueStatus(name string, q interface{ QueueLen() int; Dropped() int64 }) co
 		c.Message = fmt.Sprintf("dropped %d records — queue full", dropped)
 		return c
 	}
-	if depth > cap*95/100 {
-		c.Status = "outage"
-		c.Message = fmt.Sprintf("queue %d / %d (>95%%)", depth, cap)
-	} else if depth > cap*80/100 {
-		c.Status = "degraded"
-		c.Message = fmt.Sprintf("queue %d / %d (>80%%)", depth, cap)
-	} else if depth > 0 {
-		c.Message = fmt.Sprintf("queue %d / %d", depth, cap)
+	if cap > 0 {
+		if depth > cap*95/100 {
+			c.Status = "outage"
+			c.Message = fmt.Sprintf("queue %d / %d (>95%%)", depth, cap)
+		} else if depth > cap*80/100 {
+			c.Status = "degraded"
+			c.Message = fmt.Sprintf("queue %d / %d (>80%%)", depth, cap)
+		} else if depth > 0 {
+			c.Message = fmt.Sprintf("queue %d / %d", depth, cap)
+		}
 	}
 	return c
 }

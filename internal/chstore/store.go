@@ -557,8 +557,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	for _, q := range tables {
-		if err := s.conn.Exec(ctx, q); err != nil {
-			return fmt.Errorf("create table: %w\nSQL: %.120s", err, q)
+		if err := s.execDDL(ctx, q); err != nil {
+			return fmt.Errorf("create table: %w", err)
 		}
 	}
 
@@ -589,8 +589,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_http_status http_status TYPE minmax    GRANULARITY 4`,
 	}
 	for _, q := range alters {
-		if err := s.conn.Exec(ctx, q); err != nil {
-			return fmt.Errorf("alter table: %w\nSQL: %.120s", err, q)
+		if err := s.execDDL(ctx, q); err != nil {
+			return fmt.Errorf("alter table: %w", err)
 		}
 	}
 
@@ -645,8 +645,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		 GROUP BY day`,
 	}
 	for _, q := range mvs {
-		if err := s.conn.Exec(ctx, q); err != nil {
-			return fmt.Errorf("create MV: %w\nSQL: %.140s", err, q)
+		if err := s.execDDL(ctx, q); err != nil {
+			return fmt.Errorf("create MV: %w", err)
 		}
 	}
 	// Forward-compat: ClickHouse doesn't support ADD COLUMN on
@@ -665,11 +665,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		  AND name     = 'apdex_satisfied_state'`
 	if err := s.conn.QueryRow(ctx, probeSQL).Scan(&hasApdex); err == nil && hasApdex == 0 {
 		log.Println("[chstore] upgrading service_summary_5m MV (adding apdex states) — past summary buckets will be dropped")
-		if err := s.conn.Exec(ctx, `DROP TABLE IF EXISTS service_summary_5m`); err != nil {
+		// In cluster mode the local table is named with a _local
+		// suffix, so we drop both flavours; DROP IF EXISTS makes
+		// the second a no-op when single-node.
+		dropTarget := "service_summary_5m"
+		if s.clusterMode() {
+			dropTarget = "service_summary_5m_local"
+		}
+		if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()); err != nil {
 			return fmt.Errorf("drop old MV for upgrade: %w", err)
 		}
 		// Re-run the create (mvs[0] from above) now that the old one is gone.
-		if err := s.conn.Exec(ctx, mvs[0]); err != nil {
+		if err := s.execDDL(ctx, mvs[0]); err != nil {
 			return fmt.Errorf("recreate MV with apdex: %w", err)
 		}
 	}

@@ -161,6 +161,7 @@ func (c *Consumer[T]) Stop() {
 }
 
 func (c *Consumer[T]) QueueLen() int  { return len(c.ch) }
+func (c *Consumer[T]) Capacity() int  { return cap(c.ch) }
 func (c *Consumer[T]) Dropped() int64 { return c.dropped.Load() }
 
 // Accepted returns the cumulative count of items that were successfully

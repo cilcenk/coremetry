@@ -28,3 +28,6 @@ export type { FieldProps, SelectFieldProps, TextareaFieldProps } from './Field';
 
 export { Stack, Row } from './Stack';
 export type { StackProps, RowProps } from './Stack';
+
+export { VirtualList } from './VirtualList';
+export type { VirtualListProps } from './VirtualList';

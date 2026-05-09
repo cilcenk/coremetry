@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
+import { VirtualList } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { SQLResult, SchemaTable } from '@/lib/types';
 
@@ -274,16 +275,34 @@ export default function SQLPlaygroundPage() {
 }
 
 function ResultTable({ result }: { result: SQLResult }) {
+  // Virtualised result grid. The previous implementation
+  // rendered every result row to the DOM, which froze the
+  // browser at the 10k cap. With VirtualList only the visible
+  // ~30 rows touch the DOM; scrolling stays buttery even on a
+  // worst-case query.
+  //
+  // Layout: explicit CSS Grid with one column per result column
+  // so headers and body rows share the same template — matches
+  // the visual `<table>` look without needing table semantics.
+  // Each column gets minmax(120px, 1fr) — small enough to fit
+  // many columns, large enough to read.
+  const cols = result.columns.length;
+  const gridTemplate = `repeat(${cols}, minmax(120px, 1fr))`;
+  const ROW_HEIGHT = 22; // matches the previous td vertical padding × 2 + line height
+
   return (
     <div style={{
-      flex: 1, minHeight: 0, overflow: 'auto',
+      flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
       border: '1px solid var(--border)', borderRadius: 6,
       background: 'var(--bg1)',
+      overflow: 'hidden',
     }}>
+      {/* Meta strip — query stats, sticky cap warning. */}
       <div style={{
-        position: 'sticky', top: 0, background: 'var(--bg2)',
+        background: 'var(--bg2)',
         padding: '6px 12px', borderBottom: '1px solid var(--border)',
         fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 12,
+        flexShrink: 0,
       }}>
         <span><b style={{ color: 'var(--text)' }}>{result.rowCount}</b> rows</span>
         <span>·</span>
@@ -296,37 +315,54 @@ function ResultTable({ result }: { result: SQLResult }) {
           </span>
         )}
       </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-        <thead>
-          <tr>
-            {result.columns.map(c => (
-              <th key={c} style={{
-                padding: '4px 8px', borderBottom: '1px solid var(--border)',
-                background: 'var(--bg2)', textAlign: 'left',
-                fontWeight: 600, position: 'sticky', top: 27,
-                fontFamily: 'monospace',
-              }}>{c}</th>
+
+      {/* Header row — same gridTemplate as data rows so columns
+          line up. Outside the virtualised body so it stays
+          pinned regardless of scroll position. */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: gridTemplate,
+        background: 'var(--bg2)',
+        borderBottom: '1px solid var(--border)',
+        fontFamily: 'monospace', fontSize: 11, fontWeight: 600,
+        flexShrink: 0,
+      }}>
+        {result.columns.map(c => (
+          <div key={c} style={{ padding: '4px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {c}
+          </div>
+        ))}
+      </div>
+
+      {/* Virtualised body. height: '100%' inside flex container
+          fills the remaining space; the inner scroll lives on
+          the VirtualList element. */}
+      <VirtualList
+        items={result.rows}
+        rowHeight={ROW_HEIGHT}
+        height="100%"
+        overscan={12}
+        renderRow={(row, i) => (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: gridTemplate,
+            borderBottom: '1px solid var(--border)',
+            fontSize: 11, fontFamily: 'monospace',
+            background: i % 2 === 0 ? 'transparent' : 'var(--bg0)',
+          }}>
+            {row.map((v, j) => (
+              <div key={j} style={{
+                padding: '3px 8px', whiteSpace: 'nowrap',
+                overflow: 'hidden', textOverflow: 'ellipsis',
+              }} title={String(v)}>
+                {v === null ? <span style={{ color: 'var(--text3)' }}>NULL</span>
+                            : typeof v === 'object' ? JSON.stringify(v)
+                            : String(v)}
+              </div>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {result.rows.map((row, i) => (
-            <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-              {row.map((v, j) => (
-                <td key={j} style={{
-                  padding: '3px 8px', whiteSpace: 'nowrap',
-                  fontFamily: 'monospace',
-                  maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis',
-                }} title={String(v)}>
-                  {v === null ? <span style={{ color: 'var(--text3)' }}>NULL</span>
-                              : typeof v === 'object' ? JSON.stringify(v)
-                              : String(v)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          </div>
+        )}
+      />
     </div>
   );
 }

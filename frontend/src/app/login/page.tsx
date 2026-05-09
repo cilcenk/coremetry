@@ -65,6 +65,14 @@ export default function LoginPage() {
   const demoEnabled = !!config?.demo?.enabled;
   const ldapEnabled = !!config?.ldap?.enabled;
 
+  // Build version is unauthenticated so we can show it before the
+  // operator has a session — useful for support / matching a
+  // running instance to a release tag.
+  const [version, setVersion] = useState<string>('');
+  useEffect(() => {
+    api.version().then(v => setVersion(v?.version ?? '')).catch(() => {});
+  }, []);
+
   return (
     <div style={{
       position: 'fixed', inset: 0, display: 'grid', placeItems: 'center',
@@ -169,6 +177,19 @@ export default function LoginPage() {
           style={{ width: '100%', padding: '8px 12px' }}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
+
+        {/* Build version — only rendered once /api/version answers, so
+            the form doesn't reflow during initial paint. */}
+        {version && (
+          <div style={{
+            marginTop: 18, textAlign: 'center',
+            fontSize: 10, color: 'var(--text3)',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            letterSpacing: '0.3px',
+          }}>
+            Coremetry {version}
+          </div>
+        )}
       </form>
     </div>
   );

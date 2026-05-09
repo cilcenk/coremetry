@@ -34,6 +34,14 @@ import (
 //go:embed all:frontend/out
 var webFS embed.FS
 
+// Version is stamped at build time via -ldflags="-X main.Version=…".
+// The Dockerfile picks up the VERSION build-arg (defaults to a
+// `git describe --tags`-style string in CI; "dev" for local
+// builds without a tag context). Surfaced on the login page so
+// operators can match a running instance to a release tag without
+// shelling in.
+var Version = "dev"
+
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "Path to config file")
 
@@ -209,6 +217,7 @@ func main() {
 
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc)
+	srv.SetVersion(Version)
 	if cfg.Auth.DemoMode {
 		// Demo mode auto-signs the visitor in as the configured initial
 		// admin so they can poke at every screen, including admin-only

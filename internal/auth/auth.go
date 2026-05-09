@@ -144,7 +144,8 @@ func SkipPath(method, path string) bool {
 		"/api/auth/config",
 		"/api/auth/oidc/start",
 		"/api/auth/oidc/callback",
-		"/api/health":
+		"/api/health",
+		"/api/version":
 		return true
 	}
 	if strings.HasPrefix(path, "/v1/traces") ||

@@ -161,6 +161,9 @@ export const api = {
 
   health: ()                         => get<HealthInfo>(`/api/health`),
   status: ()                         => get<SystemStatus>(`/api/status`),
+  // Build-tag — unauthenticated, so the login page can render it
+  // before the operator has a session.
+  version: ()                        => get<{ version: string }>(`/api/version`),
 
   // Runtime settings: data retention
   getRetention: () => get<RetentionSpec>(`/api/settings/retention`),

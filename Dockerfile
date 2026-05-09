@@ -8,12 +8,18 @@ RUN npm run build
 
 # ── Stage 2: build Go binaries (with embedded frontend/out) ───────────────────
 FROM golang:1.25-alpine AS go-builder
+# VERSION is the release tag stamped into the binary via -ldflags.
+# `docker compose build --build-arg VERSION=$(git describe --tags)`
+# during release; falls back to "dev" for local builds without a
+# tag context. Surfaced on the login page so operators can match a
+# running instance to a release without shelling in.
+ARG VERSION=dev
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend-builder /app/frontend/out /app/frontend/out
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o coremetry . && \
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}" -o coremetry . && \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o demo ./cmd/demo
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────

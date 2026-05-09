@@ -25,7 +25,13 @@ services:
       retries: 10
 
   coremetry:
-    build: .
+    build:
+      context: .
+      args:
+        # Stamps the running binary with the release tag. Override
+        # at build time:
+        #   VERSION=v0.2.66 docker compose build coremetry
+        VERSION: "${VERSION:-dev}"
     container_name: coremetry
     # The OTel Collector handles OTLP/HTTP for apps now, so coremetry only
     # exposes its web/API port externally. OTLP/gRPC stays internal — the

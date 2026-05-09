@@ -55,6 +55,18 @@ type Server struct {
 	// contention is irrelevant.
 	rateMu      sync.Mutex
 	rateSamples map[string]rateSample
+
+	// version is the build-time release tag stamped via -ldflags.
+	// Surfaced unauthenticated on /api/version so the login page
+	// can show it before the operator has a session.
+	version string
+}
+
+// SetVersion records the build-time tag. Called once from main();
+// safe to call before Start() since /api/version is only consulted
+// by SPA after the server is listening.
+func (s *Server) SetVersion(v string) {
+	s.version = v
 }
 
 type rateSample struct {
@@ -142,6 +154,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.deleteAlertRule))
 	mux.HandleFunc("POST   /api/alert-rules/{id}/enable",   auth.RequireAnyRole(editorRoles, s.enableAlertRule))
 	mux.HandleFunc("GET /api/health", s.getHealth)
+	mux.HandleFunc("GET /api/version", s.getVersion)
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────
@@ -2935,6 +2948,17 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"metrics_queued": s.ing.Metrics.QueueLen(),
 		"spans_dropped": s.ing.Spans.Dropped(),
 	})
+}
+
+// getVersion is the unauthenticated build-tag endpoint the login
+// page calls to render the running release. Returns "dev" when
+// the binary was built without a -X main.Version stamp.
+func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
+	v := s.version
+	if v == "" {
+		v = "dev"
+	}
+	writeJSON(w, map[string]string{"version": v})
 }
 
 // getStatus drives the public-style status page: probes every dependency

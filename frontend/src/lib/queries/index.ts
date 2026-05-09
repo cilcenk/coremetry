@@ -22,4 +22,9 @@ export {
   useIncidents, useIncident, useIncidentEvents, useIncidentProblems,
   useCreateIncident, useUpdateIncident,
 } from './incidents';
+export {
+  useAlertRules,
+  useCreateAlertRule, useUpdateAlertRule,
+  useDeleteAlertRule, useEnableAlertRule,
+} from './alerts';
 export { useEventStream } from './eventStream';

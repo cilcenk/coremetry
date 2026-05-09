@@ -98,5 +98,10 @@ export function MetricChart({
     };
   }, [name, points, height]);
 
-  return <div ref={containerRef} style={{ width: '100%', height }} />;
+  // Container width-only — the canvas is `height` pixels plus
+  // an inline legend below, total component height = canvas +
+  // legend. Pinning the container to `height` clipped (or
+  // overflowed) the legend; letting it grow naturally keeps
+  // the layout stable.
+  return <div ref={containerRef} style={{ width: '100%' }} />;
 }

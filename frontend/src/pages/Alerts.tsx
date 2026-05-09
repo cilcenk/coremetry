@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
+import {
+  useAlertRules,
+  useCreateAlertRule, useUpdateAlertRule,
+  useDeleteAlertRule, useEnableAlertRule,
+} from '@/lib/queries';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
 import type { AlertRule, TimeRange } from '@/lib/types';
@@ -36,7 +41,6 @@ const emptyDraft: Partial<AlertRule> = {
 
 export default function AlertsPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
-  const [rules, setRules] = useState<AlertRule[] | undefined>(undefined);
   const [services, setServices] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [draft, setDraft] = useState<Partial<AlertRule>>(emptyDraft);
@@ -45,10 +49,18 @@ export default function AlertsPage() {
   // submit.
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const refresh = () =>
-    api.alertRules().then(r => setRules(r ?? [])).catch(() => setRules([]));
+  // Rules query + 4 mutations. Each mutation auto-invalidates
+  // the rules cache on success — no manual refresh() coordinator.
+  const rulesQ = useAlertRules();
+  const rules = rulesQ.isLoading ? undefined : rulesQ.data ?? [];
+  const createRule = useCreateAlertRule();
+  const updateRule = useUpdateAlertRule();
+  const deleteRule = useDeleteAlertRule();
+  const enableRule = useEnableAlertRule();
 
-  useEffect(() => { refresh(); }, []);
+  // Service list for the picker — kept on raw fetch since
+  // it's a one-shot lookup and the cache value doesn't really
+  // need sharing across pages.
   useEffect(() => {
     api.services({ from: 0, to: 0 })
       .then(s => setServices((s ?? []).map(x => x.name)))
@@ -69,21 +81,18 @@ export default function AlertsPage() {
   const save = async () => {
     if (!draft.name || !draft.metric) return;
     if (editingId) {
-      await api.updateAlertRule(editingId, draft);
+      await updateRule.mutateAsync({ id: editingId, patch: draft });
     } else {
-      await api.createAlertRule(draft);
+      await createRule.mutateAsync(draft);
     }
     cancelForm();
-    refresh();
   };
   const remove = async (id: string) => {
     if (!confirm('Disable this rule?')) return;
-    await api.deleteAlertRule(id);
-    refresh();
+    await deleteRule.mutateAsync(id);
   };
   const enable = async (id: string) => {
-    await api.enableAlertRule(id);
-    refresh();
+    await enableRule.mutateAsync(id);
   };
 
   return (

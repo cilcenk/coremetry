@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { hashColor } from '@/lib/utils';
-import type { ExploreSeries } from '@/lib/types';
+import { MultiLineChart } from './MultiLineChart';
+import type { ExploreSeries, SpanMetricSeries } from '@/lib/types';
 
 // Visualization picker covering the four shapes the operator
 // switches between in the Data Explorer:
@@ -26,11 +27,32 @@ export function ExploreViz({ series, kind, unit }: {
     return <div style={{ color: 'var(--text3)', fontSize: 12 }}>No data in this window.</div>;
   }
   switch (kind) {
-    case 'line': return <LineViz series={series} unit={unit} mode="line" />;
-    case 'bar':  return <LineViz series={series} unit={unit} mode="bar" />;
-    case 'topN': return <TopNViz series={series} unit={unit} />;
-    case 'kpi':  return <KpiViz  series={series} unit={unit} />;
+    case 'line': return <UPlotLine series={series} unit={unit} />;
+    case 'bar':  return <LineViz   series={series} unit={unit} mode="bar" />;
+    case 'topN': return <TopNViz   series={series} unit={unit} />;
+    case 'kpi':  return <KpiViz    series={series} unit={unit} />;
   }
+}
+
+// UPlotLine — for `kind: 'line'`. Adapts ExploreSeries → the
+// SpanMetricSeries shape MultiLineChart already consumes, so
+// the explore line view gets the same hover crosshair, time
+// axis, and click-to-isolate legend as the /metrics and
+// /dashboards line views. Avoids maintaining two separate
+// line implementations (the SVG one above was visually basic
+// and missing a tooltip).
+function UPlotLine({ series, unit }: { series: ExploreSeries[]; unit?: string }) {
+  const adapted: SpanMetricSeries[] = useMemo(() =>
+    series.map(s => ({
+      groupKey: s.name ? [s.name] : [],
+      // ExploreSeries point timestamps are in nanoseconds (the
+      // /api/logs/timeseries + /api/metric responses agree on
+      // ns), MultiLineChart already divides by 1e9. Field
+      // names differ — t/v vs time/value — so we re-map.
+      points: s.points.map(p => ({ time: p.t, value: p.v })),
+    })),
+  [series]);
+  return <MultiLineChart series={adapted} unit={unit} height={320} />;
 }
 
 // ── Line / Bar ──────────────────────────────────────────────────────

@@ -183,9 +183,17 @@ export function MultiLineChart({
     return () => el.removeEventListener('click', onClick, true);
   }, [series.length]);
 
+  // Container does NOT pin its height — uPlot creates a canvas
+  // of `height` pixels plus a legend table beneath it, and we
+  // want the component to take whatever total vertical space
+  // chart+legend need. A fixed-height container caused the
+  // legend to overflow into the next page section, surfacing
+  // as "the chart stretches downward and breaks". Callers that
+  // want a strict cap can wrap us in a container with their own
+  // overflow rules.
   return (
     <div ref={containerRef} style={{
-      position: 'relative', width: '100%', height,
+      position: 'relative', width: '100%',
     }} />
   );
 }

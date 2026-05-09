@@ -1277,8 +1277,16 @@ func sendScenarioLog(scenarioName string, t *Trace) {
 
 	switch {
 	case target.span.Status != nil && target.span.Status.Code == tracepb.Status_STATUS_CODE_ERROR:
-		sendLog(target.service, 17, "ERROR",
-			fmt.Sprintf("%s failed: %s", scenarioName, target.span.Status.Message),
+		// On failure, occasionally swap the generic message for one
+		// of the curated SRE-grade signal lines (ORA-, NullPointer,
+		// deadlock, panic, OOM, …). Rate is intentionally ~12% so
+		// the /anomalies log-pattern section has live content but
+		// they don't drown out the generic error stream.
+		body := fmt.Sprintf("%s failed: %s", scenarioName, target.span.Status.Message)
+		if mrand.IntN(100) < 12 {
+			body = pickAnomalyLine(target.service)
+		}
+		sendLog(target.service, 17, "ERROR", body,
 			t.traceID, target.span.SpanId, kv("error.type", "OperationFailed"))
 	case mrand.IntN(4) == 0:
 		sendLog(target.service, 13, "WARN",
@@ -1289,6 +1297,34 @@ func sendScenarioLog(scenarioName string, t *Trace) {
 			fmt.Sprintf("%s completed successfully", scenarioName),
 			t.traceID, target.span.SpanId, nil)
 	}
+}
+
+// anomalyLines are realistic-looking log bodies for each curated
+// production signal pattern. Each entry contains the substring(s)
+// the server-side detector matches on so the /anomalies page has
+// a live source of synthetic ORA- / NPE / OOM / deadlock / panic
+// lines without us having to hand-craft a separate scenario.
+var anomalyLines = []string{
+	"ORA-00060: deadlock detected while waiting for resource",
+	"ORA-01017: invalid username/password; logon denied",
+	"ORA-12541: TNS:no listener — connection to oracle-prod refused",
+	"java.lang.NullPointerException: Cannot invoke method on null reference at com.shop.UserService.lookup(UserService.java:142)",
+	"java.lang.OutOfMemoryError: Java heap space — heap dump written to /var/log/heapdump-1715.hprof",
+	"OOMKilled: container exceeded memory limit (1Gi), restarting",
+	"deadlock detected on relation orders: process 12345 waits for ShareLock; killed",
+	"ECONNREFUSED: connection refused to redis-prod-2:6379 — circuit breaker open",
+	"x509: certificate has expired or is not yet valid: current time 2026-05-09 is after 2026-05-08T00:00:00Z",
+	"tls: handshake failure with payment-gateway: unsupported cipher suite",
+	"panic: runtime error: index out of range [5] with length 3 — goroutine 142 stack",
+	"context deadline exceeded — upstream user-service did not respond within 5s",
+	"401 Unauthorized — invalid credentials for tenant=acme route=/api/orders",
+	"no space left on device: cannot write to /var/lib/postgresql/wal — disk full",
+	"java.lang.IllegalStateException: cannot complete transaction — already committed",
+}
+
+func pickAnomalyLine(service string) string {
+	line := anomalyLines[mrand.IntN(len(anomalyLines))]
+	return service + ": " + line
 }
 
 // ─── OTLP HTTP send ───────────────────────────────────────────────────────────

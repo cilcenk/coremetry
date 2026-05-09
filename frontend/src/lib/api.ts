@@ -165,6 +165,17 @@ export const api = {
   // before the operator has a session.
   version: ()                        => get<{ version: string }>(`/api/version`),
 
+  // Log-pattern anomalies (ORA-, OOM, NPE, deadlock, panic, …) —
+  // curated SRE-grade signal patterns that are either brand new
+  // in the window or up 2x+ over baseline. Backed by a 60s cache
+  // on the server side; no need to debounce client requests.
+  logPatternAnomalies: () =>
+    get<import('./types').LogPatternAnomaly[]>(`/api/anomalies/log-patterns`),
+  traceOpAnomalies:    () =>
+    get<import('./types').TraceOpAnomaly[]>(`/api/anomalies/trace-ops`),
+  metricAnomalies:     () =>
+    get<import('./types').Problem[]>(`/api/anomalies/metric`),
+
   // Runtime settings: data retention
   getRetention: () => get<RetentionSpec>(`/api/settings/retention`),
   putRetention: (sp: RetentionSpec) =>

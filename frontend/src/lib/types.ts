@@ -642,6 +642,35 @@ export type SortOrder = 'asc' | 'desc';
 // observed across the sampled traces; siblings repeating the exact
 // same triple collapse into a single row carrying count + avg/max
 // duration + error count.
+// Per-operation error anomaly — a (service, operation) tuple
+// that is either failing for the first time in the window or
+// whose error count just doubled.
+export interface TraceOpAnomaly {
+  service: string;
+  operation: string;
+  kind: 'new_error' | 'error_spike';
+  currentErrors: number;
+  baselineErrors: number;
+  ratio: number;
+  sampleTraceId: string;
+  lastSeenNs: number;
+}
+
+// One curated log-shape anomaly — either brand new in the
+// detection window or up 2x+ over baseline. Pattern + regex
+// match the server-side definitions in internal/anomaly/log_patterns.go.
+export interface LogPatternAnomaly {
+  pattern: string;        // human-readable name
+  regex: string;          // re2 used for matching
+  kind: 'new' | 'spike';
+  currentCount: number;
+  baselineCount: number;
+  ratio: number;
+  service: string;
+  sample: string;
+  lastSeenNs: number;
+}
+
 // One entry in the service-level neighbours response — a single
 // upstream caller or downstream callee of the inspected service.
 export interface NeighborStat {

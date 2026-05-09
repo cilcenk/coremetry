@@ -118,14 +118,20 @@ type ProblemFilter struct {
 	Status   string // "open" | "resolved" | ""
 	Service  string
 	Severity string
-	Limit    int
+	// RuleIDPrefix narrows to rules whose id starts with the given
+	// string — used by the Anomalies page to surface only the
+	// anomaly-detector entries (rule_id = "anomaly:…") and skip
+	// the rule-driven Problems.
+	RuleIDPrefix string
+	Limit        int
 }
 
 func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, error) {
 	var wc whereClause
-	if f.Status   != "" { wc.add("status = ?", f.Status) }
-	if f.Service  != "" { wc.add("service = ?", f.Service) }
-	if f.Severity != "" { wc.add("severity = ?", f.Severity) }
+	if f.Status       != "" { wc.add("status = ?", f.Status) }
+	if f.Service      != "" { wc.add("service = ?", f.Service) }
+	if f.Severity     != "" { wc.add("severity = ?", f.Severity) }
+	if f.RuleIDPrefix != "" { wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix) }
 	if f.Limit == 0 { f.Limit = 100 }
 
 	rows, err := s.conn.Query(ctx, `

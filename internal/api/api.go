@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -155,6 +156,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/alert-rules/{id}/enable",   auth.RequireAnyRole(editorRoles, s.enableAlertRule))
 	mux.HandleFunc("GET /api/health", s.getHealth)
 	mux.HandleFunc("GET /api/version", s.getVersion)
+	mux.HandleFunc("GET /api/anomalies/log-patterns", s.getLogPatternAnomalies)
+	mux.HandleFunc("GET /api/anomalies/trace-ops",    s.getTraceOpAnomalies)
+	mux.HandleFunc("GET /api/anomalies/metric",       s.getMetricAnomalies)
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────
@@ -2959,6 +2963,59 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 		v = "dev"
 	}
 	writeJSON(w, map[string]string{"version": v})
+}
+
+// getTraceOpAnomalies pinpoints per-(service, operation) error
+// spikes — operations that are either failing for the first time
+// in the window or whose error count just doubled. Sits beside
+// the metric anomaly stream on /anomalies so the SRE sees both
+// "service X is bad" and "the specific endpoint that's bad". 60s
+// cached; the underlying CH query is partition-pruned to 2× the
+// window so cost is bounded at scale.
+func (s *Server) getTraceOpAnomalies(w http.ResponseWriter, r *http.Request) {
+	window := parseDuration(r.URL.Query().Get("window"), 5*time.Minute)
+	key := fmt.Sprintf("anomaly:trace-ops:window=%s", window)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		return anomaly.DetectTraceOpAnomalies(r.Context(), s.store, window)
+	})
+}
+
+// getMetricAnomalies returns the open Problems whose rule_id
+// starts with "anomaly:" — i.e. the entries opened by the
+// background z-score detector against service-level metrics
+// (error_rate, p99, request_rate). The /anomalies page uses this
+// to surface the metric-side signal alongside log-pattern and
+// trace-op anomalies. No cache: ListProblems already hits the
+// indexed (status, started_at) primary key on the small problems
+// table — sub-millisecond.
+func (s *Server) getMetricAnomalies(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.store.ListProblems(r.Context(), chstore.ProblemFilter{
+		Status:       "open",
+		RuleIDPrefix: "anomaly:",
+		Limit:        100,
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, rows)
+}
+
+// getLogPatternAnomalies surfaces SRE-grade log-shape anomalies:
+// curated production failure patterns (Oracle ORA-, OOM, NPE,
+// deadlock, panic, TLS, connection-refused, etc.) that are either
+// brand new in the window or up 2x+ over baseline. Per-pattern
+// regex evaluation runs on the raw `logs` table; results are 60s
+// cached so reloading /anomalies hits Redis. The default 5-minute
+// window matches the cadence of the metric anomaly detector so
+// both signals tell a coherent "what changed in the last 5 min"
+// story.
+func (s *Server) getLogPatternAnomalies(w http.ResponseWriter, r *http.Request) {
+	window := parseDuration(r.URL.Query().Get("window"), 5*time.Minute)
+	key := fmt.Sprintf("anomaly:log-patterns:window=%s", window)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		return anomaly.DetectLogPatterns(r.Context(), s.store, window)
+	})
 }
 
 // getStatus drives the public-style status page: probes every dependency

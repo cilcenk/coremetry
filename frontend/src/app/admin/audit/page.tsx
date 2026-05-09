@@ -39,7 +39,10 @@ export default function AuditPage() {
     return (
       <>
         <Topbar title="Audit log" />
-        <div id="content"><Empty icon="🔒" title="Admin only" /></div>
+        <div id="content"><Empty icon="◇" title="Admin only">
+          The audit log records every state-changing action by a
+          user. Restricted to the admin role.
+        </Empty></div>
       </>
     );
   }

@@ -240,9 +240,11 @@ export function TraceVolumeHistogram({ range, dsl, filters }: {
             populates this; opacity 0 until the cursor enters the
             chart area. */}
         <div className="tvh-tip" style={{
+          // Theme-aware tokens so the tooltip stays readable
+          // in both dark and light modes.
           position: 'absolute', pointerEvents: 'none',
-          background: 'rgba(20,24,30,0.95)',
-          border: '1px solid rgba(125,140,160,0.30)',
+          background: 'var(--bg2)',
+          border: '1px solid var(--border)',
           borderRadius: 4,
           padding: '6px 9px',
           fontSize: 11, color: 'var(--text)',

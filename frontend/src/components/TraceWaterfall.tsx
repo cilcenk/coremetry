@@ -67,6 +67,7 @@ function categoryOf(s: SpanRow): SpanCategory | null {
 
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
+  criticalPathIds,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -83,6 +84,12 @@ export function TraceWaterfall({
   // loop patterns like N+1 DB queries — used by the service-
   // structure waterfall, off by default in the regular trace view.
   groupSimilar?: boolean;
+  // Optional set of span IDs on the trace's critical path. Rows
+  // matching these get the .wf-critical class — left-edge red
+  // accent stripe — so the operator sees at a glance which
+  // spans actually drive the wall-clock latency. Computed once
+  // per trace via lib/criticalPath.ts; we just take the result.
+  criticalPathIds?: Set<string>;
 }) {
   // Memoise the parents-of-something set keyed by the spans array
   // identity. When defaultCollapsed is on, that set becomes the
@@ -320,7 +327,13 @@ export function TraceWaterfall({
         const durMs = dur / 1e6;
         const isCol = collapsed.has(s.spanId);
         const sel = s.spanId === selectedId;
-        const cls = ['wf-row', s.statusCode === 'error' ? 'wf-err' : '', sel ? 'wf-sel' : ''].join(' ').trim();
+        const onCritical = criticalPathIds?.has(s.spanId) ?? false;
+        const cls = [
+          'wf-row',
+          s.statusCode === 'error' ? 'wf-err' : '',
+          sel ? 'wf-sel' : '',
+          onCritical ? 'wf-critical' : '',
+        ].filter(Boolean).join(' ');
 
         // Decide whether the duration label fits inside the bar (Tempo
         // does this — short bars get the label outside-right). 60px is

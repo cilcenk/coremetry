@@ -17,6 +17,7 @@ const ServiceBacktrace  = lazy(() => import('./pages/ServiceBacktrace'));
 const ServiceMap        = lazy(() => import('./pages/ServiceMap'));
 const Traces            = lazy(() => import('./pages/Traces'));
 const Trace             = lazy(() => import('./pages/Trace'));
+const TraceCompare      = lazy(() => import('./pages/TraceCompare'));
 const Logs              = lazy(() => import('./pages/Logs'));
 const Metrics           = lazy(() => import('./pages/Metrics'));
 const Explore           = lazy(() => import('./pages/Explore'));
@@ -62,6 +63,7 @@ export default function App() {
             <Route path="/service-map"    element={<ServiceMap />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />
+            <Route path="/trace/compare"  element={<TraceCompare />} />
             <Route path="/logs"           element={<Logs />} />
             <Route path="/metrics"        element={<Metrics />} />
             <Route path="/explore"        element={<Explore />} />

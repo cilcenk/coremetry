@@ -402,6 +402,17 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 .wf-row.wf-sel .wf-stripe { width: 3px; filter: brightness(1.25); opacity: 0.95; }
 .wf-row.wf-err .wf-name { color: var(--err); }
 
+/* Critical path — spans whose chain through the DAG sums to
+   the trace's wall-clock latency. Marked with a left-edge red
+   accent stripe so the operator sees at a glance which spans
+   the trace was actually waiting on. Combined with .wf-sel
+   the stripe deepens but doesn't double-stack. */
+.wf-row.wf-critical::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px; background: var(--err); z-index: 2;
+}
+.wf-row.wf-critical .wf-row-bar > .wf-bar { box-shadow: 0 0 0 1px var(--err) inset; }
+
 /* Service-color stripe down the left edge — Tempo's primary signal for
    identifying which service this span belongs to. Always visible, fixed
    width. Selected row widens it slightly. */

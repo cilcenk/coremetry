@@ -59,18 +59,90 @@ export function ServiceRuntimeBadge({
 
 // formatRuntime turns a (language, runtime name, version) trio
 // into a one-line label like "Java 21" / "Go 1.22.5" / ".NET
-// 8.0.4" / "Node.js 20.10.0" / "Python 3.12". Tries to use the
-// most operator-recognisable name for each language rather
-// than the SDK-emitted free-text.
+// 8.0.4" / "Node.js 20.10.0" / "Python 3.12". Tries hard to
+// surface SOME version even when the SDK didn't fill in the
+// canonical field — most OTel SDKs (Java agent, recent .NET)
+// stamp process.runtime.version automatically; Go and Python
+// require an explicit `WithProcessRuntimeVersion()` setup
+// that many services skip, leaving the version inside the
+// free-text `process.runtime.description` instead.
+//
+// Resolution order:
+//   1. runtimeVersion — direct, trusted
+//   2. runtimeDesc — extract via per-language regex; Go's
+//      "go version go1.21.0 darwin/arm64" → "1.21.0"
+//   3. service.version (host) → falls through; we don't pick it
+//      here because that's the deployment version, not the
+//      runtime version.
+//   4. Just the language name with no version — better than
+//      hiding the badge entirely; the operator at least sees
+//      "Go" / "Python" and knows the stack.
 function formatRuntime(rt: ServiceRuntime): string {
   const lang = (rt.language || '').toLowerCase();
   const name = friendlyLanguageName(lang) || rt.runtimeName || '';
-  const ver = simplifyVersion(rt.runtimeVersion || '');
+  let ver = simplifyVersion(rt.runtimeVersion || '');
+  if (!ver && rt.runtimeDesc) ver = extractVersionFromDesc(lang, rt.runtimeDesc);
   if (name && ver) return `${name} ${ver}`;
   if (name)        return name;
   if (rt.runtimeName) return rt.runtimeName;
-  if (rt.sdkVersion)  return `OTel ${rt.sdkVersion}`;
+  if (rt.sdkVersion)  return `OTel SDK ${rt.sdkVersion}`;
   return '';
+}
+
+// extractVersionFromDesc squeezes a version number out of the
+// free-text process.runtime.description. The patterns differ
+// per SDK:
+//   Go     → "go version go1.21.0 darwin/arm64"
+//   Python → "CPython 3.12.1 (main, ...)"
+//   Node.js → "v20.10.0" or "Node.js v20.10.0"
+//   Ruby   → "ruby 3.2.2 (2023-03-30 ...) ..."
+//   Erlang → "Erlang/OTP 26 ... 14.0.4"
+//   Java   → typically also has "21.0.1+12-LTS" style — covered
+//            by simplifyVersion already, but we re-handle here
+//            for completeness.
+function extractVersionFromDesc(lang: string, desc: string): string {
+  const d = desc.trim();
+  if (!d) return '';
+  switch (lang) {
+    case 'go': {
+      // "go version go1.21.0 darwin/arm64" — also handle bare
+      // "go1.21.0".
+      const m = d.match(/go(\d+\.\d+(?:\.\d+)?)/);
+      return m ? m[1] : '';
+    }
+    case 'python': {
+      // "CPython 3.12.1 (main, …)" / "Python 3.11.4"
+      const m = d.match(/(?:CPython|Python|PyPy)\s+(\d+\.\d+(?:\.\d+)?)/);
+      return m ? m[1] : '';
+    }
+    case 'nodejs':
+    case 'javascript': {
+      // "v20.10.0" / "Node.js v20.10.0" / bare "20.10.0"
+      const m = d.match(/v?(\d+\.\d+\.\d+)/);
+      return m ? m[1] : '';
+    }
+    case 'ruby': {
+      const m = d.match(/ruby\s+(\d+\.\d+\.\d+)/i);
+      return m ? m[1] : '';
+    }
+    case 'java':
+    case 'kotlin': {
+      // "OpenJDK Runtime Environment Temurin-21.0.1+12 (build 21.0.1+12-LTS)"
+      // Pull the first dotted version that doesn't start with 0.
+      const m = d.match(/(\d+(?:\.\d+){1,3})/);
+      return m ? m[1] : '';
+    }
+    case 'dotnet':
+    case 'csharp': {
+      const m = d.match(/(\d+\.\d+\.\d+)/);
+      return m ? m[1] : '';
+    }
+    default: {
+      // Generic dotted version anywhere in the string.
+      const m = d.match(/(\d+(?:\.\d+){1,3})/);
+      return m ? m[1] : '';
+    }
+  }
 }
 
 function friendlyLanguageName(lang: string): string {

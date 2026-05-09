@@ -275,15 +275,19 @@ export function MultiLineChart({
       position: 'relative', width: '100%',
     }}>
       <div className="uplot-tooltip" style={{
+        // Theme-aware tokens — the previous hardcoded
+        // rgba(20,24,30) painted dark on dark in dark mode
+        // and dark-on-light (text invisible) in light mode.
+        // var(--bg2) + var(--text) flip with [data-theme].
         position: 'absolute', pointerEvents: 'none',
-        background: 'rgba(20,24,30,0.96)',
-        border: '1px solid rgba(125,140,160,0.30)',
+        background: 'var(--bg2)',
+        border: '1px solid var(--border)',
         borderRadius: 4,
         padding: '8px 10px',
         fontSize: 11, color: 'var(--text)',
         opacity: 0, transition: 'opacity .08s',
         zIndex: 5,
-        boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+        boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
         maxWidth: 320,
       }} />
     </div>

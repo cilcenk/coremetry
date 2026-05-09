@@ -1,8 +1,9 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
+import { computeCriticalPath } from '@/lib/criticalPath';
 import { SpanDetail } from '@/components/SpanDetail';
 import { CopyButton } from '@/components/CopyButton';
 import { CopilotExplain } from '@/components/CopilotExplain';
@@ -70,6 +71,23 @@ function TraceDetailInner() {
   const root = spans?.find(s => !s.parentSpanId) ?? spans?.[0];
   const minT = spans && spans.length ? Math.min(...spans.map(s => s.startTime)) : 0;
   const maxT = spans && spans.length ? Math.max(...spans.map(s => s.endTime)) : 0;
+
+  // Critical path — synchronous longest chain through the
+  // span DAG. Cheap O(N) DFS; useMemo only recomputes when
+  // the span list identity changes (i.e., when a new trace
+  // is loaded). Operator can hide the highlight via the
+  // toolbar toggle.
+  const [showCritical, setShowCritical] = useState(true);
+  const criticalPath = useMemo(() => {
+    if (!spans || spans.length === 0) return null;
+    return computeCriticalPath(spans.map(s => ({
+      spanId: s.spanId,
+      parentId: s.parentSpanId ?? '',
+      startTime: s.startTime,
+      duration: s.endTime - s.startTime,
+    })));
+  }, [spans]);
+  const criticalPathIds = (showCritical && criticalPath) ? criticalPath.ids : undefined;
   const totalNs = maxT - minT;
   const hasErr = spans?.some(s => s.statusCode === 'error') ?? false;
 
@@ -88,7 +106,29 @@ function TraceDetailInner() {
               <span className={`badge ${hasErr ? 'b-err' : 'b-ok'}`}>{hasErr ? 'ERROR' : 'OK'}</span>
               <span style={{ color: 'var(--text2)', fontSize: 12 }}>{spans.length} spans · {fmtNs(totalNs)}</span>
               {root && <span style={{ color: 'var(--text3)', fontSize: 12 }}>{tsLong(root.startTime)}</span>}
-              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                {/* Critical path summary — when computed, the
+                    chain's total duration tells the operator
+                    how much of the trace's wall-clock time
+                    happens on the dominant path. Toggle hides
+                    the highlight without recomputing. */}
+                {criticalPath && criticalPath.ids.size > 0 && (
+                  <label style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    fontSize: 11, color: 'var(--text2)', marginRight: 4,
+                  }} title={`${criticalPath.ids.size} spans summing to ${fmtNs(criticalPath.totalNs)}. The synchronous longest chain through the trace's DAG.`}>
+                    <input type="checkbox"
+                           checked={showCritical}
+                           onChange={e => setShowCritical(e.target.checked)} />
+                    Critical path · {fmtNs(criticalPath.totalNs)}
+                  </label>
+                )}
+                <Link to={`/trace/compare?a=${encodeURIComponent(id)}`}
+                      className="sec"
+                      title="Compare this trace with another (side-by-side)"
+                      style={{ fontSize: 12, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                  Compare ↔
+                </Link>
                 <SharePopover traceId={id} />
                 <button className="sec"
                   onClick={() => exportTraceJSON(id, spans)}
@@ -124,7 +164,8 @@ function TraceDetailInner() {
             {tab === 'trace' && (
               <div id="td-outer">
                 <div id="td-wf">
-                  <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId} />
+                  <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
+                                  criticalPathIds={criticalPathIds} />
                 </div>
                 {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
               </div>

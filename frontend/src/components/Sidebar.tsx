@@ -8,7 +8,19 @@ import { TelescopeIcon } from './TelescopeIcon';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
 
-const NAV = [
+// adminOnly entries are hidden from non-admin users in the
+// sidebar. The pages themselves still enforce admin-role at
+// render time AND on the server side — this filter is purely a
+// UX cleanup so the link doesn't show up to viewers/editors who
+// would only get a "forbidden" page from clicking it.
+type NavItem = {
+  href: string;
+  label: string;
+  icon: string;
+  adminOnly?: boolean;
+};
+
+const NAV: NavItem[] = [
   { href: '/incidents',  label: 'Incidents',    icon: '⚠' },
   { href: '/problems',   label: 'Problems',     icon: '!' },
   { href: '/anomalies',  label: 'Anomalies',    icon: '⚠' },
@@ -22,10 +34,10 @@ const NAV = [
   { href: '/alerts',     label: 'Alerts',       icon: '◊' },
   { href: '/slos',       label: 'SLOs',         icon: '◉' },
   { href: '/monitors',   label: 'Monitors',     icon: '◉' },
-  { href: '/admin/stats', label: 'System',       icon: '◐' },
-  { href: '/admin/audit', label: 'Audit log',    icon: '◇' },
-  { href: '/admin/sql',   label: 'SQL playground', icon: '⌘' },
-  { href: '/admin/status-page', label: 'Public Status Page', icon: '◫' },
+  { href: '/admin/stats',       label: 'System',             icon: '◐' },
+  { href: '/admin/audit',       label: 'Audit log',          icon: '◇', adminOnly: true },
+  { href: '/admin/sql',         label: 'SQL playground',     icon: '⌘', adminOnly: true },
+  { href: '/admin/status-page', label: 'Public Status Page', icon: '◫', adminOnly: true },
 ];
 
 const SIDEBAR_WIDTH_KEY     = 'coremetry-sidebar-w';
@@ -192,7 +204,7 @@ export function Sidebar() {
           </span>
         </div>
         <div id="nav">
-          {NAV.map(n => (
+          {NAV.filter(n => !n.adminOnly || user?.role === 'admin').map(n => (
             <Link key={n.href} href={n.href}
               className={isActive(pathname, n.href) ? 'active' : ''}
               title={!showLabels ? n.label : undefined}

@@ -1277,13 +1277,15 @@ func sendScenarioLog(scenarioName string, t *Trace) {
 
 	switch {
 	case target.span.Status != nil && target.span.Status.Code == tracepb.Status_STATUS_CODE_ERROR:
-		// On failure, occasionally swap the generic message for one
-		// of the curated SRE-grade signal lines (ORA-, NullPointer,
-		// deadlock, panic, OOM, …). Rate is intentionally ~12% so
-		// the /anomalies log-pattern section has live content but
-		// they don't drown out the generic error stream.
+		// On failure, swap the generic message for one of the
+		// curated SRE-grade signal lines (ORA-, NullPointer,
+		// deadlock, panic, OOM, …) ~40% of the time. Density is
+		// tuned so a fresh demo deployment shows live content in
+		// the /anomalies log-pattern section within a minute or
+		// two — too low and the section stays empty during a
+		// walkthrough; too high and patterns blur together.
 		body := fmt.Sprintf("%s failed: %s", scenarioName, target.span.Status.Message)
-		if mrand.IntN(100) < 12 {
+		if mrand.IntN(100) < 40 {
 			body = pickAnomalyLine(target.service)
 		}
 		sendLog(target.service, 17, "ERROR", body,

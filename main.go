@@ -55,6 +55,12 @@ func main() {
 	migratePass     := flag.String("migrate-pass", "", "Source CH password for migration")
 	migrateTables   := flag.String("migrate-tables", "spans,logs,metric_points,profiles", "Comma-separated tables to migrate")
 	migrateDays     := flag.Int("migrate-days", 30, "Number of trailing days to migrate")
+	// Init-container mode: run schema migration only and exit.
+	// Designed for multi-replica deployments where every web pod
+	// trying to migrate concurrently causes ZK / DDL races. Run
+	// this once as a Job or initContainer; web pods boot with
+	// COREMETRY_SKIP_MIGRATE=1 to avoid re-running.
+	migrateOnly     := flag.Bool("migrate-only", false, "Run ClickHouse schema migration only, then exit. Use as a Kubernetes initContainer / one-shot Job before web pods roll out.")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -71,6 +77,19 @@ func main() {
 		log.Fatalf("clickhouse: %v\n\nMake sure ClickHouse is running:\n  docker run -d --name coremetry-ch -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-server:24.8-alpine", err)
 	}
 	defer store.Close()
+
+	// Init-container mode: chstore.New() above already ran every
+	// schema migration. We're done — exit cleanly so a Kubernetes
+	// Job / initContainer can mark itself complete and the web
+	// rollout can proceed. Web pods then run with their own
+	// chstore.New() but the migrations are idempotent (CREATE
+	// TABLE IF NOT EXISTS, ALTER … IF NOT EXISTS) so concurrent
+	// no-ops are safe; this flag is the recommended path at scale
+	// to avoid ZooKeeper / Keeper DDL races on Replicated tables.
+	if *migrateOnly {
+		log.Printf("[migrate-only] schema migration complete, exiting")
+		return
+	}
 
 	// One-shot migration: copy historical data from the source CH
 	// into the local cluster, then exit. The destination schema

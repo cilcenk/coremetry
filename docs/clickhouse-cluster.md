@@ -223,6 +223,60 @@ Drop the `otlp/old` exporter from every collector — fresh
 ingest now lands only on the new cluster. The old Coremetry can
 sit idle for a grace period before being torn down.
 
+### Schema migrations as an init-container
+
+For multi-replica deployments, having every web pod's
+`chstore.New()` race to apply schema changes is risky on
+cluster setups — concurrent `ON CLUSTER … ReplicatedMergeTree`
+DDL hits ZooKeeper / Keeper at the same time and one or more
+replicas can fail with `znode already exists` or partial
+schema state.
+
+Coremetry exposes a one-shot mode for exactly this case:
+
+```bash
+coremetry --migrate-only
+```
+
+`--migrate-only` runs `chstore.New()` (which creates / alters
+every table + MV via the `ON CLUSTER` path), then exits 0.
+Designed for:
+
+- **Kubernetes initContainer**: blocks the web pod from
+  starting until the migration completes once.
+- **Pre-deploy Job**: standalone Job in your CI/CD that
+  succeeds before the rolling update begins.
+
+Example k8s pattern:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coremetry
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: migrate
+          image: coremetry:v0.2.68
+          args: ["--migrate-only"]
+          envFrom:
+            - configMapRef: { name: coremetry-config }
+            - secretRef:    { name: coremetry-secrets }
+      containers:
+        - name: coremetry
+          image: coremetry:v0.2.68
+          # …web container starts only after migrate exits 0
+```
+
+The web pods that follow STILL run their own `chstore.New()`
+on startup — the migrations are idempotent
+(`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`,
+`ADD INDEX IF NOT EXISTS`), so concurrent no-ops are safe.
+The init-container path just guarantees the *first* run
+happens once, single-writer.
+
 ### Coexistence rules
 
 - During the dual-write window, both Coremetry instances see the

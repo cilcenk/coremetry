@@ -587,6 +587,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_kind        kind        TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_db_system   db_system   TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_http_status http_status TYPE minmax    GRANULARITY 4`,
+		// idx_status powers the per-operation error-anomaly
+		// detector (anomaly/trace_ops.go) — countIf(status_code='error')
+		// over a 5-min window otherwise touches every granule
+		// in the slice. status_code is LowCardinality with 3
+		// values (ok / error / unset) so a set(0) index is
+		// near-zero overhead and lets CH skip granules whose
+		// status set doesn't include 'error'.
+		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_status      status_code TYPE set(0)    GRANULARITY 4`,
 	}
 	for _, q := range alters {
 		if err := s.execDDL(ctx, q); err != nil {

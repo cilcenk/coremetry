@@ -41,8 +41,18 @@ export interface DeployMarker {
   description?: string; // tooltip detail (e.g. "153 spans since")
 }
 
+// Threshold — horizontal line at a y-value, optionally coloured
+// by severity. Used for SLO targets, alert rule thresholds,
+// "this is the limit" indicators. Same idea as Grafana's "alert
+// threshold" overlay or Datadog's "warning / critical bands".
+export interface Threshold {
+  value: number;
+  label?: string;            // e.g. "SLO 500ms"
+  severity?: 'warn' | 'err'; // default 'warn'
+}
+
 export function MultiLineChart({
-  series, unit, height = 320, deploys, syncKey, onZoom,
+  series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -51,6 +61,12 @@ export function MultiLineChart({
   // Hovering near a marker shows label + description in the
   // chart's tooltip panel.
   deploys?: DeployMarker[];
+  // Optional horizontal threshold lines at given y values.
+  // Painted as dashed lines; the area above the line is gently
+  // tinted in the severity colour so a band of values that
+  // breached the threshold is visually obvious without
+  // requiring the operator to read tick marks.
+  thresholds?: Threshold[];
   // syncKey — when set, multiple charts on the same page sync
   // their cursor positions. Hovering one chart paints the
   // crosshair on every chart sharing the key. Datadog /
@@ -190,39 +206,81 @@ export function MultiLineChart({
             u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
           },
         ] : undefined,
-        // Deploy-marker overlay — dashed vertical lines at every
-        // deploy time. Painted after uPlot's own draw so the
-        // lines sit on top of series fills. Each line is
-        // labelled at the top with a short truncated version
-        // string; the tooltip below picks up the hover for the
-        // full info.
-        draw: deploys && deploys.length > 0 ? [
+        // Overlay draw hooks — paint deploy markers (dashed
+        // vertical lines) AND threshold lines (dashed horizontal
+        // lines + tinted breach band) after uPlot's own series
+        // render so the overlays sit on top of fills. Combined
+        // into a single hook so we only register one handler.
+        draw: (deploys && deploys.length > 0) || (thresholds && thresholds.length > 0) ? [
           (u) => {
             const ctx = u.ctx;
-            const xMin = u.scales.x.min ?? 0;
-            const xMax = u.scales.x.max ?? 0;
             ctx.save();
-            ctx.strokeStyle = '#a371f7'; // accent2-ish purple
-            ctx.fillStyle = '#a371f7';
-            ctx.lineWidth = 1.2;
-            ctx.setLineDash([5, 4]);
-            ctx.font = '10px ui-monospace, monospace';
-            for (const d of deploys) {
-              const t = d.timeUnixNs / 1e9;
-              if (t < xMin || t > xMax) continue;
-              const x = u.valToPos(t, 'x', true);
-              ctx.beginPath();
-              ctx.moveTo(x, u.bbox.top);
-              ctx.lineTo(x, u.bbox.top + u.bbox.height);
-              ctx.stroke();
-              // Tiny label at the top — clip to 12 chars so
-              // a long version string doesn't smear across the
-              // chart. Hover for the full string.
-              const lbl = d.label.length > 12 ? d.label.slice(0, 11) + '…' : d.label;
-              ctx.setLineDash([]);
-              ctx.fillText(lbl, x + 3, u.bbox.top + 11);
-              ctx.setLineDash([5, 4]);
+
+            // ── Threshold lines ──────────────────────────────
+            //
+            // For each threshold, paint a horizontal dashed line
+            // and a faint tinted band ABOVE the line (the
+            // "breach zone"). Severity = warn → amber, err →
+            // red. Label sits at the right edge.
+            if (thresholds && thresholds.length > 0) {
+              const yMin = u.scales.y.min ?? 0;
+              const yMax = u.scales.y.max ?? 0;
+              ctx.font = '10px ui-monospace, monospace';
+              for (const th of thresholds) {
+                if (th.value < yMin || th.value > yMax) continue;
+                const colour = th.severity === 'err' ? '#e84e4e' : '#f0b352';
+                const y = u.valToPos(th.value, 'y', true);
+                // Tinted breach band above the line.
+                ctx.fillStyle = th.severity === 'err'
+                  ? 'rgba(232,78,78,0.07)'
+                  : 'rgba(240,179,82,0.07)';
+                ctx.fillRect(u.bbox.left, u.bbox.top, u.bbox.width, y - u.bbox.top);
+                // The line itself.
+                ctx.strokeStyle = colour;
+                ctx.fillStyle = colour;
+                ctx.lineWidth = 1.2;
+                ctx.setLineDash([6, 4]);
+                ctx.beginPath();
+                ctx.moveTo(u.bbox.left, y);
+                ctx.lineTo(u.bbox.left + u.bbox.width, y);
+                ctx.stroke();
+                // Label at the right edge.
+                if (th.label) {
+                  ctx.setLineDash([]);
+                  const labelW = ctx.measureText(th.label).width;
+                  ctx.fillText(
+                    th.label,
+                    u.bbox.left + u.bbox.width - labelW - 4,
+                    y - 4,
+                  );
+                }
+              }
             }
+
+            // ── Deploy markers ───────────────────────────────
+            if (deploys && deploys.length > 0) {
+              const xMin = u.scales.x.min ?? 0;
+              const xMax = u.scales.x.max ?? 0;
+              ctx.strokeStyle = '#a371f7';
+              ctx.fillStyle = '#a371f7';
+              ctx.lineWidth = 1.2;
+              ctx.setLineDash([5, 4]);
+              ctx.font = '10px ui-monospace, monospace';
+              for (const d of deploys) {
+                const t = d.timeUnixNs / 1e9;
+                if (t < xMin || t > xMax) continue;
+                const x = u.valToPos(t, 'x', true);
+                ctx.beginPath();
+                ctx.moveTo(x, u.bbox.top);
+                ctx.lineTo(x, u.bbox.top + u.bbox.height);
+                ctx.stroke();
+                const lbl = d.label.length > 12 ? d.label.slice(0, 11) + '…' : d.label;
+                ctx.setLineDash([]);
+                ctx.fillText(lbl, x + 3, u.bbox.top + 11);
+                ctx.setLineDash([5, 4]);
+              }
+            }
+
             ctx.restore();
           },
         ] : undefined,
@@ -237,6 +295,29 @@ export function MultiLineChart({
         setCursor: [
           (u) => {
             const tip = el.querySelector('.uplot-tooltip') as HTMLDivElement | null;
+            // Y-axis crosshair value pill — small label pinned
+            // to the y-axis edge at the cursor's exact y
+            // position. Datadog / Grafana paint this so the
+            // operator can read "the cursor is at 234ms"
+            // without snapping to a series datum. Different
+            // surface than the floating tooltip (which shows
+            // EVERY series' value at the cursor's x).
+            const yPill = el.querySelector('.uplot-ypill') as HTMLDivElement | null;
+            const cTop = u.cursor.top ?? -1;
+            if (yPill) {
+              if (cTop < u.bbox.top || cTop > u.bbox.top + u.bbox.height) {
+                yPill.style.opacity = '0';
+              } else {
+                const yVal = u.posToVal(cTop, 'y');
+                if (isFinite(yVal)) {
+                  yPill.textContent = fmtSmart(yVal, unit);
+                  yPill.style.top = `${cTop - 8}px`;
+                  yPill.style.opacity = '1';
+                } else {
+                  yPill.style.opacity = '0';
+                }
+              }
+            }
             if (!tip) return;
             const idx = u.cursor.idx;
             if (idx == null || idx < 0) {
@@ -351,7 +432,7 @@ export function MultiLineChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [series, unit, height, deploys, syncKey, onZoom]);
+  }, [series, unit, height, deploys, thresholds, syncKey, onZoom]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling
@@ -425,6 +506,24 @@ export function MultiLineChart({
         zIndex: 5,
         boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
         maxWidth: 320,
+      }} />
+      {/* Y-axis crosshair pill — pinned to the left edge,
+          updated in setCursor. Reads the cursor's exact y
+          value (not snapped to a series datum) so the
+          operator can answer "what is this y-coordinate" at
+          a glance. */}
+      <div className="uplot-ypill" style={{
+        position: 'absolute', pointerEvents: 'none',
+        left: 4, transform: 'translateY(-50%)',
+        background: 'var(--bg3)',
+        border: '1px solid var(--border)',
+        borderRadius: 3,
+        padding: '1px 5px',
+        fontSize: 10, color: 'var(--text)',
+        fontFamily: 'ui-monospace, monospace',
+        opacity: 0, transition: 'opacity .08s',
+        zIndex: 6,
+        whiteSpace: 'nowrap',
       }} />
     </div>
   );

@@ -122,6 +122,24 @@ export function MetricChart({
         setCursor: [
           (u) => {
             const tip = el.querySelector('.uplot-tooltip') as HTMLDivElement | null;
+            // Y-axis crosshair value pill — pinned to the
+            // left edge, follows the cursor's y position.
+            const yPill = el.querySelector('.uplot-ypill') as HTMLDivElement | null;
+            const cTop = u.cursor.top ?? -1;
+            if (yPill) {
+              if (cTop < u.bbox.top || cTop > u.bbox.top + u.bbox.height) {
+                yPill.style.opacity = '0';
+              } else {
+                const yVal = u.posToVal(cTop, 'y');
+                if (isFinite(yVal)) {
+                  yPill.textContent = fmtSmart(yVal, unit);
+                  yPill.style.top = `${cTop - 8}px`;
+                  yPill.style.opacity = '1';
+                } else {
+                  yPill.style.opacity = '0';
+                }
+              }
+            }
             if (!tip) return;
             const idx = u.cursor.idx;
             if (idx == null || idx < 0) {
@@ -179,12 +197,11 @@ export function MetricChart({
 
   // Container width-only; uPlot owns the canvas height. The
   // .uplot-tooltip child is updated by the setCursor hook
-  // above (Grafana-style floating value panel).
+  // above (Grafana-style floating value panel). The y-pill
+  // shows the exact y value at the cursor's row-coordinate.
   return (
     <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
       <div className="uplot-tooltip" style={{
-        // Theme-aware (var(--bg2)/--text/--border) so the panel
-        // is readable in both dark and light modes.
         position: 'absolute', pointerEvents: 'none',
         background: 'var(--bg2)',
         border: '1px solid var(--border)',
@@ -195,6 +212,19 @@ export function MetricChart({
         zIndex: 5,
         boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
         maxWidth: 320,
+      }} />
+      <div className="uplot-ypill" style={{
+        position: 'absolute', pointerEvents: 'none',
+        left: 4, transform: 'translateY(-50%)',
+        background: 'var(--bg3)',
+        border: '1px solid var(--border)',
+        borderRadius: 3,
+        padding: '1px 5px',
+        fontSize: 10, color: 'var(--text)',
+        fontFamily: 'ui-monospace, monospace',
+        opacity: 0, transition: 'opacity .08s',
+        zIndex: 6,
+        whiteSpace: 'nowrap',
       }} />
     </div>
   );

@@ -4,6 +4,12 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci || npm install
 COPY frontend/ ./
+# VITE_APP_VERSION is read by import.meta.env in lib/otel.ts +
+# any "Coremetry vX" footer / login-page chrome. Same value
+# the Go binary stamps so server + UI agree on the version.
+# Falls back to "dev" when invoked outside a tagged context.
+ARG VITE_APP_VERSION=dev
+ENV VITE_APP_VERSION=${VITE_APP_VERSION}
 # Vite outputs to dist/ (not Next.js's out/). Stage 2 embeds it
 # via //go:embed all:frontend/dist into the Go binary.
 RUN npm run build

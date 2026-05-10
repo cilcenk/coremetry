@@ -25,13 +25,26 @@ services:
       retries: 10
 
   coremetry:
+    # `image:` here serves two purposes: (1) docker compose
+    # tags the freshly-built image as coremetry:latest so a
+    # plain `docker pull` works, and (2) re-uses the cached
+    # image on subsequent `up` invocations without rebuild.
+    image: coremetry:${VERSION:-latest}
     build:
       context: .
+      tags:
+        - "coremetry:latest"
+        - "coremetry:${VERSION:-latest}"
       args:
-        # Stamps the running binary with the release tag. Override
-        # at build time:
-        #   VERSION=v0.2.66 docker compose build coremetry
+        # Stamps the running binary with the release tag. The
+        # Makefile auto-fills $VERSION via `git describe` so
+        # local builds get a real tag like "v0.4.48-3-gabc"
+        # instead of the literal "dev". CI / release scripts
+        # override:
+        #   VERSION=v0.4.50 docker compose build coremetry
+        # Both the Go binary AND the Vite SPA pick this up.
         VERSION: "${VERSION:-dev}"
+        VITE_APP_VERSION: "${VERSION:-dev}"
     container_name: coremetry
     # The OTel Collector handles OTLP/HTTP for apps now, so coremetry only
     # exposes its web/API port externally. OTLP/gRPC stays internal — the

@@ -119,6 +119,7 @@ func (s *Server) Start() error {
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
 	mux.HandleFunc("GET /api/admin/system-stats", s.getSystemStats)
+	mux.HandleFunc("GET /api/admin/redis-stats",  s.getRedisStats)
 	mux.HandleFunc("GET /api/admin/cardinality",  auth.RequireRole(auth.RoleAdmin, s.getCardinality))
 	// SSE event stream — long-lived connection, fans out
 	// problem.* / anomaly.* events from the in-process bus.
@@ -442,6 +443,23 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, "system-stats", 60*time.Second, func() (any, error) {
 		return s.store.GetSystemStats(r.Context())
+	})
+}
+
+// getRedisStats surfaces Redis INFO + DBSIZE on the System page so
+// operators see hit-rate, ops/sec, evictions, key count, memory at a
+// glance alongside the ClickHouse + ingest figures. Returns a zero-
+// valued Stats struct (no error) when Redis isn't configured — the UI
+// renders a "not configured" banner rather than an error tile.
+//
+// Cached 5s — the ops/sec gauge needs to feel live during incident
+// response. Cheap query (single INFO + DBSIZE round-trip).
+func (s *Server) getRedisStats(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "redis-stats", 5*time.Second, func() (any, error) {
+		if s.cache == nil {
+			return cache.RedisStats{}, nil
+		}
+		return s.cache.Stats(r.Context())
 	})
 }
 
@@ -2895,40 +2913,51 @@ func (s *Server) copilotConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // getAISettings returns the current Copilot config minus the actual
-// key. UI uses it to drive the editable form. We expose only
-// {provider, model, hasKey} — the secret never round-trips.
+// key. UI uses it to drive the editable form. We expose
+// {provider, model, baseUrl, hasKey} — the secret never round-trips.
+// baseUrl is non-secret (operators put it in their Helm values), so
+// we echo it so the UI can show "currently pointing at <local
+// endpoint>" without operator memorisation.
 func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
-	provider, model, hasKey := s.copilot.Snapshot()
+	provider, model, baseURL, hasKey := s.copilot.Snapshot()
 	writeJSON(w, map[string]any{
 		"provider": provider,
 		"model":    model,
+		"baseUrl":  baseURL,
 		"hasKey":   hasKey,
 	})
 }
 
-// putAISettings saves a new provider + key (+ optional model) and
-// updates the live service. Body shape matches the GET response sans
-// hasKey, plus an apiKey field. An empty apiKey legitimately disables
-// the feature (UI's "remove key" path).
+// putAISettings saves a new provider + key (+ optional model + base
+// URL) and updates the live service. Body shape matches the GET
+// response sans hasKey, plus an apiKey field. An empty apiKey + non-
+// "openai" provider legitimately disables the feature (UI's "remove
+// key" path); the openai provider with a baseUrl but no key is the
+// "local Ollama, no auth" config.
 func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Provider string `json:"provider"`
 		APIKey   string `json:"apiKey"`
 		Model    string `json:"model"`
+		BaseURL  string `json:"baseUrl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest); return
 	}
-	if in.Provider != "" && in.Provider != copilot.ProviderAnthropic && in.Provider != copilot.ProviderGitHub {
-		http.Error(w, "provider must be 'anthropic' or 'github'", http.StatusBadRequest); return
+	if in.Provider != "" &&
+		in.Provider != copilot.ProviderAnthropic &&
+		in.Provider != copilot.ProviderGitHub &&
+		in.Provider != copilot.ProviderOpenAI {
+		http.Error(w, "provider must be 'anthropic', 'github' or 'openai'", http.StatusBadRequest); return
 	}
-	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model); err != nil {
+	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
-	provider, model, hasKey := s.copilot.Snapshot()
+	provider, model, baseURL, hasKey := s.copilot.Snapshot()
 	writeJSON(w, map[string]any{
 		"provider": provider,
 		"model":    model,
+		"baseUrl":  baseURL,
 		"hasKey":   hasKey,
 	})
 }

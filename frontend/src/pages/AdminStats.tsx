@@ -9,6 +9,7 @@ import { fmtNum, tsLong } from '@/lib/utils';
 import type {
   TimeRange,
   SystemStatus, ComponentHealth, StatusComponent,
+  RedisStats,
 } from '@/lib/types';
 
 // Coremetry "what's inside" page. Three sections stacked top-to-
@@ -38,6 +39,17 @@ export default function AdminStatsPage() {
   // useQueryClient handle.
   const dataQ = useSystemStats();
   const data = dataQ.isLoading ? undefined : dataQ.isError ? null : dataQ.data;
+
+  // Redis live snapshot — 5s server cache, 10s client poll. Separate
+  // query so the rest of the page (60s polled) doesn't have to wait
+  // on the Redis round-trip and vice-versa.
+  const redisQ = useQuery<RedisStats>({
+    queryKey: ['admin', 'redis-stats'],
+    queryFn: () => api.redisStats(),
+    refetchInterval: 10_000,
+    staleTime: 7_000,
+  });
+  const redis = redisQ.isLoading ? undefined : redisQ.isError ? null : redisQ.data;
   const setRefreshTick = (_n: number | ((p: number) => number)) => {
     qc.invalidateQueries({ queryKey: keys.admin.systemStats });
   };
@@ -181,6 +193,9 @@ export default function AdminStatsPage() {
                 </div>
               )}
             </div>
+
+            {/* ── Redis cache live status ─────────────────────────── */}
+            <RedisPanel data={redis} />
 
             {/* ── Per-table storage ───────────────────────────────── */}
             <div style={{
@@ -417,6 +432,110 @@ function KPI({ label, value, sub, cls }: { label: string; value: string; sub?: s
       )}
     </div>
   );
+}
+
+// RedisPanel renders Redis INFO + DBSIZE — keys, memory, hit-rate,
+// ops/sec — alongside the ClickHouse storage table. Falls back to
+// "Redis not configured" when version is empty (server returned a
+// zero-valued struct because no Redis URL is wired). Polled every
+// 10s so the ops/sec gauge feels live during incident response.
+function RedisPanel({ data }: { data: RedisStats | null | undefined }) {
+  if (data === undefined) {
+    return (
+      <div style={{
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        borderRadius: 8, padding: 14, marginBottom: 18,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
+          Redis cache <span style={{ color: 'var(--text3)', fontWeight: 400 }}>· loading…</span>
+        </div>
+        <Spinner />
+      </div>
+    );
+  }
+  if (data === null) {
+    return (
+      <div style={{
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        borderRadius: 8, padding: 14, marginBottom: 18,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
+          Redis cache <span style={{ color: 'var(--err)', fontWeight: 400 }}>· probe failed</span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+          INFO command returned an error. Check the Redis URL in config or container logs.
+        </div>
+      </div>
+    );
+  }
+  if (!data.version) {
+    return (
+      <div style={{
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        borderRadius: 8, padding: 14, marginBottom: 18,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+          Redis cache <span style={{ color: 'var(--text3)', fontWeight: 400 }}>· not configured</span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6 }}>
+          Coremetry is running with the in-memory Noop cache. For multi-replica HA
+          (alert deduplication, response cache shared across pods, anomaly
+          evaluator leader election) wire <code>cache.redis_url</code> in the config or
+          set <code>COREMETRY_REDIS_URL=redis://&lt;host&gt;:6379/0</code> in the
+          environment.
+        </div>
+      </div>
+    );
+  }
+  const memPct = data.maxMemoryBytes > 0
+    ? (data.usedMemoryBytes / data.maxMemoryBytes) * 100
+    : 0;
+  const evicting = data.evictedKeys > 0;
+  return (
+    <div style={{
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: 14, marginBottom: 18,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12,
+      }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Redis cache</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          v{data.version} · {data.mode || 'standalone'} · uptime {fmtUptime(data.uptimeSec)}
+        </span>
+      </div>
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10,
+      }}>
+        <KPI label="Keys"          value={fmtNum(data.keys)} />
+        <KPI label="Hit rate"      value={`${(data.hitRate * 100).toFixed(1)}%`}
+             cls={data.hitRate >= 0.8 ? 'ok' : data.hitRate >= 0.5 ? 'warn' : 'err'} />
+        <KPI label="Ops / sec"     value={fmtNum(Math.round(data.opsPerSec))} />
+        <KPI label="Clients"       value={String(data.connectedClients)} />
+        <KPI label="Memory"
+             value={fmtBytes(data.usedMemoryBytes)}
+             sub={data.maxMemoryBytes > 0
+               ? `${memPct.toFixed(0)}% of ${fmtBytes(data.maxMemoryBytes)}`
+               : `peak ${fmtBytes(data.usedMemoryPeakBytes)}`}
+             cls={memPct >= 90 ? 'err' : memPct >= 75 ? 'warn' : undefined} />
+        <KPI label="Net in"        value={`${data.netInputKbps.toFixed(1)} KB/s`} />
+        <KPI label="Net out"       value={`${data.netOutputKbps.toFixed(1)} KB/s`} />
+        <KPI label="Evicted"
+             value={fmtNum(data.evictedKeys)}
+             cls={evicting ? 'warn' : undefined}
+             sub={evicting ? 'maxmemory pressure' : undefined} />
+        <KPI label="Expired"       value={fmtNum(data.expiredKeys)} />
+      </div>
+    </div>
+  );
+}
+
+function fmtUptime(sec: number): string {
+  if (!sec || sec < 0) return '—';
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
 }
 
 function fmtBytes(n: number): string {

@@ -321,12 +321,20 @@ func main() {
 	// (saved via Settings → AI Copilot) win on top. Configured() returns
 	// false when no key is set; the UI hides the buttons in that case.
 	copilotSvc := copilot.New(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model)
+	// BaseURL is provider-specific (only "openai" reads it). Apply
+	// the env-default before LoadPersisted so runtime overrides
+	// from /api/settings/ai still win on top.
+	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL)
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
 	if copilotSvc.Configured() {
-		p, m, _ := copilotSvc.Snapshot()
-		log.Printf("[copilot] AI explain enabled (provider=%s model=%s)", p, m)
+		p, m, b, _ := copilotSvc.Snapshot()
+		if b != "" {
+			log.Printf("[copilot] AI explain enabled (provider=%s model=%s baseURL=%s)", p, m, b)
+		} else {
+			log.Printf("[copilot] AI explain enabled (provider=%s model=%s)", p, m)
+		}
 	}
 
 	// ── LDAP / AD enterprise auth (optional) ─────────────────────────────────

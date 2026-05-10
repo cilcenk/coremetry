@@ -299,6 +299,8 @@ export const api = {
     }),
 
   // Runtime settings: AI Copilot
+  redisStats: () =>
+    get<import('./types').RedisStats>(`/api/admin/redis-stats`),
   getAISettings: () => get<AISettings>(`/api/settings/ai`),
   putAISettings: (s: AISettingsInput) =>
     request<AISettings>(`/api/settings/ai`, {

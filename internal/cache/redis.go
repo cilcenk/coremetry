@@ -61,6 +61,130 @@ func (r *redisCache) Ping(ctx context.Context) error {
 	return r.cli.Ping(ctx).Err()
 }
 
+// RedisStats is the slice of INFO + DBSIZE the System page renders.
+// Kept small so one trip per Stats() call covers the panel without
+// streaming the full INFO blob (which is hundreds of fields). All
+// fields are zeroed on parse failure — UI shows "—" for those rows
+// rather than crashing the panel.
+type RedisStats struct {
+	Version             string  `json:"version"`
+	Mode                string  `json:"mode"`               // standalone|sentinel|cluster
+	Uptime              int64   `json:"uptimeSec"`
+	ConnectedClients    int     `json:"connectedClients"`
+	Keys                int64   `json:"keys"`
+	UsedMemoryBytes     int64   `json:"usedMemoryBytes"`
+	UsedMemoryPeakBytes int64   `json:"usedMemoryPeakBytes"`
+	MaxMemoryBytes      int64   `json:"maxMemoryBytes"`
+	HitRate             float64 `json:"hitRate"`            // keyspace_hits / (hits+misses), 0..1
+	OpsPerSec           float64 `json:"opsPerSec"`          // instantaneous_ops_per_sec
+	NetInputKBps        float64 `json:"netInputKbps"`
+	NetOutputKBps       float64 `json:"netOutputKbps"`
+	EvictedKeys         int64   `json:"evictedKeys"`
+	ExpiredKeys         int64   `json:"expiredKeys"`
+}
+
+// Stats parses a representative subset of `INFO` plus DBSIZE so the
+// admin/stats page can render Redis health alongside ClickHouse +
+// queue depth. Cheap (~ms) — no aggregation, just a single round trip.
+func (r *redisCache) Stats(ctx context.Context) (RedisStats, error) {
+	var out RedisStats
+	info, err := r.cli.Info(ctx).Result()
+	if err != nil {
+		return out, fmt.Errorf("redis INFO: %w", err)
+	}
+	// Map keys → values from INFO's `key:value` line shape.
+	parseInt := func(s string) int64 {
+		var n int64
+		_, _ = fmt.Sscanf(s, "%d", &n)
+		return n
+	}
+	parseFloat := func(s string) float64 {
+		var f float64
+		_, _ = fmt.Sscanf(s, "%f", &f)
+		return f
+	}
+	hits, misses := int64(0), int64(0)
+	for _, raw := range splitLines(info) {
+		k, v, ok := splitKV(raw, ':')
+		if !ok {
+			continue
+		}
+		switch k {
+		case "redis_version":
+			out.Version = v
+		case "redis_mode":
+			out.Mode = v
+		case "uptime_in_seconds":
+			out.Uptime = parseInt(v)
+		case "connected_clients":
+			out.ConnectedClients = int(parseInt(v))
+		case "used_memory":
+			out.UsedMemoryBytes = parseInt(v)
+		case "used_memory_peak":
+			out.UsedMemoryPeakBytes = parseInt(v)
+		case "maxmemory":
+			out.MaxMemoryBytes = parseInt(v)
+		case "instantaneous_ops_per_sec":
+			out.OpsPerSec = parseFloat(v)
+		case "instantaneous_input_kbps":
+			out.NetInputKBps = parseFloat(v)
+		case "instantaneous_output_kbps":
+			out.NetOutputKBps = parseFloat(v)
+		case "keyspace_hits":
+			hits = parseInt(v)
+		case "keyspace_misses":
+			misses = parseInt(v)
+		case "evicted_keys":
+			out.EvictedKeys = parseInt(v)
+		case "expired_keys":
+			out.ExpiredKeys = parseInt(v)
+		}
+	}
+	if hits+misses > 0 {
+		out.HitRate = float64(hits) / float64(hits+misses)
+	}
+	if n, err := r.cli.DBSize(ctx).Result(); err == nil {
+		out.Keys = n
+	}
+	return out, nil
+}
+
+// splitLines splits INFO output by both \r\n and \n — Redis uses
+// CRLF on the wire but some pipes normalise to LF.
+func splitLines(s string) []string {
+	out := []string{}
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			line := s[start:i]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			out = append(out, line)
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+func splitKV(s string, sep byte) (string, string, bool) {
+	for i := 0; i < len(s); i++ {
+		if s[i] == sep {
+			return s[:i], s[i+1:], true
+		}
+	}
+	return "", "", false
+}
+
+// Stats on the noop cache returns an empty struct + nil — the System
+// page checks for "version == ''" and renders "Redis not configured".
+func (noopCache) Stats(_ context.Context) (RedisStats, error) {
+	return RedisStats{}, nil
+}
+
 // ── Lock ────────────────────────────────────────────────────────────────────
 
 // releaseScript ensures we only delete the key if the value still matches

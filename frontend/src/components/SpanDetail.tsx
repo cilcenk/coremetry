@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { SpanRow, ProfileRow, LogRow, SpanMetricSeries } from '@/lib/types';
+import type { SpanRow, ProfileRow, LogRow } from '@/lib/types';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
-import { fmtSmart } from '@/lib/chartFmt';
 import { IconFlame } from './icons';
 import { CopyButton } from './CopyButton';
 
@@ -45,73 +44,6 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
       .then(r => setSpanLogs(r.logs ?? []))
       .catch(() => setSpanLogs([]));
   }, [span.spanId, span.traceId]);
-
-  // Honeycomb-style span aggregate metrics — when the operator
-  // opens a span, surface "is this slow / failing / ordinary"
-  // by computing aggregate stats for every span matching the
-  // same (service, operation) pair over the last hour. The
-  // cells answer:
-  //   • count          — how many of these have we seen
-  //   • error rate     — what % failed
-  //   • avg / p50 / p95 / p99 latency
-  //   • this span's percentile — where THIS occurrence lands
-  //                              against the population
-  // One CH query class per stat (5 calls) but the response is
-  // small and partition-pruned by service_name + 1h time range.
-  const [aggMetrics, setAggMetrics] = useState<{
-    count: number; errorRate: number;
-    avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number;
-  } | null | undefined>(undefined);
-  useEffect(() => {
-    if (!span.serviceName || !span.name) { setAggMetrics(null); return; }
-    setAggMetrics(undefined);
-    // Last hour by default — long enough to give the
-    // population stats statistical weight, short enough that
-    // the data reflects the current state of the service.
-    const to   = Date.now() * 1_000_000;
-    const from = to - 3600 * 1_000_000_000;
-    // ParseDSL on the server splits by newline and AND-joins each
-    // line; using a literal " AND " on one line gets treated as a
-    // single (mis-quoted) value, so the second predicate silently
-    // drops and the count comes back as 0. Newline-separate to
-    // give each predicate its own clean parse.
-    const dsl =
-      `service.name = "${span.serviceName.replace(/"/g, '\\"')}"\n` +
-      `name = "${span.name.replace(/"/g, '\\"')}"`;
-    Promise.all([
-      api.spanMetric({ agg: 'count',      dsl, from, to }),
-      api.spanMetric({ agg: 'error_rate', dsl, from, to }),
-      api.spanMetric({ agg: 'avg',        dsl, from, to, field: 'duration_ms' }),
-      api.spanMetric({ agg: 'p50',        dsl, from, to, field: 'duration_ms' }),
-      api.spanMetric({ agg: 'p95',        dsl, from, to, field: 'duration_ms' }),
-      api.spanMetric({ agg: 'p99',        dsl, from, to, field: 'duration_ms' }),
-    ]).then(([cnt, er, avg, p50, p95, p99]) => {
-      const sumLast = (s: SpanMetricSeries[] | null | undefined): number => {
-        // The agg endpoint returns one series with N bucketed
-        // points. For COUNT we want the SUM over the window;
-        // for rate / quantile / avg we want the LAST bucket
-        // value (the freshest snapshot). Differentiate:
-        return (s?.[0]?.points ?? []).reduce((acc, p) => acc + (p.value || 0), 0);
-      };
-      const lastNonNull = (s: SpanMetricSeries[] | null | undefined): number => {
-        const pts = s?.[0]?.points ?? [];
-        // Average across all buckets — for distribution stats
-        // (avg / quantiles) this gives a steady reading; using
-        // just the last bucket would jump per refresh.
-        const ok = pts.filter(p => p.value !== null && isFinite(p.value));
-        if (ok.length === 0) return 0;
-        return ok.reduce((acc, p) => acc + p.value, 0) / ok.length;
-      };
-      setAggMetrics({
-        count:     Math.round(sumLast(cnt)),
-        errorRate: lastNonNull(er),
-        avgMs:     lastNonNull(avg),
-        p50Ms:     lastNonNull(p50),
-        p95Ms:     lastNonNull(p95),
-        p99Ms:     lastNonNull(p99),
-      });
-    }).catch(() => setAggMetrics(null));
-  }, [span.serviceName, span.name]);
 
   // ── Resize handle ────────────────────────────────────────────────────────
   // Panel width persists in localStorage so navigating away and back
@@ -174,14 +106,6 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
         <button className="ps-close" onClick={onClose}>✕</button>
       </div>
       <div id="span-panel-body">
-        {/* Aggregate metrics first — Honeycomb's "is this span
-            unusual?" framing. Same (service.name, span.name)
-            stats over the last hour give the operator
-            instant context: count, error rate, latency
-            distribution, plus where THIS span lands on the
-            distribution. */}
-        <SpanMetrics span={span} agg={aggMetrics} />
-
         {/* Attributes — what the application code emitted; usually
             the most informative bit when debugging an unfamiliar span.
             "Info" (service/kind/timing/IDs) below: shape of the row,
@@ -385,129 +309,3 @@ function Row({ k, v, mono, pre, copyable }: {
   );
 }
 
-// SpanMetrics — Honeycomb-style "is this span unusual?" panel.
-// Shows aggregate stats for every span sharing the same
-// (service.name, span.name) pair over the last hour, plus
-// where THIS occurrence lands relative to the distribution
-// (slower than P95? P99? typical?). The single most useful
-// thing to surface when an operator clicks a span — answers
-// "is this latency normal" before they read attributes.
-function SpanMetrics({ span, agg }: {
-  span: SpanRow;
-  agg: {
-    count: number; errorRate: number;
-    avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number;
-  } | null | undefined;
-}) {
-  // While loading, render a small placeholder so the panel
-  // doesn't reflow when the data lands.
-  if (agg === undefined) {
-    return (
-      <div className="span-metrics" style={metricsBox}>
-        <div style={metricsHeader}>Aggregate · last 1h</div>
-        <div style={{ fontSize: 11, color: 'var(--text3)' }}>Loading…</div>
-      </div>
-    );
-  }
-  if (agg === null || agg.count === 0) {
-    // No siblings in the last hour — common for one-off
-    // span names. Still render the section so the operator
-    // doesn't think the panel is broken.
-    return (
-      <div className="span-metrics" style={metricsBox}>
-        <div style={metricsHeader}>Aggregate · last 1h</div>
-        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-          No other spans matching <code>{span.name}</code> from <code>{span.serviceName}</code>{' '}
-          in the last hour.
-        </div>
-      </div>
-    );
-  }
-  // Position THIS span on the distribution. We don't have
-  // the raw histogram so we approximate against the standard
-  // percentiles: ≥ p99 → "P99+", ≥ p95 → "≥P95",
-  // ≥ p50 → "above median", below → "below median".
-  const dur = span.durationMs;
-  const rank = dur >= agg.p99Ms ? 'P99+'
-             : dur >= agg.p95Ms ? '≥ P95'
-             : dur >= agg.p50Ms ? 'above median'
-             : 'below median';
-  const rankColor = dur >= agg.p99Ms ? 'var(--err)'
-                  : dur >= agg.p95Ms ? 'var(--warn)'
-                  : 'var(--ok)';
-  return (
-    <div className="span-metrics" style={metricsBox}>
-      <div style={metricsHeader}>
-        Aggregate · last 1h ·
-        <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 4 }}>
-          ({span.serviceName} / {span.name})
-        </span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-        <Cell label="this span" value={fmtSmart(dur, 'ms')} tone={rankColor}
-              hint={`Position vs population: ${rank}`} />
-        <Cell label="executions" value={agg.count.toLocaleString()} />
-        <Cell label="error rate"
-              value={`${agg.errorRate.toFixed(2)}%`}
-              tone={agg.errorRate > 5 ? 'var(--err)'
-                  : agg.errorRate > 0 ? 'var(--warn)' : undefined} />
-        <Cell label="avg"  value={fmtSmart(agg.avgMs, 'ms')} />
-        <Cell label="p50"  value={fmtSmart(agg.p50Ms, 'ms')} />
-        <Cell label="p95"  value={fmtSmart(agg.p95Ms, 'ms')} />
-        <Cell label="p99"  value={fmtSmart(agg.p99Ms, 'ms')} />
-        <Cell label="this vs p99"
-              value={agg.p99Ms > 0
-                ? `${(dur / agg.p99Ms * 100).toFixed(0)}%`
-                : '—'}
-              tone={dur > agg.p99Ms ? 'var(--err)' : undefined}
-              hint="this span's duration as a fraction of the population P99" />
-        <Cell label="this vs avg"
-              value={agg.avgMs > 0
-                ? `${(dur / agg.avgMs * 100).toFixed(0)}%`
-                : '—'} />
-      </div>
-    </div>
-  );
-}
-
-function Cell({ label, value, tone, hint }: {
-  label: string;
-  value: string;
-  tone?: string;
-  hint?: string;
-}) {
-  return (
-    <div title={hint} style={{
-      display: 'flex', flexDirection: 'column', gap: 1,
-      padding: '4px 8px',
-      background: 'var(--bg2)',
-      border: '1px solid var(--border)',
-      borderRadius: 4,
-    }}>
-      <span style={{
-        fontSize: 9, color: 'var(--text3)',
-        fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase',
-      }}>{label}</span>
-      <span style={{
-        fontSize: 12, fontWeight: 600,
-        color: tone ?? 'var(--text)',
-        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-        fontVariantNumeric: 'tabular-nums',
-      }}>{value}</span>
-    </div>
-  );
-}
-
-const metricsBox: React.CSSProperties = {
-  margin: '0 0 12px',
-  padding: '10px 12px',
-  background: 'var(--bg1)',
-  border: '1px solid var(--border)',
-  borderRadius: 6,
-};
-const metricsHeader: React.CSSProperties = {
-  fontSize: 11, fontWeight: 600,
-  letterSpacing: '0.5px', textTransform: 'uppercase',
-  color: 'var(--text2)', marginBottom: 8,
-  display: 'flex', alignItems: 'baseline', gap: 4,
-};

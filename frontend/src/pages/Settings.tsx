@@ -594,6 +594,7 @@ function AITab() {
   const [loaded, setLoaded] = useState(false);
   const [provider, setProvider] = useState<AIProvider>('anthropic');
   const [model, setModel] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [hasKey, setHasKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
@@ -603,6 +604,7 @@ function AITab() {
     api.getAISettings().then(s => {
       setProvider(s.provider || 'anthropic');
       setModel(s.model || '');
+      setBaseUrl(s.baseUrl || '');
       setHasKey(s.hasKey);
       setLoaded(true);
     }).catch(() => setLoaded(true));
@@ -612,7 +614,7 @@ function AITab() {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey, model });
+      const next = await api.putAISettings({ provider, apiKey, model, baseUrl });
       setHasKey(next.hasKey);
       setApiKey('');
       setMsg({ kind: 'ok', text: next.hasKey ? 'Saved — Copilot is live.' : 'Saved — Copilot disabled.' });
@@ -627,7 +629,7 @@ function AITab() {
     if (!confirm('Remove the saved API key? Copilot buttons will disappear until a new key is set.')) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model });
+      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl });
       setHasKey(next.hasKey);
       setApiKey('');
       setMsg({ kind: 'ok', text: 'Key cleared — Copilot is dormant.' });
@@ -651,6 +653,13 @@ function AITab() {
       <code style={{ background: 'var(--bg0)', padding: '1px 5px', borderRadius: 3 }}>~/.config/github-copilot/hosts.json</code>{' '}
       or run your own OAuth flow. Coremetry exchanges it for a Copilot session token automatically.
     </>
+  ) : provider === 'openai' ? (
+    <>
+      Drives any OpenAI-compatible <code style={{ background: 'var(--bg0)', padding: '1px 5px', borderRadius: 3 }}>/v1/chat/completions</code> endpoint —
+      real OpenAI, Ollama, LM Studio, vLLM, llama.cpp server, LocalAI, OpenWebUI.
+      Set <b>Base URL</b> below to your endpoint (e.g. <code>http://ollama:11434/v1</code>).
+      API key is optional for local endpoints that don't gate on it (Ollama default).
+    </>
   ) : (
     <>
       Paste your Anthropic API key (starts with{' '}
@@ -661,7 +670,15 @@ function AITab() {
     </>
   );
 
-  const modelPlaceholder = provider === 'github' ? 'gpt-4o (default)' : 'claude-sonnet-4-6 (default)';
+  const modelPlaceholder =
+    provider === 'github' ? 'gpt-4o (default)' :
+    provider === 'openai' ? 'gpt-4o-mini / llama3.1 / qwen2.5-coder …' :
+    'claude-sonnet-4-6 (default)';
+
+  const providerLabel =
+    provider === 'github' ? 'GitHub Copilot' :
+    provider === 'openai' ? 'OpenAI-compatible' :
+    'Anthropic';
 
   return (
     <div style={{ maxWidth: 640 }}>
@@ -669,17 +686,21 @@ function AITab() {
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Inline natural-language explanations for traces, Problems and exceptions.
         Pick a provider, paste your key, save — buttons appear automatically on the
-        trace detail page and the Problems table.
+        trace detail page and the Problems table. The OpenAI-compatible provider
+        targets self-hosted local LLMs (Ollama / LM Studio / vLLM …) so traces
+        never leave your perimeter.
       </p>
 
-      <div className={`status-banner status-banner-${hasKey ? 'operational' : 'degraded'}`}>
-        <span className={`status-pill status-pill-${hasKey ? 'operational' : 'degraded'}`}>
-          {hasKey ? 'CONFIGURED' : 'NOT CONFIGURED'}
+      <div className={`status-banner status-banner-${hasKey || (provider === 'openai' && baseUrl) ? 'operational' : 'degraded'}`}>
+        <span className={`status-pill status-pill-${hasKey || (provider === 'openai' && baseUrl) ? 'operational' : 'degraded'}`}>
+          {hasKey || (provider === 'openai' && baseUrl) ? 'CONFIGURED' : 'NOT CONFIGURED'}
         </span>
         <span style={{ fontWeight: 600, fontSize: 14 }}>
           {hasKey
-            ? `Provider: ${provider === 'github' ? 'GitHub Copilot' : 'Anthropic'} — ready.`
-            : 'No API key configured. Paste one below to enable.'}
+            ? `Provider: ${providerLabel} — ready.`
+            : provider === 'openai' && baseUrl
+              ? `Provider: ${providerLabel} (no auth) — ready at ${baseUrl}.`
+              : 'Not configured. Paste a key (or set a local endpoint URL) below.'}
         </span>
       </div>
 
@@ -694,15 +715,43 @@ function AITab() {
                   style={{ width: '100%' }}>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="github">GitHub Copilot</option>
+            <option value="openai">OpenAI-compatible (Ollama / LM Studio / vLLM / OpenAI)</option>
           </select>
         </label>
+
+        {/* Base URL — only meaningful for the openai provider. The
+            field is rendered for all providers but the openai branch
+            is the only one that consumes it server-side; harmless
+            otherwise (saved + ignored). Keeps the form layout
+            stable when switching providers. */}
+        {provider === 'openai' && (
+          <label style={{ display: 'block', marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+              Base URL
+            </div>
+            <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
+                   placeholder="http://ollama:11434/v1   (or https://api.openai.com/v1 for real OpenAI)"
+                   autoComplete="off" style={{ width: '100%', fontFamily: 'monospace' }} />
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+              Endpoint must serve <code>/chat/completions</code> in OpenAI's request shape.
+              Common paths: Ollama → <code>http://&lt;host&gt;:11434/v1</code>,
+              LM Studio → <code>http://&lt;host&gt;:1234/v1</code>,
+              vLLM → <code>http://&lt;host&gt;:8000/v1</code>.
+            </div>
+          </label>
+        )}
 
         <label style={{ display: 'block', marginBottom: 6 }}>
           <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
             API key {hasKey && <span style={{ color: 'var(--text3)' }}>(saved — leave empty to keep current)</span>}
+            {provider === 'openai' && (
+              <span style={{ color: 'var(--text3)' }}> (optional for local endpoints)</span>
+            )}
           </div>
           <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-                 placeholder={hasKey ? '••••••••••••••••' : (provider === 'github' ? 'ghu_…' : 'sk-ant-…')}
+                 placeholder={hasKey ? '••••••••••••••••' :
+                   provider === 'github' ? 'ghu_…' :
+                   provider === 'openai' ? 'sk-… (optional)' : 'sk-ant-…'}
                  autoComplete="off" style={{ width: '100%' }} />
         </label>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14, lineHeight: 1.5 }}>

@@ -51,18 +51,45 @@ export interface RetentionSpec {
   profiles?: string;
 }
 
+// RedisStats matches cache.RedisStats — INFO + DBSIZE snapshot
+// rendered on the System page. version=="" means Redis is not
+// configured (Noop cache active); the UI shows a "wire it up for HA"
+// banner instead of the metrics grid.
+export interface RedisStats {
+  version: string;
+  mode: string;
+  uptimeSec: number;
+  connectedClients: number;
+  keys: number;
+  usedMemoryBytes: number;
+  usedMemoryPeakBytes: number;
+  maxMemoryBytes: number;
+  hitRate: number;        // 0..1, keyspace_hits / (hits+misses)
+  opsPerSec: number;      // instantaneous_ops_per_sec
+  netInputKbps: number;
+  netOutputKbps: number;
+  evictedKeys: number;
+  expiredKeys: number;
+}
+
 // AI Copilot config edited from Settings. apiKey is write-only — the
 // GET response never includes it; hasKey is the masked indicator.
-export type AIProvider = 'anthropic' | 'github';
+// baseUrl is provider-specific (only "openai" reads it) and is the
+// non-secret pointer at a self-hosted OpenAI-compatible endpoint
+// (Ollama, LM Studio, vLLM, etc.) — echoed back so the form shows
+// what's wired.
+export type AIProvider = 'anthropic' | 'github' | 'openai';
 export interface AISettings {
   provider: AIProvider;
   model: string;
+  baseUrl: string;
   hasKey: boolean;
 }
 export interface AISettingsInput {
   provider: AIProvider;
   apiKey: string;
   model?: string;
+  baseUrl?: string;
 }
 
 // Role hierarchy used everywhere. `editor` was introduced for the

@@ -23,6 +23,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: '/incidents',  label: 'Incidents',    icon: '⚠' },
   { href: '/problems',   label: 'Problems',     icon: '!' },
+  { href: '/anomalies',  label: 'Anomalies',    icon: '⚠' },
   { href: '/services',   label: 'Services',     icon: '◈' },
   { href: '/traces',     label: 'Traces',       icon: '⋮' },
   { href: '/metrics',    label: 'Metrics',      icon: '∿' },

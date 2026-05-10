@@ -26,6 +26,10 @@ type Cache interface {
 	// (treats cache-disabled mode as healthy — there's no remote to be
 	// down). Used by the status page.
 	Ping(ctx context.Context) error
+	// Stats returns Redis INFO + DBSIZE for the System page admin
+	// view. Noop returns a zero-valued struct so callers can render
+	// "Redis not configured" without error handling.
+	Stats(ctx context.Context) (RedisStats, error)
 }
 
 // Lock is a best-effort distributed lock. TryAcquire returns ok=false

@@ -102,19 +102,25 @@ type TailSamplingConfig struct {
 	MaxTraces int  `yaml:"max_traces"  json:"maxTraces"` // memory cap; default 200000
 }
 
-// AIConfig wires the optional AI Copilot. Two providers supported:
+// AIConfig wires the optional AI Copilot. Three providers supported:
 //   - "anthropic" (default): APIKey is an `sk-ant-…` key from the
 //     Anthropic console.
 //   - "github":              APIKey is a GitHub OAuth token (`ghu_…`)
 //     with Copilot access; Coremetry exchanges it for a session token
 //     and calls api.githubcopilot.com (OpenAI-compatible).
+//   - "openai":              Any OpenAI-compatible /v1/chat/completions
+//     endpoint. Drives self-hosted local LLMs (Ollama, LM Studio,
+//     vLLM, llama.cpp server) and the real OpenAI API. Set BaseURL
+//     to your local endpoint (e.g. http://ollama:11434/v1) and
+//     APIKey is optional for endpoints that don't gate on it.
 //
 // Env config is the boot-time default; the admin Settings tab can
 // override at runtime, persisted to system_settings.
 type AIConfig struct {
-	Provider string `yaml:"provider"` // env: COREMETRY_AI_PROVIDER (anthropic|github)
+	Provider string `yaml:"provider"` // env: COREMETRY_AI_PROVIDER (anthropic|github|openai)
 	APIKey   string `yaml:"api_key"`  // env: COREMETRY_AI_API_KEY
 	Model    string `yaml:"model"`    // env: COREMETRY_AI_MODEL
+	BaseURL  string `yaml:"base_url"` // env: COREMETRY_AI_BASE_URL (openai provider only)
 }
 
 // LogsConfig picks which read backend serves /api/logs. Ingest still
@@ -383,6 +389,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_AI_MODEL"); v != "" {
 		cfg.AI.Model = v
+	}
+	if v := os.Getenv("COREMETRY_AI_BASE_URL"); v != "" {
+		cfg.AI.BaseURL = v
 	}
 	if cfg.Auth.TokenTTL == 0 {
 		cfg.Auth.TokenTTL = defaults.Auth.TokenTTL

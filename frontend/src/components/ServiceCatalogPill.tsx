@@ -62,8 +62,8 @@ export function ServiceCatalogPill({ service }: { service: string }) {
 
   return (
     <span style={{
-      display: 'inline-flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
-      fontSize: 11, color: 'var(--text2)',
+      display: 'inline-flex', flexWrap: 'wrap', gap: 8, alignItems: 'center',
+      fontSize: 13, color: 'var(--text2)',
     }}>
       {meta.ownerTeam && (
         <Pill title="Owner team">👥 {meta.ownerTeam}</Pill>
@@ -87,7 +87,7 @@ export function ServiceCatalogPill({ service }: { service: string }) {
         <button onClick={() => setEditing(true)}
           style={{
             background: 'transparent', border: 0, cursor: 'pointer',
-            color: 'var(--text3)', padding: '0 4px', fontSize: 11,
+            color: 'var(--text3)', padding: '0 6px', fontSize: 14,
           }}
           title="Edit catalog metadata">✎</button>
       )}
@@ -98,9 +98,10 @@ export function ServiceCatalogPill({ service }: { service: string }) {
 function Pill({ children, title }: { children: React.ReactNode; title?: string }) {
   return (
     <span title={title} style={{
-      padding: '2px 8px', borderRadius: 12,
+      padding: '4px 12px', borderRadius: 14,
       background: 'var(--bg3)', border: '1px solid var(--border)',
       color: 'var(--text)', whiteSpace: 'nowrap',
+      fontWeight: 500,
     }}>
       {children}
     </span>
@@ -112,11 +113,12 @@ function Link({ href, title, children }: {
 }) {
   return (
     <a href={href} target="_blank" rel="noopener" title={title} style={{
-      padding: '2px 8px', borderRadius: 12,
+      padding: '4px 12px', borderRadius: 14,
       background: 'rgba(56,139,253,0.10)',
       border: '1px solid rgba(56,139,253,0.35)',
       color: 'var(--accent2)', textDecoration: 'none',
       whiteSpace: 'nowrap',
+      fontWeight: 500,
     }}>
       {children} ↗
     </a>

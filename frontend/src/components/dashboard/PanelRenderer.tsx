@@ -5,6 +5,7 @@ import type {
   SpanMetricSeries, TimeRange,
 } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
+import { fmtSmart } from '@/lib/chartFmt';
 import { MultiLineChart } from '../MultiLineChart';
 import { Spinner } from '../Spinner';
 
@@ -126,33 +127,58 @@ function SpanMetricPanel({ cfg, range, syncKey }: { cfg: SpanMetricPanelConfig; 
   return <MultiLineChart series={series} height={280} syncKey={syncKey} />;
 }
 
-// ── Single value (last point of the series, with a sparkline) ───────────────
+// ── Single value with prior-period delta + sparkline ──────────────────────
+//
+// Datadog / New Relic stat-tile pattern: big number, small
+// trendline underneath, "+12.3% vs prior 15m" delta chip
+// coloured by direction-vs-better. The previous tile showed a
+// raw decimal with no context — an operator looking at "234.56"
+// can't tell if that's normal or a regression.
+//
+// Implementation: fetch the doubled time window in one query,
+// split the points into two halves on the time midpoint. The
+// recent half feeds the displayed value + sparkline; the older
+// half computes the prior baseline. One round trip, no extra
+// API surface.
 
 function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
   const [value, setValue] = useState<number | null | undefined>(undefined);
+  const [prior, setPrior] = useState<number | null>(null);
   const [points, setPoints] = useState<{ time: number; value: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setValue(undefined); setError(null);
+    setValue(undefined); setPrior(null); setError(null);
+    // Fetch DOUBLE the visible range so we have an equal-sized
+    // prior period to compare against. The midpoint splits
+    // recent (the operator's actual window) from prior.
     const { from, to } = timeRangeToNs(range);
+    const span = to - from;
+    const extendedFrom = from - span;
     const promise = cfg.source === 'spanmetric'
       ? api.spanMetric({
           agg: cfg.span?.agg ?? 'count', field: cfg.span?.field,
           groupBy: cfg.span?.groupBy, filters: cfg.span?.filters, dsl: cfg.span?.dsl,
-          from, to, step: cfg.span?.step,
+          from: extendedFrom, to, step: cfg.span?.step,
         })
       : api.metricQuery({
           name: cfg.metric?.metricName ?? '', service: cfg.metric?.service,
           agg: cfg.metric?.agg, groupBy: cfg.metric?.groupBy,
-          from, to, step: cfg.metric?.step,
+          from: extendedFrom, to, step: cfg.metric?.step,
         });
     promise
       .then(s => {
         const flat = (s ?? []).flatMap(x => x.points);
         flat.sort((a, b) => a.time - b.time);
-        setPoints(flat);
-        setValue(flat.length > 0 ? flat[flat.length - 1].value : null);
+        // Split on the time midpoint between extended start
+        // and end. Some buckets may straddle the midpoint;
+        // we err on the side of "later" so the recent half
+        // owns any boundary point.
+        const recent = flat.filter(p => p.time >= from);
+        const priorPts = flat.filter(p => p.time < from);
+        setPoints(recent);
+        setValue(recent.length > 0 ? recent[recent.length - 1].value : null);
+        setPrior(priorPts.length > 0 ? mean(priorPts.map(p => p.value)) : null);
       })
       .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range]);
@@ -160,31 +186,93 @@ function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
   if (error) return <PanelError msg={error} />;
   if (value === undefined) return <PanelLoading />;
 
-  const decimals = cfg.decimals ?? 2;
-  const display = value === null ? '—'
-    : isFinite(value) ? value.toFixed(decimals)
-    : String(value);
+  const agg = cfg.source === 'spanmetric' ? (cfg.span?.agg ?? '') : (cfg.metric?.agg ?? '');
+  const display = formatStatValue(value, cfg.unit, cfg.decimals);
+  // Delta vs prior — only when we have both numbers AND the
+  // prior wasn't zero (avoid Infinity/-100% noise on rare
+  // empty earlier windows).
+  const delta = (value !== null && prior !== null && prior !== 0)
+    ? ((value - prior) / Math.abs(prior)) * 100
+    : null;
+  const tone = deltaTone(agg, delta);
 
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      height: 220, gap: 4,
+      height: 220, gap: 6,
     }}>
-      <div style={{ fontSize: 42, fontWeight: 600, color: 'var(--accent2)' }}>
+      <div style={{ fontSize: 42, fontWeight: 600, color: 'var(--accent2)', lineHeight: 1.05 }}>
         {display}
-        {cfg.unit && (
-          <span style={{ fontSize: 18, marginLeft: 6, color: 'var(--text2)' }}>{cfg.unit}</span>
-        )}
       </div>
+      {/* Delta chip — colour-coded by direction-vs-better.
+          Aggs where lower-is-better (latency / errors) flip
+          red on increase; rate / count etc. stay neutral. */}
+      {delta !== null && (
+        <div style={{
+          fontSize: 12,
+          color: tone === 'good' ? 'var(--ok)'
+               : tone === 'bad'  ? 'var(--err)'
+               : 'var(--text2)',
+          fontFamily: 'ui-monospace, monospace',
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+        }}
+             title="Δ vs same-length prior window">
+          {delta > 0.05 ? '▲' : delta < -0.05 ? '▼' : '·'}
+          {' '}
+          {delta > 0 ? '+' : ''}{Math.abs(delta) >= 100 ? delta.toFixed(0) : delta.toFixed(1)}%
+          <span style={{ color: 'var(--text3)' }}>vs prior</span>
+        </div>
+      )}
       {points.length > 1 && (
-        <Sparkline points={points} />
+        <Sparkline points={points} tone={tone} />
       )}
     </div>
   );
 }
 
-function Sparkline({ points }: { points: { time: number; value: number }[] }) {
+// formatStatValue — uses fmtSmart when we have a unit and the
+// caller didn't pin decimals; otherwise honour the explicit
+// decimals (preserving the old contract for stat tiles that
+// were tuned to a specific precision).
+function formatStatValue(value: number | null, unit: string | undefined, decimals: number | undefined): React.ReactNode {
+  if (value === null || !isFinite(value as number)) return '—';
+  // If unit is a known-smart kind (ms, %, rps, etc.), defer to
+  // fmtSmart for the auto-promotion (ms→s past 1k, etc.).
+  if (unit) {
+    return fmtSmart(value, unit);
+  }
+  const d = decimals ?? 2;
+  return value.toFixed(d);
+}
+
+// deltaTone — direction-vs-better classifier. For aggs where
+// lower is the goal (p50/p99/avg/max/error_rate/errors), an
+// increase is "bad" → red. For traffic-shape aggs (rate /
+// count / sum), there's no clear direction → neutral.
+type Tone = 'good' | 'bad' | 'neutral';
+function deltaTone(agg: string, delta: number | null): Tone {
+  if (delta === null || Math.abs(delta) < 0.5) return 'neutral';
+  const lowerIsBetter = /^(p\d+|avg|max|min|error_rate|errors)$/.test(agg);
+  if (!lowerIsBetter) return 'neutral';
+  return delta > 0 ? 'bad' : 'good';
+}
+
+function mean(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  let s = 0;
+  for (const v of arr) s += v;
+  return s / arr.length;
+}
+
+// Sparkline tints to match the delta tone — a bad-trending
+// stat gets a red sparkline, a good-trending one gets green.
+// Neutral keeps the standard accent so traffic charts read
+// like the rest of the page.
+function Sparkline({ points, tone = 'neutral' }: {
+  points: { time: number; value: number }[];
+  tone?: Tone;
+}) {
   const w = 200, h = 40;
   const xs = points.map(p => p.time);
   const ys = points.map(p => p.value);
@@ -196,9 +284,18 @@ function Sparkline({ points }: { points: { time: number; value: number }[] }) {
     const y = h - ((p.value - ymin) / yr) * h;
     return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
   }).join(' ');
+  // Build a fill area that extends to the bottom of the spark
+  // so the sparkline reads as an area chart, not a thin line —
+  // visually closer to Datadog's stat tiles.
+  const areaPath = path + ` L ${w} ${h} L 0 ${h} Z`;
+  const stroke = tone === 'good' ? 'var(--ok)' : tone === 'bad' ? 'var(--err)' : 'var(--accent)';
+  const fill   = tone === 'good' ? 'rgba(63,185,80,0.15)'
+              : tone === 'bad'  ? 'rgba(248,81,73,0.15)'
+              : 'rgba(56,139,253,0.12)';
   return (
     <svg width={w} height={h} style={{ display: 'block' }}>
-      <path d={path} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
+      <path d={areaPath} fill={fill} stroke="none" />
+      <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} />
     </svg>
   );
 }

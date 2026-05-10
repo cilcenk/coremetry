@@ -59,6 +59,12 @@ export default function ServicesPage() {
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [minSpans, setMinSpans] = useState('');
   const [minP99, setMinP99] = useState('');
+  // Server-side team filters — resolved through the catalog
+  // and applied as a service_name IN (...) allowlist on the
+  // backend so the filter is correct across pages, not just
+  // the visible 50.
+  const [ownerTeam, setOwnerTeam] = useState('');
+  const [sreTeam, setSreTeam] = useState('');
 
   // serviceFilter is the picker's draft — typing / dropdown picks
   // mutate it freely and the in-memory `sorted` re-filter narrows
@@ -93,6 +99,12 @@ export default function ServicesPage() {
       // LIMIT/OFFSET, so the page reflects the global rank.
       sort: sortBy,
       dir: sortDir,
+      // Catalog-driven team filters — server resolves them
+      // to a service-name allowlist, so the page is correct
+      // across pagination (vs the local-only catalog match
+      // that only narrowed the loaded page).
+      ownerTeam: ownerTeam || undefined,
+      sreTeam: sreTeam || undefined,
     }).then(resp => {
       setData(resp?.services ?? []);
       setHasMore(resp?.hasMore ?? false);
@@ -101,12 +113,12 @@ export default function ServicesPage() {
         api.serviceSparklines(r, names).then(d => setSparklines(d ?? {})).catch(() => {});
       }
     }).catch(() => { setData(null); setHasMore(false); });
-  }, [range, page, committedFilter, sortBy, sortDir]);
+  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam]);
 
   // Reset to page 0 whenever the search filter, time range,
-  // or sort changes — staying on page 5 of an old result set
-  // when the operator re-orders is jarring.
-  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir]);
+  // sort, or team filter changes — staying on page 5 of an
+  // old result set when the operator re-orders is jarring.
+  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam]);
 
   // Service combobox options come from the loaded data itself.
   const serviceOptions = useMemo(
@@ -148,7 +160,25 @@ export default function ServicesPage() {
   const reset = () => {
     setServiceFilter(''); setCommittedFilter('');
     setErrorsOnly(false); setMinSpans(''); setMinP99('');
+    setOwnerTeam(''); setSreTeam('');
   };
+
+  // Distinct team values from the catalog — feeds the two
+  // dropdowns. Sorted for stable rendering.
+  const ownerTeamOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of Object.values(catalog)) {
+      if (m.ownerTeam) set.add(m.ownerTeam);
+    }
+    return [...set].sort();
+  }, [catalog]);
+  const sreTeamOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of Object.values(catalog)) {
+      if (m.sreTeam) set.add(m.sreTeam);
+    }
+    return [...set].sort();
+  }, [catalog]);
 
   // Aggregate row across the currently-visible (filtered) services.
   // Span count → sum. Error rate / avg / apdex → weighted by span count
@@ -252,6 +282,26 @@ export default function ServicesPage() {
               onChange={e => setMinSpans(e.target.value)} style={{ width: 100 }} />
             <input placeholder="Min P99 (ms)" value={minP99} type="number"
               onChange={e => setMinP99(e.target.value)} style={{ width: 110 }} />
+            {/* Team dropdowns derived from the catalog. Server
+                resolves the selection to a service-name
+                allowlist so the filter is correct across all
+                pages, not just the loaded 50 rows. */}
+            <select value={ownerTeam}
+              onChange={e => setOwnerTeam(e.target.value)}
+              style={{ minWidth: 130 }}>
+              <option value="">All owner teams</option>
+              {ownerTeamOptions.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <select value={sreTeam}
+              onChange={e => setSreTeam(e.target.value)}
+              style={{ minWidth: 130 }}>
+              <option value="">All SRE teams</option>
+              {sreTeamOptions.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
             <label style={{ display: 'flex', alignItems: 'center', gap: 5,
                             color: 'var(--text2)', cursor: 'pointer' }}>
               <input type="checkbox" checked={errorsOnly}

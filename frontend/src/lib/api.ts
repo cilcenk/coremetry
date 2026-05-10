@@ -66,6 +66,11 @@ export const api = {
   servicesPage: (r: RangeParams, opts: {
     limit?: number; offset?: number; name?: string;
     sort?: string; dir?: 'asc' | 'desc';
+    // Catalog-driven team filters. Backend resolves the team
+    // → service-name allowlist via the service_metadata
+    // table; downstream spans query stays a microsecond
+    // partition-pruned operation.
+    ownerTeam?: string; sreTeam?: string;
   } = {}) =>
     get<{
       services: Service[];

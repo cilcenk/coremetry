@@ -91,7 +91,15 @@ func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 // Pass `since` for a relative window (now-since … now), or non-zero `from`/`to`
 // for an absolute window (overrides since).
 func (s *Store) GetServices(ctx context.Context, since time.Duration, from, to time.Time) ([]ServiceSummary, error) {
-	return s.GetServicesFiltered(ctx, since, from, to, "", "", "", 0, 0)
+	return s.GetServicesFilteredIn(ctx, since, from, to, "", nil, "", "", 0, 0)
+}
+
+// GetServicesFiltered keeps the prior surface intact (no
+// service-name allowlist). The newer GetServicesFilteredIn
+// is the variant the API uses when the operator filtered by
+// owner / SRE team.
+func (s *Store) GetServicesFiltered(ctx context.Context, since time.Duration, from, to time.Time, nameMatch, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
+	return s.GetServicesFilteredIn(ctx, since, from, to, nameMatch, nil, sort, dir, limit, offset)
 }
 
 // servicesSortExpr maps a UI-side sort key to a CH ORDER BY
@@ -133,7 +141,13 @@ func servicesSortExpr(sort, dir string) string {
 // when the user types its name. Empty `nameMatch` disables the
 // filter (legacy behaviour). limit/offset drive page-based
 // pagination — pass limit=0 to disable the cap.
-func (s *Store) GetServicesFiltered(ctx context.Context, since time.Duration, from, to time.Time, nameMatch, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
+// GetServicesFilteredIn — same as GetServicesFiltered plus
+// an optional `serviceIn` allowlist. Used by the API to
+// pre-narrow the universe of services to those whose catalog
+// row matches an owner-team / SRE-team filter; the spans
+// query then groups across just the allowed names. nil /
+// empty list = no constraint.
+func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
 	var wc whereClause
 	if !from.IsZero() {
 		wc.add("time >= ?", from)
@@ -145,6 +159,18 @@ func (s *Store) GetServicesFiltered(ctx context.Context, since time.Duration, fr
 	}
 	if nameMatch != "" {
 		wc.add("positionCaseInsensitive(service_name, ?) > 0", nameMatch)
+	}
+	if len(serviceIn) > 0 {
+		// Build a `service_name IN (?, ?, …)` clause. ClickHouse
+		// driver expects each `?` placeholder to map to a
+		// single arg, so we splat the slice.
+		holders := make([]string, len(serviceIn))
+		args := make([]any, len(serviceIn))
+		for i, n := range serviceIn {
+			holders[i] = "?"
+			args[i] = n
+		}
+		wc.add("service_name IN ("+strings.Join(holders, ",")+")", args...)
 	}
 	limitClause := ""
 	if limit > 0 {

@@ -353,6 +353,14 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// BY mapping; everything else falls back to span-count desc.
 	sort := strings.TrimSpace(q.Get("sort"))
 	dir := strings.TrimSpace(q.Get("dir"))
+	// Optional team filters — narrow the listing to services
+	// whose service_metadata row matches the requested owner
+	// or SRE team. Resolved here against the catalog so the
+	// downstream spans query gets a fixed `service_name IN
+	// (...)` allowlist (microsecond-level filter); avoids a
+	// per-query JOIN against the catalog.
+	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
+	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
 	if from.IsZero() {
 		from = time.Now().Add(-since)
 	}
@@ -363,13 +371,43 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// shorter than ~5 min would return empty — fall through to the raw
 	// scan in that case (small window = small scan, also fast).
 	useMV := to.Sub(from) >= 5*time.Minute
-	key := fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:since=%s:from=%s:to=%s:name=%s:sort=%s:dir=%s",
-		useMV, limit, offset, q.Get("since"), q.Get("from"), q.Get("to"), nameMatch, sort, dir)
+	key := fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:since=%s:from=%s:to=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s",
+		useMV, limit, offset, q.Get("since"), q.Get("from"), q.Get("to"), nameMatch, sort, dir, ownerTeam, sreTeam)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
 	// filter, range). Refresh button on the page can ?refresh=1.
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		// Resolve team filters → service-name allowlist via
+		// the catalog. Bounded by catalog size (~thousands),
+		// not span volume; effectively free.
+		var serviceIn []string
+		if ownerTeam != "" || sreTeam != "" {
+			catalog, cerr := s.store.ListServiceMetadata(r.Context())
+			if cerr != nil {
+				return nil, fmt.Errorf("catalog: %w", cerr)
+			}
+			for name, md := range catalog {
+				if ownerTeam != "" && md.OwnerTeam != ownerTeam {
+					continue
+				}
+				if sreTeam != "" && md.SRETeam != sreTeam {
+					continue
+				}
+				serviceIn = append(serviceIn, name)
+			}
+			if len(serviceIn) == 0 {
+				// No catalog rows match the requested team
+				// — return empty without firing the spans
+				// query.
+				return map[string]any{
+					"services": []chstore.ServiceSummary{},
+					"hasMore":  false,
+					"offset":   offset,
+					"limit":    limit,
+				}, nil
+			}
+		}
 		// Fetch limit+1 so we can report hasMore without paying a
 		// separate count(DISTINCT) — at 10k+ services a count is
 		// the slowest part of the page.
@@ -377,9 +415,9 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		var rows []chstore.ServiceSummary
 		var err error
 		if useMV {
-			rows, err = s.store.GetServicesAggFiltered(r.Context(), from, to, nameMatch, sort, dir, probeLimit, offset)
+			rows, err = s.store.GetServicesAggFilteredIn(r.Context(), from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
 		} else {
-			rows, err = s.store.GetServicesFiltered(r.Context(), since, from, to, nameMatch, sort, dir, probeLimit, offset)
+			rows, err = s.store.GetServicesFilteredIn(r.Context(), since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
 		}
 		if err != nil {
 			return nil, err

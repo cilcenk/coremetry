@@ -102,7 +102,14 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 // 30-second hard execution timeout via SETTINGS — this endpoint must
 // never hang the UI thread, even when the MV itself has a backlog.
 func (s *Store) GetServicesAgg(ctx context.Context, from, to time.Time, limit int) ([]ServiceSummary, error) {
-	return s.GetServicesAggFiltered(ctx, from, to, "", "", "", limit, 0)
+	return s.GetServicesAggFilteredIn(ctx, from, to, "", nil, "", "", limit, 0)
+}
+
+// GetServicesAggFiltered — preserves the prior surface (no
+// service-name allowlist). New callers should use
+// GetServicesAggFilteredIn directly.
+func (s *Store) GetServicesAggFiltered(ctx context.Context, from, to time.Time, nameMatch, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
+	return s.GetServicesAggFilteredIn(ctx, from, to, nameMatch, nil, sort, dir, limit, offset)
 }
 
 // servicesAggSortExpr — alias for servicesSortExpr but using
@@ -139,7 +146,11 @@ func servicesAggSortExpr(sort, dir string) string {
 // dropdown so a service that's outside the limited top-N still
 // surfaces when the user types its name. `nameMatch` empty disables
 // the filter.
-func (s *Store) GetServicesAggFiltered(ctx context.Context, from, to time.Time, nameMatch, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
+// GetServicesAggFilteredIn — same as GetServicesAggFiltered
+// plus a service-name allowlist (the API uses this to
+// pre-narrow the universe by ownerTeam / sreTeam without
+// joining at query time). nil / empty = no constraint.
+func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
 	if from.IsZero() {
 		from = time.Now().Add(-24 * time.Hour)
 	}
@@ -158,6 +169,18 @@ func (s *Store) GetServicesAggFiltered(ctx context.Context, from, to time.Time, 
 		// service-names autocomplete does.
 		nameClause = " AND positionCaseInsensitive(service_name, ?) > 0"
 		args = append(args, nameMatch)
+	}
+	if len(serviceIn) > 0 {
+		// IN-list against the allowlist. Splat each value as
+		// its own placeholder so the driver binds them one
+		// per `?` (the IN clause itself takes a parenthesised
+		// list of literals).
+		holders := make([]string, len(serviceIn))
+		for i, n := range serviceIn {
+			holders[i] = "?"
+			args = append(args, n)
+		}
+		nameClause += " AND service_name IN (" + strings.Join(holders, ",") + ")"
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT service_name,

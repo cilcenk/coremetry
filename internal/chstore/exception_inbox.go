@@ -74,24 +74,114 @@ func FingerprintException(exType, exMessage, service, stacktrace string) string 
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// Java-style "    at fully.qualified.Class.method(Source.java:42)" — the
-// line number is intentionally dropped so a refactor that moves the
-// throw doesn't fragment the group.
-var atLineRe = regexp.MustCompile(`(?m)^\s*at\s+([\w$.<>]+)\(`)
+// Frame extractors — one regex per language style. The
+// previous implementation was Java-only, which silently
+// fell through to message-fingerprinting on Python / Go /
+// Node / .NET / Ruby — fragmenting groups along the message
+// dimension instead of the stable code-path dimension. Each
+// regex captures a single "fully-qualified frame identifier"
+// (no line number, no path prefix) so a refactor that
+// moves the throw across files doesn't fragment the group.
+var (
+	// Java / Kotlin / Scala: "    at fully.qualified.Class.method(Source.java:42)"
+	frameJavaRe = regexp.MustCompile(`(?m)^\s*at\s+([\w$.<>]+)\(`)
+	// Python: '  File "/path/to/file.py", line 42, in func_name'
+	framePythonRe = regexp.MustCompile(`(?m)^\s*File\s+"[^"]*?([^/\\"]+\.py)",\s*line\s+\d+,\s*in\s+(\S+)`)
+	// Node.js / JavaScript: '    at Object.func (path/to/file.js:42:13)' or
+	// '    at func (path/to/file.js:42:13)'.
+	frameNodeRe = regexp.MustCompile(`(?m)^\s*at\s+([\w$.<>]+)\s*\(`)
+	// Go: 'pkg.func(...) /path/to/file.go:42 +0x...' — the
+	// canonical traceback shape for runtime.gopanic. Capture
+	// the package-qualified function (everything up to the
+	// last "(...)").
+	frameGoRe = regexp.MustCompile(`(?m)^([\w./]+(?:\.[\w$.<>]+)+)\(`)
+	// .NET: 'at Namespace.Class.Method() in C:\path\file.cs:line 42'.
+	frameDotnetRe = regexp.MustCompile(`(?m)^\s*at\s+([\w.<>]+)`)
+	// Ruby: '/path/to/file.rb:42:in `func''.
+	frameRubyRe = regexp.MustCompile(`(?m)([^/\\:]+\.rb):\d+:in\s+[\x60'](\S+?)['\x60]`)
+)
+
+// frameworkPrefixes — frames at these prefixes are noise that
+// every exception in the language has at the bottom of the
+// stack (the runtime / framework boilerplate). Skipping them
+// lets the top-N frames zoom in on application code so the
+// fingerprint is "the bug" rather than "the runtime".
+var frameworkPrefixes = []string{
+	// Java / JVM
+	"java.lang.Thread", "java.util.concurrent", "sun.", "jdk.",
+	// Spring / Tomcat / common Java frameworks
+	"org.springframework", "org.apache.catalina",
+	// Go
+	"runtime.", "net/http.", "reflect.",
+	// Node
+	"node:internal/", "internal/process/", "anonymous",
+	// Python
+	"<frozen importlib", "importlib._bootstrap", "site-packages",
+	// .NET
+	"System.Threading", "System.Web",
+	// Ruby
+	"<internal:",
+}
+
+func isFrameworkFrame(frame string) bool {
+	for _, p := range frameworkPrefixes {
+		if strings.Contains(frame, p) {
+			return true
+		}
+	}
+	return false
+}
 
 func topFrames(stacktrace string, n int) string {
 	if stacktrace == "" {
 		return ""
 	}
-	matches := atLineRe.FindAllStringSubmatch(stacktrace, n)
-	if len(matches) == 0 {
-		return ""
+	// Try each language's pattern in turn; first one that
+	// matches wins. Patterns are ordered most-specific to
+	// least so e.g. Python's "File ... line N, in func" doesn't
+	// get consumed by the Node "at func (...)" matcher.
+	type extractor struct {
+		re   *regexp.Regexp
+		// keep tells the caller which capture groups to
+		// concatenate per match (different patterns capture
+		// different anchors).
+		keep []int
 	}
-	out := make([]string, 0, len(matches))
-	for _, m := range matches {
-		out = append(out, m[1])
+	tries := []extractor{
+		{framePythonRe, []int{1, 2}}, // file.py + func
+		{frameRubyRe, []int{1, 2}},   // file.rb + func
+		{frameJavaRe, []int{1}},
+		{frameNodeRe, []int{1}},
+		{frameGoRe, []int{1}},
+		{frameDotnetRe, []int{1}},
 	}
-	return strings.Join(out, "\n")
+	for _, t := range tries {
+		matches := t.re.FindAllStringSubmatch(stacktrace, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		out := make([]string, 0, n)
+		for _, m := range matches {
+			parts := make([]string, 0, len(t.keep))
+			for _, k := range t.keep {
+				if k < len(m) {
+					parts = append(parts, m[k])
+				}
+			}
+			frame := strings.Join(parts, ":")
+			if isFrameworkFrame(frame) {
+				continue
+			}
+			out = append(out, frame)
+			if len(out) >= n {
+				break
+			}
+		}
+		if len(out) > 0 {
+			return strings.Join(out, "\n")
+		}
+	}
+	return ""
 }
 
 // Replacements applied in order — UUIDs and hex tokens contain digits,

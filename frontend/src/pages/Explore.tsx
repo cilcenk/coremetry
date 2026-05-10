@@ -563,7 +563,19 @@ name ~ checkout`}
                   </span>
                 )}
               </div>
-              <MultiLineChart series={series} unit={unit} deploys={deployMarkers} />
+              <MultiLineChart series={series} unit={unit}
+                              deploys={deployMarkers}
+                              onZoom={(fromSec, toSec) => {
+                                // Drag-zoom on the chart → update the
+                                // page's TimeRange to the selected
+                                // window. Datadog / Grafana pattern;
+                                // saves a trip to the topbar picker.
+                                setRange({
+                                  preset: 'custom',
+                                  fromMs: Math.floor(fromSec * 1000),
+                                  toMs:   Math.ceil(toSec  * 1000),
+                                });
+                              }} />
             </div>
 
             {/* Per-series summary */}

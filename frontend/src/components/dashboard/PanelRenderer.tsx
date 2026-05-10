@@ -11,7 +11,7 @@ import { Spinner } from '../Spinner';
 // PanelRenderer dispatches on panel.type. Self-contained — fetches its
 // own data, re-fetches when `range` changes. Errors are surfaced inline
 // instead of crashing the whole dashboard.
-export function PanelRenderer({ panel, range, vars }: {
+export function PanelRenderer({ panel, range, vars, syncKey }: {
   panel: Panel;
   range: TimeRange;
   // Resolved values for the dashboard's variables (Grafana-style
@@ -20,12 +20,16 @@ export function PanelRenderer({ panel, range, vars }: {
   // with `service.name = "${service}"` and no service picked behaves
   // as "no service filter" rather than failing.
   vars?: Record<string, string>;
+  // Cursor-sync key. When set (one key per dashboard), every panel
+  // on the page hovers in lockstep — Datadog / Grafana dashboard
+  // pattern that turns 8 disconnected charts into one view.
+  syncKey?: string;
 }) {
   switch (panel.type) {
     case 'metric':
-      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={range} />;
+      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={range} syncKey={syncKey} />;
     case 'spanmetric':
-      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={range} />;
+      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={range} syncKey={syncKey} />;
     case 'stat':
       return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={range} />;
     case 'markdown':
@@ -79,7 +83,7 @@ function applyVarsToStat(cfg: StatPanelConfig, vars?: Record<string, string>): S
 
 // ── Metric line chart ───────────────────────────────────────────────────────
 
-function MetricPanel({ cfg, range }: { cfg: MetricPanelConfig; range: TimeRange }) {
+function MetricPanel({ cfg, range, syncKey }: { cfg: MetricPanelConfig; range: TimeRange; syncKey?: string }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,12 +100,12 @@ function MetricPanel({ cfg, range }: { cfg: MetricPanelConfig; range: TimeRange 
   if (error) return <PanelError msg={error} />;
   if (series === undefined) return <PanelLoading />;
   if (!series || series.length === 0) return <PanelEmpty />;
-  return <MultiLineChart series={series} height={280} />;
+  return <MultiLineChart series={series} height={280} syncKey={syncKey} />;
 }
 
 // ── Span metric line chart ──────────────────────────────────────────────────
 
-function SpanMetricPanel({ cfg, range }: { cfg: SpanMetricPanelConfig; range: TimeRange }) {
+function SpanMetricPanel({ cfg, range, syncKey }: { cfg: SpanMetricPanelConfig; range: TimeRange; syncKey?: string }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
@@ -119,7 +123,7 @@ function SpanMetricPanel({ cfg, range }: { cfg: SpanMetricPanelConfig; range: Ti
   if (error) return <PanelError msg={error} />;
   if (series === undefined) return <PanelLoading />;
   if (!series || series.length === 0) return <PanelEmpty />;
-  return <MultiLineChart series={series} height={280} />;
+  return <MultiLineChart series={series} height={280} syncKey={syncKey} />;
 }
 
 // ── Single value (last point of the series, with a sparkline) ───────────────

@@ -205,7 +205,8 @@ function Inner() {
             vars={varValues}
             editing={editing}
             onEditPanel={setEditingPanel}
-            onDeletePanel={deletePanel} />
+            onDeletePanel={deletePanel}
+            dashboardId={id} />
         )}
 
         {editingPanelObj && (
@@ -277,7 +278,7 @@ function normalizePanels(raw: unknown): Panel[] {
 // not persisted across reloads (matches Grafana's default behaviour;
 // add a localStorage layer if users start asking for it).
 function DashboardGrid({
-  panels, range, vars, editing, onEditPanel, onDeletePanel,
+  panels, range, vars, editing, onEditPanel, onDeletePanel, dashboardId,
 }: {
   panels: Panel[];
   range: TimeRange;
@@ -285,6 +286,10 @@ function DashboardGrid({
   editing: boolean;
   onEditPanel: (id: string) => void;
   onDeletePanel: (id: string) => void;
+  // Cursor-sync key passed to every chart panel — every chart on
+  // the dashboard hovers in lockstep so the operator reads 8
+  // panels as one view.
+  dashboardId: string;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -360,7 +365,8 @@ function DashboardGrid({
                         </span>
                       )}
                     </div>
-                    <PanelRenderer panel={p} range={range} vars={vars} />
+                    <PanelRenderer panel={p} range={range} vars={vars}
+                                   syncKey={`dashboard:${dashboardId}`} />
                   </div>
                 ))}
               </div>

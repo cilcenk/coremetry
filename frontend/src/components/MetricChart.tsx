@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { MetricPoint } from '@/lib/types';
+import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 
 // uPlot single-series chart. Replaces Chart.js for the metric
 // drill-down view. Three load-bearing options:
@@ -22,8 +23,15 @@ import type { MetricPoint } from '@/lib/types';
 //      0 on pages that didn't stretch their parent.
 
 export function MetricChart({
-  name, points, height = 300,
-}: { name: string; points: MetricPoint[]; height?: number }) {
+  name, points, height = 300, unit, syncKey, onZoom,
+}: {
+  name: string;
+  points: MetricPoint[];
+  height?: number;
+  unit?: string;
+  syncKey?: string;
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
 
@@ -47,6 +55,11 @@ export function MetricChart({
       ys[i] = points[i].value;
     }
 
+    // Same series across charts → same colour. seriesColor is
+    // deterministic on the metric name so an operator who
+    // sees "http_requests_total" in one chart sees it in the
+    // same hue everywhere.
+    const lineColor = seriesColor(name);
     const opts: uPlot.Options = {
       width: el.clientWidth || 600,
       height,
@@ -55,8 +68,8 @@ export function MetricChart({
         {},
         {
           label: name,
-          stroke: '#388bfd',
-          fill: 'rgba(56,139,253,0.10)',
+          stroke: lineColor,
+          fill: lineColor + '1a', // ~10% alpha
           width: 2,
           points: { show: points.length <= 100, size: 5 },
         },
@@ -71,16 +84,38 @@ export function MetricChart({
           stroke: text3,
           grid: { stroke: grid, width: 1 },
           ticks: { stroke: grid, width: 1 },
-          values: (_u, splits) => splits.map(v =>
-            v == null ? '' :
-            Math.abs(v) >= 100 ? v.toFixed(0) :
-            Math.abs(v) >= 1   ? v.toFixed(2) :
-                                 v.toFixed(4)),
+          // Smart axis formatter — promotes ms→s, count→k/M,
+          // bytes→kB/MB. With a unit hint the axis reads
+          // "234ms" not "234.5678".
+          values: (_u, splits) => splits.map(v => fmtSmart(v, unit)),
+          size: 56,
         },
       ],
-      cursor: { x: true, y: true, focus: { prox: 30 } },
+      cursor: {
+        x: true, y: true, focus: { prox: 30 },
+        // Drag-zoom (x-axis only). Forwarded to the page via
+        // onZoom so the parent can update its TimeRange.
+        drag: { x: true, y: false, setScale: !!onZoom },
+        // Cursor sync — charts on the same dashboard share a
+        // sync key so hovering one paints the crosshair on
+        // every chart sharing the key.
+        sync: syncKey ? { key: syncKey } : undefined,
+      },
       legend: { show: true, live: true, markers: { width: 2 } },
       hooks: {
+        // Drag-zoom callback — forward unix-sec range to the
+        // parent so it can update its TimeRange state.
+        setSelect: onZoom ? [
+          (u) => {
+            const sel = u.select;
+            if (!sel || sel.width < 4) return;
+            const x0 = u.posToVal(sel.left, 'x');
+            const x1 = u.posToVal(sel.left + sel.width, 'x');
+            if (!isFinite(x0) || !isFinite(x1)) return;
+            onZoom(Math.min(x0, x1), Math.max(x0, x1));
+            u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+          },
+        ] : undefined,
         // Floating tooltip near the cursor — same UX as
         // MultiLineChart (Grafana / Datadog style). Single
         // series so the panel just shows one row.
@@ -103,14 +138,11 @@ export function MetricChart({
             const hh = d.getHours().toString().padStart(2, '0');
             const mm = d.getMinutes().toString().padStart(2, '0');
             const ss = d.getSeconds().toString().padStart(2, '0');
-            const valStr =
-              Math.abs(yVal as number) >= 100 ? (yVal as number).toFixed(0) :
-              Math.abs(yVal as number) >= 1   ? (yVal as number).toFixed(2) :
-                                                 (yVal as number).toFixed(4);
+            const valStr = fmtSmart(yVal as number, unit);
             tip.innerHTML =
               `<div style="font-weight:600;margin-bottom:2px">${hh}:${mm}:${ss}</div>` +
               `<div style="display:flex;gap:8px;align-items:center">` +
-                `<span style="display:inline-block;width:8px;height:8px;background:#388bfd;border-radius:2px"></span>` +
+                `<span style="display:inline-block;width:8px;height:8px;background:${lineColor};border-radius:2px"></span>` +
                 `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${name}">${name}</span>` +
                 `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${valStr}</span>` +
               `</div>`;
@@ -143,7 +175,7 @@ export function MetricChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [name, points, height]);
+  }, [name, points, height, unit, syncKey, onZoom]);
 
   // Container width-only; uPlot owns the canvas height. The
   // .uplot-tooltip child is updated by the setCursor hook

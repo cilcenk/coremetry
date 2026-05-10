@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { SpanMetricSeries } from '@/lib/types';
-import { hashColor } from '@/lib/utils';
+import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 
 // Multi-series line chart on uPlot. Renders the same hover-
 // crosshair + per-series tooltip experience as the previous
@@ -42,7 +42,7 @@ export interface DeployMarker {
 }
 
 export function MultiLineChart({
-  series, unit, height = 320, deploys,
+  series, unit, height = 320, deploys, syncKey, onZoom,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -51,6 +51,17 @@ export function MultiLineChart({
   // Hovering near a marker shows label + description in the
   // chart's tooltip panel.
   deploys?: DeployMarker[];
+  // syncKey — when set, multiple charts on the same page sync
+  // their cursor positions. Hovering one chart paints the
+  // crosshair on every chart sharing the key. Datadog /
+  // Grafana use this so a dashboard reads as one view rather
+  // than 8 disconnected ones.
+  syncKey?: string;
+  // onZoom — called when the user click-drags a horizontal
+  // range to zoom in. Receives unix seconds; the page can
+  // update its TimeRange state and re-fetch. Without this the
+  // drag still works as a visual zoom but doesn't propagate.
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -106,16 +117,19 @@ export function MultiLineChart({
         {},
         ...series.map((s) => {
           const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';
-          const color = hashColor(label);
+          // Curated palette → same series name lands on the
+          // same colour across every chart in the app. Old
+          // hashColor() picked any of 16M shades, so the same
+          // 'frontend' service ended up green here, purple
+          // there. seriesColor maps to one of 10 stable hues.
+          const color = seriesColor(label);
           return {
             label,
             stroke: color,
             fill: color + '22',
             width: 2,
             points: { show: times.length <= 100, size: 4 },
-            value: (_u: uPlot, v: number | null) =>
-              v == null ? '—'
-                        : `${v.toFixed(3)}${unit ? ' ' + unit : ''}`,
+            value: (_u: uPlot, v: number | null) => fmtSmart(v, unit),
           } satisfies uPlot.Series;
         }),
       ],
@@ -129,13 +143,53 @@ export function MultiLineChart({
           stroke: text3,
           grid: { stroke: grid, width: 1 },
           ticks: { stroke: grid, width: 1 },
-          values: (_u, splits) => splits.map(v =>
-            v == null ? '' : `${v.toFixed(2)}${unit ? ' ' + unit : ''}`),
+          // Smart axis formatter — promotes ms→s, count→k/M,
+          // bytes→kB/MB, etc. The previous "v.toFixed(2)"
+          // produced "12500.00" on a 12.5k-rps chart; now it
+          // reads "12.5k rps".
+          values: (_u, splits) => splits.map(v => fmtSmart(v, unit)),
+          // Slightly wider axis to fit the trailing unit
+          // ("234 ms" needs more room than "234").
+          size: 56,
         },
       ],
-      cursor: { x: true, y: true, focus: { prox: 30 } },
+      cursor: {
+        x: true, y: true, focus: { prox: 30 },
+        // Drag-zoom: x-axis only. uPlot's built-in select
+        // mechanism + setScale=true handles the visual zoom;
+        // onZoom (below, in hooks.setSelect) propagates the
+        // chosen range to the page so it can update its
+        // TimeRange and re-fetch. Click-only behaviour is
+        // unchanged (drag is from > 5 px movement).
+        drag: { x: true, y: false, setScale: !!onZoom },
+        // Sync cursors across charts that share a key. Two
+        // chart instances on the same page with the same
+        // syncKey will paint the same crosshair simultaneously
+        // when the operator hovers either one — Grafana /
+        // Datadog dashboard pattern.
+        sync: syncKey ? { key: syncKey } : undefined,
+      },
       legend: { show: true, live: true, markers: { width: 2 } },
       hooks: {
+        // Drag-zoom callback — fires when the operator
+        // releases a horizontal selection. Convert from uPlot
+        // pixel select to data-space (unix seconds) and hand
+        // off to the page; the page is responsible for
+        // updating its time-range state and refetching.
+        setSelect: onZoom ? [
+          (u) => {
+            const sel = u.select;
+            if (!sel || sel.width < 4) return; // ignore tiny accidental drags
+            const x0 = u.posToVal(sel.left, 'x');
+            const x1 = u.posToVal(sel.left + sel.width, 'x');
+            if (!isFinite(x0) || !isFinite(x1)) return;
+            onZoom(Math.min(x0, x1), Math.max(x0, x1));
+            // Reset the visual selection after the parent
+            // takes over the new range — otherwise the grey
+            // band sticks around until the next click.
+            u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+          },
+        ] : undefined,
         // Deploy-marker overlay — dashed vertical lines at every
         // deploy time. Painted after uPlot's own draw so the
         // lines sit on top of series fills. Each line is
@@ -213,15 +267,14 @@ export function MultiLineChart({
               if (v == null) continue;
               const s = series[i];
               const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';
-              rows.push({ label, color: hashColor(label), v: v as number });
+              rows.push({ label, color: seriesColor(label), v: v as number });
             }
             if (rows.length === 0) {
               tip.style.opacity = '0';
               return;
             }
             rows.sort((a, b) => b.v - a.v);
-            const fmt = (n: number) =>
-              `${n.toFixed(3)}${unit ? ' ' + unit : ''}`;
+            const fmt = (n: number) => fmtSmart(n, unit);
             // Find the nearest deploy marker within ~12px of
             // the cursor's x — close enough that the operator
             // is clearly hovering "the deploy line" not
@@ -298,7 +351,7 @@ export function MultiLineChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [series, unit, height, deploys]);
+  }, [series, unit, height, deploys, syncKey, onZoom]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
-import type { Service, ServiceMap, InfraMetricSeries, NeighborStat, ServiceRuntime } from '@/lib/types';
+import type { Service, ServiceMap, InfraMetricSeries, NeighborStat, ServiceRuntime, Deploy } from '@/lib/types';
 
 // /api/services + related — the topology side of the app.
 // `range` carries the time window so two pages with different
@@ -69,6 +69,19 @@ export function useAllServiceRuntimes() {
     queryKey: ['services', 'runtimes', 'all'],
     queryFn: () => api.allServiceRuntimes(),
     staleTime: 5 * 60_000,
+  });
+}
+
+// useServiceDeploys — distinct service.version timestamps in
+// the time window, for the deploy-marker overlay on charts.
+// 60s server cache so re-mounts don't hammer CH; 30s client
+// stale so a fresh deploy surfaces within ~one chart refresh.
+export function useServiceDeploys(svc: string, from: number, to: number) {
+  return useQuery<Deploy[]>({
+    queryKey: keys.deploys.forService(svc, from, to),
+    queryFn: async () => (await api.serviceDeploys(svc, { from, to })) ?? [],
+    enabled: !!svc && !!from && !!to,
+    staleTime: 30_000,
   });
 }
 

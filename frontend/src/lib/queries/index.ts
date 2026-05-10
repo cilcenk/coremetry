@@ -14,7 +14,7 @@ export {
 export {
   useServices, useServiceNames, useServiceMap,
   useServiceInfra, useServiceNeighbors, useServiceRuntime,
-  useAllServiceRuntimes,
+  useAllServiceRuntimes, useServiceDeploys,
 } from './services';
 export {
   useSystemStats, useCardinality, useSamplingSettings, useUpdateSampling,

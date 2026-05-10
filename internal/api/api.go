@@ -135,6 +135,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/{name}/infra",     s.getServiceInfraMetrics)
 	mux.HandleFunc("GET /api/services/{name}/runtime",   s.getServiceRuntime)
 	mux.HandleFunc("GET /api/services/{name}/db-queries", s.getServiceDBQueries)
+	mux.HandleFunc("GET /api/services/{name}/deploys", s.getServiceDeploys)
 	mux.HandleFunc("GET /api/services-runtimes",         s.getAllServiceRuntimes)
 	mux.HandleFunc("GET /api/services/graph", s.getServiceGraph)
 	mux.HandleFunc("GET /api/services/sparklines", s.getServiceSparklines)
@@ -516,6 +517,32 @@ func (s *Server) getAllServiceRuntimes(w http.ResponseWriter, r *http.Request) {
 // not realtime — a one-minute cache trades perfect freshness
 // for not re-running the regex GROUP BY on every panel
 // expand.
+// getServiceDeploys returns the distinct service.version
+// timestamps for a service in a time window — drives the
+// dashed vertical "deploy markers" the chart overlay paints
+// on latency / error / volume charts. Cached 60s for the same
+// reason as db-queries: the view is for ad-hoc investigation,
+// not realtime.
+func (s *Server) getServiceDeploys(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
+	if from.IsZero() || to.IsZero() {
+		to = time.Now()
+		from = to.Add(-1 * time.Hour)
+	}
+	key := fmt.Sprintf("service-deploys:svc=%s:from=%d:to=%d",
+		name, from.UnixNano(), to.UnixNano())
+	s.serveCached(w, r, key, time.Minute, func() (any, error) {
+		return s.store.GetServiceDeploys(r.Context(), name, from, to)
+	})
+}
+
 func (s *Server) getServiceDBQueries(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {

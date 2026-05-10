@@ -11,7 +11,7 @@ import { LogsExplorer } from '@/components/LogsExplorer';
 import { MetricsExplorer } from '@/components/MetricsExplorer';
 import { ColumnManager } from '@/components/ColumnManager';
 import { api } from '@/lib/api';
-import { useExemplarFetcher } from '@/lib/queries';
+import { useExemplarFetcher, useServiceDeploys } from '@/lib/queries';
 import { timeRangeToNs, fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import type { TimeRange, FilterExpr, SpanMetricSeries, SpanAgg, TraceRow } from '@/lib/types';
@@ -134,6 +134,26 @@ function ExploreInner() {
   const [exemplarBusy, setExemplarBusy] = useState<'slow' | 'error' | null>(null);
   const [exemplarMsg, setExemplarMsg] = useState<string | null>(null);
   const exemplarCtx = useMemo(() => extractExemplarCtx(filters, mode), [filters, mode]);
+
+  // Deploy markers — fetched only when the filter pins a
+  // single service (same gating as exemplars; the lookup is
+  // service-scoped). The MultiLineChart paints dashed vertical
+  // lines at every deploy time so the operator can spot a
+  // regression that coincides with a code ship.
+  const exploreRange = timeRangeToNs(range);
+  const deploysQ = useServiceDeploys(
+    exemplarCtx?.service ?? '',
+    exploreRange.from,
+    exploreRange.to,
+  );
+  const deployMarkers = useMemo(() => {
+    if (!deploysQ.data) return undefined;
+    return deploysQ.data.map(d => ({
+      timeUnixNs: d.timeUnixNs,
+      label: d.version,
+      description: `${d.spanCount.toLocaleString()} spans since first seen`,
+    }));
+  }, [deploysQ.data]);
 
   async function openExemplar(kind: 'slow' | 'error') {
     if (!exemplarCtx) return;
@@ -543,7 +563,7 @@ name ~ checkout`}
                   </span>
                 )}
               </div>
-              <MultiLineChart series={series} unit={unit} />
+              <MultiLineChart series={series} unit={unit} deploys={deployMarkers} />
             </div>
 
             {/* Per-series summary */}

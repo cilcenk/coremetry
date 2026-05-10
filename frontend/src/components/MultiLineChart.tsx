@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { SpanMetricSeries } from '@/lib/types';
@@ -31,9 +31,27 @@ import { hashColor } from '@/lib/utils';
 //      setSeries(idx, { show }) on the live plot, no React
 //      state, no rebuild.
 
+// DeployMarker — lightweight shape the chart consumes for the
+// dashed vertical "deploy line" overlay. Avoids leaking the
+// fuller Deploy type into chart code so non-service callers
+// (eg. Dashboards) can synthesise markers from any source.
+export interface DeployMarker {
+  timeUnixNs: number;
+  label: string;        // service.version or whatever the caller wants
+  description?: string; // tooltip detail (e.g. "153 spans since")
+}
+
 export function MultiLineChart({
-  series, unit, height = 320,
-}: { series: SpanMetricSeries[]; unit?: string; height?: number }) {
+  series, unit, height = 320, deploys,
+}: {
+  series: SpanMetricSeries[];
+  unit?: string;
+  height?: number;
+  // Optional dashed vertical lines painted at the given times.
+  // Hovering near a marker shows label + description in the
+  // chart's tooltip panel.
+  deploys?: DeployMarker[];
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
 
@@ -118,6 +136,42 @@ export function MultiLineChart({
       cursor: { x: true, y: true, focus: { prox: 30 } },
       legend: { show: true, live: true, markers: { width: 2 } },
       hooks: {
+        // Deploy-marker overlay — dashed vertical lines at every
+        // deploy time. Painted after uPlot's own draw so the
+        // lines sit on top of series fills. Each line is
+        // labelled at the top with a short truncated version
+        // string; the tooltip below picks up the hover for the
+        // full info.
+        draw: deploys && deploys.length > 0 ? [
+          (u) => {
+            const ctx = u.ctx;
+            const xMin = u.scales.x.min ?? 0;
+            const xMax = u.scales.x.max ?? 0;
+            ctx.save();
+            ctx.strokeStyle = '#a371f7'; // accent2-ish purple
+            ctx.fillStyle = '#a371f7';
+            ctx.lineWidth = 1.2;
+            ctx.setLineDash([5, 4]);
+            ctx.font = '10px ui-monospace, monospace';
+            for (const d of deploys) {
+              const t = d.timeUnixNs / 1e9;
+              if (t < xMin || t > xMax) continue;
+              const x = u.valToPos(t, 'x', true);
+              ctx.beginPath();
+              ctx.moveTo(x, u.bbox.top);
+              ctx.lineTo(x, u.bbox.top + u.bbox.height);
+              ctx.stroke();
+              // Tiny label at the top — clip to 12 chars so
+              // a long version string doesn't smear across the
+              // chart. Hover for the full string.
+              const lbl = d.label.length > 12 ? d.label.slice(0, 11) + '…' : d.label;
+              ctx.setLineDash([]);
+              ctx.fillText(lbl, x + 3, u.bbox.top + 11);
+              ctx.setLineDash([5, 4]);
+            }
+            ctx.restore();
+          },
+        ] : undefined,
         // Grafana-style hover tooltip — the floating panel
         // matches what Datadog / Honeycomb / Grafana all do
         // (hover anywhere on the chart and see all series'
@@ -168,8 +222,37 @@ export function MultiLineChart({
             rows.sort((a, b) => b.v - a.v);
             const fmt = (n: number) =>
               `${n.toFixed(3)}${unit ? ' ' + unit : ''}`;
+            // Find the nearest deploy marker within ~12px of
+            // the cursor's x — close enough that the operator
+            // is clearly hovering "the deploy line" not
+            // somewhere else. Surfaces version + description
+            // at the top of the tooltip; same colour as the
+            // dashed line itself for visual continuity.
+            let deployRow = '';
+            if (deploys && deploys.length > 0) {
+              const cursorX = u.cursor.left ?? -1;
+              let nearest: DeployMarker | null = null;
+              let bestDx = 12;
+              for (const d of deploys) {
+                const t = d.timeUnixNs / 1e9;
+                const px = u.valToPos(t, 'x', true);
+                const dx = Math.abs(px - cursorX);
+                if (dx < bestDx) {
+                  bestDx = dx;
+                  nearest = d;
+                }
+              }
+              if (nearest) {
+                deployRow =
+                  `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">` +
+                    `<span style="display:inline-block;width:8px;height:8px;background:#a371f7;border-radius:2px;flex-shrink:0"></span>` +
+                    `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${nearest.label}${nearest.description ? ' — ' + nearest.description : ''}">deploy ${nearest.label}</span>` +
+                  `</div>`;
+              }
+            }
             tip.innerHTML =
               `<div style="font-weight:600;margin-bottom:4px">${hh}:${mm}:${ss}</div>` +
+              deployRow +
               rows.map(r =>
                 `<div style="display:flex;gap:8px;align-items:center;line-height:1.5">` +
                   `<span style="display:inline-block;width:8px;height:8px;background:${r.color};border-radius:2px;flex-shrink:0"></span>` +
@@ -215,7 +298,7 @@ export function MultiLineChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [series, unit, height]);
+  }, [series, unit, height, deploys]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling

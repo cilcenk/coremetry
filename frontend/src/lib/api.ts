@@ -389,6 +389,13 @@ export const api = {
     get<import('./types').DBQueryStat[] | null>(
       `/api/services/${encodeURIComponent(svc)}/db-queries?${qs(params)}`),
 
+  // /api/services/{name}/deploys — first-seen timestamps for
+  // every service.version emitted in the window. Drives the
+  // dashed deploy-marker overlay on charts.
+  serviceDeploys: (svc: string, params: { from?: number; to?: number }) =>
+    get<import('./types').Deploy[] | null>(
+      `/api/services/${encodeURIComponent(svc)}/deploys?${qs(params)}`),
+
   // Exemplar lookup — picks a representative trace for a metric
   // chart point. 404 means "no span matched the bucket" (the
   // user clicked outside the actual data window) — swallow it

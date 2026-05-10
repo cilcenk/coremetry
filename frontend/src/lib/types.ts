@@ -953,6 +953,17 @@ export interface AggSpanNode {
   children?: AggSpanNode[];
 }
 
+// Deploy — one observed (service, service.version) entry.
+// Used to paint dashed vertical "deploy marker" lines on
+// metric / latency / error charts so an operator can read at
+// a glance whether a regression coincides with a deploy.
+export interface Deploy {
+  service: string;
+  version: string;
+  timeUnixNs: number;
+  spanCount: number;
+}
+
 // DBQueryStat — one row in the database query analyzer panel.
 // One per normalised DB statement seen on the service in the
 // time window (literals replaced with "?" so a hot query

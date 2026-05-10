@@ -88,6 +88,11 @@ export const keys = {
                    ['spans', 'exemplar', svc, op, from, to, kind] as const,
   },
 
+  deploys: {
+    forService:  (svc: string, from: number, to: number) =>
+                   ['deploys', svc, from, to] as const,
+  },
+
   // The "auth" key is special — invalidating it on logout drops every
   // cached query that depends on the user, which is most of them.
   auth: {

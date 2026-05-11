@@ -299,6 +299,12 @@ export const api = {
     }),
 
   // Runtime settings: AI Copilot
+  // spanBreakdown — Elastic-APM-style "where does this service
+  // spend its time?" stacked-area data. Per-bucket cumulative ms
+  // grouped by span category (db / queue / http / kind).
+  spanBreakdown: (service: string, fromNs: number, toNs: number) =>
+    get<import('./types').BreakdownPoint[] | null>(
+      `/api/services/${encodeURIComponent(service)}/span-breakdown?from=${fromNs}&to=${toNs}`),
   // spanFacets — Datadog-style trace tag explorer: top-N values per
   // well-known facet column over (window + DSL filter). Drives the
   // /explore facets panel; click a value adds it as a filter chip.

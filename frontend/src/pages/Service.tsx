@@ -10,6 +10,7 @@ import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
 import { ServiceInfra } from '@/components/ServiceInfra';
 import { Sparkline } from '@/components/Sparkline';
+import { SpanBreakdownChart } from '@/components/SpanBreakdownChart';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
@@ -157,6 +158,14 @@ function ServiceDetailInner() {
             <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
             <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
             <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
+            {/* Span breakdown — Elastic-APM "where does this
+                service spend its time?" stacked-area view sits
+                above the DB / operations tables so the operator
+                gets the categorical answer first, then drills
+                down into the rows. */}
+            <SpanBreakdownChart service={svc}
+                                fromNs={timeRangeToNs(range).from}
+                                toNs={timeRangeToNs(range).to} />
             <DBQueriesPanel   service={svc}
                               from={timeRangeToNs(range).from}
                               to={timeRangeToNs(range).to} />
@@ -194,14 +203,24 @@ function KPI({ label, value, cls }: { label: string; value: string; cls?: string
 // `name = <op>` pre-filtered alongside the service. Sortable; aggregate
 // "All" row at the top mirrors the services page so totals are visible
 // without scrolling.
-type OpSortKey = 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99' | 'apdex';
+type OpSortKey = 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99' | 'apdex' | 'impact';
 const OP_NATURAL_DIR: Record<OpSortKey, 'asc' | 'desc'> = {
   name: 'asc', spanCount: 'desc', errorRate: 'desc',
-  avg: 'desc', p99: 'desc', apdex: 'asc',
+  avg: 'desc', p99: 'desc', apdex: 'asc', impact: 'desc',
 };
 
+// Elastic-APM's "Impact" = avg_duration × count. Surfaces the
+// heaviest cumulative consumers — the operation that's slow OR
+// runs a lot. A 5ms operation called 100k times shows up; a
+// once-an-hour 30s job doesn't. Default sort so the top of the
+// table answers "what should I optimise first" without the
+// operator combining columns by eye.
+function impactOf(r: OperationSummary): number {
+  return r.avgDurationMs * r.spanCount;
+}
+
 function OperationsTable({ service, rows, range }: { service: string; rows: OperationSummary[]; range: TimeRange }) {
-  const [sortBy, setSortBy] = useState<OpSortKey>('spanCount');
+  const [sortBy, setSortBy] = useState<OpSortKey>('impact');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   // Drill-down to Explore with both service.name + name pre-filtered.
@@ -226,6 +245,7 @@ function OperationsTable({ service, rows, range }: { service: string; rows: Oper
         case 'spanCount': return a.spanCount - b.spanCount;
         case 'errorRate': return a.errorRate - b.errorRate;
         case 'avg':       return a.avgDurationMs - b.avgDurationMs;
+        case 'impact':    return impactOf(a) - impactOf(b);
         case 'p99':       return a.p99DurationMs - b.p99DurationMs;
         case 'apdex':     return (a.apdex ?? 0) - (b.apdex ?? 0);
       }
@@ -310,6 +330,7 @@ function OperationsTable({ service, rows, range }: { service: string; rows: Oper
             <tr>
               <OpSortTh col="name"      label="Operation"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
               <th style={{ textAlign: 'left', width: 92 }}>Trend</th>
+              <OpSortTh col="impact"    label="Impact"     sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
               <OpSortTh col="spanCount" label="Calls"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
               <OpSortTh col="errorRate" label="Err %"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
               <OpSortTh col="avg"       label="Avg"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
@@ -330,6 +351,9 @@ function OperationsTable({ service, rows, range }: { service: string; rows: Oper
                       using the same window + bucket boundaries as
                       every row beneath it. */}
                   <Sparkline values={aggSparkline} title={`total calls/bucket × ${rows.length} ops`} />
+                </td>
+                <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>
+                  {fmtImpact(rows.reduce((n, r) => n + impactOf(r), 0))}
                 </td>
                 <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(agg.spans)}</td>
                 <td className="mono" style={{ textAlign: 'right' }}>
@@ -369,6 +393,10 @@ function OperationsTable({ service, rows, range }: { service: string; rows: Oper
                       color={sparkColor}
                       title={`${fmtNum(op.spanCount)} calls · click row to drill in`} />
                   </td>
+                  <td className="mono" style={{ textAlign: 'right' }}>
+                    <ImpactBar value={impactOf(op)}
+                               max={Math.max(...rows.map(impactOf))} />
+                  </td>
                   <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(op.spanCount)}</td>
                   <td className="mono" style={{ textAlign: 'right' }}>
                     <span className={`badge b-${errCls === 'err' ? 'err' : errCls === 'warn' ? 'warn' : 'ok'}`}>
@@ -390,6 +418,42 @@ function OperationsTable({ service, rows, range }: { service: string; rows: Oper
       </div>
     </div>
   );
+}
+
+// ImpactBar renders a horizontal proportion bar + numeric label —
+// Elastic APM's signature pattern in the transaction list. Bar
+// width = row impact / max impact across the visible rows so the
+// busiest operation always fills the cell. Keeps the heaviest
+// cumulative consumer visually obvious without forcing the
+// operator to read tabular numbers.
+function ImpactBar({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  return (
+    <div style={{ position: 'relative', minWidth: 90, display: 'inline-block' }}>
+      <div style={{
+        position: 'absolute', inset: 0, width: `${pct}%`,
+        background: 'rgba(56,139,253,0.12)',
+        borderRadius: 3,
+      }} />
+      <span style={{ position: 'relative', paddingRight: 4 }}>
+        {fmtImpact(value)}
+      </span>
+    </div>
+  );
+}
+
+// fmtImpact renders impact in time units. Below a second we keep
+// ms with at most one decimal; past a second we promote to s/min/h
+// so a 30M-ms ops job reads as "8.3h" rather than "30000000".
+function fmtImpact(ms: number): string {
+  if (ms < 1) return `${ms.toFixed(2)}ms`;
+  if (ms < 1000) return `${ms.toFixed(1)}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const min = sec / 60;
+  if (min < 60) return `${min.toFixed(1)}min`;
+  const hr = min / 60;
+  return `${hr.toFixed(1)}h`;
 }
 
 function OpSortTh({ col, label, sort, dir, onSort, align }: {

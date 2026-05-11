@@ -51,6 +51,14 @@ export interface RetentionSpec {
   profiles?: string;
 }
 
+// BreakdownPoint — one bucket of the Elastic-APM-style "span
+// breakdown" stacked-area chart. Cumulative ms of duration
+// grouped by span category for the service detail page.
+export interface BreakdownPoint {
+  time: number;                   // unix ns (bucket start)
+  kinds: Record<string, number>;  // category → ms summed in bucket
+}
+
 // Facet — one tag dimension (service.name, http.route, db.system, …)
 // with its top-N values for the current /explore window. Drives the
 // trace facets panel: operator scans which tags exist + frequency,

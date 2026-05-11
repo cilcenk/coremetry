@@ -177,6 +177,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/state",     auth.RequireAnyRole(editorRoles, s.setExceptionGroupState))
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign",    auth.RequireAnyRole(editorRoles, s.assignExceptionGroup))
 	mux.HandleFunc("GET    /api/services/{name}/operations", s.svcOperationSummary)
+	mux.HandleFunc("GET    /api/services/{name}/span-breakdown", s.svcSpanBreakdown)
 	mux.HandleFunc("GET    /api/services/{name}/callers",  s.svcCallers)
 	mux.HandleFunc("GET    /api/services/{name}/callees",  s.svcCallees)
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
@@ -2682,6 +2683,30 @@ func (s *Server) listExceptions(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Service backtrace ────────────────────────────────────────────────────────
+
+// svcSpanBreakdown returns time-bucketed cumulative duration per
+// span category (db / queue / http / client / server / internal)
+// for a single service. Drives Elastic-APM-style "where does this
+// service spend its time?" stacked-area chart on the service
+// detail page. Cached 30s — the surrounding page re-renders on
+// every range change and an SRE typically clicks through 4-5
+// services during triage.
+func (s *Server) svcSpanBreakdown(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	svc := r.PathValue("name")
+	to := parseTime(q.Get("to"))
+	if to.IsZero() {
+		to = time.Now()
+	}
+	from := parseTime(q.Get("from"))
+	if from.IsZero() {
+		from = to.Add(-1 * time.Hour)
+	}
+	key := fmt.Sprintf("svc-breakdown:svc=%s:from=%d:to=%d", svc, from.UnixNano(), to.UnixNano())
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.GetSpanBreakdown(r.Context(), svc, from, to)
+	})
+}
 
 // svcOperationSummary returns per-operation aggregates for a single
 // service. Drives the Operations table on the service detail page.

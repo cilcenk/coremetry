@@ -66,6 +66,24 @@ type Server struct {
 	// Surfaced unauthenticated on /api/version so the login page
 	// can show it before the operator has a session.
 	version string
+
+	// background carries the cadence + timeout knobs (status
+	// probe ceiling, SMTP cache TTL, anomaly intervals) lifted
+	// out of magic-number land into config in v0.4.95.
+	// Optional — zero values fall through to a 5s probe ceiling
+	// so the field doesn't need to be set for unit tests that
+	// don't touch /api/status.
+	background config.BackgroundConfig
+}
+
+// SetBackgroundConfig wires the cadence/timeout knobs to the
+// Server. Called once from main() after Load() so the status
+// probe respects the configured ceiling.
+func (s *Server) SetBackgroundConfig(b config.BackgroundConfig) {
+	if b.StatusProbeTimeout == 0 {
+		b.StatusProbeTimeout = 5 * time.Second
+	}
+	s.background = b
 }
 
 // SetVersion records the build-time tag. Called once from main();
@@ -4126,14 +4144,34 @@ func (s *Server) collectStatus(ctx context.Context) systemStatus {
 
 	probes := []func() componentStatus{chProbe, cacheProbe, logsProbe}
 	out := make([]componentStatus, len(probes))
+	// Hard ceiling on the whole probe pass — each individual
+	// probe has its own 2s context timeout, but a misbehaving
+	// driver could still hang. Without a parent deadline the
+	// receive loop below would block indefinitely. Pre-v0.4.95
+	// audit flagged this as a potential goroutine leak source;
+	// the buffered channel + per-probe ctx already prevented a
+	// true leak, but a stuck status endpoint blocking on every
+	// caller poll is its own problem.
+	probeCtx, probeCancel := context.WithTimeout(ctx, s.background.StatusProbeTimeout)
+	defer probeCancel()
 	results := make(chan result, len(probes))
 	for i, p := range probes {
 		i, p := i, p
 		go func() { results <- result{i, p()} }()
 	}
-	for range probes {
-		r := <-results
-		out[r.idx] = r.c
+	// Select on probeCtx.Done so a caller disconnect / parent
+	// cancel returns the partial result we have rather than
+	// stalling on a probe that won't finish. Slots not received
+	// stay at zero-value (Name=""), which the caller filters out.
+	received := 0
+	for received < len(probes) {
+		select {
+		case r := <-results:
+			out[r.idx] = r.c
+			received++
+		case <-probeCtx.Done():
+			received = len(probes) // bail out of the loop
+		}
 	}
 
 	// API + Ingest queues with per-second rates sampled across status

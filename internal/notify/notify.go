@@ -173,6 +173,22 @@ type Notifier struct {
 	// keyed by (account_id, client_id). Lazy-allocated in New;
 	// see sendZoomChat for the cache+invalidate flow.
 	zoomTokens zoomTokenCache
+
+	// smtpCacheTTL is how long the cached SMTP block is reused
+	// before re-reading from system_settings. Config-driven so
+	// operators on big CH clusters can back off the lookup
+	// without recompiling. Zero falls back to 30s in SMTP().
+	smtpCacheTTL time.Duration
+}
+
+// SetSMTPCacheTTL lets main.go wire the configurable refresh
+// interval after construction. Zero is treated as "use the
+// 30s default" so unit tests that build a Notifier without
+// touching config still behave correctly.
+func (n *Notifier) SetSMTPCacheTTL(d time.Duration) {
+	n.mu.Lock()
+	n.smtpCacheTTL = d
+	n.mu.Unlock()
 }
 
 func New(store *chstore.Store) *Notifier {
@@ -206,11 +222,17 @@ func (n *Notifier) Publish(kind string, payload any) {
 	}
 }
 
-// SMTP returns the cached settings (read-through with 30s TTL). Safe for
-// concurrent callers.
+// SMTP returns the cached settings (read-through). Cache TTL is
+// config-driven (cfg.Background.SMTPCacheTTL) so operators can
+// dial it up on big CH clusters; defaults to 30s when unset.
+// Safe for concurrent callers.
 func (n *Notifier) SMTP(ctx context.Context) SMTPSettings {
 	n.mu.RLock()
-	if time.Since(n.smtpRead) < 30*time.Second {
+	ttl := n.smtpCacheTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	if time.Since(n.smtpRead) < ttl {
 		s := n.smtp
 		n.mu.RUnlock()
 		return s

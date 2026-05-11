@@ -221,6 +221,7 @@ func main() {
 
 	// ── Notifier (SMTP-driven email; slack/webhook stubs) ────────────────────
 	notifier := notify.New(store)
+	notifier.SetSMTPCacheTTL(cfg.Background.SMTPCacheTTL)
 
 	// ── SSE event broker (in-process pub/sub) ────────────────────────────────
 	// Producers: evaluator, anomaly detector. Consumers: every
@@ -248,14 +249,17 @@ func main() {
 	store.SetNeighborProvider(corr)
 
 	// ── Anomaly detector (Watchdog-style baseline check) ─────────────────────
-	go anomaly.New(store, 2*time.Minute, lockImpl, notifier).Start(ctx)
+	// Cadence is config-driven (cfg.Background.AnomalyInterval) so
+	// operators can dial it down on big CH clusters or crank it up
+	// on demo deployments without recompiling.
+	go anomaly.New(store, cfg.Background.AnomalyInterval, lockImpl, notifier).Start(ctx)
 
 	// ── Anomaly recorder ─────────────────────────────────────────────────────
 	// Persists log-pattern + trace-op detections into anomaly_events
 	// so the operator can later answer "did this fire in the last
 	// hour, even if it has cleared". Without this the /anomalies
 	// page only ever shows the live snapshot.
-	anomaly.NewRecorder(store, time.Minute, 5*time.Minute, lockImpl).Start(ctx)
+	anomaly.NewRecorder(store, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(ctx)
 
 	// ── Synthetic monitor runner (HTTP probes + heartbeat absence) ───────────
 	// Lock-gated so HA replicas don't double-probe; emits state-change
@@ -372,6 +376,7 @@ func main() {
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, sampler, bus)
 	srv.SetVersion(Version)
+	srv.SetBackgroundConfig(cfg.Background)
 	if cfg.Auth.DemoMode {
 		// Demo mode auto-signs the visitor in as the configured initial
 		// admin so they can poke at every screen, including admin-only

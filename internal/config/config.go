@@ -31,6 +31,34 @@ type Config struct {
 	Logs       LogsConfig      `yaml:"logs"`
 	AI         AIConfig        `yaml:"ai"`
 	Sampling   SamplingConfig  `yaml:"sampling"`
+	Background BackgroundConfig `yaml:"background"`
+}
+
+// BackgroundConfig controls the cadence of every internal worker
+// loop — anomaly detector, recorder, status probes, etc. Default
+// values match what was hard-coded in main.go pre-v0.4.95. Tuning
+// these matters at scale: a 2-min detector tick on a busy stack
+// adds up to non-trivial CH load, and operators on slow CH
+// clusters want to back off; operators on demo deployments
+// often want to crank them down so anomalies surface quickly.
+//
+// Each field is a duration; zero means "use the default". The
+// defaults() function applies them so a config file that names
+// the section but omits a knob still gets the sensible value.
+type BackgroundConfig struct {
+	// Interval between anomaly-detector sweeps. Default 2m.
+	AnomalyInterval time.Duration `yaml:"anomaly_interval"`
+	// Recorder cadence + backfill window. Default 1m / 5m.
+	AnomalyRecordInterval time.Duration `yaml:"anomaly_record_interval"`
+	AnomalyRecordBackfill time.Duration `yaml:"anomaly_record_backfill"`
+	// SMTP settings refresh TTL. Default 30s — short so the
+	// operator's Settings change is picked up on the next
+	// alert send without a restart.
+	SMTPCacheTTL time.Duration `yaml:"smtp_cache_ttl"`
+	// Status probe ceiling — hard timeout on /api/status so a
+	// stuck CH/Redis client driver doesn't park the goroutine
+	// forever. Default 5s, well above the per-probe 2s timeout.
+	StatusProbeTimeout time.Duration `yaml:"status_probe_timeout"`
 }
 
 // SamplingConfig controls how many of the incoming spans we keep.
@@ -306,6 +334,35 @@ var defaults = Config{
 		InitialAdmin:    "admin@coremetry.local",
 		InitialPassword: "admin",
 	},
+	Background: BackgroundConfig{
+		AnomalyInterval:       2 * time.Minute,
+		AnomalyRecordInterval: 1 * time.Minute,
+		AnomalyRecordBackfill: 5 * time.Minute,
+		SMTPCacheTTL:          30 * time.Second,
+		StatusProbeTimeout:    5 * time.Second,
+	},
+}
+
+// applyBackgroundDefaults fills zero-valued duration fields on
+// the loaded BackgroundConfig with their canonical defaults.
+// Called after YAML parse so a partial config (e.g. only
+// AnomalyInterval set) keeps reasonable values for the rest.
+func applyBackgroundDefaults(b *BackgroundConfig) {
+	if b.AnomalyInterval == 0 {
+		b.AnomalyInterval = defaults.Background.AnomalyInterval
+	}
+	if b.AnomalyRecordInterval == 0 {
+		b.AnomalyRecordInterval = defaults.Background.AnomalyRecordInterval
+	}
+	if b.AnomalyRecordBackfill == 0 {
+		b.AnomalyRecordBackfill = defaults.Background.AnomalyRecordBackfill
+	}
+	if b.SMTPCacheTTL == 0 {
+		b.SMTPCacheTTL = defaults.Background.SMTPCacheTTL
+	}
+	if b.StatusProbeTimeout == 0 {
+		b.StatusProbeTimeout = defaults.Background.StatusProbeTimeout
+	}
 }
 
 func Load(path string) (*Config, error) {
@@ -489,5 +546,6 @@ func Load(path string) (*Config, error) {
 	if cfg.Retention.MetricsDays == 0 {
 		cfg.Retention.MetricsDays = defaults.Retention.MetricsDays
 	}
+	applyBackgroundDefaults(&cfg.Background)
 	return &cfg, nil
 }

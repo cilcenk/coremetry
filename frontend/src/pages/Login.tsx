@@ -4,6 +4,7 @@ import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { api, type AuthConfigResponse } from '@/lib/api';
 import { useBranding } from '@/lib/branding';
+import { useT } from '@/lib/i18n';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -11,6 +12,7 @@ export default function LoginPage() {
   // username field label, footer line). Falls back to the
   // bundled defaults for any field left empty.
   const brand = useBranding();
+  const t = useT();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,7 +59,7 @@ export default function LoginPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed';
       setError(msg.includes('invalid credentials') || msg.includes('401')
-        ? 'Invalid email or password'
+        ? t('login.invalid')
         : msg);
     } finally {
       setBusy(false);
@@ -114,7 +116,7 @@ export default function LoginPage() {
           </div>
           <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 4 }}>
             {brand.loginTitle === `Sign in to ${brand.appName}`
-              ? 'Sign in to continue'
+              ? t('login.signInToContinue')
               : brand.loginTitle}
           </div>
           {brand.loginSubtitle && (
@@ -145,14 +147,14 @@ export default function LoginPage() {
                 background: 'var(--bg)', color: 'var(--text)',
                 border: '1px solid var(--border)',
               }}>
-              ⚿ Sign in with {oidcLabel}
+              ⚿ {t('login.signInWith')} {oidcLabel}
             </button>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
               color: 'var(--text3)', fontSize: 11, margin: '6px 0 14px',
             }}>
               <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-              <span>or sign in locally</span>
+              <span>{t('login.orLocal')}</span>
               <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
             </div>
           </>
@@ -170,15 +172,15 @@ export default function LoginPage() {
 
         <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
           {ldapEnabled
-            ? (brand.usernameLabel === 'Email' ? 'Username or email' : brand.usernameLabel)
-            : brand.usernameLabel}
+            ? (brand.usernameLabel === 'Email' ? t('login.usernameOrEmail') : brand.usernameLabel)
+            : (brand.usernameLabel === 'Email' ? t('login.email') : brand.usernameLabel)}
         </label>
         <input type={ldapEnabled ? 'text' : 'email'} autoComplete="username" required autoFocus
           value={email} onChange={e => setEmail(e.target.value)}
           style={{ width: '100%', marginBottom: 14 }} />
 
         <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
-          Password
+          {t('login.password')}
         </label>
         <input type="password" autoComplete="current-password" required
           value={password} onChange={e => setPassword(e.target.value)}
@@ -196,7 +198,9 @@ export default function LoginPage() {
 
         <button type="submit" disabled={busy}
           style={{ width: '100%', padding: '8px 12px' }}>
-          {busy ? 'Signing in…' : brand.signInButtonLabel}
+          {busy
+            ? t('login.signingIn')
+            : (brand.signInButtonLabel === 'Sign in' ? t('login.signIn') : brand.signInButtonLabel)}
         </button>
 
         {brand.footerText && (

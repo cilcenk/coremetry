@@ -14,6 +14,10 @@ export interface BrandingSettings {
   footerText?: string;
   logoDataUri?: string;
   primaryColor?: string;
+  // 'en' (default) | 'tr'. Drives the i18n catalog the SPA
+  // uses for sidebar labels, login strings, common buttons,
+  // page titles, empty/error states.
+  language?: 'en' | 'tr';
 }
 
 export const DEFAULT_BRANDING: Required<BrandingSettings> = {
@@ -26,6 +30,7 @@ export const DEFAULT_BRANDING: Required<BrandingSettings> = {
   footerText:        '',
   logoDataUri:       '',
   primaryColor:      '',
+  language:          'en',
 };
 
 // Resolve fills empty fields with defaults so consumers never
@@ -45,6 +50,7 @@ export function resolveBranding(b: BrandingSettings | null | undefined): Require
   if (b.footerText)        r.footerText = b.footerText;
   if (b.logoDataUri)       r.logoDataUri = b.logoDataUri;
   if (b.primaryColor)      r.primaryColor = b.primaryColor;
+  if (b.language === 'tr' || b.language === 'en') r.language = b.language;
   return r;
 }
 

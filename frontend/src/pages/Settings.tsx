@@ -1852,6 +1852,19 @@ function BrandingTab() {
                  placeholder='e.g. "© Acme Bank · Internal use only"' style={{ width: '100%' }} />
         </Field>
 
+        <Field label="UI language">
+          <select value={b.language ?? 'en'}
+                  onChange={e => set('language', e.target.value)}
+                  style={{ fontSize: 13, padding: '4px 8px', minWidth: 200 }}>
+            <option value="en">English (default)</option>
+            <option value="tr">Türkçe</option>
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Drives sidebar labels, login strings, common buttons, page titles.
+            Applies to every operator hitting this Coremetry instance.
+          </div>
+        </Field>
+
         <Field label="Primary color (CSS — e.g. #4f46e5, rgb(79,70,229))">
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input value={b.primaryColor ?? ''} onChange={e => set('primaryColor', e.target.value)}

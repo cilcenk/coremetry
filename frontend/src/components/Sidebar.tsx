@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { useHealth, useOpenProblemCount } from '@/lib/queries';
+import { useT } from '@/lib/i18n';
 import { ThemeToggle } from './ThemeToggle';
 import { DensityToggle } from './DensityToggle';
 import { TelescopeIcon } from './TelescopeIcon';
@@ -20,30 +21,33 @@ type NavItem = {
   adminOnly?: boolean;
 };
 
+// NavItem labels are i18n keys; the actual label is resolved
+// from the t() catalog at render time so a language switch
+// surfaces immediately.
 const NAV: NavItem[] = [
-  { href: '/incidents',  label: 'Incidents',    icon: '⚠' },
-  { href: '/problems',   label: 'Problems',     icon: '!' },
-  { href: '/anomalies',  label: 'Anomalies',    icon: '⚠' },
-  { href: '/services',   label: 'Services',     icon: '◈' },
-  { href: '/databases',  label: 'Databases',    icon: '⛁' },
-  { href: '/messaging',  label: 'Messaging',    icon: '⌬' },
-  { href: '/traces',     label: 'Traces',       icon: '⋮' },
-  { href: '/metrics',    label: 'Metrics',      icon: '∿' },
-  { href: '/logs',       label: 'Logs',         icon: '≡' },
-  { href: '/explore',    label: 'Explore',      icon: '◎' },
-  { href: '/notebook',   label: 'Notebook',     icon: '◰' },
-  { href: '/dashboards', label: 'Dashboards',   icon: '◫' },
-  { href: '/profiling',  label: 'Profiling',    icon: '⌬' },
-  { href: '/alerts',     label: 'Alerts',       icon: '◊' },
-  { href: '/service-map', label: 'Service map', icon: '◉' },
-  { href: '/slos',       label: 'SLOs',         icon: '◉' },
-  { href: '/monitors',   label: 'Monitors',     icon: '◉' },
-  { href: '/admin/stats',       label: 'System',             icon: '◐' },
-  { href: '/admin/cardinality', label: 'Cardinality',        icon: '◐', adminOnly: true },
-  { href: '/admin/catalog',     label: 'Service catalog',    icon: '◫', adminOnly: true },
-  { href: '/admin/audit',       label: 'Audit log',          icon: '◇', adminOnly: true },
-  { href: '/admin/sql',         label: 'SQL playground',     icon: '⌘', adminOnly: true },
-  { href: '/admin/status-page', label: 'Public Status Page', icon: '◫', adminOnly: true },
+  { href: '/incidents',  label: 'nav.incidents',   icon: '⚠' },
+  { href: '/problems',   label: 'nav.problems',    icon: '!' },
+  { href: '/anomalies',  label: 'nav.anomalies',   icon: '⚠' },
+  { href: '/services',   label: 'nav.services',    icon: '◈' },
+  { href: '/databases',  label: 'nav.databases',   icon: '⛁' },
+  { href: '/messaging',  label: 'nav.messaging',   icon: '⌬' },
+  { href: '/traces',     label: 'nav.traces',      icon: '⋮' },
+  { href: '/metrics',    label: 'nav.metrics',     icon: '∿' },
+  { href: '/logs',       label: 'nav.logs',        icon: '≡' },
+  { href: '/explore',    label: 'nav.explore',     icon: '◎' },
+  { href: '/notebook',   label: 'nav.notebook',    icon: '◰' },
+  { href: '/dashboards', label: 'nav.dashboards',  icon: '◫' },
+  { href: '/profiling',  label: 'nav.profiling',   icon: '⌬' },
+  { href: '/alerts',     label: 'nav.alerts',      icon: '◊' },
+  { href: '/service-map', label: 'nav.serviceMap', icon: '◉' },
+  { href: '/slos',       label: 'nav.slos',        icon: '◉' },
+  { href: '/monitors',   label: 'nav.monitors',    icon: '◉' },
+  { href: '/admin/stats',       label: 'nav.system',      icon: '◐' },
+  { href: '/admin/cardinality', label: 'nav.cardinality', icon: '◐', adminOnly: true },
+  { href: '/admin/catalog',     label: 'nav.catalog',     icon: '◫', adminOnly: true },
+  { href: '/admin/audit',       label: 'nav.audit',       icon: '◇', adminOnly: true },
+  { href: '/admin/sql',         label: 'nav.sql',         icon: '⌘', adminOnly: true },
+  { href: '/admin/status-page', label: 'nav.statusPage',  icon: '◫', adminOnly: true },
 ];
 
 const SIDEBAR_WIDTH_KEY     = 'coremetry-sidebar-w';
@@ -57,6 +61,7 @@ export function Sidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const t = useT();
   // Both queries auto-poll on their own intervals (5s / 30s) and
   // share their cache with anywhere else that consumes them.
   // The /exceptions page consumes the same cache for its inline
@@ -208,10 +213,10 @@ export function Sidebar() {
           {NAV.filter(n => !n.adminOnly || user?.role === 'admin').map(n => (
             <Link key={n.href} to={n.href}
               className={isActive(pathname, n.href) ? 'active' : ''}
-              title={!showLabels ? n.label : undefined}
+              title={!showLabels ? t(n.label) : undefined}
               style={!showLabels ? { justifyContent: 'center', padding: '10px 0' } : undefined}>
               <span className="icon">{n.icon}</span>
-              {showLabels && <span className="nav-label">{n.label}</span>}
+              {showLabels && <span className="nav-label">{t(n.label)}</span>}
               {showLabels && n.href === '/problems' && openProblems > 0 && (
                 <span className="nav-badge">{openProblems}</span>
               )}
@@ -264,18 +269,18 @@ export function Sidebar() {
                 {user.role === 'admin' && (
                   <>
                     <MenuItem onClick={() => { setMenuOpen(false); navigate('/users'); }}>
-                      ◯ Manage users
+                      ◯ {t('user.manageUsers')}
                     </MenuItem>
                     <MenuItem onClick={() => { setMenuOpen(false); navigate('/settings'); }}>
-                      ⚙ Settings
+                      ⚙ {t('user.settings')}
                     </MenuItem>
                   </>
                 )}
                 <MenuItem onClick={() => { setMenuOpen(false); setShowChangePw(true); }}>
-                  ⚿ Change password
+                  ⚿ {t('user.changePassword')}
                 </MenuItem>
                 <MenuItem onClick={() => { setMenuOpen(false); logout(); }}>
-                  ⏻ Sign out
+                  ⏻ {t('user.signOut')}
                 </MenuItem>
               </div>
             )}

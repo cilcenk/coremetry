@@ -187,6 +187,49 @@ type Notifier struct {
 	// operators on big CH clusters can back off the lookup
 	// without recompiling. Zero falls back to 30s in SMTP().
 	smtpCacheTTL time.Duration
+
+	// publicURL is the operator-facing base URL of this
+	// Coremetry deployment (e.g. https://coremetry.bank.local).
+	// When set, every problem / anomaly / incident
+	// notification body carries a "View in Coremetry:
+	// <url>" link so the recipient (oncall on their phone,
+	// team channel) can click straight to the relevant
+	// detail page. Empty disables the link — back-compat
+	// for deployments that haven't wired it yet.
+	publicURL string
+}
+
+// SetPublicURL configures the deep-link base for notification
+// bodies. Trims trailing slashes so URL composition is just
+// base + "/route" with no double slash.
+func (n *Notifier) SetPublicURL(u string) {
+	n.mu.Lock()
+	n.publicURL = strings.TrimRight(strings.TrimSpace(u), "/")
+	n.mu.Unlock()
+}
+
+// PublicURL reads the configured base URL — safe to call from
+// any goroutine; helpers below use it to build per-problem
+// deep links.
+func (n *Notifier) PublicURL() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.publicURL
+}
+
+// problemURL builds the deep link to a problem detail. Returns
+// "" when no public URL is configured — callers append a
+// "View in Coremetry: <url>" line conditionally to avoid a
+// dangling empty link in the notification body.
+func (n *Notifier) problemURL(problemID string) string {
+	base := n.PublicURL()
+	if base == "" {
+		return ""
+	}
+	// /anomalies is the page that surfaces Problems; the
+	// ?problem= query param scrolls + highlights the matching
+	// row.
+	return base + "/anomalies?problem=" + problemID
 }
 
 // SetSMTPCacheTTL lets main.go wire the configurable refresh
@@ -402,7 +445,7 @@ func (n *Notifier) sendEmail(ctx context.Context, c chstore.NotificationChannel,
 	}
 
 	subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName)
-	body := buildEmailBody(p)
+	body := n.buildEmailBody(p)
 
 	from := smtpCfg.From
 	fromHeader := from
@@ -422,7 +465,7 @@ func (n *Notifier) sendEmail(ctx context.Context, c chstore.NotificationChannel,
 	return sendSMTP(addr, smtpCfg, from, ec.Recipients, []byte(msg.String()))
 }
 
-func buildEmailBody(p chstore.Problem) string {
+func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", p.Description)
@@ -434,6 +477,9 @@ func buildEmailBody(p chstore.Problem) string {
 	fmt.Fprintf(&b, "Started at: %s\n", t)
 	if p.RunbookURL != "" {
 		fmt.Fprintf(&b, "Runbook:    %s\n", p.RunbookURL)
+	}
+	if u := n.problemURL(p.ID); u != "" {
+		fmt.Fprintf(&b, "Open:       %s\n", u)
 	}
 	return b.String()
 }
@@ -519,6 +565,13 @@ func (n *Notifier) sendSlack(ctx context.Context, c chstore.NotificationChannel,
 			"short": false,
 		})
 	}
+	if u := n.problemURL(p.ID); u != "" {
+		fields = append(fields, map[string]any{
+			"title": "Coremetry",
+			"value": fmt.Sprintf("<%s|Open in Coremetry ↗>", u),
+			"short": false,
+		})
+	}
 	body := map[string]any{
 		"text": fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName),
 		"attachments": []map[string]any{{
@@ -563,14 +616,30 @@ func (n *Notifier) sendTeams(ctx context.Context, c chstore.NotificationChannel,
 		"text":       p.Description,
 		"sections":   []map[string]any{{"facts": facts}},
 	}
+	// MessageCard supports up to multiple potentialAction
+	// buttons. Surface Runbook + Coremetry-link side by side
+	// so the oncall has both one tap away.
+	var actions []map[string]any
 	if p.RunbookURL != "" {
-		body["potentialAction"] = []map[string]any{{
+		actions = append(actions, map[string]any{
 			"@type": "OpenUri",
 			"name":  "Open runbook",
 			"targets": []map[string]string{
 				{"os": "default", "uri": p.RunbookURL},
 			},
-		}}
+		})
+	}
+	if u := n.problemURL(p.ID); u != "" {
+		actions = append(actions, map[string]any{
+			"@type": "OpenUri",
+			"name":  "Open in Coremetry",
+			"targets": []map[string]string{
+				{"os": "default", "uri": u},
+			},
+		})
+	}
+	if len(actions) > 0 {
+		body["potentialAction"] = actions
 	}
 	return postJSON(ctx, tc.WebhookURL, body)
 }
@@ -677,6 +746,9 @@ func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChann
 		p.Metric, p.Value, p.Threshold, t)
 	if p.RunbookURL != "" {
 		msg += "\n• Runbook: " + p.RunbookURL
+	}
+	if u := n.problemURL(p.ID); u != "" {
+		msg += "\n• View in Coremetry: " + u
 	}
 
 	payload := map[string]any{"message": msg}
@@ -928,7 +1000,18 @@ func (n *Notifier) sendWebhook(ctx context.Context, c chstore.NotificationChanne
 	if wc.URL == "" {
 		return errors.New("channel has no URL")
 	}
-	return postJSON(ctx, wc.URL, p)
+	// Generic-webhook receivers (PagerDuty Events API, n8n,
+	// custom Lambdas) typically build their own UI URL from
+	// the payload. Surface the Coremetry deep-link as a
+	// dedicated field so they don't have to reconstruct it
+	// from the deployment's base URL. JSON shape is
+	// backward-compatible: a receiver that doesn't know
+	// about coremetryUrl just ignores the extra field.
+	payload := map[string]any{
+		"problem":      p,
+		"coremetryUrl": n.problemURL(p.ID),
+	}
+	return postJSON(ctx, wc.URL, payload)
 }
 
 // ── WhatsApp backend (Twilio Messages API) ──────────────────────────────────

@@ -32,6 +32,15 @@ type Config struct {
 	AI         AIConfig        `yaml:"ai"`
 	Sampling   SamplingConfig  `yaml:"sampling"`
 	Background BackgroundConfig `yaml:"background"`
+	// PublicURL is the operator-facing base URL of this
+	// Coremetry deployment (e.g. https://coremetry.bank.local).
+	// Notification bodies (Slack / Teams / Zoom / email /
+	// generic webhook) include deep-links to the relevant
+	// problem / anomaly / incident detail when set. Empty
+	// disables the linking — back-compat for deployments
+	// where the URL isn't reachable from the recipient's
+	// network.
+	PublicURL string `yaml:"public_url"`
 }
 
 // BackgroundConfig controls the cadence of every internal worker
@@ -417,6 +426,12 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_HTTP_ADDR"); v != "" {
 		cfg.Listen.HTTP = v
+	}
+	// COREMETRY_PUBLIC_URL — deployment's externally-reachable
+	// base URL. Notification bodies include deep links when set.
+	// e.g. https://coremetry.bank.local
+	if v := os.Getenv("COREMETRY_PUBLIC_URL"); v != "" {
+		cfg.PublicURL = v
 	}
 	if v := os.Getenv("COREMETRY_GRPC_ADDR"); v != "" {
 		cfg.Listen.GRPC = v

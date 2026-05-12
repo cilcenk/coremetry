@@ -222,6 +222,12 @@ func main() {
 	// ── Notifier (SMTP-driven email; slack/webhook stubs) ────────────────────
 	notifier := notify.New(store)
 	notifier.SetSMTPCacheTTL(cfg.Background.SMTPCacheTTL)
+	// Deep-link base URL — set via COREMETRY_PUBLIC_URL or
+	// config.yaml. When configured, every problem / anomaly
+	// notification body includes a clickable "Open in
+	// Coremetry" link so the recipient lands on the relevant
+	// detail page in one tap.
+	notifier.SetPublicURL(cfg.PublicURL)
 
 	// ── SSE event broker (in-process pub/sub) ────────────────────────────────
 	// Producers: evaluator, anomaly detector. Consumers: every

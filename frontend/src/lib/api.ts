@@ -332,6 +332,15 @@ export const api = {
   oracleMetrics: (instance: string, fromNs: number, toNs: number) =>
     get<import('./types').OracleMetrics | null>(
       `/api/databases/oracle?instance=${encodeURIComponent(instance)}&from=${fromNs}&to=${toNs}`),
+  postgresMetrics: (instance: string, fromNs: number, toNs: number) =>
+    get<import('./types').PostgresMetrics | null>(
+      `/api/databases/postgres?instance=${encodeURIComponent(instance)}&from=${fromNs}&to=${toNs}`),
+  mysqlMetrics: (instance: string, fromNs: number, toNs: number) =>
+    get<import('./types').MySQLMetrics | null>(
+      `/api/databases/mysql?instance=${encodeURIComponent(instance)}&from=${fromNs}&to=${toNs}`),
+  redisMetrics: (instance: string, fromNs: number, toNs: number) =>
+    get<import('./types').RedisMetrics | null>(
+      `/api/databases/redis?instance=${encodeURIComponent(instance)}&from=${fromNs}&to=${toNs}`),
   spanBreakdown: (service: string, fromNs: number, toNs: number) =>
     get<import('./types').BreakdownPoint[] | null>(
       `/api/services/${encodeURIComponent(service)}/span-breakdown?from=${fromNs}&to=${toNs}`),

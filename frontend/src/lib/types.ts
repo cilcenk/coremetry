@@ -178,6 +178,95 @@ export interface OracleMetrics {
   tablespaces: { name: string; usedBytes: number; maxBytes: number; usedPct: number }[];
 }
 
+// PostgresMetrics — receiver drill-down for one Postgres
+// instance. Sourced from OTel postgresql receiver
+// metric_points (`postgresql.*`). Empty receiver = zeros +
+// status="down" (no synthetic fallback).
+export interface PostgresMetrics {
+  instance: string;
+  status: 'up' | 'down';
+  windowSeconds: number;
+  backends: { usage: number; limit: number };
+  commitsPerSec: number;
+  rollbacksPerSec: number;
+  deadlocksPerSec: number;
+  blocksReadPerSec: number;
+  blocksHitPerSec: number;
+  cacheHitPct: number;
+  tempFilesPerSec: number;
+  tempBytesPerSec: number;
+  walAgeSec: number;
+  walLagBytes: number;
+  replicationDelaySec: number;
+  bgwriter: {
+    buffersAllocatedPerSec: number;
+    buffersCheckpointPerSec: number;
+    buffersBgwriterPerSec: number;
+    buffersBackendPerSec: number;
+  };
+  databases: { name: string; sizeBytes: number; commitsPerSec: number;
+                rollbacksPerSec: number; backendCount: number }[];
+  locks: { mode: string; count: number }[];
+}
+
+// MySQLMetrics — receiver drill-down for one MySQL instance.
+export interface MySQLMetrics {
+  instance: string;
+  status: 'up' | 'down';
+  windowSeconds: number;
+  threads: { connected: number; running: number; createdPerSec: number };
+  connections: { usage: number; limit: number };
+  questionsPerSec: number;
+  slowQueriesPerSec: number;
+  rowLockWaitsPerSec: number;
+  rowLockTimeSec: number;
+  tmpDiskTablesPerSec: number;
+  openedTablesPerSec: number;
+  bufferPool: {
+    pagesData: number; pagesDirty: number; pagesFree: number;
+    pagesTotal: number; usagePct: number; dirtyPct: number;
+  };
+  handlers: {
+    readFirstPerSec: number; readKeyPerSec: number;
+    readNextPerSec: number; readRndNextPerSec: number; writePerSec: number;
+  };
+  rowOps: {
+    insertPerSec: number; updatePerSec: number;
+    deletePerSec: number; selectPerSec: number;
+  };
+  replicaDelaySec: number;
+}
+
+// RedisMetrics — receiver drill-down for one Redis instance.
+export interface RedisMetrics {
+  instance: string;
+  status: 'up' | 'down';
+  role: 'master' | 'replica' | 'unknown' | string;
+  windowSeconds: number;
+  uptimeSec: number;
+  clients: {
+    connected: number; blocked: number;
+    maxInputBufferBytes: number; maxOutputBufferBytes: number;
+  };
+  memory: {
+    usedBytes: number; rssBytes: number; peakBytes: number; maxBytes: number;
+    fragmentationRatio: number; luaBytes: number; usagePct: number;
+  };
+  commandsPerSec: number;
+  netInputBytesPerSec: number;
+  netOutputBytesPerSec: number;
+  keyspaceHitsPerSec: number;
+  keyspaceMissesPerSec: number;
+  hitRatePct: number;
+  keysEvictedPerSec: number;
+  keysExpiredPerSec: number;
+  replicationLagBytes: number;
+  changesSinceLastSave: number;
+  slowlogEntries: number;
+  connectionsRejectedPerSec: number;
+  keyspaces: { name: string; keys: number; expires: number }[];
+}
+
 // MessagingInstance — same structure for queues / topics. The
 // destination field tries messaging.destination.name first, then
 // messaging.destination, then peer.service, then 'unknown'.

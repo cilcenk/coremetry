@@ -153,7 +153,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
 	mux.HandleFunc("GET /api/databases",  s.getDatabases)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
-	mux.HandleFunc("GET /api/databases/oracle", s.getOracleMetrics)
+	mux.HandleFunc("GET /api/databases/oracle",     s.getOracleMetrics)
+	mux.HandleFunc("GET /api/databases/postgres",   s.getPostgresMetrics)
+	mux.HandleFunc("GET /api/databases/mysql",      s.getMySQLMetrics)
+	mux.HandleFunc("GET /api/databases/redis",      s.getRedisMetrics)
 	mux.HandleFunc("GET /api/messaging",  s.getMessaging)
 	mux.HandleFunc("GET /api/messaging/detail", s.getMessagingDetail)
 	mux.HandleFunc("GET /api/services/{name}/backtrace", s.getServiceBacktrace)
@@ -953,6 +956,41 @@ func (s *Server) getOracleMetrics(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("oracle:%s:%s", instance, cacheBucket(from, to))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.GetOracleMetrics(r.Context(), instance, from, to)
+	})
+}
+
+// getPostgresMetrics serves the Postgres receiver drill-down
+// for the row-click drawer on /databases. Mirrors getOracleMetrics:
+// 30s cache TTL bucketed to a 30s grid so morning-triage hits
+// share one query trip even with rolling time windows.
+func (s *Server) getPostgresMetrics(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	from, to := parseFromTo(r, time.Hour)
+	key := fmt.Sprintf("postgres:%s:%s", instance, cacheBucket(from, to))
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.GetPostgresMetrics(r.Context(), instance, from, to)
+	})
+}
+
+// getMySQLMetrics — MySQL receiver drill-down (buffer pool /
+// threads / row-lock / slow queries / handlers / replica lag).
+func (s *Server) getMySQLMetrics(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	from, to := parseFromTo(r, time.Hour)
+	key := fmt.Sprintf("mysql:%s:%s", instance, cacheBucket(from, to))
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.GetMySQLMetrics(r.Context(), instance, from, to)
+	})
+}
+
+// getRedisMetrics — Redis receiver drill-down (clients / memory /
+// commands / hit rate / per-keyspace / replication / role).
+func (s *Server) getRedisMetrics(w http.ResponseWriter, r *http.Request) {
+	instance := r.URL.Query().Get("instance")
+	from, to := parseFromTo(r, time.Hour)
+	key := fmt.Sprintf("redis:%s:%s", instance, cacheBucket(from, to))
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.GetRedisMetrics(r.Context(), instance, from, to)
 	})
 }
 

@@ -218,7 +218,7 @@ func (s *Store) GetDatabaseDetail(
 		  AND db_system = ? AND instance = ?
 		GROUP BY service_name, pod
 		ORDER BY countMerge(span_count_state) DESC
-		LIMIT 100
+		LIMIT 500
 		SETTINGS max_execution_time = 8`,
 		from, to, system, mvInstance)
 	if err != nil {
@@ -368,7 +368,7 @@ func (s *Store) GetMessagingDetail(
 		  AND msg_system = ? AND cluster = ? AND destination = ?
 		GROUP BY service_name, pod, role
 		ORDER BY countMerge(span_count_state) DESC
-		LIMIT 100
+		LIMIT 500
 		SETTINGS max_execution_time = 8`,
 		from, to, system, cluster, destination)
 	if err != nil {
@@ -561,57 +561,80 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		}
 	}
 
-	// OracleDB receiver discovery — pull every distinct Oracle
-	// instance that emitted oracledb.* metric_points in the window
-	// but doesn't already have a span-derived row. These appear
-	// with Source="receiver" and zero RED stats; the operator
-	// clicks through to the rich OracleDB panel (sessions /
-	// wait-classes / tablespaces) which reads the same metrics.
-	// Without this, Oracle DBs monitored purely via the receiver
-	// (a common setup — the DBA-team manages monitoring; the app
-	// team doesn't have a span SDK in place) wouldn't appear on
-	// /databases at all.
-	// Build an "already covered" predicate from the span-derived
-	// keys we just inserted, so the receiver pass can skip Oracle
-	// instances that already appear above.
+	// Receiver-discovery — pull every distinct DB instance that
+	// emitted database-receiver metric_points (oracledb.*,
+	// postgresql.*, mysql.*, redis.*) in the window but doesn't
+	// already have a span-derived row. These appear with
+	// Source="receiver" and zero RED stats; the operator clicks
+	// through to the engine-specific panel which reads the
+	// rich metrics directly. Without this, DBs monitored purely
+	// via the receiver (DBA-team monitoring, no app-side SDK)
+	// wouldn't appear on /databases at all.
 	covered := func(system, instance string) bool {
 		_, ok := idxByKey[key{system, instance}]
 		return ok
 	}
-	if receiverOnly, err := s.discoverOracleReceiverInstances(ctx, from, to, covered); err == nil {
-		out = append(out, receiverOnly...)
+	for _, prefix := range []struct{ metric, system string }{
+		{"oracledb.", "oracle"},
+		{"postgresql.", "postgresql"},
+		{"mysql.", "mysql"},
+		{"redis.", "redis"},
+	} {
+		extra, err := s.discoverReceiverInstances(ctx, from, to, prefix.metric, prefix.system, covered)
+		if err != nil {
+			continue
+		}
+		out = append(out, extra...)
 	}
 	return out, nil
 }
 
-// discoverOracleReceiverInstances returns one DBInstance per
-// distinct Oracle instance seen in oracledb.* metric_points in
-// the window that isn't already covered by a span-derived row.
-// The instance identifier can ride on either an `instance` /
-// `oracledb.instance.name` attr (newer receivers) or a
-// `service.name` resource key (older setups), so we coalesce
-// across both. Empty / `(unknown)` rows are dropped — a missing
-// instance label gives the operator no actionable handle.
-func (s *Store) discoverOracleReceiverInstances(
+// discoverReceiverInstances returns one DBInstance per distinct
+// DB instance seen in metric_points whose metric name starts
+// with `metricPrefix` (e.g. "oracledb.", "postgresql.",
+// "mysql.", "redis.") in the window, that isn't already covered
+// by a span-derived row. The instance identifier can ride on:
+//
+//   - <prefix>instance.name attr (newer OTel receivers, e.g.
+//     "oracledb.instance.name")
+//   - `instance` attr (generic)
+//   - `server.address` attr (postgresql / mysql receivers)
+//   - `service.name` resource key (older setups)
+//
+// We coalesce across all four so the discovery works regardless
+// of which receiver version / config the operator has wired.
+// Empty rows are dropped — a missing instance label gives the
+// operator no actionable handle.
+//
+// Generalised from the prior Oracle-only helper so all four
+// engines we support (oracle / postgres / mysql / redis) share
+// one discovery path.
+func (s *Store) discoverReceiverInstances(
 	ctx context.Context, from, to time.Time,
+	metricPrefix, system string,
 	alreadyCovered func(system, instance string) bool,
 ) ([]DBInstance, error) {
+	// <prefix>instance.name turns into e.g. "oracledb.instance.name"
+	// — receivers commonly emit a self-naming attr like this on
+	// every datapoint.
+	specificAttr := metricPrefix + "instance.name"
 	q := `
 		SELECT coalesce(
-			nullIf(attr_values[indexOf(attr_keys, 'oracledb.instance.name')], ''),
+			nullIf(attr_values[indexOf(attr_keys, ?)], ''),
 			nullIf(attr_values[indexOf(attr_keys, 'instance')], ''),
+			nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
 			nullIf(res_values[indexOf(res_keys, 'service.name')], ''),
 			''
 		) AS inst
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
-		  AND startsWith(metric, 'oracledb.')
+		  AND startsWith(metric, ?)
 		GROUP BY inst
 		HAVING inst != ''
 		ORDER BY inst
 		LIMIT 100
 		SETTINGS max_execution_time = 8`
-	rows, err := s.conn.Query(ctx, q, from, to)
+	rows, err := s.conn.Query(ctx, q, specificAttr, from, to, metricPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -622,11 +645,11 @@ func (s *Store) discoverOracleReceiverInstances(
 		if err := rows.Scan(&inst); err != nil {
 			continue
 		}
-		if alreadyCovered != nil && alreadyCovered("oracle", inst) {
+		if alreadyCovered != nil && alreadyCovered(system, inst) {
 			continue
 		}
 		out = append(out, DBInstance{
-			System:   "oracle",
+			System:   system,
 			Instance: inst,
 			Source:   DBSourceReceiver,
 			Callers:  []string{},

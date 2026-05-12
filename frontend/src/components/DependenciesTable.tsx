@@ -4,7 +4,7 @@ import { Empty, Spinner } from './Spinner';
 import { MultiLineChart } from './MultiLineChart';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
-import type { TimeRange, DBDetail, MessagingDetail, OracleMetrics, SpanMetricSeries } from '@/lib/types';
+import type { TimeRange, DBDetail, MessagingDetail, OracleMetrics, PostgresMetrics, MySQLMetrics, RedisMetrics, SpanMetricSeries } from '@/lib/types';
 
 // OracleDrill — what the user clicked on. Carries enough state
 // to build a metricQuery against /api/metrics/query and label
@@ -401,6 +401,15 @@ function DetailDrawer({ system, cluster, name, kind, range }: {
       {kind === 'db' && system.toLowerCase() === 'oracle' && (
         <OraclePanel instance={name} range={range} />
       )}
+      {kind === 'db' && (system.toLowerCase() === 'postgresql' || system.toLowerCase() === 'postgres') && (
+        <PostgresPanel instance={name} range={range} />
+      )}
+      {kind === 'db' && (system.toLowerCase() === 'mysql' || system.toLowerCase() === 'mariadb') && (
+        <MySQLPanel instance={name} range={range} />
+      )}
+      {kind === 'db' && system.toLowerCase() === 'redis' && (
+        <RedisPanel instance={name} range={range} />
+      )}
 
       {/* Per-(service, pod) breakdown — the SRE's "which client
           is shouting at this DB / queue" answer. Sorted by impact
@@ -509,12 +518,26 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
   const hasRole = rows.some(r => r.role);
   const [sortBy, setSortBy] = useState<CallerSortKey>('calls');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // Client-side search across service / pod / role so an
+  // operator with hundreds of pods hitting one DB can pinpoint
+  // a specific instance fast. Backend caps the result set at
+  // LIMIT 500 (v0.5.12) so filtering 500 rows stays
+  // sub-millisecond.
+  const [search, setSearch] = useState('');
   const toggleSort = (col: CallerSortKey) => {
     if (sortBy === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
     else { setSortBy(col); setSortDir(CALLER_NATURAL[col]); }
   };
+  const filtered = useMemo(() => {
+    const t = search.trim().toLowerCase();
+    if (!t) return rows;
+    return rows.filter(r =>
+      r.service.toLowerCase().includes(t) ||
+      r.pod.toLowerCase().includes(t) ||
+      (r.role ?? '').toLowerCase().includes(t));
+  }, [rows, search]);
   const sorted = useMemo(() => {
-    const arr = [...rows];
+    const arr = [...filtered];
     arr.sort((a, b) => {
       switch (sortBy) {
         case 'service': return a.service.localeCompare(b.service);
@@ -527,17 +550,30 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
       }
     });
     return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [rows, sortBy, sortDir]);
+  }, [filtered, sortBy, sortDir]);
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 6,
+        display: 'flex', alignItems: 'center', gap: 8,
         fontSize: 12, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
       }}>
         <span aria-hidden style={{
           width: 8, height: 8, borderRadius: 2, background: dotColor,
         }} />
         {title}
+        {rows.length > 10 && (
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search service / pod / role…"
+            style={{
+              marginLeft: 'auto', fontSize: 11, padding: '3px 8px',
+              width: 200, fontWeight: 400,
+            }} />
+        )}
+        {search && (
+          <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
+            {sorted.length} of {rows.length}
+          </span>
+        )}
       </div>
       {rows.length === 0 ? (
         emptyMessage && <div style={{ fontSize: 12, color: 'var(--text3)' }}>{emptyMessage}</div>
@@ -640,9 +676,10 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-function Stat({ label, value, tone, onClick }: {
+function Stat({ label, value, tone, onClick, sub }: {
   label: string; value: string; tone?: 'ok' | 'warn' | 'err';
   onClick?: () => void;
+  sub?: string;
 }) {
   const color = tone === 'err' ? 'var(--err)'
               : tone === 'warn' ? 'var(--warn)'
@@ -668,6 +705,12 @@ function Stat({ label, value, tone, onClick }: {
                      fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
         {value}
       </div>
+      {sub && (
+        <div style={{
+          fontSize: 10, color: 'var(--text3)', marginTop: 2,
+          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+        }}>{sub}</div>
+      )}
     </>
   );
   if (onClick) {
@@ -1269,4 +1312,390 @@ function fmtBytes(v: number): string {
   if (v >= 1e6)  return (v / 1e6).toFixed(1)  + ' MB';
   if (v >= 1e3)  return (v / 1e3).toFixed(1)  + ' kB';
   return v.toFixed(0) + ' B';
+}
+
+// PostgresPanel — drill-down for one Postgres instance, mirrors
+// OraclePanel's shape (status badge + KPI tiles + per-DB table).
+// Tile clicks open the same metric-chart modal used by Oracle.
+function PostgresPanel({ instance, range }: { instance: string; range: TimeRange }) {
+  const [data, setData] = useState<PostgresMetrics | null | undefined>(undefined);
+  const [drill, setDrill] = useState<OracleDrill | null>(null);
+  useEffect(() => {
+    setData(undefined);
+    const { from, to } = timeRangeToNs(range);
+    api.postgresMetrics(instance, from, to)
+      .then(r => setData(r ?? null))
+      .catch(() => setData(null));
+  }, [instance, range]);
+  return (
+    <div style={{
+      marginTop: 6, marginBottom: 14, padding: 12, borderRadius: 6,
+      background: 'rgba(51,103,145,0.05)',
+      border: '1px solid rgba(91,143,185,0.25)',
+    }}>
+      <PanelHeader engineLabel="PostgreSQL receiver" instance={instance}
+        status={data?.status} color="#5b8fb9" />
+      {data === undefined && <Spinner />}
+      {data === null && <PanelErr />}
+      {data && (
+        <>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+            gap: 8, marginBottom: 12,
+          }}>
+            <GaugeStat label="Backends"
+              usage={data.backends.usage} limit={data.backends.limit}
+              onClick={() => setDrill({ metric: 'postgresql.backends', label: 'Backends' })} />
+            <Stat label="Commits/s" value={fmtNum(data.commitsPerSec)}
+              onClick={() => setDrill({ metric: 'postgresql.commits', label: 'Commits', unit: '/s' })} />
+            <Stat label="Rollbacks/s" value={fmtNum(data.rollbacksPerSec)}
+              tone={data.rollbacksPerSec > data.commitsPerSec * 0.05 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'postgresql.rollbacks', label: 'Rollbacks', unit: '/s' })} />
+            <Stat label="Deadlocks/s" value={data.deadlocksPerSec.toFixed(3)}
+              tone={data.deadlocksPerSec > 0.1 ? 'err' : data.deadlocksPerSec > 0 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'postgresql.deadlocks', label: 'Deadlocks', unit: '/s' })} />
+            <Stat label="Cache hit" value={`${data.cacheHitPct.toFixed(1)}%`}
+              tone={data.cacheHitPct < 95 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'postgresql.blocks_hit', label: 'Cache hits vs reads' })} />
+            <Stat label="Blocks read/s" value={fmtNum(data.blocksReadPerSec)}
+              onClick={() => setDrill({ metric: 'postgresql.blocks_read', label: 'Blocks read', unit: '/s' })} />
+            <Stat label="Temp files/s" value={data.tempFilesPerSec.toFixed(2)}
+              tone={data.tempFilesPerSec > 1 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'postgresql.temp_files', label: 'Temp files', unit: '/s' })} />
+            <Stat label="WAL lag" value={fmtBytes(data.walLagBytes)}
+              tone={data.walLagBytes > 64 * 1024 * 1024 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'postgresql.wal.lag', label: 'WAL lag', unit: 'B' })} />
+            <Stat label="Replication delay" value={`${data.replicationDelaySec.toFixed(1)}s`}
+              tone={data.replicationDelaySec > 10 ? 'err'
+                  : data.replicationDelaySec > 2 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'postgresql.replication.data_delay', label: 'Replication delay', unit: 's' })} />
+            <Stat label="Bgwriter alloc/s" value={fmtNum(data.bgwriter.buffersAllocatedPerSec)}
+              onClick={() => setDrill({ metric: 'postgresql.bgwriter.buffers.allocated', label: 'Bgwriter buffers allocated', unit: '/s' })} />
+          </div>
+
+          {data.databases.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <SubHeader label={`Databases (${data.databases.length})`} />
+              <div className="table-wrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
+                <table>
+                  <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>
+                    <tr>
+                      <th>Name</th>
+                      <th className="num">Size</th>
+                      <th className="num">Backends</th>
+                      <th className="num">Commits/s</th>
+                      <th className="num">Rollbacks/s</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.databases].sort((a, b) => b.sizeBytes - a.sizeBytes).map(d => (
+                      <tr key={d.name}
+                        onClick={() => setDrill({
+                          metric: 'postgresql.database.size',
+                          label: `Database · ${d.name}`,
+                          unit: 'B',
+                          filters: [{ key: 'database', op: '=', value: d.name }],
+                        })}
+                        style={{ cursor: 'pointer' }}>
+                        <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, fontWeight: 600 }}>{d.name}</td>
+                        <td className="num mono">{fmtBytes(d.sizeBytes)}</td>
+                        <td className="num mono">{fmtNum(d.backendCount)}</td>
+                        <td className="num mono">{fmtNum(d.commitsPerSec)}</td>
+                        <td className="num mono">{fmtNum(d.rollbacksPerSec)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {data.locks.length > 0 && (
+            <div>
+              <SubHeader label="Locks by mode" />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {data.locks.map(l => (
+                  <span key={l.mode} style={{
+                    fontSize: 11, padding: '3px 8px', borderRadius: 3,
+                    background: 'var(--bg3)', color: 'var(--text2)',
+                    fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  }}>
+                    {l.mode} <span style={{ color: 'var(--text3)' }}>{fmtNum(l.count)}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {drill && (
+        <OracleMetricDrillModal drill={drill} range={range} onClose={() => setDrill(null)} />
+      )}
+    </div>
+  );
+}
+
+// MySQLPanel — drill-down for one MySQL/MariaDB instance.
+function MySQLPanel({ instance, range }: { instance: string; range: TimeRange }) {
+  const [data, setData] = useState<MySQLMetrics | null | undefined>(undefined);
+  const [drill, setDrill] = useState<OracleDrill | null>(null);
+  useEffect(() => {
+    setData(undefined);
+    const { from, to } = timeRangeToNs(range);
+    api.mysqlMetrics(instance, from, to)
+      .then(r => setData(r ?? null))
+      .catch(() => setData(null));
+  }, [instance, range]);
+  return (
+    <div style={{
+      marginTop: 6, marginBottom: 14, padding: 12, borderRadius: 6,
+      background: 'rgba(0,117,143,0.05)',
+      border: '1px solid rgba(33,160,160,0.25)',
+    }}>
+      <PanelHeader engineLabel="MySQL receiver" instance={instance}
+        status={data?.status} color="#21a0a0" />
+      {data === undefined && <Spinner />}
+      {data === null && <PanelErr />}
+      {data && (
+        <>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+            gap: 8, marginBottom: 12,
+          }}>
+            <Stat label="Threads connected" value={fmtNum(data.threads.connected)}
+              sub={`${fmtNum(data.threads.running)} running`}
+              onClick={() => setDrill({ metric: 'mysql.threads', label: 'Threads' })} />
+            <Stat label="Questions/s" value={fmtNum(data.questionsPerSec)}
+              onClick={() => setDrill({ metric: 'mysql.questions', label: 'Questions', unit: '/s' })} />
+            <Stat label="Slow queries/s" value={data.slowQueriesPerSec.toFixed(2)}
+              tone={data.slowQueriesPerSec > 1 ? 'err' : data.slowQueriesPerSec > 0.1 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'mysql.slow_queries', label: 'Slow queries', unit: '/s' })} />
+            <Stat label="Row-lock waits/s" value={data.rowLockWaitsPerSec.toFixed(2)}
+              tone={data.rowLockWaitsPerSec > 1 ? 'err' : data.rowLockWaitsPerSec > 0.2 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'mysql.row_locks', label: 'Row-lock waits', unit: '/s' })} />
+            <Stat label="Buffer pool usage" value={`${data.bufferPool.usagePct.toFixed(1)}%`}
+              sub={`${data.bufferPool.dirtyPct.toFixed(1)}% dirty`}
+              tone={data.bufferPool.usagePct >= 95 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'mysql.buffer_pool.pages.data', label: 'Buffer pool pages' })} />
+            <Stat label="Tmp disk tables/s" value={data.tmpDiskTablesPerSec.toFixed(2)}
+              tone={data.tmpDiskTablesPerSec > 1 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'mysql.tmp_resources.disk', label: 'Tmp disk tables', unit: '/s' })} />
+            <Stat label="Inserts/s" value={fmtNum(data.rowOps.insertPerSec)}
+              onClick={() => setDrill({ metric: 'mysql.row_operations.insert', label: 'Inserts', unit: '/s' })} />
+            <Stat label="Updates/s" value={fmtNum(data.rowOps.updatePerSec)}
+              onClick={() => setDrill({ metric: 'mysql.row_operations.update', label: 'Updates', unit: '/s' })} />
+            <Stat label="Deletes/s" value={fmtNum(data.rowOps.deletePerSec)}
+              onClick={() => setDrill({ metric: 'mysql.row_operations.delete', label: 'Deletes', unit: '/s' })} />
+            <Stat label="Selects/s" value={fmtNum(data.rowOps.selectPerSec)}
+              onClick={() => setDrill({ metric: 'mysql.row_operations.select', label: 'Selects', unit: '/s' })} />
+            <Stat label="Replica delay" value={`${data.replicaDelaySec.toFixed(1)}s`}
+              tone={data.replicaDelaySec > 10 ? 'err'
+                  : data.replicaDelaySec > 2 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'mysql.replica.time_behind_source', label: 'Replica delay', unit: 's' })} />
+            <Stat label="Threads created/s" value={fmtNum(data.threads.createdPerSec)}
+              tone={data.threads.createdPerSec > 1 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'mysql.threads.created', label: 'Threads created', unit: '/s' })} />
+          </div>
+          <div>
+            <SubHeader label="Handlers (index efficiency proxy)" />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <HandlerChip label="read_first" v={data.handlers.readFirstPerSec} />
+              <HandlerChip label="read_key" v={data.handlers.readKeyPerSec} />
+              <HandlerChip label="read_next" v={data.handlers.readNextPerSec} />
+              <HandlerChip label="read_rnd_next" v={data.handlers.readRndNextPerSec}
+                warn={data.handlers.readRndNextPerSec > data.handlers.readKeyPerSec} />
+              <HandlerChip label="write" v={data.handlers.writePerSec} />
+            </div>
+            {data.handlers.readRndNextPerSec > data.handlers.readKeyPerSec && (
+              <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 6 }}>
+                read_rnd_next exceeds read_key — full-table scans dominating index reads.
+                Check for missing indexes or stale query plans.
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {drill && (
+        <OracleMetricDrillModal drill={drill} range={range} onClose={() => setDrill(null)} />
+      )}
+    </div>
+  );
+}
+
+function HandlerChip({ label, v, warn }: { label: string; v: number; warn?: boolean }) {
+  return (
+    <span style={{
+      fontSize: 11, padding: '3px 8px', borderRadius: 3,
+      background: warn ? 'rgba(245,179,67,0.15)' : 'var(--bg3)',
+      color: warn ? 'var(--warn)' : 'var(--text2)',
+      fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+    }}>
+      {label} <span style={{ opacity: 0.7 }}>{fmtNum(v)}/s</span>
+    </span>
+  );
+}
+
+// RedisPanel — drill-down for one Redis instance.
+function RedisPanel({ instance, range }: { instance: string; range: TimeRange }) {
+  const [data, setData] = useState<RedisMetrics | null | undefined>(undefined);
+  const [drill, setDrill] = useState<OracleDrill | null>(null);
+  useEffect(() => {
+    setData(undefined);
+    const { from, to } = timeRangeToNs(range);
+    api.redisMetrics(instance, from, to)
+      .then(r => setData(r ?? null))
+      .catch(() => setData(null));
+  }, [instance, range]);
+  return (
+    <div style={{
+      marginTop: 6, marginBottom: 14, padding: 12, borderRadius: 6,
+      background: 'rgba(220,38,38,0.05)',
+      border: '1px solid rgba(220,38,38,0.25)',
+    }}>
+      <PanelHeader engineLabel="Redis receiver" instance={instance}
+        status={data?.status} color="#dc2626"
+        extraBadge={data?.role && data.role !== 'unknown' ? data.role : undefined} />
+      {data === undefined && <Spinner />}
+      {data === null && <PanelErr />}
+      {data && (
+        <>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+            gap: 8, marginBottom: 12,
+          }}>
+            <Stat label="Clients" value={fmtNum(data.clients.connected)}
+              sub={data.clients.blocked > 0 ? `${fmtNum(data.clients.blocked)} blocked` : undefined}
+              onClick={() => setDrill({ metric: 'redis.clients.connected', label: 'Clients connected' })} />
+            <Stat label="Memory used" value={fmtBytes(data.memory.usedBytes)}
+              sub={data.memory.maxBytes > 0 ? `${data.memory.usagePct.toFixed(1)}% of max` : undefined}
+              tone={data.memory.usagePct >= 90 ? 'err' : data.memory.usagePct >= 75 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'redis.memory.used', label: 'Memory used', unit: 'B' })} />
+            <Stat label="Fragmentation" value={data.memory.fragmentationRatio.toFixed(2)}
+              tone={data.memory.fragmentationRatio > 1.5 ? 'warn'
+                  : data.memory.fragmentationRatio > 5 ? 'err' : 'ok'}
+              onClick={() => setDrill({ metric: 'redis.memory.fragmentation_ratio', label: 'Memory fragmentation ratio' })} />
+            <Stat label="Commands/s" value={fmtNum(data.commandsPerSec)}
+              onClick={() => setDrill({ metric: 'redis.commands', label: 'Commands', unit: '/s' })} />
+            <Stat label="Hit rate" value={`${data.hitRatePct.toFixed(1)}%`}
+              tone={data.hitRatePct < 90 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'redis.keyspace.hits', label: 'Keyspace hits' })} />
+            <Stat label="Keys evicted/s" value={data.keysEvictedPerSec.toFixed(2)}
+              tone={data.keysEvictedPerSec > 0.5 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'redis.keys.evicted', label: 'Keys evicted', unit: '/s' })} />
+            <Stat label="Keys expired/s" value={fmtNum(data.keysExpiredPerSec)}
+              onClick={() => setDrill({ metric: 'redis.keys.expired', label: 'Keys expired', unit: '/s' })} />
+            <Stat label="Net in/s" value={fmtBytes(data.netInputBytesPerSec)}
+              onClick={() => setDrill({ metric: 'redis.net.input', label: 'Net input', unit: 'B' })} />
+            <Stat label="Net out/s" value={fmtBytes(data.netOutputBytesPerSec)}
+              onClick={() => setDrill({ metric: 'redis.net.output', label: 'Net output', unit: 'B' })} />
+            <Stat label="Repl lag" value={fmtBytes(data.replicationLagBytes)}
+              tone={data.replicationLagBytes > 64 * 1024 * 1024 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'redis.replication.replica_offset', label: 'Replication lag', unit: 'B' })} />
+            <Stat label="Slowlog" value={fmtNum(data.slowlogEntries)}
+              tone={data.slowlogEntries > 100 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'redis.slowlog.length', label: 'Slowlog entries' })} />
+            <Stat label="Conn rejected/s" value={data.connectionsRejectedPerSec.toFixed(2)}
+              tone={data.connectionsRejectedPerSec > 0 ? 'err' : 'ok'}
+              onClick={() => setDrill({ metric: 'redis.connections.rejected', label: 'Connections rejected', unit: '/s' })} />
+          </div>
+          {data.keyspaces.length > 0 && (
+            <div>
+              <SubHeader label={`Keyspaces (${data.keyspaces.length})`} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {[...data.keyspaces].sort((a, b) => b.keys - a.keys).map(k => (
+                  <button key={k.name} type="button"
+                    onClick={() => setDrill({
+                      metric: 'redis.db.keys',
+                      label: `Keyspace ${k.name}`,
+                      filters: [{ key: 'db', op: '=', value: k.name }],
+                    })}
+                    style={{
+                      all: 'unset', cursor: 'pointer',
+                      fontSize: 11, padding: '4px 10px', borderRadius: 3,
+                      background: 'var(--bg3)', color: 'var(--text2)',
+                      fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                      transition: 'background 0.12s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg2)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg3)')}>
+                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{k.name}</span>
+                    {' '}<span>{fmtNum(k.keys)} keys</span>
+                    {k.expires > 0 && (
+                      <span style={{ color: 'var(--text3)' }}> · {fmtNum(k.expires)} expires</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {drill && (
+        <OracleMetricDrillModal drill={drill} range={range} onClose={() => setDrill(null)} />
+      )}
+    </div>
+  );
+}
+
+// PanelHeader is the engine-tile chrome shared by Postgres /
+// MySQL / Redis (and now Oracle by copy). status badge +
+// optional secondary chip (Redis role) + instance label on
+// the right. Centralised so all three panels read identically.
+function PanelHeader({ engineLabel, instance, status, color, extraBadge }: {
+  engineLabel: string;
+  instance: string;
+  status: 'up' | 'down' | undefined;
+  color: string;
+  extraBadge?: string;
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+      fontSize: 12, fontWeight: 700, color,
+    }}>
+      <span style={{ fontSize: 13 }}>⛁</span>
+      {engineLabel}
+      {status && (
+        <span title={status === 'up'
+          ? 'receiver metric_points present in window'
+          : 'No receiver metric_points seen — receiver may be down or not yet wired'}
+          style={{
+            fontSize: 9, padding: '1px 6px', borderRadius: 3,
+            background: status === 'up' ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)',
+            color: status === 'up' ? 'var(--ok)' : 'var(--err)',
+            fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+            textTransform: 'uppercase', letterSpacing: '.5px',
+          }}>{status}</span>
+      )}
+      {extraBadge && (
+        <span style={{
+          fontSize: 9, padding: '1px 6px', borderRadius: 3,
+          background: 'rgba(120,120,120,0.15)', color: 'var(--text2)',
+          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+          textTransform: 'uppercase', letterSpacing: '.5px',
+        }}>{extraBadge}</span>
+      )}
+      <span style={{
+        marginLeft: 'auto', fontSize: 10, color: 'var(--text3)',
+        fontWeight: 400, fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+      }}>
+        instance: {instance || '(unknown)'}
+      </span>
+    </div>
+  );
+}
+
+function PanelErr() {
+  return (
+    <div style={{ fontSize: 12, color: 'var(--err)' }}>Receiver metrics query failed.</div>
+  );
+}
+
+function SubHeader({ label }: { label: string }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
+      textTransform: 'uppercase', letterSpacing: 0.4,
+    }}>{label}</div>
+  );
 }

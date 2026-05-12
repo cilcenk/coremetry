@@ -91,7 +91,7 @@ func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 // Pass `since` for a relative window (now-since … now), or non-zero `from`/`to`
 // for an absolute window (overrides since).
 func (s *Store) GetServices(ctx context.Context, since time.Duration, from, to time.Time) ([]ServiceSummary, error) {
-	return s.GetServicesFilteredIn(ctx, since, from, to, "", nil, "", "", 0, 0)
+	return s.GetServicesFilteredIn(ctx, since, from, to, "", nil, "", "", 0, 0, "")
 }
 
 // GetServicesFiltered keeps the prior surface intact (no
@@ -99,7 +99,7 @@ func (s *Store) GetServices(ctx context.Context, since time.Duration, from, to t
 // is the variant the API uses when the operator filtered by
 // owner / SRE team.
 func (s *Store) GetServicesFiltered(ctx context.Context, since time.Duration, from, to time.Time, nameMatch, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
-	return s.GetServicesFilteredIn(ctx, since, from, to, nameMatch, nil, sort, dir, limit, offset)
+	return s.GetServicesFilteredIn(ctx, since, from, to, nameMatch, nil, sort, dir, limit, offset, "")
 }
 
 // servicesSortExpr maps a UI-side sort key to a CH ORDER BY
@@ -135,6 +135,64 @@ func servicesSortExpr(sort, dir string) string {
 	return col + " " + d + " NULLS LAST"
 }
 
+// clusterDeriveExpr is the canonical "which cluster did this
+// span come from" expression. Banks running OTel SDKs with
+// different resource-attribute conventions emit the cluster
+// name under any of three keys, sometimes as a resource attr
+// (cluster-level, set at SDK init) and sometimes as a span
+// attr (per-operation overrides). We coalesce across all six
+// permutations, resource-first since that's the stable case.
+//
+// Returns '' when no signal is present — callers comparing
+// against an empty string skip the row, which is the right
+// behaviour (no-cluster rows belong only in the "All
+// clusters" view).
+const clusterDeriveExpr = `coalesce(
+	nullIf(res_values[indexOf(res_keys, 'k8s.cluster.name')], ''),
+	nullIf(res_values[indexOf(res_keys, 'openshift.cluster.name')], ''),
+	nullIf(res_values[indexOf(res_keys, 'cluster')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'k8s.cluster.name')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'openshift.cluster.name')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'cluster')], ''),
+	''
+)`
+
+// ListClusters returns the distinct cluster names observed in
+// the window, sourced from the same resource/attr coalesce
+// chain the filter uses. Drives the cluster-filter dropdown on
+// /services and /service?name=. Capped at 200 — beyond that
+// the dropdown is unusable anyway, and the operator can type
+// the cluster directly into the filter URL.
+func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string, error) {
+	if from.IsZero() {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT `+clusterDeriveExpr+` AS cluster
+		FROM spans
+		WHERE time >= ? AND time <= ?
+		GROUP BY cluster
+		HAVING cluster != ''
+		ORDER BY cluster
+		LIMIT 200
+		SETTINGS max_execution_time = 8`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err == nil {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
 // GetServicesFiltered narrows the result to services whose name
 // matches `nameMatch` (case-insensitive substring). Used by the
 // services-page picker so a service outside the top-N still appears
@@ -147,7 +205,12 @@ func servicesSortExpr(sort, dir string) string {
 // row matches an owner-team / SRE-team filter; the spans
 // query then groups across just the allowed names. nil /
 // empty list = no constraint.
-func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
+// cluster (when non-empty) narrows results to spans whose
+// derived k8s/openshift cluster name matches exactly. The
+// match is on the resolved string returned by
+// clusterDeriveExpr — operators pass the cluster name they
+// see in the /api/clusters dropdown.
+func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int, cluster string) ([]ServiceSummary, error) {
 	var wc whereClause
 	if !from.IsZero() {
 		wc.add("time >= ?", from)
@@ -171,6 +234,14 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 			args[i] = n
 		}
 		wc.add("service_name IN ("+strings.Join(holders, ",")+")", args...)
+	}
+	if cluster != "" {
+		// Match exactly against the derived cluster name. The
+		// coalesce expression is repeated inline because CH
+		// doesn't carry derived expressions across WHERE — but
+		// the cost is the same indexOf scan whether referenced
+		// once (here) or twice (here + GROUP BY).
+		wc.add(clusterDeriveExpr+" = ?", cluster)
 	}
 	limitClause := ""
 	if limit > 0 {

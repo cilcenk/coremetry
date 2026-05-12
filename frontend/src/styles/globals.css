@@ -680,9 +680,13 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 #span-panel-body { padding: 12px 14px; }
 .ps-sec { margin-bottom: 14px; }
 .ps-sec-title { font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-.ps-kv { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.ps-kv { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
 .ps-kv td { padding: 3px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
-.ps-kv td:first-child { color: var(--text2); white-space: nowrap; width: 110px; }
+/* Attribute keys (e.g. messaging.kafka.consumer.group.id) can be very
+   long. table-layout: auto + max-width + word-break lets long keys
+   wrap onto multiple lines instead of being clipped by the old
+   nowrap+110px fixed column. Min-width keeps short keys aligned. */
+.ps-kv td:first-child { color: var(--text2); min-width: 140px; max-width: 320px; word-break: break-word; font-family: monospace; }
 .ps-kv td:last-child { font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 .ps-event { margin: 3px 0; padding: 5px 8px; background: var(--bg2); border-radius: 4px; font-size: 12px; }
 

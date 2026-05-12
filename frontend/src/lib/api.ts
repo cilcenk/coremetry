@@ -71,6 +71,11 @@ export const api = {
     // table; downstream spans query stays a microsecond
     // partition-pruned operation.
     ownerTeam?: string; sreTeam?: string;
+    // Cluster filter (k8s.cluster.name / openshift.cluster.name
+    // / cluster). Setting this forces the raw-span scan path
+    // on the backend since the service MV doesn't carry the
+    // cluster dim.
+    cluster?: string;
   } = {}) =>
     get<{
       services: Service[];
@@ -78,6 +83,12 @@ export const api = {
       offset: number;
       limit: number;
     }>(`/api/services?${qs({ ...r, ...opts })}`),
+
+  // List distinct clusters seen in the window. Drives the
+  // cluster-filter dropdown on /services and per-cluster
+  // selector on the service detail page.
+  clusters: (fromNs: number, toNs: number) =>
+    get<{ clusters: string[] }>(`/api/clusters?from=${fromNs}&to=${toNs}`),
   // Coremetry meta-observability snapshot — drives /admin/stats.
   systemStats: () =>
     get<import('./types').SystemStats>('/api/admin/system-stats'),

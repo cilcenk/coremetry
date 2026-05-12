@@ -136,6 +136,7 @@ func (s *Server) Start() error {
 
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
+	mux.HandleFunc("GET /api/clusters", s.getClusters)
 	mux.HandleFunc("GET /api/admin/system-stats", s.getSystemStats)
 	mux.HandleFunc("GET /api/correlations",       s.getCorrelations)
 	mux.HandleFunc("GET /api/admin/redis-stats",  s.getRedisStats)
@@ -426,6 +427,22 @@ func (s *Server) warmDependenciesCache() {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
+// getClusters returns the distinct k8s / openshift cluster names
+// observed in the requested window. Drives the cluster-filter
+// dropdown on /services + the per-cluster selector on
+// /service?name=. Cached 60s — cluster set changes rarely.
+func (s *Server) getClusters(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, 24*time.Hour)
+	key := "clusters:" + cacheBucket(from, to)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		names, err := s.store.ListClusters(r.Context(), from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"clusters": names}, nil
+	})
+}
+
 func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
@@ -465,6 +482,10 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// per-query JOIN against the catalog.
 	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
 	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
+	// Optional cluster filter — narrows to spans whose
+	// k8s.cluster.name / openshift.cluster.name / cluster
+	// resource-attr matches. Empty = no constraint.
+	cluster := strings.TrimSpace(q.Get("cluster"))
 	if from.IsZero() {
 		from = time.Now().Add(-since)
 	}
@@ -474,9 +495,13 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// MV-backed fast path. The MV writes a row every 5 minutes, so windows
 	// shorter than ~5 min would return empty — fall through to the raw
 	// scan in that case (small window = small scan, also fast).
-	useMV := to.Sub(from) >= 5*time.Minute
-	key := fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:since=%s:from=%s:to=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s",
-		useMV, limit, offset, q.Get("since"), q.Get("from"), q.Get("to"), nameMatch, sort, dir, ownerTeam, sreTeam)
+	// MV path doesn't carry a cluster dimension — force raw
+	// scan when a cluster filter is set. Trade-off: full scan
+	// over the window, but bounded by the filter so the cost
+	// stays proportional to the chosen cluster's traffic.
+	useMV := to.Sub(from) >= 5*time.Minute && cluster == ""
+	key := fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:since=%s:from=%s:to=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s:cl=%s",
+		useMV, limit, offset, q.Get("since"), q.Get("from"), q.Get("to"), nameMatch, sort, dir, ownerTeam, sreTeam, cluster)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
@@ -521,7 +546,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		if useMV {
 			rows, err = s.store.GetServicesAggFilteredIn(r.Context(), from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
 		} else {
-			rows, err = s.store.GetServicesFilteredIn(r.Context(), since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
+			rows, err = s.store.GetServicesFilteredIn(r.Context(), since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster)
 		}
 		if err != nil {
 			return nil, err

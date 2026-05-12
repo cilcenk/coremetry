@@ -65,6 +65,13 @@ export default function ServicesPage() {
   // the visible 50.
   const [ownerTeam, setOwnerTeam] = useState('');
   const [sreTeam, setSreTeam] = useState('');
+  // Cluster filter — narrows the list to services whose spans
+  // emitted from the selected k8s / openshift cluster. Resolved
+  // server-side via the resource/attr coalesce chain. Banks
+  // running tens of clusters need this to triage by-region or
+  // by-tier (prod vs canary vs DR).
+  const [cluster, setCluster] = useState('');
+  const [clusterOptions, setClusterOptions] = useState<string[]>([]);
 
   // serviceFilter is the picker's draft — typing / dropdown picks
   // mutate it freely and the in-memory `sorted` re-filter narrows
@@ -105,6 +112,7 @@ export default function ServicesPage() {
       // that only narrowed the loaded page).
       ownerTeam: ownerTeam || undefined,
       sreTeam: sreTeam || undefined,
+      cluster: cluster || undefined,
     }).then(resp => {
       setData(resp?.services ?? []);
       setHasMore(resp?.hasMore ?? false);
@@ -113,12 +121,22 @@ export default function ServicesPage() {
         api.serviceSparklines(r, names).then(d => setSparklines(d ?? {})).catch(() => {});
       }
     }).catch(() => { setData(null); setHasMore(false); });
-  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam]);
+  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster]);
 
   // Reset to page 0 whenever the search filter, time range,
-  // sort, or team filter changes — staying on page 5 of an
-  // old result set when the operator re-orders is jarring.
-  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam]);
+  // sort, or team / cluster filter changes — staying on page 5
+  // of an old result set when the operator re-orders is jarring.
+  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster]);
+
+  // Pre-fetch the cluster options on first mount and whenever
+  // the time range changes. The /api/clusters response is
+  // cached server-side (60s) so flipping ranges quickly is
+  // free after the first hit.
+  useEffect(() => {
+    const { from, to } = timeRangeToNs(range);
+    api.clusters(from, to).then(r => setClusterOptions(r?.clusters ?? []))
+      .catch(() => setClusterOptions([]));
+  }, [range]);
 
   // Service combobox options come from the loaded data itself.
   const serviceOptions = useMemo(
@@ -300,6 +318,24 @@ export default function ServicesPage() {
               <option value="">All SRE teams</option>
               {sreTeamOptions.map(t => (
                 <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            {/* Cluster filter — pulled from /api/clusters, which
+                derives the cluster name from any of
+                k8s.cluster.name / openshift.cluster.name /
+                cluster (resource attr first, then span attr).
+                Selecting forces the raw-span path on the backend
+                since the MV doesn't carry a cluster dim — slower
+                but bounded by the chosen cluster's volume. */}
+            <select value={cluster}
+              onChange={e => setCluster(e.target.value)}
+              style={{ minWidth: 160 }}
+              title={clusterOptions.length === 0
+                ? 'No clusters detected — set k8s.cluster.name / openshift.cluster.name on your OTel SDK resource attrs'
+                : `${clusterOptions.length} cluster${clusterOptions.length === 1 ? '' : 's'} detected`}>
+              <option value="">All clusters{clusterOptions.length > 0 ? ` (${clusterOptions.length})` : ''}</option>
+              {clusterOptions.map(c => (
+                <option key={c} value={c}>{c}</option>
               ))}
             </select>
             <label style={{ display: 'flex', alignItems: 'center', gap: 5,

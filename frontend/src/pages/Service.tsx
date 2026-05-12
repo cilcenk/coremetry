@@ -5,6 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceStructure } from '@/components/ServiceStructure';
 import { ServiceCharts } from '@/components/ServiceCharts';
+import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
@@ -176,6 +177,14 @@ function ServiceDetailInner() {
                               from={timeRangeToNs(range).from}
                               to={timeRangeToNs(range).to} />
             <OperationsTable service={svc} rows={operations} range={range} />
+            {/* Latency heatmap (Honeycomb-style 2D density).
+                Reveals multi-modal distributions the P50/P99
+                line charts hide — "P99 is fine but 5% of
+                users hit the slow band" reads instantly off
+                this grid. Toggleable so operators who don't
+                find the view useful can collapse it without
+                paying the load. */}
+            <ServiceLatencyHeatmap service={svc} range={range} />
             {/* Compact RED time-series at the bottom — RPS,
                 error rate, P99 latency. SLOs paint threshold
                 lines automatically; deploys paint vertical
@@ -587,6 +596,135 @@ function ServiceClusterBreakdown({ service, range }: {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ServiceLatencyHeatmap fetches the heatmap for the current
+// service + window and renders it under a collapsible
+// section. Uses the existing /api/spans/heatmap endpoint
+// with a single service_name filter — that endpoint already
+// uses the primary-key partition prune so this is cheap
+// even on a 24h window.
+function ServiceLatencyHeatmap({ service, range }: {
+  service: string;
+  range: import('@/lib/types').TimeRange;
+}) {
+  const [data, setData] = useState<import('@/lib/types').LatencyHeatmap | null | undefined>(undefined);
+  // Same service usually runs across multiple clusters
+  // simultaneously (eu-west + eu-central + us-east as one
+  // logical fleet). We load the cluster set from the
+  // per-service breakdown endpoint that already powers the
+  // table above and let the operator pivot the heatmap to
+  // any single cluster — or "All clusters" (the merged
+  // distribution, default) which is the union view a
+  // global-latency owner cares about.
+  const [clusters, setClusters] = useState<string[]>([]);
+  const [picked, setPicked] = useState<string>(''); // '' = all
+  // Collapse state — defaults open. Persisted to localStorage
+  // so an operator who'd rather hide the panel doesn't fight
+  // it on every reload. Keyed globally (not per-service) so
+  // the preference is a one-time setting.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem('svc.heatmap.collapsed') === '1'; }
+    catch { return false; }
+  });
+
+  // Pull the cluster set whenever the service or window
+  // changes. Cheap (cached server-side 30s) and keeps the
+  // dropdown in sync with whatever traffic is in the window.
+  useEffect(() => {
+    const { from, to } = timeRangeToNs(range);
+    api.serviceClusters(service, from, to)
+      .then(r => {
+        const names = (r?.clusters ?? []).map(c => c.cluster);
+        setClusters(names);
+        // If the previously-picked cluster vanished from the
+        // window (e.g. window moved past its traffic), drop
+        // back to "All" instead of querying for nothing.
+        if (picked && !names.includes(picked)) setPicked('');
+      })
+      .catch(() => setClusters([]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [service, range]);
+
+  useEffect(() => {
+    if (collapsed) return;
+    setData(undefined);
+    const { from, to } = timeRangeToNs(range);
+    const f: { key: string; op: string; value: string }[] = [
+      { key: 'service.name', op: '=', value: service },
+    ];
+    if (picked) {
+      // Hit the resource-attr key directly. The OTLP ingest
+      // path materialises k8s.cluster.name as a span attr,
+      // so a single predicate is enough (no coalesce across
+      // resource + span attrs needed at query time).
+      f.push({ key: 'k8s.cluster.name', op: '=', value: picked });
+    }
+    api.spanHeatmap({ from, to, filters: JSON.stringify(f), buckets: 60 })
+      .then(r => setData(r ?? null))
+      .catch(() => setData(null));
+  }, [service, range, collapsed, picked]);
+
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem('svc.heatmap.collapsed', next ? '1' : '0'); }
+    catch { /* private browsing — best-effort only */ }
+  };
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
+      }}>
+        <button type="button" onClick={toggle}
+          style={{
+            all: 'unset', cursor: 'pointer',
+            fontSize: 11, fontWeight: 700, color: 'var(--text2)',
+            textTransform: 'uppercase', letterSpacing: 0.4,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+          title={collapsed ? 'Expand' : 'Collapse'}>
+          <span style={{ color: 'var(--text3)' }}>{collapsed ? '▸' : '▾'}</span>
+          Latency distribution
+        </button>
+        {!collapsed && clusters.length >= 2 && (
+          <select value={picked}
+            onChange={e => setPicked(e.target.value)}
+            title="Same service runs across multiple clusters — pivot the heatmap to any single cluster, or stay on the union view."
+            style={{ fontSize: 11, padding: '2px 6px', marginLeft: 4 }}>
+            <option value="">All clusters ({clusters.length})</option>
+            {clusters.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        {!collapsed && data && data.maxCount > 0 && (
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+            peak {data.maxCount.toLocaleString()} spans/cell · log-scale y-axis
+          </span>
+        )}
+      </div>
+      {!collapsed && (
+        <div style={{
+          padding: 10, borderRadius: 6,
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+        }}>
+          {data === undefined && <Spinner />}
+          {data === null && (
+            <div style={{ fontSize: 12, color: 'var(--err)' }}>
+              Failed to load latency distribution.
+            </div>
+          )}
+          {data && (data.maxCount === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+              No spans in this window.
+            </div>
+          ) : (
+            <LatencyHeatmap data={data} height={240} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

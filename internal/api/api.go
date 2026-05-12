@@ -2831,11 +2831,12 @@ func (s *Server) listZoomChannels(w http.ResponseWriter, r *http.Request) {
 		// "Edit existing channel" path.
 		ChannelID string `json:"existingChannelId,omitempty"`
 		// "Configuring new channel" path — inline credentials.
-		AccountID    string `json:"accountId,omitempty"`
-		ClientID     string `json:"clientId,omitempty"`
-		ClientSecret string `json:"clientSecret,omitempty"`
-		OAuthBaseURL string `json:"oauthBaseUrl,omitempty"`
-		APIBaseURL   string `json:"apiBaseUrl,omitempty"`
+		AccountID          string `json:"accountId,omitempty"`
+		ClientID           string `json:"clientId,omitempty"`
+		ClientSecret       string `json:"clientSecret,omitempty"`
+		OAuthBaseURL       string `json:"oauthBaseUrl,omitempty"`
+		APIBaseURL         string `json:"apiBaseUrl,omitempty"`
+		InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
@@ -2844,6 +2845,7 @@ func (s *Server) listZoomChannels(w http.ResponseWriter, r *http.Request) {
 
 	accID, cliID, cliSec := body.AccountID, body.ClientID, body.ClientSecret
 	oauthBase, apiBase := body.OAuthBaseURL, body.APIBaseURL
+	skipVerify := body.InsecureSkipVerify
 
 	// Existing-channel path: look up stored config so the admin
 	// doesn't have to re-type the redacted clientSecret.
@@ -2858,11 +2860,12 @@ func (s *Server) listZoomChannels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var cfg struct {
-			AccountID    string `json:"accountId"`
-			ClientID     string `json:"clientId"`
-			ClientSecret string `json:"clientSecret"`
-			OAuthBaseURL string `json:"oauthBaseUrl"`
-			APIBaseURL   string `json:"apiBaseUrl"`
+			AccountID          string `json:"accountId"`
+			ClientID           string `json:"clientId"`
+			ClientSecret       string `json:"clientSecret"`
+			OAuthBaseURL       string `json:"oauthBaseUrl"`
+			APIBaseURL         string `json:"apiBaseUrl"`
+			InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 		}
 		if err := json.Unmarshal(c.Config, &cfg); err == nil {
 			if accID == "" {
@@ -2880,6 +2883,11 @@ func (s *Server) listZoomChannels(w http.ResponseWriter, r *http.Request) {
 			if apiBase == "" {
 				apiBase = cfg.APIBaseURL
 			}
+			// Body-supplied skipVerify wins so an admin can flip the
+			// setting on for one probe without persisting it yet.
+			if !skipVerify {
+				skipVerify = cfg.InsecureSkipVerify
+			}
 		}
 	}
 
@@ -2893,7 +2901,7 @@ func (s *Server) listZoomChannels(w http.ResponseWriter, r *http.Request) {
 	// message and the admin can retry.
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
-	channels, err := s.notify.ListZoomChannels(ctx, accID, cliID, cliSec, oauthBase, apiBase)
+	channels, err := s.notify.ListZoomChannels(ctx, accID, cliID, cliSec, oauthBase, apiBase, skipVerify)
 	if err != nil {
 		// Even on error we may have a partial list (page cap or
 		// late-page failure). Return both so the UI can render

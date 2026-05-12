@@ -117,6 +117,14 @@ type ZoomChatChannelConfig struct {
 	// both — operators typically fill both fields with the same
 	// prefix or leave both empty.
 	OAuthBaseURL string `json:"oauthBaseUrl,omitempty"`
+	// InsecureSkipVerify disables TLS certificate validation on
+	// the OAuth + chat HTTP calls. Use only when the operator
+	// has routed Zoom traffic through a corporate proxy that
+	// terminates TLS with a private CA the pod doesn't have in
+	// its trust store. Setting this is the equivalent of
+	// `curl -k` — turns off MITM detection, so reserve it for
+	// trusted corp networks. Public Zoom hosts MUST verify.
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 	// Legacy webhook fields — kept for graceful migration from
 	// pre-v0.4.78 configs. When AccountID is empty AND
 	// WebhookURL is set, sendZoomChat returns a clean
@@ -605,6 +613,35 @@ type zoomTokenEntry struct {
 // stack on a stalled batch.
 var zoomHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
+// zoomHTTPClientInsecure is the InsecureSkipVerify=true variant
+// reserved for channels with that flag set. Lazily initialised
+// (sync.Once) so the certPool / TLS handshake setup happens
+// once per process rather than per request. Kept as a package-
+// level singleton instead of per-channel because every call
+// hits the same upstream host pattern (api.zoom.us /
+// proxy.bank.local) and the transport's connection pool
+// benefits from sharing.
+var (
+	zoomInsecureOnce   sync.Once
+	zoomInsecureClient *http.Client
+)
+
+func zoomClientFor(skipVerify bool) *http.Client {
+	if !skipVerify {
+		return zoomHTTPClient
+	}
+	zoomInsecureOnce.Do(func() {
+		zoomInsecureClient = &http.Client{
+			Timeout: 15 * time.Second,
+			// nolint:gosec // operator-opt-in for corp-proxy MITM CAs.
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	})
+	return zoomInsecureClient
+}
+
 func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChannel, p chstore.Problem) error {
 	var zc ZoomChatChannelConfig
 	if err := json.Unmarshal(c.Config, &zc); err != nil {
@@ -626,7 +663,7 @@ func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChann
 		return errors.New("Zoom Chat channel needs either a Channel ID or a contact email")
 	}
 
-	token, err := n.zoomAccessToken(ctx, zc.AccountID, zc.ClientID, zc.ClientSecret, zc.OAuthBaseURL)
+	token, err := n.zoomAccessToken(ctx, zc.AccountID, zc.ClientID, zc.ClientSecret, zc.OAuthBaseURL, zc.InsecureSkipVerify)
 	if err != nil {
 		return fmt.Errorf("zoom oauth: %w", err)
 	}
@@ -650,7 +687,7 @@ func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChann
 	}
 
 	// First attempt with the (cached) token.
-	if err := postZoomChatMessage(ctx, token, payload, zc.APIBaseURL); err != nil {
+	if err := postZoomChatMessage(ctx, token, payload, zc.APIBaseURL, zc.InsecureSkipVerify); err != nil {
 		// On auth failure, drop the cached token and retry once
 		// with a freshly-minted one. Zoom can revoke tokens at
 		// any moment (admin rotated the secret, app pause, etc.)
@@ -658,11 +695,11 @@ func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChann
 		// alerts silently.
 		if isAuthErr(err) {
 			n.zoomInvalidate(zc.AccountID, zc.ClientID)
-			token2, err2 := n.zoomAccessToken(ctx, zc.AccountID, zc.ClientID, zc.ClientSecret, zc.OAuthBaseURL)
+			token2, err2 := n.zoomAccessToken(ctx, zc.AccountID, zc.ClientID, zc.ClientSecret, zc.OAuthBaseURL, zc.InsecureSkipVerify)
 			if err2 != nil {
 				return fmt.Errorf("zoom oauth retry: %w", err2)
 			}
-			return postZoomChatMessage(ctx, token2, payload, zc.APIBaseURL)
+			return postZoomChatMessage(ctx, token2, payload, zc.APIBaseURL, zc.InsecureSkipVerify)
 		}
 		return err
 	}
@@ -674,7 +711,7 @@ func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChann
 // the same account hold separate tokens. Refresh threshold is 30s
 // before the server-stated expires_in so an in-flight request
 // doesn't race the expiry.
-func (n *Notifier) zoomAccessToken(ctx context.Context, accountID, clientID, clientSecret, oauthBaseURL string) (string, error) {
+func (n *Notifier) zoomAccessToken(ctx context.Context, accountID, clientID, clientSecret, oauthBaseURL string, skipVerify bool) (string, error) {
 	cacheKey := accountID + "|" + clientID
 	n.zoomTokens.mu.Lock()
 	if e, ok := n.zoomTokens.entries[cacheKey]; ok && time.Until(e.expiresAt) > 30*time.Second {
@@ -703,7 +740,7 @@ func (n *Notifier) zoomAccessToken(ctx context.Context, accountID, clientID, cli
 	req.SetBasicAuth(clientID, clientSecret)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := zoomHTTPClient.Do(req)
+	resp, err := zoomClientFor(skipVerify).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -743,7 +780,7 @@ func (n *Notifier) zoomInvalidate(accountID, clientID string) {
 	n.zoomTokens.mu.Unlock()
 }
 
-func postZoomChatMessage(ctx context.Context, token string, payload map[string]any, apiBaseURL string) error {
+func postZoomChatMessage(ctx context.Context, token string, payload map[string]any, apiBaseURL string, skipVerify bool) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode chat payload: %w", err)
@@ -763,7 +800,7 @@ func postZoomChatMessage(ctx context.Context, token string, payload map[string]a
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := zoomHTTPClient.Do(req)
+	resp, err := zoomClientFor(skipVerify).Do(req)
 	if err != nil {
 		return err
 	}
@@ -822,8 +859,9 @@ type ZoomChannel struct {
 //     so an unresponsive Zoom doesn't hang the request.
 func (n *Notifier) ListZoomChannels(
 	ctx context.Context, accountID, clientID, clientSecret, oauthBaseURL, apiBaseURL string,
+	skipVerify bool,
 ) ([]ZoomChannel, error) {
-	token, err := n.zoomAccessToken(ctx, accountID, clientID, clientSecret, oauthBaseURL)
+	token, err := n.zoomAccessToken(ctx, accountID, clientID, clientSecret, oauthBaseURL, skipVerify)
 	if err != nil {
 		return nil, fmt.Errorf("zoom oauth: %w", err)
 	}
@@ -850,7 +888,7 @@ func (n *Notifier) ListZoomChannels(
 			return out, err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := zoomHTTPClient.Do(req)
+		resp, err := zoomClientFor(skipVerify).Do(req)
 		if err != nil {
 			return out, fmt.Errorf("zoom list channels: %w", err)
 		}

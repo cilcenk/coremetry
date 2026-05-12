@@ -344,6 +344,12 @@ function ChannelModal({ initial, onClose, onSaved }: {
   // outbound traffic through a corporate gateway fill these.
   const [zoomAPIBaseURL, setZoomAPIBaseURL] = useState(initial?.config.apiBaseUrl ?? '');
   const [zoomOAuthBaseURL, setZoomOAuthBaseURL] = useState(initial?.config.oauthBaseUrl ?? '');
+  // TLS verification toggle — defaults to off (verify enabled).
+  // Operators in corp networks where api.zoom.us is fronted by
+  // a MITM proxy with a private CA can flip this on as a
+  // workaround. Public Zoom traffic should always verify.
+  const [zoomSkipVerify, setZoomSkipVerify] = useState(
+    initial?.config.insecureSkipVerify ?? false);
   // WhatsApp / Twilio fields
   const [twilioSid, setTwilioSid] = useState(initial?.config.accountSid ?? '');
   const [twilioToken, setTwilioToken] = useState(initial?.config.authToken ?? '');
@@ -393,6 +399,7 @@ function ChannelModal({ initial, onClose, onSaved }: {
         if (zoomToContact.trim()) config.toContact = zoomToContact.trim();
         if (zoomAPIBaseURL.trim()) config.apiBaseUrl = zoomAPIBaseURL.trim();
         if (zoomOAuthBaseURL.trim()) config.oauthBaseUrl = zoomOAuthBaseURL.trim();
+        if (zoomSkipVerify) config.insecureSkipVerify = true;
       } else if (type === 'webhook') {
         if (!url) throw new Error('Webhook URL is required');
         config.url = url;
@@ -533,6 +540,7 @@ function ChannelModal({ initial, onClose, onSaved }: {
                     clientSecret={zoomClientSecret}
                     oauthBaseUrl={zoomOAuthBaseURL}
                     apiBaseUrl={zoomAPIBaseURL}
+                    insecureSkipVerify={zoomSkipVerify}
                     onPick={jid => setZoomChannelId(jid)} />
                 </div>
               </Field>
@@ -566,6 +574,24 @@ function ChannelModal({ initial, onClose, onSaved }: {
                     (<code>/v2/chat/users/me/messages</code> and <code>/oauth/token</code>) —
                     only the host changes. Leave empty to hit Zoom's public hosts.
                   </div>
+                  <label style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 8,
+                    marginTop: 12, fontSize: 12, cursor: 'pointer',
+                  }}>
+                    <input type="checkbox"
+                      checked={zoomSkipVerify}
+                      onChange={e => setZoomSkipVerify(e.target.checked)}
+                      style={{ marginTop: 2 }} />
+                    <span>
+                      <span style={{ fontWeight: 600 }}>Skip TLS certificate verification</span>
+                      <span style={{ display: 'block', color: 'var(--text3)', fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
+                        Disables certificate trust checks on the OAuth + chat calls. Turn this on
+                        only when the corporate proxy fronting <code>api.zoom.us</code> terminates
+                        TLS with a private CA the pod doesn't trust. Equivalent to <code>curl -k</code> —
+                        public Zoom hosts should leave it off.
+                      </span>
+                    </span>
+                  </label>
                 </div>
               </details>
               {/* Legacy webhook nudge — surfaces when editing a
@@ -2158,7 +2184,7 @@ interface ZoomChannelRow {
 function ZoomChannelPicker({
   existingChannelId,
   accountId, clientId, clientSecret,
-  oauthBaseUrl, apiBaseUrl, onPick,
+  oauthBaseUrl, apiBaseUrl, insecureSkipVerify, onPick,
 }: {
   existingChannelId?: string;
   accountId: string;
@@ -2166,6 +2192,7 @@ function ZoomChannelPicker({
   clientSecret: string;
   oauthBaseUrl: string;
   apiBaseUrl: string;
+  insecureSkipVerify?: boolean;
   onPick: (jid: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -2197,6 +2224,7 @@ function ZoomChannelPicker({
           clientSecret: clientSecret.trim(),
           oauthBaseUrl: oauthBaseUrl.trim(),
           apiBaseUrl: apiBaseUrl.trim(),
+          insecureSkipVerify: !!insecureSkipVerify,
         }),
       });
       if (!r.ok) {

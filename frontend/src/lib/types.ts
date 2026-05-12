@@ -717,6 +717,7 @@ export interface NotificationChannel {
     toContact?: string;      // zoomchat — fallback DM contact email
     apiBaseUrl?: string;     // zoomchat — optional proxy host for api.zoom.us (chat messages)
     oauthBaseUrl?: string;   // zoomchat — optional proxy host for zoom.us (OAuth token)
+    insecureSkipVerify?: boolean; // zoomchat — skip TLS cert verification (corp MITM proxies with private CA)
     accountSid?: string;     // whatsapp (Twilio)
     authToken?: string;      // whatsapp (Twilio)
     from?: string;           // whatsapp sender (with or without 'whatsapp:' prefix)

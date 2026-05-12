@@ -126,6 +126,33 @@ func podIP(pod string) string {
 	return fmt.Sprintf("10.%d.%d.%d", (h>>16)&0xff, (h>>8)&0xff, h&0xff|1)
 }
 
+// demoClusters is the synthetic multi-cluster set we spread the
+// demo services across so the per-cluster breakdown panel on
+// /service?name= and the cluster filter on /services have
+// something to show. Three names cover the typical bank
+// deployment shape (eu-west / eu-central / us-east).
+var demoClusters = []string{"prod-eu-west", "prod-eu-central", "prod-us-east"}
+
+// clusterFor deterministically maps a service name to one of the
+// demoClusters via FNV-1a hash modulo the cluster count. Same
+// service always lands on the same cluster, so reloads stay
+// consistent. Some services (frontend, api-gateway) get pinned
+// to a single cluster so the trace topology stays readable.
+func clusterFor(serviceName string) string {
+	switch serviceName {
+	case "frontend", "api-gateway", "bff-frontend":
+		// Front-tier pinned to the EU-west "primary" cluster so
+		// the trace waterfall has a stable entry point.
+		return demoClusters[0]
+	}
+	var h uint32 = 2166136261
+	for i := 0; i < len(serviceName); i++ {
+		h ^= uint32(serviceName[i])
+		h *= 16777619
+	}
+	return demoClusters[int(h)%len(demoClusters)]
+}
+
 // ─── Trace builder ────────────────────────────────────────────────────────────
 
 type spanInfo struct {
@@ -275,6 +302,7 @@ func (t *Trace) Send() error {
 			kvStr("k8s.pod.name", pod),
 			kvStr("k8s.pod.ip", podIP(pod)),
 			kvStr("k8s.namespace.name", "demo"),
+			kvStr("k8s.cluster.name", clusterFor(s.Name)),
 			kvStr("deployment.environment", "demo"),
 			kvStr("service.version", "1.0.0"),
 		}
@@ -883,6 +911,7 @@ func sendLog(service string, severity int32, sevText, body string, traceID, span
 			kvStr("host.name", pod),
 			kvStr("service.instance.id", pod),
 			kvStr("k8s.pod.name", pod),
+			kvStr("k8s.cluster.name", clusterFor(s.Name)),
 		}},
 		ScopeLogs: []*logspb.ScopeLogs{{
 			Scope:      &commonpb.InstrumentationScope{Name: "coremetry-demo"},
@@ -1157,6 +1186,7 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 				kvStr("host.name", pod),
 				kvStr("service.instance.id", pod),
 				kvStr("k8s.pod.name", pod),
+				kvStr("k8s.cluster.name", clusterFor(s.Name)),
 				kvStr("deployment.environment", "demo"),
 			}},
 			ScopeMetrics: []*metricspb.ScopeMetrics{{

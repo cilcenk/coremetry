@@ -258,7 +258,7 @@ services:
     container_name: coremetry-java-demo
     environment:
       OTEL_SERVICE_NAME: java-demo
-      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=demo,host.name=java-demo-1,service.version=0.1.0"
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=demo,host.name=java-demo-1,service.version=0.1.0,k8s.cluster.name=prod-eu-west,k8s.namespace.name=demo"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_TRACES_EXPORTER: otlp

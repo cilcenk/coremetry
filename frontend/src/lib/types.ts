@@ -147,10 +147,12 @@ export interface OracleMetrics {
   instance: string;
   synthetic: boolean;
   windowSeconds: number;
-  sessions:  { usage: number; limit: number };
+  status: 'up' | 'down';
+  sessions:  { usage: number; limit: number; active: number; inactive: number };
   processes: { usage: number; limit: number };
   cpuTimeSec: number;
   pgaMemoryBytes: number;
+  sgaMemoryBytes: number;
   logicalReadsPerSec: number;
   physicalReadsPerSec: number;
   cacheHitPct: number;
@@ -160,6 +162,9 @@ export interface OracleMetrics {
   userCommitsPerSec: number;
   userRollbacksPerSec: number;
   transactionsPerSec: number;
+  rowLockWaitsPerSec: number;
+  waitClasses: { name: string; perSec: number }[];
+  topSQL: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[];
   tablespaces: { name: string; usedBytes: number; maxBytes: number; usedPct: number }[];
 }
 

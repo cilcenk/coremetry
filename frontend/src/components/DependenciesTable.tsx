@@ -704,6 +704,18 @@ function OraclePanel({ instance, range }: { instance: string; range: TimeRange }
       }}>
         <span style={{ fontSize: 13 }}>⛁</span>
         OracleDB receiver
+        {data && (
+          <span title={data.status === 'up'
+            ? 'oracledb.* metric_points present in window'
+            : 'No oracledb.* metric_points seen — receiver may be down or not yet wired'}
+                style={{
+                  fontSize: 9, padding: '1px 6px', borderRadius: 3,
+                  background: data.status === 'up' ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)',
+                  color: data.status === 'up' ? 'var(--ok)' : 'var(--err)',
+                  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                  textTransform: 'uppercase', letterSpacing: '.5px',
+                }}>{data.status}</span>
+        )}
         {data && data.synthetic && (
           <span title="No oracledb.* metric_points found for this window — values shown are deterministic synthetic placeholders. Wire the OpenTelemetry oracledb receiver to populate."
                 style={{
@@ -732,7 +744,10 @@ function OraclePanel({ instance, range }: { instance: string; range: TimeRange }
             gap: 8, marginBottom: 12,
           }}>
             <GaugeStat label="Sessions"
-              usage={data.sessions.usage} limit={data.sessions.limit} />
+              usage={data.sessions.usage} limit={data.sessions.limit}
+              sub={data.sessions.active > 0 || data.sessions.inactive > 0
+                ? `${fmtNum(data.sessions.active)} active · ${fmtNum(data.sessions.inactive)} idle`
+                : undefined} />
             <GaugeStat label="Processes"
               usage={data.processes.usage} limit={data.processes.limit} />
             <Stat label="Logical reads/s"  value={fmtNum(data.logicalReadsPerSec)} />
@@ -740,6 +755,9 @@ function OraclePanel({ instance, range }: { instance: string; range: TimeRange }
                   tone={data.physicalReadsPerSec > data.logicalReadsPerSec * 0.05 ? 'warn' : undefined} />
             <Stat label="Cache hit"        value={`${data.cacheHitPct.toFixed(1)}%`}
                   tone={data.cacheHitPct < 95 ? 'warn' : 'ok'} />
+            <Stat label="Row-lock waits/s" value={data.rowLockWaitsPerSec.toFixed(2)}
+                  tone={data.rowLockWaitsPerSec > 1 ? 'err'
+                       : data.rowLockWaitsPerSec > 0.2 ? 'warn' : 'ok'} />
             <Stat label="Executions/s"     value={fmtNum(data.executionsPerSec)} />
             <Stat label="Commits/s"        value={fmtNum(data.userCommitsPerSec)} />
             <Stat label="Rollbacks/s"      value={fmtNum(data.userRollbacksPerSec)}
@@ -747,8 +765,17 @@ function OraclePanel({ instance, range }: { instance: string; range: TimeRange }
             <Stat label="Hard parses/s"    value={fmtNum(data.hardParsesPerSec)} />
             <Stat label="Parse calls/s"    value={fmtNum(data.parseCallsPerSec)} />
             <Stat label="CPU time"         value={`${data.cpuTimeSec.toFixed(0)}s`} />
+            <Stat label="SGA"              value={fmtBytes(data.sgaMemoryBytes)} />
             <Stat label="PGA memory"       value={fmtBytes(data.pgaMemoryBytes)} />
           </div>
+
+          {data.waitClasses.length > 0 && (
+            <WaitClassesBar waits={data.waitClasses} />
+          )}
+
+          {data.topSQL.length > 0 && (
+            <TopSQLTable rows={data.topSQL} />
+          )}
 
           {data.tablespaces.length > 0 && (
             <div>
@@ -773,7 +800,9 @@ function OraclePanel({ instance, range }: { instance: string; range: TimeRange }
   );
 }
 
-function GaugeStat({ label, usage, limit }: { label: string; usage: number; limit: number }) {
+function GaugeStat({ label, usage, limit, sub }: {
+  label: string; usage: number; limit: number; sub?: string;
+}) {
   const pct = limit > 0 ? (usage / limit) * 100 : 0;
   const tone: 'ok' | 'warn' | 'err' =
     pct >= 90 ? 'err' : pct >= 75 ? 'warn' : 'ok';
@@ -801,6 +830,145 @@ function GaugeStat({ label, usage, limit }: { label: string; usage: number; limi
           width: `${Math.min(100, pct)}%`, height: '100%', background: fill,
           transition: 'width 0.2s',
         }} />
+      </div>
+      {sub && (
+        <div style={{
+          fontSize: 10, color: 'var(--text3)', marginTop: 4,
+          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+        }}>{sub}</div>
+      )}
+    </div>
+  );
+}
+
+// WaitClassesBar renders Oracle's 10 wait classes as a single
+// stacked horizontal bar — at-a-glance "where is the DB
+// spending its time". Mirrors the System Wait Classes panel
+// in Oracle's reference Grafana dashboard. Sum of perSec
+// across classes is the total wait pressure: a 1.0 result
+// means one concurrent client fully blocked on the DB.
+function WaitClassesBar({ waits }: { waits: { name: string; perSec: number }[] }) {
+  const total = waits.reduce((a, w) => a + w.perSec, 0);
+  // Stable, semantic colour-per-class. user_io is the heaviest
+  // typical class so we give it the most-visible blue; commit
+  // gets green (success-coded); concurrency red (where row
+  // locks live).
+  const CLASS_COLOR: Record<string, string> = {
+    user_io:       '#388bfd',
+    system_io:     '#5b8fb9',
+    commit:        '#3fb950',
+    network:       '#a371f7',
+    concurrency:   '#f0703f',
+    application:   '#f5b343',
+    configuration: '#39c5cf',
+    scheduler:     '#db61a2',
+    cluster:       '#7d8590',
+    other:         '#6dbf5b',
+  };
+  const colorOf = (n: string) => CLASS_COLOR[n.toLowerCase()] ?? '#7d8590';
+  if (total <= 0) return null;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 8,
+        fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
+        textTransform: 'uppercase', letterSpacing: 0.4,
+      }}>
+        System wait classes
+        <span style={{
+          fontWeight: 400, color: 'var(--text3)',
+          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+          textTransform: 'none', letterSpacing: 0,
+        }}>
+          total {total.toFixed(2)} s/s
+        </span>
+      </div>
+      <div style={{
+        display: 'flex', height: 18, borderRadius: 3, overflow: 'hidden',
+        border: '1px solid var(--border)',
+      }}>
+        {waits.map(w => {
+          const pct = (w.perSec / total) * 100;
+          if (pct < 0.5) return null; // suppress sub-pixel slivers
+          return (
+            <div key={w.name}
+              title={`${w.name}: ${w.perSec.toFixed(3)} s/s (${pct.toFixed(1)}%)`}
+              style={{
+                width: `${pct}%`, background: colorOf(w.name),
+                cursor: 'help',
+              }} />
+          );
+        })}
+      </div>
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 6, fontSize: 10,
+      }}>
+        {waits
+          .filter(w => w.perSec > 0)
+          .slice(0, 8)
+          .map(w => (
+            <span key={w.name} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              color: 'var(--text2)',
+            }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: 2,
+                background: colorOf(w.name),
+              }} />
+              <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
+                {w.name}
+              </span>
+              <span style={{ color: 'var(--text3)' }}>
+                {w.perSec.toFixed(2)}
+              </span>
+            </span>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+// TopSQLTable lists the heaviest SQL statements by accumulated
+// elapsed time over the window — Oracle's authoritative
+// "which statement is the DB working hardest on" view.
+// Complementary to the span-derived "Top statements" further
+// down: V$SQL sees everything the DB executes, traces only see
+// what the application emits.
+function TopSQLTable({ rows }: { rows: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[] }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
+        textTransform: 'uppercase', letterSpacing: 0.4,
+      }}>
+        Top SQL by elapsed time
+      </div>
+      <div className="table-wrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
+        <table>
+          <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>
+            <tr>
+              <th>SQL</th>
+              <th className="num">Elapsed</th>
+              <th className="num">Execs</th>
+              <th className="num">Avg</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td style={{
+                  fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 11,
+                  maxWidth: 600, wordBreak: 'break-word',
+                }}>
+                  {r.sql || <span style={{ color: 'var(--text3)' }}>(unknown)</span>}
+                </td>
+                <td className="num mono">{r.elapsedSec.toFixed(1)}s</td>
+                <td className="num mono">{fmtNum(r.executions)}</td>
+                <td className="num mono">{r.avgElapsedMs.toFixed(1)}ms</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

@@ -34,6 +34,38 @@ export function ServiceCharts({ service, range }: {
   const [p99Series, setP99Series] = useState<SpanMetricSeries[] | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Compare-to-previous-period toggle. 'off' suppresses the
+  // second fetch entirely; '24h' / '7d' / 'prev' (matched
+  // window) all hit the same /api/spans/span-metric path with
+  // shifted from/to. Persisted in localStorage so an operator
+  // who likes the comparison view keeps it across reloads.
+  const [compare, setCompare] = useState<CompareMode>(() => {
+    try {
+      const v = localStorage.getItem('svc.charts.compare') as CompareMode | null;
+      if (v === '24h' || v === '7d' || v === 'prev') return v;
+    } catch { /* private browsing — best-effort */ }
+    return 'off';
+  });
+  const setCompareAndPersist = (m: CompareMode) => {
+    setCompare(m);
+    try { localStorage.setItem('svc.charts.compare', m); }
+    catch { /* best-effort */ }
+  };
+  const [rpsPrev, setRpsPrev] = useState<SpanMetricSeries[] | null>(null);
+  const [errPrev, setErrPrev] = useState<SpanMetricSeries[] | null>(null);
+  const [p99Prev, setP99Prev] = useState<SpanMetricSeries[] | null>(null);
+  const compareOffsetNs = useMemo(() => {
+    switch (compare) {
+      case '24h':  return 24 * 3600 * 1e9;
+      case '7d':   return 7 * 24 * 3600 * 1e9;
+      case 'prev': return (to - from);
+      default:     return 0;
+    }
+  }, [compare, from, to]);
+  const compareLabel = compare === '24h' ? '24h ago'
+    : compare === '7d' ? '7d ago'
+    : compare === 'prev' ? 'prev window' : '';
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -55,6 +87,35 @@ export function ServiceCharts({ service, range }: {
     });
     return () => { cancelled = true; };
   }, [service, from, to]);
+
+  // Compare fetch — only fires when toggle is on. Separate from
+  // the current-period fetch so toggling compare doesn't
+  // re-fetch the current metrics (which the operator is
+  // already looking at).
+  useEffect(() => {
+    if (compare === 'off' || compareOffsetNs === 0) {
+      setRpsPrev(null); setErrPrev(null); setP99Prev(null);
+      return;
+    }
+    let cancelled = false;
+    const dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
+    const prevFrom = from - compareOffsetNs;
+    const prevTo = to - compareOffsetNs;
+    Promise.all([
+      api.spanMetric({ agg: 'rate',       dsl, from: prevFrom, to: prevTo, groupBy: 'name' }),
+      api.spanMetric({ agg: 'error_rate', dsl, from: prevFrom, to: prevTo, groupBy: 'name' }),
+      api.spanMetric({ agg: 'p99',        dsl, from: prevFrom, to: prevTo, groupBy: 'name', field: 'duration_ms' }),
+    ]).then(([rps, err, p99]) => {
+      if (cancelled) return;
+      setRpsPrev(rps ?? []);
+      setErrPrev(err ?? []);
+      setP99Prev(p99 ?? []);
+    }).catch(() => {
+      if (cancelled) return;
+      setRpsPrev([]); setErrPrev([]); setP99Prev([]);
+    });
+    return () => { cancelled = true; };
+  }, [service, from, to, compare, compareOffsetNs]);
 
   // Deploy markers for this service in the visible window.
   const deploysQ = useServiceDeploys(service, from, to);
@@ -119,33 +180,77 @@ export function ServiceCharts({ service, range }: {
   }
 
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-      gap: 10, marginBottom: 14,
-    }}>
-      <ChartCard title="RPS by operation">
-        <MultiLineChart series={rpsSeries ?? []} unit="rps"
-                        height={140}
-                        deploys={deployMarkers}
-                        syncKey={syncKey} />
-      </ChartCard>
-      <ChartCard title="Error rate by operation">
-        <MultiLineChart series={errSeries ?? []} unit="%"
-                        height={140}
-                        deploys={deployMarkers}
-                        thresholds={errorThresholds}
-                        syncKey={syncKey} />
-      </ChartCard>
-      <ChartCard title="P99 latency by operation">
-        <MultiLineChart series={p99Series ?? []} unit="ms"
-                        height={140}
-                        deploys={deployMarkers}
-                        thresholds={latencyThresholds}
-                        syncKey={syncKey} />
-      </ChartCard>
+    <div style={{ marginBottom: 14 }}>
+      {/* Compare-to-previous toggle row. Sits above the three
+          panels so the chosen period applies to all of them
+          uniformly. Dynatrace-style "previous 24h" overlay is
+          off by default (no second fetch); flipping it on
+          paints a dashed ghost line per chart. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
+        fontSize: 11, color: 'var(--text2)',
+      }}>
+        <span style={{
+          textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700,
+        }}>Compare to:</span>
+        {(['off', '24h', '7d', 'prev'] as CompareMode[]).map(m => (
+          <button key={m} type="button"
+            onClick={() => setCompareAndPersist(m)}
+            title={m === 'off' ? 'No comparison'
+              : m === 'prev' ? 'Previous window of the same length'
+              : `${m} ago at the same time`}
+            style={{
+              all: 'unset', cursor: 'pointer',
+              fontSize: 11, padding: '2px 8px', borderRadius: 3,
+              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              background: compare === m ? 'var(--accent2)' : 'var(--bg2)',
+              color: compare === m ? 'var(--bg)' : 'var(--text2)',
+              border: `1px solid ${compare === m ? 'var(--accent2)' : 'var(--border)'}`,
+              fontWeight: compare === m ? 600 : 400,
+            }}>
+            {m === 'off' ? 'off' : m === 'prev' ? 'prev window' : m}
+          </button>
+        ))}
+      </div>
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 10,
+      }}>
+        <ChartCard title="RPS by operation">
+          <MultiLineChart series={rpsSeries ?? []} unit="rps"
+                          height={140}
+                          deploys={deployMarkers}
+                          syncKey={syncKey}
+                          compareSeries={rpsPrev ?? undefined}
+                          compareOffsetNs={compareOffsetNs}
+                          compareLabel={compareLabel} />
+        </ChartCard>
+        <ChartCard title="Error rate by operation">
+          <MultiLineChart series={errSeries ?? []} unit="%"
+                          height={140}
+                          deploys={deployMarkers}
+                          thresholds={errorThresholds}
+                          syncKey={syncKey}
+                          compareSeries={errPrev ?? undefined}
+                          compareOffsetNs={compareOffsetNs}
+                          compareLabel={compareLabel} />
+        </ChartCard>
+        <ChartCard title="P99 latency by operation">
+          <MultiLineChart series={p99Series ?? []} unit="ms"
+                          height={140}
+                          deploys={deployMarkers}
+                          thresholds={latencyThresholds}
+                          syncKey={syncKey}
+                          compareSeries={p99Prev ?? undefined}
+                          compareOffsetNs={compareOffsetNs}
+                          compareLabel={compareLabel} />
+        </ChartCard>
+      </div>
     </div>
   );
 }
+
+type CompareMode = 'off' | '24h' | '7d' | 'prev';
 
 function ChartCard({ title, children }: {
   title: string;

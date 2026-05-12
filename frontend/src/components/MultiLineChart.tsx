@@ -53,6 +53,7 @@ export interface Threshold {
 
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
+  compareSeries, compareOffsetNs, compareLabel,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -78,6 +79,16 @@ export function MultiLineChart({
   // update its TimeRange state and re-fetch. Without this the
   // drag still works as a visual zoom but doesn't propagate.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // compareSeries — past-period data overlaid as dashed,
+  // half-opacity ghost lines aligned to the current window.
+  // The page fetched the same series N hours/days ago and
+  // passes the offset so we can shift each point's timestamp
+  // forward into the current X range. Same colour as the
+  // matching current series so the eye reads "this is the
+  // previous version of THAT line" without a separate legend.
+  compareSeries?: SpanMetricSeries[];
+  compareOffsetNs?: number;
+  compareLabel?: string; // tooltip suffix e.g. "24h ago"
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -93,20 +104,38 @@ export function MultiLineChart({
     if (!el) return;
     plotRef.current?.destroy();
     plotRef.current = null;
-    visibleRef.current = series.map(() => true);
-    if (series.length === 0) return;
+    // visibleRef tracks BOTH current and compare series so the
+    // legend toggle still works on either set. Compare lines
+    // sit after current lines in the series array.
+    const compareEnabled = (compareSeries?.length ?? 0) > 0 && (compareOffsetNs ?? 0) > 0;
+    visibleRef.current = [...series.map(() => true), ...(compareSeries ?? []).map(() => true)];
+    if (series.length === 0 && !compareEnabled) return;
+
+    // Shift compare-series timestamps forward by the offset so
+    // a point from "24h ago" lands at the same X position as
+    // the matching current-period point. The visual story is
+    // "where the line was at this same time-of-day yesterday".
+    const offsetNs = compareEnabled ? (compareOffsetNs ?? 0) : 0;
+    const shiftedCompare: SpanMetricSeries[] = compareEnabled
+      ? (compareSeries ?? []).map(s => ({
+          ...s,
+          points: s.points.map(p => ({ ...p, time: p.time + offsetNs })),
+        }))
+      : [];
 
     // Unified time axis (union of bucket timestamps across
-    // every series). uPlot consumes this as a single x array
-    // shared by all y arrays.
+    // every series, including the shifted compare set). uPlot
+    // consumes this as a single x array shared by all y arrays.
     const allTimes = new Set<number>();
     series.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
+    shiftedCompare.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
     const times = [...allTimes].sort((a, b) => a - b);
     const xs = times.map(t => t / 1e9); // ns → unix seconds
 
     // Per-series y values aligned to the union x axis. Missing
     // points become null → uPlot draws a gap.
-    const ySeries: (number | null)[][] = series.map(s => {
+    const allSeries = [...series, ...shiftedCompare];
+    const ySeries: (number | null)[][] = allSeries.map(s => {
       const valByTime = new Map(s.points.map(p => [p.time, p.value]));
       return times.map(t => valByTime.get(t) ?? null);
     });
@@ -131,14 +160,36 @@ export function MultiLineChart({
       scales: { x: { time: true } },
       series: [
         {},
-        ...series.map((s) => {
+        ...allSeries.map((s, idx) => {
+          const isCompare = idx >= series.length;
           const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';
           // Curated palette → same series name lands on the
           // same colour across every chart in the app. Old
           // hashColor() picked any of 16M shades, so the same
           // 'frontend' service ended up green here, purple
           // there. seriesColor maps to one of 10 stable hues.
+          // Compare lines share the colour of their current-
+          // period twin (same label → same hash → same stop)
+          // so the eye reads "ghost of THAT line" not "a new
+          // unknown line".
           const color = seriesColor(label);
+          if (isCompare) {
+            return {
+              // Suffix the label so the legend disambiguates
+              // the two lines. compareLabel arrives as e.g.
+              // "24h ago" or "7d ago".
+              label: `${label} · ${compareLabel ?? 'past'}`,
+              // Half-opacity hex append + dashed stroke read
+              // unambiguously as "ghost / reference line".
+              stroke: color + '88',
+              fill: 'transparent', // no fill on compare so it doesn't fight the current band
+              width: 1.5,
+              dash: [4, 4],
+              points: { show: false },
+              value: (_u: uPlot, v: number | null) => fmtSmart(v, unit) +
+                (v != null ? ` (${compareLabel ?? 'past'})` : ''),
+            } satisfies uPlot.Series;
+          }
           return {
             label,
             stroke: color,
@@ -432,7 +483,7 @@ export function MultiLineChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [series, unit, height, deploys, thresholds, syncKey, onZoom]);
+  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling

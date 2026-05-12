@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { ServicePicker } from '@/components/ServicePicker';
+import { ClusterChips as ClusterChipsRef } from '@/components/ClusterChips';
 import { Modal, Button, Field, SelectField, TextareaField, Row } from '@/components/ui';
 import { useIncidents, useCreateIncident } from '@/lib/queries';
 import { tsLong, fmtNum } from '@/lib/utils';
@@ -87,7 +88,10 @@ export default function IncidentsPage() {
                         </span>
                       )}
                     </td>
-                    <td className="mono" style={{ fontSize: 12 }}>{i.service || '—'}</td>
+                    <td className="mono" style={{ fontSize: 12 }}>
+                      {i.service || '—'}
+                      <ClusterChipsRef clusters={i.clusters} />
+                    </td>
                     <td className="mono" style={{ fontSize: 11 }}>{tsLong(i.startedAt)}</td>
                     <td className="mono" style={{ textAlign: 'right' }}>
                       {fmtDuration(i.startedAt, i.resolvedAt)}
@@ -191,3 +195,4 @@ function NewIncidentModal({ onClose, onCreated }: { onClose: () => void; onCreat
     </Modal>
   );
 }
+

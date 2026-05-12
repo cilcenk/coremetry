@@ -28,6 +28,9 @@ export interface Incident {
   ackAt?: number;
   resolvedAt?: number;
   updatedAt: number;
+  // k8s/openshift clusters the service was active in around
+  // the incident — enriched at read time on the server.
+  clusters?: string[];
 }
 
 export interface IncidentEvent {
@@ -726,6 +729,9 @@ export interface Problem {
   description: string;
   startedAt: number;
   resolvedAt?: number;
+  // k8s/openshift clusters the firing service was active in
+  // around the problem time — read-time enriched.
+  clusters?: string[];
 }
 
 export interface ServiceEdgeStats {
@@ -1098,6 +1104,9 @@ export interface AnomalyEvent {
   currentCount: number;
   sample: string;
   status: 'active' | 'cleared';
+  // k8s/openshift clusters where the anomaly's service was
+  // active around the detection — read-time enriched.
+  clusters?: string[];
 }
 
 // Per-operation error anomaly — a (service, operation) tuple

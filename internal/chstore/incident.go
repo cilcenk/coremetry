@@ -27,6 +27,12 @@ type Incident struct {
 	AckAt      *int64  `json:"ackAt,omitempty"`
 	ResolvedAt *int64  `json:"resolvedAt,omitempty"`
 	UpdatedAt  int64   `json:"updatedAt"`
+	// Clusters — same pattern as Problem.Clusters: enriched
+	// at read time from recent span activity for the
+	// incident's primary service. Empty when the service
+	// isn't tagged with cluster attrs. Multi-cluster
+	// incidents render with multiple chips.
+	Clusters []string `json:"clusters,omitempty"`
 }
 
 type IncidentEvent struct {

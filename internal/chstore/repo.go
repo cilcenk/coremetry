@@ -158,6 +158,46 @@ const clusterDeriveExpr = `coalesce(
 	''
 )`
 
+// GetServiceClusterMap returns one entry per service with the
+// distinct cluster names it ran in during the last `since`
+// window. Used to enrich Problems / Anomalies / Incidents at
+// read time so the operator sees which cluster(s) the firing
+// service spans — same service can run across 3+ clusters
+// simultaneously (eu-west / eu-central / us-east) and a
+// problem on one might not affect the others.
+//
+// Single batched query — N+1-free regardless of problem count.
+// Capped at 1000 services × 50 clusters as a defensive bound;
+// well above any realistic bank-scale deployment.
+func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (map[string][]string, error) {
+	if since == 0 {
+		since = 1 * time.Hour
+	}
+	from := time.Now().Add(-since)
+	rows, err := s.conn.Query(ctx, `
+		SELECT service_name, `+clusterDeriveExpr+` AS cluster
+		FROM spans
+		WHERE time >= ? AND service_name != ''
+		GROUP BY service_name, cluster
+		HAVING cluster != ''
+		ORDER BY service_name, cluster
+		LIMIT 50000
+		SETTINGS max_execution_time = 8`, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var svc, cl string
+		if err := rows.Scan(&svc, &cl); err != nil {
+			continue
+		}
+		out[svc] = append(out[svc], cl)
+	}
+	return out, rows.Err()
+}
+
 // ListClusters returns the distinct cluster names observed in
 // the window, sourced from the same resource/attr coalesce
 // chain the filter uses. Drives the cluster-filter dropdown on

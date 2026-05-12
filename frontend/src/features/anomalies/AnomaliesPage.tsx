@@ -6,6 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { CopilotExplain } from '@/components/CopilotExplain';
+import { ClusterChips } from '@/components/ClusterChips';
 import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -436,6 +437,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           style={{ fontWeight: 600 }}>
                           {p.service}
                         </Link>
+                        <ClusterChips clusters={p.clusters} />
                       </td>
                       <td className="mono">{p.metric}</td>
                       <td className="mono" style={{ textAlign: 'right' }}>

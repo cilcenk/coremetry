@@ -27,6 +27,11 @@ type AnomalyEvent struct {
 	// Status is computed in the query, not stored. "active" while
 	// last_seen >= now() - 10m, otherwise "cleared".
 	Status        string `json:"status"`
+	// Clusters — k8s/openshift cluster names the anomaly's
+	// service was active in around the time of detection.
+	// Enriched at read time (no schema migration); empty for
+	// services without cluster attrs.
+	Clusters []string `json:"clusters,omitempty"`
 }
 
 // FingerprintAnomaly stitches the same (kind, pattern, service)

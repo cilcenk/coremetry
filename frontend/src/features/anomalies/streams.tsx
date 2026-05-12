@@ -12,6 +12,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, Badge, Row } from '@/components/ui';
+import { ClusterChips } from '@/components/ClusterChips';
 import {
   useLogPatternAnomalies, useTraceOpAnomalies, useMetricAnomalies,
   useAnomalyEvents, useAnomalySilences,
@@ -279,6 +280,7 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
                         style={{ fontFamily: 'monospace', fontSize: 11 }}>
                     {e.service || '—'}
                   </Link>
+                  <ClusterChips clusters={e.clusters} />
                 </td>
                 <td style={{ fontSize: 11, color: 'var(--text2)' }}>
                   {e.kind === 'log_pattern' ? 'log' : 'trace op'}

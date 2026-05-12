@@ -3758,6 +3758,7 @@ func (s *Server) listIncidents(w http.ResponseWriter, r *http.Request) {
 		Limit:    parseInt(q.Get("limit"), 200),
 	})
 	if err != nil { writeErr(w, err); return }
+	rows = s.store.EnrichIncidentsWithClusters(r.Context(), rows, time.Hour)
 	writeJSON(w, rows)
 }
 
@@ -4029,7 +4030,13 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// operator who edits a runbook URL sees existing
 		// open problems pick up the new link on the next
 		// refresh.
-		return s.store.EnrichProblemsWithRunbooks(r.Context(), probs), nil
+		probs = s.store.EnrichProblemsWithRunbooks(r.Context(), probs)
+		// Cluster chips — same read-time pattern. One batch
+		// CH query for the service→clusters map, soft-fails
+		// silently on error so a transient blip doesn't
+		// blank the page.
+		probs = s.store.EnrichProblemsWithClusters(r.Context(), probs, time.Hour)
+		return probs, nil
 	})
 }
 
@@ -4316,10 +4323,14 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 	limit := parseInt(q.Get("limit"), 200)
 	key := fmt.Sprintf("anomaly:events:since=%s:limit=%d", since, limit)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.ListAnomalyEvents(r.Context(), chstore.ListAnomalyEventsFilter{
+		rows, err := s.store.ListAnomalyEvents(r.Context(), chstore.ListAnomalyEventsFilter{
 			SinceNs: time.Now().Add(-since).UnixNano(),
 			Limit:   limit,
 		})
+		if err != nil {
+			return nil, err
+		}
+		return s.store.EnrichAnomaliesWithClusters(r.Context(), rows, time.Hour), nil
 	})
 }
 

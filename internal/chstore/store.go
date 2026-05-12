@@ -847,6 +847,132 @@ func (s *Store) migrate(ctx context.Context) error {
 		   uniqState(trace_id) AS trace_count_state
 		 FROM spans
 		 GROUP BY day`,
+
+		// db_summary_5m: per-(db_system, peer_service, 5-min) pre-
+		// aggregation powering /api/databases. Pre-v0.5.9 every
+		// page load issued two raw-spans GROUP BYs over a 1h
+		// window — ~40M rows scanned twice on a billion-span/day
+		// deployment. Reading the MV instead drops that to
+		// thousands of rows. Aggregate states (countState /
+		// quantilesState / sumState) compose across partitions
+		// so 1h / 6h / 24h all merge sub-millisecond.
+		//
+		// The COALESCE for "unknown" mirrors the raw query so the
+		// MV's instance column is comparable to the raw output —
+		// keeps the read path's SQL near-identical.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (db_system, instance, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   db_system,
+		   coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   countState()                                  AS span_count_state,
+		   countIfState(status_code = 'error')           AS error_count_state,
+		   sumState(duration)                            AS duration_sum_state,
+		   quantilesState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
+		 FROM spans
+		 WHERE db_system != ''
+		 GROUP BY db_system, instance, time_bucket`,
+
+		// db_caller_summary_5m: per-(db_system, peer_service,
+		// service_name, host_name, 5-min) — drives the row-click
+		// detail drawer on /databases. host_name carries the
+		// resource.host.name = k8s pod name in containerised
+		// deployments, which is the resolution the drawer's
+		// per-pod breakdown wants.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_caller_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (db_system, instance, service_name, host_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   db_system,
+		   coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
+		   service_name,
+		   coalesce(nullIf(host_name, ''), '(unknown)')  AS host_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   countState()                                  AS span_count_state,
+		   countIfState(status_code = 'error')           AS error_count_state,
+		   sumState(duration)                            AS duration_sum_state,
+		   quantilesState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
+		 FROM spans
+		 WHERE db_system != ''
+		 GROUP BY db_system, instance, service_name, host_name, time_bucket`,
+
+		// messaging_summary_5m: structural parallel for /api/messaging.
+		// Cluster + destination are derived expressions in the source
+		// query because the dimension lives in attr_keys/attr_values
+		// rather than dedicated columns. We materialise the resolved
+		// values so the read path joins on plain string equality.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS messaging_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (msg_system, cluster, destination, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   msg_system,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.bootstrap.servers')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.cluster.name')], ''),
+		     '(default)'
+		   ) AS cluster,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+		     nullIf(peer_service, ''),
+		     'unknown'
+		   ) AS destination,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   countState()                               AS span_count_state,
+		   countIfState(status_code = 'error')        AS error_count_state,
+		   sumState(duration)                         AS duration_sum_state,
+		   quantilesState(0.5, 0.95, 0.99)(duration)  AS duration_q_state
+		 FROM spans
+		 WHERE msg_system != ''
+		 GROUP BY msg_system, cluster, destination, time_bucket`,
+
+		// messaging_caller_summary_5m: per-(msg_system, cluster,
+		// destination, service_name, host_name, kind, 5-min). Kind
+		// rides the dim so the messaging drawer can split
+		// Producers / Consumers without a second pass.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS messaging_caller_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (msg_system, cluster, destination, service_name, host_name, kind, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   msg_system,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.bootstrap.servers')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.kafka.cluster.name')], ''),
+		     '(default)'
+		   ) AS cluster,
+		   coalesce(
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+		     nullIf(peer_service, ''),
+		     'unknown'
+		   ) AS destination,
+		   service_name,
+		   coalesce(nullIf(host_name, ''), '(unknown)') AS host_name,
+		   kind,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)   AS time_bucket,
+		   countState()                                 AS span_count_state,
+		   countIfState(status_code = 'error')          AS error_count_state,
+		   sumState(duration)                           AS duration_sum_state,
+		   quantilesState(0.5, 0.95, 0.99)(duration)    AS duration_q_state
+		 FROM spans
+		 WHERE msg_system != ''
+		 GROUP BY msg_system, cluster, destination, service_name, host_name, kind, time_bucket`,
 	}
 	for _, q := range mvs {
 		if err := s.execDDL(ctx, q); err != nil {

@@ -168,47 +168,74 @@ func (s *Store) GetDatabaseDetail(
 		TopOps:  []DBOpStat{},
 	}
 
-	// Aggregate stats for the (system, instance) pair.
+	// Aggregate stats for the (system, instance) pair — read
+	// from db_caller_summary_5m and roll up across every caller.
+	// instance="unknown" in the materialised row corresponds to
+	// the raw query's "(peer_service = '' OR peer_service IS NULL)"
+	// branch — the MV coalesces that case into 'unknown' at
+	// INSERT time, so the read path can compare on plain string
+	// equality.
+	mvInstance := instance
+	if instance == "" {
+		mvInstance = "unknown"
+	}
+	var avgMs, p99Ms *float64
 	row := s.conn.QueryRow(ctx, `
-		SELECT count(),
-		       countIf(status_code = 'error'),
-		       avg(duration) / 1e6,
-		       quantile(0.99)(duration) / 1e6
-		FROM spans
-		WHERE time >= ? AND time <= ? AND db_system = ? AND `+instancePredicate+`
-		SETTINGS max_execution_time = 15`,
-		append([]any{from, to, system}, argIfNeeded(instancePredicate, instanceArg)...)...)
-	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &out.AvgMs, &out.P99Ms); err != nil {
+		SELECT countMerge(span_count_state),
+		       countMerge(error_count_state),
+		       sumMerge(duration_sum_state) / 1e6
+		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM db_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		  AND db_system = ? AND instance = ?
+		SETTINGS max_execution_time = 8`,
+		from, to, system, mvInstance)
+	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p99Ms); err != nil {
 		return nil, err
+	}
+	if avgMs != nil {
+		out.AvgMs = *avgMs
+	}
+	if p99Ms != nil {
+		out.P99Ms = *p99Ms
 	}
 	if out.SpanCount > 0 {
 		out.ErrorRate = float64(out.ErrorCount) / float64(out.SpanCount) * 100
 	}
 
-	// Per-(service, pod) breakdown. host_name carries the
-	// resource.host.name set by the OTel SDK; for k8s deployments
-	// that's the pod name, which is what operators want to see.
+	// Per-(service, pod) breakdown — read from db_caller_summary_5m.
 	rows, err := s.conn.Query(ctx, `
 		SELECT service_name,
-		       coalesce(nullIf(host_name, ''), '(unknown)') AS pod,
-		       count(), countIf(status_code = 'error'),
-		       avg(duration) / 1e6,
-		       quantile(0.99)(duration) / 1e6
-		FROM spans
-		WHERE time >= ? AND time <= ? AND db_system = ? AND `+instancePredicate+`
+		       host_name AS pod,
+		       countMerge(span_count_state),
+		       countMerge(error_count_state),
+		       sumMerge(duration_sum_state) / 1e6
+		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM db_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		  AND db_system = ? AND instance = ?
 		GROUP BY service_name, pod
-		ORDER BY count() DESC
+		ORDER BY countMerge(span_count_state) DESC
 		LIMIT 100
-		SETTINGS max_execution_time = 15`,
-		append([]any{from, to, system}, argIfNeeded(instancePredicate, instanceArg)...)...)
+		SETTINGS max_execution_time = 8`,
+		from, to, system, mvInstance)
 	if err != nil {
 		return out, nil // partial result fine — overview-only mode
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var b DBCallerBreakdown
-		if err := rows.Scan(&b.Service, &b.Pod, &b.SpanCount, &b.ErrorCount, &b.AvgMs, &b.P99Ms); err != nil {
+		var bAvg, bP99 *float64
+		if err := rows.Scan(&b.Service, &b.Pod, &b.SpanCount, &b.ErrorCount, &bAvg, &bP99); err != nil {
 			continue
+		}
+		if bAvg != nil {
+			b.AvgMs = *bAvg
+		}
+		if bP99 != nil {
+			b.P99Ms = *bP99
 		}
 		if b.SpanCount > 0 {
 			b.ErrorRate = float64(b.ErrorCount) / float64(b.SpanCount) * 100
@@ -295,50 +322,54 @@ func (s *Store) GetMessagingDetail(
 		TopOps:  []DBOpStat{},
 	}
 
-	// Multi-cluster scope: when cluster is supplied AND is not
-	// the catch-all "(default)" we narrow the query to that
-	// physical cluster. "(default)" means "the implicit
-	// cluster" (spans without any cluster-discriminating
-	// attribute) — those spans match when clusterExpr resolves
-	// to '(default)' so we can use the same equality check.
+	// MV-backed aggregate over messaging_caller_summary_5m. The
+	// MV materialises cluster + destination at INSERT time so
+	// the read path can use plain string equality. cluster
+	// "(default)" matches the implicit-cluster bucket.
+	var avgMs, p99Ms *float64
 	row := s.conn.QueryRow(ctx, `
-		SELECT count(),
-		       countIf(status_code = 'error'),
-		       avg(duration) / 1e6,
-		       quantile(0.99)(duration) / 1e6
-		FROM spans
-		WHERE time >= ? AND time <= ? AND msg_system = ?
-		  AND `+clusterExpr+` = ?
-		  AND `+destExpr+` = ?
-		SETTINGS max_execution_time = 15`,
+		SELECT countMerge(span_count_state),
+		       countMerge(error_count_state),
+		       sumMerge(duration_sum_state) / 1e6
+		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM messaging_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		  AND msg_system = ? AND cluster = ? AND destination = ?
+		SETTINGS max_execution_time = 8`,
 		from, to, system, cluster, destination)
-	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &out.AvgMs, &out.P99Ms); err != nil {
+	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p99Ms); err != nil {
 		return nil, err
+	}
+	if avgMs != nil {
+		out.AvgMs = *avgMs
+	}
+	if p99Ms != nil {
+		out.P99Ms = *p99Ms
 	}
 	if out.SpanCount > 0 {
 		out.ErrorRate = float64(out.ErrorCount) / float64(out.SpanCount) * 100
 	}
 
-	// Messaging breakdown groups by kind too so producers and
-	// consumers surface as separate rows even when they share
-	// service + pod (a service that both publishes to one topic
-	// and consumes from another, common in event-driven
-	// architectures). The frontend renders a role badge per row.
+	// Per-(service, pod, role) breakdown from the MV. kind
+	// rides the dimension so a service that both publishes and
+	// consumes lands on two rows.
 	rows, err := s.conn.Query(ctx, `
 		SELECT service_name,
-		       coalesce(nullIf(host_name, ''), '(unknown)') AS pod,
-		       coalesce(nullIf(kind, ''), 'client')         AS role,
-		       count(), countIf(status_code = 'error'),
-		       avg(duration) / 1e6,
-		       quantile(0.99)(duration) / 1e6
-		FROM spans
-		WHERE time >= ? AND time <= ? AND msg_system = ?
-		  AND `+clusterExpr+` = ?
-		  AND `+destExpr+` = ?
+		       host_name AS pod,
+		       coalesce(nullIf(kind, ''), 'client') AS role,
+		       countMerge(span_count_state),
+		       countMerge(error_count_state),
+		       sumMerge(duration_sum_state) / 1e6
+		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM messaging_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		  AND msg_system = ? AND cluster = ? AND destination = ?
 		GROUP BY service_name, pod, role
-		ORDER BY count() DESC
+		ORDER BY countMerge(span_count_state) DESC
 		LIMIT 100
-		SETTINGS max_execution_time = 15`,
+		SETTINGS max_execution_time = 8`,
 		from, to, system, cluster, destination)
 	if err != nil {
 		return out, nil
@@ -346,8 +377,15 @@ func (s *Store) GetMessagingDetail(
 	defer rows.Close()
 	for rows.Next() {
 		var b DBCallerBreakdown
-		if err := rows.Scan(&b.Service, &b.Pod, &b.Role, &b.SpanCount, &b.ErrorCount, &b.AvgMs, &b.P99Ms); err != nil {
+		var bAvg, bP99 *float64
+		if err := rows.Scan(&b.Service, &b.Pod, &b.Role, &b.SpanCount, &b.ErrorCount, &bAvg, &bP99); err != nil {
 			continue
+		}
+		if bAvg != nil {
+			b.AvgMs = *bAvg
+		}
+		if bP99 != nil {
+			b.P99Ms = *bP99
 		}
 		if b.SpanCount > 0 {
 			b.ErrorRate = float64(b.ErrorCount) / float64(b.SpanCount) * 100
@@ -425,23 +463,29 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	if to.IsZero() {
 		to = time.Now()
 	}
-	// Two-step query: aggregate stats per (system, instance) +
-	// fetch top callers separately. The callers query groups by
-	// (system, instance, service_name) then arrayJoin-folds; one
-	// trip, no correlated subquery.
+	// Read from db_summary_5m (added v0.5.9) instead of raw spans —
+	// turns the 40M-row scan into a thousands-of-rows scan on
+	// pre-aggregated state. The MV writes are triggered on every
+	// span INSERT so the freshness gap is bounded by CH's INSERT
+	// flush latency (~1s in this codebase's config), not the
+	// 5-min bucket length. The most-recent in-flight bucket reads
+	// as a partial — operators viewing the trailing edge see a
+	// slightly understated count for the last <5min, which is
+	// acceptable given the cost-of-load trade.
 	rows, err := s.conn.Query(ctx, `
 		SELECT db_system,
-		       coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
-		       count()                                       AS span_count,
-		       countIf(status_code = 'error')                AS error_count,
-		       avg(duration) / 1e6                           AS avg_ms,
-		       quantile(0.99)(duration) / 1e6                AS p99_ms
-		FROM spans
-		WHERE time >= ? AND time <= ? AND db_system != ''
+		       instance,
+		       countMerge(span_count_state)                            AS span_count,
+		       countMerge(error_count_state)                           AS error_count,
+		       sumMerge(duration_sum_state) / 1e6
+		         / nullIf(countMerge(span_count_state), 0)             AS avg_ms,
+		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM db_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY db_system, instance
 		ORDER BY span_count DESC
 		LIMIT 200
-		SETTINGS max_execution_time = 20`, from, to)
+		SETTINGS max_execution_time = 15`, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -451,8 +495,19 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	idxByKey := map[key]int{}
 	for rows.Next() {
 		var r DBInstance
-		if err := rows.Scan(&r.System, &r.Instance, &r.SpanCount, &r.ErrorCount, &r.AvgMs, &r.P99Ms); err != nil {
+		// avg / p99 come back nullable (nullIf division guard) —
+		// scan into pointers and coalesce. A row with span_count=0
+		// shouldn't appear given our ORDER BY but the defensive
+		// guard is essentially free.
+		var avgMs, p99Ms *float64
+		if err := rows.Scan(&r.System, &r.Instance, &r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
 			return nil, err
+		}
+		if avgMs != nil {
+			r.AvgMs = *avgMs
+		}
+		if p99Ms != nil {
+			r.P99Ms = *p99Ms
 		}
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
@@ -473,21 +528,20 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	// trimmed in Go to top-5 so a 100-caller DB doesn't blow up
 	// the response. Could be done with topK aggregate but the
 	// readability tradeoff isn't worth it at this row count.
-	// LIMIT 1000 caps the worst-case fan-out at scale: 200 (db,
-	// instance) rows × 100 calling services = 20k otherwise. We
-	// only render top-5 per row in the table; the remaining rows
-	// are wasted bytes on the wire. 1000 keeps the per-row top-5
-	// faithful even when 50 distinct services hit one DB.
+	// MV-backed callers query — db_caller_summary_5m has the
+	// per-(system, instance, service_name) rollup pre-computed.
+	// LIMIT 1000 still applies as the wire-byte cap.
 	cRows, err := s.conn.Query(ctx, `
 		SELECT db_system,
-		       coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
-		       service_name, count() AS c
-		FROM spans
-		WHERE time >= ? AND time <= ? AND db_system != ''
+		       instance,
+		       service_name,
+		       countMerge(span_count_state) AS c
+		FROM db_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY db_system, instance, service_name
 		ORDER BY db_system, instance, c DESC
 		LIMIT 1000
-		SETTINGS max_execution_time = 15`, from, to)
+		SETTINGS max_execution_time = 8`, from, to)
 	if err != nil {
 		return out, nil // partial result is fine — callers are optional
 	}
@@ -594,30 +648,26 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 	if to.IsZero() {
 		to = time.Now()
 	}
-	// Destination expression — same priority chain as
-	// MessagingInstance comment. Kept inline (not a const) since
-	// the messaging detail uses it slightly differently
-	// (compared against an exact destination string).
-	const destExpr = `coalesce(
-		nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
-		nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
-		nullIf(peer_service, ''),
-		'unknown'
-	)`
+	// MV-backed read from messaging_summary_5m (added v0.5.9).
+	// Pre-aggregated by (msg_system, cluster, destination, 5min);
+	// the cluster + destination derived expressions are
+	// materialised at INSERT time so the read joins on plain
+	// string equality.
 	rows, err := s.conn.Query(ctx, `
 		SELECT msg_system,
-		       `+clusterExpr+` AS cluster,
-		       `+destExpr+`    AS destination,
-		       count()                                       AS span_count,
-		       countIf(status_code = 'error')                AS error_count,
-		       avg(duration) / 1e6                           AS avg_ms,
-		       quantile(0.99)(duration) / 1e6                AS p99_ms
-		FROM spans
-		WHERE time >= ? AND time <= ? AND msg_system != ''
+		       cluster,
+		       destination,
+		       countMerge(span_count_state)                            AS span_count,
+		       countMerge(error_count_state)                           AS error_count,
+		       sumMerge(duration_sum_state) / 1e6
+		         / nullIf(countMerge(span_count_state), 0)             AS avg_ms,
+		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM messaging_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY msg_system, cluster, destination
 		ORDER BY span_count DESC
 		LIMIT 200
-		SETTINGS max_execution_time = 20`, from, to)
+		SETTINGS max_execution_time = 15`, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -627,9 +677,16 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 	idxByKey := map[key]int{}
 	for rows.Next() {
 		var r MessagingInstance
+		var avgMs, p99Ms *float64
 		if err := rows.Scan(&r.System, &r.Cluster, &r.Destination,
-			&r.SpanCount, &r.ErrorCount, &r.AvgMs, &r.P99Ms); err != nil {
+			&r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
 			return nil, err
+		}
+		if avgMs != nil {
+			r.AvgMs = *avgMs
+		}
+		if p99Ms != nil {
+			r.P99Ms = *p99Ms
 		}
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
@@ -645,19 +702,20 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 		return out, nil
 	}
 
-	// LIMIT 1000 — same rationale as GetDatabases. We only show
-	// top-5 per row; the rest is wire-byte waste.
+	// MV-backed callers read from messaging_caller_summary_5m.
+	// LIMIT 1000 mirrors the DB path's wire-byte cap.
 	cRows, err := s.conn.Query(ctx, `
 		SELECT msg_system,
-		       `+clusterExpr+` AS cluster,
-		       `+destExpr+`    AS destination,
-		       service_name, count() AS c
-		FROM spans
-		WHERE time >= ? AND time <= ? AND msg_system != ''
+		       cluster,
+		       destination,
+		       service_name,
+		       countMerge(span_count_state) AS c
+		FROM messaging_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY msg_system, cluster, destination, service_name
 		ORDER BY msg_system, cluster, destination, c DESC
 		LIMIT 1000
-		SETTINGS max_execution_time = 15`, from, to)
+		SETTINGS max_execution_time = 8`, from, to)
 	if err != nil {
 		return out, nil
 	}

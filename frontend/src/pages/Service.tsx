@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
@@ -642,10 +642,53 @@ function ServiceLatencyHeatmap({ service, range }: {
     catch { return false; }
   });
 
+  // Lazy-mount gate — the heatmap is below the RED chart row
+  // and the operations table, so on a wide enough viewport
+  // it's often only seen after a scroll. Until the section
+  // has been visible at least once (or sits within 200px of
+  // the viewport), the spanHeatmap fetch is deferred. Keeps
+  // the cold initial render from competing for CH bandwidth
+  // with the above-the-fold queries.
+  //
+  // Sticky: once the operator has seen the heatmap, we leave
+  // hasBeenVisible=true so subsequent scrolls / re-mounts
+  // don't toggle it back to "deferred" and re-skip fetches.
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [hasBeenVisible, setHasBeenVisible] = useState(false);
+  useEffect(() => {
+    if (hasBeenVisible) return;
+    if (!containerRef.current) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      // Old browser fallback — eagerly mount, same behaviour
+      // as before lazy-mount existed.
+      setHasBeenVisible(true);
+      return;
+    }
+    const io = new IntersectionObserver(entries => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          setHasBeenVisible(true);
+          io.disconnect();
+          break;
+        }
+      }
+    }, {
+      // Start fetching 200px before the panel enters the
+      // viewport so the data is usually ready by the time
+      // the operator reads its top edge.
+      rootMargin: '200px',
+    });
+    io.observe(containerRef.current);
+    return () => io.disconnect();
+  }, [hasBeenVisible]);
+
   // Pull the cluster set whenever the service or window
   // changes. Cheap (cached server-side 30s) and keeps the
   // dropdown in sync with whatever traffic is in the window.
+  // Gated on visibility too — no point loading the cluster
+  // list for a panel the operator hasn't scrolled to.
   useEffect(() => {
+    if (!hasBeenVisible || collapsed) return;
     const { from, to } = timeRangeToNs(range);
     api.serviceClusters(service, from, to)
       .then(r => {
@@ -658,10 +701,10 @@ function ServiceLatencyHeatmap({ service, range }: {
       })
       .catch(() => setClusters([]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [service, range]);
+  }, [service, range, hasBeenVisible, collapsed]);
 
   useEffect(() => {
-    if (collapsed) return;
+    if (collapsed || !hasBeenVisible) return;
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
     const f: { key: string; op: string; value: string }[] = [
@@ -677,7 +720,7 @@ function ServiceLatencyHeatmap({ service, range }: {
     api.spanHeatmap({ from, to, filters: JSON.stringify(f), buckets: 60 })
       .then(r => setData(r ?? null))
       .catch(() => setData(null));
-  }, [service, range, collapsed, picked]);
+  }, [service, range, collapsed, picked, hasBeenVisible]);
 
   const toggle = () => {
     const next = !collapsed;
@@ -687,7 +730,7 @@ function ServiceLatencyHeatmap({ service, range }: {
   };
 
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div ref={containerRef} style={{ marginBottom: 14 }}>
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
       }}>

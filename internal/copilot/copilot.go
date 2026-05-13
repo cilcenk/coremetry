@@ -507,8 +507,38 @@ next.
 
 Be terse — operator triage context. No preamble.`
 
-func SystemPromptTrace() string     { return systemTrace }
-func SystemPromptProblem() string   { return systemProblem }
-func SystemPromptException() string { return systemException }
-func SystemPromptIncident() string  { return systemIncident }
-func SystemPromptAnomaly() string   { return systemAnomaly }
+// systemServiceHealth — used when the operator hits "Explain
+// service health" on a Service detail page. The model gets the
+// three RED time-series (RPS, error rate, P99 latency), any
+// recent deploys, and any active problems, and is asked to
+// answer "is this service healthy right now and what should
+// I look at first if it's not".
+//
+// Distinct from systemProblem because there may not be an
+// alert firing — operator just wants a sanity-check on the
+// chart shape. Wording biases the model toward "looks fine"
+// vs "investigate X" rather than always-assuming-broken.
+const systemServiceHealth = `You are a senior SRE assistant inside an APM tool. The operator
+is looking at the live RED charts for one service and wants a
+quick "is this healthy?" read. Given throughput / error rate /
+P99 latency series over the window (with deploy markers + any
+active problems), respond in 3-5 bullets:
+
+  (1) one-line "looks healthy" / "warning signs" / "actively
+      degraded" headline,
+  (2) the most notable shape in the data (spike, ramp,
+      bimodal, drift, flatline) if any,
+  (3) likely cause hints anchored to the actual numbers shown
+      (correlate with deploys / problems when relevant),
+  (4) the first 2-3 things the operator should check.
+
+Be terse and grounded in the numbers — no preamble, no
+hedging like "without more context". If the data really does
+look healthy, say so plainly.`
+
+func SystemPromptTrace() string         { return systemTrace }
+func SystemPromptProblem() string       { return systemProblem }
+func SystemPromptException() string     { return systemException }
+func SystemPromptIncident() string      { return systemIncident }
+func SystemPromptAnomaly() string       { return systemAnomaly }
+func SystemPromptServiceHealth() string { return systemServiceHealth }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { Spinner } from './Spinner';
+import { CopilotExplain } from './CopilotExplain';
+import { IconSparkles } from './icons';
 import { api } from '@/lib/api';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
@@ -217,6 +219,18 @@ export function ServiceCharts({ service, range, onZoom }: {
             {m === 'off' ? 'off' : m === 'prev' ? 'prev window' : m}
           </button>
         ))}
+        <span style={{ flex: 1 }} />
+        {/* AI triage button — feeds the live RED series + any
+            open problems to the LLM and asks "is this service
+            healthy". Distinct from per-problem explain because
+            the chart may look fine and the answer should say
+            so plainly. Self-hides when copilot isn't configured. */}
+        <CopilotExplain
+          kind="service-health"
+          id={service}
+          fromNs={from}
+          toNs={to}
+          label={<><IconSparkles /> <span>AI triage</span></>} />
       </div>
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',

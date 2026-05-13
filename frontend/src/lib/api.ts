@@ -457,6 +457,10 @@ export const api = {
     request<{ explanation: string }>(`/api/copilot/explain-incident/${id}`, { method: 'POST' }),
   copilotExplainAnomaly: (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-anomaly/${id}`, { method: 'POST' }),
+  copilotExplainServiceHealth: (service: string, fromNs: number, toNs: number) =>
+    request<{ explanation: string }>(
+      `/api/copilot/explain-service?service=${encodeURIComponent(service)}&from=${fromNs}&to=${toNs}`,
+      { method: 'POST' }),
 
   // Public status page admin
   statusPageGetConfig:    () => get<StatusPageConfig>(`/api/status-page/config`),

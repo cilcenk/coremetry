@@ -992,8 +992,7 @@ type TraceFilter struct {
 
 func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	// MV fast-path. Activates when:
-	//   • A service filter is in play (need trace_service_index_5m)
-	//   • The window is at least 5 minutes (MVs are 5-min bucketed)
+	//   • Window is ≥ 5 minutes (MVs are 5-min bucketed)
 	//   • No per-span filters that require raw access:
 	//       search (LIKE on name), traceId prefix, extra attr
 	//       columns, DSL/Filters, RequireServices.
@@ -1004,13 +1003,22 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	//     doesn't compute exact totals — same trade-off the
 	//     /api/traces UI already accepts).
 	//
+	// Branches by service filter:
+	//   • f.Service != "" → two-stage path: scan
+	//     trace_service_index_5m for matching trace_ids, then
+	//     pull their summaries from trace_summary_5m.
+	//   • f.Service == "" → single-stage path: scan
+	//     trace_summary_5m directly (PK on (time_bucket,
+	//     trace_id) handles the partition prune; GROUP BY
+	//     collapses the bucketed rows into one row per
+	//     trace_id within the window). Drops the open-page
+	//     /traces?last=15m wait from "scan tens of millions
+	//     of raw spans" to sub-second.
+	//
 	// When all conditions hold we bypass the GROUP BY trace_id
 	// over raw spans (~10-100M rows on a 7-day window) and
-	// read pre-aggregated state instead. End-to-end 7-day
-	// service-filtered queries drop from 30-60s cold to
-	// sub-second.
-	if f.Service != "" &&
-		!f.From.IsZero() && !f.To.IsZero() &&
+	// read pre-aggregated state instead.
+	if !f.From.IsZero() && !f.To.IsZero() &&
 		f.To.Sub(f.From) >= 5*time.Minute &&
 		f.Search == "" && f.TraceID == "" &&
 		len(f.ExtraAttrs) == 0 && len(f.Filters) == 0 &&
@@ -1318,39 +1326,48 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		stage1Limit = 200
 	}
 
-	rows1, err := s.conn.Query(ctx, `
-		SELECT trace_id
-		FROM trace_service_index_5m
-		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
-		GROUP BY trace_id
-		ORDER BY maxMerge(last_seen_state) DESC
-		LIMIT ?
-		SETTINGS
-		  max_execution_time = 15,
-		  optimize_read_in_order = 1,
-		  optimize_aggregation_in_order = 1`,
-		f.Service, f.From, f.To, stage1Limit)
-	if err != nil {
-		return nil, 0, false, fmt.Errorf("stage1: %w", err)
-	}
-	defer rows1.Close()
-	traceIDs := make([]any, 0, stage1Limit)
-	for rows1.Next() {
-		var id string
-		if err := rows1.Scan(&id); err != nil {
+	// No-service path: skip Stage 1 entirely. trace_summary_5m's
+	// PK on (time_bucket, trace_id) handles the partition prune,
+	// so a direct scan over the window finds every trace without
+	// the service-index narrowing step. holders="" tells Stage 2
+	// to omit the `trace_id IN (...)` clause.
+	var traceIDs []any
+	holders := ""
+	if f.Service != "" {
+		rows1, err := s.conn.Query(ctx, `
+			SELECT trace_id
+			FROM trace_service_index_5m
+			WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+			GROUP BY trace_id
+			ORDER BY maxMerge(last_seen_state) DESC
+			LIMIT ?
+			SETTINGS
+			  max_execution_time = 15,
+			  optimize_read_in_order = 1,
+			  optimize_aggregation_in_order = 1`,
+			f.Service, f.From, f.To, stage1Limit)
+		if err != nil {
+			return nil, 0, false, fmt.Errorf("stage1: %w", err)
+		}
+		defer rows1.Close()
+		traceIDs = make([]any, 0, stage1Limit)
+		for rows1.Next() {
+			var id string
+			if err := rows1.Scan(&id); err != nil {
+				return nil, 0, false, err
+			}
+			traceIDs = append(traceIDs, id)
+		}
+		if err := rows1.Err(); err != nil {
 			return nil, 0, false, err
 		}
-		traceIDs = append(traceIDs, id)
-	}
-	if err := rows1.Err(); err != nil {
-		return nil, 0, false, err
-	}
-	if len(traceIDs) == 0 {
-		return []TraceRow{}, 0, false, nil
-	}
+		if len(traceIDs) == 0 {
+			return []TraceRow{}, 0, false, nil
+		}
 
-	holders := strings.Repeat("?,", len(traceIDs))
-	holders = holders[:len(holders)-1]
+		holders = strings.Repeat("?,", len(traceIDs))
+		holders = holders[:len(holders)-1]
+	}
 
 	// Push-down HAVING built from the post-aggregate filters.
 	having := []string{}
@@ -1396,6 +1413,14 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		order = "ASC"
 	}
 
+	// Whether stage 2 narrows by trace_id (service path) or
+	// scans the bucket window (no-service path) — same SELECT,
+	// different WHERE.
+	traceIDClause := ""
+	if holders != "" {
+		traceIDClause = "trace_id IN (" + holders + ") AND "
+	}
+
 	stage2 := `
 		SELECT trace_id,
 		       argMaxIfMerge(root_name_state)                              AS root_name,
@@ -1406,12 +1431,13 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		       countMerge(span_count_state)                                AS span_count,
 		       toUInt8(countMerge(error_count_state) > 0)                  AS has_error
 		FROM trace_summary_5m
-		WHERE trace_id IN (` + holders + `)
-		  AND time_bucket >= ? AND time_bucket <= ?
+		WHERE ` + traceIDClause + `time_bucket >= ? AND time_bucket <= ?
 		GROUP BY trace_id` + havingSQL + `
 		ORDER BY ` + sortExpr + ` ` + order + `
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 15`
+		SETTINGS max_execution_time = 15,
+		         optimize_read_in_order = 1,
+		         optimize_aggregation_in_order = 1`
 
 	args := append([]any{}, traceIDs...)
 	args = append(args, f.From, f.To, pageLimit, f.Offset)

@@ -9,6 +9,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
+import { LogTable } from '@/components/LogTable';
 import { Pager } from '@/components/Pager';
 import { useLogs } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
@@ -230,23 +231,9 @@ function LogsInner() {
         )}
         {data && logs.length > 0 && (
           <>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th><th>Sev</th><th>Service</th><th>Message</th><th>Trace</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logs.map((l, idx) => (
-                    <LogRowR key={l.id} l={l} idx={idx}
-                             selected={tableNav.selected === idx}
-                             expanded={expanded.has(l.id)}
-                             onClick={() => { tableNav.setSelected(idx); toggle(l.id); }} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <LogTable logs={logs} nav={tableNav}
+              expandedIds={expanded}
+              onToggleExpand={toggle} />
             <Pager page={page} pageSize={100} total={total} onPage={setPage}
                    extras={<>{total.toLocaleString()} total</>} />
           </>
@@ -256,60 +243,8 @@ function LogsInner() {
   );
 }
 
-function LogRowR({ l, idx, selected, expanded, onClick }: {
-  l: LogRow; idx: number; selected: boolean; expanded: boolean; onClick: () => void;
-}) {
-  const attrs = Object.entries(l.attributes ?? {});
-  const res = Object.entries(l.resourceAttributes ?? {});
-  return (
-    <>
-      <tr onClick={onClick}
-          data-row-idx={idx}
-          className={selected ? 'row-selected' : ''}>
-        <td className="mono">{tsShort(l.timestamp)}</td>
-        <td><span className={sevClass(l.severity)}>{l.severityText || sevName(l.severity)}</span></td>
-        <td>
-          <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--bg3)', borderRadius: 3, fontFamily: 'monospace' }}>
-            {l.serviceName}
-          </span>
-        </td>
-        <td style={{ maxWidth: 480 }} title={l.body}>{l.body}</td>
-        <td className="mono">
-          {l.traceId ? (
-            <>
-              <Link to={`/trace?id=${l.traceId}`} onClick={e => e.stopPropagation()}>
-                {l.traceId.slice(0, 8)}…
-              </Link>
-              <CopyButton value={l.traceId} title="Copy trace ID" />
-            </>
-          ) : '—'}
-        </td>
-      </tr>
-      {expanded && (
-        <tr>
-          <td colSpan={5} style={{ background: 'var(--bg0)', padding: '10px 20px' }}>
-            <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: 'var(--text)', marginBottom: attrs.length ? 8 : 0 }}>
-              {l.body}
-            </pre>
-            {attrs.length > 0 && (
-              <table className="kv-table"><tbody>
-                {attrs.map(([k, v]) => <tr key={k}><td>{k}</td><td>{String(v)}</td></tr>)}
-              </tbody></table>
-            )}
-            {res.length > 0 && (
-              <details style={{ marginTop: 6 }}>
-                <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--text2)' }}>Resource ({res.length})</summary>
-                <table className="kv-table"><tbody>
-                  {res.map(([k, v]) => <tr key={k}><td>{k}</td><td>{String(v)}</td></tr>)}
-                </tbody></table>
-              </details>
-            )}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
+// LogRowR moved to components/LogTable.tsx (shared between
+// /logs and the trace detail Logs tab).
 
 export default function LogsPage() {
   return (

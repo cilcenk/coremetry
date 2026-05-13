@@ -6,6 +6,7 @@ import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { computeCriticalPath } from '@/lib/criticalPath';
 import { SpanDetail } from '@/components/SpanDetail';
 import { CopyButton } from '@/components/CopyButton';
+import { LogTable } from '@/components/LogTable';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
 import { useShortcuts } from '@/lib/keyboard';
@@ -337,70 +338,29 @@ function TraceLogsPanel({ logs }: { logs: LogRow[] | null | undefined }) {
       Make sure your collector ships logs with the W3C trace context (trace_id + span_id) populated.
     </Empty>;
   }
-  // Ascending chronological order — easier to read with the trace
-  // waterfall above mentally lined up to the same timeline.
-  //
-  // Rows wrap natively (CSS .trace-logs-msg: pre-wrap +
-  // overflow-wrap: anywhere) so a long stack trace / JSON
-  // body / multi-line SQL renders in full without a click —
-  // operators kept asking "where's the rest of the line" and
-  // a click-to-expand model added friction without value.
+  // Ascending chronological order — lines up with the trace
+  // waterfall above. Display reuses the shared <LogTable> so
+  // severity colouring / row expand layout / attribute tables
+  // stay consistent with the /logs page; operators don't
+  // re-learn a second viewer when they drill in from a trace.
   const sorted = [...logs].sort((a, b) => a.timestamp - b.timestamp);
   return (
-    <div className="trace-logs">
+    <>
       <div style={{
         display: 'flex', gap: 10, padding: '6px 10px',
-        borderBottom: '1px solid var(--border)',
         fontSize: 11, color: 'var(--text3)',
       }}>
         <span>{sorted.length} log line{sorted.length === 1 ? '' : 's'}</span>
       </div>
-      {sorted.map((l, i) => {
-        const sev = l.severityText || severityFromNumber(l.severity);
-        const sevCls = severityClass(sev);
-        return (
-          <div key={i} className="trace-logs-row">
-            <span className="trace-logs-ts" title={tsLong(l.timestamp)}>{fmtClock(l.timestamp)}</span>
-            <span className={`trace-logs-sev ${sevCls}`}>{sev || 'info'}</span>
-            <span className="trace-logs-svc">{l.serviceName || '—'}</span>
-            <span className="trace-logs-msg">{l.body}</span>
-            {l.spanId && (
-              <span className="trace-logs-span" title={`span_id: ${l.spanId}`}>
-                {l.spanId.slice(0, 12)}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
+      <LogTable logs={sorted} hideTraceColumn />
+    </>
   );
 }
 
-function severityFromNumber(n: number): string {
-  // OTel SeverityNumber bands (1-4 trace, 5-8 debug, 9-12 info, 13-16 warn, 17-20 error, 21-24 fatal)
-  if (n >= 21) return 'fatal';
-  if (n >= 17) return 'error';
-  if (n >= 13) return 'warn';
-  if (n >= 9)  return 'info';
-  if (n >= 5)  return 'debug';
-  return 'trace';
-}
-function severityClass(s: string): string {
-  const lc = (s || '').toLowerCase();
-  if (lc.startsWith('fatal') || lc.startsWith('crit')) return 'sev-fatal';
-  if (lc.startsWith('err')) return 'sev-err';
-  if (lc.startsWith('warn')) return 'sev-warn';
-  if (lc.startsWith('info') || lc === 'notice') return 'sev-info';
-  if (lc.startsWith('debug')) return 'sev-debug';
-  return 'sev-trace';
-}
-// HH:MM:SS.mmm formatter — drops the date prefix because all logs in
-// the panel belong to the same trace (often <1s wide).
-function fmtClock(ns: number): string {
-  const d = new Date(ns / 1e6);
-  const pad = (n: number, w = 2) => n.toString().padStart(w, '0');
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
-}
+// Severity-helpers + per-log time formatter used to live
+// here for the legacy custom .trace-logs grid. After v0.5.62
+// the panel renders through the shared <LogTable> which
+// handles all of that itself, so the helpers are gone.
 
 export default function TraceDetailPage() {
   return (

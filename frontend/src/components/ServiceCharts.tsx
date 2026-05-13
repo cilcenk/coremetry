@@ -78,15 +78,21 @@ export function ServiceCharts({ service, range, onZoom }: {
     let cancelled = false;
     setLoading(true);
     const dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
-    Promise.all([
-      api.spanMetric({ agg: 'rate',       dsl, from, to, groupBy: 'name' }),
-      api.spanMetric({ agg: 'error_rate', dsl, from, to, groupBy: 'name' }),
-      api.spanMetric({ agg: 'p99',        dsl, from, to, groupBy: 'name', field: 'duration_ms' }),
-    ]).then(([rps, err, p99]) => {
+    // Batch — one CH pass for rate + error_rate + p99 over the
+    // same WHERE. Cold-cache time drops to ~1/3 of the legacy
+    // three-call fan-out because the spans scan happens once.
+    api.spanMetricBatch({
+      from, to, groupBy: ['name'], dsl,
+      aggs: [
+        { name: 'rate',       agg: 'rate' },
+        { name: 'error_rate', agg: 'error_rate' },
+        { name: 'p99',        agg: 'p99', field: 'duration_ms' },
+      ],
+    }).then(res => {
       if (cancelled) return;
-      setRpsSeries(rps ?? []);
-      setErrSeries(err ?? []);
-      setP99Series(p99 ?? []);
+      setRpsSeries(res.rate       ?? []);
+      setErrSeries(res.error_rate ?? []);
+      setP99Series(res.p99        ?? []);
     }).catch(() => {
       if (cancelled) return;
       setRpsSeries([]); setErrSeries([]); setP99Series([]);
@@ -96,10 +102,11 @@ export function ServiceCharts({ service, range, onZoom }: {
     return () => { cancelled = true; };
   }, [service, from, to]);
 
-  // Compare fetch — only fires when toggle is on. Separate from
-  // the current-period fetch so toggling compare doesn't
-  // re-fetch the current metrics (which the operator is
-  // already looking at).
+  // Compare fetch — only fires when toggle is on. Same batch
+  // trick: one CH pass for the previous window's three
+  // aggregates. Separate from the current-period fetch so
+  // toggling compare doesn't re-fetch the current metrics
+  // (which the operator is already looking at).
   useEffect(() => {
     if (compare === 'off' || compareOffsetNs === 0) {
       setRpsPrev(null); setErrPrev(null); setP99Prev(null);
@@ -109,15 +116,18 @@ export function ServiceCharts({ service, range, onZoom }: {
     const dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
     const prevFrom = from - compareOffsetNs;
     const prevTo = to - compareOffsetNs;
-    Promise.all([
-      api.spanMetric({ agg: 'rate',       dsl, from: prevFrom, to: prevTo, groupBy: 'name' }),
-      api.spanMetric({ agg: 'error_rate', dsl, from: prevFrom, to: prevTo, groupBy: 'name' }),
-      api.spanMetric({ agg: 'p99',        dsl, from: prevFrom, to: prevTo, groupBy: 'name', field: 'duration_ms' }),
-    ]).then(([rps, err, p99]) => {
+    api.spanMetricBatch({
+      from: prevFrom, to: prevTo, groupBy: ['name'], dsl,
+      aggs: [
+        { name: 'rate',       agg: 'rate' },
+        { name: 'error_rate', agg: 'error_rate' },
+        { name: 'p99',        agg: 'p99', field: 'duration_ms' },
+      ],
+    }).then(res => {
       if (cancelled) return;
-      setRpsPrev(rps ?? []);
-      setErrPrev(err ?? []);
-      setP99Prev(p99 ?? []);
+      setRpsPrev(res.rate       ?? []);
+      setErrPrev(res.error_rate ?? []);
+      setP99Prev(res.p99        ?? []);
     }).catch(() => {
       if (cancelled) return;
       setRpsPrev([]); setErrPrev([]); setP99Prev([]);

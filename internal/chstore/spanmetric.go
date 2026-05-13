@@ -134,6 +134,173 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 	return out, rows.Err()
 }
 
+// SpanMetricBatchFilter computes N aggregations over the same
+// span selection in a single CH query. Drives the Service
+// detail page's "rate + error_rate + p99" chart row (and the
+// compare-period twin) — three independent QuerySpanMetric
+// calls fanned out into one CH pass over the spans table.
+// Cold-cache time drops from ~3 × singleN to ~1 × singleN.
+//
+// All aggregations share the SAME GroupBy + StepSeconds +
+// filters; they only differ in (Name, Aggregation, Field).
+// Name is the operator's label for the result key in the
+// response map — callers pick something stable ("rate",
+// "error_rate", "p99") so the frontend can address each
+// series without inspecting types.
+type SpanMetricBatchFilter struct {
+	Filters     []FilterExpr
+	GroupBy     []string
+	From, To    time.Time
+	StepSeconds int
+	Aggs        []SpanMetricAggSpec
+}
+
+type SpanMetricAggSpec struct {
+	Name        string // result key, e.g. "rate" / "error_rate" / "p99"
+	Aggregation string // count | error_rate | rate | avg | sum | p50 | p95 | p99 | max | min
+	Field       string // attribute / column when aggregation needs one (default duration_ms)
+}
+
+// QuerySpanMetricMulti runs every aggregation in `f.Aggs`
+// against the same WHERE + GROUP BY in ONE round trip. Returns
+// a map keyed by spec.Name → series list. Empty result map on
+// success is allowed (no spans matched the filter); per-spec
+// failures (e.g. unknown aggregation) fail the whole call.
+func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilter) (map[string][]SpanMetricSeries, error) {
+	if len(f.Aggs) == 0 {
+		return map[string][]SpanMetricSeries{}, nil
+	}
+	// ── Build WHERE ───────────────────────────────────────────────────────────
+	var wc whereClause
+	if !f.From.IsZero() {
+		wc.add("time >= ?", f.From)
+	}
+	if !f.To.IsZero() {
+		wc.add("time <= ?", f.To)
+	}
+	ApplyFilters(&wc, f.Filters)
+
+	// ── Bucket size (same auto-pick as QuerySpanMetric) ───────────────────────
+	step := f.StepSeconds
+	if step <= 0 {
+		span := f.To.Sub(f.From).Seconds()
+		switch {
+		case span <= 600:        step = 10
+		case span <= 3600:       step = 30
+		case span <= 6*3600:     step = 60
+		case span <= 24*3600:    step = 300
+		case span <= 7*24*3600:  step = 1800
+		default:                 step = 3600
+		}
+	}
+
+	// Build one SELECT expression per aggregation, aliased
+	// with `v0` / `v1` / `v2`. Position-aliasing avoids a
+	// name-collision when the operator picks names that
+	// happen to match SQL keywords (`count`, `rate`).
+	selectParts := []string{
+		fmt.Sprintf(
+			"toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket",
+			step),
+	}
+	for i, a := range f.Aggs {
+		field := a.Field
+		if field == "" {
+			field = "duration_ms"
+		}
+		expr, err := aggToSQL(a.Aggregation, fieldToSQL(field), step)
+		if err != nil {
+			return nil, fmt.Errorf("agg %q: %w", a.Name, err)
+		}
+		selectParts = append(selectParts, fmt.Sprintf("%s AS v%d", expr, i))
+	}
+
+	// GroupBy → single Array(String) tuple (same path as
+	// QuerySpanMetric so the result-shape stays familiar).
+	groupSelect := "[]::Array(String)"
+	if len(f.GroupBy) > 0 {
+		parts := make([]string, len(f.GroupBy))
+		var groupArgs []any
+		for i, k := range f.GroupBy {
+			expr, args := groupKeyExpr(k)
+			parts[i] = expr
+			groupArgs = append(groupArgs, args...)
+		}
+		groupSelect = "[" + strings.Join(parts, ", ") + "]"
+		wc.args = append(groupArgs, wc.args...)
+	}
+	selectParts = append(selectParts, groupSelect+" AS gk")
+
+	sql := fmt.Sprintf(`
+		SELECT %s
+		FROM spans
+		%s
+		GROUP BY bucket, gk
+		ORDER BY gk, bucket
+		LIMIT 50000`,
+		strings.Join(selectParts, ", "),
+		wc.sql())
+
+	rows, err := s.conn.Query(ctx, sql, wc.args...)
+	if err != nil {
+		return nil, fmt.Errorf("query span metric multi: %w", err)
+	}
+	defer rows.Close()
+
+	// Per-agg accumulator: agg_name → (key→series).
+	type acc struct {
+		seriesMap map[string]*SpanMetricSeries
+		order     []string
+	}
+	accs := make([]acc, len(f.Aggs))
+	for i := range accs {
+		accs[i].seriesMap = map[string]*SpanMetricSeries{}
+	}
+
+	for rows.Next() {
+		// Scan one row of: bucket, v0..vN, gk.
+		dest := make([]any, 0, 2+len(f.Aggs))
+		var bucket uint64
+		dest = append(dest, &bucket)
+		vals := make([]*float64, len(f.Aggs))
+		for i := range vals {
+			dest = append(dest, &vals[i])
+		}
+		var gk []string
+		dest = append(dest, &gk)
+		if err := rows.Scan(dest...); err != nil {
+			return nil, err
+		}
+		key := strings.Join(gk, "|")
+		for i, v := range vals {
+			ser, ok := accs[i].seriesMap[key]
+			if !ok {
+				ser = &SpanMetricSeries{GroupKey: append([]string{}, gk...)}
+				accs[i].seriesMap[key] = ser
+				accs[i].order = append(accs[i].order, key)
+			}
+			f := 0.0
+			if v != nil {
+				f = *v
+			}
+			ser.Points = append(ser.Points, SpanMetricPoint{Time: int64(bucket), Value: f})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]SpanMetricSeries, len(f.Aggs))
+	for i, a := range f.Aggs {
+		list := make([]SpanMetricSeries, 0, len(accs[i].order))
+		for _, k := range accs[i].order {
+			list = append(list, *accs[i].seriesMap[k])
+		}
+		out[a.Name] = list
+	}
+	return out, nil
+}
+
 // fieldToSQL maps a friendly field name to the underlying ClickHouse expression.
 func fieldToSQL(field string) string {
 	switch field {

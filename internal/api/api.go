@@ -218,6 +218,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
 	mux.HandleFunc("GET /api/metrics/labels", s.getMetricLabelValues)
 	mux.HandleFunc("GET /api/spans/metric", s.spanMetric)
+	mux.HandleFunc("POST /api/spans/metric-batch", s.spanMetricBatch)
 	mux.HandleFunc("GET /api/spans/facets", s.spanFacets)
 	mux.HandleFunc("GET /api/spans/repeats", s.spanRepeats)
 	mux.HandleFunc("GET /api/spans/exemplar", s.spanExemplar)
@@ -2033,6 +2034,86 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, series)
+}
+
+// spanMetricBatch runs N aggregations over the same span
+// selection in a single CH query. The Service detail page's
+// RED chart row used to fire 3 separate /api/spans/metric
+// calls (rate, error_rate, p99) — each scanning the same
+// spans, just running a different aggregation. This endpoint
+// collapses all three into one pass, dropping cold-cache
+// time from ~3× to ~1× single. Compare-period fires the same
+// reduction on the second chart row.
+//
+// Request body shape:
+//
+//	{
+//	  "from":  <unix ns>, "to":  <unix ns>,
+//	  "step":  <seconds | 0 for auto>,
+//	  "groupBy": ["name", ...],
+//	  "filters": [{"key":"service.name","op":"=","values":["foo"]}, ...],
+//	  "dsl":   "service.name = 'foo'",   // optional, OR with filters
+//	  "aggs": [
+//	    {"name":"rate",       "agg":"rate"},
+//	    {"name":"error_rate", "agg":"error_rate"},
+//	    {"name":"p99",        "agg":"p99", "field":"duration_ms"}
+//	  ]
+//	}
+//
+// Response:
+//
+//	{ "rate": [SpanMetricSeries…],
+//	  "error_rate": […],
+//	  "p99": […] }
+func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		From    int64    `json:"from"`
+		To      int64    `json:"to"`
+		Step    int      `json:"step"`
+		GroupBy []string `json:"groupBy"`
+		Filters json.RawMessage `json:"filters"`
+		DSL     string   `json:"dsl"`
+		Aggs    []struct {
+			Name string `json:"name"`
+			Agg  string `json:"agg"`
+			Field string `json:"field"`
+		} `json:"aggs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(body.Aggs) == 0 {
+		http.Error(w, "at least one agg required", http.StatusBadRequest)
+		return
+	}
+	filters, err := parseFiltersAndDSL(string(body.Filters), body.DSL)
+	if err != nil {
+		http.Error(w, "invalid query DSL: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	specs := make([]chstore.SpanMetricAggSpec, len(body.Aggs))
+	for i, a := range body.Aggs {
+		specs[i] = chstore.SpanMetricAggSpec{
+			Name:        a.Name,
+			Aggregation: a.Agg,
+			Field:       a.Field,
+		}
+	}
+	f := chstore.SpanMetricBatchFilter{
+		Filters:     filters,
+		GroupBy:     body.GroupBy,
+		From:        time.Unix(0, body.From),
+		To:          time.Unix(0, body.To),
+		StepSeconds: body.Step,
+		Aggs:        specs,
+	}
+	out, err := s.store.QuerySpanMetricMulti(r.Context(), f)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, out)
 }
 
 // spanHeatmap — Honeycomb-style 2D latency density. Returns a

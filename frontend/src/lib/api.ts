@@ -534,6 +534,35 @@ export const api = {
   spanMetric: (params: SpanMetricParams) =>
     get<SpanMetricSeries[] | null>(`/api/spans/metric?${qs(params)}`),
 
+  // spanMetricBatch — N aggregations over the SAME span
+  // selection in one CH pass. Used by Service detail charts
+  // (rate + error_rate + p99 share a WHERE) to drop cold-load
+  // time from 3× to 1× a single-agg query. Returns a map
+  // keyed by spec.name so callers address each series
+  // without inspecting types.
+  spanMetricBatch: (body: {
+    from?: number; to?: number; step?: number;
+    groupBy?: string[];
+    filters?: string;
+    dsl?: string;
+    aggs: { name: string; agg: string; field?: string }[];
+  }) =>
+    request<Record<string, SpanMetricSeries[] | null>>('/api/spans/metric-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from:    body.from,
+        to:      body.to,
+        step:    body.step,
+        groupBy: body.groupBy,
+        // server expects filters as raw JSON; we pass through
+        // the same shape the GET endpoint does.
+        filters: body.filters ? JSON.parse(body.filters) : undefined,
+        dsl:     body.dsl,
+        aggs:    body.aggs,
+      }),
+    }),
+
   // 2D latency density grid. Same filter shape as spanMetric
   // — a heatmap toggle on /explore swaps between "line trend"
   // and "density" without re-typing the predicate.

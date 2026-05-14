@@ -1,4 +1,4 @@
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useRef, useState, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTableNav } from '@/lib/useTableNav';
 import { Topbar } from '@/components/Topbar';
@@ -278,6 +278,20 @@ function TracesPageInner() {
     },
   );
 
+  // Per-session hover-prefetch dedupe. Trace span data is
+  // immutable once stored, so a hit during one operator
+  // session never goes stale; once a trace has been warmed
+  // we don't refire on every mouseenter. /api/traces/{id} is
+  // server-cached 5 min so the warm path is essentially free
+  // once the first hover lands.
+  const prefetchedTraces = useRef<Set<string>>(new Set());
+  const prefetchTrace = (id: string) => {
+    if (prefetchedTraces.current.has(id)) return;
+    prefetchedTraces.current.add(id);
+    // Fire-and-forget — response just warms the cache.
+    api.trace(id).catch(() => {});
+  };
+
   // Build a DSL string the histogram can use to scope its volume +
   // error-rate query to the same predicate the table is showing. We
   // only fold in the *cheap* filters (service + hasError); free-text
@@ -508,7 +522,19 @@ function TracesPageInner() {
                     <tr key={t.traceId}
                         data-row-idx={i}
                         className={tableNav.selected === i ? 'row-selected' : undefined}
-                        onMouseEnter={() => tableNav.setSelected(i)}
+                        onMouseEnter={() => {
+                          tableNav.setSelected(i);
+                          // Hover-prefetch the trace's spans —
+                          // /api/traces/{id} is server-cached 5
+                          // min, so by the time the operator
+                          // clicks the row the trace detail
+                          // page's mount fetch lands on a HIT
+                          // (L1 first, Redis second). Dedupe via
+                          // a ref-held Set so dragging across
+                          // 50 rows fires 50 requests once each,
+                          // not the same 50 re-fired.
+                          prefetchTrace(t.traceId);
+                        }}
                         {...rowClickHandlers(`/trace?id=${t.traceId}`,
                                              () => navigate(`/trace?id=${t.traceId}`))}>
                       <td className="mono">{tsShort(t.startTime)}</td>

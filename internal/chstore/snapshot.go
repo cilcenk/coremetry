@@ -57,6 +57,68 @@ func (s *Store) CreateTraceSnapshot(ctx context.Context, snap TraceSnapshot) err
 	return batch.Send()
 }
 
+// ListTraceSnapshots returns every active (unexpired) snapshot
+// for one trace_id, ordered by most recent first. Drives the
+// admin "manage shares" panel — operator sees what's out there
+// AND who minted each one. Capped at 50 entries per trace to
+// keep the response small (operationally there should never be
+// more than 1-2 active per trace anyway).
+func (s *Store) ListTraceSnapshots(ctx context.Context, traceID string) ([]TraceSnapshot, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT token, trace_id, created_by,
+		       toUnixTimestamp64Nano(created_at),
+		       toUnixTimestamp64Nano(expires_at)
+		FROM trace_snapshots FINAL
+		WHERE trace_id = ? AND expires_at > now64()
+		ORDER BY created_at DESC
+		LIMIT 50`, traceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TraceSnapshot
+	for rows.Next() {
+		var snap TraceSnapshot
+		if err := rows.Scan(&snap.Token, &snap.TraceID, &snap.CreatedBy,
+			&snap.CreatedAt, &snap.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, snap)
+	}
+	return out, rows.Err()
+}
+
+// RevokeTraceSnapshot immediately invalidates a share token by
+// setting its expires_at to now. The ReplacingMergeTree
+// (version-keyed) takes the higher version on read, so the
+// next GetTraceSnapshot returns nil → 404 on the public route.
+// Idempotent — revoking an already-expired token is a no-op.
+func (s *Store) RevokeTraceSnapshot(ctx context.Context, token string) error {
+	batch, err := s.conn.PrepareBatch(ctx,
+		"INSERT INTO trace_snapshots (token, trace_id, created_by, created_at, expires_at)")
+	if err != nil {
+		return fmt.Errorf("prepare revoke: %w", err)
+	}
+	// We need the existing row's trace_id / created_by /
+	// created_at to preserve audit semantics. Fetch first.
+	prev, err := s.GetTraceSnapshot(ctx, token)
+	if err != nil {
+		return err
+	}
+	if prev == nil {
+		return nil // already gone
+	}
+	now := time.Now().UTC()
+	if err := batch.Append(
+		prev.Token, prev.TraceID, prev.CreatedBy,
+		time.Unix(0, prev.CreatedAt).UTC(),
+		now, // expires_at = now → instant expiry
+	); err != nil {
+		return fmt.Errorf("append revoke: %w", err)
+	}
+	return batch.Send()
+}
+
 // GetTraceSnapshot returns (snapshot, nil) for a valid + unexpired
 // token, (nil, nil) for "not found / already expired" — caller
 // translates both to a 404 so we don't leak which case it was.

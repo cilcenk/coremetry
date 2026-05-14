@@ -463,6 +463,11 @@ export const api = {
     request<{ token: string; url: string; expiresAt: number }>(
       `/api/traces/${id}/share?ttlHours=${ttlHours}`,
       { method: 'POST' }),
+  listTraceShares: (id: string) =>
+    get<Array<{ token: string; traceId: string; createdBy: string; createdAt: number; expiresAt: number }> | null>(
+      `/api/traces/${id}/shares`),
+  revokeTraceShare: (token: string) =>
+    request<{ status: string }>(`/api/traces/share/${token}`, { method: 'DELETE' }),
 
   // AI Copilot
   copilotConfig:         () => get<{ enabled: boolean }>(`/api/copilot/config`),

@@ -493,6 +493,21 @@ function SharePopover({ traceId }: { traceId: string }) {
   const [publicExpiresAt, setPublicExpiresAt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // TTL picker — operator picks the share-link lifetime
+  // instead of always getting 24h. Banking-scale operators
+  // sharing with vendors / support tickets routinely want
+  // 7-30d; in-team handoffs default to 24h.
+  const [ttlHours, setTtlHours] = useState(24);
+  // Active shares for this trace. Loaded when the popover
+  // opens; refreshed after mint / revoke.
+  type ShareRow = Awaited<ReturnType<typeof api.listTraceShares>>;
+  const [shares, setShares] = useState<NonNullable<ShareRow>>([]);
+  const reloadShares = async () => {
+    try {
+      const list = await api.listTraceShares(traceId);
+      setShares(list ?? []);
+    } catch { setShares([]); }
+  };
 
   // Click-outside to close.
   useEffect(() => {
@@ -502,6 +517,13 @@ function SharePopover({ traceId }: { traceId: string }) {
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  // Fetch active shares when popover opens so the operator sees
+  // what's already out there before minting another.
+  useEffect(() => {
+    if (open) void reloadShares();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const copyInternal = async () => {
@@ -514,13 +536,14 @@ function SharePopover({ traceId }: { traceId: string }) {
   const generatePublic = async () => {
     setBusy(true); setError(null);
     try {
-      const res = await api.shareTrace(traceId, 24);
+      const res = await api.shareTrace(traceId, ttlHours);
       setPublicURL(res.url);
       setPublicExpiresAt(res.expiresAt);
       // Auto-copy on generate so the common case is one-click.
       await copyToClipboard(res.url);
       setPublicCopied(true);
       setTimeout(() => setPublicCopied(false), 2000);
+      void reloadShares();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to mint share link');
     } finally {
@@ -533,6 +556,21 @@ function SharePopover({ traceId }: { traceId: string }) {
     await copyToClipboard(publicURL);
     setPublicCopied(true);
     setTimeout(() => setPublicCopied(false), 2000);
+  };
+
+  const revoke = async (token: string) => {
+    try {
+      await api.revokeTraceShare(token);
+      // If we revoked the one just minted, clear the URL slot
+      // so the popover returns to the "generate" affordance.
+      if (publicURL && publicURL.includes(token)) {
+        setPublicURL(null);
+        setPublicExpiresAt(null);
+      }
+      void reloadShares();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Revoke failed');
+    }
   };
 
   return (
@@ -577,7 +615,17 @@ function SharePopover({ traceId }: { traceId: string }) {
           </div>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.5 }}>
             Anyone with this URL can view a read-only snapshot — no Coremetry account needed.
-            Expires in 24 hours.
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: 11 }}>
+            <span style={{ color: 'var(--text2)' }}>Expires in:</span>
+            <select value={ttlHours}
+              onChange={e => setTtlHours(Number(e.target.value))}
+              style={{ fontSize: 11, padding: '2px 4px' }}>
+              <option value={1}>1 hour</option>
+              <option value={24}>24 hours</option>
+              <option value={24 * 7}>7 days</option>
+              <option value={24 * 30}>30 days</option>
+            </select>
           </div>
           {!publicURL ? (
             <button onClick={generatePublic} disabled={busy}
@@ -608,6 +656,39 @@ function SharePopover({ traceId }: { traceId: string }) {
           )}
           {error && (
             <div style={{ marginTop: 8, fontSize: 11, color: 'var(--err)' }}>{error}</div>
+          )}
+          {/* Active shares for this trace — operator audits
+              what's already out there + revokes leaks
+              without having to remember tokens. Empty list
+              hides the whole block so the popover stays
+              tidy when there's nothing to manage. */}
+          {shares.length > 0 && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)',
+                            textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 6 }}>
+                Active shares ({shares.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {shares.map(s => (
+                  <div key={s.token} style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    fontSize: 11, color: 'var(--text2)',
+                  }}>
+                    <span style={{
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }} title={`${s.createdBy || 'unknown'} · expires ${tsLong(s.expiresAt)}`}>
+                      …{s.token.slice(-8)} · {s.createdBy || 'unknown'}
+                    </span>
+                    <button onClick={() => revoke(s.token)}
+                      className="sec"
+                      style={{ fontSize: 10, padding: '2px 6px', color: 'var(--err)' }}>
+                      Revoke
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

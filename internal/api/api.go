@@ -212,6 +212,8 @@ func (s *Server) Start() error {
 	// user); GET resolves it without auth (the auth middleware's
 	// SkipPath allowlist lets it through).
 	mux.HandleFunc("POST /api/traces/{id}/share", s.createTraceSnapshot)
+	mux.HandleFunc("GET  /api/traces/{id}/shares", s.listTraceSnapshots)
+	mux.HandleFunc("DELETE /api/traces/share/{token}", s.revokeTraceSnapshot)
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
@@ -1922,8 +1924,9 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 // createTraceSnapshot mints a public-share token for the requested
 // trace. Any authenticated user can mint one; the public viewer
 // endpoint is gated only by token possession + expiry. Default
-// lifetime 24h; client can pass `?ttlHours=N` (capped to 7 days)
-// for longer-lived shares.
+// lifetime 24h; client can pass `?ttlHours=N` (capped to 30 days)
+// for longer-lived shares — vendors / support tickets routinely
+// need a working link past the 1-week mark.
 func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -1937,8 +1940,8 @@ func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "trace not found", http.StatusNotFound); return
 	}
 	ttlHours := parseInt(r.URL.Query().Get("ttlHours"), 24)
-	if ttlHours <= 0   { ttlHours = 24 }
-	if ttlHours > 24*7 { ttlHours = 24 * 7 }
+	if ttlHours <= 0      { ttlHours = 24 }
+	if ttlHours > 24*30   { ttlHours = 24 * 30 }
 
 	c := auth.FromContext(r.Context())
 	creator := ""
@@ -1974,6 +1977,46 @@ func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 		"url":       publicURL,
 		"expiresAt": snap.ExpiresAt,
 	})
+}
+
+// listTraceSnapshots returns the active (unexpired) public-share
+// links for a trace. Used by the share popover so the operator
+// sees what's already out there before minting another one —
+// avoids duplicate links for the same trace and lets them
+// revoke leaks.
+func (s *Server) listTraceSnapshots(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "trace id required", http.StatusBadRequest)
+		return
+	}
+	snaps, err := s.store.ListTraceSnapshots(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, snaps)
+}
+
+// revokeTraceSnapshot invalidates a share link immediately by
+// setting its expires_at to now. The public viewer's expiry
+// gate already returns 404 for expired tokens, so the next
+// request from anyone holding the link gets the "Snapshot not
+// found or expired" empty state. Any authenticated user can
+// revoke any token — share links are a soft secret and the
+// blast radius of an over-eager revoke is just "operator
+// has to mint a new one".
+func (s *Server) revokeTraceSnapshot(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if token == "" {
+		http.Error(w, "token required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.RevokeTraceSnapshot(r.Context(), token); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]string{"status": "revoked"})
 }
 
 // getPublicTrace resolves a public-share token and returns the

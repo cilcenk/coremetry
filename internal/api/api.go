@@ -778,11 +778,19 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("svc-bundle:svc=%s:since=%s:from=%s:to=%s",
 		svc, q.Get("since"), q.Get("from"), q.Get("to"))
-	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
+	// 60s soft TTL — every slot on this bundle is operator-
+	// curated (catalog, problems, operations summary, deploys)
+	// rather than per-span data; minute-grain freshness is
+	// indistinguishable to a human and the SWR tier from
+	// v0.5.36 extends stale-but-usable to 3 min. Combined
+	// with the v0.5.66 hover-prefetch this means most
+	// operator clicks within their session land on a HIT-L1.
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		type result struct {
 			Service    *chstore.ServiceSummary    `json:"service"`
 			Problems   []chstore.Problem          `json:"problems"`
 			Operations []chstore.OperationSummary `json:"operations"`
+			Deploys    []chstore.Deploy           `json:"deploys"`
 		}
 		out := &result{}
 
@@ -793,7 +801,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 		// blank the whole panel. WaitGroup keeps the
 		// goroutines bounded to this request's lifetime.
 		var wg sync.WaitGroup
-		wg.Add(3)
+		wg.Add(4)
 
 		go func() {
 			defer wg.Done()
@@ -832,6 +840,16 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			out.Operations = ops
+		}()
+
+		go func() {
+			defer wg.Done()
+			deps, err := s.store.GetServiceDeploys(r.Context(), svc, from, to)
+			if err != nil {
+				log.Printf("[svc-bundle] deploys %s: %v", svc, err)
+				return
+			}
+			out.Deploys = deps
 		}()
 
 		wg.Wait()

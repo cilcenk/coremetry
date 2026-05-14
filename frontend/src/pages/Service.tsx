@@ -15,6 +15,8 @@ import { SpanBreakdownChart } from '@/components/SpanBreakdownChart';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
+import { useQueryClient } from '@tanstack/react-query';
+import { keys } from '@/lib/queries/keys';
 import type { Service, Problem, TimeRange, OperationSummary } from '@/lib/types';
 
 const SINCE_MAP: Record<string, string> = {
@@ -27,6 +29,7 @@ function ServiceDetailInner() {
   const [searchParams] = useSearchParams();
   const svc = searchParams.get('name') ?? '';
 
+  const queryClient = useQueryClient();
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
   const [info, setInfo] = useState<Service | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
@@ -38,25 +41,38 @@ function ServiceDetailInner() {
     setLoading(true);
     const r = timeRangeToNs(range);
     // Single bundled fetch — the backend fans out KPI lookup,
-    // problems list, and operations table to CH in parallel
-    // goroutines and ships one JSON response, cached 15s. Net
-    // effect at billion-span scale: 3 network round trips +
-    // 3 serial CH cold-cache costs collapse into 1 round trip
-    // and 1 parallel CH window. Heatmap / RED charts / cluster
-    // breakdown stay separate; they own their own time-window
-    // semantics (compare period, lazy mount) the bundle can't
-    // bake in without coupling.
+    // problems list, operations table, and deploy markers to
+    // CH in parallel goroutines and ships one JSON response,
+    // cached 60s with SWR. At billion-span scale: 4 network
+    // round trips + 4 serial CH cold-cache costs collapse
+    // into 1 round trip and 1 parallel CH window. Heatmap /
+    // RED charts / cluster breakdown stay separate; they
+    // own their own time-window semantics (compare period,
+    // lazy mount) the bundle can't bake in without coupling.
+    //
+    // Bundle's deploys slot is hand-seeded into the React
+    // Query cache under the deploys-forService key, so the
+    // ServiceCharts component's useServiceDeploys hook
+    // resolves instantly (cache HIT) instead of firing its
+    // own /api/services/.../deploys round trip below the
+    // fold. Same window the bundle is for.
     api.serviceBundle(svc, r)
       .then(b => {
         setInfo(b?.service ?? null);
         setProblems(b?.problems ?? []);
         setOperations(b?.operations ?? []);
+        if (b?.deploys) {
+          queryClient.setQueryData(
+            keys.deploys.forService(svc, r.from ?? 0, r.to ?? 0),
+            b.deploys,
+          );
+        }
       })
       .catch(() => {
         setInfo(null); setProblems([]); setOperations([]);
       })
       .finally(() => setLoading(false));
-  }, [svc, range]);
+  }, [svc, range, queryClient]);
 
   if (!svc) {
     return (

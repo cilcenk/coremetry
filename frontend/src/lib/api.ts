@@ -651,6 +651,7 @@ export const api = {
       service:    Service | null;
       problems:   import('./types').Problem[] | null;
       operations: OperationSummary[] | null;
+      deploys:    import('./types').Deploy[] | null;
     }>(`/api/services/${encodeURIComponent(svc)}/bundle?${qs(r)}`),
   serviceCallers: (svc: string, since: string) =>
     get<ServiceEdgeStats[] | null>(`/api/services/${encodeURIComponent(svc)}/callers?since=${since}`),

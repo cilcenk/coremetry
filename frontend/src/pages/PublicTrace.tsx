@@ -50,10 +50,21 @@ function PublicTraceInner() {
     </Empty>;
   }
 
+  // Empty span list is possible (snapshot of an in-progress trace
+  // whose root hasn't been flushed, or a trace with all spans
+  // dropped by sampling). Without the null guard, `root.startTime`
+  // below crashes the whole public viewer with a white screen
+  // instead of showing the "no spans" empty state.
+  if (!data.spans || data.spans.length === 0) {
+    return <Empty icon="⚠" title="Snapshot has no spans">
+      The trace was captured but no spans are attached — the link is valid
+      but there's nothing to render.
+    </Empty>;
+  }
   const sel = data.spans.find(s => s.spanId === selectedId) ?? null;
   const root = data.spans.find(s => !s.parentSpanId) ?? data.spans[0];
-  const minT = data.spans.length ? Math.min(...data.spans.map(s => s.startTime)) : 0;
-  const maxT = data.spans.length ? Math.max(...data.spans.map(s => s.endTime)) : 0;
+  const minT = Math.min(...data.spans.map(s => s.startTime));
+  const maxT = Math.max(...data.spans.map(s => s.endTime));
   const totalNs = maxT - minT;
   const hasErr = data.spans.some(s => s.statusCode === 'error');
 

@@ -2174,10 +2174,19 @@ function SSOPresetsTab() {
   const active = presets.find(p => p.key === activeKey) ?? presets[0];
   const [copied, setCopied] = useState(false);
   const copy = () => {
-    navigator.clipboard.writeText(active.yaml).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    navigator.clipboard.writeText(active.yaml)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {
+        // Clipboard API can reject when the page isn't in a
+        // secure context, when the tab loses focus mid-call,
+        // or when the user denied permission. Silent fail —
+        // the operator still has the visible YAML to copy
+        // manually. Without the catch this surfaces as an
+        // unhandled promise rejection in the console.
+      });
   };
   return (
     <div style={{ maxWidth: 920 }}>

@@ -3,6 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { MetricPoint } from '@/lib/types';
 import { fmtSmart, seriesColor } from '@/lib/chartFmt';
+import { escapeHTML } from '@/lib/utils';
 
 // uPlot single-series chart. Replaces Chart.js for the metric
 // drill-down view. Three load-bearing options:
@@ -157,11 +158,12 @@ export function MetricChart({
             const mm = d.getMinutes().toString().padStart(2, '0');
             const ss = d.getSeconds().toString().padStart(2, '0');
             const valStr = fmtSmart(yVal as number, unit);
+            const safeName = escapeHTML(name);
             tip.innerHTML =
               `<div style="font-weight:600;margin-bottom:2px">${hh}:${mm}:${ss}</div>` +
               `<div style="display:flex;gap:8px;align-items:center">` +
                 `<span style="display:inline-block;width:8px;height:8px;background:${lineColor};border-radius:2px"></span>` +
-                `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${name}">${name}</span>` +
+                `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${safeName}">${safeName}</span>` +
                 `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${valStr}</span>` +
               `</div>`;
             tip.style.opacity = '1';

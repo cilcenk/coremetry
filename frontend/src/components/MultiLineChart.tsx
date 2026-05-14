@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
+import { escapeHTML } from '@/lib/utils';
 import type { SpanMetricSeries } from '@/lib/types';
 import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 
@@ -428,23 +429,26 @@ export function MultiLineChart({
                 }
               }
               if (nearest) {
+                const lbl = escapeHTML(nearest.label);
+                const desc = nearest.description ? ' — ' + escapeHTML(nearest.description) : '';
                 deployRow =
                   `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">` +
                     `<span style="display:inline-block;width:8px;height:8px;background:#a371f7;border-radius:2px;flex-shrink:0"></span>` +
-                    `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${nearest.label}${nearest.description ? ' — ' + nearest.description : ''}">deploy ${nearest.label}</span>` +
+                    `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${lbl}${desc}">deploy ${lbl}</span>` +
                   `</div>`;
               }
             }
             tip.innerHTML =
               `<div style="font-weight:600;margin-bottom:4px">${hh}:${mm}:${ss}</div>` +
               deployRow +
-              rows.map(r =>
-                `<div style="display:flex;gap:8px;align-items:center;line-height:1.5">` +
+              rows.map(r => {
+                const lbl = escapeHTML(r.label);
+                return `<div style="display:flex;gap:8px;align-items:center;line-height:1.5">` +
                   `<span style="display:inline-block;width:8px;height:8px;background:${r.color};border-radius:2px;flex-shrink:0"></span>` +
-                  `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="${r.label}">${r.label}</span>` +
+                  `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="${lbl}">${lbl}</span>` +
                   `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${fmt(r.v)}</span>` +
-                `</div>`,
-              ).join('');
+                `</div>`;
+              }).join('');
             tip.style.opacity = '1';
             // Position: by default 12px right + below the
             // cursor. If the tooltip would clip past the

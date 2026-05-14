@@ -44,6 +44,23 @@ export function fmtNum(n: number): string {
   return String(n);
 }
 
+// escapeHTML — minimal HTML-entity escape for safely
+// interpolating untrusted strings into innerHTML template
+// literals (chart tooltips, etc.). Covers the five chars
+// that change the parse tree (& < > " '). Span attributes
+// are operator-controllable but ultimately a malicious
+// ingester could ship `service.name = "<script>"` and trip
+// XSS at render time; wrapping any interpolation site keeps
+// the rendered string inert.
+export function escapeHTML(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Binary unit formatter — KiB / MiB / GiB / TiB. Hoisted from
 // ServiceInfra.tsx where it was duplicated locally; the
 // cardinality page also needs it for column-bytes columns.

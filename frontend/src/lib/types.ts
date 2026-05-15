@@ -27,6 +27,32 @@ export interface TopologyResponse {
   truncated: boolean;
 }
 
+// Service-level topology (v0.5.102) — collapses ops into the
+// service node, includes synthetic infra nodes (db, queue, ext)
+// and protocol-tagged edges with top endpoint labels.
+export type ServiceTopologyNodeKind = 'service' | 'db' | 'queue' | 'external';
+export interface ServiceTopologyNode {
+  id: string;
+  name: string;
+  kind: ServiceTopologyNodeKind;
+}
+export interface ServiceTopologyEdge {
+  parentService: string;
+  childNode: string;
+  nodeKind: ServiceTopologyNodeKind;
+  protocol: string;       // "http" | "rpc" | "kafka" | "db" | "internal"
+  topLabels: string[];    // up to 5 most-frequent labels
+  distinctLabels: number;
+  calls: number;
+}
+export interface ServiceTopologyResponse {
+  nodes: ServiceTopologyNode[];
+  edges: ServiceTopologyEdge[];
+  from: number;
+  to: number;
+  truncated: boolean;
+}
+
 // One row of the system status grid on /status. Mirrors the
 // componentStatus / systemStatus types in internal/api.
 // ── Incident management ──────────────────────────────────────────────────────

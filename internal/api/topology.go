@@ -153,6 +153,101 @@ func splitNodeID(id string) (svc, op string) {
 	return id, ""
 }
 
+// ServiceTopologyResponse is the JSON shape served by
+// /api/topology/service — flat node + edge lists matching the
+// chstore ServiceTopologyEdge model. Includes the time window so
+// the UI can render the active window and a draw.io export can
+// embed it in the filename.
+type ServiceTopologyResponse struct {
+	Nodes     []ServiceTopologyNode         `json:"nodes"`
+	Edges     []chstore.ServiceTopologyEdge `json:"edges"`
+	From      int64                         `json:"from"`
+	To        int64                         `json:"to"`
+	Truncated bool                          `json:"truncated"`
+}
+
+// ServiceTopologyNode is one node in the service-level graph.
+// Kind distinguishes a real service from synthetic infra nodes
+// (db, queue, cache, external) so the renderer can paint them
+// differently without per-node lookup.
+type ServiceTopologyNode struct {
+	ID   string `json:"id"`   // canonical id used by edges (service name OR "db:postgresql")
+	Name string `json:"name"` // display label, sans prefix for infra ("postgresql" not "db:postgresql")
+	Kind string `json:"kind"` // "service" | "db" | "queue" | "external"
+}
+
+// getServiceTopology delivers the full service-level interaction
+// graph for a time window. No depth bound — the entire backend
+// fabric is small enough (tens to low hundreds of services) to
+// render in one view; the SVG layout below handles overflow via
+// scrolling. The depth-bounded op-level view at /api/topology
+// remains in place for "what does service X talk to" deep dives.
+func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
+	const edgeCap = 5000
+	from, to := parseFromTo(r, 1*time.Hour)
+	edges, err := s.store.GetServiceTopologyEdges(r.Context(), from, to, edgeCap)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	// Drop "external" edges whose peer_service points at a known
+	// instrumented service — those already show as cross-service
+	// edges from the join pass. Without this, a client→server
+	// hop renders twice: once as a real service edge, once as
+	// "frontend → ext:api-gateway". Only un-instrumented peers
+	// (third-party APIs, legacy systems) survive the filter.
+	knownServices := map[string]bool{}
+	for _, e := range edges {
+		if e.NodeKind == "service" {
+			knownServices[e.ParentService] = true
+			knownServices[e.ChildNode] = true
+		}
+	}
+	filtered := edges[:0]
+	for _, e := range edges {
+		if e.NodeKind == "external" {
+			peer := strings.TrimPrefix(e.ChildNode, "ext:")
+			if knownServices[peer] {
+				continue
+			}
+		}
+		filtered = append(filtered, e)
+	}
+	edges = filtered
+	nodes := map[string]ServiceTopologyNode{}
+	addNode := func(id, kind string) {
+		if _, ok := nodes[id]; ok {
+			return
+		}
+		name := id
+		if kind != "service" {
+			for _, p := range []string{"db:", "queue:", "ext:"} {
+				if strings.HasPrefix(name, p) {
+					name = name[len(p):]
+					break
+				}
+			}
+		}
+		nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
+	}
+	for _, e := range edges {
+		addNode(e.ParentService, "service")
+		addNode(e.ChildNode, e.NodeKind)
+	}
+	nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
+	for _, n := range nodes {
+		nodesOut = append(nodesOut, n)
+	}
+	sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+	writeJSON(w, ServiceTopologyResponse{
+		Nodes:     nodesOut,
+		Edges:     edges,
+		From:      from.UnixNano(),
+		To:        to.UnixNano(),
+		Truncated: len(edges) >= edgeCap,
+	})
+}
+
 // exportTopologyDrawIO serialises the same topology response as
 // /api/topology but as a draw.io (mxGraph) XML document. Layered
 // layout: each BFS hop is a column at x=hop*240, nodes within a

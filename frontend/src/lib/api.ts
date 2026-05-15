@@ -173,6 +173,11 @@ export const api = {
     get<import('./types').TopologyResponse>(`/api/topology?${qs(params)}`),
   topologyDrawIOURL: (params: { root: string; depth?: number; from?: number; to?: number }) =>
     `/api/topology/drawio?${qs(params)}`,
+  // Service-level topology (v0.5.102) — full backend graph with
+  // protocol/method labels + infra nodes. No depth bound; the
+  // service fabric is generally small enough to draw whole.
+  serviceTopology: (params: { from?: number; to?: number }) =>
+    get<import('./types').ServiceTopologyResponse>(`/api/topology/service?${qs(params)}`),
 
   // Inbound-callers backtrace — Dynatrace-style consumer view.
   // Returns a row per (caller service × pod/instance × client IP ×

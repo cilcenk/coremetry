@@ -185,13 +185,13 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 			uniqExact(label) AS distinct_labels,
 			count() AS calls
 		FROM spans AS c
-		INNER JOIN (
+		INNER GLOBAL JOIN (
 			SELECT trace_id, span_id, service_name
 			FROM spans
 			WHERE time >= ? AND time <= ?
 		) AS p
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
-		WHERE c.trace_id IN (SELECT trace_id FROM root_traces)
+		WHERE c.trace_id GLOBAL IN (SELECT trace_id FROM root_traces)
 		  AND c.time >= ? AND c.time <= ?
 		  AND c.parent_id != ''
 		  AND p.service_name != c.service_name
@@ -201,7 +201,8 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 		SETTINGS max_execution_time = 60,
 		         join_algorithm = 'grace_hash',
 		         max_bytes_in_join = 2000000000,
-		         max_memory_usage = 4000000000`,
+		         max_memory_usage = 4000000000,
+		         distributed_product_mode = 'global'`,
 		rootService, rootOp, from, to,
 		from, to, from, to, limit,
 	)
@@ -262,13 +263,14 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 			uniqExact(label) AS distinct_labels,
 			count() AS calls
 		FROM spans
-		WHERE trace_id IN (SELECT trace_id FROM root_traces)
+		WHERE trace_id GLOBAL IN (SELECT trace_id FROM root_traces)
 		  AND time >= ? AND time <= ?
 		  AND child != ''
 		GROUP BY parent_service, child, proto, kind_out
 		ORDER BY calls DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 30,
+		         distributed_product_mode = 'global'`,
 		rootService, rootOp, from, to,
 		from, to, limit,
 	)
@@ -343,7 +345,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt64(count())     AS calls,
 			toUInt64(?)           AS version
 		FROM spans AS c
-		INNER JOIN (
+		INNER GLOBAL JOIN (
 			SELECT trace_id, span_id, service_name
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
@@ -356,7 +358,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',
 		         max_bytes_in_join = 4000000000,
-		         max_memory_usage = 8000000000`,
+		         max_memory_usage = 8000000000,
+		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
 		bucketStart.Unix(), end.Unix(),
@@ -438,7 +441,7 @@ func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time
 			toUInt64(count()) AS calls,
 			toUInt64(?)    AS version
 		FROM spans AS c
-		INNER JOIN (
+		INNER GLOBAL JOIN (
 			SELECT trace_id, span_id, service_name, name
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
@@ -450,7 +453,8 @@ func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',
 		         max_bytes_in_join = 4000000000,
-		         max_memory_usage = 8000000000`,
+		         max_memory_usage = 8000000000,
+		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
 		bucketStart.Unix(), end.Unix(),
@@ -522,7 +526,7 @@ func (s *Store) WriteRootFlowsBucket(ctx context.Context, bucketStart time.Time)
 			groupUniqArrayArray(50)(arrayDistinct([sp.service_name])) AS services,
 			toUInt64(?) AS version
 		FROM root_traces AS rt
-		INNER JOIN (
+		INNER GLOBAL JOIN (
 			SELECT trace_id, service_name
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
@@ -531,7 +535,8 @@ func (s *Store) WriteRootFlowsBucket(ctx context.Context, bucketStart time.Time)
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',
 		         max_bytes_in_join = 4000000000,
-		         max_memory_usage = 8000000000`,
+		         max_memory_usage = 8000000000,
+		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(), end.Unix(),
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),

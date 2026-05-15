@@ -187,7 +187,7 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 			uniqExact(label) AS distinct_labels,
 			count() AS calls
 		FROM spans AS c
-		INNER GLOBAL JOIN (
+		GLOBAL INNER JOIN (
 			SELECT trace_id, span_id, service_name
 			FROM spans
 			WHERE time >= ? AND time <= ?
@@ -350,7 +350,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toFloat64(quantileExact(0.99)(c.duration)) / 1e6 AS p99_ms,
 			toUInt64(?)           AS version
 		FROM spans AS c
-		INNER GLOBAL JOIN (
+		GLOBAL INNER JOIN (
 			SELECT trace_id, span_id, service_name
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
@@ -459,7 +459,7 @@ func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time
 			toUInt64(count()) AS calls,
 			toUInt64(?)    AS version
 		FROM spans AS c
-		INNER GLOBAL JOIN (
+		GLOBAL INNER JOIN (
 			SELECT trace_id, span_id, service_name, name
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
@@ -544,7 +544,7 @@ func (s *Store) WriteRootFlowsBucket(ctx context.Context, bucketStart time.Time)
 			groupUniqArrayArray(50)(arrayDistinct([sp.service_name])) AS services,
 			toUInt64(?) AS version
 		FROM root_traces AS rt
-		INNER GLOBAL JOIN (
+		GLOBAL INNER JOIN (
 			SELECT trace_id, service_name
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')

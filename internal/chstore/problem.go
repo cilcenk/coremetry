@@ -34,6 +34,12 @@ type AlertRule struct {
 	// percentile metrics (a 1-request window with 1 error = 100%
 	// error_rate, which is meaningless). 0 = no floor.
 	MinSamples uint32 `json:"minSamples"`
+	// CooldownSec is the post-resolution silence window (v0.5.129).
+	// After a problem auto-resolves the evaluator suppresses re-
+	// opens on the same (rule, service) for this many seconds —
+	// kills threshold-jitter flapping where the value oscillates
+	// at the boundary. 0 = re-open immediately.
+	CooldownSec uint32 `json:"cooldownSec"`
 	// RunbookURL — optional link an oncall reaches when the
 	// rule fires. Surfaces on Problem detail + alert
 	// notifications. Empty = no runbook configured.
@@ -314,7 +320,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL
 		ORDER BY created_at DESC`)
 	if err != nil {
@@ -327,7 +333,8 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		var enabled, builtIn uint8
 		if err := rows.Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator,
 			&r.Threshold, &r.WindowSec, &r.Severity, &enabled, &builtIn,
-			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CreatedAt); err != nil {
+			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
+			&r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Enabled = enabled == 1
@@ -347,11 +354,11 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO alert_rules
 		(id, name, service, metric, comparator, threshold, window_sec,
 		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		 created_at, version)`)
+		 cooldown_sec, created_at, version)`)
 	if err != nil { return err }
 	if err := batch.Append(r.ID, r.Name, r.Service, r.Metric, r.Comparator,
 		r.Threshold, r.WindowSec, r.Severity, enabled, builtIn,
-		r.RunbookURL, r.ForSec, r.MinSamples,
+		r.RunbookURL, r.ForSec, r.MinSamples, r.CooldownSec,
 		time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
 		return err
 	}
@@ -381,11 +388,11 @@ func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error)
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL WHERE id = ? LIMIT 1`, id).
 		Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator, &r.Threshold,
 			&r.WindowSec, &r.Severity, &enabled, &builtIn,
-			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CreatedAt)
+			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec, &r.CreatedAt)
 	if err != nil { return nil, err }
 	r.Enabled = enabled == 1
 	r.BuiltIn = builtIn == 1

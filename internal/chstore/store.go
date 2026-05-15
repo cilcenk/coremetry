@@ -460,6 +460,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			runbook_url  String       DEFAULT '',
 			for_sec      UInt32       DEFAULT 0,
 			min_samples  UInt32       DEFAULT 0,
+			cooldown_sec UInt32       DEFAULT 0,
 			created_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -824,6 +825,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// saw fewer than N requests — kills percentile / error-
 		// rate flapping on low-traffic services.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS min_samples UInt32 DEFAULT 0`,
+		// v0.5.129 post-resolution cooldown. 0 = re-open
+		// immediately. When > 0 the evaluator suppresses re-
+		// opens within N seconds of the last resolution —
+		// kills threshold-jitter flapping at the boundary.
+		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS cooldown_sec UInt32 DEFAULT 0`,
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS sre_team String DEFAULT ''`,
 		// chat_channel — successor to slack_channel. Existing
 		// rows with a populated slack_channel keep showing it

@@ -36,7 +36,12 @@ type Evaluator struct {
 	// breachMu — the evaluator runs single-leader per tick but
 	// the seed call + tests can touch it concurrently.
 	breachSince map[breachKey]time.Time
-	breachMu    sync.Mutex
+	// lastResolved stamps when a problem on (rule, service) last
+	// auto-resolved. Used by the v0.5.129 cooldown gate
+	// (AlertRule.CooldownSec): re-opens within the cooldown
+	// window are suppressed to absorb threshold-jitter flap.
+	lastResolved map[breachKey]time.Time
+	breachMu     sync.Mutex
 }
 
 type breachKey struct {
@@ -52,11 +57,12 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 		interval = time.Minute
 	}
 	return &Evaluator{
-		store:       store,
-		interval:    interval,
-		lock:        lock,
-		notifier:    notifier,
-		breachSince: make(map[breachKey]time.Time),
+		store:        store,
+		interval:     interval,
+		lock:         lock,
+		notifier:     notifier,
+		breachSince:  make(map[breachKey]time.Time),
+		lastResolved: make(map[breachKey]time.Time),
 	}
 }
 
@@ -344,6 +350,18 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 
 	switch {
 	case breached && !hasOpen:
+		// Cooldown gate (v0.5.129): if this (rule, service)
+		// just auto-resolved, hold off re-opening until the
+		// cooldown window passes. Threshold-jitter near the
+		// boundary stops producing OPEN/RESOLVED churn.
+		if r.CooldownSec > 0 {
+			e.breachMu.Lock()
+			rt, seen := e.lastResolved[key]
+			e.breachMu.Unlock()
+			if seen && now.Sub(rt) < time.Duration(r.CooldownSec)*time.Second {
+				return
+			}
+		}
 		// Open a new problem
 		p := chstore.Problem{
 			ID:          newID(),
@@ -397,13 +415,18 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 
 	case !breached && hasOpen:
 		// Auto-resolve
-		now := time.Now().UnixNano()
+		resolvedAt := time.Now().UnixNano()
 		open.Status = "resolved"
-		open.ResolvedAt = &now
+		open.ResolvedAt = &resolvedAt
 		open.Value = value
 		if err := e.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[evaluator] resolve problem: %v", err)
 		} else {
+			// Stamp the resolution so v0.5.129's CooldownSec
+			// gate can suppress immediate re-opens.
+			e.breachMu.Lock()
+			e.lastResolved[key] = time.Now()
+			e.breachMu.Unlock()
 			log.Printf("[evaluator] PROBLEM RESOLVED: %s · %s", service, r.Metric)
 		}
 	}

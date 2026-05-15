@@ -422,14 +422,20 @@ function FlowsView({ range }: { range: TimeRange }) {
   const [picked, setPicked] = useState<RootFlow | null>(null);
   const [pickedData, setPickedData] = useState<ServiceTopologyResponse | null | undefined>(undefined);
   const [selectedEdge, setSelectedEdge] = useState<ServiceTopologyEdge | null>(null);
+  // Operator-controllable cap on the flow list. Default 100
+  // covers most installs; slider goes up to 200 (server-side
+  // hard cap) for the rare deployment with hundreds of distinct
+  // root endpoints. Pre-aggregated table, so widening is cheap.
+  const [top, setTop] = useState(100);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     setFlows(undefined);
     setPicked(null);
     const { from, to } = timeRangeToNs(range);
-    api.topologyFlows({ top: 20, from, to }).then(d => setFlows(d.flows ?? []))
+    api.topologyFlows({ top, from, to }).then(d => setFlows(d.flows ?? []))
       .catch(() => setFlows(null));
-  }, [range]);
+  }, [range, top]);
 
   useEffect(() => {
     if (!picked) { setPickedData(undefined); return; }
@@ -450,11 +456,36 @@ function FlowsView({ range }: { range: TimeRange }) {
     </Empty>;
   }
 
+  // Client-side substring filter so an operator can narrow a
+  // 200-flow list to "show me everything POST /payment".
+  const term = search.trim().toLowerCase();
+  const visibleFlows = !term
+    ? flows
+    : flows.filter(f =>
+        f.rootOp.toLowerCase().includes(term)
+        || f.rootService.toLowerCase().includes(term));
+
   return (
     <>
       {!picked && (
-        <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
-          {flows.map((f, i) => (
+        <>
+          <div className="controls" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+            <input type="search" placeholder="Search flows…"
+              value={search} onChange={e => setSearch(e.target.value)}
+              style={{ fontSize: 12, padding: '3px 8px', width: 220 }}
+              title="Substring match on root op or root service" />
+            <label style={{ fontSize: 12, color: 'var(--text2)' }}>Show top</label>
+            <input type="range" min={20} max={200} step={10} value={top}
+              onChange={e => setTop(parseInt(e.target.value, 10))}
+              style={{ width: 140 }}
+              title="How many root flows to fetch — backend cap is 200" />
+            <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{top}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+              {visibleFlows.length}/{flows.length} flows
+            </span>
+          </div>
+          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
+          {visibleFlows.map((f, i) => (
             <button key={i} type="button"
               onClick={() => setPicked(f)}
               style={{
@@ -483,7 +514,8 @@ function FlowsView({ range }: { range: TimeRange }) {
               </div>
             </button>
           ))}
-        </div>
+          </div>
+        </>
       )}
       {picked && (
         <>

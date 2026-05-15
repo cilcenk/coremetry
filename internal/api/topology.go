@@ -393,6 +393,38 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getTopologyEdgeInstances returns the per-peer_service
+// breakdown for an infra edge (db / queue). Powers the
+// EdgeDetailPanel's per-instance section so the operator can see
+// which postgres / kafka instance is hot without leaving
+// /topology. Cached 60s on the (parent, system, kind, window)
+// tuple — the data feeds a triage popover that re-opens
+// repeatedly while the operator scans.
+func (s *Server) getTopologyEdgeInstances(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	parent := q.Get("parent")
+	system := q.Get("system")
+	kind := q.Get("kind") // "db" | "queue"
+	if parent == "" || system == "" || (kind != "db" && kind != "queue") {
+		http.Error(w, "parent, system, and kind=db|queue required", http.StatusBadRequest)
+		return
+	}
+	from, to := parseFromTo(r, 1*time.Hour)
+	key := fmt.Sprintf("topology-edge-instances:p=%s:s=%s:k=%s:from=%d:to=%d",
+		parent, system, kind,
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		instances, err := s.store.GetEdgeInstances(r.Context(), parent, system, kind, from, to, 50)
+		if err != nil {
+			return nil, err
+		}
+		if instances == nil {
+			instances = []chstore.EdgeInstance{}
+		}
+		return map[string]any{"instances": instances}, nil
+	})
+}
+
 // getTopologyOps lists the operations that appear as outbound
 // callers for a given service in the window. Used by the
 // operation deep-dive view to populate the op picker once the

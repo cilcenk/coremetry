@@ -292,7 +292,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             onNodeClick={onNodeClick}
           />
           {selectedEdge && (
-            <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
+            <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} />
           )}
         </>
       )}
@@ -546,7 +546,7 @@ function FlowsView({ range }: { range: TimeRange }) {
                 onEdgeClick={setSelectedEdge}
               />
               {selectedEdge && (
-                <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
+                <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} />
               )}
             </>
           )}
@@ -877,10 +877,43 @@ function OpTopologySVG({ layers, edges }: {
   );
 }
 
-function EdgeDetailPanel({ edge, onClose }: {
+function EdgeDetailPanel({ edge, onClose, range }: {
   edge: ServiceTopologyEdge;
   onClose: () => void;
+  range?: TimeRange;
 }) {
+  // Per-instance breakdown for infra edges (v0.5.142). Lazy-
+  // fetched the first time the panel renders for a db/queue
+  // edge; cached client-side via the api layer so re-opening
+  // the same edge is instant. Empty for service-service edges.
+  const isInfra = edge.nodeKind === 'db' || edge.nodeKind === 'queue';
+  const [instances, setInstances] = useState<
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'ok'; rows: Array<{ instance: string; calls: number; avgMs: number; p99Ms: number }> }
+    | { kind: 'err'; msg: string }
+  >({ kind: 'idle' });
+  useEffect(() => {
+    if (!isInfra || !range) return;
+    // childNode = "db:postgresql" / "queue:kafka" — strip prefix
+    // to get the system column value the backend filters on.
+    const colonAt = edge.childNode.indexOf(':');
+    if (colonAt < 0) return;
+    const system = edge.childNode.slice(colonAt + 1);
+    setInstances({ kind: 'loading' });
+    const { from, to } = timeRangeToNs(range);
+    api.topologyEdgeInstances({
+      parent: edge.parentService,
+      system,
+      kind: edge.nodeKind as 'db' | 'queue',
+      from, to,
+    })
+      .then(d => setInstances({ kind: 'ok', rows: d.instances ?? [] }))
+      .catch(err => setInstances({
+        kind: 'err',
+        msg: err instanceof Error ? err.message : 'Failed to load instances',
+      }));
+  }, [edge, isInfra, range]);
   return (
     <div style={{
       background: 'var(--bg2)', border: '1px solid var(--border)',
@@ -904,6 +937,54 @@ function EdgeDetailPanel({ edge, onClose }: {
       {edge.distinctLabels > edge.topLabels.length && (
         <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)' }}>
           Showing top {edge.topLabels.length} of {edge.distinctLabels} distinct endpoints.
+        </div>
+      )}
+      {isInfra && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed var(--border)' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>
+            Per-instance breakdown
+          </div>
+          {instances.kind === 'loading' && (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>Loading…</div>
+          )}
+          {instances.kind === 'err' && (
+            <div style={{ fontSize: 11, color: 'var(--err)' }}>{instances.msg}</div>
+          )}
+          {instances.kind === 'ok' && instances.rows.length === 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+              No peer_service tagged for this edge in the current window.
+            </div>
+          )}
+          {instances.kind === 'ok' && instances.rows.length > 0 && (
+            <table style={{
+              width: '100%', fontSize: 11,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            }}>
+              <thead>
+                <tr style={{ color: 'var(--text3)', textAlign: 'left' }}>
+                  <th>Instance</th>
+                  <th style={{ textAlign: 'right' }}>Calls</th>
+                  <th style={{ textAlign: 'right' }}>Avg ms</th>
+                  <th style={{ textAlign: 'right' }}>P99 ms</th>
+                </tr>
+              </thead>
+              <tbody>
+                {instances.rows.map(r => (
+                  <tr key={r.instance}>
+                    <td>{r.instance}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtNum(r.calls)}</td>
+                    <td style={{ textAlign: 'right' }}>{r.avgMs.toFixed(1)}</td>
+                    <td style={{ textAlign: 'right',
+                      color: r.p99Ms > 1000 ? '#dc2626'
+                        : r.p99Ms > 250 ? '#d97706'
+                        : undefined }}>
+                      {r.p99Ms.toFixed(0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>

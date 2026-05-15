@@ -291,6 +291,72 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 	return out, infra.Err()
 }
 
+// EdgeInstance is one (peer_service) bucket for an infra edge —
+// the actual host / cluster behind a `db:postgresql` or
+// `queue:kafka` node. Drives the EdgeDetailPanel "per-instance"
+// expand in topology so the operator can see which postgres
+// instance is hot without leaving the diagram.
+type EdgeInstance struct {
+	Instance string  `json:"instance"`
+	Calls    uint64  `json:"calls"`
+	AvgMs    float64 `json:"avgMs"`
+	P99Ms    float64 `json:"p99Ms"`
+}
+
+// GetEdgeInstances returns the peer_service breakdown for one
+// (parentService, system, kind) edge over [from, to]. Bounded by
+// the spans (service_name, time) primary key + filtered by
+// db_system / msg_system so the scan stays tight even at
+// billions of spans/day. Limit caps the buckets — 50 hosts is
+// more than enough for any realistic per-service db/queue fan-out.
+//
+// kind: "db" → filter by db_system; "queue" → filter by msg_system.
+// Returns empty slice when nothing matches (empty window).
+func (s *Store) GetEdgeInstances(ctx context.Context, parentService, system, kind string, from, to time.Time, limit int) ([]EdgeInstance, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var sysCol string
+	switch kind {
+	case "db":
+		sysCol = "db_system"
+	case "queue":
+		sysCol = "msg_system"
+	default:
+		return []EdgeInstance{}, nil
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+			coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
+			toUInt64(count())                              AS calls,
+			toFloat64(avg(duration)) / 1e6                 AS avg_ms,
+			toFloat64(quantile(0.99)(duration)) / 1e6      AS p99_ms
+		FROM spans
+		WHERE service_name = ?
+		  AND `+sysCol+` = ?
+		  AND time >= ? AND time <= ?
+		GROUP BY instance
+		ORDER BY calls DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10,
+		         distributed_product_mode = 'global'`,
+		parentService, system, from, to, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []EdgeInstance{}
+	for rows.Next() {
+		var e EdgeInstance
+		if err := rows.Scan(&e.Instance, &e.Calls, &e.AvgMs, &e.P99Ms); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // WriteTopologyBucket aggregates the service-level topology for
 // one 5-min window and inserts the result rows into
 // topology_edges_5m. Two passes (cross-service join + infra

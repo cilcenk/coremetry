@@ -202,6 +202,12 @@ export const api = {
   // the operation deep-dive view).
   topologyOps: (params: { service: string; from?: number; to?: number }) =>
     get<{ ops: string[] | null }>(`/api/topology/ops?${qs(params)}`),
+  // Per-instance breakdown for one infra edge (v0.5.142). 60s
+  // server cache; UI fetches lazily when the operator opens the
+  // edge detail panel for a db/queue edge.
+  topologyEdgeInstances: (params: { parent: string; system: string; kind: 'db' | 'queue'; from?: number; to?: number }) =>
+    get<{ instances: Array<{ instance: string; calls: number; avgMs: number; p99Ms: number }> }>(
+      `/api/topology/edge/instances?${qs(params)}`),
   topologyDrawIOURL: (params: { root: string; depth?: number; from?: number; to?: number }) =>
     `/api/topology/drawio?${qs(params)}`,
   // Service-level topology (v0.5.102) — full backend graph with

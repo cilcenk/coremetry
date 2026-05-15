@@ -9,7 +9,7 @@ import {
 } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
-import type { AlertRule, TimeRange } from '@/lib/types';
+import type { AlertRule, NoisyRule, TimeRange } from '@/lib/types';
 
 const METRICS = [
   { v: 'error_rate',   label: 'Error rate (%)' },
@@ -114,6 +114,33 @@ export default function AlertsPage() {
       .catch(() => {});
   }, []);
 
+  // Noisy-rules report (v0.5.131). 24h window by default; server
+  // caches the heavy GROUP BY for 5 min so a fleet of operators
+  // hitting /alerts at the same time shares one round-trip.
+  const [noisy, setNoisy] = useState<NoisyRule[] | null>(null);
+  useEffect(() => {
+    api.alertTuningNoisyRules('24h', 10)
+      .then(r => setNoisy((r?.rules ?? []).filter(n => n.suggestion !== '')))
+      .catch(() => setNoisy(null));
+  }, []);
+  const applySuggestion = (n: NoisyRule) => {
+    const base = (rules ?? []).find(r => r.id === n.ruleId);
+    if (!base) return;
+    setDraft({
+      ...base,
+      forSec:      n.suggestedForSec      ?? base.forSec      ?? 0,
+      minSamples:  n.suggestedMinSamples  ?? base.minSamples  ?? 0,
+      cooldownSec: n.suggestedCooldownSec ?? base.cooldownSec ?? 0,
+    });
+    setEditingId(n.ruleId);
+    setShowForm(true);
+    // Scroll the form into view so the operator sees the
+    // suggested values immediately.
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 0);
+  };
+
   const startEdit = (r: AlertRule) => {
     setDraft({ ...r });
     setEditingId(r.id);
@@ -156,6 +183,63 @@ export default function AlertsPage() {
             {showForm ? 'Cancel' : '+ New alert rule'}
           </button>
         </div>
+
+        {/* Noisy-rules report — surfaces rules that have opened
+            problems most often in the last 24h with a one-click
+            "Apply" affordance that pre-fills the edit form with
+            the suggested dampening values. Hidden when no rule
+            has a suggestion (the report itself fetches the top
+            N and we filter to those with a non-empty suggestion). */}
+        {noisy && noisy.length > 0 && (
+          <div style={{
+            background: 'var(--bg1)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: 14, marginBottom: 14,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>⚡ Noisy rules (last 24h)</span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                {noisy.length} rule{noisy.length === 1 ? '' : 's'} could be tightened
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Rule</th>
+                  <th className="num">Fires/24h</th>
+                  <th className="num">Median dur.</th>
+                  <th>Last fired</th>
+                  <th>Suggestion</th>
+                  <th></th>
+                </tr></thead>
+                <tbody>
+                  {noisy.map(n => (
+                    <tr key={n.ruleId}>
+                      <td><b>{n.ruleName}</b></td>
+                      <td className="num mono">{n.openCount}</td>
+                      <td className="num mono">
+                        {n.medianDurSec >= 60
+                          ? `${(n.medianDurSec / 60).toFixed(1)} min`
+                          : `${n.medianDurSec.toFixed(0)} s`}
+                      </td>
+                      <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
+                        {tsLong(n.lastFiredNs)}
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--text2)' }}>{n.suggestion}</td>
+                      <td>
+                        <button className="sec"
+                          onClick={() => applySuggestion(n)}
+                          style={{ fontSize: 11, padding: '3px 10px' }}
+                          title="Open edit form with the suggested dampening values pre-filled">
+                          Apply →
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {showForm && (
           <div style={{

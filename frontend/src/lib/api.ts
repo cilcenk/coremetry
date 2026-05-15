@@ -348,6 +348,14 @@ export const api = {
   // Audit log (admin-only read).
   auditLog: (since = '24h', filters: { actor?: string; action?: string; target?: string } = {}) =>
     get<import('./types').AuditEntry[]>(`/api/admin/audit?${qs({ since, ...filters })}`),
+  // Alert-tuning noisy-rules report (v0.5.131). Cached server-
+  // side 5 min so a burst of operators viewing it during morning
+  // triage doesn't re-run the GROUP BY.
+  alertTuningNoisyRules: (since = '24h', limit = 30) =>
+    get<{
+      rules: Array<import('./types').NoisyRule>;
+      from: number; to: number; sinceSec: number;
+    }>(`/api/admin/alert-tuning/noisy-rules?${qs({ since, limit })}`),
 
   // Saved views (per-user named filter combos).
   savedViews: (page: string) =>

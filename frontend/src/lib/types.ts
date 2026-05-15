@@ -794,6 +794,26 @@ export interface AlertRule {
   createdAt: number;
 }
 
+// Noisy-rules report row (v0.5.131). Pairs a rule's open-rate
+// stats with a heuristic suggestion + the current knob values
+// so the UI can render a one-click "Apply" affordance.
+export interface NoisyRule {
+  ruleId: string;
+  ruleName: string;
+  severity: string;
+  openCount: number;
+  medianDurSec: number;
+  lastFiredNs: number;
+  totalDurSec: number;
+  suggestion: string;
+  suggestedForSec?: number;
+  suggestedMinSamples?: number;
+  suggestedCooldownSec?: number;
+  currentForSec: number;
+  currentMinSamples: number;
+  currentCooldownSec: number;
+}
+
 export interface Problem {
   id: string;
   // Runbook URL — composed at read time on the backend from

@@ -22,6 +22,12 @@ type AlertRule struct {
 	Severity   string  `json:"severity"`    // info | warning | critical
 	Enabled    bool    `json:"enabled"`
 	BuiltIn    bool    `json:"builtIn"`
+	// ForSec is the sustained-breach gate (v0.5.126): the
+	// threshold must stay breached for this long before a
+	// problem opens. Prometheus-style `for:` — kills single-
+	// sample spike noise without changing the threshold. 0 =
+	// open immediately (current behaviour).
+	ForSec uint32 `json:"forSec"`
 	// RunbookURL — optional link an oncall reaches when the
 	// rule fires. Surfaces on Problem detail + alert
 	// notifications. Empty = no runbook configured.
@@ -301,7 +307,7 @@ func (s *Store) EnrichProblemsWithRunbooks(ctx context.Context, problems []Probl
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
-		       severity, enabled, built_in, runbook_url,
+		       severity, enabled, built_in, runbook_url, for_sec,
 		       toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL
 		ORDER BY created_at DESC`)
@@ -315,7 +321,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		var enabled, builtIn uint8
 		if err := rows.Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator,
 			&r.Threshold, &r.WindowSec, &r.Severity, &enabled, &builtIn,
-			&r.RunbookURL, &r.CreatedAt); err != nil {
+			&r.RunbookURL, &r.ForSec, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Enabled = enabled == 1
@@ -334,11 +340,12 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 	// upgraded installs.
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO alert_rules
 		(id, name, service, metric, comparator, threshold, window_sec,
-		 severity, enabled, built_in, runbook_url, created_at, version)`)
+		 severity, enabled, built_in, runbook_url, for_sec,
+		 created_at, version)`)
 	if err != nil { return err }
 	if err := batch.Append(r.ID, r.Name, r.Service, r.Metric, r.Comparator,
 		r.Threshold, r.WindowSec, r.Severity, enabled, builtIn,
-		r.RunbookURL,
+		r.RunbookURL, r.ForSec,
 		time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
 		return err
 	}
@@ -367,12 +374,12 @@ func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error)
 	var enabled, builtIn uint8
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
-		       severity, enabled, built_in, runbook_url,
+		       severity, enabled, built_in, runbook_url, for_sec,
 		       toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL WHERE id = ? LIMIT 1`, id).
 		Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator, &r.Threshold,
 			&r.WindowSec, &r.Severity, &enabled, &builtIn,
-			&r.RunbookURL, &r.CreatedAt)
+			&r.RunbookURL, &r.ForSec, &r.CreatedAt)
 	if err != nil { return nil, err }
 	r.Enabled = enabled == 1
 	r.BuiltIn = builtIn == 1

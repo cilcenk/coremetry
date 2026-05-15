@@ -458,6 +458,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			enabled      UInt8        DEFAULT 1,
 			built_in     UInt8        DEFAULT 0,
 			runbook_url  String       DEFAULT '',
+			for_sec      UInt32       DEFAULT 0,
 			created_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -812,6 +813,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// repeat heavily across the user list.
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS team LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS runbook_url String DEFAULT ''`,
+		// v0.5.126 sustained-breach gate. 0 = open immediately
+		// (legacy behaviour). When > 0 the evaluator only opens a
+		// problem after the threshold has been breached for this
+		// many seconds in a row.
+		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS for_sec UInt32 DEFAULT 0`,
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS sre_team String DEFAULT ''`,
 		// chat_channel — successor to slack_channel. Existing
 		// rows with a populated slack_channel keep showing it

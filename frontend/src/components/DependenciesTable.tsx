@@ -272,6 +272,7 @@ export function DependenciesTable({
                           cluster={r.cluster ?? '(default)'}
                           name={nameOf(r)}
                           kind={kind}
+                          source={r.source ?? 'spans'}
                           range={range} />
                       </td>
                     </tr>
@@ -315,7 +316,7 @@ function SortHeader({ col, label, sort, dir, onSort, align }: {
 // Lazy — only fires when the row is expanded; bounded server-
 // side at LIMIT 100 callers / LIMIT 20 ops so the response stays
 // cheap even for a 50-pod fleet.
-function DetailDrawer({ system, cluster, name, kind, range }: {
+function DetailDrawer({ system, cluster, name, kind, source, range }: {
   system: string;
   // Cluster identifier — only meaningful for queue/messaging
   // rows. DB callers pass "(default)" and the backend ignores
@@ -323,6 +324,12 @@ function DetailDrawer({ system, cluster, name, kind, range }: {
   cluster: string;
   name: string;
   kind: 'db' | 'queue';
+  // 'spans' = row came from app-emitted traces; 'receiver' = row
+  // came from an OTel DB receiver. We only render the receiver-
+  // specific metric panel (oracle / postgres / mysql / redis)
+  // for receiver rows so the upper "Called from services" panel
+  // doesn't bleed receiver-side metrics into a span-derived row.
+  source: 'spans' | 'receiver';
   range: TimeRange;
 }) {
   type D = DBDetail | MessagingDetail;
@@ -398,16 +405,19 @@ function DetailDrawer({ system, cluster, name, kind, range }: {
           The backend serves synthetic numbers with synthetic=true
           when no receiver data exists in the window so the panel
           still renders during integration setup. */}
-      {kind === 'db' && system.toLowerCase() === 'oracle' && (
+      {/* Receiver-specific panels gated on source — app-derived
+          rows (the "Called from services" panel) intentionally
+          hide these so receiver-side metrics don't bleed in. */}
+      {source === 'receiver' && kind === 'db' && system.toLowerCase() === 'oracle' && (
         <OraclePanel instance={name} range={range} />
       )}
-      {kind === 'db' && (system.toLowerCase() === 'postgresql' || system.toLowerCase() === 'postgres') && (
+      {source === 'receiver' && kind === 'db' && (system.toLowerCase() === 'postgresql' || system.toLowerCase() === 'postgres') && (
         <PostgresPanel instance={name} range={range} />
       )}
-      {kind === 'db' && (system.toLowerCase() === 'mysql' || system.toLowerCase() === 'mariadb') && (
+      {source === 'receiver' && kind === 'db' && (system.toLowerCase() === 'mysql' || system.toLowerCase() === 'mariadb') && (
         <MySQLPanel instance={name} range={range} />
       )}
-      {kind === 'db' && system.toLowerCase() === 'redis' && (
+      {source === 'receiver' && kind === 'db' && system.toLowerCase() === 'redis' && (
         <RedisPanel instance={name} range={range} />
       )}
 

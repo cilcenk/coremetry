@@ -657,17 +657,25 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const top = e.topLabels[0] || '';
           const more = e.distinctLabels > 1 ? ` (+${e.distinctLabels - 1})` : '';
           const match = isEdgeMatch(e);
+          // Latency-tint: edges with p99 > 1s shift toward red so a
+          // slow strand stands out even before reading the label.
+          // Bucketed: <250ms = base color, 250-1000ms = amber tint,
+          // >1000ms = red tint (alpha-blended via stroke override).
+          let strokeOverride = color;
+          if (e.p99Ms > 1000) strokeOverride = '#dc2626';
+          else if (e.p99Ms > 250) strokeOverride = '#d97706';
+          const p99 = e.p99Ms > 0 ? ` · p99 ${e.p99Ms.toFixed(0)}ms` : '';
           return (
             <g key={i} style={{ cursor: 'pointer', opacity: match ? 1 : 0.18 }}
                onClick={() => onEdgeClick(e)}>
               <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-                stroke={color} strokeWidth={sw} fill="none"
+                stroke={strokeOverride} strokeWidth={sw} fill="none"
                 markerEnd={`url(#arrow-${e.protocol})`} opacity={0.7}>
-                <title>{`${e.parentService} → ${e.childNode}\n${proto} · ${fmtNum(e.calls)} calls · ${e.distinctLabels} endpoint(s)\n\n${e.topLabels.join('\n')}`}</title>
+                <title>{`${e.parentService} → ${e.childNode}\n${proto} · ${fmtNum(e.calls)} calls · avg ${e.avgMs.toFixed(1)}ms · p99 ${e.p99Ms.toFixed(0)}ms · ${e.distinctLabels} endpoint(s)\n\n${e.topLabels.join('\n')}`}</title>
               </path>
               {showLabel && (
                 <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4}
-                  fontSize={10} fill={color} textAnchor="middle"
+                  fontSize={10} fill={strokeOverride} textAnchor="middle"
                   style={{ pointerEvents: 'none' }}>
                   {`${proto} ${truncate(top, 28)}${more}`}
                 </text>
@@ -676,7 +684,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                 <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 9}
                   fontSize={9} fill="var(--text3)" textAnchor="middle"
                   style={{ pointerEvents: 'none' }}>
-                  {fmtNum(e.calls)} calls
+                  {fmtNum(e.calls)} calls{p99}
                 </text>
               )}
             </g>

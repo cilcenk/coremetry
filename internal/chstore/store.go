@@ -728,6 +728,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			top_labels      Array(String),
 			distinct_labels UInt32,
 			calls           UInt64,
+			-- Latency per bucket (v0.5.118). sum_duration_ns lets
+			-- the reader rebuild a window-wide avg = sum/calls;
+			-- p99_ms is bucket-local approximate, the reader takes
+			-- max(p99_ms) across buckets which is a conservative
+			-- (slightly pessimistic) merge — acceptable given the
+			-- "spot the slow strand" use case.
+			sum_duration_ns UInt64 DEFAULT 0,
+			p99_ms          Float64 DEFAULT 0,
 			version         UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		PARTITION BY toDate(time_bucket)
@@ -836,6 +844,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS http_method  LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS http_route   LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS db_system    LowCardinality(String) DEFAULT ''`,
+		// v0.5.118 latency overlay — backfill columns onto installs
+		// whose topology_edges_5m predates them. ReplacingMergeTree
+		// keeps the schema additive-safe.
+		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS sum_duration_ns UInt64  DEFAULT 0`,
+		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS p99_ms          Float64 DEFAULT 0`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_kind        kind        TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_db_system   db_system   TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_http_status http_status TYPE minmax    GRANULARITY 4`,

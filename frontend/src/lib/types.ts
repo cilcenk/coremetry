@@ -44,6 +44,8 @@ export interface ServiceTopologyEdge {
   topLabels: string[];    // up to 5 most-frequent labels
   distinctLabels: number;
   calls: number;
+  avgMs: number;          // window-wide average latency (ms)
+  p99Ms: number;          // conservative window p99 (ms)
 }
 export interface ServiceTopologyResponse {
   nodes: ServiceTopologyNode[];

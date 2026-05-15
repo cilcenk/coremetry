@@ -80,6 +80,8 @@ type ServiceTopologyEdge struct {
 	TopLabels      []string `json:"topLabels"`
 	DistinctLabels uint64   `json:"distinctLabels"`
 	Calls          uint64   `json:"calls"`
+	AvgMs          float64  `json:"avgMs"`   // window-wide avg ms (sum/calls)
+	P99Ms          float64  `json:"p99Ms"`   // conservative window p99
 }
 
 // RootFlow describes one business-level entry point: the root
@@ -317,7 +319,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 	if err := s.conn.Exec(ctx, `
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
-			 protocol, top_labels, distinct_labels, calls, version)
+			 protocol, top_labels, distinct_labels, calls,
+			 sum_duration_ns, p99_ms, version)
 		WITH
 			multiIf(
 				c.db_system  != '', 'db',
@@ -343,6 +346,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			topK(5)(label)        AS top_labels,
 			toUInt32(uniqExact(label)) AS distinct_labels,
 			toUInt64(count())     AS calls,
+			toUInt64(sum(c.duration)) AS sum_duration_ns,
+			toFloat64(quantileExact(0.99)(c.duration)) / 1e6 AS p99_ms,
 			toUInt64(?)           AS version
 		FROM spans AS c
 		INNER GLOBAL JOIN (
@@ -372,7 +377,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 	if err := s.conn.Exec(ctx, `
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
-			 protocol, top_labels, distinct_labels, calls, version)
+			 protocol, top_labels, distinct_labels, calls,
+			 sum_duration_ns, p99_ms, version)
 		WITH
 			multiIf(
 				db_system  != '', concat('db:',    db_system),
@@ -408,12 +414,15 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			topK(5)(label)       AS top_labels,
 			toUInt32(uniqExact(label)) AS distinct_labels,
 			toUInt64(count())    AS calls,
+			toUInt64(sum(duration)) AS sum_duration_ns,
+			toFloat64(quantileExact(0.99)(duration)) / 1e6 AS p99_ms,
 			toUInt64(?)          AS version
 		FROM spans
 		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		  AND child != ''
 		GROUP BY parent_service, child, proto, kind_out
-		SETTINGS max_execution_time = 120`,
+		SETTINGS max_execution_time = 120,
+		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
 		bucketStart.Unix(), end.Unix(),
@@ -651,7 +660,9 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 			protocol,
 			arraySlice(merged, 1, 5) AS top_labels,
 			toUInt64(length(merged)) AS distinct_labels,
-			total_calls
+			total_calls,
+			avg_ms,
+			max_p99_ms
 		FROM (
 			SELECT
 				parent_service,
@@ -659,7 +670,11 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 				any(node_kind) AS node_kind,
 				protocol,
 				arrayDistinct(arrayFlatten(groupArray(top_labels))) AS merged,
-				toUInt64(sum(calls)) AS total_calls
+				toUInt64(sum(calls)) AS total_calls,
+				if(sum(calls) > 0,
+				   toFloat64(sum(sum_duration_ns)) / sum(calls) / 1e6,
+				   0) AS avg_ms,
+				toFloat64(max(p99_ms)) AS max_p99_ms
 			FROM topology_edges_5m FINAL
 			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
 			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
@@ -678,7 +693,8 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 	for rows.Next() {
 		var e ServiceTopologyEdge
 		if err := rows.Scan(&e.ParentService, &e.ChildNode, &e.NodeKind,
-			&e.Protocol, &e.TopLabels, &e.DistinctLabels, &e.Calls); err != nil {
+			&e.Protocol, &e.TopLabels, &e.DistinctLabels, &e.Calls,
+			&e.AvgMs, &e.P99Ms); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

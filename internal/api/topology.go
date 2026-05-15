@@ -248,6 +248,107 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// FlowsResponse lists the top root-anchored business flows in a
+// window. Each entry pairs a root signature with its trace count
+// and the unique set of services those traces touched.
+type FlowsResponse struct {
+	Flows []chstore.RootFlow `json:"flows"`
+	From  int64              `json:"from"`
+	To    int64              `json:"to"`
+}
+
+// getRootFlows surfaces the top business-level entry points by
+// trace volume. Used by the /topology page's "Flows" section to
+// list flows like POST /login or POST /payment with a chip list
+// of involved services.
+func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, 1*time.Hour)
+	top := parseInt(r.URL.Query().Get("top"), 20)
+	flows, err := s.store.GetRootFlows(r.Context(), from, to, top)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano()})
+}
+
+// getFlowTopology returns the service-level subgraph for one
+// (root_service, root_op) flow. Same response shape as
+// getServiceTopology so the renderer reuses a single code path
+// — the difference is the edges/nodes are restricted to traces
+// matching the flow signature.
+func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rootService := q.Get("root_service")
+	rootOp := q.Get("root_op")
+	if rootService == "" || rootOp == "" {
+		http.Error(w, "root_service and root_op required", http.StatusBadRequest)
+		return
+	}
+	from, to := parseFromTo(r, 1*time.Hour)
+	edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	// Same external-peer filter as the global topology — drop
+	// peers that already exist as instrumented services so the
+	// subgraph doesn't double-count cross-service edges.
+	knownServices := map[string]bool{}
+	for _, e := range edges {
+		if e.NodeKind == "service" {
+			knownServices[e.ParentService] = true
+			knownServices[e.ChildNode] = true
+		}
+	}
+	filtered := edges[:0]
+	for _, e := range edges {
+		if e.NodeKind == "external" {
+			peer := strings.TrimPrefix(e.ChildNode, "ext:")
+			if knownServices[peer] {
+				continue
+			}
+		}
+		filtered = append(filtered, e)
+	}
+	edges = filtered
+	nodes := map[string]ServiceTopologyNode{}
+	addNode := func(id, kind string) {
+		if _, ok := nodes[id]; ok {
+			return
+		}
+		name := id
+		if kind != "service" {
+			for _, p := range []string{"db:", "queue:", "ext:"} {
+				if strings.HasPrefix(name, p) {
+					name = name[len(p):]
+					break
+				}
+			}
+		}
+		nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
+	}
+	// Always include the root service as a node, even if it has no
+	// outgoing edges in this window (single-service flow case).
+	addNode(rootService, "service")
+	for _, e := range edges {
+		addNode(e.ParentService, "service")
+		addNode(e.ChildNode, e.NodeKind)
+	}
+	nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
+	for _, n := range nodes {
+		nodesOut = append(nodesOut, n)
+	}
+	sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+	writeJSON(w, ServiceTopologyResponse{
+		Nodes:     nodesOut,
+		Edges:     edges,
+		From:      from.UnixNano(),
+		To:        to.UnixNano(),
+		Truncated: false,
+	})
+}
+
 // exportTopologyDrawIO serialises the same topology response as
 // /api/topology but as a draw.io (mxGraph) XML document. Layered
 // layout: each BFS hop is a column at x=hop*240, nodes within a

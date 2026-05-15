@@ -178,6 +178,12 @@ export const api = {
   // service fabric is generally small enough to draw whole.
   serviceTopology: (params: { from?: number; to?: number }) =>
     get<import('./types').ServiceTopologyResponse>(`/api/topology/service?${qs(params)}`),
+  // Root-anchored business flows (v0.5.103) — top entry points
+  // by trace volume + the subgraph for one flow.
+  topologyFlows: (params: { top?: number; from?: number; to?: number }) =>
+    get<import('./types').FlowsResponse>(`/api/topology/flows?${qs(params)}`),
+  topologyFlow: (params: { root_service: string; root_op: string; from?: number; to?: number }) =>
+    get<import('./types').ServiceTopologyResponse>(`/api/topology/flow?${qs(params)}`),
 
   // Inbound-callers backtrace — Dynatrace-style consumer view.
   // Returns a row per (caller service × pod/instance × client IP ×

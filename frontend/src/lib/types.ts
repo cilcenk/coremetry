@@ -53,6 +53,20 @@ export interface ServiceTopologyResponse {
   truncated: boolean;
 }
 
+// Root-anchored business flows (v0.5.103) — top entry points by
+// trace volume; clicking a flow shows its restricted subgraph.
+export interface RootFlow {
+  rootService: string;
+  rootOp: string;
+  traceCount: number;
+  services: string[];
+}
+export interface FlowsResponse {
+  flows: RootFlow[];
+  from: number;
+  to: number;
+}
+
 // One row of the system status grid on /status. Mirrors the
 // componentStatus / systemStatus types in internal/api.
 // ── Incident management ──────────────────────────────────────────────────────

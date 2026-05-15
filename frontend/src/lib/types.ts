@@ -786,6 +786,11 @@ export interface AlertRule {
   // notifications so the oncall lands on the playbook in one
   // click instead of digging through Confluence.
   runbookUrl?: string;
+  // Noise-dampening knobs (v0.5.127-129). All default to 0 =
+  // legacy fire-immediately behaviour; operators opt in per rule.
+  forSec?: number;       // sustained breach gate
+  minSamples?: number;   // sample-count floor
+  cooldownSec?: number;  // post-resolution silence
   createdAt: number;
 }
 

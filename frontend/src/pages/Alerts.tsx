@@ -236,6 +236,37 @@ export default function AlertsPage() {
                 </select>
               </Field>
             </div>
+            {/* Noise-dampening knobs (v0.5.127-129). All three
+                default to 0 = legacy "fire immediately" behaviour.
+                Operators tune per-rule when prod sends too many
+                alerts:
+                  • For — sustained breach gate (Prometheus `for:`)
+                  • Min samples — sample-count floor (kills 1/1 = 100%)
+                  • Cooldown — post-resolution silence (kills jitter) */}
+            <div style={{ marginTop: 10,
+              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+              <Field label="Sustain (sec) — fires only after breach holds this long">
+                <input type="number" min={0} step={30}
+                  value={draft.forSec ?? 0}
+                  onChange={e => setDraft({ ...draft, forSec: Number(e.target.value) })}
+                  placeholder="0 = immediate"
+                  style={{ width: '100%' }} />
+              </Field>
+              <Field label="Min samples — require N requests in window">
+                <input type="number" min={0} step={10}
+                  value={draft.minSamples ?? 0}
+                  onChange={e => setDraft({ ...draft, minSamples: Number(e.target.value) })}
+                  placeholder="0 = no floor"
+                  style={{ width: '100%' }} />
+              </Field>
+              <Field label="Cooldown (sec) — silence after auto-resolve">
+                <input type="number" min={0} step={60}
+                  value={draft.cooldownSec ?? 0}
+                  onChange={e => setDraft({ ...draft, cooldownSec: Number(e.target.value) })}
+                  placeholder="0 = immediate re-open"
+                  style={{ width: '100%' }} />
+              </Field>
+            </div>
             {/* Runbook URL — optional. Surfaces on Problem
                 detail when the rule fires so the oncall lands
                 on the team's playbook in one click. */}

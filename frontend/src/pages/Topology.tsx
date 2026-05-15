@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
-import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import type { TopologyResponse, TopologyNode } from '@/lib/types';
 import type { TimeRange } from '@/lib/types';
@@ -119,32 +119,8 @@ export default function TopologyPage() {
             <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
               {data.nodes.length} nodes · {data.edges.length} edges · depth {data.depth}
             </div>
-            {/* Layered node listing — one column per BFS hop. */}
-            <div style={{ display: 'flex', gap: 16, overflowX: 'auto', marginBottom: 24 }}>
-              {layers.map((layer, hop) => (
-                <div key={hop} style={{
-                  minWidth: 240, padding: 8, borderRadius: 6,
-                  background: 'var(--bg2)', border: '1px solid var(--border)',
-                }}>
-                  <div style={{
-                    fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-                    color: 'var(--text3)', letterSpacing: '0.3px', marginBottom: 6,
-                  }}>
-                    Hop {hop}
-                  </div>
-                  {layer.map(n => (
-                    <div key={n.id} style={{
-                      padding: '4px 6px', fontSize: 11, lineHeight: 1.4,
-                      borderBottom: '1px solid var(--border)',
-                    }}>
-                      <div style={{ fontWeight: 600 }}>{n.service}</div>
-                      <div style={{ fontFamily: 'monospace', color: 'var(--text3)' }}>{n.op}</div>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-            <div className="table-wrap">
+            <TopologySVG layers={layers} edges={data.edges} />
+            <div className="table-wrap" style={{ marginTop: 16 }}>
               <table>
                 <thead><tr>
                   <th>Caller</th>
@@ -176,6 +152,87 @@ export default function TopologyPage() {
         )}
       </div>
     </>
+  );
+}
+
+// TopologySVG renders the BFS-layered graph as an inline SVG:
+// columns are hops (x = hop * COL_W), nodes stacked vertically
+// inside each column, edges drawn as right-leaning Bezier curves
+// with stroke width proportional to call volume so the heaviest
+// paths read at a glance. Service color comes from the existing
+// hashColor palette so a node's hue stays consistent with the
+// service-map / trace waterfall views.
+function TopologySVG({ layers, edges }: {
+  layers: TopologyNode[][];
+  edges: TopologyResponse['edges'];
+}) {
+  const NODE_W = 200, NODE_H = 48, COL_W = 280, ROW_H = 64;
+  const pos = new Map<string, { x: number; y: number }>();
+  layers.forEach((layer, hop) => {
+    layer.forEach((n, i) => {
+      pos.set(n.id, { x: hop * COL_W, y: i * ROW_H });
+    });
+  });
+  const maxRows = Math.max(1, ...layers.map(l => l.length));
+  const width = Math.max(1, layers.length) * COL_W;
+  const height = maxRows * ROW_H + 20;
+  const maxCalls = Math.max(1, ...edges.map(e => Number(e.calls) || 0));
+  const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  return (
+    <div style={{
+      overflowX: 'auto', overflowY: 'auto', maxHeight: '60vh',
+      border: '1px solid var(--border)', borderRadius: 6,
+      background: 'var(--bg2)', padding: 12, marginBottom: 16,
+    }}>
+      <svg width={width} height={height}
+        viewBox={`-10 -10 ${width + 40} ${height + 40}`}
+        xmlns="http://www.w3.org/2000/svg"
+        style={{ display: 'block' }}>
+        <defs>
+          <marker id="topo-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text3)" />
+          </marker>
+        </defs>
+        {edges.map((e, i) => {
+          const src = pos.get(`${e.parentService}|${e.parentOp}`);
+          const dst = pos.get(`${e.childService}|${e.childOp}`);
+          if (!src || !dst) return null;
+          const x1 = src.x + NODE_W, y1 = src.y + NODE_H / 2;
+          const x2 = dst.x,          y2 = dst.y + NODE_H / 2;
+          const mx = (x1 + x2) / 2;
+          const sw = 1 + (Number(e.calls) / maxCalls) * 3;
+          return (
+            <path key={i}
+              d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+              stroke="var(--text3)" strokeWidth={sw} fill="none"
+              markerEnd="url(#topo-arrow)" opacity={0.55}>
+              <title>{`${e.parentService}.${e.parentOp} → ${e.childService}.${e.childOp} · ${fmtNum(e.calls)} calls`}</title>
+            </path>
+          );
+        })}
+        {layers.flatMap(layer => layer.map(n => {
+          const p = pos.get(n.id)!;
+          const color = hashColor(n.service);
+          return (
+            <g key={n.id} transform={`translate(${p.x}, ${p.y})`}>
+              <rect width={NODE_W} height={NODE_H} rx={6} ry={6}
+                fill={color} fillOpacity={0.16}
+                stroke={color} strokeWidth={1.5}>
+                <title>{`${n.service}.${n.op}`}</title>
+              </rect>
+              <text x={10} y={19} fontSize={12} fontWeight={600} fill="var(--text)">
+                {truncate(n.service, 26)}
+              </text>
+              <text x={10} y={36} fontSize={11} fill="var(--text3)"
+                fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace">
+                {truncate(n.op, 28)}
+              </text>
+            </g>
+          );
+        }))}
+      </svg>
+    </div>
   );
 }
 

@@ -178,12 +178,18 @@ function LogsInner() {
           <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
             placeholder="Service…" width={170} onEnter={apply} />
           <input
-            placeholder='Search… (try `level:error`, `service.name:java-demo AND timeout`)'
+            placeholder='Search… (KQL: level:error AND service.name:"checkout")'
             value={draft.search}
             onChange={e => setDraft({ ...draft, search: e.target.value })}
             onKeyDown={e => e.key === 'Enter' && apply()}
-            title='Free-text on body. Lucene syntax supported when the logs backend is Elasticsearch — e.g. field:value, AND, OR, NOT, "phrase", value*. Plain words match the body.'
-            style={{ width: 320 }} />
+            title={'Free-text on body OR KQL/Lucene syntax (Elasticsearch backend).\n\n' +
+              'Examples:\n' +
+              '  level:error\n' +
+              '  service.name:"checkout-svc" AND NOT message:health\n' +
+              '  trace.id:c9ea*\n' +
+              '  message:"connection refused" AND k8s.namespace:prod\n\n' +
+              'Plain words match the body. Use double quotes for exact phrases.'}
+            style={{ width: 380 }} />
           {/* Trace ID filter — dedicated input next to search so
               operators can paste a trace ID from a problem /
               incident and see only its log lines. Mirrors the

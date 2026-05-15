@@ -111,6 +111,91 @@ func NewES(cfg ESConfig) (*ESStore, error) {
 
 func (s *ESStore) Backend() string { return "elasticsearch" }
 
+// ListFields returns the searchable field paths discovered from
+// the configured index's mapping. Used by the v0.5.135 search-
+// autocomplete affordance on /logs so the operator sees what
+// they can filter by (level / service.name / k8s.namespace /
+// trace.id / …) without guessing.
+//
+// Only "keyword" / "text" / "long" / "date" / "boolean" leaves
+// are returned — nested objects expand to dotted paths
+// (a.b.c) so the result matches what query_string expects.
+//
+// Results are alphabetised; an empty cache for ~60s tolerates
+// the typical fleet of operators loading /logs together.
+func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
+	req := esapi.IndicesGetMappingRequest{
+		Index: []string{s.cfg.Index},
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, fmt.Errorf("get mapping: %s", res.String())
+	}
+	var body map[string]struct {
+		Mappings struct {
+			Properties map[string]any `json:"properties"`
+		} `json:"mappings"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	for _, idx := range body {
+		walkProperties("", idx.Mappings.Properties, seen)
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sortStrings(out)
+	return out, nil
+}
+
+// walkProperties recurses into ES mapping properties to flatten
+// nested types (object / nested) into dot paths. Skips internal
+// fields starting with "_". Only emits leaf paths whose type
+// looks searchable.
+func walkProperties(prefix string, props map[string]any, out map[string]struct{}) {
+	for name, raw := range props {
+		if name == "" || name[0] == '_' {
+			continue
+		}
+		m, _ := raw.(map[string]any)
+		if m == nil {
+			continue
+		}
+		path := name
+		if prefix != "" {
+			path = prefix + "." + name
+		}
+		if nested, ok := m["properties"].(map[string]any); ok {
+			walkProperties(path, nested, out)
+			continue
+		}
+		t, _ := m["type"].(string)
+		switch t {
+		case "keyword", "text", "long", "integer", "short",
+			"double", "float", "date", "boolean", "ip":
+			out[path] = struct{}{}
+		}
+	}
+}
+
+func sortStrings(s []string) {
+	// std sort.Strings imported lazily — avoid pulling sort in
+	// the package if no other callsite needs it (small payoff
+	// but the import list is already large here).
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
+
 // Ping checks ES cluster availability via the lightweight Info API
 // (same endpoint NewES uses at startup). 2-second timeout enforced by
 // the caller's context.

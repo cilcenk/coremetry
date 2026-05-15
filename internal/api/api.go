@@ -224,6 +224,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
+	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
@@ -2070,6 +2071,35 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"total": page.Total, "logs": page.Logs})
+}
+
+// getLogsFields surfaces the searchable field paths discovered
+// from the logs backend's index mapping. Used by the /logs UI's
+// "available fields" hint so the operator sees what they can
+// filter by without guessing. Only the Elasticsearch backend
+// implements ListFields; ClickHouse returns an empty list (its
+// shape is fixed and the UI already knows it).
+//
+// Cached 60s — mappings rarely change and an open /logs tab
+// re-fetches on focus.
+func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
+	type fielder interface {
+		ListFields(ctx context.Context) ([]string, error)
+	}
+	s.serveCached(w, r, "logs-fields", 60*time.Second, func() (any, error) {
+		f, ok := s.logs.(fielder)
+		if !ok {
+			return map[string]any{"fields": []string{}, "backend": s.logs.Backend()}, nil
+		}
+		fields, err := f.ListFields(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		if fields == nil {
+			fields = []string{}
+		}
+		return map[string]any{"fields": fields, "backend": s.logs.Backend()}, nil
+	})
 }
 
 // getLogsTimeseries powers the Logs source on the Data Explorer

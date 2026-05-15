@@ -32,6 +32,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/sse"
+	"github.com/cilcenk/coremetry/internal/topology"
 )
 
 //go:embed all:frontend/dist
@@ -277,6 +278,14 @@ func main() {
 	// (type, message, service) into exception_groups. Leader-gated so
 	// multiple replicas don't redo the same scan.
 	go runExceptionRefresher(ctx, store, lockImpl)
+
+	// ── Topology aggregator ──────────────────────────────────────────────────
+	// Pre-aggregates service-level topology edges into
+	// topology_edges_5m every 5 minutes. The /topology view reads
+	// from there instead of the spans self-join — at billions of
+	// spans/day scale the live path is unworkable. Bootstrap
+	// backfills the last 1h so the view is populated immediately.
+	topology.New(store, 5*time.Minute, 1*time.Hour, lockImpl).Start(ctx)
 
 	// ── Auth (JWT issuer + initial admin seed) ────────────────────────────────
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)

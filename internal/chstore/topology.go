@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -278,6 +279,173 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 		out = append(out, e)
 	}
 	return out, infra.Err()
+}
+
+// WriteTopologyBucket aggregates the service-level topology for
+// one 5-min window and inserts the result rows into
+// topology_edges_5m. Two passes (cross-service join + infra
+// detection), each INSERT ... SELECT in a single CH round-trip.
+//
+// Idempotent: re-running over the same bucket inserts new rows
+// with the same primary key (time_bucket, parent_service,
+// child_node, node_kind, protocol). ReplacingMergeTree(version)
+// dedupes them at read time by keeping the highest version. A
+// background goroutine in internal/topology calls this every
+// 5 minutes; the API never invokes the heavy join directly.
+func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) error {
+	end := bucketStart.Add(5 * time.Minute)
+
+	// Cross-service pass — service A → service B via http/rpc.
+	if err := s.conn.Exec(ctx, `
+		INSERT INTO topology_edges_5m
+			(time_bucket, parent_service, child_node, node_kind,
+			 protocol, top_labels, distinct_labels, calls, version)
+		WITH
+			multiIf(
+				c.db_system  != '', 'db',
+				c.msg_system != '', 'kafka',
+				c.rpc_system != '', 'rpc',
+				c.http_method != '', 'http',
+				'internal'
+			) AS proto,
+			multiIf(
+				c.http_method != '', concat(c.http_method, ' ',
+					if(c.http_route != '', c.http_route, c.name)),
+				c.rpc_method  != '', c.rpc_method,
+				c.db_system   != '', concat(c.db_system, ' ', c.name),
+				c.msg_system  != '', concat(c.msg_system, ' ', c.name),
+				c.name
+			) AS label
+		SELECT
+			toDateTime(?, 'UTC') AS time_bucket,
+			p.service_name        AS parent_service,
+			c.service_name        AS child_node,
+			'service'             AS node_kind,
+			proto                 AS protocol,
+			topK(5)(label)        AS top_labels,
+			toUInt32(uniqExact(label)) AS distinct_labels,
+			toUInt64(count())     AS calls,
+			toUInt64(?)           AS version
+		FROM spans AS c
+		INNER JOIN spans AS p
+			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
+		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
+		  AND p.time >= toDateTime(?, 'UTC') AND p.time < toDateTime(?, 'UTC')
+		  AND c.parent_id != ''
+		  AND p.service_name != c.service_name
+		GROUP BY parent_service, child_node, protocol
+		SETTINGS max_execution_time = 120`,
+		bucketStart.Unix(),
+		uint64(time.Now().UnixNano()),
+		bucketStart.Unix(), end.Unix(),
+		bucketStart.Unix(), end.Unix(),
+	); err != nil {
+		return fmt.Errorf("topology bucket cross-service pass: %w", err)
+	}
+
+	// Infra pass — service → db/queue/external.
+	if err := s.conn.Exec(ctx, `
+		INSERT INTO topology_edges_5m
+			(time_bucket, parent_service, child_node, node_kind,
+			 protocol, top_labels, distinct_labels, calls, version)
+		WITH
+			multiIf(
+				db_system  != '', concat('db:',    db_system),
+				msg_system != '', concat('queue:', msg_system),
+				peer_service != '' AND kind = 'client', concat('ext:', peer_service),
+				''
+			) AS child,
+			multiIf(
+				db_system  != '', 'db',
+				msg_system != '', 'kafka',
+				peer_service != '', 'http',
+				''
+			) AS proto,
+			multiIf(
+				db_system  != '', 'db',
+				msg_system != '', 'queue',
+				peer_service != '', 'external',
+				''
+			) AS kind_out,
+			multiIf(
+				http_method != '', concat(http_method, ' ',
+					if(http_route != '', http_route, name)),
+				db_system   != '', name,
+				msg_system  != '', name,
+				name
+			) AS label
+		SELECT
+			toDateTime(?, 'UTC') AS time_bucket,
+			service_name         AS parent_service,
+			child                AS child_node,
+			kind_out             AS node_kind,
+			proto                AS protocol,
+			topK(5)(label)       AS top_labels,
+			toUInt32(uniqExact(label)) AS distinct_labels,
+			toUInt64(count())    AS calls,
+			toUInt64(?)          AS version
+		FROM spans
+		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+		  AND child != ''
+		GROUP BY parent_service, child, proto, kind_out
+		SETTINGS max_execution_time = 120`,
+		bucketStart.Unix(),
+		uint64(time.Now().UnixNano()),
+		bucketStart.Unix(), end.Unix(),
+	); err != nil {
+		return fmt.Errorf("topology bucket infra pass: %w", err)
+	}
+	return nil
+}
+
+// ReadServiceTopologyAgg reads pre-aggregated topology rows for
+// a window from topology_edges_5m. Each row in the agg table is
+// one 5-min bucket; we sum calls + merge top_labels arrays across
+// buckets to give an aggregate over the requested window.
+//
+// distinct_labels is approximated as the count of unique labels in
+// the merged top_labels array — at 5 labels per bucket that's
+// accurate up to a few dozen endpoints per strand, which is plenty
+// for human-readable topology.
+//
+// Window is rounded out to the surrounding 5-min boundaries so a
+// partially-covered bucket isn't dropped silently.
+func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, limit int) ([]ServiceTopologyEdge, error) {
+	if limit <= 0 || limit > 100000 {
+		limit = 20000
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+			parent_service,
+			child_node,
+			any(node_kind) AS node_kind,
+			protocol,
+			arraySlice(arrayDistinct(arrayFlatten(groupArray(top_labels))), 1, 5) AS top_labels,
+			toUInt32(length(arrayDistinct(arrayFlatten(groupArray(top_labels))))) AS distinct_labels,
+			sum(calls) AS total_calls
+		FROM topology_edges_5m FINAL
+		WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+		  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+		GROUP BY parent_service, child_node, protocol
+		ORDER BY total_calls DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`,
+		from.Unix(), to.Unix(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ServiceTopologyEdge
+	for rows.Next() {
+		var e ServiceTopologyEdge
+		if err := rows.Scan(&e.ParentService, &e.ChildNode, &e.NodeKind,
+			&e.Protocol, &e.TopLabels, &e.DistinctLabels, &e.Calls); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // GetServiceTopologyEdges returns service-pair interactions with

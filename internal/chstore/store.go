@@ -710,6 +710,29 @@ func (s *Store) migrate(ctx context.Context) error {
 		ORDER BY (service_name, metric, time)
 		TTL toDate(time) + INTERVAL %d DAY
 		SETTINGS index_granularity = 8192`, md),
+
+		// Pre-aggregated topology edges (v0.5.108). The service-
+		// level topology view used to run a self-join on the spans
+		// table per request — at billions-of-spans-per-day scale
+		// that's a non-starter. A background aggregator goroutine
+		// runs the join once per 5-min bucket and stores results
+		// here; API reads from this table instead of spans. 14d
+		// retention is plenty for an overview surface; ReplacingMergeTree
+		// dedupes re-runs over the same bucket (idempotent backfills).
+		`CREATE TABLE IF NOT EXISTS topology_edges_5m (
+			time_bucket     DateTime CODEC(DoubleDelta, ZSTD(3)),
+			parent_service  LowCardinality(String),
+			child_node      String,
+			node_kind       LowCardinality(String),  -- service|db|queue|external
+			protocol        LowCardinality(String),  -- http|rpc|db|kafka|internal
+			top_labels      Array(String),
+			distinct_labels UInt32,
+			calls           UInt64,
+			version         UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toDate(time_bucket)
+		ORDER BY (time_bucket, parent_service, child_node, node_kind, protocol)
+		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
 	}
 
 	for _, q := range tables {

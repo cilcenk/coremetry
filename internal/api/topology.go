@@ -186,7 +186,12 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	// difference between "snappy" and "30s timeouts".
 	key := fmt.Sprintf("topology-service:from=%d:to=%d", from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		edges, err := s.store.GetServiceTopologyEdges(r.Context(), from, to, edgeCap)
+		// Read from the topology_edges_5m pre-aggregated table
+		// (filled by the background aggregator goroutine every
+		// 5 min). The live self-join path used to run here is
+		// untenable at production scale — see WriteTopologyBucket
+		// for the actual aggregation query.
+		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, edgeCap)
 		if err != nil {
 			return nil, err
 		}

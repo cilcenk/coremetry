@@ -1093,6 +1093,20 @@ canvas { max-width: 100%; }
 
   /* TimeRangePicker bits — let preset chips wrap rather than overflow */
   .trp-presets { flex-wrap: wrap; }
+
+  /* Topbar prefs pill (lang/density/theme) — keep functional parity
+     on phones but reclaim ~25px so the title + range picker can
+     breathe. Drop the visual separator + tighten the gap. */
+  #topbar { gap: 6px; }
+  .topbar-prefs-sep { display: none; }
+}
+
+/* Extreme width — let the topbar wrap onto a second row rather than
+   clip the prefs pill off the right edge. Title + range picker stay
+   on row 1, pill drops to row 2. */
+@media (max-width: 480px) {
+  #topbar { flex-wrap: wrap; row-gap: 6px; }
+  .topbar-prefs { margin-left: auto; }
 }
 
 /* iPhone SE / very narrow viewports */

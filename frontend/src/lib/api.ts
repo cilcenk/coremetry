@@ -356,6 +356,12 @@ export const api = {
       rules: Array<import('./types').NoisyRule>;
       from: number; to: number; sinceSec: number;
     }>(`/api/admin/alert-tuning/noisy-rules?${qs({ since, limit })}`),
+  // Logs field discovery (v0.5.136). Returns the searchable field
+  // paths the configured logs backend knows about. Empty array
+  // for ClickHouse (shape is fixed); ES backend returns the
+  // mapping leaves. Server caches 60s.
+  logsFields: () => get<{ fields: string[]; backend: string }>(
+    `/api/logs/fields`),
 
   // Saved views (per-user named filter combos).
   savedViews: (page: string) =>

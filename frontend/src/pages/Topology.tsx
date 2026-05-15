@@ -25,7 +25,12 @@ type View = 'service' | 'operation' | 'flows';
 export default function TopologyPage() {
   const [params, setParams] = useSearchParams();
   const view = (params.get('view') as View) || 'service';
-  const preset = params.get('preset') || '1h';
+  // Default 24h so rarely-triggered interactions (cron jobs,
+  // hourly batch flows, low-traffic endpoints called 1-2x/day)
+  // still surface in the diagram. The pre-aggregated agg table
+  // keeps 14 days, so widening the default is cheap. URL state
+  // overrides per-bookmark.
+  const preset = params.get('preset') || '24h';
   const [range, setRange] = useState<TimeRange>({ preset });
 
   useEffect(() => {

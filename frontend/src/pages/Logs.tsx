@@ -130,6 +130,32 @@ function LogsInner() {
   // to the next.
   useEffect(() => { setExpanded(new Set()); }, [range, filter, page]);
 
+  // Field-mapping hint (v0.5.136 / v0.5.137). On the Elastic
+  // backend, surface what fields are queryable so the operator
+  // doesn't have to guess what their index mapping exposes. CH
+  // backend returns an empty list (its shape is fixed and
+  // already documented in the placeholder).
+  const [fields, setFields] = useState<string[]>([]);
+  const [showFieldsHint, setShowFieldsHint] = useState(false);
+  useEffect(() => {
+    api.logsFields()
+      .then(d => setFields(d.fields ?? []))
+      .catch(() => setFields([]));
+  }, []);
+  // Insert "field:" into the search box at cursor / end. Auto-
+  // focuses so the operator can type the value immediately.
+  const insertField = (f: string) => {
+    const cur = draft.search;
+    const sep = cur && !cur.endsWith(' ') ? ' AND ' : '';
+    setDraft({ ...draft, search: `${cur}${sep}${f}:` });
+    // Move keyboard focus back to the input.
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLInputElement>('input[placeholder^="Search…"]');
+      el?.focus();
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+  };
+
   const apply = () => { setPage(0); setFilter(draft); };
   const reset = () => {
     const empty = { service: '', search: '', severity: 0, traceId: '', spanId: '' };
@@ -190,6 +216,14 @@ function LogsInner() {
               '  message:"connection refused" AND k8s.namespace:prod\n\n' +
               'Plain words match the body. Use double quotes for exact phrases.'}
             style={{ width: 380 }} />
+          {fields.length > 0 && (
+            <button type="button" className="sec"
+              onClick={() => setShowFieldsHint(v => !v)}
+              title={`${fields.length} indexable field${fields.length === 1 ? '' : 's'} discovered from the Elasticsearch mapping. Click to browse + auto-insert into the search.`}
+              style={{ fontSize: 11, padding: '3px 8px' }}>
+              {showFieldsHint ? '× Fields' : 'ƒ Fields'}
+            </button>
+          )}
           {/* Trace ID filter — dedicated input next to search so
               operators can paste a trace ID from a problem /
               incident and see only its log lines. Mirrors the
@@ -218,6 +252,42 @@ function LogsInner() {
             {live ? '⏸ Pause Live' : '▶ Live tail'}
           </button>
         </div>
+
+        {/* Field-mapping chips (v0.5.137). Toggled via the ƒ
+            Fields button next to the search input. Discovered
+            from the Elasticsearch _mapping; clicking a chip
+            inserts "field:" at the end of the current search
+            with the right AND glue + auto-focuses the input. */}
+        {showFieldsHint && fields.length > 0 && (
+          <div style={{
+            background: 'var(--bg2)', border: '1px solid var(--border)',
+            borderRadius: 6, padding: 8, marginBottom: 10,
+            fontSize: 11,
+          }}>
+            <div style={{
+              fontWeight: 600, color: 'var(--text2)', marginBottom: 6,
+              display: 'flex', alignItems: 'baseline', gap: 8,
+            }}>
+              <span>Discovered fields</span>
+              <span style={{ color: 'var(--text3)', fontWeight: 400 }}>
+                {fields.length} field{fields.length === 1 ? '' : 's'} · click to insert "field:" into the search
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {fields.map(f => (
+                <button key={f} type="button"
+                  onClick={() => insertField(f)}
+                  className="sec"
+                  style={{
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    fontSize: 11, padding: '2px 6px',
+                  }}>
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
         {data && logs.length === 0 && (

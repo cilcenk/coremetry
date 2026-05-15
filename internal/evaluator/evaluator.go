@@ -12,6 +12,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/cache"
@@ -26,6 +27,21 @@ type Evaluator struct {
 	interval time.Duration
 	lock     cache.Lock
 	notifier *notify.Notifier
+
+	// breachSince tracks when a (rule, service) tuple first
+	// breached its threshold. Used by the v0.5.127 sustained-
+	// breach gate (AlertRule.ForSec): a problem only opens once
+	// the breach has persisted ForSec seconds. Reset to zero
+	// time the moment the breach clears. Map mutex'd via
+	// breachMu — the evaluator runs single-leader per tick but
+	// the seed call + tests can touch it concurrently.
+	breachSince map[breachKey]time.Time
+	breachMu    sync.Mutex
+}
+
+type breachKey struct {
+	RuleID  string
+	Service string
 }
 
 // New takes a cache.Lock so multiple Coremetry replicas only run the
@@ -35,7 +51,13 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 	if interval == 0 {
 		interval = time.Minute
 	}
-	return &Evaluator{store: store, interval: interval, lock: lock, notifier: notifier}
+	return &Evaluator{
+		store:       store,
+		interval:    interval,
+		lock:        lock,
+		notifier:    notifier,
+		breachSince: make(map[breachKey]time.Time),
+	}
 }
 
 // Start runs the evaluation loop until ctx is cancelled. Built-in rules
@@ -264,6 +286,35 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	}
 
 	breached := compare(value, r.Comparator, r.Threshold)
+
+	// Sustained-breach gate (v0.5.127): when r.ForSec > 0 we
+	// stamp the first-breach time and only open a problem after
+	// the breach has persisted that long. Clearing the breach
+	// resets the stamp so a re-breach restarts the clock — same
+	// semantics as Prometheus' `for:` directive. Open problems
+	// don't pass through here; the breach has already been
+	// promoted, refresh continues via the existing path.
+	key := breachKey{RuleID: r.ID, Service: service}
+	now := time.Now()
+	if breached && r.ForSec > 0 {
+		e.breachMu.Lock()
+		first, seen := e.breachSince[key]
+		if !seen {
+			e.breachSince[key] = now
+			e.breachMu.Unlock()
+			return // first sighting — wait for sustain
+		}
+		e.breachMu.Unlock()
+		if now.Sub(first) < time.Duration(r.ForSec)*time.Second {
+			return // still inside the sustain window
+		}
+		// Past the sustain — fall through to open.
+	}
+	if !breached {
+		e.breachMu.Lock()
+		delete(e.breachSince, key)
+		e.breachMu.Unlock()
+	}
 
 	open, err := e.store.FindOpenProblem(ctx, r.ID, service)
 	hasOpen := err == nil && open != nil && open.ID != ""

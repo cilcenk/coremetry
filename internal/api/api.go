@@ -2913,6 +2913,13 @@ func (s *Server) putLDAPSettings(w http.ResponseWriter, r *http.Request) {
 	if err := s.ldap.SavePersisted(r.Context(), s.store, c); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
+	// Audit row carries non-secret config shape only — bind password
+	// and the directory host's credentials never go into audit_log.
+	details, _ := json.Marshal(map[string]any{
+		"enabled": c.Enabled, "host": c.Host, "port": c.Port,
+		"defaultRole": c.DefaultRole, "groupRoleMapCount": len(c.GroupRoleMap),
+	})
+	s.audit(r, "settings.ldap.update", "settings", "ldap", string(details))
 	writeJSON(w, s.ldap.Snapshot())
 }
 
@@ -3289,6 +3296,11 @@ func (s *Server) putSamplingSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	details, _ := json.Marshal(map[string]any{
+		"default": cfg.Default, "serviceCount": len(cfg.Services),
+		"tailEnabled": cfg.Tail.Enabled,
+	})
+	s.audit(r, "settings.sampling.update", "settings", "sampling", string(details))
 	s.getSamplingSettings(w, r)
 }
 
@@ -3335,6 +3347,12 @@ func (s *Server) putSMTPSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Password never enters audit_log — only the connection shape.
+	details, _ := json.Marshal(map[string]any{
+		"host": body.Host, "port": body.Port, "username": body.Username,
+		"from": body.From, "startTLS": body.StartTLS,
+	})
+	s.audit(r, "settings.smtp.update", "settings", "smtp", string(details))
 	writeJSON(w, maskedSMTP(body))
 }
 
@@ -3831,6 +3849,8 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	details, _ := json.Marshal(map[string]any{"email": u.Email, "role": u.Role, "team": u.Team})
+	s.audit(r, "user.create", "user", u.ID, string(details))
 	writeJSON(w, map[string]interface{}{
 		"id": u.ID, "email": u.Email, "role": u.Role, "team": u.Team,
 	})
@@ -3853,6 +3873,8 @@ func (s *Server) setUserTeam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	details, _ := json.Marshal(map[string]any{"team": body.Team})
+	s.audit(r, "user.set_team", "user", id, string(details))
 	writeJSON(w, map[string]string{"team": body.Team})
 }
 
@@ -3905,11 +3927,14 @@ func (s *Server) setUserRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	prevRole := target.Role
 	target.Role = role
 	if err := s.store.UpsertUser(r.Context(), *target); err != nil {
 		writeErr(w, err)
 		return
 	}
+	details, _ := json.Marshal(map[string]any{"email": target.Email, "from": prevRole, "to": role})
+	s.audit(r, "user.set_role", "user", target.ID, string(details))
 	writeJSON(w, map[string]any{"id": target.ID, "email": target.Email, "role": target.Role})
 }
 
@@ -3945,6 +3970,8 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	details, _ := json.Marshal(map[string]any{"email": target.Email, "role": target.Role})
+	s.audit(r, "user.delete", "user", id, string(details))
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -3972,6 +3999,9 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Audit row carries no password material — just that someone
+	// admin-reset this user's credential.
+	s.audit(r, "user.reset_password", "user", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -4445,6 +4475,12 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
 	provider, model, baseURL, hasKey := s.copilot.Snapshot()
+	// apiKey itself never enters audit_log; hasKey is the only
+	// secret-adjacent bit and it's already part of the public GET.
+	details, _ := json.Marshal(map[string]any{
+		"provider": provider, "model": model, "baseUrl": baseURL, "hasKey": hasKey,
+	})
+	s.audit(r, "settings.ai.update", "settings", "ai", string(details))
 	writeJSON(w, map[string]any{
 		"provider": provider,
 		"model":    model,
@@ -5818,6 +5854,8 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
 		writeErr(w, err); return
 	}
+	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
+	s.audit(r, "alert_rule.create", "alert_rule", rule.ID, string(details))
 	writeJSON(w, rule)
 }
 
@@ -5842,20 +5880,26 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
 		writeErr(w, err); return
 	}
+	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
+	s.audit(r, "alert_rule.update", "alert_rule", rule.ID, string(details))
 	writeJSON(w, rule)
 }
 
 func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteAlertRule(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteAlertRule(r.Context(), id); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "alert_rule.delete", "alert_rule", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func (s *Server) enableAlertRule(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.SetAlertRuleEnabled(r.Context(), r.PathValue("id"), true); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.SetAlertRuleEnabled(r.Context(), id, true); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "alert_rule.enable", "alert_rule", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -5992,6 +6036,8 @@ func (s *Server) createDashboard(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpsertDashboard(r.Context(), d); err != nil {
 		writeErr(w, err); return
 	}
+	details, _ := json.Marshal(map[string]any{"name": d.Name})
+	s.audit(r, "dashboard.create", "dashboard", d.ID, string(details))
 	writeJSON(w, d)
 }
 
@@ -6011,13 +6057,17 @@ func (s *Server) updateDashboard(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpsertDashboard(r.Context(), d); err != nil {
 		writeErr(w, err); return
 	}
+	details, _ := json.Marshal(map[string]any{"name": d.Name})
+	s.audit(r, "dashboard.update", "dashboard", d.ID, string(details))
 	writeJSON(w, d)
 }
 
 func (s *Server) deleteDashboard(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteDashboard(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteDashboard(r.Context(), id); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "dashboard.delete", "dashboard", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

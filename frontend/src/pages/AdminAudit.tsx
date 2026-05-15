@@ -12,12 +12,28 @@ import { tsLong } from '@/lib/utils';
 // empty. Discovered values from the response are still merged
 // at render time as a safety net.
 const KNOWN_ACTIONS = [
+  'alert_rule.create',
+  'alert_rule.update',
+  'alert_rule.delete',
+  'alert_rule.enable',
   'anomaly_silence.create',
   'anomaly_silence.delete',
+  'dashboard.create',
+  'dashboard.update',
+  'dashboard.delete',
   'problem.acknowledge',
   'saved_view.create',
   'saved_view.delete',
+  'settings.ai.update',
+  'settings.ldap.update',
+  'settings.sampling.update',
+  'settings.smtp.update',
   'sql.query',
+  'user.create',
+  'user.delete',
+  'user.reset_password',
+  'user.set_role',
+  'user.set_team',
 ];
 
 // /admin/audit shows the append-only audit_log: who did what, when.

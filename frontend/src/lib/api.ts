@@ -31,17 +31,44 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
+// Default per-request timeout. CH queries that hit the
+// max_execution_time guard return an error quickly, but a hung
+// upstream (network blip, CH cluster restart) would otherwise
+// leave the fetch pending forever — the UI surfaces this as a
+// spinner that never resolves. 60s is generous enough for the
+// heaviest read on prod scale (raw spans scan with filters) and
+// short enough that the operator gets a real error instead of
+// a stuck page. Callers that need longer can pass their own
+// signal via init.
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(API_BASE + path, { credentials: 'include', ...init });
-  if (r.status === 401) {
-    onUnauthorized?.();
-    throw new UnauthorizedError(await r.text().catch(() => 'unauthorized'));
+  let signal = init?.signal;
+  let abortTimer: ReturnType<typeof setTimeout> | undefined;
+  if (!signal) {
+    const ctl = new AbortController();
+    signal = ctl.signal;
+    abortTimer = setTimeout(() => ctl.abort(), DEFAULT_REQUEST_TIMEOUT_MS);
   }
-  if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-  // 204 / empty bodies → undefined
-  const ct = r.headers.get('content-type') ?? '';
-  if (!ct.includes('application/json')) return undefined as unknown as T;
-  return r.json() as Promise<T>;
+  try {
+    const r = await fetch(API_BASE + path, { credentials: 'include', ...init, signal });
+    if (r.status === 401) {
+      onUnauthorized?.();
+      throw new UnauthorizedError(await r.text().catch(() => 'unauthorized'));
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    // 204 / empty bodies → undefined
+    const ct = r.headers.get('content-type') ?? '';
+    if (!ct.includes('application/json')) return undefined as unknown as T;
+    return await (r.json() as Promise<T>);
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s — try a narrower time range or fewer filters`);
+    }
+    throw err;
+  } finally {
+    if (abortTimer) clearTimeout(abortTimer);
+  }
 }
 
 async function get<T>(path: string): Promise<T> { return request<T>(path); }

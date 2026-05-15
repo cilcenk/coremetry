@@ -30,7 +30,7 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, 'src') },
   },
   server: {
-    port: 3000,
+    port: 4888,
     proxy: {
       '/api': 'http://localhost:8088',
       '/v1': 'http://localhost:8088',

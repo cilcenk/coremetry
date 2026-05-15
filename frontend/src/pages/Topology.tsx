@@ -135,7 +135,16 @@ function ServiceView({ range }: { range: TimeRange }) {
   useEffect(() => {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
-    api.serviceTopology({ from, to }).then(setData).catch(() => setData(null));
+    api.serviceTopology({ from, to })
+      // Normalise: nil slices from older backend / empty windows
+      // marshal as JSON null, which crashes data.edges.forEach.
+      // Belt-and-braces with the server-side fix.
+      .then(d => setData({
+        ...d,
+        nodes: d?.nodes ?? [],
+        edges: d?.edges ?? [],
+      }))
+      .catch(() => setData(null));
   }, [range]);
 
   // Compute the visible subgraph from the raw response based on
@@ -304,7 +313,8 @@ function OperationView({ params, setParams, range }: {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
     api.topology({ root, root_op: rootOp || undefined, depth, from, to })
-      .then(setData).catch(() => setData(null));
+      .then(d => setData({ ...d, nodes: d?.nodes ?? [], edges: d?.edges ?? [] }))
+      .catch(() => setData(null));
   }, [root, rootOp, depth, range]);
 
   // Load ops for the selected service so the op picker can be
@@ -422,7 +432,9 @@ function FlowsView({ range }: { range: TimeRange }) {
     const { from, to } = timeRangeToNs(range);
     api.topologyFlow({
       root_service: picked.rootService, root_op: picked.rootOp, from, to,
-    }).then(setPickedData).catch(() => setPickedData(null));
+    })
+      .then(d => setPickedData({ ...d, nodes: d?.nodes ?? [], edges: d?.edges ?? [] }))
+      .catch(() => setPickedData(null));
   }, [picked, range]);
 
   if (flows === undefined) return <Spinner />;

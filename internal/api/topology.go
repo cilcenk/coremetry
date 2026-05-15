@@ -135,6 +135,9 @@ func (s *Server) getTopology(w http.ResponseWriter, r *http.Request) {
 			}
 			return keptEdges[i].ChildOp < keptEdges[j].ChildOp
 		})
+		if keptEdges == nil {
+			keptEdges = []chstore.TopologyEdge{}
+		}
 		return TopologyResponse{
 			Nodes:       nodesOut,
 			Edges:       keptEdges,
@@ -257,6 +260,13 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			nodesOut = append(nodesOut, n)
 		}
 		sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+		// Empty-window safety: nil edge slice marshals as JSON
+		// `null` which makes the SPA's `data.edges.forEach` crash.
+		// Same shape every call so the frontend can stay defensive-
+		// free.
+		if edges == nil {
+			edges = []chstore.ServiceTopologyEdge{}
+		}
 		return ServiceTopologyResponse{
 			Nodes:     nodesOut,
 			Edges:     edges,
@@ -292,6 +302,9 @@ func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 		flows, err := s.store.ReadRootFlowsAgg(r.Context(), from, to, top)
 		if err != nil {
 			return nil, err
+		}
+		if flows == nil {
+			flows = []chstore.RootFlow{}
 		}
 		return FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano()}, nil
 	})
@@ -367,6 +380,9 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 			nodesOut = append(nodesOut, n)
 		}
 		sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+		if edges == nil {
+			edges = []chstore.ServiceTopologyEdge{}
+		}
 		return ServiceTopologyResponse{
 			Nodes:     nodesOut,
 			Edges:     edges,

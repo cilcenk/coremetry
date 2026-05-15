@@ -523,6 +523,10 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 	// aggregate" — even though both wrappers are scalar array
 	// functions. Splitting the merge into a named subquery field
 	// sidesteps the false-positive.
+	// toUInt64 casts on length() + sum() because the CH Go driver
+	// is strict on Scan type matching — a UInt32 column won't bind
+	// to *uint64 even though the value fits. Struct fields stay
+	// uint64 so JSON encoding keeps the same shape across drivers.
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			parent_service,
@@ -530,7 +534,7 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 			node_kind,
 			protocol,
 			arraySlice(merged, 1, 5) AS top_labels,
-			toUInt32(length(merged)) AS distinct_labels,
+			toUInt64(length(merged)) AS distinct_labels,
 			total_calls
 		FROM (
 			SELECT
@@ -539,7 +543,7 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 				any(node_kind) AS node_kind,
 				protocol,
 				arrayDistinct(arrayFlatten(groupArray(top_labels))) AS merged,
-				sum(calls) AS total_calls
+				toUInt64(sum(calls)) AS total_calls
 			FROM topology_edges_5m FINAL
 			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
 			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE

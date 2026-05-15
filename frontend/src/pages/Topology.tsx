@@ -85,6 +85,21 @@ function ServiceView({ range }: { range: TimeRange }) {
   // operator can find a service inside a 100-node graph without
   // dropping context. Empty = all nodes at normal opacity.
   const [search, setSearch] = useState('');
+  // Incidents overlay — services with at least one open problem
+  // get a red highlight on their node so an operator can spot
+  // trouble without leaving the topology page. Refreshes on
+  // range change; client-side derived from a single /api/problems
+  // round-trip.
+  const [incidentServices, setIncidentServices] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    api.problems({ status: 'open', limit: 500 })
+      .then(rows => {
+        const s = new Set<string>();
+        (rows ?? []).forEach(p => { if (p.service) s.add(p.service); });
+        setIncidentServices(s);
+      })
+      .catch(() => setIncidentServices(new Set()));
+  }, [range]);
   useEffect(() => {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
@@ -206,6 +221,7 @@ function ServiceView({ range }: { range: TimeRange }) {
           <ServiceTopologySVG
             nodes={visible.nodes} edges={visible.edges} layout={layout}
             onEdgeClick={setSelectedEdge} search={search}
+            incidentServices={incidentServices}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
@@ -536,12 +552,13 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
   onEdgeClick: (e: ServiceTopologyEdge) => void;
   search?: string;
+  incidentServices?: Set<string>;
 }) {
   // Search highlighting: a node "matches" when its name includes
   // the (case-insensitive) substring. Edges match when EITHER end
@@ -635,13 +652,21 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search }: {
           const { fill, stroke } = nodeColors(n);
           const kindIcon = n.kind === 'db' ? '⛁' : n.kind === 'queue' ? '⌬' : n.kind === 'external' ? '↗' : '';
           const match = isNodeMatch(n);
+          const hasIncident = !!incidentServices && incidentServices.has(n.id);
           return (
             <g key={n.id} transform={`translate(${p.x}, ${p.y})`}
                style={{ opacity: match ? 1 : 0.18 }}>
+              {hasIncident && (
+                <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}
+                  rx={10} ry={10} fill="none"
+                  stroke="#dc2626" strokeWidth={2.4} strokeDasharray="4 3">
+                  <title>Open problem(s) on this service</title>
+                </rect>
+              )}
               <rect width={NODE_W} height={NODE_H} rx={8} ry={8}
                 fill={fill} fillOpacity={0.18} stroke={stroke}
                 strokeWidth={term && match ? 2.8 : 1.6}>
-                <title>{`${n.name} (${n.kind})`}</title>
+                <title>{`${n.name} (${n.kind})${hasIncident ? ' · open problem' : ''}`}</title>
               </rect>
               <text x={10} y={22} fontSize={13} fontWeight={600} fill="var(--text)">
                 {truncate(n.name, 24)}
@@ -649,6 +674,11 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search }: {
               <text x={10} y={40} fontSize={10} fill="var(--text3)">
                 {n.kind.toUpperCase()}
               </text>
+              {hasIncident && (
+                <text x={NODE_W - 34} y={40} fontSize={10} fontWeight={700} fill="#dc2626">
+                  !
+                </text>
+              )}
               {kindIcon && (
                 <text x={NODE_W - 18} y={22} fontSize={14} fill={stroke}>{kindIcon}</text>
               )}

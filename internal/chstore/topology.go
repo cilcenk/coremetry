@@ -516,19 +516,35 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 	if limit <= 0 || limit > 100000 {
 		limit = 20000
 	}
+	// Subquery: aggregate within groups first, then post-process
+	// the merged label array. Inlining the merged array twice in
+	// the outer SELECT (once for arraySlice, once for length)
+	// makes CH's analyzer reject the query as "aggregate inside
+	// aggregate" — even though both wrappers are scalar array
+	// functions. Splitting the merge into a named subquery field
+	// sidesteps the false-positive.
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			parent_service,
 			child_node,
-			any(node_kind) AS node_kind,
+			node_kind,
 			protocol,
-			arraySlice(arrayDistinct(arrayFlatten(groupArray(top_labels))), 1, 5) AS top_labels,
-			toUInt32(length(arrayDistinct(arrayFlatten(groupArray(top_labels))))) AS distinct_labels,
-			sum(calls) AS total_calls
-		FROM topology_edges_5m FINAL
-		WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
-		  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
-		GROUP BY parent_service, child_node, protocol
+			arraySlice(merged, 1, 5) AS top_labels,
+			toUInt32(length(merged)) AS distinct_labels,
+			total_calls
+		FROM (
+			SELECT
+				parent_service,
+				child_node,
+				any(node_kind) AS node_kind,
+				protocol,
+				arrayDistinct(arrayFlatten(groupArray(top_labels))) AS merged,
+				sum(calls) AS total_calls
+			FROM topology_edges_5m FINAL
+			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+			GROUP BY parent_service, child_node, protocol
+		)
 		ORDER BY total_calls DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 10`,

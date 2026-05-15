@@ -398,11 +398,20 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				peer_service != '', 'external',
 				''
 			) AS kind_out,
+			-- Label format: include the instance/host (peer_service)
+			-- when present so the edge detail panel surfaces "which
+			-- postgres instance is hot" without forcing a separate
+			-- query. Falls back to system+operation when peer is
+			-- empty so labels stay informative on older spans.
 			multiIf(
 				http_method != '', concat(http_method, ' ',
 					if(http_route != '', http_route, name)),
-				db_system   != '', name,
-				msg_system  != '', name,
+				db_system   != '' AND peer_service != '',
+					concat(db_system, '@', peer_service, ' ', name),
+				db_system   != '', concat(db_system, ' ', name),
+				msg_system  != '' AND peer_service != '',
+					concat(msg_system, '@', peer_service, ' ', name),
+				msg_system  != '', concat(msg_system, ' ', name),
 				name
 			) AS label
 		SELECT

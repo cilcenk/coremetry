@@ -46,7 +46,6 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'navGroup.services',
     items: [
       { href: '/services',    label: 'nav.services',   icon: '◈' },
-      { href: '/service-map', label: 'nav.serviceMap', icon: '◉' },
       { href: '/topology',    label: 'nav.topology',   icon: '⋔' },
       { href: '/databases',   label: 'nav.databases',  icon: '⛁' },
       { href: '/messaging',   label: 'nav.messaging',  icon: '⌬' },

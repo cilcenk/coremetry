@@ -15,7 +15,6 @@ const Login             = lazy(() => import('./pages/Login'));
 const Services          = lazy(() => import('./pages/Services'));
 const Service           = lazy(() => import('./pages/Service'));
 const ServiceBacktrace  = lazy(() => import('./pages/ServiceBacktrace'));
-const ServiceMap        = lazy(() => import('./pages/ServiceMap'));
 const Topology          = lazy(() => import('./pages/Topology'));
 const Traces            = lazy(() => import('./pages/Traces'));
 const Trace             = lazy(() => import('./pages/Trace'));
@@ -71,7 +70,7 @@ export default function App() {
             <Route path="/services"       element={<Services />} />
             <Route path="/service"        element={<Service />} />
             <Route path="/service/backtrace" element={<ServiceBacktrace />} />
-            <Route path="/service-map"    element={<ServiceMap />} />
+            <Route path="/service-map"    element={<Topology />} />
             <Route path="/topology"       element={<Topology />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />

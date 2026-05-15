@@ -75,8 +75,27 @@ function ServiceView({ range }: { range: TimeRange }) {
   // across renders. Inline arrows would force a re-render of every
   // node g on each parent re-render — at 200 nodes that's a
   // perceptible jank on slow laptops.
-  const onNodeClick = useCallback((serviceName: string) => {
-    navigate(`/service?name=${encodeURIComponent(serviceName)}`);
+  // Click target depends on node kind: services go to their
+  // detail page; infra nodes pivot to /databases or /messaging
+  // so the operator can see per-instance latency / throughput
+  // (the topology agg collapses by db_system/msg_system, those
+  // pages keep the per-instance breakdown).
+  const onNodeClick = useCallback((node: ServiceTopologyNode) => {
+    switch (node.kind) {
+      case 'service':
+        navigate(`/service?name=${encodeURIComponent(node.name)}`);
+        break;
+      case 'db':
+        navigate(`/databases?system=${encodeURIComponent(node.name)}`);
+        break;
+      case 'queue':
+        navigate(`/messaging?system=${encodeURIComponent(node.name)}`);
+        break;
+      case 'external':
+        // External APIs have no detail page (no traces past the
+        // outbound boundary). Stay on the topology view.
+        break;
+    }
   }, [navigate]);
   const [data, setData] = useState<ServiceTopologyResponse | null | undefined>(undefined);
   const [selectedEdge, setSelectedEdge] = useState<ServiceTopologyEdge | null>(null);
@@ -594,7 +613,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   onEdgeClick: (e: ServiceTopologyEdge) => void;
   search?: string;
   incidentServices?: Set<string>;
-  onNodeClick?: (serviceName: string) => void;
+  onNodeClick?: (node: ServiceTopologyNode) => void;
 }) {
   // Search highlighting: a node "matches" when its name includes
   // the (case-insensitive) substring. Edges match when EITHER end
@@ -697,11 +716,15 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const kindIcon = n.kind === 'db' ? '⛁' : n.kind === 'queue' ? '⌬' : n.kind === 'external' ? '↗' : '';
           const match = isNodeMatch(n);
           const hasIncident = !!incidentServices && incidentServices.has(n.id);
-          const clickable = n.kind === 'service' && !!onNodeClick;
+          // Every kind except 'external' has a destination page —
+          // services to /service, db to /databases, queue to
+          // /messaging. External nodes stay non-clickable since
+          // there's nothing past the outbound boundary.
+          const clickable = !!onNodeClick && n.kind !== 'external';
           return (
             <g key={n.id} transform={`translate(${p.x}, ${p.y})`}
                style={{ opacity: match ? 1 : 0.18, cursor: clickable ? 'pointer' : 'default' }}
-               onClick={clickable ? () => onNodeClick(n.name) : undefined}>
+               onClick={clickable ? () => onNodeClick(n) : undefined}>
               {hasIncident && (
                 <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}
                   rx={10} ry={10} fill="none"

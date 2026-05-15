@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -139,6 +140,47 @@ func (s *Server) listAuditLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, rows)
+}
+
+// exportAuditLog streams the audit log as CSV using the same
+// filter shape as the JSON list endpoint. Limit is bumped to 50k
+// so a quarterly compliance pull (~SOC2 audit window) lands in
+// one shot. Filename embeds the since param + UTC date so the
+// downloaded file is self-describing on a reviewer's disk.
+func (s *Server) exportAuditLog(w http.ResponseWriter, r *http.Request) {
+	claims := auth.FromContext(r.Context())
+	if claims == nil || claims.Role != auth.RoleAdmin {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	q := r.URL.Query()
+	since := parseDuration(q.Get("since"), 24*time.Hour)
+	rows, err := s.store.ListAuditLog(r.Context(), chstore.AuditFilter{
+		SinceNs:    time.Now().Add(-since).UnixNano(),
+		Actor:      strings.TrimSpace(q.Get("actor")),
+		Action:     strings.TrimSpace(q.Get("action")),
+		TargetKind: strings.TrimSpace(q.Get("target")),
+		Limit:      parseInt(q.Get("limit"), 50000),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	filename := fmt.Sprintf("coremetry-audit-%s-%s.csv",
+		strings.ReplaceAll(time.Now().UTC().Format(time.DateOnly), "-", ""),
+		strings.ReplaceAll(q.Get("since"), " ", ""))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+	_ = cw.Write([]string{"time", "actor_email", "actor_role", "action", "target_kind", "target_id", "ip", "details"})
+	for _, e := range rows {
+		_ = cw.Write([]string{
+			time.Unix(0, e.Time).UTC().Format(time.RFC3339),
+			e.ActorEmail, e.ActorRole, e.Action,
+			e.TargetKind, e.TargetID, e.IP, e.Details,
+		})
+	}
 }
 
 // audit is a thin helper called from mutation handlers. Best-effort:

@@ -309,13 +309,82 @@ function LogsInner() {
           <>
             <LogTable logs={logs} nav={tableNav}
               expandedIds={expanded}
-              onToggleExpand={toggle} />
+              onToggleExpand={toggle}
+              extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
             <Pager page={page} pageSize={100} total={total} onPage={setPage}
                    extras={<>{total.toLocaleString()} total</>} />
           </>
         )}
       </div>
     </>
+  );
+}
+
+// SimilarTracesPanel (v0.5.141) — collapsed-by-default block in
+// the expanded log row. Click "Find similar" → POSTs the body to
+// /api/logs/similar (Elastic more_like_this + trace.id terms
+// agg) and renders the bucketed trace IDs as clickable links.
+// CH-backend deployments see a tooltip explaining ES is needed
+// rather than a noisy error; ES installs get a one-click pivot
+// to "all traces that produced a log like this one".
+function SimilarTracesPanel({ body }: { body: string }) {
+  const [state, setState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'ok'; traces: Array<{ traceId: string; count: number }> }
+    | { kind: 'err'; msg: string }
+  >({ kind: 'idle' });
+  const run = async () => {
+    setState({ kind: 'loading' });
+    try {
+      const r = await api.logsSimilarTraces(body, 50);
+      setState({ kind: 'ok', traces: r.traces ?? [] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'similar-logs lookup failed';
+      setState({ kind: 'err', msg });
+    }
+  };
+  return (
+    <div style={{
+      marginTop: 8, paddingTop: 8,
+      borderTop: '1px dashed var(--border)',
+      fontSize: 11,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <button type="button" className="sec"
+          onClick={run}
+          disabled={state.kind === 'loading'}
+          style={{ fontSize: 11, padding: '3px 10px' }}
+          title="Find traces whose logs contain text similar to this one (more_like_this on the body field; Elasticsearch backend only).">
+          {state.kind === 'loading' ? 'Searching…' : '⌕ Find similar traces'}
+        </button>
+        {state.kind === 'ok' && (
+          <span style={{ color: 'var(--text3)' }}>
+            {state.traces.length} trace{state.traces.length === 1 ? '' : 's'} match
+          </span>
+        )}
+        {state.kind === 'err' && (
+          <span style={{ color: 'var(--err)' }}>{state.msg}</span>
+        )}
+      </div>
+      {state.kind === 'ok' && state.traces.length > 0 && (
+        <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {state.traces.map(t => (
+            <Link key={t.traceId}
+              to={`/trace/${encodeURIComponent(t.traceId)}`}
+              title={`${t.count} similar log line${t.count === 1 ? '' : 's'} in this trace`}
+              style={{
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontSize: 10, padding: '2px 6px', borderRadius: 3,
+                background: 'var(--bg2)', border: '1px solid var(--border)',
+                color: 'var(--text)', textDecoration: 'none',
+              }}>
+              {t.traceId.slice(0, 16)}<span style={{ color: 'var(--text3)' }}> · {t.count}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

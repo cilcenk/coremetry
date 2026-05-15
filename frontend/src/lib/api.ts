@@ -370,6 +370,16 @@ export const api = {
   // mapping leaves. Server caches 60s.
   logsFields: () => get<{ fields: string[]; backend: string }>(
     `/api/logs/fields`),
+  // Similar-traces lookup (v0.5.141). more_like_this on the
+  // configured body field + trace.id terms aggregation. ES-only;
+  // CH backend returns 400.
+  logsSimilarTraces: (text: string, limit = 50) =>
+    request<{ traces: Array<{ traceId: string; count: number }> }>(
+      `/api/logs/similar`,
+      {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, limit }),
+      }),
 
   // Saved views (per-user named filter combos).
   savedViews: (page: string) =>

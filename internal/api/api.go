@@ -225,6 +225,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
+	mux.HandleFunc("POST /api/logs/similar",   s.getLogsSimilarTraces)
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
@@ -2101,6 +2102,45 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 		}
 		return map[string]any{"fields": fields, "backend": s.logs.Backend()}, nil
 	})
+}
+
+// getLogsSimilarTraces bucket-counts trace IDs whose logs are
+// pattern-similar to a seed text (more_like_this on the body
+// field). POST body shape: {"text":"...","limit":50}. Returns
+// {traces:[{traceId,count}]} sorted descending by count.
+// Read-only against Elasticsearch; ClickHouse backend gets a
+// clean 400 (no similar-text support).
+func (s *Server) getLogsSimilarTraces(w http.ResponseWriter, r *http.Request) {
+	type similarRunner interface {
+		SimilarTraces(ctx context.Context, seed string, limit int) ([]logstore.SimilarTrace, error)
+	}
+	runner, ok := s.logs.(similarRunner)
+	if !ok {
+		http.Error(w, `{"error":"similar-logs lookup requires the Elasticsearch backend"}`, http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Text  string `json:"text"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Text = strings.TrimSpace(body.Text)
+	if body.Text == "" {
+		http.Error(w, "text required", http.StatusBadRequest)
+		return
+	}
+	traces, err := runner.SimilarTraces(r.Context(), body.Text, body.Limit)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if traces == nil {
+		traces = []logstore.SimilarTrace{}
+	}
+	writeJSON(w, map[string]any{"traces": traces})
 }
 
 // getLogsTimeseries powers the Logs source on the Data Explorer

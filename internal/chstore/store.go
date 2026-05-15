@@ -459,6 +459,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			built_in     UInt8        DEFAULT 0,
 			runbook_url  String       DEFAULT '',
 			for_sec      UInt32       DEFAULT 0,
+			min_samples  UInt32       DEFAULT 0,
 			created_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -818,6 +819,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// problem after the threshold has been breached for this
 		// many seconds in a row.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS for_sec UInt32 DEFAULT 0`,
+		// v0.5.128 sample-count floor. 0 = no floor. When > 0
+		// the evaluator skips evaluation entirely if the window
+		// saw fewer than N requests — kills percentile / error-
+		// rate flapping on low-traffic services.
+		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS min_samples UInt32 DEFAULT 0`,
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS sre_team String DEFAULT ''`,
 		// chat_channel — successor to slack_channel. Existing
 		// rows with a populated slack_channel keep showing it

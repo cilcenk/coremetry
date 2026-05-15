@@ -279,6 +279,29 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	if service == "" {
 		return
 	}
+	// Sample floor (v0.5.128). For sample-dependent metrics
+	// (error_rate / percentiles / avg_ms) a single bad request
+	// in a low-traffic window pushes the value to scary levels
+	// without any real signal — skip the eval entirely below
+	// MinSamples. request_rate / error_count are absolute and
+	// inherently sample-aware, so the gate doesn't apply.
+	if r.MinSamples > 0 && metricNeedsSampleFloor(r.Metric) {
+		count, err := e.measureCount(ctx, service, time.Duration(r.WindowSec)*time.Second)
+		if err != nil {
+			log.Printf("[evaluator] measure-count %s/%s: %v", r.ID, service, err)
+			return
+		}
+		if count < uint64(r.MinSamples) {
+			// Also clear any stamped breach so a sustain gate
+			// doesn't carry over once the service warms up.
+			key := breachKey{RuleID: r.ID, Service: service}
+			e.breachMu.Lock()
+			delete(e.breachSince, key)
+			e.breachMu.Unlock()
+			return
+		}
+	}
+
 	value, err := e.measure(ctx, service, r.Metric, time.Duration(r.WindowSec)*time.Second)
 	if err != nil {
 		log.Printf("[evaluator] measure %s/%s: %v", r.ID, service, err)
@@ -615,6 +638,34 @@ func nextSeverity(cur string, openFor time.Duration) string {
 }
 
 // measure runs the per-service metric query for the given window.
+// metricNeedsSampleFloor reports whether a metric's value is
+// distorted by low sample counts (1 of 1 = 100% error rate)
+// versus an absolute count whose value carries the signal
+// directly. v0.5.128's MinSamples gate only applies to the
+// former.
+func metricNeedsSampleFloor(metric string) bool {
+	if strings.HasSuffix(metric, "_rate") || strings.HasSuffix(metric, "_ms") {
+		return true
+	}
+	switch metric {
+	case "error_rate", "avg_ms", "p50_ms", "p95_ms", "p99_ms":
+		return true
+	}
+	return false
+}
+
+// measureCount returns the total span count for a service over
+// the window. Used by the MinSamples gate; one extra round-trip
+// per rule per tick (skipped when MinSamples == 0).
+func (e *Evaluator) measureCount(ctx context.Context, service string, window time.Duration) (uint64, error) {
+	cutoff := time.Now().Add(-window)
+	var n uint64
+	err := e.store.Conn().QueryRow(ctx, `
+		SELECT count() FROM spans WHERE service_name = ? AND time >= ?`,
+		service, cutoff).Scan(&n)
+	return n, err
+}
+
 func (e *Evaluator) measure(ctx context.Context, service, metric string, window time.Duration) (float64, error) {
 	cutoff := time.Now().Add(-window)
 	conn := e.store.Conn()

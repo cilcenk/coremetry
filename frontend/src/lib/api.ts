@@ -166,6 +166,14 @@ export const api = {
     return get<import('./types').ServiceMap>(`/api/service-map?${qs}`);
   },
 
+  // Topology — operation-level BFS rooted at one service, depth-
+  // bounded. Drives the /topology page; mirrors the backend at
+  // internal/api/topology.go.
+  topology: (params: { root: string; depth?: number; from?: number; to?: number }) =>
+    get<import('./types').TopologyResponse>(`/api/topology?${qs(params)}`),
+  topologyDrawIOURL: (params: { root: string; depth?: number; from?: number; to?: number }) =>
+    `/api/topology/drawio?${qs(params)}`,
+
   // Inbound-callers backtrace — Dynatrace-style consumer view.
   // Returns a row per (caller service × pod/instance × client IP ×
   // user-agent) with RED stats so the operator can pinpoint who

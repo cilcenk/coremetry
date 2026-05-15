@@ -9,6 +9,24 @@ export interface Service {
   apdexThresholdMs: number; // T (default 200)
 }
 
+// Topology view (v0.5.100) — operation-level call graph rooted at
+// one service, BFS-bounded by depth. Mirrors api.TopologyResponse.
+export interface TopologyNode { id: string; service: string; op: string }
+export interface TopologyEdge {
+  parentService: string; parentOp: string;
+  childService: string;  childOp: string;
+  calls: number;
+}
+export interface TopologyResponse {
+  nodes: TopologyNode[];
+  edges: TopologyEdge[];
+  rootService: string;
+  depth: number;
+  from: number;
+  to: number;
+  truncated: boolean;
+}
+
 // One row of the system status grid on /status. Mirrors the
 // componentStatus / systemStatus types in internal/api.
 // ── Incident management ──────────────────────────────────────────────────────

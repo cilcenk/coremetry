@@ -16,6 +16,7 @@ const Services          = lazy(() => import('./pages/Services'));
 const Service           = lazy(() => import('./pages/Service'));
 const ServiceBacktrace  = lazy(() => import('./pages/ServiceBacktrace'));
 const ServiceMap        = lazy(() => import('./pages/ServiceMap'));
+const Topology          = lazy(() => import('./pages/Topology'));
 const Traces            = lazy(() => import('./pages/Traces'));
 const Trace             = lazy(() => import('./pages/Trace'));
 const TraceCompare      = lazy(() => import('./pages/TraceCompare'));
@@ -71,6 +72,7 @@ export default function App() {
             <Route path="/service"        element={<Service />} />
             <Route path="/service/backtrace" element={<ServiceBacktrace />} />
             <Route path="/service-map"    element={<ServiceMap />} />
+            <Route path="/topology"       element={<Topology />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />
             <Route path="/trace/compare"  element={<TraceCompare />} />

@@ -63,6 +63,11 @@ export default function ProblemsPage() {
   const [, setServices] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [data, setData] = useState<ExceptionGroup[] | null | undefined>(undefined);
+  const [total, setTotal] = useState(0);
+  // Page index (0-based). Reset to 0 whenever the filters (tab,
+  // service) change so the user doesn't end up on "page 4 of 2".
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(0);
   // Expanded fingerprint(s) — multiple groups can be open at once for compare-and-contrast.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -72,10 +77,18 @@ export default function ProblemsPage() {
   const qc = useQueryClient();
   const refreshExceptionGroups = () => {
     setData(undefined);
-    api.exceptionGroups({ state: tab, service: service || undefined, limit: 200 })
-      .then(d => setData(d ?? [])).catch(() => setData(null));
+    api.exceptionGroups({
+      state: tab, service: service || undefined,
+      limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+    })
+      .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); })
+      .catch(() => setData(null));
   };
-  useEffect(refreshExceptionGroups, [tab, service]);
+  // Reset page when filters change so the next fetch starts at 0;
+  // page changes themselves drive a separate effect to avoid a
+  // double round-trip.
+  useEffect(() => { setPage(0); }, [tab, service]);
+  useEffect(refreshExceptionGroups, [tab, service, page]);
 
   useEffect(() => {
     api.services({ from: 0, to: 0 })
@@ -175,7 +188,12 @@ export default function ProblemsPage() {
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search type/message…" style={{ width: 260 }} />
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
-            {filtered.length} groups · {fmtNum(filtered.reduce((n, g) => n + Number(g.occurrences), 0))} occurrences
+            {total > 0 && (
+              <>
+                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {fmtNum(total)} groups
+                {search.trim() && <> · {filtered.length} on this page match</>}
+              </>
+            )}
           </span>
         </div>
 
@@ -296,6 +314,28 @@ export default function ProblemsPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {data && total > PAGE_SIZE && (
+          <div style={{
+            marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
+            justifyContent: 'flex-end', fontSize: 12,
+          }}>
+            <button type="button" className="sec"
+              disabled={page === 0}
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              style={{ fontSize: 11, padding: '3px 10px' }}>
+              ← Prev
+            </button>
+            <span style={{ color: 'var(--text3)' }}>
+              Page {page + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+            </span>
+            <button type="button" className="sec"
+              disabled={(page + 1) * PAGE_SIZE >= total}
+              onClick={() => setPage(p => p + 1)}
+              style={{ fontSize: 11, padding: '3px 10px' }}>
+              Next →
+            </button>
           </div>
         )}
 

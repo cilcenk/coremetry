@@ -293,12 +293,15 @@ type ExceptionGroupFilter struct {
 	Service  string
 	Assignee string
 	Limit    int
+	Offset   int
 }
 
-func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter) ([]ExceptionGroup, error) {
-	if f.Limit == 0 {
-		f.Limit = 200
-	}
+// buildExceptionGroupWhere builds the WHERE clause shared by the
+// list + count queries. Pulled out so the count never drifts from
+// the rows actually returned by ListExceptionGroups — without this
+// helper, a small edit to one and not the other would silently
+// produce a paginator whose "Page X of Y" is wrong.
+func buildExceptionGroupWhere(f ExceptionGroupFilter) whereClause {
 	var wc whereClause
 	if f.State != "" {
 		if f.State == "open" {
@@ -317,7 +320,21 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 	if f.Assignee != "" {
 		wc.add("assignee = ?", f.Assignee)
 	}
-	args := append(wc.args, f.Limit)
+	return wc
+}
+
+func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter) ([]ExceptionGroup, error) {
+	if f.Limit == 0 {
+		f.Limit = 50
+	}
+	if f.Limit > 500 {
+		f.Limit = 500
+	}
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+	wc := buildExceptionGroupWhere(f)
+	args := append(wc.args, f.Limit, f.Offset)
 	rows, err := s.conn.Query(ctx, `
 		SELECT fingerprint, ex_type, ex_message, service, state, assignee,
 		       toUnixTimestamp64Nano(first_seen),
@@ -325,7 +342,7 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 		       resolved_at, occurrences, notes
 		FROM exception_groups FINAL `+wc.sql()+`
 		ORDER BY last_seen DESC
-		LIMIT ?`, args...)
+		LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -345,6 +362,21 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 		out = append(out, g)
 	}
 	return out, rows.Err()
+}
+
+// CountExceptionGroups returns the total number of rows that
+// match f (Limit + Offset are ignored). Drives the paginator's
+// "X of N" indicator on the inbox so the UI can offer a "last
+// page" jump without having to fetch every group.
+func (s *Store) CountExceptionGroups(ctx context.Context, f ExceptionGroupFilter) (int64, error) {
+	wc := buildExceptionGroupWhere(f)
+	row := s.conn.QueryRow(ctx, `
+		SELECT count() FROM exception_groups FINAL `+wc.sql(), wc.args...)
+	var n uint64
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return int64(n), nil
 }
 
 // SetExceptionGroupState handles all explicit user-driven transitions.

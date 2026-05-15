@@ -753,9 +753,11 @@ export const api = {
   exceptions: (params: { service?: string; groupBy?: string; from?: number; to?: number; limit?: number }) =>
     get<Exception[] | null>(`/api/exceptions?${qs(params)}`),
 
-  // Errors Inbox (state-tracked exception groups)
-  exceptionGroups: (params: { state?: string; service?: string; assignee?: string; limit?: number }) =>
-    get<ExceptionGroup[] | null>(`/api/exception-groups?${qs(params)}`),
+  // Errors Inbox (state-tracked exception groups). v0.5.95 switched
+  // the response shape from a bare array to { items, total, limit,
+  // offset } so the UI can paginate without losing the global count.
+  exceptionGroups: (params: { state?: string; service?: string; assignee?: string; limit?: number; offset?: number }) =>
+    get<{ items: ExceptionGroup[]; total: number; limit: number; offset: number }>(`/api/exception-groups?${qs(params)}`),
   exceptionGroupSamples: (fingerprint: string, limit = 10) =>
     get<ExceptionSample[] | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
   setExceptionGroupState: (fingerprint: string, state: ExceptionGroupState) =>

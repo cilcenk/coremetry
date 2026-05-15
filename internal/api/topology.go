@@ -285,7 +285,11 @@ func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 	top := parseInt(r.URL.Query().Get("top"), 20)
 	key := fmt.Sprintf("topology-flows:from=%d:to=%d:top=%d", from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), top)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		flows, err := s.store.GetRootFlows(r.Context(), from, to, top)
+		// Read from the pre-aggregated table (v0.5.112). The live
+		// self-join path used to run here would intermittently
+		// timeout on high-cardinality installs; the agg table is
+		// filled by the same 5-min topology-agg goroutine.
+		flows, err := s.store.ReadRootFlowsAgg(r.Context(), from, to, top)
 		if err != nil {
 			return nil, err
 		}

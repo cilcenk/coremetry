@@ -751,6 +751,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		PARTITION BY toDate(time_bucket)
 		ORDER BY (time_bucket, parent_service, parent_op, child_service, child_op)
 		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
+
+		// Business-flow rollup (v0.5.112). One row per 5-min
+		// bucket per (root_service, root_op) — i.e. one entry per
+		// entry-point per slice. Drives the /topology Flows view.
+		// services is the unique set the flow's traces touched in
+		// that bucket; merged at read time across buckets.
+		`CREATE TABLE IF NOT EXISTS topology_root_flows_5m (
+			time_bucket   DateTime CODEC(DoubleDelta, ZSTD(3)),
+			root_service  LowCardinality(String),
+			root_op       String,
+			trace_count   UInt64,
+			services      Array(String),
+			version       UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toDate(time_bucket)
+		ORDER BY (time_bucket, root_service, root_op)
+		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
 	}
 
 	for _, q := range tables {

@@ -112,6 +112,10 @@ func (a *Aggregator) tick(ctx context.Context, bootstrap bool) {
 			log.Printf("[topology-agg] op bucket %s: %v", b.Format(time.RFC3339), err)
 			continue
 		}
+		if err := a.store.WriteRootFlowsBucket(ctx, b); err != nil {
+			log.Printf("[topology-agg] root flows bucket %s: %v", b.Format(time.RFC3339), err)
+			continue
+		}
 	}
 	if bootstrap {
 		log.Printf("[topology-agg] backfilled %d buckets through %s", len(buckets), end.Format(time.RFC3339))

@@ -469,6 +469,83 @@ func (s *Store) ReadTopologyOpEdgesAgg(ctx context.Context, from, to time.Time, 
 	return out, rows.Err()
 }
 
+// WriteRootFlowsBucket pre-aggregates business flows for one
+// 5-min window. Counts traces + collects unique services per
+// (root_service, root_op). Mirrors GetRootFlows but materialises
+// the result into the agg table for cheap fan-out reads later.
+func (s *Store) WriteRootFlowsBucket(ctx context.Context, bucketStart time.Time) error {
+	end := bucketStart.Add(5 * time.Minute)
+	if err := s.conn.Exec(ctx, `
+		INSERT INTO topology_root_flows_5m
+			(time_bucket, root_service, root_op,
+			 trace_count, services, version)
+		WITH root_traces AS (
+			SELECT trace_id, service_name AS root_service, name AS root_op
+			FROM spans
+			WHERE parent_id = ''
+			  AND time >= toDateTime(?, 'UTC')
+			  AND time <  toDateTime(?, 'UTC')
+		)
+		SELECT
+			toDateTime(?, 'UTC') AS time_bucket,
+			rt.root_service,
+			rt.root_op,
+			toUInt64(uniqExact(rt.trace_id)) AS trace_count,
+			groupUniqArrayArray(50)(arrayDistinct([sp.service_name])) AS services,
+			toUInt64(?) AS version
+		FROM root_traces AS rt
+		INNER JOIN spans AS sp ON sp.trace_id = rt.trace_id
+		WHERE sp.time >= toDateTime(?, 'UTC') AND sp.time < toDateTime(?, 'UTC')
+		GROUP BY rt.root_service, rt.root_op
+		SETTINGS max_execution_time = 120`,
+		bucketStart.Unix(), end.Unix(),
+		bucketStart.Unix(),
+		uint64(time.Now().UnixNano()),
+		bucketStart.Unix(), end.Unix(),
+	); err != nil {
+		return fmt.Errorf("topology root flows bucket: %w", err)
+	}
+	return nil
+}
+
+// ReadRootFlowsAgg reads pre-aggregated business flows for a
+// window. trace_count is summed across buckets; services arrays
+// are merged + deduplicated. Limit caps the number of flows
+// returned to the heaviest by trace volume.
+func (s *Store) ReadRootFlowsAgg(ctx context.Context, from, to time.Time, limit int) ([]RootFlow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+			root_service,
+			root_op,
+			toUInt64(sum(trace_count)) AS total_traces,
+			arrayDistinct(arrayFlatten(groupArray(services))) AS services
+		FROM topology_root_flows_5m FINAL
+		WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+		  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+		GROUP BY root_service, root_op
+		ORDER BY total_traces DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`,
+		from.Unix(), to.Unix(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RootFlow
+	for rows.Next() {
+		var f RootFlow
+		if err := rows.Scan(&f.RootService, &f.RootOp, &f.TraceCount, &f.Services); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // ListOpsForService returns the operation names that appear as
 // outbound callers for a given service in the window. Drives the
 // op-picker dropdown on the operation deep-dive view. Reads

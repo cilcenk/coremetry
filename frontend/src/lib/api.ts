@@ -344,6 +344,14 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
     }),
+  // Elastic SQL (v0.5.138). Same response shape as sqlQuery so the
+  // playground's table renderer is single-codepath. 400 with a
+  // useful body when the logs backend isn't ES.
+  elasticSqlQuery: (query: string, fetchSize = 1000) =>
+    request<import('./types').SQLResult>(`/api/admin/sql/elastic`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, fetchSize }),
+    }),
 
   // Audit log (admin-only read).
   auditLog: (since = '24h', filters: { actor?: string; action?: string; target?: string } = {}) =>

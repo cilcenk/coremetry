@@ -283,6 +283,7 @@ func (s *Server) Start() error {
 	// on the application side.
 	mux.HandleFunc("POST /api/admin/sql/query",       s.execSQL)
 	mux.HandleFunc("GET  /api/admin/sql/schema",      s.sqlSchema)
+	mux.HandleFunc("POST /api/admin/sql/elastic",     s.execElasticSQL)
 	// Saved views — per-user CRUD (server scopes by session).
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)

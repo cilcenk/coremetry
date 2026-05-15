@@ -14,6 +14,37 @@ import type { SQLResult, SchemaTable } from '@/lib/types';
 //
 // Layout: schema browser left, editor + results right.
 
+type Backend = 'clickhouse' | 'elasticsearch';
+
+// ES-flavoured sample queries — shown only when the operator
+// switches the playground to the Elasticsearch tab. Quoted
+// index pattern + SQL the ES plugin supports (no joins, no
+// nested aggregates past one level).
+const ES_SAMPLES: { label: string; sql: string }[] = [
+  { label: 'Top error messages (last 1h)', sql:
+    `SELECT message, COUNT(*) AS errs
+FROM "logs-*"
+WHERE "log.level" = 'ERROR' AND "@timestamp" > NOW() - INTERVAL 1 HOURS
+GROUP BY message
+ORDER BY errs DESC
+LIMIT 50` },
+  { label: 'Error rate per service (last 1h)', sql:
+    `SELECT "service.name", COUNT(*) AS total,
+       SUM(CASE WHEN "log.level" = 'ERROR' THEN 1 ELSE 0 END) AS errs
+FROM "logs-*"
+WHERE "@timestamp" > NOW() - INTERVAL 1 HOURS
+GROUP BY "service.name"
+ORDER BY errs DESC` },
+  { label: 'Recent logs for a trace', sql:
+    `SELECT "@timestamp", "service.name", "log.level", message
+FROM "logs-*"
+WHERE "trace.id" = 'PASTE_TRACE_ID_HERE'
+ORDER BY "@timestamp" DESC
+LIMIT 100` },
+  { label: 'Show columns of the index', sql:
+    `DESCRIBE "logs-*"` },
+];
+
 const SAMPLES: { label: string; sql: string }[] = [
   { label: 'Top services by spans (last 1h)', sql:
     `SELECT service_name, count() AS spans, countIf(status_code='error') AS errors
@@ -55,10 +86,29 @@ export default function SQLPlaygroundPage() {
   const [schema, setSchema] = useState<SchemaTable[] | undefined>(undefined);
   const [openTables, setOpenTables] = useState<Set<string>>(new Set());
 
+  const [backend, setBackend] = useState<Backend>(() => {
+    try {
+      const v = localStorage.getItem('coremetry-sql-backend') as Backend | null;
+      return v === 'elasticsearch' ? 'elasticsearch' : 'clickhouse';
+    } catch { return 'clickhouse'; }
+  });
   const [query, setQuery] = useState<string>(
     'SELECT count() FROM spans WHERE time >= now() - INTERVAL 5 MINUTE');
   const [result, setResult] = useState<SQLResult | null | undefined>(undefined);
   const [running, setRunning] = useState(false);
+
+  const switchBackend = (next: Backend) => {
+    setBackend(next);
+    try { localStorage.setItem('coremetry-sql-backend', next); } catch {}
+    setResult(undefined);
+    // Swap the starter query so the operator doesn't try to run
+    // CH SQL against ES (or vice-versa) and hit a parse error.
+    if (next === 'elasticsearch') {
+      setQuery(ES_SAMPLES[0].sql);
+    } else {
+      setQuery('SELECT count() FROM spans WHERE time >= now() - INTERVAL 5 MINUTE');
+    }
+  };
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const [history, setHistory] = useState<string[]>([]);
@@ -79,7 +129,9 @@ export default function SQLPlaygroundPage() {
     setRunning(true);
     setResult(undefined);
     try {
-      const res = await api.sqlQuery(q);
+      const res = backend === 'elasticsearch'
+        ? await api.elasticSqlQuery(q)
+        : await api.sqlQuery(q);
       setResult(res);
       // Push to history (dedupe + cap)
       const next = [q, ...history.filter(h => h !== q)].slice(0, HISTORY_MAX);
@@ -130,7 +182,12 @@ export default function SQLPlaygroundPage() {
     <>
       <Topbar title="SQL playground" />
       <div id="content" style={{ display: 'flex', gap: 12, height: 'calc(100vh - 80px)' }}>
-        {/* ── Schema sidebar ───────────────────────────────────── */}
+        {/* Schema sidebar — CH only. The Elasticsearch backend's
+            queryable fields are surfaced via /logs page's
+            ƒ Fields button; the playground sidebar would just
+            duplicate that and confuse the operator with two
+            different schema sources. */}
+        {backend === 'clickhouse' && (
         <div style={{
           width: 240, flexShrink: 0,
           background: 'var(--bg1)', border: '1px solid var(--border)',
@@ -199,23 +256,49 @@ export default function SQLPlaygroundPage() {
             );
           })}
         </div>
+        )}
 
         {/* ── Editor + results ─────────────────────────────────── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* Backend toggle (v0.5.138). Persists to local-
+                storage so the operator's last choice survives
+                reload. Swaps sample queries + run path; the
+                starter query is replaced to avoid a parse error
+                on first run. */}
+            <div style={{
+              display: 'flex', border: '1px solid var(--border)',
+              borderRadius: 6, overflow: 'hidden',
+            }}>
+              <button type="button"
+                onClick={() => switchBackend('clickhouse')}
+                className={backend === 'clickhouse' ? '' : 'sec'}
+                style={{ borderRadius: 0, padding: '5px 10px', fontSize: 11 }}>
+                ClickHouse
+              </button>
+              <button type="button"
+                onClick={() => switchBackend('elasticsearch')}
+                className={backend === 'elasticsearch' ? '' : 'sec'}
+                style={{ borderRadius: 0, padding: '5px 10px', fontSize: 11, borderLeft: '1px solid var(--border)' }}
+                title="Forwards the SQL to Elasticsearch's _sql endpoint. Requires the logs backend to be Elasticsearch.">
+                Elasticsearch
+              </button>
+            </div>
             <button type="button" onClick={run} disabled={running}
               style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600 }}>
               {running ? 'Running…' : 'Run'} <span style={{ color: 'var(--text3)' }}>⌘↵</span>
             </button>
             <select onChange={e => {
-              const s = SAMPLES.find(x => x.label === e.target.value);
+              const list = backend === 'elasticsearch' ? ES_SAMPLES : SAMPLES;
+              const s = list.find(x => x.label === e.target.value);
               if (s) setQuery(s.sql);
               e.target.value = '';
             }}
               defaultValue=""
               style={{ fontSize: 11 }}>
               <option value="">Sample queries…</option>
-              {SAMPLES.map(s => <option key={s.label} value={s.label}>{s.label}</option>)}
+              {(backend === 'elasticsearch' ? ES_SAMPLES : SAMPLES)
+                .map(s => <option key={s.label} value={s.label}>{s.label}</option>)}
             </select>
             <select onChange={e => {
               if (e.target.value) setQuery(e.target.value);

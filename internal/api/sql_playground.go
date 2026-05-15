@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/cilcenk/coremetry/internal/auth"
+	"github.com/cilcenk/coremetry/internal/logstore"
 )
 
 // SQL playground — admin-only ad-hoc query interface against the
@@ -239,6 +241,61 @@ type SchemaTable struct {
 type SchemaColumn struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
+}
+
+// execElasticSQL is the Elasticsearch counterpart to execSQL.
+// Read-only by definition — ES SQL plugin only supports SELECT
+// / SHOW / DESCRIBE; we still keep a first-token safety net.
+// Audited the same way as the CH path so the admin trail
+// includes cross-backend queries uniformly.
+func (s *Server) execElasticSQL(w http.ResponseWriter, r *http.Request) {
+	claims := auth.FromContext(r.Context())
+	if claims == nil || claims.Role != auth.RoleAdmin {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	// Type-assert the configured logs backend to the ES SQL
+	// runner — the LogStore interface stays unchanged; only ES
+	// implements ExecSQL. CH-backed deployments get a clean 400
+	// instead of a misleading 500.
+	type esSQLRunner interface {
+		ExecSQL(ctx context.Context, query string, fetchSize int) (*logstore.SQLResult, error)
+	}
+	runner, ok := s.logs.(interface {
+		ExecSQL(ctx context.Context, query string, fetchSize int) (*logstore.SQLResult, error)
+	})
+	_ = esSQLRunner(nil) // doc: which interface shape; suppresses unused name
+	if !ok {
+		http.Error(w, `{"error":"Elasticsearch SQL not available — current logs backend is `+s.logs.Backend()+`"}`, http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Query     string `json:"query"`
+		FetchSize int    `json:"fetchSize"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Query = strings.TrimSpace(body.Query)
+	if !isSafeReadSQL(body.Query) {
+		http.Error(w, "only single SELECT / WITH / SHOW / DESCRIBE statements allowed", http.StatusBadRequest)
+		return
+	}
+	res, err := runner.ExecSQL(r.Context(), body.Query, body.FetchSize)
+	if err != nil {
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	s.audit(r, "sql.query", "es_sql_playground", "",
+		fmt.Sprintf(`{"backend":"elasticsearch","rows":%d,"tookMs":%d,"query":%q}`,
+			len(res.Rows), res.TookMs, body.Query))
+	writeJSON(w, map[string]any{
+		"columns":  res.Columns,
+		"rows":     res.Rows,
+		"rowCount": len(res.Rows),
+		"tookMs":   res.TookMs,
+	})
 }
 
 func (s *Server) sqlSchema(w http.ResponseWriter, r *http.Request) {

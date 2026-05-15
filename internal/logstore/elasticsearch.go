@@ -185,6 +185,82 @@ func walkProperties(prefix string, props map[string]any, out map[string]struct{}
 	}
 }
 
+// SQLResult is the wire-shape returned by ExecSQL. Mirrors the
+// AdminSql /api/admin/sql/query shape (columns/rows/tookMs) so
+// the frontend table renderer is single-codepath.
+type SQLResult struct {
+	Columns []string `json:"columns"`
+	Rows    [][]any  `json:"rows"`
+	TookMs  int64    `json:"tookMs"`
+}
+
+// ExecSQL forwards a query to Elasticsearch's /_sql endpoint and
+// returns the result in the same shape as the CH SQL playground.
+// Read-only by definition — the Elastic SQL plugin doesn't expose
+// DML; we still keep the safety net (first-token check + 30s
+// fetch budget) so a typo can't dump a billion rows.
+func (s *ESStore) ExecSQL(ctx context.Context, query string, fetchSize int) (*SQLResult, error) {
+	if fetchSize <= 0 || fetchSize > 10000 {
+		fetchSize = 1000
+	}
+	body := map[string]any{
+		"query":      query,
+		"fetch_size": fetchSize,
+		// 30s request timeout server-side — the SPA wraps the
+		// fetch with its own 60s AbortController on top.
+		"request_timeout":  "30s",
+		"page_timeout":     "30s",
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequestWithContext(ctx, "POST", "/_sql?format=json", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	start := time.Now()
+	res, err := s.cli.Transport.Perform(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		// Try to surface the ES error message — usually a JSON
+		// {"error":{"type":..., "reason":...}} blob the operator
+		// can act on directly (column name typo, parse failure,
+		// unsupported function).
+		var body map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&body)
+		if ej, ok := body["error"].(map[string]any); ok {
+			if reason, ok := ej["reason"].(string); ok {
+				return nil, fmt.Errorf("es-sql: %s", reason)
+			}
+		}
+		return nil, fmt.Errorf("es-sql: %s", res.Status)
+	}
+	var resp struct {
+		Columns []struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		} `json:"columns"`
+		Rows [][]any `json:"rows"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	cols := make([]string, len(resp.Columns))
+	for i, c := range resp.Columns {
+		cols[i] = c.Name
+	}
+	if resp.Rows == nil {
+		resp.Rows = [][]any{}
+	}
+	return &SQLResult{
+		Columns: cols,
+		Rows:    resp.Rows,
+		TookMs:  time.Since(start).Milliseconds(),
+	}, nil
+}
+
 func sortStrings(s []string) {
 	// std sort.Strings imported lazily — avoid pulling sort in
 	// the package if no other callsite needs it (small payoff

@@ -4012,14 +4012,28 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	out, err := s.store.ListExceptionGroups(r.Context(), chstore.ExceptionGroupFilter{
+	f := chstore.ExceptionGroupFilter{
 		State:    q.Get("state"),
 		Service:  q.Get("service"),
 		Assignee: q.Get("assignee"),
-		Limit:    parseInt(q.Get("limit"), 200),
-	})
+		Limit:    parseInt(q.Get("limit"), 50),
+		Offset:   parseInt(q.Get("offset"), 0),
+	}
+	items, err := s.store.ListExceptionGroups(r.Context(), f)
 	if err != nil { writeErr(w, err); return }
-	writeJSON(w, out)
+	total, err := s.store.CountExceptionGroups(r.Context(), f)
+	if err != nil { writeErr(w, err); return }
+	// `items` can be nil from the store on an empty page — serialise
+	// as [] so the frontend never has to null-guard the array.
+	if items == nil {
+		items = []chstore.ExceptionGroup{}
+	}
+	writeJSON(w, map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  f.Limit,
+		"offset": f.Offset,
+	})
 }
 
 func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request) {

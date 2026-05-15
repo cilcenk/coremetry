@@ -177,6 +177,43 @@ func TestParseFromToRespectsExplicitParams(t *testing.T) {
 	}
 }
 
+// ── sanitizePassword ─────────────────────────────────────────
+//
+// Locks the contract that paste-mangle (trailing whitespace,
+// invisible soft-hyphens injected when copying from rendered
+// HTML) does not silently fail bcrypt/LDAP compare. Visible
+// homoglyphs (en/em-dash) are deliberately preserved — the i18n
+// hint on the login screen owns that user-facing recovery path.
+
+func TestSanitizePasswordTrimsLeadingTrailingSpace(t *testing.T) {
+	if got := sanitizePassword("  hunter2\t\n"); got != "hunter2" {
+		t.Errorf("trim: got %q want %q", got, "hunter2")
+	}
+}
+
+func TestSanitizePasswordStripsSoftHyphen(t *testing.T) {
+	// "se­cret" — rendered as "secret" but bcrypt-compares as different.
+	if got := sanitizePassword("se­cret"); got != "secret" {
+		t.Errorf("soft-hyphen: got %q want %q", got, "secret")
+	}
+}
+
+func TestSanitizePasswordPreservesEnDash(t *testing.T) {
+	// en-dash is visible; could be a real character. Frontend hint
+	// handles user confusion. Do not silently rewrite.
+	in := "foo–bar"
+	if got := sanitizePassword(in); got != in {
+		t.Errorf("en-dash must survive: got %q want %q", got, in)
+	}
+}
+
+func TestSanitizePasswordPreservesInternalSpace(t *testing.T) {
+	in := "two words"
+	if got := sanitizePassword(in); got != in {
+		t.Errorf("internal space must survive: got %q want %q", got, in)
+	}
+}
+
 func itoa(n int64) string {
 	const digits = "0123456789"
 	if n == 0 {

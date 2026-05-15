@@ -2667,6 +2667,25 @@ func newID(n int) string {
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
+// sanitizePassword strips paste-mangle artifacts that would
+// otherwise silently break bcrypt/LDAP compare: leading and
+// trailing whitespace (a common copy-paste mishap from password
+// managers / chat apps), and soft-hyphen (U+00AD) anywhere in
+// the string. Soft-hyphen renders as nothing, so it can't be
+// part of a real password but does survive paste from rendered
+// HTML. We deliberately do NOT rewrite visible homoglyphs like
+// en-/em-dash for hyphen — those could be legitimate characters
+// and the matching i18n hint on the login screen already tells
+// the user to retype if it looks suspicious.
+func sanitizePassword(p string) string {
+	const softHyphen = '­'
+	p = strings.TrimSpace(p)
+	if strings.ContainsRune(p, softHyphen) {
+		p = strings.ReplaceAll(p, string(softHyphen), "")
+	}
+	return p
+}
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email    string `json:"email"`
@@ -2677,6 +2696,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
+	body.Password = sanitizePassword(body.Password)
 	if body.Email == "" || body.Password == "" {
 		http.Error(w, "email and password required", http.StatusBadRequest)
 		return

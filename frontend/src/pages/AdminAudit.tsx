@@ -5,6 +5,21 @@ import { useAuth } from '@/components/AuthProvider';
 import { useAuditLog } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
 
+// Curated catalog of every action the API currently emits via
+// s.audit(). Kept in lock-step with internal/api/*; new entries
+// added here as soon as a new audit call ships so the action
+// dropdown is fully populated even when the current window is
+// empty. Discovered values from the response are still merged
+// at render time as a safety net.
+const KNOWN_ACTIONS = [
+  'anomaly_silence.create',
+  'anomaly_silence.delete',
+  'problem.acknowledge',
+  'saved_view.create',
+  'saved_view.delete',
+  'sql.query',
+];
+
 // /admin/audit shows the append-only audit_log: who did what, when.
 // Admin-only — the API also enforces this server-side, but the SPA
 // hides the page from non-admin sidebars.
@@ -29,8 +44,14 @@ export default function AuditPage() {
     : auditQ.isError ? null
     : auditQ.data ?? [];
 
+  // Seed the dropdown with every action the API currently emits
+  // so an empty window doesn't hide a filter the operator is
+  // looking for (e.g. "who acknowledged this morning's noise" —
+  // if no acks landed in the default 24h slice, the option would
+  // otherwise vanish). Discovered actions from the current page
+  // get merged in case the backend ships a new one ahead of us.
   const distinctActions = useMemo(() => {
-    const s = new Set<string>();
+    const s = new Set<string>(KNOWN_ACTIONS);
     (data ?? []).forEach(e => s.add(e.action));
     return Array.from(s).sort();
   }, [data]);

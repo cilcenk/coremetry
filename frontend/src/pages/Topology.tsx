@@ -80,6 +80,11 @@ function ServiceView({ range }: { range: TimeRange }) {
   // overview to a specific service without losing the time range.
   const [topN, setTopN] = useState(30);
   const [focus, setFocus] = useState('');
+  // Substring search across nodes in the current visible subgraph.
+  // Doesn't filter the diagram — it highlights matches so the
+  // operator can find a service inside a 100-node graph without
+  // dropping context. Empty = all nodes at normal opacity.
+  const [search, setSearch] = useState('');
   useEffect(() => {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
@@ -168,6 +173,10 @@ function ServiceView({ range }: { range: TimeRange }) {
             <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)' }}>{topN}</span>
           </>
         )}
+        <input type="search" placeholder="Search…" value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 8px', width: 140 }}
+          title="Highlight nodes matching this text" />
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
           {focus
             ? `Focused on ${focus}: ${showingNodes} nodes / ${showingEdges} edges`
@@ -196,7 +205,7 @@ function ServiceView({ range }: { range: TimeRange }) {
         <>
           <ServiceTopologySVG
             nodes={visible.nodes} edges={visible.edges} layout={layout}
-            onEdgeClick={setSelectedEdge}
+            onEdgeClick={setSelectedEdge} search={search}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
@@ -527,12 +536,27 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
   onEdgeClick: (e: ServiceTopologyEdge) => void;
+  search?: string;
 }) {
+  // Search highlighting: a node "matches" when its name includes
+  // the (case-insensitive) substring. Edges match when EITHER end
+  // matches. Non-matching geometry fades to 0.18 opacity so the
+  // operator can still see the graph context. Empty search ==
+  // everything matches.
+  const term = (search ?? '').trim().toLowerCase();
+  const isNodeMatch = (n: ServiceTopologyNode) =>
+    !term || n.name.toLowerCase().includes(term);
+  const isEdgeMatch = (e: ServiceTopologyEdge) => {
+    if (!term) return true;
+    const p = nodes.find(n => n.id === e.parentService);
+    const c = nodes.find(n => n.id === e.childNode);
+    return (p && isNodeMatch(p)) || (c && isNodeMatch(c));
+  };
   const layered: ServiceTopologyNode[][] = [];
   nodes.forEach(n => {
     const h = layout.get(n.id) ?? 0;
@@ -579,8 +603,10 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick }: {
           const proto = e.protocol.toUpperCase();
           const top = e.topLabels[0] || '';
           const more = e.distinctLabels > 1 ? ` (+${e.distinctLabels - 1})` : '';
+          const match = isEdgeMatch(e);
           return (
-            <g key={i} style={{ cursor: 'pointer' }} onClick={() => onEdgeClick(e)}>
+            <g key={i} style={{ cursor: 'pointer', opacity: match ? 1 : 0.18 }}
+               onClick={() => onEdgeClick(e)}>
               <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                 stroke={color} strokeWidth={sw} fill="none"
                 markerEnd={`url(#arrow-${e.protocol})`} opacity={0.7}>
@@ -608,10 +634,13 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick }: {
           if (!p) return null;
           const { fill, stroke } = nodeColors(n);
           const kindIcon = n.kind === 'db' ? '⛁' : n.kind === 'queue' ? '⌬' : n.kind === 'external' ? '↗' : '';
+          const match = isNodeMatch(n);
           return (
-            <g key={n.id} transform={`translate(${p.x}, ${p.y})`}>
+            <g key={n.id} transform={`translate(${p.x}, ${p.y})`}
+               style={{ opacity: match ? 1 : 0.18 }}>
               <rect width={NODE_W} height={NODE_H} rx={8} ry={8}
-                fill={fill} fillOpacity={0.18} stroke={stroke} strokeWidth={1.6}>
+                fill={fill} fillOpacity={0.18} stroke={stroke}
+                strokeWidth={term && match ? 2.8 : 1.6}>
                 <title>{`${n.name} (${n.kind})`}</title>
               </rect>
               <text x={10} y={22} fontSize={13} fontWeight={600} fill="var(--text)">

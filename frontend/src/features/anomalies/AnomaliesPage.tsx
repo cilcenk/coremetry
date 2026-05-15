@@ -51,23 +51,40 @@ const P_NATURAL_DIR: Record<PSortKey, SortDir> = {
 export default function ProblemsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
-  // ?service= URL param pre-populates the service filter — driven
-  // by the "View N problems →" / "Errors" pills on the service
-  // detail page so the operator lands on the exact scope they
-  // were looking at without retyping it.
-  const [searchParams] = useSearchParams();
-  const initialService = searchParams.get('service') ?? '';
-  const [tab, setTab] = useState<string>('open');
-  const [service, setService] = useState(initialService);
+  // URL is the source of truth for tab + service + page so a
+  // pasted link reproduces the exact triage view. ?service= was
+  // already URL-driven (driven by the service-detail "Errors"
+  // pill); v0.5.98 adds ?tab=…&page=N so the inbox is fully
+  // shareable. Filter changes always reset page back to 0 so a
+  // teammate's link can't land them on "page 4 of 2".
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab     = searchParams.get('tab') || 'open';
+  const service = searchParams.get('service') || '';
+  const page    = Math.max(0, parseInt(searchParams.get('page') || '0', 10) || 0);
+  const setTab = (v: string) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    p.set('tab', v); p.delete('page');
+    return p;
+  }, { replace: true });
+  const setService = (v: string) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('service', v); else p.delete('service');
+    p.delete('page');
+    return p;
+  }, { replace: true });
+  const setPage = (next: number | ((p: number) => number)) =>
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      const v = typeof next === 'function' ? next(page) : next;
+      if (v > 0) p.set('page', String(v)); else p.delete('page');
+      return p;
+    }, { replace: true });
   const [search, setSearch] = useState('');
   const [, setServices] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [data, setData] = useState<ExceptionGroup[] | null | undefined>(undefined);
   const [total, setTotal] = useState(0);
-  // Page index (0-based). Reset to 0 whenever the filters (tab,
-  // service) change so the user doesn't end up on "page 4 of 2".
   const PAGE_SIZE = 50;
-  const [page, setPage] = useState(0);
   // Expanded fingerprint(s) — multiple groups can be open at once for compare-and-contrast.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -84,10 +101,9 @@ export default function ProblemsPage() {
       .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); })
       .catch(() => setData(null));
   };
-  // Reset page when filters change so the next fetch starts at 0;
-  // page changes themselves drive a separate effect to avoid a
-  // double round-trip.
-  useEffect(() => { setPage(0); }, [tab, service]);
+  // Page reset on filter change is owned by setTab/setService now
+  // (they delete ?page=). Single effect drives the fetch.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(refreshExceptionGroups, [tab, service, page]);
 
   useEffect(() => {

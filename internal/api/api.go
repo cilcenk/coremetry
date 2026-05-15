@@ -5589,22 +5589,6 @@ func actorOf(r *http.Request) string {
 	return "anonymous"
 }
 
-// auditFrom builds a partially-filled AuditEntry from the
-// request context — actor id / email / role + the originating
-// IP — and lets the caller fill the action / target slots. The
-// timestamp + entry id are set by AppendAudit. Best-effort: an
-// anonymous request just gets empty actor fields, the audit row
-// still writes.
-func (s *Server) auditFrom(r *http.Request) chstore.AuditEntry {
-	e := chstore.AuditEntry{IP: clientIP(r)}
-	if c := auth.FromContext(r.Context()); c != nil {
-		e.ActorID = c.UserID
-		e.ActorEmail = c.Email
-		e.ActorRole = c.Role
-	}
-	return e
-}
-
 // ── Synthetic monitors ──────────────────────────────────────────────────────
 
 func (s *Server) listMonitors(w http.ResponseWriter, r *http.Request) {
@@ -5784,8 +5768,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 // (threshold no longer breached) or the operator manually
 // edits the rule.
 //
-// Editor-role gated. The operator that triggers it is
-// recorded for audit (future surface).
+// Editor-role gated; each successful call is appended to the
+// audit log so "who silenced this overnight" is answerable.
 func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs []string `json:"ids"`
@@ -5807,6 +5791,11 @@ func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Audit: one entry per call (not per id) — the IDs go in
+	// details so a reviewer can correlate against the problem
+	// table without bloating the audit_log row count.
+	details, _ := json.Marshal(map[string]any{"ids": body.IDs, "acknowledged": n})
+	s.audit(r, "problem.acknowledge", "problem", "", string(details))
 	writeJSON(w, map[string]any{"acknowledged": n})
 }
 

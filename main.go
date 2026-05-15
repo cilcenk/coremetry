@@ -32,6 +32,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/sse"
+	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/topology"
 )
 
@@ -286,6 +287,29 @@ func main() {
 	// spans/day scale the live path is unworkable. Bootstrap
 	// backfills the last 1h so the view is populated immediately.
 	topology.New(store, 5*time.Minute, 1*time.Hour, lockImpl).Start(ctx)
+
+	// ── Elastic ML anomaly poller (v0.5.120) ─────────────────────────────────
+	// Read-only against Elastic — pulls open anomaly-detection
+	// jobs' high-score records and upserts them into anomaly_events
+	// so they show up on /anomalies alongside the native detectors.
+	// Gated on logs.elasticsearch.ml_enabled to keep installs that
+	// haven't opted in untouched.
+	if cfg.Logs.Elasticsearch.MLEnabled && len(cfg.Logs.Elasticsearch.Addresses) > 0 {
+		mlp, err := elasticml.New(elasticml.Config{
+			Addresses:          cfg.Logs.Elasticsearch.Addresses,
+			Username:           cfg.Logs.Elasticsearch.Username,
+			Password:           cfg.Logs.Elasticsearch.Password,
+			APIKey:             cfg.Logs.Elasticsearch.APIKey,
+			InsecureSkipVerify: cfg.Logs.Elasticsearch.InsecureSkipVerify,
+			MinScore:           cfg.Logs.Elasticsearch.MLMinScore,
+		}, store, lockImpl)
+		if err != nil {
+			log.Printf("[elastic-ml] disabled: %v", err)
+		} else {
+			mlp.Start(ctx)
+			log.Printf("[elastic-ml] polling enabled (min_score=%v)", cfg.Logs.Elasticsearch.MLMinScore)
+		}
+	}
 
 	// ── Auth (JWT issuer + initial admin seed) ────────────────────────────────
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)

@@ -182,6 +182,15 @@ type ESConfig struct {
 	APIKey             string   `yaml:"api_key"`
 	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"`
 	Index              string   `yaml:"index"`
+	// MLEnabled turns on the v0.5.120 read-only ML anomaly job
+	// poller — Coremetry calls /_ml/anomaly_detectors and ingests
+	// significant records into anomaly_events so existing Elastic
+	// ML jobs surface on the /anomalies page alongside the native
+	// detectors. Read-only against Elastic.
+	MLEnabled bool `yaml:"ml_enabled"`
+	// MLMinScore overrides the per-record score threshold (default
+	// 75 — Elastic's "critical" band; lower brings more noise).
+	MLMinScore float64 `yaml:"ml_min_score"`
 }
 
 // RedisConfig is fully optional. When URL is empty Coremetry runs in
@@ -512,6 +521,14 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_ES_INSECURE"); v == "true" || v == "1" {
 		cfg.Logs.Elasticsearch.InsecureSkipVerify = true
+	}
+	if v := os.Getenv("COREMETRY_ES_ML_ENABLED"); v == "true" || v == "1" {
+		cfg.Logs.Elasticsearch.MLEnabled = true
+	}
+	if v := os.Getenv("COREMETRY_ES_ML_MIN_SCORE"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Logs.Elasticsearch.MLMinScore = f
+		}
 	}
 	if v := os.Getenv("COREMETRY_AI_PROVIDER"); v != "" {
 		cfg.AI.Provider = v

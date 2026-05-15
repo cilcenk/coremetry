@@ -616,7 +616,14 @@ func (s *Server) exportTopologyDrawIO(w http.ResponseWriter, r *http.Request) {
 		depth = 6
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
-	allEdges, err := s.store.GetTopologyEdges(r.Context(), from, to, 50000)
+	// Read from the pre-aggregated op-edges table same as the
+	// JSON endpoint at /api/topology. The legacy live-query
+	// path used to run here issued a spans-on-spans INNER JOIN
+	// which trips Code 288 (DOUBLE_DISTRIBUTED_IN_JOIN_…) on
+	// cluster CH installs — and was unnecessarily expensive
+	// even on single-node since v0.5.109 made the agg table
+	// authoritative.
+	allEdges, err := s.store.ReadTopologyOpEdgesAgg(r.Context(), from, to, 50000)
 	if err != nil {
 		writeErr(w, err)
 		return

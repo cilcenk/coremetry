@@ -56,89 +56,82 @@ func (s *Server) getTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
 	const edgeCap = 50000
-	allEdges, err := s.store.GetTopologyEdges(r.Context(), from, to, edgeCap)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	// Index edges by parent service so BFS only scans relevant rows
-	// per frontier expansion. Map of parent_service → []edge.
-	byParentService := make(map[string][]chstore.TopologyEdge)
-	for _, e := range allEdges {
-		byParentService[e.ParentService] = append(byParentService[e.ParentService], e)
-	}
-
-	nodeIDOf := func(svc, op string) string { return svc + "|" + op }
-	visited := map[string]TopologyNode{}
-	addNode := func(svc, op string) {
-		id := nodeIDOf(svc, op)
-		if _, ok := visited[id]; !ok {
-			visited[id] = TopologyNode{ID: id, Service: svc, Op: op}
+	key := fmt.Sprintf("topology-op:root=%s:depth=%d:from=%d:to=%d", root, depth, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		allEdges, err := s.store.GetTopologyEdges(r.Context(), from, to, edgeCap)
+		if err != nil {
+			return nil, err
 		}
-	}
-
-	// Seed the frontier with every operation in the root service
-	// that appears as a parent in any edge — that's the natural
-	// "entry point" surface.
-	frontier := map[string]struct{}{}
-	for _, e := range byParentService[root] {
-		key := nodeIDOf(e.ParentService, e.ParentOp)
-		frontier[key] = struct{}{}
-		addNode(e.ParentService, e.ParentOp)
-	}
-	expanded := map[string]bool{}
-	var keptEdges []chstore.TopologyEdge
-	for hop := 0; hop < depth && len(frontier) > 0; hop++ {
-		nextFrontier := map[string]struct{}{}
-		for parentID := range frontier {
-			if expanded[parentID] {
-				continue // cyclic graph guard — expand each node once.
+		// Index edges by parent service so BFS only scans relevant
+		// rows per frontier expansion. Map of parent_service → []edge.
+		byParentService := make(map[string][]chstore.TopologyEdge)
+		for _, e := range allEdges {
+			byParentService[e.ParentService] = append(byParentService[e.ParentService], e)
+		}
+		nodeIDOf := func(svc, op string) string { return svc + "|" + op }
+		visited := map[string]TopologyNode{}
+		addNode := func(svc, op string) {
+			id := nodeIDOf(svc, op)
+			if _, ok := visited[id]; !ok {
+				visited[id] = TopologyNode{ID: id, Service: svc, Op: op}
 			}
-			expanded[parentID] = true
-			parentSvc, parentOp := splitNodeID(parentID)
-			for _, e := range byParentService[parentSvc] {
-				if e.ParentOp != parentOp {
+		}
+		frontier := map[string]struct{}{}
+		for _, e := range byParentService[root] {
+			key := nodeIDOf(e.ParentService, e.ParentOp)
+			frontier[key] = struct{}{}
+			addNode(e.ParentService, e.ParentOp)
+		}
+		expanded := map[string]bool{}
+		var keptEdges []chstore.TopologyEdge
+		for hop := 0; hop < depth && len(frontier) > 0; hop++ {
+			nextFrontier := map[string]struct{}{}
+			for parentID := range frontier {
+				if expanded[parentID] {
 					continue
 				}
-				keptEdges = append(keptEdges, e)
-				addNode(e.ChildService, e.ChildOp)
-				childID := nodeIDOf(e.ChildService, e.ChildOp)
-				if !expanded[childID] {
-					nextFrontier[childID] = struct{}{}
+				expanded[parentID] = true
+				parentSvc, parentOp := splitNodeID(parentID)
+				for _, e := range byParentService[parentSvc] {
+					if e.ParentOp != parentOp {
+						continue
+					}
+					keptEdges = append(keptEdges, e)
+					addNode(e.ChildService, e.ChildOp)
+					childID := nodeIDOf(e.ChildService, e.ChildOp)
+					if !expanded[childID] {
+						nextFrontier[childID] = struct{}{}
+					}
 				}
 			}
+			frontier = nextFrontier
 		}
-		frontier = nextFrontier
-	}
-
-	// Stable ordering of nodes/edges so the JSON is byte-stable
-	// across calls — eases caching + diffing on the frontend.
-	nodesOut := make([]TopologyNode, 0, len(visited))
-	for _, n := range visited {
-		nodesOut = append(nodesOut, n)
-	}
-	sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
-	sort.Slice(keptEdges, func(i, j int) bool {
-		if keptEdges[i].ParentService != keptEdges[j].ParentService {
-			return keptEdges[i].ParentService < keptEdges[j].ParentService
+		nodesOut := make([]TopologyNode, 0, len(visited))
+		for _, n := range visited {
+			nodesOut = append(nodesOut, n)
 		}
-		if keptEdges[i].ParentOp != keptEdges[j].ParentOp {
-			return keptEdges[i].ParentOp < keptEdges[j].ParentOp
-		}
-		if keptEdges[i].ChildService != keptEdges[j].ChildService {
-			return keptEdges[i].ChildService < keptEdges[j].ChildService
-		}
-		return keptEdges[i].ChildOp < keptEdges[j].ChildOp
-	})
-	writeJSON(w, TopologyResponse{
-		Nodes:       nodesOut,
-		Edges:       keptEdges,
-		RootService: root,
-		Depth:       depth,
-		From:        from.UnixNano(),
-		To:          to.UnixNano(),
-		Truncated:   len(allEdges) >= edgeCap,
+		sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+		sort.Slice(keptEdges, func(i, j int) bool {
+			if keptEdges[i].ParentService != keptEdges[j].ParentService {
+				return keptEdges[i].ParentService < keptEdges[j].ParentService
+			}
+			if keptEdges[i].ParentOp != keptEdges[j].ParentOp {
+				return keptEdges[i].ParentOp < keptEdges[j].ParentOp
+			}
+			if keptEdges[i].ChildService != keptEdges[j].ChildService {
+				return keptEdges[i].ChildService < keptEdges[j].ChildService
+			}
+			return keptEdges[i].ChildOp < keptEdges[j].ChildOp
+		})
+		return TopologyResponse{
+			Nodes:       nodesOut,
+			Edges:       keptEdges,
+			RootService: root,
+			Depth:       depth,
+			From:        from.UnixNano(),
+			To:          to.UnixNano(),
+			Truncated:   len(allEdges) >= edgeCap,
+		}, nil
 	})
 }
 
@@ -185,66 +178,75 @@ type ServiceTopologyNode struct {
 func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	const edgeCap = 5000
 	from, to := parseFromTo(r, 1*time.Hour)
-	edges, err := s.store.GetServiceTopologyEdges(r.Context(), from, to, edgeCap)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Drop "external" edges whose peer_service points at a known
-	// instrumented service — those already show as cross-service
-	// edges from the join pass. Without this, a client→server
-	// hop renders twice: once as a real service edge, once as
-	// "frontend → ext:api-gateway". Only un-instrumented peers
-	// (third-party APIs, legacy systems) survive the filter.
-	knownServices := map[string]bool{}
-	for _, e := range edges {
-		if e.NodeKind == "service" {
-			knownServices[e.ParentService] = true
-			knownServices[e.ChildNode] = true
+	// Cache key includes the rounded window so concurrent requests
+	// over the same minute share one CH round-trip. Topology view
+	// is a "what does the fabric look like" surface — sub-minute
+	// freshness isn't load-bearing, but the underlying self-join
+	// is heavy enough at production scale that caching is the
+	// difference between "snappy" and "30s timeouts".
+	key := fmt.Sprintf("topology-service:from=%d:to=%d", from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		edges, err := s.store.GetServiceTopologyEdges(r.Context(), from, to, edgeCap)
+		if err != nil {
+			return nil, err
 		}
-	}
-	filtered := edges[:0]
-	for _, e := range edges {
-		if e.NodeKind == "external" {
-			peer := strings.TrimPrefix(e.ChildNode, "ext:")
-			if knownServices[peer] {
-				continue
+		// Drop "external" edges whose peer_service points at a
+		// known instrumented service — those already show as
+		// cross-service edges from the join pass. Without this, a
+		// client→server hop renders twice: once as a real service
+		// edge, once as "frontend → ext:api-gateway". Only
+		// un-instrumented peers (third-party APIs, legacy systems)
+		// survive the filter.
+		knownServices := map[string]bool{}
+		for _, e := range edges {
+			if e.NodeKind == "service" {
+				knownServices[e.ParentService] = true
+				knownServices[e.ChildNode] = true
 			}
 		}
-		filtered = append(filtered, e)
-	}
-	edges = filtered
-	nodes := map[string]ServiceTopologyNode{}
-	addNode := func(id, kind string) {
-		if _, ok := nodes[id]; ok {
-			return
-		}
-		name := id
-		if kind != "service" {
-			for _, p := range []string{"db:", "queue:", "ext:"} {
-				if strings.HasPrefix(name, p) {
-					name = name[len(p):]
-					break
+		filtered := edges[:0]
+		for _, e := range edges {
+			if e.NodeKind == "external" {
+				peer := strings.TrimPrefix(e.ChildNode, "ext:")
+				if knownServices[peer] {
+					continue
 				}
 			}
+			filtered = append(filtered, e)
 		}
-		nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
-	}
-	for _, e := range edges {
-		addNode(e.ParentService, "service")
-		addNode(e.ChildNode, e.NodeKind)
-	}
-	nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
-	for _, n := range nodes {
-		nodesOut = append(nodesOut, n)
-	}
-	sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
-	writeJSON(w, ServiceTopologyResponse{
-		Nodes:     nodesOut,
-		Edges:     edges,
-		From:      from.UnixNano(),
-		To:        to.UnixNano(),
-		Truncated: len(edges) >= edgeCap,
+		edges = filtered
+		nodes := map[string]ServiceTopologyNode{}
+		addNode := func(id, kind string) {
+			if _, ok := nodes[id]; ok {
+				return
+			}
+			name := id
+			if kind != "service" {
+				for _, p := range []string{"db:", "queue:", "ext:"} {
+					if strings.HasPrefix(name, p) {
+						name = name[len(p):]
+						break
+					}
+				}
+			}
+			nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
+		}
+		for _, e := range edges {
+			addNode(e.ParentService, "service")
+			addNode(e.ChildNode, e.NodeKind)
+		}
+		nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
+		for _, n := range nodes {
+			nodesOut = append(nodesOut, n)
+		}
+		sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+		return ServiceTopologyResponse{
+			Nodes:     nodesOut,
+			Edges:     edges,
+			From:      from.UnixNano(),
+			To:        to.UnixNano(),
+			Truncated: len(edges) >= edgeCap,
+		}, nil
 	})
 }
 
@@ -264,12 +266,14 @@ type FlowsResponse struct {
 func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 1*time.Hour)
 	top := parseInt(r.URL.Query().Get("top"), 20)
-	flows, err := s.store.GetRootFlows(r.Context(), from, to, top)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano()})
+	key := fmt.Sprintf("topology-flows:from=%d:to=%d:top=%d", from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), top)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		flows, err := s.store.GetRootFlows(r.Context(), from, to, top)
+		if err != nil {
+			return nil, err
+		}
+		return FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano()}, nil
+	})
 }
 
 // getFlowTopology returns the service-level subgraph for one
@@ -286,66 +290,69 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
-	edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// Same external-peer filter as the global topology — drop
-	// peers that already exist as instrumented services so the
-	// subgraph doesn't double-count cross-service edges.
-	knownServices := map[string]bool{}
-	for _, e := range edges {
-		if e.NodeKind == "service" {
-			knownServices[e.ParentService] = true
-			knownServices[e.ChildNode] = true
+	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d", rootService, rootOp, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
+		if err != nil {
+			return nil, err
 		}
-	}
-	filtered := edges[:0]
-	for _, e := range edges {
-		if e.NodeKind == "external" {
-			peer := strings.TrimPrefix(e.ChildNode, "ext:")
-			if knownServices[peer] {
-				continue
+		// Same external-peer filter as the global topology — drop
+		// peers that already exist as instrumented services so the
+		// subgraph doesn't double-count cross-service edges.
+		knownServices := map[string]bool{}
+		for _, e := range edges {
+			if e.NodeKind == "service" {
+				knownServices[e.ParentService] = true
+				knownServices[e.ChildNode] = true
 			}
 		}
-		filtered = append(filtered, e)
-	}
-	edges = filtered
-	nodes := map[string]ServiceTopologyNode{}
-	addNode := func(id, kind string) {
-		if _, ok := nodes[id]; ok {
-			return
-		}
-		name := id
-		if kind != "service" {
-			for _, p := range []string{"db:", "queue:", "ext:"} {
-				if strings.HasPrefix(name, p) {
-					name = name[len(p):]
-					break
+		filtered := edges[:0]
+		for _, e := range edges {
+			if e.NodeKind == "external" {
+				peer := strings.TrimPrefix(e.ChildNode, "ext:")
+				if knownServices[peer] {
+					continue
 				}
 			}
+			filtered = append(filtered, e)
 		}
-		nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
-	}
-	// Always include the root service as a node, even if it has no
-	// outgoing edges in this window (single-service flow case).
-	addNode(rootService, "service")
-	for _, e := range edges {
-		addNode(e.ParentService, "service")
-		addNode(e.ChildNode, e.NodeKind)
-	}
-	nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
-	for _, n := range nodes {
-		nodesOut = append(nodesOut, n)
-	}
-	sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
-	writeJSON(w, ServiceTopologyResponse{
-		Nodes:     nodesOut,
-		Edges:     edges,
-		From:      from.UnixNano(),
-		To:        to.UnixNano(),
-		Truncated: false,
+		edges = filtered
+		nodes := map[string]ServiceTopologyNode{}
+		addNode := func(id, kind string) {
+			if _, ok := nodes[id]; ok {
+				return
+			}
+			name := id
+			if kind != "service" {
+				for _, p := range []string{"db:", "queue:", "ext:"} {
+					if strings.HasPrefix(name, p) {
+						name = name[len(p):]
+						break
+					}
+				}
+			}
+			nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
+		}
+		// Always include the root service as a node, even if it
+		// has no outgoing edges in this window (single-service
+		// flow case).
+		addNode(rootService, "service")
+		for _, e := range edges {
+			addNode(e.ParentService, "service")
+			addNode(e.ChildNode, e.NodeKind)
+		}
+		nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
+		for _, n := range nodes {
+			nodesOut = append(nodesOut, n)
+		}
+		sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+		return ServiceTopologyResponse{
+			Nodes:     nodesOut,
+			Edges:     edges,
+			From:      from.UnixNano(),
+			To:        to.UnixNano(),
+			Truncated: false,
+		}, nil
 	})
 }
 

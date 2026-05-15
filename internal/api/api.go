@@ -275,6 +275,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/anomalies/silences/bulk-delete", s.bulkDeleteAnomalySilences)
 	// Audit log — admin-only read.
 	mux.HandleFunc("GET /api/admin/audit",            s.listAuditLog)
+	mux.HandleFunc("GET /api/admin/alert-tuning/noisy-rules", s.alertTuningNoisyRules)
 	mux.HandleFunc("GET /api/admin/audit/export",     s.exportAuditLog)
 	// SQL playground — admin only; readonly=2 + 60s cap on the
 	// CH side, allow-list of SELECT/WITH/SHOW/DESCRIBE/EXPLAIN

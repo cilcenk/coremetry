@@ -16,6 +16,7 @@ const KNOWN_ACTIONS = [
   'alert_rule.update',
   'alert_rule.delete',
   'alert_rule.enable',
+  'anomaly_silence.bulk_delete',
   'anomaly_silence.create',
   'anomaly_silence.delete',
   'dashboard.create',

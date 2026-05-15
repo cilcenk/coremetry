@@ -278,6 +278,11 @@ export const api = {
     }),
   deleteAnomalySilence: (id: string) =>
     request<void>(`/api/anomalies/silences/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  bulkDeleteAnomalySilences: (ids: string[]) =>
+    request<{ deleted: number }>(`/api/anomalies/silences/bulk-delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }),
 
   // SQL playground — admin only, read-only by enforcement.
   sqlSchema: () =>

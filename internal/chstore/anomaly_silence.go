@@ -57,6 +57,33 @@ func (s *Store) DeleteAnomalySilence(ctx context.Context, id string) error {
 	return s.UpsertAnomalySilence(ctx, *cur)
 }
 
+// DeleteAnomalySilences soft-deletes a batch in one call. Already-
+// expired or non-existent ids are silently skipped (idempotent so
+// the UI can blast every visible id without checking which are
+// still live). Returns the number that were actually flipped.
+func (s *Store) DeleteAnomalySilences(ctx context.Context, ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	now := time.Now().UnixNano() - 1
+	count := 0
+	for _, id := range ids {
+		cur, err := s.GetAnomalySilence(ctx, id)
+		if err != nil {
+			return count, err
+		}
+		if cur == nil || cur.UntilAt <= now {
+			continue
+		}
+		cur.UntilAt = now
+		if err := s.UpsertAnomalySilence(ctx, *cur); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
 func (s *Store) GetAnomalySilence(ctx context.Context, id string) (*AnomalySilence, error) {
 	var s2 AnomalySilence
 	var createdAt, untilAt time.Time

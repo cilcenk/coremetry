@@ -10,6 +10,7 @@ export {
   useLogPatternAnomalies, useTraceOpAnomalies, useMetricAnomalies,
   useAnomalyEvents, useAnomalySilences,
   useCreateAnomalySilence, useDeleteAnomalySilence,
+  useBulkDeleteAnomalySilences,
 } from './anomalies';
 export {
   useServices, useServiceNames, useServiceMap,

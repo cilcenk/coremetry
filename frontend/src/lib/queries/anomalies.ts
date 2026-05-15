@@ -105,3 +105,13 @@ export function useDeleteAnomalySilence() {
     },
   });
 }
+
+export function useBulkDeleteAnomalySilences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.bulkDeleteAnomalySilences,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.anomalies.all });
+    },
+  });
+}

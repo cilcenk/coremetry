@@ -18,6 +18,7 @@ import {
   useLogPatternAnomalies, useTraceOpAnomalies, useMetricAnomalies,
   useAnomalyEvents, useAnomalySilences,
   useCreateAnomalySilence, useDeleteAnomalySilence,
+  useBulkDeleteAnomalySilences,
 } from '@/lib/queries';
 import { fmtNum, tsLong } from '@/lib/utils';
 import type {
@@ -38,6 +39,7 @@ export function AnomalyStreams() {
   const silences    = useAnomalySilences().data;
   const createSilence = useCreateAnomalySilence();
   const deleteSilence = useDeleteAnomalySilence();
+  const bulkDeleteSilences = useBulkDeleteAnomalySilences();
 
   const onMute = async (kind: string, pattern: string, service: string, durationSec: number) => {
     await createSilence.mutateAsync({
@@ -48,10 +50,13 @@ export function AnomalyStreams() {
   const onUnmute = async (id: string) => {
     await deleteSilence.mutateAsync(id);
   };
+  const onUnmuteAll = async (ids: string[]) => {
+    await bulkDeleteSilences.mutateAsync(ids);
+  };
 
   return (
     <>
-      <SilencesSection items={silences} onUnmute={onUnmute} />
+      <SilencesSection items={silences} onUnmute={onUnmute} onUnmuteAll={onUnmuteAll} />
       <LogPatternsSection items={logPatterns} onMute={onMute} />
       <TraceOpsSection    items={traceOps}    onMute={onMute} />
       <MetricSection      items={metrics} />
@@ -201,9 +206,10 @@ function MetricSection({ items }: { items: Problem[] | undefined }) {
   );
 }
 
-function SilencesSection({ items, onUnmute }: {
+function SilencesSection({ items, onUnmute, onUnmuteAll }: {
   items: AnomalySilence[] | undefined;
   onUnmute: (id: string) => void;
+  onUnmuteAll: (ids: string[]) => void;
 }) {
   if (!items || items.length === 0) return null;
   return (
@@ -215,6 +221,22 @@ function SilencesSection({ items, onUnmute }: {
       <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 600 }}>
         Muted ({items.length})
       </span>
+      {items.length > 1 && (
+        <button type="button"
+          onClick={() => {
+            if (window.confirm(`Unmute all ${items.length} silences?`)) {
+              onUnmuteAll(items.map(s => s.id));
+            }
+          }}
+          title="Unmute every active silence"
+          style={{
+            fontSize: 10, padding: '2px 6px',
+            background: 'transparent', border: '1px solid var(--border)',
+            borderRadius: 3, color: 'var(--text2)', cursor: 'pointer',
+          }}>
+          Unmute all
+        </button>
+      )}
       {items.map(s => {
         const remaining = Math.max(0, s.untilAt / 1e6 - Date.now());
         const remainStr = remaining > 24 * 3600 * 1000

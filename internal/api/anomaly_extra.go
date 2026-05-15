@@ -86,6 +86,37 @@ func (s *Server) deleteAnomalySilence(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// bulkDeleteAnomalySilences mirrors the v0.5.83 problem bulk-ack
+// shape: POST a body of ids, get back a count. Lets an operator
+// clean up an overnight storm of silences in one click instead of
+// hitting × on each chip. One audit entry per call with the id
+// list in details.
+func (s *Server) bulkDeleteAnomalySilences(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(body.IDs) == 0 {
+		http.Error(w, "ids list required", http.StatusBadRequest)
+		return
+	}
+	if len(body.IDs) > 200 {
+		http.Error(w, "max 200 ids per bulk delete", http.StatusBadRequest)
+		return
+	}
+	n, err := s.store.DeleteAnomalySilences(r.Context(), body.IDs)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	details, _ := json.Marshal(map[string]any{"ids": body.IDs, "deleted": n})
+	s.audit(r, "anomaly_silence.bulk_delete", "anomaly_silence", "", string(details))
+	writeJSON(w, map[string]any{"deleted": n})
+}
+
 // ── Audit log ─────────────────────────────────────────────────────
 
 func (s *Server) listAuditLog(w http.ResponseWriter, r *http.Request) {

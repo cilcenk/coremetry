@@ -110,6 +110,20 @@ export default function AuditPage() {
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {data?.length ?? 0} entries
           </span>
+          {/* CSV export uses the same filter shape as the JSON view —
+              just a different endpoint that streams to download.
+              Anchor element with attributes built inline so the
+              browser handles the download path without us juggling
+              a Blob; auth cookies travel with the request. */}
+          <a href={`/api/admin/audit/export?since=${encodeURIComponent(since)}`
+            + (actor.trim() ? `&actor=${encodeURIComponent(actor.trim())}` : '')
+            + (action.trim() ? `&action=${encodeURIComponent(action.trim())}` : '')
+            + (target.trim() ? `&target=${encodeURIComponent(target.trim())}` : '')}
+            className="sec"
+            style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}
+            title="Download current view as CSV">
+            ↓ Export CSV
+          </a>
         </div>
 
         {data === undefined && <Spinner />}

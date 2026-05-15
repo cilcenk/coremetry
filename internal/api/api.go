@@ -3453,6 +3453,10 @@ func (s *Server) createChannel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Audit row carries name + type only; the channel's Config blob
+	// holds the secret and never enters audit_log.
+	details, _ := json.Marshal(map[string]any{"name": c.Name, "type": c.Type})
+	s.audit(r, "notification_channel.create", "notification_channel", c.ID, string(details))
 	writeJSON(w, c)
 }
 
@@ -3484,6 +3488,8 @@ func (s *Server) updateChannel(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	details, _ := json.Marshal(map[string]any{"name": c.Name, "type": c.Type})
+	s.audit(r, "notification_channel.update", "notification_channel", c.ID, string(details))
 	c.Config = redactSecrets(c.Type, c.Config)
 	writeJSON(w, c)
 }
@@ -3536,10 +3542,12 @@ func mergeSecrets(channelType string, existing, incoming json.RawMessage) json.R
 }
 
 func (s *Server) deleteChannel(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteChannel(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteChannel(r.Context(), id); err != nil {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "notification_channel.delete", "notification_channel", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

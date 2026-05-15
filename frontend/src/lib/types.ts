@@ -1183,7 +1183,7 @@ export interface SavedView {
 // if it has stopped".
 export interface AnomalyEvent {
   id: string;
-  kind: 'log_pattern' | 'trace_op';
+  kind: 'log_pattern' | 'trace_op' | 'elastic_ml';
   pattern: string;
   service: string;
   startedAt: number;     // unix ns — first observation

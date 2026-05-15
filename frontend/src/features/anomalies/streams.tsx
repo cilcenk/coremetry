@@ -307,7 +307,9 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
                   <ClusterChips clusters={e.clusters} />
                 </td>
                 <td style={{ fontSize: 11, color: 'var(--text2)' }}>
-                  {e.kind === 'log_pattern' ? 'log' : 'trace op'}
+                  {e.kind === 'log_pattern' ? 'log'
+                    : e.kind === 'elastic_ml' ? 'Elastic ML'
+                    : 'trace op'}
                 </td>
                 <td className="num mono">{e.peakRatio.toFixed(1)}</td>
                 <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(e.startedAt)}</td>

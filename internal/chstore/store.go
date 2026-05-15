@@ -764,6 +764,20 @@ func (s *Store) migrate(ctx context.Context) error {
 		// type so an admin can target any of email / slack /
 		// teams / zoomchat / webhook to a specific team.
 		`ALTER TABLE notification_channels ADD COLUMN IF NOT EXISTS match_rules String DEFAULT '{}'`,
+		// Spans columns needed by v0.5.102+ topology queries. Older
+		// installs whose spans table was created before these
+		// fields existed in CREATE TABLE would otherwise return
+		// "Missing column" on the service-level topology join. All
+		// default to '' so existing rows behave as if the field is
+		// unset — same as ingestion paths that don't populate them.
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS kind         LowCardinality(String) DEFAULT 'internal'`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS peer_service LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS msg_system   LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS rpc_system   LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS rpc_method   LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS http_method  LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS http_route   LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS db_system    LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_kind        kind        TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_db_system   db_system   TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_http_status http_status TYPE minmax    GRANULARITY 4`,

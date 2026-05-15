@@ -398,6 +398,188 @@ func (s *Server) getTopologyOps(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// exportServiceTopologyDrawIO serialises the service-level
+// topology (the full backend graph, op-collapsed, infra-included)
+// as a draw.io mxGraph XML. Same payload shape as the JSON
+// /api/topology/service endpoint; the layout uses the same BFS
+// hop assignment so the exported diagram matches what the UI
+// renders inline. Edge labels carry protocol + top method+
+// endpoint so the diagram is self-explanatory standalone.
+func (s *Server) exportServiceTopologyDrawIO(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, 1*time.Hour)
+	edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, 5000)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	// External-peer filter, mirroring the JSON path.
+	knownServices := map[string]bool{}
+	for _, e := range edges {
+		if e.NodeKind == "service" {
+			knownServices[e.ParentService] = true
+			knownServices[e.ChildNode] = true
+		}
+	}
+	filtered := edges[:0]
+	for _, e := range edges {
+		if e.NodeKind == "external" {
+			peer := strings.TrimPrefix(e.ChildNode, "ext:")
+			if knownServices[peer] {
+				continue
+			}
+		}
+		filtered = append(filtered, e)
+	}
+	edges = filtered
+
+	// Assign each node an id + a hop (BFS from no-incoming roots).
+	type nodeMeta struct{ ID, Name, Kind string; Hop int }
+	nodes := map[string]*nodeMeta{}
+	addNode := func(id, kind string) {
+		if _, ok := nodes[id]; ok {
+			return
+		}
+		name := id
+		if kind != "service" {
+			for _, p := range []string{"db:", "queue:", "ext:"} {
+				if strings.HasPrefix(name, p) {
+					name = name[len(p):]
+					break
+				}
+			}
+		}
+		nodes[id] = &nodeMeta{ID: id, Name: name, Kind: kind}
+	}
+	for _, e := range edges {
+		addNode(e.ParentService, "service")
+		addNode(e.ChildNode, e.NodeKind)
+	}
+	incoming := map[string]int{}
+	for _, e := range edges {
+		incoming[e.ChildNode]++
+	}
+	frontier := []string{}
+	for id, n := range nodes {
+		if incoming[id] == 0 && n.Kind == "service" {
+			frontier = append(frontier, id)
+			nodes[id].Hop = 0
+		}
+	}
+	if len(frontier) == 0 {
+		// Cyclic — pick highest out-degree service as the seed.
+		out := map[string]int{}
+		for _, e := range edges {
+			out[e.ParentService]++
+		}
+		pick := ""
+		maxOut := -1
+		for k, v := range out {
+			if v > maxOut {
+				maxOut, pick = v, k
+			}
+		}
+		if pick != "" {
+			frontier = []string{pick}
+			nodes[pick].Hop = 0
+		}
+	}
+	visited := map[string]bool{}
+	for len(frontier) > 0 {
+		var next []string
+		for _, id := range frontier {
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
+			h := nodes[id].Hop
+			for _, e := range edges {
+				if e.ParentService != id {
+					continue
+				}
+				if _, ok := nodes[e.ChildNode]; ok && !visited[e.ChildNode] {
+					if nodes[e.ChildNode].Hop == 0 && e.ChildNode != id {
+						nodes[e.ChildNode].Hop = h + 1
+					}
+					next = append(next, e.ChildNode)
+				}
+			}
+		}
+		frontier = next
+	}
+
+	// Group nodes by hop, sort within for stable output.
+	buckets := map[int][]string{}
+	for id, n := range nodes {
+		buckets[n.Hop] = append(buckets[n.Hop], id)
+	}
+	for _, list := range buckets {
+		sort.Strings(list)
+	}
+	hops := make([]int, 0, len(buckets))
+	for h := range buckets {
+		hops = append(hops, h)
+	}
+	sort.Ints(hops)
+
+	// Build XML.
+	colorByKind := func(kind string) string {
+		switch kind {
+		case "db":
+			return "#dae8fc;strokeColor=#6c8ebf"
+		case "queue":
+			return "#fff2cc;strokeColor=#d6b656"
+		case "external":
+			return "#f8cecc;strokeColor=#b85450"
+		default:
+			return "#d5e8d4;strokeColor=#82b366"
+		}
+	}
+	var nodesXML strings.Builder
+	idForNode := map[string]string{}
+	nextID := 2
+	for _, h := range hops {
+		for i, id := range buckets[h] {
+			n := nodes[id]
+			cellID := fmt.Sprintf("n%d", nextID)
+			nextID++
+			idForNode[id] = cellID
+			label := n.Name + "\n" + strings.ToUpper(n.Kind)
+			fmt.Fprintf(&nodesXML,
+				`<mxCell id="%s" value="%s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=%s;" vertex="1" parent="1"><mxGeometry x="%d" y="%d" width="220" height="60" as="geometry"/></mxCell>`,
+				cellID, html.EscapeString(label), colorByKind(n.Kind), h*280, i*100,
+			)
+		}
+	}
+	var edgesXML strings.Builder
+	for _, e := range edges {
+		src := idForNode[e.ParentService]
+		dst := idForNode[e.ChildNode]
+		if src == "" || dst == "" {
+			continue
+		}
+		top := ""
+		if len(e.TopLabels) > 0 {
+			top = e.TopLabels[0]
+		}
+		label := strings.ToUpper(e.Protocol) + "  " + top + "\n" + fmt.Sprintf("%d calls", e.Calls)
+		cellID := fmt.Sprintf("e%d", nextID)
+		nextID++
+		fmt.Fprintf(&edgesXML,
+			`<mxCell id="%s" value="%s" style="endArrow=classic;html=1;rounded=0;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="%s" target="%s"><mxGeometry relative="1" as="geometry"/></mxCell>`,
+			cellID, html.EscapeString(label), src, dst,
+		)
+	}
+	body := fmt.Sprintf(
+		`<mxfile><diagram name="Service topology"><mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" arrows="1" connect="1" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>%s%s</root></mxGraphModel></diagram></mxfile>`,
+		nodesXML.String(), edgesXML.String(),
+	)
+	_ = xml.Unmarshal([]byte(body), new(struct{ XMLName xml.Name }))
+	filename := fmt.Sprintf("service-topology-%s.drawio", time.Now().UTC().Format("20060102-1504"))
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	_, _ = w.Write([]byte(body))
+}
+
 // exportTopologyDrawIO serialises the same topology response as
 // /api/topology but as a draw.io (mxGraph) XML document. Layered
 // layout: each BFS hop is a column at x=hop*240, nodes within a

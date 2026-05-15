@@ -173,6 +173,12 @@ function ServiceView({ range }: { range: TimeRange }) {
             ? `Focused on ${focus}: ${showingNodes} nodes / ${showingEdges} edges`
             : `${showingNodes}/${totalNodes} nodes · ${showingEdges}/${totalEdges} edges`}
         </span>
+        <a href={api.serviceTopologyDrawIOURL({ from: data.from, to: data.to })}
+          className="sec"
+          style={{ fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}
+          title="Download full service topology as draw.io">
+          ↓ draw.io
+        </a>
       </div>
       {data.truncated && (
         <div style={{

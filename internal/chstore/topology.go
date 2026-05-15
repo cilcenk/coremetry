@@ -185,17 +185,23 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 			uniqExact(label) AS distinct_labels,
 			count() AS calls
 		FROM spans AS c
-		INNER JOIN spans AS p
+		INNER JOIN (
+			SELECT trace_id, span_id, service_name
+			FROM spans
+			WHERE time >= ? AND time <= ?
+		) AS p
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.trace_id IN (SELECT trace_id FROM root_traces)
 		  AND c.time >= ? AND c.time <= ?
-		  AND p.time >= ? AND p.time <= ?
 		  AND c.parent_id != ''
 		  AND p.service_name != c.service_name
 		GROUP BY parent_service, child_service, protocol
 		ORDER BY calls DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 60,
+		         join_algorithm = 'grace_hash',
+		         max_bytes_in_join = 2000000000,
+		         max_memory_usage = 4000000000`,
 		rootService, rootOp, from, to,
 		from, to, from, to, limit,
 	)
@@ -296,6 +302,16 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 	end := bucketStart.Add(5 * time.Minute)
 
 	// Cross-service pass — service A → service B via http/rpc.
+	//
+	// Memory note: the right side of the join (`p`) is column-
+	// projected to (trace_id, span_id, service_name) and pre-
+	// filtered to the bucket window in a subquery so CH doesn't
+	// load the whole spans row block into the hash side. With
+	// join_algorithm='grace_hash' the hash table spills to disk
+	// past the per-query limit, so a 1B-span 5-min slice still
+	// fits even on a modest 4-8 GB CH. allow_experimental_analyzer
+	// off keeps grace_hash on the legacy planner where it's
+	// stable across 23.x→24.x.
 	if err := s.conn.Exec(ctx, `
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
@@ -327,14 +343,20 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt64(count())     AS calls,
 			toUInt64(?)           AS version
 		FROM spans AS c
-		INNER JOIN spans AS p
+		INNER JOIN (
+			SELECT trace_id, span_id, service_name
+			FROM spans
+			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+		) AS p
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
-		  AND p.time >= toDateTime(?, 'UTC') AND p.time < toDateTime(?, 'UTC')
 		  AND c.parent_id != ''
 		  AND p.service_name != c.service_name
 		GROUP BY parent_service, child_node, protocol
-		SETTINGS max_execution_time = 120`,
+		SETTINGS max_execution_time = 180,
+		         join_algorithm = 'grace_hash',
+		         max_bytes_in_join = 4000000000,
+		         max_memory_usage = 8000000000`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
 		bucketStart.Unix(), end.Unix(),
@@ -416,13 +438,19 @@ func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time
 			toUInt64(count()) AS calls,
 			toUInt64(?)    AS version
 		FROM spans AS c
-		INNER JOIN spans AS p
+		INNER JOIN (
+			SELECT trace_id, span_id, service_name, name
+			FROM spans
+			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+		) AS p
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
-		  AND p.time >= toDateTime(?, 'UTC') AND p.time < toDateTime(?, 'UTC')
 		  AND c.parent_id != ''
 		GROUP BY parent_service, parent_op, child_service, child_op
-		SETTINGS max_execution_time = 120`,
+		SETTINGS max_execution_time = 180,
+		         join_algorithm = 'grace_hash',
+		         max_bytes_in_join = 4000000000,
+		         max_memory_usage = 8000000000`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
 		bucketStart.Unix(), end.Unix(),
@@ -494,10 +522,16 @@ func (s *Store) WriteRootFlowsBucket(ctx context.Context, bucketStart time.Time)
 			groupUniqArrayArray(50)(arrayDistinct([sp.service_name])) AS services,
 			toUInt64(?) AS version
 		FROM root_traces AS rt
-		INNER JOIN spans AS sp ON sp.trace_id = rt.trace_id
-		WHERE sp.time >= toDateTime(?, 'UTC') AND sp.time < toDateTime(?, 'UTC')
+		INNER JOIN (
+			SELECT trace_id, service_name
+			FROM spans
+			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+		) AS sp ON sp.trace_id = rt.trace_id
 		GROUP BY rt.root_service, rt.root_op
-		SETTINGS max_execution_time = 120`,
+		SETTINGS max_execution_time = 180,
+		         join_algorithm = 'grace_hash',
+		         max_bytes_in_join = 4000000000,
+		         max_memory_usage = 8000000000`,
 		bucketStart.Unix(), end.Unix(),
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),

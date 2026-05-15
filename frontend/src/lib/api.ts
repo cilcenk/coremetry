@@ -182,6 +182,8 @@ export const api = {
   // service fabric is generally small enough to draw whole.
   serviceTopology: (params: { from?: number; to?: number }) =>
     get<import('./types').ServiceTopologyResponse>(`/api/topology/service?${qs(params)}`),
+  serviceTopologyDrawIOURL: (params: { from?: number; to?: number }) =>
+    `/api/topology/service/drawio?${qs(params)}`,
   // Root-anchored business flows (v0.5.103) — top entry points
   // by trace volume + the subgraph for one flow.
   topologyFlows: (params: { top?: number; from?: number; to?: number }) =>

@@ -185,6 +185,88 @@ func walkProperties(prefix string, props map[string]any, out map[string]struct{}
 	}
 }
 
+// SimilarTrace is one trace bucket returned by SimilarTraces —
+// the bucketing is done server-side via a terms aggregation on
+// trace.id over a more_like_this query. Count is "how many
+// log lines from this trace matched", a rough relevance proxy.
+type SimilarTrace struct {
+	TraceID string `json:"traceId"`
+	Count   uint64 `json:"count"`
+}
+
+// SimilarTraces returns the trace IDs whose logs contain text
+// pattern-similar to the supplied seed string. Uses Elastic's
+// more_like_this query for the similarity signal + a terms
+// aggregation to bucket per trace.id. The aggregation cap stays
+// modest (50 traces) because the UI renders these as a clickable
+// list — past 50 entries the operator will narrow rather than
+// scroll. Read-only against Elastic.
+func (s *ESStore) SimilarTraces(ctx context.Context, seed string, limit int) ([]SimilarTrace, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if seed == "" {
+		return []SimilarTrace{}, nil
+	}
+	body := map[string]any{
+		"size": 0,
+		"query": map[string]any{
+			"more_like_this": map[string]any{
+				"fields":         []string{s.fields.Body},
+				"like":           seed,
+				"min_term_freq":  1,
+				"min_doc_freq":   1,
+				"max_query_terms": 25,
+			},
+		},
+		"aggs": map[string]any{
+			"traces": map[string]any{
+				"terms": map[string]any{
+					"field": s.fields.TraceID,
+					"size":  limit,
+				},
+			},
+		},
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return nil, err
+	}
+	req := esapi.SearchRequest{
+		Index: []string{s.cfg.Index},
+		Body:  &buf,
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, fmt.Errorf("similar traces: %s", res.String())
+	}
+	var resp struct {
+		Aggregations struct {
+			Traces struct {
+				Buckets []struct {
+					Key      string `json:"key"`
+					DocCount uint64 `json:"doc_count"`
+				} `json:"buckets"`
+			} `json:"traces"`
+		} `json:"aggregations"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+		return nil, err
+	}
+	out := make([]SimilarTrace, 0, len(resp.Aggregations.Traces.Buckets))
+	for _, b := range resp.Aggregations.Traces.Buckets {
+		if b.Key == "" {
+			continue
+		}
+		out = append(out, SimilarTrace{TraceID: b.Key, Count: b.DocCount})
+	}
+	return out, nil
+}
+
 // SQLResult is the wire-shape returned by ExecSQL. Mirrors the
 // AdminSql /api/admin/sql/query shape (columns/rows/tookMs) so
 // the frontend table renderer is single-codepath.

@@ -95,6 +95,27 @@ export function tsLong(ns: number): string {
   return new Date(ns / 1e6).toLocaleString('en', { dateStyle: 'short', timeStyle: 'medium' });
 }
 
+// tsRel renders a unix-ns timestamp as a coarse relative duration
+// ("in 12h", "3d ago"). Used for expiry indicators where the
+// absolute date is less load-bearing than "how much longer". For
+// past timestamps the suffix flips to " ago". Rounds to the
+// largest unit that fits to keep the label tight.
+export function tsRel(ns: number): string {
+  if (!ns) return '—';
+  const diffMs = ns / 1e6 - Date.now();
+  const abs = Math.abs(diffMs);
+  const past = diffMs < 0;
+  const min = abs / 60_000;
+  const h = abs / 3_600_000;
+  const d = abs / 86_400_000;
+  let body: string;
+  if (d >= 1) body = Math.round(d) + 'd';
+  else if (h >= 1) body = Math.round(h) + 'h';
+  else if (min >= 1) body = Math.round(min) + 'm';
+  else body = '<1m';
+  return past ? body + ' ago' : 'in ' + body;
+}
+
 // Hand-picked palette tuned for modern APM dashboards. Replaces the
 // previous Tailwind-default rainbow (indigo/violet/pink/orange/yellow/
 // emerald/cyan…) which read as "candy crayons" on a dark UI. Every

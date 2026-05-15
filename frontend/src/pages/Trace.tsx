@@ -11,7 +11,7 @@ import { CopilotExplain } from '@/components/CopilotExplain';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
-import { fmtNs, tsLong } from '@/lib/utils';
+import { fmtNs, tsLong, tsRel } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
 
 function TraceDetailInner() {
@@ -648,8 +648,9 @@ function SharePopover({ traceId }: { traceId: string }) {
                 </button>
               </div>
               {publicExpiresAt && (
-                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                  Expires {tsLong(publicExpiresAt)}
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}
+                     title={tsLong(publicExpiresAt)}>
+                  Expires {tsRel(publicExpiresAt)}
                 </div>
               )}
             </>
@@ -679,6 +680,10 @@ function SharePopover({ traceId }: { traceId: string }) {
                       flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }} title={`${s.createdBy || 'unknown'} · expires ${tsLong(s.expiresAt)}`}>
                       …{s.token.slice(-8)} · {s.createdBy || 'unknown'}
+                    </span>
+                    <span style={{ fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap' }}
+                          title={tsLong(s.expiresAt)}>
+                      {tsRel(s.expiresAt)}
                     </span>
                     <button onClick={() => revoke(s.token)}
                       className="sec"

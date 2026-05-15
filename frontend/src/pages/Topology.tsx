@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
@@ -70,6 +70,14 @@ export default function TopologyPage() {
 // ── View 1: Service topology ─────────────────────────────────
 
 function ServiceView({ range }: { range: TimeRange }) {
+  const navigate = useNavigate();
+  // Stable callback so the SVG memo treats it as identity-equal
+  // across renders. Inline arrows would force a re-render of every
+  // node g on each parent re-render — at 200 nodes that's a
+  // perceptible jank on slow laptops.
+  const onNodeClick = useCallback((serviceName: string) => {
+    navigate(`/service?name=${encodeURIComponent(serviceName)}`);
+  }, [navigate]);
   const [data, setData] = useState<ServiceTopologyResponse | null | undefined>(undefined);
   const [selectedEdge, setSelectedEdge] = useState<ServiceTopologyEdge | null>(null);
   // Top-N + focus controls. In production a single full render is
@@ -80,6 +88,11 @@ function ServiceView({ range }: { range: TimeRange }) {
   // overview to a specific service without losing the time range.
   const [topN, setTopN] = useState(30);
   const [focus, setFocus] = useState('');
+  // How many hops to expand around the focused service. 1 = just
+  // direct neighbors; 2 = neighbors-of-neighbors; up to 4 keeps
+  // the diagram readable. Only used when focus is set; the top-N
+  // pick handles the no-focus case.
+  const [focusHops, setFocusHops] = useState(1);
   // Substring search across nodes in the current visible subgraph.
   // Doesn't filter the diagram — it highlights matches so the
   // operator can find a service inside a 100-node graph without
@@ -113,15 +126,26 @@ function ServiceView({ range }: { range: TimeRange }) {
   const visible = useMemo(() => {
     if (!data) return null;
     if (focus) {
+      // BFS outward AND inward from focus up to focusHops layers.
+      // Both directions matter: callers (incoming edges) are as
+      // important as callees for triage.
       const keepNodes = new Set<string>([focus]);
-      const keepEdges: ServiceTopologyEdge[] = [];
-      data.edges.forEach(e => {
-        if (e.parentService === focus || e.childNode === focus) {
-          keepNodes.add(e.parentService);
-          keepNodes.add(e.childNode);
-          keepEdges.push(e);
-        }
-      });
+      let frontier = new Set<string>([focus]);
+      for (let h = 0; h < focusHops; h++) {
+        const next = new Set<string>();
+        data.edges.forEach(e => {
+          if (frontier.has(e.parentService) && !keepNodes.has(e.childNode)) {
+            next.add(e.childNode);
+          }
+          if (frontier.has(e.childNode) && !keepNodes.has(e.parentService)) {
+            next.add(e.parentService);
+          }
+        });
+        next.forEach(id => keepNodes.add(id));
+        frontier = next;
+      }
+      const keepEdges = data.edges.filter(e =>
+        keepNodes.has(e.parentService) && keepNodes.has(e.childNode));
       return {
         nodes: data.nodes.filter(n => keepNodes.has(n.id)),
         edges: keepEdges,
@@ -188,6 +212,16 @@ function ServiceView({ range }: { range: TimeRange }) {
             <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)' }}>{topN}</span>
           </>
         )}
+        {focus && (
+          <>
+            <label style={{ fontSize: 12, color: 'var(--text2)' }}>Hops</label>
+            <input type="range" min={1} max={4} value={focusHops}
+              onChange={e => setFocusHops(parseInt(e.target.value, 10))}
+              style={{ width: 100 }}
+              title="How many hops outward from the focused service to include" />
+            <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)' }}>{focusHops}</span>
+          </>
+        )}
         <input type="search" placeholder="Search…" value={search}
           onChange={e => setSearch(e.target.value)}
           style={{ fontSize: 12, padding: '3px 8px', width: 140 }}
@@ -222,6 +256,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             nodes={visible.nodes} edges={visible.edges} layout={layout}
             onEdgeClick={setSelectedEdge} search={search}
             incidentServices={incidentServices}
+            onNodeClick={onNodeClick}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
@@ -552,13 +587,14 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
   onEdgeClick: (e: ServiceTopologyEdge) => void;
   search?: string;
   incidentServices?: Set<string>;
+  onNodeClick?: (serviceName: string) => void;
 }) {
   // Search highlighting: a node "matches" when its name includes
   // the (case-insensitive) substring. Edges match when EITHER end
@@ -653,9 +689,11 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const kindIcon = n.kind === 'db' ? '⛁' : n.kind === 'queue' ? '⌬' : n.kind === 'external' ? '↗' : '';
           const match = isNodeMatch(n);
           const hasIncident = !!incidentServices && incidentServices.has(n.id);
+          const clickable = n.kind === 'service' && !!onNodeClick;
           return (
             <g key={n.id} transform={`translate(${p.x}, ${p.y})`}
-               style={{ opacity: match ? 1 : 0.18 }}>
+               style={{ opacity: match ? 1 : 0.18, cursor: clickable ? 'pointer' : 'default' }}
+               onClick={clickable ? () => onNodeClick(n.name) : undefined}>
               {hasIncident && (
                 <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}
                   rx={10} ry={10} fill="none"

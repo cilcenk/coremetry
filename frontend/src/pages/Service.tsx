@@ -751,7 +751,7 @@ function ServiceLatencyHeatmap({ service, range }: {
   };
 
   return (
-    <div ref={containerRef} style={{ marginBottom: 14 }}>
+    <div ref={containerRef} style={{ marginTop: 24, marginBottom: 14 }}>
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
       }}>

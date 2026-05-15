@@ -733,6 +733,24 @@ func (s *Store) migrate(ctx context.Context) error {
 		PARTITION BY toDate(time_bucket)
 		ORDER BY (time_bucket, parent_service, child_node, node_kind, protocol)
 		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
+
+		// Op-level edges per 5-min bucket. Powers the operation
+		// deep-dive view. Higher row cardinality than the service-
+		// level table (every distinct op pair) but still bounded
+		// because ops are LowCardinality in practice (HTTP routes,
+		// gRPC methods). Same aggregator goroutine fills it.
+		`CREATE TABLE IF NOT EXISTS topology_op_edges_5m (
+			time_bucket     DateTime CODEC(DoubleDelta, ZSTD(3)),
+			parent_service  LowCardinality(String),
+			parent_op       String,
+			child_service   LowCardinality(String),
+			child_op        String,
+			calls           UInt64,
+			version         UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toDate(time_bucket)
+		ORDER BY (time_bucket, parent_service, parent_op, child_service, child_op)
+		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
 	}
 
 	for _, q := range tables {

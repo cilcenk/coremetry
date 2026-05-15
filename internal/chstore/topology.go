@@ -398,6 +398,108 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 	return nil
 }
 
+// WriteTopologyOpBucket pre-aggregates per-op edges for a 5-min
+// bucket. Same shape as WriteTopologyBucket but at op granularity
+// — used by /api/topology (operation deep-dive view).
+func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time) error {
+	end := bucketStart.Add(5 * time.Minute)
+	if err := s.conn.Exec(ctx, `
+		INSERT INTO topology_op_edges_5m
+			(time_bucket, parent_service, parent_op,
+			 child_service, child_op, calls, version)
+		SELECT
+			toDateTime(?, 'UTC') AS time_bucket,
+			p.service_name AS parent_service,
+			p.name         AS parent_op,
+			c.service_name AS child_service,
+			c.name         AS child_op,
+			toUInt64(count()) AS calls,
+			toUInt64(?)    AS version
+		FROM spans AS c
+		INNER JOIN spans AS p
+			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
+		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
+		  AND p.time >= toDateTime(?, 'UTC') AND p.time < toDateTime(?, 'UTC')
+		  AND c.parent_id != ''
+		GROUP BY parent_service, parent_op, child_service, child_op
+		SETTINGS max_execution_time = 120`,
+		bucketStart.Unix(),
+		uint64(time.Now().UnixNano()),
+		bucketStart.Unix(), end.Unix(),
+		bucketStart.Unix(), end.Unix(),
+	); err != nil {
+		return fmt.Errorf("topology op bucket: %w", err)
+	}
+	return nil
+}
+
+// ReadTopologyOpEdgesAgg reads per-op edges from the aggregated
+// table for the requested window. Returns the full edge set; the
+// API handler runs the BFS to extract the bounded subgraph.
+func (s *Store) ReadTopologyOpEdgesAgg(ctx context.Context, from, to time.Time, limit int) ([]TopologyEdge, error) {
+	if limit <= 0 || limit > 200000 {
+		limit = 50000
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+			parent_service, parent_op, child_service, child_op,
+			sum(calls) AS total_calls
+		FROM topology_op_edges_5m FINAL
+		WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+		  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+		GROUP BY parent_service, parent_op, child_service, child_op
+		ORDER BY total_calls DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`,
+		from.Unix(), to.Unix(), limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TopologyEdge
+	for rows.Next() {
+		var e TopologyEdge
+		if err := rows.Scan(&e.ParentService, &e.ParentOp,
+			&e.ChildService, &e.ChildOp, &e.Calls); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListOpsForService returns the operation names that appear as
+// outbound callers for a given service in the window. Drives the
+// op-picker dropdown on the operation deep-dive view. Reads
+// directly from the agg table so the response is fast.
+func (s *Store) ListOpsForService(ctx context.Context, service string, from, to time.Time) ([]string, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT DISTINCT parent_op
+		FROM topology_op_edges_5m FINAL
+		WHERE parent_service = ?
+		  AND time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+		  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+		ORDER BY parent_op
+		LIMIT 500
+		SETTINGS max_execution_time = 5`,
+		service, from.Unix(), to.Unix(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var op string
+		if err := rows.Scan(&op); err != nil {
+			return nil, err
+		}
+		out = append(out, op)
+	}
+	return out, rows.Err()
+}
+
 // ReadServiceTopologyAgg reads pre-aggregated topology rows for
 // a window from topology_edges_5m. Each row in the agg table is
 // one 5-min bucket; we sum calls + merge top_labels arrays across

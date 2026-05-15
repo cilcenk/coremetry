@@ -105,7 +105,11 @@ func (a *Aggregator) tick(ctx context.Context, bootstrap bool) {
 	}
 	for _, b := range buckets {
 		if err := a.store.WriteTopologyBucket(ctx, b); err != nil {
-			log.Printf("[topology-agg] bucket %s: %v", b.Format(time.RFC3339), err)
+			log.Printf("[topology-agg] service bucket %s: %v", b.Format(time.RFC3339), err)
+			continue
+		}
+		if err := a.store.WriteTopologyOpBucket(ctx, b); err != nil {
+			log.Printf("[topology-agg] op bucket %s: %v", b.Format(time.RFC3339), err)
 			continue
 		}
 	}

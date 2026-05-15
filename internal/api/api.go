@@ -176,6 +176,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/{name}/clusters",  s.getServiceClusterBreakdown)
 	mux.HandleFunc("GET /api/services/{name}/neighbors", s.getServiceNeighbors)
 	mux.HandleFunc("GET /api/topology",                  s.getTopology)
+	mux.HandleFunc("GET /api/topology/ops",              s.getTopologyOps)
 	mux.HandleFunc("GET /api/topology/service",          s.getServiceTopology)
 	mux.HandleFunc("GET /api/topology/flows",            s.getRootFlows)
 	mux.HandleFunc("GET /api/topology/flow",             s.getFlowTopology)

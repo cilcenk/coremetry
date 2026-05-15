@@ -169,8 +169,12 @@ export const api = {
   // Topology — operation-level BFS rooted at one service, depth-
   // bounded. Drives the /topology page; mirrors the backend at
   // internal/api/topology.go.
-  topology: (params: { root: string; depth?: number; from?: number; to?: number }) =>
+  topology: (params: { root: string; root_op?: string; depth?: number; from?: number; to?: number }) =>
     get<import('./types').TopologyResponse>(`/api/topology?${qs(params)}`),
+  // Ops list for a given root service (powers the op picker on
+  // the operation deep-dive view).
+  topologyOps: (params: { service: string; from?: number; to?: number }) =>
+    get<{ ops: string[] | null }>(`/api/topology/ops?${qs(params)}`),
   topologyDrawIOURL: (params: { root: string; depth?: number; from?: number; to?: number }) =>
     `/api/topology/drawio?${qs(params)}`,
   // Service-level topology (v0.5.102) — full backend graph with

@@ -47,6 +47,11 @@ func (s *Server) getTopology(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "root service required", http.StatusBadRequest)
 		return
 	}
+	// Optional op-level seed: when set, BFS starts from
+	// (root, rootOp) only rather than every op in root. Lets the
+	// operator answer "what does POST /payment cascade into?"
+	// without N hops of unrelated ops cluttering the view.
+	rootOp := q.Get("root_op")
 	depth := parseInt(q.Get("depth"), 3)
 	if depth < 1 {
 		depth = 1
@@ -56,9 +61,11 @@ func (s *Server) getTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
 	const edgeCap = 50000
-	key := fmt.Sprintf("topology-op:root=%s:depth=%d:from=%d:to=%d", root, depth, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	key := fmt.Sprintf("topology-op:root=%s:op=%s:depth=%d:from=%d:to=%d", root, rootOp, depth, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		allEdges, err := s.store.GetTopologyEdges(r.Context(), from, to, edgeCap)
+		// Read from the pre-aggregated op-edges table instead of
+		// the live spans self-join. Same shape, 1000× cheaper.
+		allEdges, err := s.store.ReadTopologyOpEdgesAgg(r.Context(), from, to, edgeCap)
 		if err != nil {
 			return nil, err
 		}
@@ -78,6 +85,11 @@ func (s *Server) getTopology(w http.ResponseWriter, r *http.Request) {
 		}
 		frontier := map[string]struct{}{}
 		for _, e := range byParentService[root] {
+			// When rootOp is set, only seed BFS from that single op;
+			// without it, every op in the root service is a seed.
+			if rootOp != "" && e.ParentOp != rootOp {
+				continue
+			}
 			key := nodeIDOf(e.ParentService, e.ParentOp)
 			frontier[key] = struct{}{}
 			addNode(e.ParentService, e.ParentOp)
@@ -358,6 +370,27 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 			To:        to.UnixNano(),
 			Truncated: false,
 		}, nil
+	})
+}
+
+// getTopologyOps lists the operations that appear as outbound
+// callers for a given service in the window. Used by the
+// operation deep-dive view to populate the op picker once the
+// operator has chosen a root service.
+func (s *Server) getTopologyOps(w http.ResponseWriter, r *http.Request) {
+	service := r.URL.Query().Get("service")
+	if service == "" {
+		http.Error(w, "service required", http.StatusBadRequest)
+		return
+	}
+	from, to := parseFromTo(r, 1*time.Hour)
+	key := fmt.Sprintf("topology-ops:svc=%s:from=%d:to=%d", service, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		ops, err := s.store.ListOpsForService(r.Context(), service, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ops": ops}, nil
 	})
 }
 

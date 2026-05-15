@@ -208,20 +208,39 @@ function OperationView({ params, setParams, range }: {
   setParams: (n: URLSearchParams | ((p: URLSearchParams) => URLSearchParams), opts?: { replace?: boolean }) => void;
   range: TimeRange;
 }) {
-  const root  = params.get('root')  || '';
-  const depth = Math.max(1, Math.min(6, parseInt(params.get('depth') || '3', 10) || 3));
+  const root   = params.get('root')    || '';
+  const rootOp = params.get('root_op') || '';
+  const depth  = Math.max(1, Math.min(6, parseInt(params.get('depth') || '3', 10) || 3));
   const [data, setData] = useState<TopologyResponse | null | undefined>(undefined);
+  const [ops, setOps]   = useState<string[]>([]);
 
   useEffect(() => {
     if (!root) { setData(null); return; }
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
-    api.topology({ root, depth, from, to }).then(setData).catch(() => setData(null));
-  }, [root, depth, range]);
+    api.topology({ root, root_op: rootOp || undefined, depth, from, to })
+      .then(setData).catch(() => setData(null));
+  }, [root, rootOp, depth, range]);
+
+  // Load ops for the selected service so the op picker can be
+  // populated. Refreshes when the service or time range changes.
+  useEffect(() => {
+    if (!root) { setOps([]); return; }
+    const { from, to } = timeRangeToNs(range);
+    api.topologyOps({ service: root, from, to })
+      .then(d => setOps(d.ops ?? []))
+      .catch(() => setOps([]));
+  }, [root, range]);
 
   const setRoot = (v: string) => setParams(prev => {
     const p = new URLSearchParams(prev);
     if (v) p.set('root', v); else p.delete('root');
+    p.delete('root_op'); // ops are service-scoped; reset on service change.
+    return p;
+  }, { replace: true });
+  const setRootOp = (v: string) => setParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('root_op', v); else p.delete('root_op');
     return p;
   }, { replace: true });
   const setDepth = (v: number) => setParams(prev => {
@@ -236,9 +255,19 @@ function OperationView({ params, setParams, range }: {
 
   return (
     <>
-      <div className="controls" style={{ marginBottom: 12, gap: 12 }}>
+      <div className="controls" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
         <label style={{ fontSize: 12, color: 'var(--text2)' }}>Root service</label>
         <ServicePicker value={root} onChange={setRoot} placeholder="Pick a service…" width={220} />
+        {root && (
+          <>
+            <label style={{ fontSize: 12, color: 'var(--text2)' }}>Operation</label>
+            <select value={rootOp} onChange={e => setRootOp(e.target.value)}
+              style={{ fontSize: 12, padding: '3px 6px', minWidth: 180 }}>
+              <option value="">— all ops —</option>
+              {ops.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </>
+        )}
         <label style={{ fontSize: 12, color: 'var(--text2)' }}>Depth</label>
         <input type="range" min={1} max={6} value={depth}
                onChange={e => setDepth(parseInt(e.target.value, 10))}

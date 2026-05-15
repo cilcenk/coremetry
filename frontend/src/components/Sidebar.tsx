@@ -3,9 +3,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { useHealth, useOpenProblemCount } from '@/lib/queries';
 import { useT } from '@/lib/i18n';
-import { ThemeToggle } from './ThemeToggle';
-import { DensityToggle } from './DensityToggle';
-import { LangToggle } from './LangToggle';
 import { TelescopeIcon } from './TelescopeIcon';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -129,7 +126,7 @@ export function Sidebar() {
 
   // Width + collapsed state hydrate from localStorage on mount only;
   // initial render uses safe defaults so SSR + client agree.
-  const [width, setWidth] = useState(196);
+  const [width, setWidth] = useState(220);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -271,21 +268,14 @@ export function Sidebar() {
         <div id="sidebar-header">
           <TelescopeIcon size={22} />
           {showLabels && <span className="title">Coremetry</span>}
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-            {showLabels && <LangToggle />}
-            {showLabels && <DensityToggle />}
-            {showLabels && <ThemeToggle />}
-            {!isMobile && (
-              <button onClick={toggleCollapsed} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                style={{
-                  width: 24, height: 24, padding: 0, fontSize: 12,
-                  background: 'transparent', color: 'var(--text2)',
-                  border: '1px solid var(--border)', borderRadius: 4,
-                }}>
-                {collapsed ? '»' : '«'}
-              </button>
-            )}
-          </span>
+          {!isMobile && (
+            <button onClick={toggleCollapsed}
+              className="theme-toggle"
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              style={{ marginLeft: 'auto', fontSize: 12 }}>
+              {collapsed ? '»' : '«'}
+            </button>
+          )}
         </div>
         <div id="nav">
           {NAV_GROUPS.map(group => {

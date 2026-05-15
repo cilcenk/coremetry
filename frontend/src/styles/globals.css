@@ -79,7 +79,7 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 }
 #sidebar[data-collapsed="true"] #sidebar-header { padding: 14px 0; justify-content: center; }
 #sidebar-header .logo { color: var(--brand); font-size: 22px; }
-#sidebar-header .title { font-weight: 800; font-size: 15px; letter-spacing: .02em; }
+#sidebar-header .title { font-weight: 800; font-size: 15px; letter-spacing: .02em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #nav { flex: 1; padding: 6px 0; overflow-y: auto; overflow-x: hidden; }
 #nav a {
   display: flex; align-items: center; gap: 10px;
@@ -839,6 +839,15 @@ canvas { max-width: 100%; }
   transition: background .12s, color .12s, border-color .12s;
 }
 .theme-toggle:hover { background: var(--bg2); color: var(--text); border-color: var(--accent); }
+
+/* Density + theme toggle pill group in the topbar */
+.topbar-prefs { display: flex; align-items: center; flex-shrink: 0; }
+.topbar-prefs .theme-toggle { border-radius: 0; border-right: none; }
+.topbar-prefs .theme-toggle:first-child { border-radius: 6px 0 0 6px; }
+.topbar-prefs .theme-toggle:last-child  { border-radius: 0 6px 6px 0; border-right: 1px solid var(--border); }
+.topbar-prefs .theme-toggle:hover { position: relative; z-index: 1; }
+/* Vertical separator between the time-range picker and the pref group */
+.topbar-prefs-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; margin: 0 8px; }
 
 /* Share button (Grafana-style — copies URL with encoded state) */
 .share-btn {

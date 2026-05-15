@@ -72,38 +72,130 @@ export default function TopologyPage() {
 function ServiceView({ range }: { range: TimeRange }) {
   const [data, setData] = useState<ServiceTopologyResponse | null | undefined>(undefined);
   const [selectedEdge, setSelectedEdge] = useState<ServiceTopologyEdge | null>(null);
+  // Top-N + focus controls. In production a single full render is
+  // unusable past ~50 services; default to top 30 by total call
+  // volume so the page loads with a readable overview. "Focus on"
+  // overrides the top-N pick — it shows only the focused service
+  // + its 1-hop neighbors so an operator can pivot from the
+  // overview to a specific service without losing the time range.
+  const [topN, setTopN] = useState(30);
+  const [focus, setFocus] = useState('');
   useEffect(() => {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
     api.serviceTopology({ from, to }).then(setData).catch(() => setData(null));
   }, [range]);
-  const layout = useMemo(() => layerServices(data), [data]);
+
+  // Compute the visible subgraph from the raw response based on
+  // the two controls. All filtering is client-side because the
+  // server already caps edges at 5k; computing here lets the
+  // operator slide topN / pick focus without a round-trip.
+  const visible = useMemo(() => {
+    if (!data) return null;
+    if (focus) {
+      const keepNodes = new Set<string>([focus]);
+      const keepEdges: ServiceTopologyEdge[] = [];
+      data.edges.forEach(e => {
+        if (e.parentService === focus || e.childNode === focus) {
+          keepNodes.add(e.parentService);
+          keepNodes.add(e.childNode);
+          keepEdges.push(e);
+        }
+      });
+      return {
+        nodes: data.nodes.filter(n => keepNodes.has(n.id)),
+        edges: keepEdges,
+      };
+    }
+    // Top-N pick: rank nodes by total in+out call volume,
+    // keep the heaviest N, then drop edges whose endpoints aren't
+    // both in the kept set.
+    const score = new Map<string, number>();
+    const bump = (id: string, calls: number) => {
+      score.set(id, (score.get(id) ?? 0) + calls);
+    };
+    data.edges.forEach(e => {
+      bump(e.parentService, e.calls);
+      bump(e.childNode, e.calls);
+    });
+    const ranked = data.nodes.slice().sort((a, b) =>
+      (score.get(b.id) ?? 0) - (score.get(a.id) ?? 0));
+    const keptSet = new Set(ranked.slice(0, topN).map(n => n.id));
+    const keepEdges = data.edges.filter(e =>
+      keptSet.has(e.parentService) && keptSet.has(e.childNode));
+    return {
+      nodes: data.nodes.filter(n => keptSet.has(n.id)),
+      edges: keepEdges,
+    };
+  }, [data, topN, focus]);
+
+  const layout = useMemo(
+    () => layerServices(visible ? { ...data!, nodes: visible.nodes, edges: visible.edges } : null),
+    [visible, data]
+  );
 
   if (data === undefined) return <Spinner />;
   if (data === null) return <Empty icon="✗" title="Failed to load topology" />;
   if (data.nodes.length === 0) {
     return <Empty icon="◇" title="No interactions in this window">Pick a wider time range or wait for traces to flow.</Empty>;
   }
+  const totalNodes = data.nodes.length;
+  const totalEdges = data.edges.length;
+  const showingNodes = visible?.nodes.length ?? 0;
+  const showingEdges = visible?.edges.length ?? 0;
+  // Build the focus-picker options from the full node list so the
+  // operator can pivot to any service even when it's not in the
+  // current top-N slice.
+  const focusOptions = data.nodes
+    .filter(n => n.kind === 'service')
+    .map(n => n.name)
+    .sort();
   return (
     <>
+      <div className="controls" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 12, color: 'var(--text2)' }}>Focus on</label>
+        <select value={focus} onChange={e => setFocus(e.target.value)}
+          style={{ fontSize: 12, padding: '3px 6px', minWidth: 180 }}>
+          <option value="">— top services —</option>
+          {focusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {!focus && (
+          <>
+            <label style={{ fontSize: 12, color: 'var(--text2)' }}>Top services</label>
+            <input type="range" min={10} max={Math.min(200, totalNodes)} value={topN}
+              onChange={e => setTopN(parseInt(e.target.value, 10))}
+              style={{ width: 140 }} />
+            <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)' }}>{topN}</span>
+          </>
+        )}
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+          {focus
+            ? `Focused on ${focus}: ${showingNodes} nodes / ${showingEdges} edges`
+            : `${showingNodes}/${totalNodes} nodes · ${showingEdges}/${totalEdges} edges`}
+        </span>
+      </div>
       {data.truncated && (
         <div style={{
           background: 'rgba(212,165,55,0.12)', border: '1px solid rgba(212,165,55,0.4)',
           borderRadius: 4, padding: '6px 10px', marginBottom: 10,
           color: 'var(--text2)', fontSize: 11,
         }}>
-          Edge query hit its 5k cap — view shows the heaviest strands only.
+          Edge query hit its 5k cap — heaviest strands only. Narrow the time range for full coverage.
         </div>
       )}
-      <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
-        {data.nodes.length} nodes · {data.edges.length} edges
-      </div>
-      <ServiceTopologySVG
-        nodes={data.nodes} edges={data.edges} layout={layout}
-        onEdgeClick={setSelectedEdge}
-      />
-      {selectedEdge && (
-        <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
+      {visible && visible.nodes.length === 0 && (
+        <Empty icon="◇" title={focus ? `No interactions for ${focus} in this window` : 'No matches'} />
+      )}
+      {visible && visible.nodes.length > 0 && (
+        <>
+          <ServiceTopologySVG
+            nodes={visible.nodes} edges={visible.edges} layout={layout}
+            onEdgeClick={setSelectedEdge}
+          />
+          {selectedEdge && (
+            <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} />
+          )}
+        </>
       )}
     </>
   );

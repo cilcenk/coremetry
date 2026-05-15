@@ -626,6 +626,19 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
      row of vertical space and adds no information. */
   display: none;
 }
+/* Grafana-style click-to-isolate: rows act as buttons. Cursor
+   hint + subtle hover bg communicate the affordance; the JS
+   handler in MultiLineChart wires the actual show/hide. */
+.u-legend tr.u-series {
+  cursor: pointer;
+  user-select: none;
+}
+.u-legend tr.u-series:hover {
+  background: var(--bg3);
+}
+.u-legend tr.u-series.u-off {
+  opacity: 0.45;
+}
 
 /* ── Dashboard row header (Grafana-style collapsible groups) ──────────── */
 .dash-row-header {

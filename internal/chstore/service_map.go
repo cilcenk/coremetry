@@ -228,7 +228,14 @@ func (s *Store) getServiceMapAt(
 	}
 	tr.Close()
 	if len(traceIDs) == 0 {
-		return &ServiceMap{}, nil
+		// Non-nil empty slices — Go marshals a nil []T as JSON null,
+		// which makes the SPA's `for (const n of data.nodes)` blow up
+		// ("i.nodes is not iterable") on empty windows. Same shape as
+		// the populated path so the frontend can stay defensive-free.
+		return &ServiceMap{
+			Nodes: []ServiceMapNode{},
+			Edges: []ServiceMapEdge{},
+		}, nil
 	}
 
 	holders := make([]string, len(traceIDs))

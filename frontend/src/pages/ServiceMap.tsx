@@ -74,9 +74,7 @@ export default function ServiceMapPage() {
     if (namesQ.data?.names) {
       for (const n of namesQ.data.names) set.add(n);
     }
-    if (mapQ.data?.nodes) {
-      for (const n of mapQ.data.nodes) if (!n.kind) set.add(n.service);
-    }
+    for (const n of (mapQ.data?.nodes ?? [])) if (!n.kind) set.add(n.service);
     return Array.from(set).sort();
   }, [namesQ.data, mapQ.data]);
   // Auto-pick a focused service on first load so the operator
@@ -88,8 +86,9 @@ export default function ServiceMapPage() {
   // selection / Clear focus disables further auto-picks.
   const [autoFocused, setAutoFocused] = useState(false);
   useEffect(() => {
-    if (autoFocused || focus || !mapQ.data || mapQ.data.nodes.length === 0) return;
-    const real = mapQ.data.nodes
+    const nodes = mapQ.data?.nodes ?? [];
+    if (autoFocused || focus || !mapQ.data || nodes.length === 0) return;
+    const real = nodes
       .filter(n => !n.kind)
       .sort((a, b) => b.spanCount - a.spanCount)
       .slice(0, 3);
@@ -99,11 +98,18 @@ export default function ServiceMapPage() {
       setAutoFocused(true);
     }
   }, [mapQ.data, autoFocused, focus]);
+  // Normalise nodes/edges to arrays even when the API returns
+  // them as null (older backend, empty windows). Downstream
+  // iterations assume arrays — without this, the page crashed
+  // with "i.nodes is not iterable" on first load against a
+  // pre-v0.5.105 server that hadn't returned empty slices yet.
   const data = mapQ.isLoading
     ? undefined
     : mapQ.isError
       ? null
-      : mapQ.data ?? { nodes: [], edges: [], sampledFrom: 0, totalSpans: 0 };
+      : mapQ.data
+        ? { ...mapQ.data, nodes: mapQ.data.nodes ?? [], edges: mapQ.data.edges ?? [] }
+        : { nodes: [], edges: [], sampledFrom: 0, totalSpans: 0 };
 
   // Cluster filter — when non-empty, narrows the graph to
   // nodes whose enriched cluster matches. "multi" services

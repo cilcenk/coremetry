@@ -175,7 +175,12 @@ export default function LoginPage() {
             ? (brand.usernameLabel === 'Email' ? t('login.usernameOrEmail') : brand.usernameLabel)
             : (brand.usernameLabel === 'Email' ? t('login.email') : brand.usernameLabel)}
         </label>
-        <input type={ldapEnabled ? 'text' : 'email'} autoComplete="username" required autoFocus
+        {/* Always text — `type="email"` triggered HTML5 @-validation
+            which blocked LDAP users typing a bare sAMAccountName, and
+            before /api/auth/config resolved the flag flipped briefly
+            anyway. Backend owns the format check; the input type
+            doesn't add safety beyond a soft hint, so we drop it. */}
+        <input type="text" autoComplete="username" required autoFocus
           value={email} onChange={e => setEmail(e.target.value)}
           style={{ width: '100%', marginBottom: 14 }} />
 

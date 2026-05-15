@@ -639,6 +639,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// resolves to a trace_id, gated by `expires_at`. Public route
 		// (no auth) reads by token. Token is the primary key so we can
 		// revoke or list per-trace cheaply.
+		//
+		// TTL drops expired rows during background merges so the table
+		// doesn't grow unboundedly with one-off shares. 7-day grace
+		// past expires_at leaves forensics room (who minted what for
+		// which trace) before the row physically goes away.
 		`CREATE TABLE IF NOT EXISTS trace_snapshots (
 			token        String,
 			trace_id     String,
@@ -647,7 +652,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			expires_at   DateTime64(9),
 			version      UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
-		ORDER BY token`,
+		ORDER BY token
+		TTL toDateTime(expires_at) + INTERVAL 7 DAY`,
 
 		// Marks an existing incident as visible on the public status
 		// page. Operator toggles via the admin UI. Kept as a separate
@@ -769,6 +775,10 @@ func (s *Store) migrate(ctx context.Context) error {
 		// near-zero overhead and lets CH skip granules whose
 		// status set doesn't include 'error'.
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_status      status_code TYPE set(0)    GRANULARITY 4`,
+		// Apply the trace_snapshots TTL to installs that created
+		// the table before v0.5.91. MODIFY TTL is metadata-only;
+		// repeated applies are idempotent.
+		`ALTER TABLE trace_snapshots MODIFY TTL toDateTime(expires_at) + INTERVAL 7 DAY`,
 	}
 	for _, q := range alters {
 		if err := s.execDDL(ctx, q); err != nil {

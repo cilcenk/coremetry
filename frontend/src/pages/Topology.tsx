@@ -569,7 +569,7 @@ function OperationView({ params, setParams, range }: {
     return p;
   }, { replace: true });
 
-  const layers = useMemo(() => layerOpNodes(data, root), [data, root]);
+  const layers = useMemo(() => layerOpNodes(data, root, rootOp || undefined), [data, root, rootOp]);
   const drawioHref = data && root
     ? api.topologyDrawIOURL({ root, depth, from: data.from, to: data.to }) : '';
 
@@ -628,7 +628,8 @@ function OperationView({ params, setParams, range }: {
           <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
             {data.nodes.length} nodes · {data.edges.length} edges · depth {data.depth}
           </div>
-          <OpTopologySVG layers={layers} edges={data.edges} />
+          <OpTopologySVG layers={layers} edges={data.edges}
+            anchor={rootOp ? `${root}|${rootOp}` : undefined} />
         </>
       )}
     </>
@@ -949,7 +950,19 @@ function layerServices(
   return layer;
 }
 
-function layerOpNodes(data: TopologyResponse | null | undefined, root: string): TopologyNode[][] {
+// layerOpNodes lays out the operation deep-dive view. When
+// rootOp is given (v0.5.160) only that specific {service|op}
+// becomes the column-0 anchor — previously every operation on
+// the root service got dropped into column 0 even when the
+// operator had narrowed the picker to a single op, which caused
+// the same "every focus looks the same" visual symptom we just
+// fixed on the service view. Without rootOp the legacy
+// behaviour stands: every root-service op anchors column 0.
+function layerOpNodes(
+  data: TopologyResponse | null | undefined,
+  root: string,
+  rootOp?: string,
+): TopologyNode[][] {
   if (!data || !root) return [];
   const outgoing = new Map<string, string[]>();
   data.edges.forEach(e => {
@@ -959,12 +972,20 @@ function layerOpNodes(data: TopologyResponse | null | undefined, root: string): 
     outgoing.get(src)!.push(dst);
   });
   const hop = new Map<string, number>();
-  data.edges.forEach(e => {
-    if (e.parentService === root) {
-      const id = `${e.parentService}|${e.parentOp}`;
-      if (!hop.has(id)) hop.set(id, 0);
+  if (rootOp) {
+    const anchorID = `${root}|${rootOp}`;
+    if (data.nodes.some(n => n.id === anchorID)) {
+      hop.set(anchorID, 0);
     }
-  });
+  }
+  if (hop.size === 0) {
+    data.edges.forEach(e => {
+      if (e.parentService === root) {
+        const id = `${e.parentService}|${e.parentOp}`;
+        if (!hop.has(id)) hop.set(id, 0);
+      }
+    });
+  }
   if (hop.size === 0) data.nodes.forEach(n => hop.set(n.id, 0));
   let frontier = new Set(hop.keys());
   while (frontier.size > 0) {
@@ -1235,9 +1256,12 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   );
 }
 
-function OpTopologySVG({ layers, edges }: {
+function OpTopologySVG({ layers, edges, anchor }: {
   layers: TopologyNode[][];
   edges: TopologyResponse['edges'];
+  // v0.5.160 — `{service}|{op}` id of the anchored root. Drawn
+  // with an accent border so the operator's eye lands on it.
+  anchor?: string;
 }) {
   const op_node_w = 200, op_node_h = 48, op_col_w = 280, op_row_h = 64;
   const pos = new Map<string, { x: number; y: number }>();
@@ -1282,12 +1306,15 @@ function OpTopologySVG({ layers, edges }: {
         {layers.flatMap(layer => layer.map(n => {
           const p = pos.get(n.id)!;
           const color = hashColor(n.service);
+          const isAnchor = !!anchor && n.id === anchor;
+          const strokeColor = isAnchor ? 'var(--accent2)' : color;
+          const strokeW = isAnchor ? 3 : 1.5;
           return (
             <g key={n.id} transform={`translate(${p.x}, ${p.y})`}>
               <rect width={op_node_w} height={op_node_h} rx={6} ry={6}
-                fill={color} fillOpacity={0.16}
-                stroke={color} strokeWidth={1.5}>
-                <title>{`${n.service}.${n.op}`}</title>
+                fill={color} fillOpacity={isAnchor ? 0.28 : 0.16}
+                stroke={strokeColor} strokeWidth={strokeW}>
+                <title>{`${n.service}.${n.op}${isAnchor ? ' · focused' : ''}`}</title>
               </rect>
               <text x={10} y={19} fontSize={12} fontWeight={600} fill="var(--text)">
                 {truncate(n.service, 26)}

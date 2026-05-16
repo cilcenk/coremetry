@@ -89,11 +89,15 @@ type ServiceTopologyEdge struct {
 // counts how many traces start there. Services carries the set
 // of unique services those traces touch, in arbitrary order (use
 // GetFlowTopology to recover the call-graph shape for one flow).
+// P99Ns is the 99th-percentile root-span duration in the window —
+// computed lazily by ComputeFlowsLatencyP99 and merged in at the
+// API layer (v0.5.156). 0 = not yet computed / no samples.
 type RootFlow struct {
 	RootService string   `json:"rootService"`
 	RootOp      string   `json:"rootOp"`
 	TraceCount  uint64   `json:"traceCount"`
 	Services    []string `json:"services"`
+	P99Ns       uint64   `json:"p99Ns,omitempty"`
 }
 
 // GetRootFlows returns the top business flows by trace count over
@@ -665,6 +669,67 @@ func (s *Store) ReadRootFlowsAgg(ctx context.Context, from, to time.Time, limit 
 			return nil, err
 		}
 		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// FlowSig identifies a business flow by its (root_service, root_op)
+// pair. Used as a bounded IN-list for the p99 enrichment so the
+// query never scans more roots than the caller already listed.
+type FlowSig struct {
+	RootService string
+	RootOp      string
+}
+
+// ComputeFlowsLatencyP99 returns the p99 root-span duration (ns)
+// for each requested flow signature over the window. Keyed on
+// "service\x00op" so the caller can look up without a struct
+// equality dance. Empty input → empty map, no query.
+//
+// The IN list is bounded by the caller's flow limit (cap 200 on
+// the API surface), so even at billion-span scale this is a thin
+// GROUP BY over (parent_id='') roots filtered to a handful of
+// signatures — far cheaper than ranking flows from raw spans,
+// which is why we let the agg path own ranking and use this only
+// for latency enrichment.
+func (s *Store) ComputeFlowsLatencyP99(ctx context.Context, from, to time.Time, sigs []FlowSig) (map[string]uint64, error) {
+	if len(sigs) == 0 {
+		return map[string]uint64{}, nil
+	}
+	// Build the IN-list as a flat (svc, op, svc, op, …) arg slice;
+	// CH accepts `IN ((?,?), (?,?), …)` with positional binding.
+	placeholders := make([]byte, 0, len(sigs)*8)
+	args := make([]any, 0, 2+len(sigs)*2)
+	args = append(args, from, to)
+	for i, sig := range sigs {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '(', '?', ',', '?', ')')
+		args = append(args, sig.RootService, sig.RootOp)
+	}
+	q := `
+		SELECT service_name, name,
+		       toUInt64(quantile(0.99)(toFloat64(duration))) AS p99_ns
+		FROM spans
+		WHERE parent_id = ''
+		  AND time >= ? AND time < ?
+		  AND (service_name, name) IN (` + string(placeholders) + `)
+		GROUP BY service_name, name
+		SETTINGS max_execution_time = 15`
+	rows, err := s.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]uint64, len(sigs))
+	for rows.Next() {
+		var svc, op string
+		var p99 uint64
+		if err := rows.Scan(&svc, &op, &p99); err != nil {
+			return nil, err
+		}
+		out[svc+"\x00"+op] = p99
 	}
 	return out, rows.Err()
 }

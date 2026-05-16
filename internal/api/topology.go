@@ -306,6 +306,25 @@ func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 		if flows == nil {
 			flows = []chstore.RootFlow{}
 		}
+		// Enrich with p99 root-span duration (v0.5.156). One CH
+		// query, scoped to the (service, op) signatures we just
+		// returned, so the cost is bounded by `top` regardless of
+		// span volume. Errors are non-fatal — the flow list is
+		// still useful without latency.
+		if len(flows) > 0 {
+			sigs := make([]chstore.FlowSig, 0, len(flows))
+			for _, f := range flows {
+				sigs = append(sigs, chstore.FlowSig{
+					RootService: f.RootService,
+					RootOp:      f.RootOp,
+				})
+			}
+			if lat, err := s.store.ComputeFlowsLatencyP99(r.Context(), from, to, sigs); err == nil {
+				for i := range flows {
+					flows[i].P99Ns = lat[flows[i].RootService+"\x00"+flows[i].RootOp]
+				}
+			}
+		}
 		return FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano()}, nil
 	})
 }

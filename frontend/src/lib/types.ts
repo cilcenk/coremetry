@@ -62,6 +62,10 @@ export interface RootFlow {
   rootOp: string;
   traceCount: number;
   services: string[];
+  // p99 root-span duration in ns over the window (v0.5.156).
+  // Omitted when no roots matched the signature (e.g. transient
+  // empty bucket). Use ms = p99Ns / 1e6 for display.
+  p99Ns?: number;
 }
 export interface FlowsResponse {
   flows: RootFlow[];

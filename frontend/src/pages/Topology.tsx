@@ -716,6 +716,26 @@ function FlowsView({ range }: { range: TimeRange }) {
                   {fmtNum(f.traceCount)} traces
                 </span>
               </div>
+              {f.p99Ns !== undefined && f.p99Ns > 0 && (() => {
+                // p99 latency chip — colour bands match the
+                // operator's mental model for "fast" vs "slow"
+                // user-visible flows. Tooltip carries the exact
+                // number so an ops review doesn't have to squint
+                // at a chip.
+                const p99Ms = f.p99Ns / 1e6;
+                const color = p99Ms > 5000 ? 'var(--err)'
+                  : p99Ms > 1000 ? 'var(--warn)'
+                  : 'var(--text3)';
+                const label = p99Ms >= 1000
+                  ? `${(p99Ms / 1000).toFixed(2)} s`
+                  : `${p99Ms.toFixed(0)} ms`;
+                return (
+                  <div style={{ marginTop: 4, fontSize: 11, color, fontFamily: 'ui-monospace, monospace' }}
+                       title={`p99 root-span duration: ${p99Ms.toFixed(2)} ms`}>
+                    p99 {label}
+                  </div>
+                );
+              })()}
               <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {f.services.slice(0, 10).map(s => (
                   <span key={s} style={{
@@ -744,6 +764,13 @@ function FlowsView({ range }: { range: TimeRange }) {
             <span style={{ fontWeight: 700, fontSize: 13 }}>{picked.rootOp}</span>
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
               {picked.rootService} · {fmtNum(picked.traceCount)} traces
+              {picked.p99Ns !== undefined && picked.p99Ns > 0 && (() => {
+                const p99Ms = picked.p99Ns / 1e6;
+                const label = p99Ms >= 1000
+                  ? `${(p99Ms / 1000).toFixed(2)} s`
+                  : `${p99Ms.toFixed(0)} ms`;
+                return <> · p99 {label}</>;
+              })()}
             </span>
             {/* Per-flow draw.io export (v0.5.145). Same window as
                 the inline view; backend reuses the service-level

@@ -400,6 +400,11 @@ func main() {
 			log.Printf("[copilot] AI explain enabled (provider=%s model=%s)", p, m)
 		}
 	}
+	// Wire the AI observability sink (v0.5.163). Every Explain
+	// call from now on emits an ai_calls row asynchronously so the
+	// operator can see "which Explain button gets clicked, by
+	// whom, with what latency / token cost" in the /ai page.
+	copilotSvc.SetRecorder(aiCallRecorder{store})
 
 	// ── LDAP / AD enterprise auth (optional) ─────────────────────────────────
 	ldapSvc := ldap.New()
@@ -633,3 +638,39 @@ func (s *trustedHeaderUserStore) UpsertUser(ctx context.Context, u auth.LookupUs
 		AuthProvider: "trusted",
 	})
 }
+
+// aiCallRecorder is the chstore-backed implementation of
+// copilot.Recorder (v0.5.163). Sits in main rather than either
+// package so neither chstore nor copilot needs to import the
+// other — keeps the dependency graph clean. RecordCall runs on a
+// goroutine inside copilot.Service so the user's request returns
+// the moment the LLM responds; this method just translates the
+// shape and writes the row.
+type aiCallRecorder struct {
+	store *chstore.Store
+}
+
+func (r aiCallRecorder) RecordCall(ctx context.Context, c copilot.CallRecord) {
+	row := chstore.AICall{
+		CreatedAt:      c.CreatedAt.UnixNano(),
+		Surface:        c.Surface,
+		Provider:       c.Provider,
+		Model:          c.Model,
+		BaseURL:        c.BaseURL,
+		DurationMs:     c.DurationMs,
+		InputTokens:    c.InputTokens,
+		OutputTokens:   c.OutputTokens,
+		Status:         c.Status,
+		ErrorMsg:       c.ErrorMsg,
+		PromptChars:    c.PromptChars,
+		ResponseChars:  c.ResponseChars,
+		UserID:         c.UserID,
+		UserEmail:      c.UserEmail,
+		PromptSample:   c.PromptSample,
+		ResponseSample: c.ResponseSample,
+	}
+	if err := r.store.InsertAICall(ctx, row); err != nil {
+		log.Printf("[ai-obs] insert call: %v", err)
+	}
+}
+

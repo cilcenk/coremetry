@@ -61,6 +61,84 @@ type Service struct {
 	ghSessExp time.Time
 
 	cli *http.Client
+
+	// recorder is the AI-observability sink (v0.5.162). Set once at
+	// startup via SetRecorder. Nil = recording disabled (tests, or
+	// minimal binary). Recording runs on its own goroutine so user-
+	// facing latency isn't impacted by ingest cost.
+	recorder Recorder
+}
+
+// Recorder is the sink for the Coremetry-native AI observability
+// pipeline. Implemented by a thin adapter around chstore.Store
+// (kept in package api to avoid copilot→chstore import dependency).
+// Every Explain call emits exactly one CallRecord regardless of
+// success — errors show up in /ai with status="error" so the
+// operator sees broken provider configs without grepping logs.
+type Recorder interface {
+	RecordCall(ctx context.Context, c CallRecord)
+}
+
+// CallRecord captures one LLM round-trip. CreatedAt is set by the
+// Explain wrapper at call start; DurationMs measured at return.
+// Token counts come from the provider response when available
+// (OpenAI + Anthropic both ship usage data; some Ollama versions
+// don't — those stay 0).
+type CallRecord struct {
+	CreatedAt      time.Time
+	Surface        string
+	Provider       string
+	Model          string
+	BaseURL        string
+	DurationMs     uint32
+	InputTokens    uint32
+	OutputTokens   uint32
+	Status         string
+	ErrorMsg       string
+	PromptChars    uint32
+	ResponseChars  uint32
+	UserID         string
+	UserEmail      string
+	PromptSample   string
+	ResponseSample string
+}
+
+// metaKey is the unexported type for ctx.WithValue lookups so other
+// packages can't accidentally collide.
+type metaKey struct{}
+
+// CallMeta is attribution data the API layer stashes in ctx before
+// calling Explain — surface (which Copilot endpoint), userID/email
+// for "who triggered this call" filtering on the /ai page.
+type CallMeta struct {
+	Surface   string
+	UserID    string
+	UserEmail string
+}
+
+// WithMeta returns ctx tagged with the given CallMeta. The api
+// package's copilotExplain wrapper uses this to attribute every
+// LLM call to the surface that produced it.
+func WithMeta(ctx context.Context, m CallMeta) context.Context {
+	return context.WithValue(ctx, metaKey{}, m)
+}
+
+// MetaFromContext is the read side. Returns the zero CallMeta when
+// no tag is present so callers can treat it as "unknown".
+func MetaFromContext(ctx context.Context) CallMeta {
+	if v, ok := ctx.Value(metaKey{}).(CallMeta); ok {
+		return v
+	}
+	return CallMeta{}
+}
+
+// SetRecorder wires the observability sink. Nil disables it. Safe
+// to call before the Service is in use (single goroutine at boot).
+func (s *Service) SetRecorder(r Recorder) {
+	if s == nil {
+		return
+	}
+	s.recorder = r
 }
 
 // New always returns a Service. When apiKey is empty Configured()
@@ -129,22 +207,87 @@ func (s *Service) Configured() bool {
 }
 
 // Explain runs a single Messages/Chat call with the given system +
-// user prompt. Branches on the configured provider.
+// user prompt. Branches on the configured provider. v0.5.162 wraps
+// the dispatch with the AI-observability recorder so every call
+// emits an ai_calls row regardless of success — recording happens
+// on a goroutine so the user doesn't pay ingest cost in their
+// request path.
 func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	if !s.Configured() {
 		return "", errors.New("AI copilot not configured (open Settings → AI Copilot)")
 	}
 	s.mu.RLock()
-	provider := s.provider
+	provider, model, baseURL := s.provider, s.model, s.baseURL
 	s.mu.RUnlock()
+
+	started := time.Now()
+	var (
+		out          string
+		err          error
+		inputTokens  uint32
+		outputTokens uint32
+	)
 	switch provider {
 	case ProviderGitHub:
-		return s.explainGitHub(ctx, systemPrompt, userPrompt)
+		out, inputTokens, outputTokens, err = s.explainGitHubWithUsage(ctx, systemPrompt, userPrompt)
 	case ProviderOpenAI:
-		return s.explainOpenAI(ctx, systemPrompt, userPrompt)
+		out, inputTokens, outputTokens, err = s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
 	default:
-		return s.explainAnthropic(ctx, systemPrompt, userPrompt)
+		out, inputTokens, outputTokens, err = s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
 	}
+
+	if s.recorder != nil {
+		meta := MetaFromContext(ctx)
+		fullPrompt := systemPrompt + "\n\n" + userPrompt
+		rec := CallRecord{
+			CreatedAt:      started,
+			Surface:        meta.Surface,
+			Provider:       provider,
+			Model:          model,
+			BaseURL:        baseURL,
+			DurationMs:     uint32(time.Since(started).Milliseconds()),
+			InputTokens:    inputTokens,
+			OutputTokens:   outputTokens,
+			Status:         "ok",
+			PromptChars:    uint32(len(fullPrompt)),
+			ResponseChars:  uint32(len(out)),
+			UserID:         meta.UserID,
+			UserEmail:      meta.UserEmail,
+			PromptSample:   truncForSample(fullPrompt),
+			ResponseSample: truncForSample(out),
+		}
+		if err != nil {
+			rec.Status = "error"
+			rec.ErrorMsg = truncErr(err.Error())
+		}
+		// Fire-and-forget recording so the user gets their response
+		// the moment the LLM returns — CH ingest can take 5-20ms.
+		go func(r Recorder, rec CallRecord) {
+			// Bounded ctx so a stuck CH ingest can't pin a goroutine.
+			rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			r.RecordCall(rctx, rec)
+		}(s.recorder, rec)
+	}
+	return out, err
+}
+
+// truncForSample caps prompt/response samples at 4KB so a runaway
+// prompt doesn't bloat the ai_calls row. CH ZSTD on the column
+// handles the rest.
+func truncForSample(s string) string {
+	const cap = 4096
+	if len(s) <= cap {
+		return s
+	}
+	return s[:cap]
+}
+
+func truncErr(s string) string {
+	if len(s) > 512 {
+		return s[:512]
+	}
+	return s
 }
 
 // ── OpenAI-compatible (real OpenAI + Ollama / LM Studio / vLLM …) ───────────
@@ -157,7 +300,12 @@ func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) 
 // baseURL must include the /v1 prefix (or whatever the local endpoint
 // uses) — e.g. http://ollama:11434/v1. We append /chat/completions.
 
-func (s *Service) explainOpenAI(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+// explainOpenAIWithUsage runs the OpenAI-compat call and parses
+// the `usage` field for the AI observability recorder. Some
+// local endpoints (older Ollama, vLLM) omit usage; those return
+// 0 tokens and the recorder writes the row anyway with what it
+// has (the latency + status are still useful).
+func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
 	s.mu.RLock()
 	apiKey, model, base := s.apiKey, s.model, s.baseURL
 	s.mu.RUnlock()
@@ -182,7 +330,7 @@ func (s *Service) explainOpenAI(ctx context.Context, systemPrompt, userPrompt st
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
@@ -190,12 +338,12 @@ func (s *Service) explainOpenAI(ctx context.Context, systemPrompt, userPrompt st
 	}
 	resp, err := s.cli.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("openai-compat call: %w", err)
+		return "", 0, 0, fmt.Errorf("openai-compat call: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return "", 0, 0, fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var parsed struct {
 		Choices []struct {
@@ -203,19 +351,25 @@ func (s *Service) explainOpenAI(ctx context.Context, systemPrompt, userPrompt st
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     uint32 `json:"prompt_tokens"`
+			CompletionTokens uint32 `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("decode openai-compat response: %w", err)
+		return "", 0, 0, fmt.Errorf("decode openai-compat response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", errors.New("openai-compat: empty response")
+		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
+			errors.New("openai-compat: empty response")
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content,
+		parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, nil
 }
 
 // ── Anthropic ───────────────────────────────────────────────────────────────
 
-func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (s *Service) explainAnthropicWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
 	s.mu.RLock()
 	apiKey, model := s.apiKey, s.model
 	s.mu.RUnlock()
@@ -234,7 +388,7 @@ func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://api.anthropic.com/v1/messages", bytes.NewReader(raw))
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", apiKey)
@@ -242,21 +396,25 @@ func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt
 
 	resp, err := s.cli.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("anthropic call: %w", err)
+		return "", 0, 0, fmt.Errorf("anthropic call: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return "", 0, 0, fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var parsed struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		Usage struct {
+			InputTokens  uint32 `json:"input_tokens"`
+			OutputTokens uint32 `json:"output_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("decode anthropic response: %w", err)
+		return "", 0, 0, fmt.Errorf("decode anthropic response: %w", err)
 	}
 	var out strings.Builder
 	for _, c := range parsed.Content {
@@ -264,7 +422,7 @@ func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt
 			out.WriteString(c.Text)
 		}
 	}
-	return out.String(), nil
+	return out.String(), parsed.Usage.InputTokens, parsed.Usage.OutputTokens, nil
 }
 
 // ── GitHub Copilot ──────────────────────────────────────────────────────────
@@ -277,10 +435,10 @@ func (s *Service) explainAnthropic(ctx context.Context, systemPrompt, userPrompt
 //      with that session token as Bearer + the integration headers
 //      Copilot's edge expects.
 
-func (s *Service) explainGitHub(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (s *Service) explainGitHubWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
 	sessTok, err := s.githubSessionToken(ctx)
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	s.mu.RLock()
 	model := s.model
@@ -301,7 +459,7 @@ func (s *Service) explainGitHub(ctx context.Context, systemPrompt, userPrompt st
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://api.githubcopilot.com/chat/completions", bytes.NewReader(raw))
 	if err != nil {
-		return "", err
+		return "", 0, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+sessTok)
@@ -312,12 +470,12 @@ func (s *Service) explainGitHub(ctx context.Context, systemPrompt, userPrompt st
 
 	resp, err := s.cli.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("github copilot call: %w", err)
+		return "", 0, 0, fmt.Errorf("github copilot call: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("github copilot %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return "", 0, 0, fmt.Errorf("github copilot %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var parsed struct {
 		Choices []struct {
@@ -325,14 +483,20 @@ func (s *Service) explainGitHub(ctx context.Context, systemPrompt, userPrompt st
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     uint32 `json:"prompt_tokens"`
+			CompletionTokens uint32 `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("decode github copilot response: %w", err)
+		return "", 0, 0, fmt.Errorf("decode github copilot response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", errors.New("github copilot: empty response")
+		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
+			errors.New("github copilot: empty response")
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content,
+		parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, nil
 }
 
 // githubSessionToken returns a valid Copilot session token, refreshing

@@ -304,6 +304,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)
 	mux.HandleFunc("DELETE /api/views/{id}", s.deleteSavedView)
+	// AI observability (v0.5.163) — admin-only since prompts and
+	// response samples can contain telemetry the viewer role might
+	// not otherwise have access to. Tighten further (per-team) if
+	// the operator surface ever sends third-party data into prompts.
+	mux.HandleFunc("GET /api/ai/calls",      auth.RequireRole(auth.RoleAdmin, s.listAICalls))
+	mux.HandleFunc("GET /api/ai/calls/{id}", auth.RequireRole(auth.RoleAdmin, s.getAICall))
+	mux.HandleFunc("GET /api/ai/stats",      auth.RequireRole(auth.RoleAdmin, s.aiStats))
+	mux.HandleFunc("GET /api/ai/series",     auth.RequireRole(auth.RoleAdmin, s.aiSeries))
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────
@@ -4775,7 +4783,7 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, _ := json.Marshal(compact)
 	user := fmt.Sprintf("Trace %s with %d spans:\n```json\n%s\n```", id, len(compact), string(payload))
-	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptTrace(), user)
+	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), user)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, map[string]string{"explanation": out})
 }
@@ -4873,7 +4881,7 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(compact)
 	user := fmt.Sprintf("Span %s (target) in trace %s — %d spans in context:\n```json\n%s\n```",
 		spanID, traceID, len(compact), string(payload))
-	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptSpan(), user)
+	out, err := s.copilotExplain(r, copilot.SystemPromptSpan(), user)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, map[string]string{"explanation": out})
 }
@@ -4912,7 +4920,7 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 			"\n\nRecent deploy: service.version=%q first seen %d seconds before this problem opened. Consider whether this regression coincides with that deploy.",
 			p.RecentDeploy.Version, p.RecentDeploy.AgeSeconds)
 	}
-	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptProblem(), user)
+	out, err := s.copilotExplain(r, copilot.SystemPromptProblem(), user)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, map[string]string{"explanation": out})
 }
@@ -4970,7 +4978,7 @@ func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) 
 		"Incident: %s\nService: %s\nSeverity: %s\nStatus: %s\nSummary: %s\nAttached problems (%d):\n%s",
 		inc.Title, inc.Service, inc.Severity, inc.Status, inc.Summary, len(probs), probLines,
 	)
-	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptIncident(), user)
+	out, err := s.copilotExplain(r, copilot.SystemPromptIncident(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -5017,7 +5025,7 @@ func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
 		ev.PeakRatio, ev.CurrentRatio, ev.CurrentCount,
 		truncate(ev.Sample, 600),
 	)
-	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptAnomaly(), user)
+	out, err := s.copilotExplain(r, copilot.SystemPromptAnomaly(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -5160,7 +5168,7 @@ func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Requ
 			return "Active problems:\n" + probLines
 		}(),
 	)
-	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptServiceHealth(), user)
+	out, err := s.copilotExplain(r, copilot.SystemPromptServiceHealth(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -5250,7 +5258,7 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 		sb.WriteString("\nNo past resolved instances of this exact rule on this service — use first-principles reasoning grounded in the metric + service.\n")
 	}
 
-	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptRunbook(), sb.String())
+	out, err := s.copilotExplain(r, copilot.SystemPromptRunbook(), sb.String())
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -5305,7 +5313,7 @@ func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := buildCompareTracesPrompt(aID, aSpans, bID, bSpans)
-	out, err := s.copilot.Explain(r.Context(),
+	out, err := s.copilotExplain(r,
 		copilot.SystemPromptCompareTraces(), user)
 	if err != nil {
 		writeErr(w, err)
@@ -5466,7 +5474,7 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	out, err := s.copilot.Explain(r.Context(),
+	out, err := s.copilotExplain(r,
 		copilot.SystemPromptDeployImpact(), sb.String())
 	if err != nil {
 		writeErr(w, err)
@@ -5527,7 +5535,7 @@ func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&sb, "Fast burn (5 min): rate=%.2f, n=%d\n", fastRate, fastTotal)
 	fmt.Fprintf(&sb, "Slow burn (1 hr):  rate=%.2f, n=%d\n", slowRate, slowTotal)
 
-	out, err := s.copilot.Explain(r.Context(),
+	out, err := s.copilotExplain(r,
 		copilot.SystemPromptSLOBurn(), sb.String())
 	if err != nil {
 		writeErr(w, err)
@@ -5794,7 +5802,7 @@ func (s *Server) copilotSuggestServiceTags(w http.ResponseWriter, r *http.Reques
 		sb.WriteString("\n")
 	}
 
-	out, err := s.copilot.Explain(r.Context(),
+	out, err := s.copilotExplain(r,
 		copilot.SystemPromptServiceTags(), sb.String())
 	if err != nil {
 		writeErr(w, err)

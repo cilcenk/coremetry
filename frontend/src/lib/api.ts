@@ -391,6 +391,16 @@ export const api = {
         body: JSON.stringify({ text, limit }),
       }),
 
+  // AI observability (v0.5.163). Admin-only read endpoints.
+  aiCalls: (params: { surface?: string; provider?: string; status?: string; from?: number; to?: number; limit?: number }) =>
+    get<import('./types').AICall[]>(`/api/ai/calls?${qs(params)}`),
+  aiCall: (id: string) =>
+    get<import('./types').AICall>(`/api/ai/calls/${encodeURIComponent(id)}`),
+  aiStats: (params: { from?: number; to?: number }) =>
+    get<import('./types').AIStats>(`/api/ai/stats?${qs(params)}`),
+  aiSeries: (params: { from?: number; to?: number }) =>
+    get<import('./types').AICallsTimePoint[]>(`/api/ai/series?${qs(params)}`),
+
   // Saved views (per-user named filter combos).
   savedViews: (page: string) =>
     get<import('./types').SavedView[]>(`/api/views?page=${encodeURIComponent(page)}`),

@@ -624,6 +624,36 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
 
+		// ai_calls — every Copilot LLM call logged for native AI
+		// observability (v0.5.162). Captures provider/model/latency/
+		// tokens/status + a small prompt+response sample so the
+		// operator can see "is the AI helpful here?" and "what did
+		// it actually generate?" without exporting to a third-party
+		// LLM-trace tool. 90d TTL keeps the table bounded — for
+		// older artifact retention export to S3 or extend the TTL.
+		`CREATE TABLE IF NOT EXISTS ai_calls (
+			id              String,
+			created_at      DateTime64(9) DEFAULT now64(9),
+			surface         LowCardinality(String),
+			provider        LowCardinality(String),
+			model           LowCardinality(String),
+			base_url        String DEFAULT '',
+			duration_ms     UInt32,
+			input_tokens    UInt32 DEFAULT 0,
+			output_tokens   UInt32 DEFAULT 0,
+			status          LowCardinality(String),
+			error_msg       String DEFAULT '',
+			prompt_chars    UInt32 DEFAULT 0,
+			response_chars  UInt32 DEFAULT 0,
+			user_id         String DEFAULT '',
+			user_email      String DEFAULT '',
+			prompt_sample   String DEFAULT '' CODEC(ZSTD(3)),
+			response_sample String DEFAULT '' CODEC(ZSTD(3))
+		) ENGINE = MergeTree
+		PARTITION BY toYYYYMM(created_at)
+		ORDER BY (created_at, surface, provider)
+		TTL toDate(created_at) + INTERVAL 90 DAY`,
+
 		// Email subscribers — get notified when a public-visible
 		// incident opens or resolves on the configured components.
 		// Double opt-in: public submissions land with verified=0

@@ -525,6 +525,54 @@ export interface StatusComponent {
   createdAt: number;
 }
 
+// AI observability (v0.5.163). One row per Copilot LLM call —
+// surfaced on the /ai page with KPIs + timeseries + a drill-in
+// modal showing prompt + response samples (capped at 4KB each
+// at insert time).
+export interface AICall {
+  id: string;
+  createdAt: number;
+  surface: string;
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  durationMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  status: 'ok' | 'error';
+  errorMsg?: string;
+  promptChars: number;
+  responseChars: number;
+  userId?: string;
+  userEmail?: string;
+  promptSample?: string;
+  responseSample?: string;
+}
+
+export interface AIStats {
+  totalCalls: number;
+  okCalls: number;
+  errorCalls: number;
+  errorRate: number;
+  avgDurationMs: number;
+  p50DurationMs: number;
+  p99DurationMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  distinctUsers: number;
+  bySurface: Array<{ surface: string; calls: number; errorRate: number; avgMs: number }>;
+  byProvider: Array<{ provider: string; model: string; calls: number; inputTokens: number; outputTokens: number }>;
+}
+
+export interface AICallsTimePoint {
+  time: number;
+  calls: number;
+  errors: number;
+  avgMs: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface StatusSubscriber {
   id: string;
   email: string;

@@ -81,6 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/admin/stats',       label: 'nav.system',      icon: '◐' },
       { href: '/admin/cardinality', label: 'nav.cardinality', icon: '◐', adminOnly: true },
+      { href: '/ai',                label: 'nav.ai',          icon: '✦', adminOnly: true },
     ],
   },
   {

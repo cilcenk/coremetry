@@ -39,6 +39,7 @@ const Alerts            = lazy(() => import('./pages/Alerts'));
 const Slos              = lazy(() => import('./pages/Slos'));
 const Monitors          = lazy(() => import('./pages/Monitors'));
 const Profiling         = lazy(() => import('./pages/Profiling'));
+const AIObservability   = lazy(() => import('./pages/AIObservability'));
 const Profile           = lazy(() => import('./pages/Profile'));
 const Settings          = lazy(() => import('./pages/Settings'));
 const Users             = lazy(() => import('./pages/Users'));
@@ -92,6 +93,7 @@ export default function App() {
             <Route path="/slos"           element={<Slos />} />
             <Route path="/monitors"       element={<Monitors />} />
             <Route path="/profiling"      element={<Profiling />} />
+            <Route path="/ai"             element={<AIObservability />} />
             <Route path="/profile"        element={<Profile />} />
             <Route path="/settings"       element={<Settings />} />
             <Route path="/users"          element={<Users />} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
@@ -10,6 +10,7 @@ import type {
   TopologyResponse, TopologyNode,
   RootFlow,
   TimeRange,
+  Problem,
 } from '@/lib/types';
 
 // /topology has three complementary views; URL ?view= picks one:
@@ -165,6 +166,9 @@ function ServiceView({ range }: { range: TimeRange }) {
   }, [navigate]);
   const [data, setData] = useState<ServiceTopologyResponse | null | undefined>(undefined);
   const [selectedEdge, setSelectedEdge] = useState<ServiceTopologyEdge | null>(null);
+  // v0.5.152 — service name whose open-problems drawer is open
+  // (clicked the red ring or "!" badge). Null = drawer closed.
+  const [incidentDrawerFor, setIncidentDrawerFor] = useState<string | null>(null);
   // Top-N + focus controls. In production a single full render is
   // unusable past ~50 services; default to top 30 by total call
   // volume so the page loads with a readable overview. "Focus on"
@@ -364,10 +368,15 @@ function ServiceView({ range }: { range: TimeRange }) {
             onEdgeClick={setSelectedEdge} search={search}
             incidentServices={incidentServices}
             onNodeClick={onNodeClick}
+            onIncidentClick={(n) => setIncidentDrawerFor(n.name)}
             metaByService={metaByService}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} />
+          )}
+          {incidentDrawerFor && (
+            <IncidentDrawer service={incidentDrawerFor}
+              onClose={() => setIncidentDrawerFor(null)} />
           )}
         </>
       )}
@@ -749,7 +758,7 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, metaByService }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
@@ -757,6 +766,10 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   search?: string;
   incidentServices?: Set<string>;
   onNodeClick?: (node: ServiceTopologyNode) => void;
+  // v0.5.152 — click the red ring/badge to open the problems
+  // drawer instead of navigating to the service page. Keeps the
+  // operator on the topology view for triage.
+  onIncidentClick?: (node: ServiceTopologyNode) => void;
   metaByService?: Record<string, { ownerTeam?: string; sreTeam?: string; chatChannel?: string }>;
 }) {
   // Search highlighting: a node "matches" when its name includes
@@ -872,8 +885,13 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
               {hasIncident && (
                 <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}
                   rx={10} ry={10} fill="none"
-                  stroke="#dc2626" strokeWidth={2.4} strokeDasharray="4 3">
-                  <title>Open problem(s) on this service</title>
+                  stroke="#dc2626" strokeWidth={2.4} strokeDasharray="4 3"
+                  style={{ cursor: onIncidentClick ? 'pointer' : 'inherit' }}
+                  onClick={onIncidentClick ? (e) => {
+                    e.stopPropagation();
+                    onIncidentClick(n);
+                  } : undefined}>
+                  <title>Click to view open problems on this service</title>
                 </rect>
               )}
               {(() => {
@@ -904,9 +922,16 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                 );
               })()}
               {hasIncident && (
-                <text x={NODE_W - 34} y={40} fontSize={10} fontWeight={700} fill="#dc2626">
-                  !
-                </text>
+                <g style={{ cursor: onIncidentClick ? 'pointer' : 'inherit' }}
+                  onClick={onIncidentClick ? (e) => {
+                    e.stopPropagation();
+                    onIncidentClick(n);
+                  } : undefined}>
+                  <circle cx={NODE_W - 30} cy={36} r={8}
+                    fill="#dc2626" fillOpacity={0.18} stroke="#dc2626" strokeWidth={1.2} />
+                  <text x={NODE_W - 30} y={40} fontSize={10} fontWeight={700}
+                    fill="#dc2626" textAnchor="middle">!</text>
+                </g>
               )}
               {kindIcon && (
                 <text x={NODE_W - 18} y={22} fontSize={14} fill={stroke}>{kindIcon}</text>
@@ -1099,5 +1124,126 @@ function EdgeDetailPanel({ edge, onClose, range }: {
         </div>
       )}
     </div>
+  );
+}
+
+// IncidentDrawer (v0.5.152) — right-side slide-in showing the
+// open problems for the service whose incident ring/badge the
+// operator just clicked. Keeps the operator on the topology view
+// for triage instead of jumping to /problems and losing the
+// neighbourhood context. Each row links to the full Problem view
+// for deep triage; the drawer itself is intentionally read-only.
+function IncidentDrawer({ service, onClose }: {
+  service: string;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<
+    | { kind: 'loading' }
+    | { kind: 'ok'; rows: Problem[] }
+    | { kind: 'err'; msg: string }
+  >({ kind: 'loading' });
+
+  useEffect(() => {
+    setState({ kind: 'loading' });
+    api.problems({ service, status: 'open', limit: 100 })
+      .then(rows => setState({ kind: 'ok', rows: rows ?? [] }))
+      .catch(e => setState({
+        kind: 'err',
+        msg: e instanceof Error ? e.message : 'Failed to load problems',
+      }));
+  }, [service]);
+
+  // Esc closes — standard incident-triage muscle memory shared
+  // with the AnomaliesPage TriageDrawer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const fmtAgo = (ns: number) => {
+    const secs = Math.max(1, Math.floor((Date.now() - ns / 1e6) / 1000));
+    if (secs < 60)        return `${secs}s ago`;
+    if (secs < 3600)      return `${Math.floor(secs / 60)}m ago`;
+    if (secs < 86400)     return `${Math.floor(secs / 3600)}h ago`;
+    return `${Math.floor(secs / 86400)}d ago`;
+  };
+  const sevClass = (s: string) =>
+    s === 'critical' ? 'b-err' : s === 'warning' ? 'b-warn' : 'b-info';
+
+  return (
+    <>
+      <div onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+          zIndex: 30,
+        }} />
+      <div style={{
+        position: 'fixed', right: 0, top: 0, bottom: 0,
+        width: 'min(480px, 100vw)',
+        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
+        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
+        zIndex: 31, overflowY: 'auto',
+      }}>
+        <div style={{
+          padding: '14px 18px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ color: '#dc2626', fontSize: 16 }}>●</span>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Open problems</div>
+          <Link to={`/service?name=${encodeURIComponent(service)}`}
+            style={{ fontSize: 12, color: 'var(--text2)' }}>
+            {service} →
+          </Link>
+          <span style={{ flex: 1 }} />
+          <button onClick={onClose} className="sec"
+            title="Close (Esc)"
+            style={{ fontSize: 14, padding: '2px 10px' }}>×</button>
+        </div>
+        <div style={{ padding: '14px 18px' }}>
+          {state.kind === 'loading' && <Spinner />}
+          {state.kind === 'err' && (
+            <div style={{ color: 'var(--err)', fontSize: 12 }}>{state.msg}</div>
+          )}
+          {state.kind === 'ok' && state.rows.length === 0 && (
+            <Empty icon="◇" title="No open problems">
+              The ring may be stale — the overlay refreshes on time-range change.
+            </Empty>
+          )}
+          {state.kind === 'ok' && state.rows.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {state.rows.map(p => (
+                <Link key={p.id} to={`/problems?id=${encodeURIComponent(p.id)}`}
+                  style={{
+                    display: 'block',
+                    background: 'var(--bg2)', border: '1px solid var(--border)',
+                    borderRadius: 6, padding: 10, textDecoration: 'none',
+                    color: 'inherit',
+                  }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <span className={`badge ${sevClass(p.severity)}`}>{p.severity}</span>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{p.ruleName}</span>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                      {fmtAgo(p.startedAt)}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text2)', fontFamily: 'ui-monospace, monospace' }}>
+                    {p.metric} {p.value.toFixed(2)} vs threshold {p.threshold.toFixed(2)}
+                  </div>
+                  {p.description && (
+                    <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text3)' }}>
+                      {p.description}
+                    </div>
+                  )}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }

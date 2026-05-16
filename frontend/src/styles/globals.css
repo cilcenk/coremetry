@@ -4,6 +4,11 @@
   --bg1: #161b22;
   --bg2: #21262d;
   --bg3: #2d333b;
+  /* --bg is an alias for the page-chrome background (matches
+     #topbar / #content / drawer panels). 15+ components used
+     var(--bg) before this alias existed and silently rendered
+     transparent — fix is one-line, no per-component churn. */
+  --bg:  #0d1117;
   --border: #30363d;
   --text: #e6edf3;
   --text2: #8b949e;
@@ -34,6 +39,7 @@
   --bg1: #f6f8fa;
   --bg2: #eaeef2;
   --bg3: #d0d7de;
+  --bg:  #ffffff;
   --border: #d0d7de;
   --text:  #1f2328;
   --text2: #59636e;

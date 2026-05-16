@@ -96,11 +96,29 @@ export default function LoginPage() {
       }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           {brand.logoDataUri ? (
-            // Admin-uploaded bank/company logo. Rendered as an
-            // <img> so PNG/SVG/JPG all work via the data URI.
-            // Capped height to match the bundled mark's footprint.
-            <img src={brand.logoDataUri} alt={brand.appName}
-                 style={{ maxHeight: 64, maxWidth: 200, objectFit: 'contain' }} />
+            // Operator-uploaded bank/company logo at the top. The
+            // OpenTelemetry mark + "Coremetry" word stay visible
+            // underneath as a subtle "powered by" so the OTel
+            // provenance isn't hidden behind a re-skin (v0.5.163 —
+            // earlier the uploaded logo simply replaced the
+            // bundled mark).
+            <>
+              <img src={brand.logoDataUri} alt={brand.appName}
+                   style={{ maxHeight: 72, maxWidth: 220, objectFit: 'contain' }} />
+              <div style={{
+                marginTop: 10,
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                opacity: 0.75,
+              }}>
+                <TelescopeIcon size={14} />
+                <span style={{
+                  fontSize: 11, color: 'var(--text3)',
+                  letterSpacing: '0.4px',
+                }}>
+                  Powered by Coremetry
+                </span>
+              </div>
+            </>
           ) : (
             <div style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

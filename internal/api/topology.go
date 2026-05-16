@@ -460,7 +460,43 @@ func (s *Server) exportServiceTopologyDrawIO(w http.ResponseWriter, r *http.Requ
 		writeErr(w, err)
 		return
 	}
-	// External-peer filter, mirroring the JSON path.
+	edges = filterExternalPeers(edges)
+	filename := fmt.Sprintf("service-topology-%s.drawio",
+		time.Now().UTC().Format("20060102-1504"))
+	writeServiceDrawIO(w, "Service topology", filename, edges)
+}
+
+// exportFlowTopologyDrawIO is the per-flow draw.io export
+// (v0.5.145). Reuses the same XML builder as the service-level
+// export but feeds it the flow-restricted edge set so the
+// diagram contains only the services this flow's traces
+// touched. Filename embeds a sanitised root op.
+func (s *Server) exportFlowTopologyDrawIO(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rootService := q.Get("root_service")
+	rootOp := q.Get("root_op")
+	if rootService == "" || rootOp == "" {
+		http.Error(w, "root_service and root_op required", http.StatusBadRequest)
+		return
+	}
+	from, to := parseFromTo(r, 1*time.Hour)
+	edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	edges = filterExternalPeers(edges)
+	safeOp := strings.NewReplacer("/", "_", " ", "_", "?", "_", "&", "_").Replace(rootOp)
+	filename := fmt.Sprintf("flow-%s-%s-%s.drawio",
+		rootService, safeOp, time.Now().UTC().Format("20060102-1504"))
+	writeServiceDrawIO(w, "Flow: "+rootService+" "+rootOp, filename, edges)
+}
+
+// filterExternalPeers drops "ext:" edges whose peer is already a
+// known service in the cross-service set — same heuristic the
+// JSON endpoint uses so the JSON view and the export stay
+// visually identical.
+func filterExternalPeers(edges []chstore.ServiceTopologyEdge) []chstore.ServiceTopologyEdge {
 	knownServices := map[string]bool{}
 	for _, e := range edges {
 		if e.NodeKind == "service" {
@@ -478,9 +514,15 @@ func (s *Server) exportServiceTopologyDrawIO(w http.ResponseWriter, r *http.Requ
 		}
 		filtered = append(filtered, e)
 	}
-	edges = filtered
+	return filtered
+}
 
-	// Assign each node an id + a hop (BFS from no-incoming roots).
+// writeServiceDrawIO is the shared mxGraph XML builder used by
+// the service-level + flow-level exports. Both surfaces feed it
+// a ServiceTopologyEdge slice; the function lays nodes out by
+// BFS hop, picks a colour per kind, and writes the file under
+// the given diagram name + Content-Disposition filename.
+func writeServiceDrawIO(w http.ResponseWriter, diagramName, filename string, edges []chstore.ServiceTopologyEdge) {
 	type nodeMeta struct{ ID, Name, Kind string; Hop int }
 	nodes := map[string]*nodeMeta{}
 	addNode := func(id, kind string) {
@@ -554,8 +596,6 @@ func (s *Server) exportServiceTopologyDrawIO(w http.ResponseWriter, r *http.Requ
 		}
 		frontier = next
 	}
-
-	// Group nodes by hop, sort within for stable output.
 	buckets := map[int][]string{}
 	for id, n := range nodes {
 		buckets[n.Hop] = append(buckets[n.Hop], id)
@@ -568,8 +608,6 @@ func (s *Server) exportServiceTopologyDrawIO(w http.ResponseWriter, r *http.Requ
 		hops = append(hops, h)
 	}
 	sort.Ints(hops)
-
-	// Build XML.
 	colorByKind := func(kind string) string {
 		switch kind {
 		case "db":
@@ -618,11 +656,10 @@ func (s *Server) exportServiceTopologyDrawIO(w http.ResponseWriter, r *http.Requ
 		)
 	}
 	body := fmt.Sprintf(
-		`<mxfile><diagram name="Service topology"><mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" arrows="1" connect="1" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>%s%s</root></mxGraphModel></diagram></mxfile>`,
-		nodesXML.String(), edgesXML.String(),
+		`<mxfile><diagram name="%s"><mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" arrows="1" connect="1" math="0" shadow="0"><root><mxCell id="0"/><mxCell id="1" parent="0"/>%s%s</root></mxGraphModel></diagram></mxfile>`,
+		html.EscapeString(diagramName), nodesXML.String(), edgesXML.String(),
 	)
 	_ = xml.Unmarshal([]byte(body), new(struct{ XMLName xml.Name }))
-	filename := fmt.Sprintf("service-topology-%s.drawio", time.Now().UTC().Format("20060102-1504"))
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	_, _ = w.Write([]byte(body))

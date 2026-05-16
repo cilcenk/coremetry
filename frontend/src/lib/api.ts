@@ -217,6 +217,10 @@ export const api = {
     get<import('./types').ServiceTopologyResponse>(`/api/topology/service?${qs(params)}`),
   serviceTopologyDrawIOURL: (params: { from?: number; to?: number }) =>
     `/api/topology/service/drawio?${qs(params)}`,
+  // Per-flow draw.io export (v0.5.145). Same XML shape as the
+  // service-level export, restricted to the one flow's traces.
+  flowTopologyDrawIOURL: (params: { root_service: string; root_op: string; from?: number; to?: number }) =>
+    `/api/topology/flow/drawio?${qs(params)}`,
   // Root-anchored business flows (v0.5.103) — top entry points
   // by trace volume + the subgraph for one flow.
   topologyFlows: (params: { top?: number; from?: number; to?: number }) =>

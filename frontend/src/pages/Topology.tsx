@@ -590,6 +590,25 @@ function FlowsView({ range }: { range: TimeRange }) {
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
               {picked.rootService} · {fmtNum(picked.traceCount)} traces
             </span>
+            {/* Per-flow draw.io export (v0.5.145). Same window as
+                the inline view; backend reuses the service-level
+                XML builder restricted to this flow's traces. */}
+            <a href={(() => {
+                 const { from, to } = timeRangeToNs(range);
+                 return api.flowTopologyDrawIOURL({
+                   root_service: picked.rootService,
+                   root_op:      picked.rootOp,
+                   from, to,
+                 });
+               })()}
+               className="sec"
+               style={{
+                 marginLeft: 'auto', fontSize: 11, padding: '4px 10px',
+                 textDecoration: 'none',
+               }}
+               title="Download this flow as draw.io">
+              ↓ draw.io
+            </a>
           </div>
           {pickedData === undefined && <Spinner />}
           {pickedData === null && <Empty icon="✗" title="Failed to load flow" />}

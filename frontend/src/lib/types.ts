@@ -529,6 +529,9 @@ export interface StatusSubscriber {
   id: string;
   email: string;
   verified: boolean;
+  // Unix-ns timestamp of the last confirmation-email send. 0 =
+  // never sent (e.g. operator-added verified subscriber).
+  confirmSentAt?: number;
   createdAt: number;
 }
 

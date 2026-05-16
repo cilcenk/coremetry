@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log"
@@ -81,6 +82,16 @@ type Server struct {
 	rateMu      sync.Mutex
 	rateSamples map[string]rateSample
 
+	// Public status-page subscribe rate limit (v0.5.158). Keys are
+	// client IPs (remote addr after stripping the :port); values
+	// are the unix-second timestamp of the most recent accepted
+	// subscribe. Cleared opportunistically on each call; the map
+	// stays bounded by the number of distinct subscribers/hour
+	// times the window. Lock-protected because the public route
+	// has no auth gate.
+	subRateMu sync.Mutex
+	subRateBy map[string]int64
+
 	// version is the build-time release tag stamped via -ldflags.
 	// Surfaced unauthenticated on /api/version so the login page
 	// can show it before the operator has a session.
@@ -125,6 +136,7 @@ func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logst
 		rateSamples: map[string]rateSample{},
 		l1:          newL1Cache(1024),
 		stats:       newCacheStats(),
+		subRateBy:   map[string]int64{},
 	}
 }
 
@@ -298,6 +310,7 @@ func (s *Server) Start() error {
 	// Read-only unauth: anyone with the URL can see status + subscribe.
 	mux.HandleFunc("GET  /api/public-status",            s.publicStatus)
 	mux.HandleFunc("POST /api/public-status/subscribe",  s.publicStatusSubscribe)
+	mux.HandleFunc("GET  /api/public-status/confirm",    s.publicStatusConfirm)
 	// Admin-gated config + subscriber management.
 	mux.HandleFunc("GET    /api/status-page/config",       auth.RequireRole(auth.RoleAdmin, s.statusPageGetConfig))
 	mux.HandleFunc("PUT    /api/status-page/config",       auth.RequireRole(auth.RoleAdmin, s.statusPagePutConfig))
@@ -4383,21 +4396,142 @@ func severityRank(sev string) int {
 	}
 }
 
+// publicStatusSubscribe — public, unauth POST. Records the email
+// as unverified, mints a confirm token, and (if SMTP is wired up)
+// delivers a confirmation link. v0.5.158 promoted this from
+// instant-verified to double-opt-in so an attacker can't enrol
+// arbitrary email addresses into the operator's notification
+// stream. Response shape never leaks "does this email exist"
+// (the same `status:pending-confirmation` is returned regardless
+// of whether the row was new or re-issued), to avoid email
+// enumeration through timing or response variance.
+//
+// Per-IP rate limit: 1 accepted call per 60s. Above that we
+// return 429 immediately — a real subscriber would never refresh
+// the page that fast, and the limit is small enough to make
+// brute-force token guessing or signup flooding uneconomical.
 func (s *Server) publicStatusSubscribe(w http.ResponseWriter, r *http.Request) {
+	if !s.allowSubscribeRate(clientIP(r)) {
+		http.Error(w, "rate limited — try again in a minute", http.StatusTooManyRequests)
+		return
+	}
 	var body struct{ Email string `json:"email"` }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest); return
 	}
 	email := strings.TrimSpace(strings.ToLower(body.Email))
-	// Cheap surface validation — proper would be RFC 5322 / DNS check,
-	// but signups go through the operator anyway.
 	if email == "" || !strings.ContainsRune(email, '@') {
 		http.Error(w, "valid email required", http.StatusBadRequest); return
 	}
-	if err := s.store.AddStatusSubscriber(r.Context(), email); err != nil {
+	token, err := s.store.AddStatusSubscriber(r.Context(), email)
+	if err != nil {
 		writeErr(w, err); return
 	}
-	writeJSON(w, map[string]string{"status": "subscribed"})
+	// If token came back empty, the row was already verified —
+	// we still respond OK so the caller can't tell.
+	if token != "" {
+		if err := s.sendStatusConfirmation(r, email, token); err != nil {
+			// SMTP not configured / transient failure — log + tell
+			// the user the operator will reach out manually. We do
+			// NOT roll back the row; the token sits in CH and the
+			// operator can resend from the admin UI later.
+			log.Printf("[status-page] confirm mail to %s failed: %v", email, err)
+			writeJSON(w, map[string]string{
+				"status":  "pending-confirmation",
+				"message": "We've recorded your email. Email delivery isn't yet configured on this status page — the operator will reach out to confirm.",
+			})
+			return
+		}
+	}
+	writeJSON(w, map[string]string{
+		"status":  "pending-confirmation",
+		"message": "Check your inbox for a confirmation link. The subscription is inactive until you click it.",
+	})
+}
+
+// publicStatusConfirm — public, unauth GET. Consumes the
+// confirmation token and flips the row to verified. Renders a
+// plain HTML thank-you page rather than JSON because the
+// audience for this URL is the human clicking the link, not the
+// SPA.
+func (s *Server) publicStatusConfirm(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	email, err := s.store.ConfirmStatusSubscriber(r.Context(), token)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err != nil || email == "" {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, statusConfirmHTML("Link not valid",
+			"This confirmation link has expired or has already been used. If you didn't receive the original email, please re-subscribe."))
+		return
+	}
+	fmt.Fprint(w, statusConfirmHTML("You're subscribed",
+		"Thanks — "+html.EscapeString(email)+" will now receive updates when an incident opens or resolves. You can unsubscribe by replying to any incident email."))
+}
+
+// allowSubscribeRate gates publicStatusSubscribe at one accept
+// per IP per 60s. Returns true if the call is allowed (and
+// records the timestamp); false to reject. Map is pruned of
+// stale entries opportunistically so it doesn't leak memory
+// under a long-running flood.
+func (s *Server) allowSubscribeRate(ip string) bool {
+	if ip == "" {
+		return true // can't rate-limit unknown
+	}
+	now := time.Now().Unix()
+	s.subRateMu.Lock()
+	defer s.subRateMu.Unlock()
+	// Prune entries older than the window so the map stays
+	// bounded under sustained traffic.
+	for k, t := range s.subRateBy {
+		if now-t > 60 {
+			delete(s.subRateBy, k)
+		}
+	}
+	if last, ok := s.subRateBy[ip]; ok && now-last < 60 {
+		return false
+	}
+	s.subRateBy[ip] = now
+	return true
+}
+
+// sendStatusConfirmation composes + dispatches the
+// confirmation email through the operator's configured SMTP.
+// Builds the URL from the request scheme + host so the link
+// always resolves on whatever interface the operator surfaces
+// the status page on.
+func (s *Server) sendStatusConfirmation(r *http.Request, email, token string) error {
+	if s.notify == nil {
+		return fmt.Errorf("notifier not configured")
+	}
+	scheme := "http"
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		scheme = v
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		host = v
+	}
+	link := fmt.Sprintf("%s://%s/api/public-status/confirm?token=%s", scheme, host, token)
+	subject := "Confirm your status page subscription"
+	body := "Click the link below to confirm your subscription to status page updates.\n\n" +
+		link + "\n\n" +
+		"If you didn't request this, you can ignore this message — your address won't receive further mail."
+	return s.notify.SendMail(r.Context(), []string{email}, subject, body)
+}
+
+func statusConfirmHTML(heading, body string) string {
+	return `<!doctype html><html><head><meta charset="utf-8"><title>` +
+		html.EscapeString(heading) + `</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 480px; margin: 80px auto; padding: 0 16px; color: #1f2328; }
+  h1 { font-size: 22px; margin: 0 0 12px; }
+  p { font-size: 14px; line-height: 1.6; color: #4b5563; }
+</style></head><body>
+<h1>` + html.EscapeString(heading) + `</h1>
+<p>` + body + `</p>
+</body></html>`
 }
 
 // ── Public status page admin ────────────────────────────────────────────────

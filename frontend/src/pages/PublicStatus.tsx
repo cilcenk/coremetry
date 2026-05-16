@@ -230,7 +230,15 @@ function SubscribeForm() {
         body: JSON.stringify({ email }),
       });
       if (!r.ok) throw new Error(await r.text());
-      setMsg({ kind: 'ok', text: 'Subscribed. You\'ll get an email on each incident.' });
+      // v0.5.158 — server returns {status, message} with the
+      // double-opt-in copy. Fall back to a generic message if a
+      // pre-v0.5.158 deploy is still answering.
+      const body = await r.json().catch(() => ({} as { message?: string }));
+      setMsg({
+        kind: 'ok',
+        text: body.message
+          || 'Check your inbox — the subscription is inactive until you confirm.',
+      });
       setEmail('');
     } catch (err: unknown) {
       setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Subscribe failed' });

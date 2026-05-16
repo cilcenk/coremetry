@@ -626,14 +626,17 @@ func (s *Store) migrate(ctx context.Context) error {
 
 		// Email subscribers — get notified when a public-visible
 		// incident opens or resolves on the configured components.
-		// 'verified' is reserved for a future double-opt-in flow;
-		// today the row is created in the verified state.
+		// Double opt-in: public submissions land with verified=0
+		// and a confirm_token; the operator's manual add path
+		// bypasses (verified=1, empty token).
 		`CREATE TABLE IF NOT EXISTS status_page_subscribers (
-			id         String,
-			email      String,
-			verified   UInt8         DEFAULT 1,
-			created_at DateTime64(9) DEFAULT now64(9),
-			version    UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+			id              String,
+			email           String,
+			verified        UInt8         DEFAULT 0,
+			confirm_token   String        DEFAULT '',
+			confirm_sent_at DateTime64(9) DEFAULT toDateTime64(0, 9),
+			created_at      DateTime64(9) DEFAULT now64(9),
+			version         UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY email`,
 
@@ -882,6 +885,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		// the table before v0.5.91. MODIFY TTL is metadata-only;
 		// repeated applies are idempotent.
 		`ALTER TABLE trace_snapshots MODIFY TTL toDateTime(expires_at) + INTERVAL 7 DAY`,
+		// Status page double opt-in (v0.5.158). Rows from the
+		// public subscribe endpoint land with verified=0 and a
+		// confirm_token; clicking the emailed link clears the
+		// token and flips verified=1. Operator-curated rows
+		// inserted via the admin UI bypass the flow (verified=1,
+		// token=''). confirm_sent_at gates re-sends so a refresh-
+		// spam attack can't drown a real subscriber in mail.
+		`ALTER TABLE status_page_subscribers ADD COLUMN IF NOT EXISTS confirm_token String DEFAULT ''`,
+		`ALTER TABLE status_page_subscribers ADD COLUMN IF NOT EXISTS confirm_sent_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
 	}
 	for _, q := range alters {
 		if err := s.execDDL(ctx, q); err != nil {

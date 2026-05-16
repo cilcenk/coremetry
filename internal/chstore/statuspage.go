@@ -2,6 +2,8 @@ package chstore
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"strings"
 	"time"
 )
@@ -27,10 +29,15 @@ type StatusComponent struct {
 }
 
 type StatusSubscriber struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	Verified  bool   `json:"verified"`
-	CreatedAt int64  `json:"createdAt"`
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	Verified      bool   `json:"verified"`
+	// Token is only populated on the read path internally —
+	// never round-trips to the admin UI. The public confirm
+	// link is the only consumer.
+	Token         string `json:"-"`
+	ConfirmSentAt int64  `json:"confirmSentAt,omitempty"`
+	CreatedAt     int64  `json:"createdAt"`
 }
 
 type PublishedIncident struct {
@@ -131,7 +138,9 @@ func (s *Store) DeleteStatusComponent(ctx context.Context, id string) error {
 
 func (s *Store) ListStatusSubscribers(ctx context.Context) ([]StatusSubscriber, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, email, verified, toUnixTimestamp64Nano(created_at)
+		SELECT id, email, verified,
+		       toUnixTimestamp64Nano(confirm_sent_at),
+		       toUnixTimestamp64Nano(created_at)
 		FROM status_page_subscribers FINAL
 		ORDER BY email`)
 	if err != nil {
@@ -142,7 +151,7 @@ func (s *Store) ListStatusSubscribers(ctx context.Context) ([]StatusSubscriber, 
 	for rows.Next() {
 		var s StatusSubscriber
 		var v uint8
-		if err := rows.Scan(&s.ID, &s.Email, &v, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Email, &v, &s.ConfirmSentAt, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		s.Verified = v == 1
@@ -151,24 +160,122 @@ func (s *Store) ListStatusSubscribers(ctx context.Context) ([]StatusSubscriber, 
 	return out, rows.Err()
 }
 
-func (s *Store) AddStatusSubscriber(ctx context.Context, email string) error {
+// AddStatusSubscriber inserts an unverified subscriber row + a
+// freshly-minted confirm token. The token is returned so the
+// caller (api layer) can deliver it via SMTP without us having
+// to know the public URL here. If the row already exists and is
+// verified, we treat the call as a no-op and return empty token
+// — re-confirming a verified email is just noise. If the row
+// exists but is unverified, we mint a new token (covers
+// "operator lost the confirmation mail" without leaking signal
+// to a third party).
+func (s *Store) AddStatusSubscriber(ctx context.Context, email string) (string, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return "", nil
+	}
+	// Check existing state — verified ones don't get a re-send;
+	// unverified ones get a fresh token (overwrites previous).
+	existing := s.conn.QueryRow(ctx,
+		`SELECT verified FROM status_page_subscribers FINAL WHERE email = ? LIMIT 1`, email)
+	var v uint8
+	if err := existing.Scan(&v); err == nil && v == 1 {
+		return "", nil
+	}
+	token := randToken(16)
+	now := time.Now().UTC()
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO status_page_subscribers
+		 (id, email, verified, confirm_token, confirm_sent_at, created_at, version)`)
+	if err != nil {
+		return "", err
+	}
+	id := randHex(8)
+	if err := batch.Append(id, email, uint8(0), token, now, now, uint64(now.UnixNano())); err != nil {
+		return "", err
+	}
+	if err := batch.Send(); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// AddVerifiedSubscriber is the admin-curated path. An operator
+// invites a teammate from the admin UI; that subscriber is
+// trusted to already exist and skips the email confirmation
+// dance entirely.
+func (s *Store) AddVerifiedSubscriber(ctx context.Context, email string) error {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" {
 		return nil
 	}
 	now := time.Now().UTC()
 	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO status_page_subscribers (id, email, verified, created_at, version)`)
+		`INSERT INTO status_page_subscribers
+		 (id, email, verified, confirm_token, confirm_sent_at, created_at, version)`)
 	if err != nil {
 		return err
 	}
-	// ID is derived from email so re-subscribing is a no-op (the
-	// ReplacingMergeTree dedupes on the ORDER BY column = email).
 	id := randHex(8)
-	if err := batch.Append(id, email, uint8(1), now, uint64(now.UnixNano())); err != nil {
+	if err := batch.Append(id, email, uint8(1), "", time.Unix(0, 0).UTC(), now, uint64(now.UnixNano())); err != nil {
 		return err
 	}
 	return batch.Send()
+}
+
+// ConfirmStatusSubscriber flips verified=1 and clears the
+// confirm token when the operator clicks the link in the
+// confirmation email. Returns the email so the caller can
+// render a thank-you page. Empty email + nil error = token
+// not found / already consumed.
+func (s *Store) ConfirmStatusSubscriber(ctx context.Context, token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", nil
+	}
+	row := s.conn.QueryRow(ctx, `
+		SELECT email, verified
+		FROM status_page_subscribers FINAL
+		WHERE confirm_token = ? LIMIT 1`, token)
+	var email string
+	var v uint8
+	if err := row.Scan(&email, &v); err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return "", nil
+		}
+		return "", err
+	}
+	if v == 1 {
+		// Already verified — treat as success so a refresh of
+		// the confirm page after first click doesn't error.
+		return email, nil
+	}
+	now := time.Now().UTC()
+	batch, err := s.conn.PrepareBatch(ctx,
+		`INSERT INTO status_page_subscribers
+		 (id, email, verified, confirm_token, confirm_sent_at, created_at, version)`)
+	if err != nil {
+		return "", err
+	}
+	id := randHex(8)
+	if err := batch.Append(id, email, uint8(1), "", time.Unix(0, 0).UTC(), now, uint64(now.UnixNano())); err != nil {
+		return "", err
+	}
+	if err := batch.Send(); err != nil {
+		return "", err
+	}
+	return email, nil
+}
+
+// randToken — URL-safe hex string for the confirmation link.
+// 32 hex chars (16 bytes) is well past the brute-force threshold
+// for a non-time-sensitive secret.
+func randToken(nbytes int) string {
+	b := make([]byte, nbytes)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
 }
 
 func (s *Store) RemoveStatusSubscriber(ctx context.Context, email string) error {

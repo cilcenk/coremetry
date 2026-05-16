@@ -556,6 +556,39 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 	return b.String()
 }
 
+// SendMail is a generic plain-text mailer over the operator's
+// configured SMTP — used by surfaces that aren't problem alerts
+// (status-page subscriber double-opt-in, future password-reset
+// flows, etc.). Returns an error when SMTP isn't configured so
+// the caller can decide whether the operation should fail or
+// continue silently (status-page subscribe falls back to "we
+// recorded your email; the operator will deliver the link
+// manually" when SMTP isn't wired up).
+func (n *Notifier) SendMail(ctx context.Context, to []string, subject, body string) error {
+	cfg := n.SMTP(ctx)
+	if !cfg.Configured() {
+		return errors.New("SMTP is not configured — set host/port/from in Settings")
+	}
+	if len(to) == 0 {
+		return errors.New("SendMail: no recipients")
+	}
+	from := cfg.From
+	fromHeader := from
+	if cfg.FromName != "" {
+		fromHeader = fmt.Sprintf("%s <%s>", cfg.FromName, from)
+	}
+	msg := strings.Builder{}
+	msg.WriteString("From: " + fromHeader + "\r\n")
+	msg.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
+	msg.WriteString("Subject: " + subject + "\r\n")
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	msg.WriteString("\r\n")
+	msg.WriteString(body)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	return sendSMTP(addr, cfg, from, to, []byte(msg.String()))
+}
+
 // sendSMTP is split out so it can be swapped in tests + handles the
 // STARTTLS dance manually because net/smtp's SendMail can't do explicit
 // TLS-or-not toggling cleanly with arbitrary verify settings.

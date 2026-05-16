@@ -238,6 +238,14 @@ function SubsTab() {
         <div key={s.id} className="status-row">
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{s.email}</span>
+            {s.verified
+              ? <span className="badge b-ok" title="Confirmed the subscription via email link">verified</span>
+              : <span className="badge b-warn"
+                  title={s.confirmSentAt
+                    ? `Confirmation email sent ${tsLong(s.confirmSentAt)} — subscriber hasn't clicked yet`
+                    : 'Confirmation email not yet delivered (SMTP unconfigured at signup)'}>
+                  pending
+                </span>}
             <span style={{ color: 'var(--text3)', fontSize: 11 }}>· joined {tsLong(s.createdAt)}</span>
           </div>
           <button className="sec" onClick={async () => {

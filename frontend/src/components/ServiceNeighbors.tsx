@@ -57,7 +57,7 @@ export function ServiceNeighbors({ service, since = '10m' }: {
           fontFamily: 'ui-monospace, monospace',
         }}>{open ? '▼' : '▶'}</span>
         <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
-          Neighbours of <span style={{ color: 'var(--text)' }}>{service}</span>
+          Upstream / downstream for <span style={{ color: 'var(--text)' }}>{service}</span>
         </span>
         {open && data && (
           <span style={{ fontSize: 11, color: 'var(--text3)' }}>
@@ -98,7 +98,7 @@ export function ServiceNeighbors({ service, since = '10m' }: {
           )}
           {data === null && (
             <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic', padding: '12px 4px' }}>
-              Failed to load neighbours.
+              Failed to load upstream / downstream.
             </div>
           )}
           {data && upstream.length === 0 && downstream.length === 0 && (

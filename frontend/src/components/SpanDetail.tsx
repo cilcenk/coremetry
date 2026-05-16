@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import type { SpanRow, ProfileRow, LogRow } from '@/lib/types';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
-import { IconFlame } from './icons';
+import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
+import { CopilotExplain } from './CopilotExplain';
 
 const PANEL_MIN = 300;
 const PANEL_MAX = 1100;
@@ -113,6 +114,18 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
         <button className="ps-close" onClick={onClose}>✕</button>
       </div>
       <div id="span-panel-body">
+        {/* AI explain (v0.5.144). Per-span LLM summary — backend
+            sends only target + parent + direct children + error
+            siblings so the prompt stays tight. Works with any
+            configured copilot backend including a local LLM
+            (Ollama / vLLM / LM Studio) via the openai-compatible
+            base_url. Auto-hides when copilot isn't configured. */}
+        {span.traceId && span.spanId && (
+          <div style={{ marginBottom: 12 }}>
+            <CopilotExplain kind="span" id={span.traceId} spanId={span.spanId}
+              label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this span</span></>} />
+          </div>
+        )}
         {/* Attributes — what the application code emitted; usually
             the most informative bit when debugging an unfamiliar span.
             "Info" (service/kind/timing/IDs) below: shape of the row,

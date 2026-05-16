@@ -22,13 +22,16 @@ import { IconSparkles } from './icons';
 //                               in past resolved instances of the same rule.
 // Each endpoint uses a kind-specific system prompt so the model's
 // answers match the operator's question.
-export function CopilotExplain({ kind, id, label, fromNs, toNs }: {
-  kind: 'trace' | 'problem' | 'incident' | 'anomaly' | 'service-health' | 'runbook';
+export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
+  kind: 'trace' | 'span' | 'problem' | 'incident' | 'anomaly' | 'service-health' | 'runbook';
   id: string;
   label?: React.ReactNode;
   // Only used when kind === 'service-health'. Ignored otherwise.
   fromNs?: number;
   toNs?: number;
+  // Only used when kind === 'span'. The target span inside the
+  // trace identified by `id`. v0.5.144 per-span explain.
+  spanId?: string;
 }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,6 +59,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs }: {
           : `No past resolutions found — first-principles only.`);
       } else {
         const r = kind === 'trace'          ? await api.copilotExplainTrace(id)
+                : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '')
                 : kind === 'problem'        ? await api.copilotExplainProblem(id)
                 : kind === 'incident'       ? await api.copilotExplainIncident(id)
                 : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id)

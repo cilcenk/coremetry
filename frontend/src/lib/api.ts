@@ -568,6 +568,12 @@ export const api = {
   copilotConfig:         () => get<{ enabled: boolean }>(`/api/copilot/config`),
   copilotExplainTrace:   (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-trace/${id}`, { method: 'POST' }),
+  // Per-span explain (v0.5.144). Backend pulls target span +
+  // parent + children + error siblings for a focused prompt.
+  copilotExplainSpan:    (traceId: string, spanId: string) =>
+    request<{ explanation: string }>(
+      `/api/copilot/explain-span/${encodeURIComponent(traceId)}?span=${encodeURIComponent(spanId)}`,
+      { method: 'POST' }),
   copilotExplainProblem: (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-problem/${id}`, { method: 'POST' }),
   copilotExplainIncident: (id: string) =>

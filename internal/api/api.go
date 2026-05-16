@@ -323,6 +323,7 @@ func (s *Server) Start() error {
 	// ── AI Copilot ─────────────────────────────────────────────────
 	mux.HandleFunc("GET    /api/copilot/config",            s.copilotConfig)
 	mux.HandleFunc("POST   /api/copilot/explain-trace/{id}", s.copilotExplainTrace)
+	mux.HandleFunc("POST   /api/copilot/explain-span/{traceId}", s.copilotExplainSpan)
 	mux.HandleFunc("POST   /api/copilot/explain-problem/{id}", s.copilotExplainProblem)
 	mux.HandleFunc("POST   /api/copilot/explain-incident/{id}", s.copilotExplainIncident)
 	mux.HandleFunc("POST   /api/copilot/explain-anomaly/{id}", s.copilotExplainAnomaly)
@@ -4638,6 +4639,104 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(compact)
 	user := fmt.Sprintf("Trace %s with %d spans:\n```json\n%s\n```", id, len(compact), string(payload))
 	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptTrace(), user)
+	if err != nil { writeErr(w, err); return }
+	writeJSON(w, map[string]string{"explanation": out})
+}
+
+// copilotExplainSpan focuses the LLM on ONE span instead of the
+// whole trace: target span + parent + direct children + any
+// error spans in the same trace. Tighter prompt + cheaper round-
+// trip than re-summarising the entire waterfall. Works with any
+// configured backend — Anthropic, OpenAI, or a local LLM via
+// OpenAI-compatible base URL (Ollama / vLLM / LM Studio).
+func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
+	if !s.copilot.Configured() {
+		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable); return
+	}
+	traceID := r.PathValue("traceId")
+	spanID := strings.TrimSpace(r.URL.Query().Get("span"))
+	if spanID == "" {
+		http.Error(w, "span query param required", http.StatusBadRequest); return
+	}
+	spans, err := s.store.GetTrace(r.Context(), traceID)
+	if err != nil { writeErr(w, err); return }
+	if len(spans) == 0 {
+		http.Error(w, "trace not found", http.StatusNotFound); return
+	}
+	// Locate target + build the neighbourhood subset. O(n) on a
+	// trace's span list which is bounded by the existing 100-span
+	// cap on the trace-fetch path.
+	var target *chstore.SpanRow
+	for i := range spans {
+		if spans[i].SpanID == spanID {
+			target = &spans[i]
+			break
+		}
+	}
+	if target == nil {
+		http.Error(w, "span not found in trace", http.StatusNotFound); return
+	}
+	// Keep: target, its parent (if any), direct children, any
+	// error spans elsewhere in the trace (high signal for "why
+	// did this fail" hints). Dedupe via span-id set.
+	keep := map[string]bool{target.SpanID: true}
+	if target.ParentSpanID != "" {
+		keep[target.ParentSpanID] = true
+	}
+	for i := range spans {
+		sp := &spans[i]
+		if sp.ParentSpanID == target.SpanID {
+			keep[sp.SpanID] = true
+		}
+		if sp.StatusCode == "error" {
+			keep[sp.SpanID] = true
+		}
+	}
+	type lite struct {
+		Role       string  `json:"role"` // target | parent | child | error-elsewhere
+		Name       string  `json:"name"`
+		Service    string  `json:"service"`
+		Kind       string  `json:"kind"`
+		SpanID     string  `json:"id"`
+		ParentID   string  `json:"parent,omitempty"`
+		DurationMs float64 `json:"durMs"`
+		Status     string  `json:"status,omitempty"`
+		StatusMsg  string  `json:"statusMsg,omitempty"`
+	}
+	role := func(sp *chstore.SpanRow) string {
+		switch {
+		case sp.SpanID == target.SpanID:
+			return "target"
+		case sp.SpanID == target.ParentSpanID:
+			return "parent"
+		case sp.ParentSpanID == target.SpanID:
+			return "child"
+		default:
+			return "error-elsewhere"
+		}
+	}
+	compact := make([]lite, 0, len(keep))
+	for i := range spans {
+		sp := &spans[i]
+		if !keep[sp.SpanID] {
+			continue
+		}
+		dur := float64(sp.EndTime-sp.StartTime) / 1e6
+		l := lite{
+			Role: role(sp), Name: sp.Name, Service: sp.ServiceName,
+			Kind: sp.Kind, SpanID: sp.SpanID, ParentID: sp.ParentSpanID,
+			DurationMs: dur,
+		}
+		if sp.StatusCode == "error" {
+			l.Status = "error"
+			l.StatusMsg = sp.StatusMessage
+		}
+		compact = append(compact, l)
+	}
+	payload, _ := json.Marshal(compact)
+	user := fmt.Sprintf("Span %s (target) in trace %s — %d spans in context:\n```json\n%s\n```",
+		spanID, traceID, len(compact), string(payload))
+	out, err := s.copilot.Explain(r.Context(), copilot.SystemPromptSpan(), user)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, map[string]string{"explanation": out})
 }

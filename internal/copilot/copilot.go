@@ -458,6 +458,25 @@ the operator should investigate next.
 Be terse and concrete — the operator is reading this on a pager call.
 No preamble, no headers — just the bullets.`
 
+// systemSpan — focused per-span explain (v0.5.144). Inputs are
+// the target span + parent + immediate children + any error
+// siblings in the same trace. Operator already knows what the
+// whole trace does; they want "why is THIS step slow / failing".
+const systemSpan = `You are a senior SRE assistant inside an APM tool. The operator
+has highlighted ONE span in a distributed trace and wants to know
+why specifically this step is slow or failing. The JSON you receive
+carries the target span plus its parent + its direct children +
+any error spans in the same trace.
+
+Answer in 3-6 short bullets: (1) one-line description of what this
+span is doing, (2) where the time goes (self vs. waiting on
+children — call it out by service + name), (3) any error chain
+visible in the context, (4) one or two concrete next-step
+suggestions for an oncall.
+
+Be terse and direct — operator is reading this on a pager call.
+No preamble, no headers — just the bullets.`
+
 const systemProblem = `You are a senior SRE assistant inside an APM tool. The operator
 just opened a Problem (an alert that fired). Given the rule + service +
 metric value, explain in 3-5 short bullet points: (1) what the alert
@@ -578,6 +597,7 @@ Rules:
     list, one short paragraph per step max.`
 
 func SystemPromptTrace() string         { return systemTrace }
+func SystemPromptSpan() string          { return systemSpan }
 func SystemPromptProblem() string       { return systemProblem }
 func SystemPromptException() string     { return systemException }
 func SystemPromptIncident() string      { return systemIncident }

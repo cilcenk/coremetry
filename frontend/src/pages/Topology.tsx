@@ -198,6 +198,19 @@ function ServiceView({ range }: { range: TimeRange }) {
       })
       .catch(() => setIncidentServices(new Set()));
   }, [range]);
+  // Service catalog metadata (v0.5.148). Fetched once — entries
+  // are operator-curated, rarely change, and a single round-trip
+  // is enough for the whole diagram. Used to enrich hover tooltips
+  // with owner / SRE team so the operator on a topology page
+  // knows who to ping without leaving the view.
+  const [metaByService, setMetaByService] = useState<Record<string, {
+    ownerTeam?: string; sreTeam?: string; chatChannel?: string;
+  }>>({});
+  useEffect(() => {
+    api.servicesMetadata()
+      .then(m => setMetaByService(m ?? {}))
+      .catch(() => setMetaByService({}));
+  }, []);
   useEffect(() => {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
@@ -351,6 +364,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             onEdgeClick={setSelectedEdge} search={search}
             incidentServices={incidentServices}
             onNodeClick={onNodeClick}
+            metaByService={metaByService}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} />
@@ -735,7 +749,7 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, metaByService }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
@@ -743,6 +757,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   search?: string;
   incidentServices?: Set<string>;
   onNodeClick?: (node: ServiceTopologyNode) => void;
+  metaByService?: Record<string, { ownerTeam?: string; sreTeam?: string; chatChannel?: string }>;
 }) {
   // Search highlighting: a node "matches" when its name includes
   // the (case-insensitive) substring. Edges match when EITHER end
@@ -861,17 +876,33 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                   <title>Open problem(s) on this service</title>
                 </rect>
               )}
-              <rect width={NODE_W} height={NODE_H} rx={8} ry={8}
-                fill={fill} fillOpacity={0.18} stroke={stroke}
-                strokeWidth={term && match ? 2.8 : 1.6}>
-                <title>{`${n.name} (${n.kind})${hasIncident ? ' · open problem' : ''}`}</title>
-              </rect>
-              <text x={10} y={22} fontSize={13} fontWeight={600} fill="var(--text)">
-                {truncate(n.name, 24)}
-              </text>
-              <text x={10} y={40} fontSize={10} fill="var(--text3)">
-                {n.kind.toUpperCase()}
-              </text>
+              {(() => {
+                const md = metaByService?.[n.name];
+                const team = md?.ownerTeam || md?.sreTeam || '';
+                const tip = `${n.name} (${n.kind})`
+                  + (hasIncident ? ' · open problem' : '')
+                  + (md?.ownerTeam ? `\nowner: ${md.ownerTeam}` : '')
+                  + (md?.sreTeam   ? `\nSRE:   ${md.sreTeam}`   : '')
+                  + (md?.chatChannel ? `\nchat:  ${md.chatChannel}` : '');
+                return (
+                  <>
+                    <rect width={NODE_W} height={NODE_H} rx={8} ry={8}
+                      fill={fill} fillOpacity={0.18} stroke={stroke}
+                      strokeWidth={term && match ? 2.8 : 1.6}>
+                      <title>{tip}</title>
+                    </rect>
+                    <text x={10} y={22} fontSize={13} fontWeight={600} fill="var(--text)">
+                      {truncate(n.name, 24)}
+                    </text>
+                    <text x={10} y={40} fontSize={10} fill="var(--text3)">
+                      {n.kind.toUpperCase()}
+                      {team && n.kind === 'service' && (
+                        <tspan dx={6} fill="var(--text2)">· {truncate(team, 18)}</tspan>
+                      )}
+                    </text>
+                  </>
+                );
+              })()}
               {hasIncident && (
                 <text x={NODE_W - 34} y={40} fontSize={10} fontWeight={700} fill="#dc2626">
                   !

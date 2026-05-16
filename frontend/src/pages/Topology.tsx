@@ -335,8 +335,12 @@ function ServiceView({ range }: { range: TimeRange }) {
   // is enough for the whole diagram. Used to enrich hover tooltips
   // with owner / SRE team so the operator on a topology page
   // knows who to ping without leaving the view.
+  // v0.5.155 widened to carry runbookUrl + oncallUrl so the node
+  // can expose a one-click jump to the team's playbook from the
+  // topology view itself.
   const [metaByService, setMetaByService] = useState<Record<string, {
     ownerTeam?: string; sreTeam?: string; chatChannel?: string;
+    runbookUrl?: string; oncallUrl?: string;
   }>>({});
   useEffect(() => {
     api.servicesMetadata()
@@ -898,7 +902,10 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   // drawer instead of navigating to the service page. Keeps the
   // operator on the topology view for triage.
   onIncidentClick?: (node: ServiceTopologyNode) => void;
-  metaByService?: Record<string, { ownerTeam?: string; sreTeam?: string; chatChannel?: string }>;
+  metaByService?: Record<string, {
+    ownerTeam?: string; sreTeam?: string; chatChannel?: string;
+    runbookUrl?: string; oncallUrl?: string;
+  }>;
 }) {
   // Search highlighting: a node "matches" when its name includes
   // the (case-insensitive) substring. Edges match when EITHER end
@@ -1029,7 +1036,9 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                   + (hasIncident ? ' · open problem' : '')
                   + (md?.ownerTeam ? `\nowner: ${md.ownerTeam}` : '')
                   + (md?.sreTeam   ? `\nSRE:   ${md.sreTeam}`   : '')
-                  + (md?.chatChannel ? `\nchat:  ${md.chatChannel}` : '');
+                  + (md?.chatChannel ? `\nchat:  ${md.chatChannel}` : '')
+                  + (md?.runbookUrl ? `\nrunbook: ${md.runbookUrl}` : '')
+                  + (md?.oncallUrl  ? `\noncall:  ${md.oncallUrl}`  : '');
                 return (
                   <>
                     <rect width={NODE_W} height={NODE_H} rx={8} ry={8}
@@ -1061,6 +1070,30 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                     fill="#dc2626" textAnchor="middle">!</text>
                 </g>
               )}
+              {/* Runbook quick-jump (v0.5.155). Only services have
+                  catalog metadata; positioned at the bottom-left
+                  of the node so it doesn't collide with the
+                  incident "!" badge (bottom-right) or kindIcon
+                  (top-right). Opens in a new tab — operator's
+                  topology context isn't lost. */}
+              {(() => {
+                const md = metaByService?.[n.name];
+                if (!md?.runbookUrl) return null;
+                return (
+                  <g style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      window.open(md.runbookUrl, '_blank', 'noopener,noreferrer');
+                    }}>
+                    <circle cx={NODE_W - 50} cy={36} r={8}
+                      fill="var(--bg)" stroke="var(--accent2)" strokeWidth={1.2} />
+                    <text x={NODE_W - 50} y={40} fontSize={10} fontWeight={700}
+                      fill="var(--accent2)" textAnchor="middle">📖
+                      <title>Open runbook — {md.runbookUrl}</title>
+                    </text>
+                  </g>
+                );
+              })()}
               {kindIcon && (
                 <text x={NODE_W - 18} y={22} fontSize={14} fill={stroke}>{kindIcon}</text>
               )}

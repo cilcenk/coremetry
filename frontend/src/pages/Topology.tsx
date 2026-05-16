@@ -417,8 +417,11 @@ function ServiceView({ range }: { range: TimeRange }) {
   }, [data, topN, focus]);
 
   const layout = useMemo(
-    () => layerServices(visible ? { ...data!, nodes: visible.nodes, edges: visible.edges } : null),
-    [visible, data]
+    () => layerServices(
+      visible ? { ...data!, nodes: visible.nodes, edges: visible.edges } : null,
+      focus || undefined,
+    ),
+    [visible, data, focus]
   );
 
   if (data === undefined) return <Spinner />;
@@ -502,6 +505,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             onNodeClick={onNodeClick}
             onIncidentClick={(n) => setIncidentDrawerFor(n.name)}
             metaByService={metaByService}
+            anchor={focus || undefined}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} />
@@ -820,9 +824,100 @@ function FlowsView({ range }: { range: TimeRange }) {
 
 // ── Layout helpers + SVG renderers ────────────────────────────
 
-function layerServices(data: ServiceTopologyResponse | null | undefined): Map<string, number> {
+// layerServices assigns a column index to every visible node so
+// the SVG renderer can lay things out left-to-right. Two modes:
+//
+//   anchor unset (overview / top-N) — classic Sugiyama-ish layout:
+//     "roots" are zero-incoming-degree services placed at column 0,
+//     callees BFS forward from there. This is the long-standing
+//     behaviour and fits an overview where call direction matters.
+//
+//   anchor set (focus mode, v0.5.159) — the focused service goes
+//     to column 0 and the diagram fans out on both sides: callees
+//     to positive columns, callers to negative ones (then the
+//     whole thing is shifted so the smallest column is 0). This
+//     fixes the long-standing "in prod every focus looks like it
+//     comes from api-gateway" symptom: previously the visual root
+//     was always the topmost upstream caller of the focused node,
+//     because layerServices's incoming-degree pick favoured it.
+//     Now the operator sees the focused service as the anchor it
+//     deserves to be.
+function layerServices(
+  data: ServiceTopologyResponse | null | undefined,
+  anchor?: string,
+): Map<string, number> {
   const layer = new Map<string, number>();
   if (!data) return layer;
+
+  if (anchor && data.nodes.some(n => n.id === anchor)) {
+    // Bidirectional BFS hop-distance from the anchor. Build
+    // outgoing + incoming adjacency once so each BFS step is O(1).
+    const outAdj = new Map<string, string[]>();
+    const inAdj = new Map<string, string[]>();
+    data.edges.forEach(e => {
+      if (!outAdj.has(e.parentService)) outAdj.set(e.parentService, []);
+      outAdj.get(e.parentService)!.push(e.childNode);
+      if (!inAdj.has(e.childNode)) inAdj.set(e.childNode, []);
+      inAdj.get(e.childNode)!.push(e.parentService);
+    });
+    const fwd = new Map<string, number>([[anchor, 0]]);
+    const bwd = new Map<string, number>([[anchor, 0]]);
+    // Forward BFS — follow outgoing edges → callees.
+    let frontier: string[] = [anchor];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      frontier.forEach(id => {
+        const h = fwd.get(id)!;
+        (outAdj.get(id) || []).forEach(c => {
+          if (!fwd.has(c)) { fwd.set(c, h + 1); next.push(c); }
+        });
+      });
+      frontier = next;
+    }
+    // Backward BFS — follow incoming edges → callers.
+    frontier = [anchor];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      frontier.forEach(id => {
+        const h = bwd.get(id)!;
+        (inAdj.get(id) || []).forEach(p => {
+          if (!bwd.has(p)) { bwd.set(p, h + 1); next.push(p); }
+        });
+      });
+      frontier = next;
+    }
+    // Signed column: callees positive, callers negative, anchor 0.
+    // A node reachable BOTH ways (cycles, e.g. mutual call) picks
+    // whichever direction is closer — keeps the layout from
+    // exploding when a graph has loops.
+    const signed = new Map<string, number>();
+    data.nodes.forEach(n => {
+      const f = fwd.get(n.id);
+      const b = bwd.get(n.id);
+      if (n.id === anchor) { signed.set(n.id, 0); return; }
+      if (f !== undefined && b !== undefined) {
+        signed.set(n.id, f <= b ? f : -b);
+      } else if (f !== undefined) {
+        signed.set(n.id, f);
+      } else if (b !== undefined) {
+        signed.set(n.id, -b);
+      }
+      // Unreachable nodes (shouldn't happen — the visible-subset
+      // BFS in ServiceView already keeps only reachable ones)
+      // fall through to the post-loop fallback.
+    });
+    // Shift so the smallest column is 0 — render only handles
+    // non-negative column indices.
+    let minC = 0;
+    signed.forEach(v => { if (v < minC) minC = v; });
+    signed.forEach((v, k) => layer.set(k, v - minC));
+    // Stragglers — orphan nodes not reached in either direction.
+    let maxH = 0;
+    layer.forEach(v => { if (v > maxH) maxH = v; });
+    data.nodes.forEach(n => { if (!layer.has(n.id)) layer.set(n.id, maxH + 1); });
+    return layer;
+  }
+
   const incoming = new Map<string, number>();
   data.nodes.forEach(n => incoming.set(n.id, 0));
   data.edges.forEach(e => incoming.set(e.childNode, (incoming.get(e.childNode) ?? 0) + 1));
@@ -917,7 +1012,7 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
@@ -933,6 +1028,10 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
     ownerTeam?: string; sreTeam?: string; chatChannel?: string;
     runbookUrl?: string; oncallUrl?: string;
   }>;
+  // v0.5.159 — id of the focused service (the BFS anchor). Drawn
+  // with a thicker accent border so the operator's eye lands on
+  // it immediately.
+  anchor?: string;
 }) {
   // Search highlighting: a node "matches" when its name includes
   // the (case-insensitive) substring. Edges match when EITHER end
@@ -1059,18 +1158,22 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
               {(() => {
                 const md = metaByService?.[n.name];
                 const team = md?.ownerTeam || md?.sreTeam || '';
+                const isAnchor = !!anchor && n.id === anchor;
                 const tip = `${n.name} (${n.kind})`
+                  + (isAnchor ? ' · focused' : '')
                   + (hasIncident ? ' · open problem' : '')
                   + (md?.ownerTeam ? `\nowner: ${md.ownerTeam}` : '')
                   + (md?.sreTeam   ? `\nSRE:   ${md.sreTeam}`   : '')
                   + (md?.chatChannel ? `\nchat:  ${md.chatChannel}` : '')
                   + (md?.runbookUrl ? `\nrunbook: ${md.runbookUrl}` : '')
                   + (md?.oncallUrl  ? `\noncall:  ${md.oncallUrl}`  : '');
+                const strokeColor = isAnchor ? 'var(--accent2)' : stroke;
+                const strokeW = isAnchor ? 3 : (term && match ? 2.8 : 1.6);
                 return (
                   <>
                     <rect width={NODE_W} height={NODE_H} rx={8} ry={8}
-                      fill={fill} fillOpacity={0.18} stroke={stroke}
-                      strokeWidth={term && match ? 2.8 : 1.6}>
+                      fill={fill} fillOpacity={isAnchor ? 0.28 : 0.18} stroke={strokeColor}
+                      strokeWidth={strokeW}>
                       <title>{tip}</title>
                     </rect>
                     <text x={10} y={22} fontSize={13} fontWeight={600} fill="var(--text)">

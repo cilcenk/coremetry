@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
+import { useAuth } from '@/components/AuthProvider';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import type {
@@ -22,6 +23,19 @@ import type {
 // Each view has its own controls; the topbar time range is
 // shared across all three.
 type View = 'service' | 'operation' | 'flows';
+
+// Local view shape (v0.5.153). `local` distinguishes legacy
+// localStorage entries surfaced for unauth'd sessions or pending
+// migration from real server-backed views — they get a different
+// icon and a no-network delete path.
+type TopologyView = {
+  id: string;
+  name: string;
+  queryString: string;
+  ownerId: string;
+  shared: boolean;
+  local: boolean;
+};
 
 export default function TopologyPage() {
   const [params, setParams] = useSearchParams();
@@ -50,33 +64,122 @@ export default function TopologyPage() {
     return p;
   }, { replace: true });
 
-  // Saved views (v0.5.143). Per-user, persists to localStorage —
-  // no server round-trip, instant load. Captures the entire URL
-  // search-string (?view + ?root + ?depth + ?hops + ?preset + …)
-  // so any combination of filters round-trips.
-  const SAVED_KEY = 'coremetry-topology-views';
-  const [saved, setSaved] = useState<Array<{ name: string; qs: string }>>(() => {
-    try {
-      const raw = localStorage.getItem(SAVED_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
-  const persistSaved = (next: Array<{ name: string; qs: string }>) => {
-    setSaved(next);
-    try { localStorage.setItem(SAVED_KEY, JSON.stringify(next)); } catch {}
-  };
-  const saveCurrent = () => {
+  // Saved views (v0.5.143 → v0.5.153). Originally per-browser via
+  // localStorage; promoted to server-side so a team's "look at the
+  // billing subgraph during incidents" view is one click for the
+  // whole org rather than a Slack copy-paste. The backend
+  // `saved_views` table already speaks the same shape (name +
+  // page + queryString); admins can flip `shared=true` to publish
+  // a view to the whole org (owner_id=''). Non-admin save = own
+  // bucket. localStorage retained as a fallback for unauth'd
+  // sessions and one-time migration on first successful fetch.
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const LEGACY_LS_KEY = 'coremetry-topology-views';
+  const [saved, setSaved] = useState<TopologyView[]>([]);
+  // Pull the user's + team-shared views on mount. If the user is
+  // unauth'd, fall back to legacy localStorage so an offline /
+  // logged-out preview still works.
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) {
+      try {
+        const raw = localStorage.getItem(LEGACY_LS_KEY);
+        const arr: Array<{ name: string; qs: string }> = raw ? JSON.parse(raw) : [];
+        if (!cancelled) setSaved(arr.map(v => ({
+          id: 'ls:' + v.name, name: v.name, queryString: v.qs,
+          ownerId: '', shared: false, local: true,
+        })));
+      } catch { /* ignore */ }
+      return;
+    }
+    api.savedViews('topology')
+      .then(rows => {
+        if (cancelled) return;
+        const remote: TopologyView[] = (rows ?? []).map(v => ({
+          id: v.id, name: v.name, queryString: v.queryString,
+          ownerId: v.ownerId, shared: v.ownerId === '', local: false,
+        }));
+        setSaved(remote);
+        // One-time migration: if the server is empty for this
+        // user AND localStorage has entries, push them up so the
+        // operator's old browser bookmarks survive the upgrade.
+        // Quietly — no UI prompt; if it fails the user still has
+        // their localStorage copy to re-save manually.
+        if (remote.length === 0) {
+          try {
+            const raw = localStorage.getItem(LEGACY_LS_KEY);
+            const legacy: Array<{ name: string; qs: string }> = raw ? JSON.parse(raw) : [];
+            if (legacy.length > 0) {
+              Promise.allSettled(legacy.map(v =>
+                api.createSavedView({ name: v.name, page: 'topology', queryString: v.qs })
+              )).then(() => {
+                // Refetch to surface the migrated rows with real IDs.
+                api.savedViews('topology').then(r2 => {
+                  if (cancelled) return;
+                  setSaved((r2 ?? []).map(v => ({
+                    id: v.id, name: v.name, queryString: v.queryString,
+                    ownerId: v.ownerId, shared: v.ownerId === '', local: false,
+                  })));
+                  // Migration succeeded — drop the legacy blob so
+                  // we don't keep re-migrating on every mount.
+                  try { localStorage.removeItem(LEGACY_LS_KEY); } catch {}
+                });
+              });
+            }
+          } catch { /* ignore */ }
+        }
+      })
+      .catch(() => { /* silent — server may be unreachable */ });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  const saveCurrent = async () => {
     const name = window.prompt('Save view as:', '');
     if (!name) return;
     const qs = params.toString();
-    const next = [{ name, qs }, ...saved.filter(v => v.name !== name)].slice(0, 50);
-    persistSaved(next);
+    // Only admins see the "share" prompt — for everyone else the
+    // view stays personal. Server enforces this regardless.
+    let shared = false;
+    if (isAdmin) {
+      shared = window.confirm(
+        `Save "${name}" as a team-shared view?\n\nOK = visible to everyone in the org\nCancel = personal only`
+      );
+    }
+    try {
+      const v = await api.createSavedView({
+        name, page: 'topology', queryString: qs, shared,
+      });
+      setSaved(prev => [
+        { id: v.id, name: v.name, queryString: v.queryString,
+          ownerId: v.ownerId, shared: v.ownerId === '', local: false },
+        ...prev.filter(p => p.name !== v.name || p.shared !== (v.ownerId === '')),
+      ]);
+    } catch (e) {
+      alert('Failed to save view: ' + (e instanceof Error ? e.message : String(e)));
+    }
   };
   const loadView = (qs: string) => {
     setParams(new URLSearchParams(qs), { replace: true });
   };
-  const deleteView = (name: string) => {
-    persistSaved(saved.filter(v => v.name !== name));
+  const deleteView = async (id: string) => {
+    if (id.startsWith('ls:')) {
+      // legacy localStorage entry — strip from in-memory + LS.
+      setSaved(prev => prev.filter(v => v.id !== id));
+      try {
+        const name = id.slice(3);
+        const raw = localStorage.getItem(LEGACY_LS_KEY);
+        const arr: Array<{ name: string; qs: string }> = raw ? JSON.parse(raw) : [];
+        localStorage.setItem(LEGACY_LS_KEY, JSON.stringify(arr.filter(v => v.name !== name)));
+      } catch { /* ignore */ }
+      return;
+    }
+    try {
+      await api.deleteSavedView(id);
+      setSaved(prev => prev.filter(v => v.id !== id));
+    } catch (e) {
+      alert('Failed to delete view: ' + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   return (
@@ -97,30 +200,55 @@ export default function TopologyPage() {
               the view tabs so the operator's eye reaches it last
               (load is rarer than view-switch). */}
           <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {saved.length > 0 && (
-              <select onChange={e => {
-                if (e.target.value) loadView(e.target.value);
-                e.target.value = '';
-              }} defaultValue="" style={{ fontSize: 11, padding: '3px 6px' }}>
-                <option value="">★ Saved views ({saved.length})</option>
-                {saved.map(v => (
-                  <option key={v.name} value={v.qs}>{v.name}</option>
-                ))}
-              </select>
-            )}
+            {saved.length > 0 && (() => {
+              const sharedViews = saved.filter(v => v.shared);
+              const personalViews = saved.filter(v => !v.shared);
+              return (
+                <select onChange={e => {
+                  if (e.target.value) loadView(e.target.value);
+                  e.target.value = '';
+                }} defaultValue="" style={{ fontSize: 11, padding: '3px 6px' }}>
+                  <option value="">★ Saved views ({saved.length})</option>
+                  {sharedViews.length > 0 && (
+                    <optgroup label="Shared with team">
+                      {sharedViews.map(v => (
+                        <option key={v.id} value={v.queryString}>◍ {v.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {personalViews.length > 0 && (
+                    <optgroup label="My views">
+                      {personalViews.map(v => (
+                        <option key={v.id} value={v.queryString}>
+                          {v.local ? '⌂ ' : '★ '}{v.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              );
+            })()}
             <button type="button" className="sec" onClick={saveCurrent}
               style={{ fontSize: 11, padding: '4px 10px' }}
-              title="Save the current URL state as a named view in this browser">
+              title={isAdmin
+                ? 'Save the current URL state — admins can publish to the team'
+                : 'Save the current URL state to your account'}>
               ★ Save view
             </button>
             {saved.length > 0 && (
               <button type="button" className="sec"
                 onClick={() => {
-                  const name = window.prompt('Delete which saved view?', saved[0].name);
-                  if (name) deleteView(name);
+                  const name = window.prompt('Delete which saved view? (name)', saved[0].name);
+                  if (!name) return;
+                  const match = saved.find(v => v.name === name);
+                  if (!match) {
+                    alert(`No view named "${name}"`);
+                    return;
+                  }
+                  deleteView(match.id);
                 }}
                 style={{ fontSize: 11, padding: '4px 8px', color: 'var(--err)' }}
-                title="Remove a saved view by name">
+                title="Remove a saved view by name (admin needed for shared views)">
                 ×
               </button>
             )}

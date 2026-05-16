@@ -391,6 +391,12 @@ export const api = {
         body: JSON.stringify({ text, limit }),
       }),
 
+  // Global slow-query catalog (v0.5.165). One row per
+  // (service, normalised statement) ordered by total wall-clock
+  // time. Optional db_system narrows to one engine.
+  slowQueries: (params: { from?: number; to?: number; db_system?: string; limit?: number }) =>
+    get<import('./types').SlowQueryRow[]>(`/api/databases/slow-queries?${qs(params)}`),
+
   // AI observability (v0.5.163). Admin-only read endpoints.
   aiCalls: (params: { surface?: string; provider?: string; status?: string; from?: number; to?: number; limit?: number }) =>
     get<import('./types').AICall[]>(`/api/ai/calls?${qs(params)}`),

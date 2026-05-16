@@ -1612,6 +1612,15 @@ export interface DBQueryStat {
   totalMs: number;
 }
 
+// SlowQueryRow — same as DBQueryStat plus the originating
+// service. Drives the global slow-query catalog (v0.5.165) on
+// /databases/slow-queries — operator-facing answer to "what
+// query class is burning the most DB time across the whole
+// install?".
+export interface SlowQueryRow extends DBQueryStat {
+  service: string;
+}
+
 // Exemplar — single representative span looked up to bridge a
 // metric chart point to a sample trace (Datadog / Honeycomb /
 // Grafana exemplar pattern). Returned by /api/spans/exemplar.

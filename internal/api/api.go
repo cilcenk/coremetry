@@ -200,6 +200,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
 	mux.HandleFunc("GET /api/databases",  s.getDatabases)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
+	// Cross-service slow-query catalog (v0.5.165). One row per
+	// (service, normalised statement) ordered by total wall-clock
+	// time — what's actually worth optimising globally.
+	mux.HandleFunc("GET /api/databases/slow-queries", s.getSlowQueriesGlobal)
 	mux.HandleFunc("GET /api/databases/oracle",     s.getOracleMetrics)
 	mux.HandleFunc("GET /api/databases/postgres",   s.getPostgresMetrics)
 	mux.HandleFunc("GET /api/databases/mysql",      s.getMySQLMetrics)
@@ -1146,6 +1150,25 @@ func (s *Server) getServiceDBQueries(w http.ResponseWriter, r *http.Request) {
 		name, from.UnixNano(), to.UnixNano(), limit)
 	s.serveCached(w, r, key, time.Minute, func() (any, error) {
 		return s.store.GetTopDBQueries(r.Context(), name, from, to, limit)
+	})
+}
+
+// getSlowQueriesGlobal — cross-service slow-query catalog
+// (v0.5.165). One row per (service, normalized statement) pair
+// ordered by total wall-clock time. Filterable by db_system.
+// 60s cache because operators tend to refresh this page when
+// hunting "what's hot today" and the underlying GROUP BY is
+// expensive at billion-span scale.
+func (s *Server) getSlowQueriesGlobal(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, time.Hour)
+	q := r.URL.Query()
+	dbSystem := strings.TrimSpace(q.Get("db_system"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	key := fmt.Sprintf("slow-queries-global:from=%d:to=%d:sys=%s:limit=%d",
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
+		dbSystem, limit)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		return s.store.GetSlowQueriesGlobal(r.Context(), from, to, dbSystem, limit)
 	})
 }
 

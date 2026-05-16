@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner } from '@/components/Spinner';
@@ -66,6 +67,17 @@ export default function DatabasesPage() {
     <>
       <Topbar title="Databases" range={range} onRangeChange={setRange} />
       <div id="content">
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <Link to="/databases/slow-queries" className="sec"
+            style={{
+              fontSize: 12, padding: '5px 12px', borderRadius: 6,
+              border: '1px solid var(--border)', background: 'var(--bg3)',
+              color: 'var(--accent2)', textDecoration: 'none',
+            }}
+            title="Cross-service slow-query catalog — what's burning the most DB time globally">
+            🐢 Slow queries →
+          </Link>
+        </div>
         {q.isPending && <Spinner />}
         {q.isError && (
           <div style={{ color: 'var(--err)', fontSize: 12 }}>

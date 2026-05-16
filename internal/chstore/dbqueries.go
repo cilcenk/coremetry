@@ -40,6 +40,88 @@ type DBQueryStat struct {
 	TotalMs float64 `json:"totalMs"`
 }
 
+// SlowQueryRow extends DBQueryStat with the originating service
+// so the global slow-query catalog (v0.5.165) can show which
+// service is responsible. The same query text issued from two
+// different services is intentionally kept as two rows — same
+// SQL, different teams to ping.
+type SlowQueryRow struct {
+	DBQueryStat
+	Service string `json:"service"`
+}
+
+// GetSlowQueriesGlobal — the cross-service slow-query catalog.
+// Same normalisation rules as GetTopDBQueries but no service
+// filter; grouped by (service, norm_stmt) so the operator sees
+// "this query class is hot on payment-api AND on billing-api"
+// as separate rows. Ordered by total wall-clock time so the
+// top of the list is what's actually worth optimising.
+//
+// Optional dbSystem filter (e.g. "postgresql") narrows the
+// view when the operator already knows which engine they're
+// after. Cost is bounded by `db_statement != ''` filter — at
+// billion-span scale this still has to scan the partition
+// pruning helps for the time window, and CH's index on
+// service_name doesn't help here since we don't filter on it.
+// 30s execution-time guard keeps the worst case bounded.
+func (s *Store) GetSlowQueriesGlobal(
+	ctx context.Context, from, to time.Time, dbSystem string, limit int,
+) ([]SlowQueryRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	const placeholder = "__P__"
+	var wc whereClause
+	wc.add("time >= ?", from)
+	wc.add("time <= ?", to)
+	wc.add("db_statement != ''")
+	if dbSystem != "" {
+		wc.add("db_system = ?", dbSystem)
+	}
+	sql := `
+		SELECT
+			service_name,
+			replaceRegexpAll(
+				replaceRegexpAll(db_statement, '''[^'']*''', '__P__'),
+				'\\b[0-9]+(\\.[0-9]+){0,1}\\b', '__P__'
+			)                                          AS norm_stmt,
+			any(db_statement)                          AS sample_stmt,
+			any(db_system)                             AS db_system,
+			count()                                    AS cnt,
+			avg(duration / 1e6)                        AS avg_ms,
+			quantile(0.95)(duration / 1e6)             AS p95_ms,
+			quantile(0.99)(duration / 1e6)             AS p99_ms,
+			max(duration / 1e6)                        AS max_ms,
+			countIf(status_code = 'error')             AS err_cnt
+		FROM spans ` + wc.sql() + `
+		GROUP BY service_name, norm_stmt
+		ORDER BY (cnt * avg_ms) DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 30,
+		         optimize_skip_unused_shards = 1`
+	args := append(wc.args, limit)
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query slow queries: %w", err)
+	}
+	defer rows.Close()
+	out := []SlowQueryRow{}
+	for rows.Next() {
+		var r SlowQueryRow
+		var cnt, errCnt uint64
+		if err := rows.Scan(&r.Service, &r.Statement, &r.SampleStatement,
+			&r.DBSystem, &cnt, &r.AvgMs, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
+			return nil, err
+		}
+		r.Count = int(cnt)
+		r.ErrorCount = int(errCnt)
+		r.TotalMs = float64(cnt) * r.AvgMs
+		r.Statement = strings.ReplaceAll(r.Statement, placeholder, "?")
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // GetTopDBQueries returns the top-N normalized DB statements
 // for the given service in the time window, ordered by total
 // wall-clock time spent in them (count × avgMs).

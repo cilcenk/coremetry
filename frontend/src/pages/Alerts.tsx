@@ -118,6 +118,11 @@ export default function AlertsPage() {
   // caches the heavy GROUP BY for 5 min so a fleet of operators
   // hitting /alerts at the same time shares one round-trip.
   const [noisy, setNoisy] = useState<NoisyRule[] | null>(null);
+  // Bulk-apply selection set (v0.5.151). One operator complaint we
+  // kept hitting: 5+ rules need the same flap-suppression treatment
+  // and clicking Apply → save → close for each one is annoying.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   useEffect(() => {
     api.alertTuningNoisyRules('24h', 10)
       .then(r => setNoisy((r?.rules ?? []).filter(n => n.suggestion !== '')))
@@ -139,6 +144,64 @@ export default function AlertsPage() {
     setTimeout(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }, 0);
+  };
+  // Toggle one row in / out of the bulk-apply selection. Rows
+  // without concrete suggested values (i.e. n.suggestion is just a
+  // "tighten the threshold" hint with no knob to apply) are
+  // excluded by the caller via the disabled checkbox.
+  const toggleSelected = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  // Rules that have ≥1 concrete dampening value to apply — the
+  // "tighten threshold" suggestion sets nothing actionable.
+  const actionable = (noisy ?? []).filter(
+    n => (n.suggestedForSec ?? 0) > 0
+      || (n.suggestedMinSamples ?? 0) > 0
+      || (n.suggestedCooldownSec ?? 0) > 0,
+  );
+  const allActionableIDs = actionable.map(n => n.ruleId);
+  const allSelected = allActionableIDs.length > 0
+    && allActionableIDs.every(id => selected.has(id));
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(allActionableIDs));
+  };
+  // Bulk-apply path. Builds a patch per rule that ONLY touches the
+  // knob the suggestion targets, preserving any operator-set value
+  // the suggestion doesn't address. Patches run in parallel since
+  // each rule is independent — the React Query mutation invalidates
+  // the list eagerly so the table refreshes once all settle.
+  const applySelected = async () => {
+    if (selected.size === 0 || !rules) return;
+    setBulkBusy(true);
+    try {
+      const patches: Promise<unknown>[] = [];
+      for (const n of actionable) {
+        if (!selected.has(n.ruleId)) continue;
+        const base = rules.find(r => r.id === n.ruleId);
+        if (!base) continue;
+        const patch: Partial<AlertRule> = {
+          forSec:      (n.suggestedForSec      ?? 0) || base.forSec      || 0,
+          minSamples:  (n.suggestedMinSamples  ?? 0) || base.minSamples  || 0,
+          cooldownSec: (n.suggestedCooldownSec ?? 0) || base.cooldownSec || 0,
+        };
+        patches.push(updateRule.mutateAsync({ id: n.ruleId, patch }));
+      }
+      await Promise.allSettled(patches);
+      // Drop the selection set + refetch the noisy-rules report
+      // (a freshly-tightened rule should drop off the list within
+      // the server cache window, but a refetch makes the UI feel
+      // responsive in the meantime).
+      setSelected(new Set());
+      api.alertTuningNoisyRules('24h', 10)
+        .then(r => setNoisy((r?.rules ?? []).filter(n => n.suggestion !== '')))
+        .catch(() => {});
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const startEdit = (r: AlertRule) => {
@@ -200,10 +263,26 @@ export default function AlertsPage() {
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>
                 {noisy.length} rule{noisy.length === 1 ? '' : 's'} could be tightened
               </span>
+              {selected.size > 0 && (
+                <button onClick={applySelected}
+                  disabled={bulkBusy}
+                  style={{ marginLeft: 'auto', fontSize: 11, padding: '4px 12px' }}
+                  title="Apply each rule's suggested dampening values in one shot — no edit modal">
+                  {bulkBusy ? 'Applying…' : `Apply ${selected.size} suggestion${selected.size === 1 ? '' : 's'}`}
+                </button>
+              )}
             </div>
             <div className="table-wrap">
               <table>
                 <thead><tr>
+                  <th style={{ width: 28 }}>
+                    {actionable.length > 0 && (
+                      <input type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        title={allSelected ? 'Clear selection' : 'Select all'} />
+                    )}
+                  </th>
                   <th>Rule</th>
                   <th className="num">Fires/24h</th>
                   <th className="num">Median dur.</th>
@@ -212,8 +291,21 @@ export default function AlertsPage() {
                   <th></th>
                 </tr></thead>
                 <tbody>
-                  {noisy.map(n => (
+                  {noisy.map(n => {
+                    const hasKnob = (n.suggestedForSec ?? 0) > 0
+                      || (n.suggestedMinSamples ?? 0) > 0
+                      || (n.suggestedCooldownSec ?? 0) > 0;
+                    return (
                     <tr key={n.ruleId}>
+                      <td>
+                        <input type="checkbox"
+                          disabled={!hasKnob}
+                          checked={selected.has(n.ruleId)}
+                          onChange={() => toggleSelected(n.ruleId)}
+                          title={hasKnob
+                            ? 'Include in bulk-apply'
+                            : 'No concrete value to apply — open edit form instead'} />
+                      </td>
                       <td><b>{n.ruleName}</b></td>
                       <td className="num mono">{n.openCount}</td>
                       <td className="num mono">
@@ -234,7 +326,7 @@ export default function AlertsPage() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>

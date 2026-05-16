@@ -1,6 +1,7 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { ShortcutsHelp } from './ShortcutsHelp';
+import { CommandPalette } from './CommandPalette';
 import { useAuth } from './AuthProvider';
 import { useEventStream } from '@/lib/queries';
 import { useShortcuts } from '@/lib/keyboard';
@@ -83,6 +84,11 @@ export function AppShell() {
           render. Mount once at the shell so the help modal
           is reachable from any page without per-page wiring. */}
       <ShortcutsHelp />
+      {/* CommandPalette (v0.5.162) — global Cmd-K / Ctrl-K
+          spotlight. Self-contained: owns its hotkey binding +
+          modal render; mounting here keeps it available on every
+          authenticated page without per-page imports. */}
+      <CommandPalette />
     </div>
   );
 }

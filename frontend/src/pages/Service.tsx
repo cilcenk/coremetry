@@ -113,6 +113,18 @@ function ServiceDetailInner() {
             background: 'var(--bg3)', border: '1px solid var(--border)',
             borderRadius: 6, color: 'var(--accent2)', textDecoration: 'none',
           }}>⋮ View traces</Link>
+          {/* Profiling deep-link (v0.5.161). Opens /profiling
+              pre-filtered to this service so the operator goes
+              from "latency looks weird" → flamegraph in one
+              hop. Always shown — if profiling isn't wired up
+              yet, the page surfaces a setup-recipes CTA. */}
+          <Link to={`/profiling?service=${encodeURIComponent(svc)}`} style={{
+            fontSize: 12, padding: '5px 12px',
+            background: 'var(--bg3)', border: '1px solid var(--border)',
+            borderRadius: 6, color: 'var(--accent2)', textDecoration: 'none',
+          }} title="Continuous profiling — CPU + heap flamegraphs for this service">
+            🔥 Profiles
+          </Link>
         </div>
         {/* Service catalog metadata — owner team / oncall /
             runbook / repo. Operator-curated; falls back to a

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { IconFlame } from '@/components/icons';
@@ -17,9 +17,24 @@ const TYPES = [
 ];
 
 export default function ProfilingPage() {
+  // URL-bound state so the service detail page can deep-link
+  // operators into a pre-filtered profiling view (v0.5.161).
+  // Range stays local — the topbar picker mutates it post-mount
+  // and bookmarks aren't time-stable anyway.
+  const [params, setParams] = useSearchParams();
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
-  const [service, setService] = useState('');
-  const [ptype, setPtype] = useState('');
+  const service = params.get('service') || '';
+  const ptype = params.get('type') || '';
+  const setService = (v: string) => setParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('service', v); else p.delete('service');
+    return p;
+  }, { replace: true });
+  const setPtype = (v: string) => setParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('type', v); else p.delete('type');
+    return p;
+  }, { replace: true });
   const [services, setServices] = useState<string[]>([]);
   const [data, setData] = useState<ProfileRow[] | null | undefined>(undefined);
   // Setup recipes accordion — empty/no profiles is the common

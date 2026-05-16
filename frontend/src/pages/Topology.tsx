@@ -49,11 +49,40 @@ export default function TopologyPage() {
     return p;
   }, { replace: true });
 
+  // Saved views (v0.5.143). Per-user, persists to localStorage —
+  // no server round-trip, instant load. Captures the entire URL
+  // search-string (?view + ?root + ?depth + ?hops + ?preset + …)
+  // so any combination of filters round-trips.
+  const SAVED_KEY = 'coremetry-topology-views';
+  const [saved, setSaved] = useState<Array<{ name: string; qs: string }>>(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+  const persistSaved = (next: Array<{ name: string; qs: string }>) => {
+    setSaved(next);
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify(next)); } catch {}
+  };
+  const saveCurrent = () => {
+    const name = window.prompt('Save view as:', '');
+    if (!name) return;
+    const qs = params.toString();
+    const next = [{ name, qs }, ...saved.filter(v => v.name !== name)].slice(0, 50);
+    persistSaved(next);
+  };
+  const loadView = (qs: string) => {
+    setParams(new URLSearchParams(qs), { replace: true });
+  };
+  const deleteView = (name: string) => {
+    persistSaved(saved.filter(v => v.name !== name));
+  };
+
   return (
     <>
       <Topbar title="Topology" range={range} onRangeChange={setRange} />
       <div id="content">
-        <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 12, alignItems: 'center' }}>
           {(['service', 'operation', 'flows'] as View[]).map(v => (
             <button key={v} type="button" onClick={() => setView(v)}
               className={view === v ? '' : 'sec'}
@@ -63,6 +92,38 @@ export default function TopologyPage() {
                 : 'Business flows'}
             </button>
           ))}
+          {/* Saved views — dropdown + save. Sits to the right of
+              the view tabs so the operator's eye reaches it last
+              (load is rarer than view-switch). */}
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {saved.length > 0 && (
+              <select onChange={e => {
+                if (e.target.value) loadView(e.target.value);
+                e.target.value = '';
+              }} defaultValue="" style={{ fontSize: 11, padding: '3px 6px' }}>
+                <option value="">★ Saved views ({saved.length})</option>
+                {saved.map(v => (
+                  <option key={v.name} value={v.qs}>{v.name}</option>
+                ))}
+              </select>
+            )}
+            <button type="button" className="sec" onClick={saveCurrent}
+              style={{ fontSize: 11, padding: '4px 10px' }}
+              title="Save the current URL state as a named view in this browser">
+              ★ Save view
+            </button>
+            {saved.length > 0 && (
+              <button type="button" className="sec"
+                onClick={() => {
+                  const name = window.prompt('Delete which saved view?', saved[0].name);
+                  if (name) deleteView(name);
+                }}
+                style={{ fontSize: 11, padding: '4px 8px', color: 'var(--err)' }}
+                title="Remove a saved view by name">
+                ×
+              </button>
+            )}
+          </span>
         </div>
         {view === 'service'   && <ServiceView range={range} />}
         {view === 'operation' && <OperationView params={params} setParams={setParams} range={range} />}

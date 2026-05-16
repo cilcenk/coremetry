@@ -12,6 +12,7 @@ export default function SLOsPage() {
   const { user } = useAuth();
   const [services, setServices] = useState<string[]>([]);
   const [showNew, setShowNew] = useState(false);
+  const [showAuto, setShowAuto] = useState(false);
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
 
   // useSLOs polls every 60s + auto-invalidates on
@@ -41,7 +42,14 @@ export default function SLOsPage() {
             Service Level Objectives — track availability and latency targets with error-budget burn down.
           </span>
           {isAdmin && (
-            <button onClick={() => setShowNew(true)} style={{ marginLeft: 'auto' }}>+ New SLO</button>
+            <>
+              <button className="sec" onClick={() => setShowAuto(true)}
+                style={{ marginLeft: 'auto' }}
+                title="Scan recent telemetry and propose baseline-grounded availability + latency SLOs">
+                ✨ Auto-create
+              </button>
+              <button onClick={() => setShowNew(true)}>+ New SLO</button>
+            </>
           )}
         </div>
 
@@ -112,8 +120,123 @@ export default function SLOsPage() {
             onClose={() => setShowNew(false)}
             onCreated={() => setShowNew(false)} />
         )}
+        {showAuto && isAdmin && (
+          <AutoSLOModal onClose={() => setShowAuto(false)} onCreated={() => {
+            setShowAuto(false);
+            slosQ.refetch();
+          }} />
+        )}
       </div>
     </>
+  );
+}
+
+// AutoSLOModal (v0.5.147) walks the operator through dry-run →
+// review → commit. Two phases: dry-run lists every (service,
+// sliType) pair the autocreate pass proposes with a measured
+// baseline + a generated target. Commit re-POSTs with no
+// dry_run flag and bulk-writes the non-skipped suggestions.
+function AutoSLOModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.autocreateSLOs>>['suggestions'] | null>(null);
+  useEffect(() => {
+    setRunning(true);
+    api.autocreateSLOs(true)
+      .then(d => setPreview(d.suggestions ?? []))
+      .catch(e => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setRunning(false));
+  }, []);
+  const commit = async () => {
+    setRunning(true); setError(null);
+    try {
+      await api.autocreateSLOs(false);
+      onCreated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  };
+  const proposed = preview ? preview.filter(p => !p.skipped) : [];
+  const skipped = preview ? preview.filter(p => p.skipped) : [];
+  return (
+    <div role="dialog" style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+      display: 'grid', placeItems: 'center', zIndex: 50,
+    }}>
+      <div style={{
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        borderRadius: 8, padding: 16, maxWidth: 760, width: '90%',
+        maxHeight: '80vh', overflowY: 'auto',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>✨ Auto-create SLOs</span>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+            Baseline window: last 7 days
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.5 }}>
+          Scans the top services by recent traffic and stamps an availability +
+          latency SLO for each one that doesn't already have one. Targets are
+          measured-minus-buffer (availability) or p99 × 1.5 rounded up
+          (latency) so a fresh SLO isn't already in the red on day one.
+          Existing SLOs are never overwritten.
+        </div>
+        {running && <Spinner />}
+        {error && (
+          <div style={{ color: 'var(--err)', fontSize: 12, marginBottom: 8 }}>{error}</div>
+        )}
+        {preview && proposed.length === 0 && (
+          <Empty icon="◇" title="Nothing to propose">
+            Either no services have traffic in the last 7d, or every service
+            already has both an availability and a latency SLO.
+          </Empty>
+        )}
+        {preview && proposed.length > 0 && (
+          <div className="table-wrap" style={{ maxHeight: '50vh' }}>
+            <table>
+              <thead><tr>
+                <th>Service</th><th>SLI</th><th>Target / Threshold</th><th>Baseline</th><th>Reason</th>
+              </tr></thead>
+              <tbody>
+                {proposed.map((p, i) => (
+                  <tr key={i}>
+                    <td className="mono">{p.service}</td>
+                    <td>{p.sliType}</td>
+                    <td className="mono">
+                      {p.sliType === 'latency'
+                        ? `≤ ${p.thresholdMs?.toFixed(0)} ms @ ${(p.target * 100).toFixed(1)}%`
+                        : `${(p.target * 100).toFixed(2)}%`}
+                    </td>
+                    <td className="mono" style={{ color: 'var(--text3)' }}>
+                      {p.sliType === 'latency'
+                        ? `${p.baselineMs?.toFixed(1)} ms`
+                        : `${((p.baselineSli ?? 0) * 100).toFixed(3)}%`}
+                    </td>
+                    <td style={{ fontSize: 11, color: 'var(--text2)' }}>{p.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {preview && skipped.length > 0 && (
+          <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
+            {skipped.length} service{skipped.length === 1 ? '' : 's'} skipped — existing SLOs not overwritten.
+          </div>
+        )}
+        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+          <button className="sec" onClick={onClose}>Cancel</button>
+          <button disabled={running || !preview || proposed.length === 0}
+            onClick={commit}
+            style={{ marginLeft: 'auto' }}
+            title="Create the SLOs listed above (existing SLOs untouched)">
+            Create {proposed.length} SLO{proposed.length === 1 ? '' : 's'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

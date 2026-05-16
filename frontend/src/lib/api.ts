@@ -888,6 +888,25 @@ export const api = {
     }),
   deleteSLO: (id: string) =>
     request<void>(`/api/slos/${id}`, { method: 'DELETE' }),
+  // Auto-create SLOs from 7d telemetry baseline (v0.5.147).
+  // dryRun=true returns suggestions without writing; default
+  // commits each non-skipped suggestion + audits the operation.
+  autocreateSLOs: (dryRun: boolean) =>
+    request<{
+      suggestions: Array<{
+        service: string;
+        sliType: string;
+        target: number;
+        thresholdMs?: number;
+        windowDays: number;
+        baselineSli?: number;
+        baselineMs?: number;
+        reason: string;
+        created: boolean;
+        skipped?: string;
+      }>;
+      dryRun: boolean;
+    }>(`/api/slos/autocreate${dryRun ? '?dry_run=1' : ''}`, { method: 'POST' }),
 
   // ── Dashboards ───────────────────────────────────────────────────────────
   listDashboards: () => get<DashboardSummary[] | null>('/api/dashboards'),

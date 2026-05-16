@@ -70,6 +70,7 @@ export default function SLOsPage() {
                   <th>SLI ({items[0].windowDays}d)</th>
                   <th>Budget left</th>
                   <th>Burn rate</th>
+                  <th>7d trend</th>
                   <th>Status</th>
                   {isAdmin && <th></th>}
                 </tr>
@@ -96,6 +97,9 @@ export default function SLOsPage() {
                     </td>
                     <td className="mono">
                       {o.status ? <BurnBadge rate={o.status.burnRate} /> : '—'}
+                    </td>
+                    <td>
+                      <BurnSparkline sloId={o.id} />
                     </td>
                     <td>
                       {o.status?.healthy
@@ -432,6 +436,55 @@ function BurnExplainButton({ sloId }: { sloId: string }) {
         </Modal>
       )}
     </>
+  );
+}
+
+// BurnSparkline — small inline SVG showing the last 7 days of
+// burn-rate (one bucket per day). Stroke color is keyed off the
+// max burn-rate in the series so an operator scanning the SLO
+// list spots "this one's been hot for days" at a glance without
+// opening the detail view. Endpoint serves a 60s-cached series
+// so even 30 SLOs only hit the chstore once a minute.
+function BurnSparkline({ sloId }: { sloId: string }) {
+  type Pt = { time: number; total: number; good: number; burnRate: number };
+  const [series, setSeries] = useState<Pt[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api.sloBurnSeries(sloId, 7)
+      .then(d => { if (!cancelled) setSeries(d.series ?? []); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [sloId]);
+  if (failed) return <span style={{ color: 'var(--text3)' }}>—</span>;
+  if (!series) return <span style={{ color: 'var(--text3)', fontSize: 11 }}>…</span>;
+  if (series.length === 0) return <span style={{ color: 'var(--text3)' }}>—</span>;
+
+  const W = 84, H = 18, PAD = 1;
+  const maxRate = series.reduce((m, p) => Math.max(m, p.burnRate), 0);
+  // Use 1.0 as the upper anchor so a healthy SLO renders flat near the
+  // bottom rather than self-rescaling and looking dramatic.
+  const yMax = Math.max(1, maxRate);
+  const stepX = series.length > 1 ? (W - PAD * 2) / (series.length - 1) : 0;
+  const yOf = (v: number) => H - PAD - (v / yMax) * (H - PAD * 2);
+  const path = series.map((p, i) => {
+    const x = PAD + i * stepX;
+    return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${yOf(p.burnRate).toFixed(1)}`;
+  }).join(' ');
+  const color = maxRate > 1 ? 'var(--err)' : maxRate > 0.5 ? 'var(--warn)' : 'var(--ok)';
+  const tooltip = `7d burn rate — max ${maxRate.toFixed(2)}×`;
+  return (
+    <svg width={W} height={H} style={{ display: 'block' }}
+      role="img" aria-label={tooltip}>
+      <title>{tooltip}</title>
+      {/* Reference line at burn=1 (budget consumed exactly at allowed rate) */}
+      {yMax > 1 && (
+        <line x1={0} x2={W} y1={yOf(1)} y2={yOf(1)}
+          stroke="var(--border)" strokeWidth={0.5} strokeDasharray="2,2" />
+      )}
+      <path d={path} fill="none" stroke={color} strokeWidth={1.5}
+        strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
   );
 }
 

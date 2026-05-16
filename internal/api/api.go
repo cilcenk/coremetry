@@ -373,6 +373,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/slos",            s.listSLOs)
 	mux.HandleFunc("GET    /api/slos/{id}",       s.getSLO)
 	mux.HandleFunc("GET    /api/slos/{id}/status", s.sloStatus)
+	mux.HandleFunc("GET    /api/slos/{id}/burn-series", s.sloBurnSeries)
 	mux.HandleFunc("POST   /api/slos",            auth.RequireAnyRole(editorRoles, s.createSLO))
 	mux.HandleFunc("DELETE /api/slos/{id}",       auth.RequireAnyRole(editorRoles, s.deleteSLO))
 
@@ -6316,6 +6317,36 @@ func (s *Server) sloStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.store.ComputeSLOStatus(r.Context(), *o)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, st)
+}
+
+// sloBurnSeries serves the per-day burn-rate timeseries that
+// drives the /slos sparkline (v0.5.150). Cached 60s on (id, days)
+// — sparkline doesn't need real-time accuracy and the GROUP BY
+// over a 7d service-slice is cheap but not free.
+func (s *Server) sloBurnSeries(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	days := parseInt(r.URL.Query().Get("days"), 7)
+	key := fmt.Sprintf("slo-burn-series:%s:%d", id, days)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		o, err := s.store.GetSLO(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		if o == nil {
+			return nil, fmt.Errorf("slo not found")
+		}
+		series, err := s.store.ComputeSLOBurnSeries(r.Context(), *o, days)
+		if err != nil {
+			return nil, err
+		}
+		if series == nil {
+			series = []chstore.BurnPoint{}
+		}
+		return map[string]any{
+			"series": series,
+			"days":   days,
+		}, nil
+	})
 }
 
 func (s *Server) createSLO(w http.ResponseWriter, r *http.Request) {

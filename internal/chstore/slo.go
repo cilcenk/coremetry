@@ -156,6 +156,86 @@ func (s *Store) ComputeSLOStatus(ctx context.Context, o SLO) (*SLOStatus, error)
 	return st, nil
 }
 
+// BurnPoint is one bucket of the per-day burn-rate timeseries
+// surfaced as a sparkline on the /slos overview (v0.5.150).
+// Time is the bucket-start (UTC, day granularity for a 7d view).
+// BurnRate is (1-SLI_bucket)/(1-target) — same definition as
+// SLOStatus.BurnRate, just over the day instead of the SLO's
+// rolling window.
+type BurnPoint struct {
+	Time     int64   `json:"time"`     // unix ns, bucket start
+	Total    uint64  `json:"total"`
+	Good     uint64  `json:"good"`
+	BurnRate float64 `json:"burnRate"` // >1 = eating budget faster than allowed
+}
+
+// ComputeSLOBurnSeries returns a per-day burn-rate timeseries
+// over the past `days` days. Used by the SLO list page to
+// render a sparkline next to each row so the operator can spot
+// "this SLO has been eroding for the last 3 days" without
+// opening the detail view. Day granularity is enough for a 7-30
+// day picture; tighter granularity would just add noise to the
+// thumb-sized chart.
+func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]BurnPoint, error) {
+	if o.Service == "" {
+		return nil, fmt.Errorf("slo service is required")
+	}
+	if days <= 0 || days > 90 {
+		days = 7
+	}
+	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+
+	var goodExpr string
+	switch o.SLIType {
+	case SLITypeAvailability:
+		goodExpr = "countIf(status_code != 'error')"
+	case SLITypeLatency:
+		goodExpr = fmt.Sprintf("countIf(duration <= %f)", o.ThresholdMs*1e6)
+	default:
+		return nil, fmt.Errorf("unknown sli_type: %s", o.SLIType)
+	}
+	q := `
+		SELECT toStartOfDay(time)            AS bucket,
+		       count()                       AS total,
+		       ` + goodExpr + `              AS good
+		FROM spans
+		WHERE service_name = ? AND time >= ?`
+	args := []any{o.Service, since}
+	if o.Operation != "" {
+		q += ` AND name = ?`
+		args = append(args, o.Operation)
+	}
+	q += `
+		GROUP BY bucket
+		ORDER BY bucket
+		SETTINGS max_execution_time = 15`
+	rows, err := s.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	budget := 1.0 - o.Target
+	out := []BurnPoint{}
+	for rows.Next() {
+		var bucket time.Time
+		var total, good uint64
+		if err := rows.Scan(&bucket, &total, &good); err != nil {
+			return nil, err
+		}
+		bp := BurnPoint{
+			Time: bucket.UnixNano(),
+			Total: total, Good: good,
+		}
+		if total > 0 && budget > 0 {
+			sli := float64(good) / float64(total)
+			used := 1.0 - sli
+			bp.BurnRate = used / budget
+		}
+		out = append(out, bp)
+	}
+	return out, rows.Err()
+}
+
 // ComputeSLOBurnRate calculates the burn rate over a SHORT
 // look-back window — used by the 2-window burn-rate alarm
 // pattern (Google SRE Workbook). The status method above runs

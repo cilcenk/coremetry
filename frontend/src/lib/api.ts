@@ -880,6 +880,13 @@ export const api = {
   listSLOs: () => get<SLORow[] | null>('/api/slos'),
   getSLO:   (id: string) => get<SLO>(`/api/slos/${id}`),
   sloStatus: (id: string) => get<SLOStatus>(`/api/slos/${id}/status`),
+  // Per-day burn-rate timeseries — drives the sparkline on
+  // /slos (v0.5.150). 60s server cache.
+  sloBurnSeries: (id: string, days = 7) =>
+    get<{
+      series: Array<{ time: number; total: number; good: number; burnRate: number }>;
+      days: number;
+    }>(`/api/slos/${id}/burn-series?days=${days}`),
   createSLO: (o: Omit<SLO, 'id' | 'createdAt'>) =>
     request<SLO>('/api/slos', {
       method: 'POST',

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
+import { useAuth } from '@/components/AuthProvider';
 import {
   useAlertRules,
   useCreateAlertRule, useUpdateAlertRule,
@@ -10,6 +11,18 @@ import {
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
 import type { AlertRule, NoisyRule, TimeRange } from '@/lib/types';
+
+// User-saved presets (v0.5.157) — same shape as the built-in
+// TEMPLATES but persisted server-side via saved_views (page='
+// alert-template'). The queryString column holds the draft as
+// JSON; reusing the existing saved-views table avoids inventing
+// a new persistence path.
+type UserPreset = {
+  id: string;
+  name: string;
+  shared: boolean;
+  draft: Partial<AlertRule>;
+};
 
 const METRICS = [
   { v: 'error_rate',   label: 'Error rate (%)' },
@@ -87,10 +100,66 @@ const TEMPLATES: { id: string; label: string; description: string; draft: Partia
 ];
 
 export default function AlertsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
   const [services, setServices] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [draft, setDraft] = useState<Partial<AlertRule>>(emptyDraft);
+  // User-saved presets (v0.5.157). Loaded once per mount; mutations
+  // re-fetch eagerly so the strip stays accurate without polling.
+  const [presets, setPresets] = useState<UserPreset[]>([]);
+  const reloadPresets = () => {
+    if (!user) { setPresets([]); return; }
+    api.savedViews('alert-template')
+      .then(rows => setPresets((rows ?? []).flatMap(v => {
+        // queryString holds JSON.stringify(draft). Malformed
+        // payloads (manual CH tampering, schema drift) collapse
+        // to a dropped entry rather than breaking the whole strip.
+        try {
+          const draft = JSON.parse(v.queryString) as Partial<AlertRule>;
+          return [{ id: v.id, name: v.name, shared: v.ownerId === '', draft }];
+        } catch { return []; }
+      })))
+      .catch(() => setPresets([]));
+  };
+  useEffect(() => { reloadPresets(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user]);
+  const saveAsPreset = async () => {
+    if (!user) {
+      alert('Sign in to save presets.');
+      return;
+    }
+    const name = window.prompt('Save preset as:', draft.name || '');
+    if (!name) return;
+    const wantShared = isAdmin
+      && window.confirm(`Save "${name}" as a team-shared preset?\n\nOK = visible to everyone in the org\nCancel = personal only`);
+    try {
+      // Strip the per-rule `service` field so the preset is
+      // reusable across services. The operator can re-pick a
+      // service after loading. Everything else (thresholds,
+      // dampening, severity, runbook) carries through.
+      const { service: _svc, id: _id, builtIn: _bi, enabled: _en, ...templateDraft } = draft;
+      void _svc; void _id; void _bi; void _en;
+      await api.createSavedView({
+        name,
+        page: 'alert-template',
+        queryString: JSON.stringify(templateDraft),
+        shared: wantShared,
+      });
+      reloadPresets();
+    } catch (e) {
+      alert('Failed to save preset: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+  const deletePreset = async (id: string) => {
+    if (!confirm('Delete this preset?')) return;
+    try {
+      await api.deleteSavedView(id);
+      reloadPresets();
+    } catch (e) {
+      alert('Failed to delete preset: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
   // Non-null while editing — `id` of the row we're editing. Drives the
   // form's "Update" vs "Save" copy and decides between PUT and POST on
   // submit.
@@ -404,6 +473,46 @@ export default function AlertsPage() {
                     </button>
                   ))}
                 </div>
+                {presets.length > 0 && (
+                  <>
+                    <div style={{
+                      fontSize: 11, color: 'var(--text2)',
+                      fontWeight: 600, letterSpacing: '0.5px',
+                      textTransform: 'uppercase', margin: '10px 0 6px',
+                    }}>
+                      My presets
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {presets.map(p => (
+                        <span key={p.id} style={{
+                          display: 'inline-flex', alignItems: 'center',
+                          gap: 4, padding: '4px 4px 4px 10px',
+                          borderRadius: 14,
+                          background: 'var(--bg2)',
+                          border: '1px solid var(--border)',
+                          fontSize: 11,
+                        }}>
+                          <button type="button" onClick={() => setDraft({ ...emptyDraft, ...p.draft })}
+                            title={`Load preset · ${p.shared ? 'shared with team' : 'personal'}`}
+                            style={{
+                              background: 'transparent', border: 'none',
+                              padding: 0, color: 'inherit', cursor: 'pointer',
+                              fontSize: 11,
+                            }}>
+                            {p.shared ? '◍ ' : '★ '}{p.name}
+                          </button>
+                          <button type="button" onClick={() => deletePreset(p.id)}
+                            title="Delete preset"
+                            style={{
+                              background: 'transparent', border: 'none',
+                              padding: '0 6px', color: 'var(--err)',
+                              cursor: 'pointer', fontSize: 12,
+                            }}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
@@ -495,6 +604,15 @@ export default function AlertsPage() {
             </div>
             <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
               <button onClick={save}>{editingId ? 'Update rule' : 'Save rule'}</button>
+              {!editingId && (
+                <button type="button" className="sec" onClick={saveAsPreset}
+                  disabled={!draft.metric}
+                  title={isAdmin
+                    ? 'Save this draft as a reusable preset — admins can share with the team'
+                    : 'Save this draft as a personal preset'}>
+                  ★ Save as preset
+                </button>
+              )}
               {editingId && (
                 <span style={{ fontSize: 11, color: 'var(--text3)' }}>
                   Editing <code>{editingId}</code>

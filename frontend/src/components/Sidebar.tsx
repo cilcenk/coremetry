@@ -34,10 +34,20 @@ type NavGroup = {
 // of the eye), then the services / signals they investigate
 // with, then the meta-operations (alerts, admin).
 const NAV_GROUPS: NavGroup[] = [
+  // Inbox lives ungrouped above everything else (v0.5.214) —
+  // it's the daily landing surface for "anything needing a
+  // human", so it shouldn't sit inside the Triage group with
+  // the per-source drill-down pages. Empty titleKey suppresses
+  // the heading.
+  {
+    titleKey: '',
+    items: [
+      { href: '/inbox',     label: 'nav.inbox',     icon: '📥' },
+    ],
+  },
   {
     titleKey: 'navGroup.triage',
     items: [
-      { href: '/inbox',     label: 'nav.inbox',     icon: '📥' },
       { href: '/incidents', label: 'nav.incidents', icon: '⚠' },
       { href: '/problems',  label: 'nav.problems',  icon: '!' },
       { href: '/anomalies', label: 'nav.anomalies', icon: '⚠' },
@@ -281,15 +291,19 @@ export function Sidebar() {
           )}
         </div>
         <div id="nav">
-          {NAV_GROUPS.map(group => {
+          {NAV_GROUPS.map((group, idx) => {
             const items = group.items.filter(n => !n.adminOnly || user?.role === 'admin');
             if (items.length === 0) return null;
             // Active route auto-expands its group so the operator
             // never loses the highlight when navigating.
             const groupActive = items.some(n => isActive(pathname, n.href));
             const isOpen = expandedGroups.has(group.titleKey) || groupActive;
+            // Ungrouped sections (empty titleKey) reuse the
+            // index for the React key so multiple ungrouped
+            // blocks don't collide.
+            const key = group.titleKey || `_ungrouped:${idx}`;
             return (
-              <NavGroupBlock key={group.titleKey}
+              <NavGroupBlock key={key}
                 titleKey={group.titleKey}
                 items={items}
                 isOpen={isOpen}
@@ -409,6 +423,24 @@ function NavGroupBlock({
             <span className="icon">{n.icon}</span>
             {n.href === '/problems' && openProblems > 0 && (
               <span className="nav-dot" title={`${openProblems} open problems`} />
+            )}
+          </Link>
+        ))}
+      </>
+    );
+  }
+  // Empty titleKey = ungrouped (no header, no chevron, always
+  // expanded). v0.5.214 lifts Inbox out of Triage to top-level.
+  if (titleKey === '') {
+    return (
+      <>
+        {items.map(n => (
+          <Link key={n.href} to={n.href}
+            className={isActive(pathname, n.href) ? 'active' : ''}>
+            <span className="icon">{n.icon}</span>
+            <span className="nav-label">{t(n.label)}</span>
+            {n.href === '/problems' && openProblems > 0 && (
+              <span className="nav-badge">{openProblems}</span>
             )}
           </Link>
         ))}

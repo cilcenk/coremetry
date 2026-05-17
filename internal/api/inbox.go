@@ -34,6 +34,15 @@ type InboxItem struct {
 	StartedAt      int64    `json:"startedAt"`       // unix ns
 	LastSeen       int64    `json:"lastSeen"`        // unix ns; for problems == StartedAt
 	Assignee       string   `json:"assignee,omitempty"`
+	// OwnerTeam + SRETeam attached server-side from
+	// service_metadata so the inbox can render team chips
+	// without each row firing a per-service lookup. Empty when
+	// no catalog row exists for the service. OwnerTeam mirrors
+	// what's auto-set on Problem.Assignee at open time;
+	// surfacing it on every row (even exceptions / anomalies)
+	// keeps the column meaningful across kinds.
+	OwnerTeam      string   `json:"ownerTeam,omitempty"`
+	SRETeam        string   `json:"sreTeam,omitempty"`
 	Status         string   `json:"status"`          // open | acknowledged | resolved (problems);
 	                                                  // open | regressed (exceptions); active | cleared (anomalies)
 	Clusters       []string `json:"clusters,omitempty"`
@@ -134,6 +143,26 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			items = append(items, anomalyToInbox(e))
+		}
+
+		// Team enrichment — one batch lookup over the service
+		// catalog covers every row. Cheap (catalog is small,
+		// cached upstream), and means we don't fire a per-row
+		// GetServiceMetadata call. Empty values leave the chip
+		// off in the UI.
+		mdMap, _ := s.store.ListServiceMetadata(ctx)
+		if len(mdMap) > 0 {
+			for i := range items {
+				if items[i].Service == "" {
+					continue
+				}
+				md, ok := mdMap[items[i].Service]
+				if !ok {
+					continue
+				}
+				items[i].OwnerTeam = md.OwnerTeam
+				items[i].SRETeam = md.SRETeam
+			}
 		}
 
 		// Stable rank: priority desc, then most-recent-activity.

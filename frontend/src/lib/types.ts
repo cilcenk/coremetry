@@ -501,6 +501,11 @@ export interface InboxItem {
   startedAt: number;
   lastSeen: number;
   assignee?: string;
+  // Team chips from service_metadata. OwnerTeam = product
+  // owners (auto-assigned on Problem open), SRETeam = on-call
+  // group. Either / both can be empty when no catalog row.
+  ownerTeam?: string;
+  sreTeam?: string;
   status: string;
   clusters?: string[];
   problem?: {

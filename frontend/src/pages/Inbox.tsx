@@ -237,6 +237,32 @@ export default function InboxPage() {
                         style={{ fontWeight: 600 }}>
                         {it.service || <span style={{ color: 'var(--text3)' }}>(none)</span>}
                       </Link>
+                      {(it.ownerTeam || it.sreTeam) && (
+                        <div style={{ marginTop: 2, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {it.ownerTeam && (
+                            <span title="Owner team (service catalog)"
+                              style={{
+                                fontSize: 10, padding: '1px 6px', borderRadius: 10,
+                                background: 'rgba(56,139,253,0.08)',
+                                border: '1px solid rgba(56,139,253,0.25)',
+                                color: 'var(--accent2)', whiteSpace: 'nowrap',
+                              }}>
+                              👥 {it.ownerTeam}
+                            </span>
+                          )}
+                          {it.sreTeam && (
+                            <span title="SRE / on-call team (service catalog)"
+                              style={{
+                                fontSize: 10, padding: '1px 6px', borderRadius: 10,
+                                background: 'rgba(168,85,247,0.08)',
+                                border: '1px solid rgba(168,85,247,0.30)',
+                                color: 'var(--accent2)', whiteSpace: 'nowrap',
+                              }}>
+                              🛡 {it.sreTeam}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <div style={{ fontWeight: 600, marginBottom: 2 }}>{it.title}</div>

@@ -110,10 +110,16 @@ export default function LoginPage() {
                 marginTop: 12,
                 display: 'inline-flex', alignItems: 'center', gap: 8,
               }}>
-                <TelescopeIcon size={22} />
+                {/* v0.5.196 — OTel mark moved to the RIGHT of
+                    the Coremetry wordmark per operator
+                    request. Mirrors the way Anthropic /
+                    OpenTelemetry co-branded layouts read in
+                    most marketing surfaces: product name
+                    first, attribution mark trailing. */}
                 <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: '0.5px' }}>
                   Coremetry
                 </span>
+                <TelescopeIcon size={22} />
               </div>
             </>
           ) : (
@@ -246,11 +252,11 @@ export default function LoginPage() {
 
         {/* Build version — only rendered once /api/version answers, so
             the form doesn't reflow during initial paint. The
-            "· powered by OpenTelemetry" tag is non-removable
-            even with custom branding — it's an acknowledgement
-            of the open standard Coremetry is built on, not a
-            vendor watermark, so the branding override leaves
-            it intact. */}
+            "OpenTelemetry-native platform" tag stays even with
+            a custom brand override — it positions Coremetry
+            as native to the open standard, not a vendor
+            attribution watermark (v0.5.196 — changed from the
+            earlier "powered by" framing per operator request). */}
         {version && (
           <div style={{
             marginTop: 18, textAlign: 'center',
@@ -260,12 +266,13 @@ export default function LoginPage() {
           }}>
             {brand.appName} {version}
             <span style={{ marginLeft: 6, color: 'var(--text3)' }}>
-              · powered by{' '}
+              · an{' '}
               <a href="https://opentelemetry.io"
                  target="_blank" rel="noopener"
                  style={{ color: 'var(--accent2)', textDecoration: 'none' }}>
                 OpenTelemetry
               </a>
+              -native platform
             </span>
           </div>
         )}

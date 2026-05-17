@@ -191,18 +191,20 @@ export default function SlowQueriesPage() {
                             }}>{r.sampleStatement}</pre>
                             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
                               <Link to={(() => {
-                                // v0.5.195 — previously this link
-                                // emitted ?db.statement=… which
-                                // Traces.tsx ignored (it only reads
-                                // the structured `filters` JSON
-                                // param). Encode a real LIKE filter
-                                // chip so the destination page
-                                // applies it on mount.
+                                // v0.5.200 — also disable rootOnly so
+                                // the filter actually returns rows.
+                                // Root spans are typically the
+                                // incoming HTTP request and don't
+                                // carry db.statement; the DB span is
+                                // a CHILD span. With rootOnly=true
+                                // (default) the LIKE matched zero
+                                // rows. Earlier v0.5.195 encoded a
+                                // proper FilterExpr but missed this.
                                 const snippet = r.sampleStatement.slice(0, 60);
                                 const f = encodeFilters([
                                   { k: 'db.statement', op: 'LIKE', v: [snippet] },
                                 ]);
-                                return `/traces?view=list&service=${encodeURIComponent(r.service)}&filters=${encodeURIComponent(f)}`;
+                                return `/traces?view=list&rootOnly=false&service=${encodeURIComponent(r.service)}&filters=${encodeURIComponent(f)}`;
                               })()}>
                                 Search traces with this query →
                               </Link>

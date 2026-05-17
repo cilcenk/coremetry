@@ -927,6 +927,15 @@ export interface Problem {
   //   • email of an operator after manual claim
   // Empty = unassigned.
   assignee?: string;
+  // Priority bucket (v0.5.210) — computed at read time from
+  // severity + breach magnitude + deploy proximity. P1 = handle
+  // now, P2 = handle today, P3 = handle when convenient. UI
+  // filter defaults to "P1 + P2 only" so the inbox surfaces
+  // signal first. priorityReason is the short string that
+  // explains the bucket pick ("critical + deploy 4m before",
+  // "2.5x threshold").
+  priority?: 'P1' | 'P2' | 'P3';
+  priorityReason?: string;
   startedAt: number;
   resolvedAt?: number;
   // k8s/openshift clusters the firing service was active in

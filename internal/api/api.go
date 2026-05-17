@@ -6479,6 +6479,13 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// causal chains stay invisible to keep the signal
 		// strong.
 		probs = s.store.EnrichProblemsWithDeploys(r.Context(), probs, 30*time.Minute)
+		// Priority bucket (v0.5.210) — pure function over the
+		// already-enriched values, no CH round-trip. Runs last
+		// so it can read RecentDeploy + value/threshold +
+		// status in their final form. Recomputed on every read
+		// so a worsening metric or fresh deploy reranks
+		// instantly without rewriting the problems row.
+		probs = chstore.EnrichProblemsWithPriority(probs)
 		return probs, nil
 	})
 }

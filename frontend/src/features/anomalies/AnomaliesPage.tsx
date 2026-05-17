@@ -41,10 +41,12 @@ const NATURAL_DIR: Record<SortKey, SortDir> = {
 
 // Problems-specific sort + severity ordering — kept separate from the
 // exception inbox table because the columns don't overlap.
-type PSortKey = 'severity' | 'service' | 'metric' | 'value' | 'rule' | 'started' | 'status';
+type PSortKey = 'priority' | 'severity' | 'service' | 'metric' | 'value' | 'rule' | 'started' | 'status';
 const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
+// P1 ranks above P2 ranks above P3 (lower number = more urgent).
+const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
 const P_NATURAL_DIR: Record<PSortKey, SortDir> = {
-  severity: 'desc', service: 'asc', metric: 'asc',
+  priority: 'desc', severity: 'desc', service: 'asc', metric: 'asc',
   value: 'desc', rule: 'asc', started: 'desc', status: 'asc',
 };
 
@@ -377,7 +379,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const { user } = useAuth();
   const currentUserEmail = user?.email ?? '';
   const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>('open');
-  const [sortBy, setSortBy] = useState<PSortKey>('started');
+  const [sortBy, setSortBy] = useState<PSortKey>('priority');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Triage drawer state — id of the problem currently shown
   // in the right-side panel. Replaces the v0.5.x inline "Why?"
@@ -417,6 +419,32 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     } catch { /* ignore */ }
     return new Set(['critical', 'warning', 'info']);
   });
+  // Priority filter — defaults to P1+P2 so the operator's inbox
+  // surfaces signal first. P3 (steady warnings) is one click
+  // away. Persisted alongside the severity set.
+  const [prioSet, setPrioSet] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('problems.prio');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
+      }
+    } catch { /* ignore */ }
+    return new Set(['P1', 'P2']);
+  });
+  const togglePrio = (p: string) => {
+    setPrioSet(prev => {
+      const next = new Set(prev);
+      if (next.has(p)) {
+        if (next.size === 1) return prev;
+        next.delete(p);
+      } else {
+        next.add(p);
+      }
+      try { localStorage.setItem('problems.prio', JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const toggleSev = (s: string) => {
     setSevSet(prev => {
       const next = new Set(prev);
@@ -453,11 +481,26 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
 
   const sorted = useMemo(() => {
     if (!data) return data;
-    // Apply severity-chip filter before sort so the visible
-    // row count under the chips matches what's rendered.
-    const filtered = data.filter(p => sevSet.has(p.severity));
+    // Apply severity + priority chip filters before sort so
+    // the visible row count under the chips matches what's
+    // rendered.
+    const filtered = data.filter(p =>
+      sevSet.has(p.severity) &&
+      prioSet.has(p.priority ?? 'P3'));
     const cmp = (a: Problem, b: Problem): number => {
       switch (sortBy) {
+        case 'priority': {
+          const ra = PRIO_RANK[a.priority ?? 'P3'] ?? 0;
+          const rb = PRIO_RANK[b.priority ?? 'P3'] ?? 0;
+          if (ra !== rb) return ra - rb;
+          // Same priority bucket — break ties by severity then
+          // by start time so the operator gets a stable order
+          // within a bucket.
+          const sa = SEV_RANK[a.severity] ?? 0;
+          const sb = SEV_RANK[b.severity] ?? 0;
+          if (sa !== sb) return sa - sb;
+          return a.startedAt - b.startedAt;
+        }
         case 'severity': return (SEV_RANK[a.severity] ?? 0) - (SEV_RANK[b.severity] ?? 0);
         case 'service':  return a.service.localeCompare(b.service);
         case 'metric':   return a.metric.localeCompare(b.metric);
@@ -469,7 +512,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     };
     const arr = [...filtered].sort(cmp);
     return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [data, sortBy, sortDir, sevSet]);
+  }, [data, sortBy, sortDir, sevSet, prioSet]);
 
   // Counts per severity for the chip labels — operator sees
   // "critical (3)" instead of guessing how many would land.
@@ -544,6 +587,34 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             );
           })}
         </div>
+        {/* Priority chip filter (v0.5.210) — defaults to P1+P2
+            so the operator's first paint is signal, not noise.
+            Click P3 to widen. Counts reflect the unfiltered set. */}
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['P1', 'P2', 'P3'] as const).map(pp => {
+            const on = prioSet.has(pp);
+            const count = data?.filter(d => (d.priority ?? 'P3') === pp).length ?? 0;
+            const colour = pp === 'P1' ? 'var(--err)'
+                        : pp === 'P2' ? 'var(--warn, #facc15)'
+                        : 'var(--text3)';
+            return (
+              <button key={pp} onClick={() => togglePrio(pp)}
+                title={on ? `Hide ${pp}` : `Show ${pp}`}
+                style={{
+                  all: 'unset', cursor: 'pointer',
+                  fontSize: 11, padding: '2px 8px', borderRadius: 12,
+                  fontFamily: 'ui-monospace, monospace',
+                  border: `1px solid ${on ? colour : 'var(--border)'}`,
+                  background: on ? colour : 'transparent',
+                  color: on ? 'var(--bg)' : 'var(--text3)',
+                  fontWeight: on ? 700 : 400,
+                  letterSpacing: 0.4,
+                }}>
+                {pp} ({count})
+              </button>
+            );
+          })}
+        </div>
         <Link to="/alerts" className="sec" style={{
           marginLeft: 'auto', textDecoration: 'none', padding: '5px 12px',
           border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text)',
@@ -610,6 +681,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                     onClick={e => e.stopPropagation()}
                     title="Select all visible" />
                 </th>
+                <PSortTh col="priority" label="Priority" sort={sortBy} dir={sortDir} onSort={toggleSort} />
                 <PSortTh col="severity" label="Severity" sort={sortBy} dir={sortDir} onSort={toggleSort} />
                 <PSortTh col="service"  label="Service"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
                 <PSortTh col="metric"   label="Metric"   sort={sortBy} dir={sortDir} onSort={toggleSort} />
@@ -640,6 +712,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             });
                           }} />
                       </td>
+                      <td><PriorityBadge p={p.priority} reason={p.priorityReason} /></td>
                       <td><SeverityBadge s={p.severity} /></td>
                       <td>
                         <Link to={`/service?name=${encodeURIComponent(p.service)}`}
@@ -970,6 +1043,32 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
 function SeverityBadge({ s }: { s: string }) {
   const cls = s === 'critical' ? 'b-err' : s === 'warning' ? 'b-warn' : 'b-info';
   return <span className={`badge ${cls}`}>{s.toUpperCase()}</span>;
+}
+
+// PriorityBadge — v0.5.210 triage column. P1 / P2 / P3 pill with
+// a colour that matches the urgency stack (red/amber/grey).
+// `reason` flows into the title attribute so an operator can
+// hover and see WHY the bucket was picked ("critical + deploy
+// 4m before") — the blend formula is transparent, not magic.
+function PriorityBadge({ p, reason }: { p?: 'P1' | 'P2' | 'P3'; reason?: string }) {
+  if (!p) return <span style={{ color: 'var(--text3)' }}>—</span>;
+  const palette = p === 'P1'
+    ? { bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.55)', color: 'var(--err)' }
+    : p === 'P2'
+      ? { bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.45)', color: 'var(--warn, #facc15)' }
+      : { bg: 'rgba(148,163,184,0.10)', border: 'rgba(148,163,184,0.30)', color: 'var(--text3)' };
+  return (
+    <span
+      title={reason ? `${p} — ${reason}` : p}
+      style={{
+        padding: '2px 8px', borderRadius: 12,
+        fontSize: 11, fontWeight: 700,
+        background: palette.bg, border: `1px solid ${palette.border}`,
+        color: palette.color, whiteSpace: 'nowrap',
+      }}>
+      {p}
+    </span>
+  );
 }
 
 // SamplesPanel — fetches recent occurrences for the group and lists them

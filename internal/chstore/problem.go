@@ -94,6 +94,23 @@ type Problem struct {
 	// stored on the problems table) — the deploy might be
 	// confirmed retroactively after the row was written.
 	RecentDeploy *RecentDeploy `json:"recentDeploy,omitempty"`
+	// Priority (v0.5.210) — computed at read time from severity +
+	// breach magnitude + deploy proximity. Three buckets:
+	//   • P1 — handle now (critical + significant overshoot
+	//     OR critical + just deployed). Top of the triage queue.
+	//   • P2 — handle today (criticals at minor overshoot, OR
+	//     warnings hit by recent deploy / 2x threshold breach).
+	//   • P3 — handle when convenient (steady warnings, info-
+	//     level rules). Filterable out of the default view.
+	// Not stored on the problems table — recomputed every read
+	// so a fresh deploy or a worsening value flips the bucket
+	// without requiring a re-write of the row.
+	Priority     string        `json:"priority,omitempty"`
+	// PriorityReason — short human string explaining the bucket
+	// pick ("critical + deploy 4m before", "2.5x threshold").
+	// Driven by the same logic that sets Priority; surfaces in
+	// the UI tooltip so the rule is auditable, not magic.
+	PriorityReason string      `json:"priorityReason,omitempty"`
 }
 
 // RecentDeploy is the compact deploy signal attached to a
@@ -104,6 +121,98 @@ type RecentDeploy struct {
 	Version    string `json:"version"`
 	TimeUnixNs int64  `json:"timeUnixNs"`
 	AgeSeconds int64  `json:"ageSeconds"`
+}
+
+// EnrichProblemsWithPriority computes the P1/P2/P3 triage bucket
+// for every problem in the slice. Pure function over already-
+// loaded fields — no CH round-trip — so this is the last step
+// in the enrichment chain and runs against the post-runbook /
+// cluster / deploy values. Doesn't mutate stored rows; the
+// bucket lives only on the wire so a worsening metric or a
+// fresh deploy flips the rank on the next read.
+//
+// Blend formula (transparent on purpose — operator sees it in
+// PriorityReason and can argue with it):
+//
+//   P1 (drop-everything) when ANY of:
+//     • severity = critical AND value ≥ 2x threshold     (significant breach)
+//     • severity = critical AND deploy ≤ 5min ago        (post-deploy critical)
+//     • severity = critical AND open ≥ 4h                (stale critical)
+//
+//   P2 (today) when ANY of:
+//     • severity = critical                              (criticals default to P2)
+//     • severity = warning  AND value ≥ 2x threshold     (significant warning)
+//     • severity = warning  AND deploy ≤ 5min ago        (post-deploy warning)
+//
+//   P3 otherwise — steady warnings, info-level rules.
+//
+// "Value above threshold" only makes sense when comparator is
+// >= / >; for < comparators we use the inverse ratio. info
+// severity always pins to P3.
+//
+// Reason string is the FIRST trigger that fired — so the
+// tooltip surfaces the most relevant signal (e.g. "deploy 4m
+// ago" beats "1.8x threshold" when both apply, because the
+// former is the more actionable correlate).
+func EnrichProblemsWithPriority(problems []Problem) []Problem {
+	now := time.Now().UnixNano()
+	for i := range problems {
+		p := &problems[i]
+		p.Priority, p.PriorityReason = computePriority(*p, now)
+	}
+	return problems
+}
+
+func computePriority(p Problem, nowNs int64) (string, string) {
+	sev := p.Severity
+	if sev == "info" {
+		return "P3", "info"
+	}
+
+	// Breach magnitude. If threshold is 0 we can't compute a
+	// ratio — fall back to severity alone.
+	bigBreach := false
+	if p.Threshold != 0 {
+		ratio := p.Value / p.Threshold
+		// For "<" or "<=" rules (e.g. uptime fell below 99%),
+		// the value drops as things get worse — flip the
+		// ratio.
+		if ratio < 1 && ratio > 0 {
+			ratio = 1 / ratio
+		}
+		if ratio >= 2 {
+			bigBreach = true
+		}
+	}
+
+	postDeploy := p.RecentDeploy != nil && p.RecentDeploy.AgeSeconds > 0 && p.RecentDeploy.AgeSeconds <= 5*60
+
+	// Stale-critical: still open after 4h of operator inactivity.
+	openHours := float64(nowNs-p.StartedAt) / float64(time.Hour)
+	staleCritical := p.Status != "resolved" && openHours >= 4
+
+	if sev == "critical" {
+		switch {
+		case postDeploy:
+			return "P1", fmt.Sprintf("critical + deploy %ds before", p.RecentDeploy.AgeSeconds)
+		case bigBreach:
+			return "P1", fmt.Sprintf("critical + %.1fx threshold", p.Value/p.Threshold)
+		case staleCritical:
+			return "P1", fmt.Sprintf("critical open %.1fh", openHours)
+		default:
+			return "P2", "critical"
+		}
+	}
+
+	// severity = warning
+	switch {
+	case postDeploy:
+		return "P2", fmt.Sprintf("warning + deploy %ds before", p.RecentDeploy.AgeSeconds)
+	case bigBreach:
+		return "P2", fmt.Sprintf("warning + %.1fx threshold", p.Value/p.Threshold)
+	default:
+		return "P3", "warning steady"
+	}
 }
 
 // EnrichProblemsWithClusters fills each problem's Clusters

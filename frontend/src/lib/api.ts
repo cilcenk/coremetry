@@ -406,6 +406,13 @@ export const api = {
     get<import('./types').AIStats>(`/api/ai/stats?${qs(params)}`),
   aiSeries: (params: { from?: number; to?: number }) =>
     get<import('./types').AICallsTimePoint[]>(`/api/ai/series?${qs(params)}`),
+  aiRates: () =>
+    get<Record<string, import('./types').AIRate>>(`/api/ai/rates`),
+  putAIRates: (rates: Record<string, import('./types').AIRate>) =>
+    request<Record<string, import('./types').AIRate>>(`/api/ai/rates`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rates),
+    }),
 
   // Saved views (per-user named filter combos).
   savedViews: (page: string) =>

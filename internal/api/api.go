@@ -316,6 +316,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/ai/calls/{id}", auth.RequireRole(auth.RoleAdmin, s.getAICall))
 	mux.HandleFunc("GET /api/ai/stats",      auth.RequireRole(auth.RoleAdmin, s.aiStats))
 	mux.HandleFunc("GET /api/ai/series",     auth.RequireRole(auth.RoleAdmin, s.aiSeries))
+	mux.HandleFunc("GET /api/ai/rates",      auth.RequireRole(auth.RoleAdmin, s.getAIRates))
+	mux.HandleFunc("PUT /api/ai/rates",      auth.RequireRole(auth.RoleAdmin, s.putAIRates))
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────

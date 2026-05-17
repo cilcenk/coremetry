@@ -7,6 +7,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,6 +17,73 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
+
+// AIRate is the per-model price quote used by the /ai cost
+// estimate (v0.5.167). USD per 1M tokens, separately for input
+// and output. Stored as a JSON blob in system_settings["ai.rates"]
+// so admins can override the bundled defaults without code change.
+// Local-model endpoints (Ollama, vLLM, LM Studio) should
+// configure 0/0 — that's the default shape for any model not
+// in the table.
+type AIRate struct {
+	InputPer1M  float64 `json:"inputPer1M"`
+	OutputPer1M float64 `json:"outputPer1M"`
+}
+
+// aiRatesKey persists per-model price overrides keyed by the
+// model string Copilot reports (gpt-4o-mini, claude-sonnet-4-6,
+// llama3.1:8b, etc.). Operator-set entries win over the bundled
+// table. Frontend reads this on the /ai page to compute cost
+// at render time.
+const aiRatesKey = "ai.rates"
+
+// getAIRates returns the operator-set rate overrides (may be
+// empty). UI merges with bundled defaults client-side so a new
+// install shows reasonable estimates immediately.
+func (s *Server) getAIRates(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.store.GetSetting(r.Context(), aiRatesKey)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out := map[string]AIRate{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &out); err != nil {
+			// Corrupt blob — fall back to empty rather than error,
+			// the operator can re-save from the UI.
+			out = map[string]AIRate{}
+		}
+	}
+	writeJSON(w, out)
+}
+
+// putAIRates replaces the entire rate map. Empty map is valid
+// (resets to bundled defaults).
+func (s *Server) putAIRates(w http.ResponseWriter, r *http.Request) {
+	var body map[string]AIRate
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	// Drop entries with both rates zero — that's just the
+	// default-zero state and clutters the persisted blob.
+	cleaned := map[string]AIRate{}
+	for k, v := range body {
+		k = strings.TrimSpace(k)
+		if k == "" || (v.InputPer1M == 0 && v.OutputPer1M == 0) {
+			continue
+		}
+		cleaned[k] = v
+	}
+	raw, _ := json.Marshal(cleaned)
+	if err := s.store.PutSetting(r.Context(), aiRatesKey, raw); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.audit(r, "settings.ai_rates.update", "settings", "ai.rates",
+		fmt.Sprintf(`{"models":%d}`, len(cleaned)))
+	writeJSON(w, cleaned)
+}
 
 // copilotExplain wraps copilot.Service.Explain with the surface +
 // user metadata that the recorder needs to attribute the call. All

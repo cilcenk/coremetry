@@ -3,6 +3,9 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
+import {
+  type AIRateTable, mergeRates, costForCall, fmtCost,
+} from '@/lib/ai-rates';
 import type {
   AICall, AIStats, AICallsTimePoint, TimeRange,
 } from '@/lib/types';
@@ -26,6 +29,16 @@ export default function AIObservabilityPage() {
   const [provider, setProvider] = useState('');
   const [status, setStatus] = useState('');
   const [open, setOpen] = useState<AICall | null>(null);
+  const [rates, setRates] = useState<AIRateTable>(() => mergeRates(null));
+
+  // Pull operator-set rate overrides; merge over the bundled
+  // defaults. Done once per mount — rates change infrequently
+  // (manual Settings edits).
+  useEffect(() => {
+    api.aiRates()
+      .then(o => setRates(mergeRates(o)))
+      .catch(() => { /* fall back to bundled */ });
+  }, []);
 
   // Poll every 60s so the page stays close to live for the
   // operator watching deployments. Cheap — the stats query is
@@ -72,7 +85,21 @@ export default function AIObservabilityPage() {
             Check that the Copilot is configured and that ai_calls table exists.
           </Empty>
         )}
-        {stats && (
+        {stats && (() => {
+          // Sum estimated cost across the per-provider breakdown.
+          // Skip models we have no rate for; null total means
+          // every model was unknown — render "—" instead of $0.
+          let totalCost = 0;
+          let anyKnown = false;
+          for (const r of stats.byProvider) {
+            const c = costForCall(rates, r.model, r.inputTokens, r.outputTokens);
+            if (c !== null) {
+              totalCost += c;
+              anyKnown = true;
+            }
+          }
+          const totalCostLabel = anyKnown ? fmtCost(totalCost) : '—';
+          return (
           <>
             <div style={{
               display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
@@ -85,6 +112,7 @@ export default function AIObservabilityPage() {
               <KPI label="P99 latency" value={`${stats.p99DurationMs.toFixed(0)} ms`} />
               <KPI label="Input tokens" value={fmtNum(stats.inputTokens)} />
               <KPI label="Output tokens" value={fmtNum(stats.outputTokens)} />
+              <KPI label="Est cost" value={totalCostLabel} />
               <KPI label="Users" value={fmtNum(stats.distinctUsers)} />
             </div>
 
@@ -110,14 +138,15 @@ export default function AIObservabilityPage() {
                   rows={stats.byProvider.map(r => ({
                     a: `${r.provider} · ${r.model || '—'}`, b: fmtNum(r.calls),
                     c: fmtNum(r.inputTokens) + ' in',
-                    d: fmtNum(r.outputTokens) + ' out',
+                    d: fmtCost(costForCall(rates, r.model, r.inputTokens, r.outputTokens)),
                   }))}
-                  cols={['Provider', 'Calls', 'Input', 'Output']}
+                  cols={['Provider', 'Calls', 'Input tok', 'Est cost']}
                   onPickFirst={v => setProvider(v.split(' · ')[0])} />
               )}
             </div>
           </>
-        )}
+          );
+        })()}
 
         {/* Filter strip */}
         <div className="controls" style={{ marginTop: 18, marginBottom: 8 }}>
@@ -166,10 +195,13 @@ export default function AIObservabilityPage() {
                 <th>Status</th>
                 <th className="num">Duration</th>
                 <th className="num">In / Out tokens</th>
+                <th className="num">Cost</th>
                 <th>User</th>
               </tr></thead>
               <tbody>
-                {calls.map(c => (
+                {calls.map(c => {
+                  const cost = costForCall(rates, c.model, c.inputTokens, c.outputTokens);
+                  return (
                   <tr key={c.id} onClick={() => setOpen(c)}
                     style={{ cursor: 'pointer' }}>
                     <td className="mono" style={{ fontSize: 11 }}>{tsLong(c.createdAt)}</td>
@@ -187,17 +219,22 @@ export default function AIObservabilityPage() {
                     <td className="num mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
                       {c.inputTokens} / {c.outputTokens}
                     </td>
+                    <td className="num mono" style={{
+                      fontSize: 11,
+                      color: cost === null ? 'var(--text3)' : 'var(--text2)',
+                    }}>{fmtCost(cost)}</td>
                     <td style={{ fontSize: 11, color: 'var(--text3)' }}>
                       {c.userEmail || c.userId || '—'}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
 
-        {open && <CallDrawer call={open} onClose={() => setOpen(null)} />}
+        {open && <CallDrawer call={open} rates={rates} onClose={() => setOpen(null)} />}
       </div>
     </>
   );
@@ -303,7 +340,8 @@ function CallsChart({ series }: { series: AICallsTimePoint[] }) {
   );
 }
 
-function CallDrawer({ call, onClose }: { call: AICall; onClose: () => void }) {
+function CallDrawer({ call, rates, onClose }: { call: AICall; rates: AIRateTable; onClose: () => void }) {
+  const cost = costForCall(rates, call.model, call.inputTokens, call.outputTokens);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -340,6 +378,7 @@ function CallDrawer({ call, onClose }: { call: AICall; onClose: () => void }) {
             <Kv k="Time" v={tsLong(call.createdAt)} />
             <Kv k="Input tok" v={String(call.inputTokens)} />
             <Kv k="Output tok" v={String(call.outputTokens)} />
+            <Kv k="Est cost" v={fmtCost(cost)} />
             <Kv k="Prompt chars" v={String(call.promptChars)} />
             <Kv k="Resp chars" v={String(call.responseChars)} />
             <Kv k="User" v={call.userEmail || call.userId || '—'} />

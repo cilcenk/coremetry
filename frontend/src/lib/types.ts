@@ -564,6 +564,15 @@ export interface AIStats {
   byProvider: Array<{ provider: string; model: string; calls: number; inputTokens: number; outputTokens: number }>;
 }
 
+// AI cost rates (v0.5.167). USD per 1M tokens, per model.
+// Bundled defaults live frontend-side (see lib/ai-rates.ts);
+// admins can override via /api/ai/rates which the UI merges
+// over the bundle. Local-model endpoints stay at 0/0 = free.
+export interface AIRate {
+  inputPer1M: number;
+  outputPer1M: number;
+}
+
 export interface AICallsTimePoint {
   time: number;
   calls: number;

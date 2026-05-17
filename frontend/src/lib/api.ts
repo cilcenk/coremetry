@@ -284,9 +284,14 @@ export const api = {
   // FilterBuilder value autocomplete; cached server-side 60s with
   // a Redis fast-path (so 100 SREs opening the picker run 1 CH
   // query, not 100).
-  attributeValues: (key: string, since = '1h', limit = 200) =>
+  // Optional `q` for server-side substring search on the
+  // value (v0.5.182). Without it the picker is stuck on the
+  // top-200 by count; with it, an operator hunting a long-tail
+  // value (specific http.url, db.statement fragment) can find
+  // it without scrolling.
+  attributeValues: (key: string, since = '1h', limit = 200, q?: string) =>
     get<{ value: string; count: number }[] | null>(
-      `/api/attribute-values?key=${encodeURIComponent(key)}&since=${since}&limit=${limit}`),
+      `/api/attribute-values?${qs({ key, since, limit, q })}`),
   operations: (service: string, r: RangeParams) =>
     get<string[] | null>(`/api/operations?${qs({ ...r, service })}`),
 

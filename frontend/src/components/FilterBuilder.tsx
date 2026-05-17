@@ -135,44 +135,57 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions }: {
   const needsValue = NEEDS_VALUE[local.op];
   const isList = local.op === 'IN' || local.op === 'NOT IN';
 
-  // Live value autocomplete. As soon as the user picks an attribute
-  // key, fetch the top-N observed values (server-cached 60s) and
-  // merge with anything the parent already pre-supplied via
-  // `suggestedValues`. Per-session client cache (keyed by attribute
-  // name) so flipping back and forth between keys doesn't refetch.
-  // Empty / unrecognised keys clear to the static suggestion list.
-  const [liveByKey, setLiveByKey] = useState<Record<string, string[]>>({});
+  // Live value autocomplete. As soon as the operator picks an
+  // attribute key, fetch the top-N observed values (server-
+  // cached 60s) and merge with anything the parent already
+  // pre-supplied via `suggestedValues`.
+  //
+  // v0.5.182 — additionally re-queries with a `q` substring as
+  // the operator types in the value field so a long-tail value
+  // (a specific http.url, db.statement fragment, etc.) becomes
+  // pickable at high cardinality. Empty typed value falls back
+  // to the top-N-by-count default. Debounced 200ms so a fast
+  // typist doesn't fan out N requests per keystroke.
+  const [liveValues, setLiveValues] = useState<string[]>([]);
   const [liveLoading, setLiveLoading] = useState(false);
+  // Substring the operator is currently typing in the value
+  // field. We don't use `local.v[0]` directly because that
+  // double-fires on every keystroke; the debounced effect
+  // mirrors it into a separate state.
+  const typedValue = (local.v[0] ?? '').trim();
   useEffect(() => {
     const k = local.k.trim();
-    if (!k || liveByKey[k] !== undefined) return;
+    if (!k) { setLiveValues([]); return; }
     let cancelled = false;
     setLiveLoading(true);
-    api.attributeValues(k, '1h', 200)
-      .then(rows => {
-        if (cancelled) return;
-        setLiveByKey(prev => ({ ...prev, [k]: (rows ?? []).map(r => r.value) }));
-      })
-      .catch(() => { if (!cancelled) setLiveByKey(prev => ({ ...prev, [k]: [] })); })
-      .finally(() => { if (!cancelled) setLiveLoading(false); });
-    return () => { cancelled = true; };
-  }, [local.k, liveByKey]);
+    const handle = setTimeout(() => {
+      api.attributeValues(k, '1h', 200, typedValue || undefined)
+        .then(rows => {
+          if (cancelled) return;
+          setLiveValues((rows ?? []).map(r => r.value));
+        })
+        .catch(() => { if (!cancelled) setLiveValues([]); })
+        .finally(() => { if (!cancelled) setLiveLoading(false); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [local.k, typedValue]);
 
-  // Combine: parent-provided suggestions first (services / operations
-  // tend to be richer than the 1h fast-cache), then live observed
-  // values, deduped.
+  // Combine: parent-provided suggestions first (services /
+  // operations tend to be richer than the 1h fast-cache),
+  // then live observed values, deduped. When the operator
+  // typed a substring filter the live side already narrowed,
+  // so dedup just merges in whatever seed entries also match.
   const valueOptions = useMemo(() => {
     const seed = suggestedValues?.[local.k] ?? [];
-    const live = liveByKey[local.k.trim()] ?? [];
-    if (seed.length === 0) return live;
-    if (live.length === 0) return seed;
+    if (seed.length === 0) return liveValues;
+    if (liveValues.length === 0) return seed;
     const seen = new Set<string>();
     const out: string[] = [];
-    for (const v of [...seed, ...live]) {
+    for (const v of [...seed, ...liveValues]) {
       if (!seen.has(v)) { seen.add(v); out.push(v); }
     }
     return out;
-  }, [local.k, suggestedValues, liveByKey]);
+  }, [local.k, suggestedValues, liveValues]);
 
   const submit = () => {
     const v = needsValue

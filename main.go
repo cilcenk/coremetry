@@ -46,15 +46,28 @@ var webFS embed.FS
 // operators can match a running instance to a release tag without
 // shelling in.
 //
-// Runtime fallback: if Version is still "dev" at startup we read
-// /app/VERSION (written into the image by the Dockerfile from
-// VERSION.txt in the build context). This way an operator who
-// forgets to pass --build-arg VERSION=… still gets the right
-// version on the login page as long as their build pipeline
-// produced the VERSION.txt file.
+// Resolution order at startup (highest wins):
+//
+//  1. COREMETRY_VERSION env var — runtime override added in
+//     v0.5.170. Useful for operators running a pre-built image
+//     that was built without --build-arg VERSION=…; Helm chart
+//     can stamp the chart's appVersion here without re-building
+//     the image. Always wins so an operator can correct a wrong
+//     stamp from outside.
+//  2. ldflag (-X main.Version=…) — proper build pipeline.
+//  3. /app/VERSION file — Dockerfile RUN line writes this from
+//     the ARG so even a forgotten ldflag still surfaces.
+//  4. Default "dev".
 var Version = "dev"
 
 func init() {
+	// Env override wins unconditionally — see resolution order
+	// above. Empty / whitespace value is ignored so an explicitly
+	// blank env var falls through to the next source.
+	if v := strings.TrimSpace(os.Getenv("COREMETRY_VERSION")); v != "" {
+		Version = v
+		return
+	}
 	if Version != "" && Version != "dev" {
 		return
 	}

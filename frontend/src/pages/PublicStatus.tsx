@@ -2,10 +2,16 @@ import { useEffect, useState, FormEvent } from 'react';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
-// /public-status — customer-facing status page. Standalone layout
-// (no sidebar, no auth, no Coremetry chrome). Polls /api/public-status
-// every 30s. Subscribers post their email to get notified when
-// incidents are published.
+// /public-status — customer-facing status page. Standalone
+// layout (no sidebar, no auth, no Coremetry chrome). Polls
+// /api/public-status every 30s. Subscribers post their email
+// to get notified when incidents are published.
+//
+// v0.5.179 — visual overhaul modelled on status.claude.com:
+// big hero headline + status pill, narrower content column,
+// minimal component rows (no card chrome), incidents grouped
+// by recency bucket. Same data contract; only the layout
+// changed.
 
 interface ComponentRow {
   id: string;
@@ -49,137 +55,264 @@ export default function PublicStatusPage() {
     return () => clearInterval(t);
   }, []);
 
-  if (data === undefined) return <div style={{ padding: 60, textAlign: 'center', color: 'var(--text3)' }}>Loading…</div>;
-  if (data === null)      return <div style={{ padding: 60, textAlign: 'center', color: 'var(--err)' }}>Could not load status</div>;
+  if (data === undefined) {
+    return <div style={{ padding: 80, textAlign: 'center', color: 'var(--text3)' }}>Loading…</div>;
+  }
+  if (data === null) {
+    return <div style={{ padding: 80, textAlign: 'center', color: 'var(--err)' }}>Could not load status</div>;
+  }
 
   return (
     <div style={{
       minHeight: '100vh', background: 'var(--bg)',
       display: 'flex', flexDirection: 'column',
     }}>
-      {/* Top bar — branded header (no sidebar) */}
+      {/* Slim top bar — wordmark on the left, theme toggle on
+          the right. No chrome, no buttons, no navigation. The
+          page IS the status. */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        padding: '14px 28px', borderBottom: '1px solid var(--border)',
-        background: 'var(--bg1)',
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '18px 32px',
+        borderBottom: '1px solid var(--border)',
       }}>
-        <TelescopeIcon size={28} />
-        {/* Title only renders when the operator set a non-default
-            value. The seeded "Service Status" placeholder + the
-            "Acme Status" sample literal stay invisible — the OTel
-            mark + URL context already identify the page. */}
-        {data.title && data.title !== 'Service Status' && data.title !== 'Acme Status' && (
-          <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>{data.title}</div>
-        )}
+        <TelescopeIcon size={24} />
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+          {data.title && data.title !== 'Service Status' && data.title !== 'Acme Status'
+            ? data.title
+            : 'Status'}
+        </div>
         <span style={{ marginLeft: 'auto' }} />
         <ThemeToggle />
       </div>
 
-      <div style={{ maxWidth: 880, margin: '0 auto', padding: '32px 24px', width: '100%', flex: 1 }}>
-        {/* Banner */}
-        <div className={`status-banner status-banner-${data.status}`}>
-          <span className={`status-pill status-pill-${data.status}`}>{labelOf(data.status)}</span>
-          <span style={{ fontWeight: 700, fontSize: 18 }}>{headlineOf(data.status)}</span>
-        </div>
-        {data.description && (
-          <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: 12 }}>{data.description}</p>
-        )}
-        <p style={{ color: 'var(--text3)', fontSize: 11, marginTop: 8 }}>
-          Last updated {new Date(data.checkedAt).toLocaleString()} · refreshes every 30s
-        </p>
+      <div style={{
+        maxWidth: 720, margin: '0 auto',
+        padding: '56px 24px 64px',
+        width: '100%', flex: 1,
+      }}>
+        {/* Hero — large headline + small pill underneath.
+            status.claude.com style is "answer the question on
+            arrival" — the visitor's first read should be the
+            three-word verdict. */}
+        <Hero status={data.status} description={data.description} checkedAt={data.checkedAt} />
 
-        {/* Components — name + 90-day uptime bars */}
+        {/* Components — flat list, no card chrome. Status
+            pill on the right, optional 90-day uptime bar
+            underneath. */}
         {data.components.length > 0 && (
-          <div style={{ marginTop: 28 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)', marginBottom: 12 }}>Components</div>
-            <div className="status-grid">
-              {data.components.map(c => <ComponentCard key={c.id} c={c} />)}
+          <section style={{ marginTop: 56 }}>
+            <SectionHeading>Components</SectionHeading>
+            <div style={{
+              border: '1px solid var(--border)', borderRadius: 8,
+              overflow: 'hidden',
+              background: 'var(--bg1)',
+            }}>
+              {data.components.map((c, i) => (
+                <ComponentLine key={c.id} c={c} first={i === 0} />
+              ))}
             </div>
-          </div>
+          </section>
         )}
 
-        {/* Active + recent incidents */}
-        {data.incidents.length > 0 && (
-          <div style={{ marginTop: 32 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)', marginBottom: 12 }}>Recent incidents</div>
-            {data.incidents.map(i => <IncidentCard key={i.id} i={i} />)}
-          </div>
+        {/* Past incidents — grouped by recency bucket so the
+            "what happened today" question lands first. */}
+        {data.incidents.length > 0 ? (
+          <section style={{ marginTop: 56 }}>
+            <SectionHeading>Past incidents</SectionHeading>
+            <IncidentList incidents={data.incidents} />
+          </section>
+        ) : (
+          <section style={{ marginTop: 56 }}>
+            <SectionHeading>Past incidents</SectionHeading>
+            <div style={{
+              padding: 24, textAlign: 'center',
+              color: 'var(--text3)', fontSize: 13,
+              border: '1px solid var(--border)', borderRadius: 8,
+              background: 'var(--bg1)',
+            }}>
+              No incidents reported.
+            </div>
+          </section>
         )}
 
-        {/* Subscribe form */}
-        <SubscribeForm />
+        {/* Subscribe — boxed at the bottom, intentionally
+            small so it doesn't dominate above-the-fold. */}
+        <section style={{ marginTop: 56 }}>
+          <SubscribeForm />
+        </section>
 
-        <div style={{ marginTop: 40, color: 'var(--text3)', fontSize: 11, textAlign: 'center' }}>
-          Powered by Coremetry
+        <div style={{
+          marginTop: 64,
+          paddingTop: 24,
+          borderTop: '1px solid var(--border)',
+          color: 'var(--text3)', fontSize: 11,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        }}>
+          <TelescopeIcon size={12} /> <span>Powered by Coremetry</span>
         </div>
       </div>
     </div>
   );
 }
 
-function labelOf(s: 'operational' | 'degraded' | 'outage'): string {
-  return s === 'operational' ? 'OPERATIONAL' : s === 'degraded' ? 'DEGRADED' : 'OUTAGE';
-}
-function headlineOf(s: 'operational' | 'degraded' | 'outage'): string {
-  return s === 'operational' ? 'All systems operational'
-       : s === 'degraded'    ? 'Some systems are experiencing issues'
-       :                       'Major outage in progress';
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 600,
+      color: 'var(--text3)',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      marginBottom: 14,
+    }}>
+      {children}
+    </div>
+  );
 }
 
-function ComponentCard({ c }: { c: ComponentRow }) {
-  const cls = c.status === 'operational' ? 'operational'
-            : c.status === 'degraded'    ? 'degraded'
-            : c.status === 'outage'      ? 'outage'
-            :                              'degraded';
+function Hero({ status, description, checkedAt }: {
+  status: 'operational' | 'degraded' | 'outage';
+  description?: string;
+  checkedAt: string;
+}) {
+  const headline = status === 'operational' ? 'All systems operational'
+    : status === 'degraded'    ? 'Some systems are experiencing issues'
+    :                            'Major outage in progress';
+  const accent = status === 'operational' ? 'var(--ok)'
+    : status === 'degraded'    ? 'var(--warn)'
+    :                            'var(--err)';
   return (
-    <div className={`status-row status-row-${cls}`}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span className={`status-dot status-dot-${cls}`} />
-          <span style={{ fontWeight: 600 }}>{c.name}</span>
+    <div style={{
+      padding: '32px 24px',
+      borderRadius: 12,
+      background: status === 'operational'
+        ? 'rgba(63,185,80,0.08)'
+        : status === 'degraded'
+          ? 'rgba(245,159,0,0.08)'
+          : 'rgba(255,82,82,0.08)',
+      border: `1px solid ${accent}`,
+    }}>
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        marginBottom: 14,
+      }}>
+        <span style={{
+          width: 10, height: 10, borderRadius: '50%',
+          background: accent,
+          boxShadow: `0 0 8px ${accent}`,
+        }} />
+        <span style={{
+          fontSize: 11, fontWeight: 700,
+          letterSpacing: 1.2, textTransform: 'uppercase',
+          color: accent,
+        }}>{statusLabel(status)}</span>
+      </div>
+      <div style={{
+        fontSize: 28, fontWeight: 700,
+        color: 'var(--text)', lineHeight: 1.25,
+        marginBottom: description ? 14 : 10,
+      }}>
+        {headline}
+      </div>
+      {description && (
+        <div style={{
+          fontSize: 14, color: 'var(--text2)', lineHeight: 1.55,
+          marginBottom: 10,
+        }}>
+          {description}
+        </div>
+      )}
+      <div style={{
+        fontSize: 11, color: 'var(--text3)',
+      }}>
+        Last updated {new Date(checkedAt).toLocaleString()} · refreshes every 30s
+      </div>
+    </div>
+  );
+}
+
+function statusLabel(s: 'operational' | 'degraded' | 'outage'): string {
+  return s === 'operational' ? 'Operational' : s === 'degraded' ? 'Degraded' : 'Outage';
+}
+
+function ComponentLine({ c, first }: { c: ComponentRow; first: boolean }) {
+  const cls = c.status === 'operational' ? 'operational'
+    : c.status === 'degraded'    ? 'degraded'
+    : c.status === 'outage'      ? 'outage'
+    :                              'unknown';
+  const color = cls === 'operational' ? 'var(--ok)'
+    : cls === 'degraded' ? 'var(--warn)'
+    : cls === 'outage'   ? 'var(--err)'
+    : 'var(--text3)';
+  const pillLabel = c.status === 'unknown' ? 'No data'
+    : c.status === 'operational' ? 'Operational'
+    : c.status === 'degraded' ? 'Degraded'
+    : 'Outage';
+  return (
+    <div style={{
+      padding: '14px 18px',
+      borderTop: first ? 'none' : '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: '50%',
+          background: color,
+          boxShadow: cls !== 'unknown' ? `0 0 4px ${color}` : 'none',
+          flexShrink: 0,
+        }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>
+            {c.name}
+          </div>
+          {c.description && (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+              {c.description}
+            </div>
+          )}
           {c.message && (
-            <span style={{ color: 'var(--text3)', fontSize: 12 }}>· {c.message}</span>
+            <div style={{ fontSize: 12, color, marginTop: 2 }}>
+              {c.message}
+            </div>
           )}
         </div>
-        {c.description && (
-          <div style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 18 }}>{c.description}</div>
-        )}
-        {c.uptimeDays && c.uptimeDays.length > 0 && (
-          <div style={{ marginLeft: 18 }}>
-            <UptimeBar days={c.uptimeDays} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
-              <span>90 days ago</span>
-              <span>{uptimePct(c.uptimeDays)}% uptime</span>
-              <span>today</span>
-            </div>
-          </div>
-        )}
+        <div style={{
+          fontSize: 11, color, fontWeight: 600,
+          letterSpacing: 0.4, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          {pillLabel}
+        </div>
       </div>
-      <span className={`status-pill status-pill-${cls}`}>{c.status === 'unknown' ? 'PENDING' : c.status.toUpperCase()}</span>
+      {c.uptimeDays && c.uptimeDays.length > 0 && (
+        <div style={{ marginTop: 14, marginLeft: 20 }}>
+          <UptimeBar days={c.uptimeDays} />
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            fontSize: 10, color: 'var(--text3)', marginTop: 6,
+          }}>
+            <span>{c.uptimeDays.length} days ago</span>
+            <span>{uptimePct(c.uptimeDays)}% uptime</span>
+            <span>Today</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function UptimeBar({ days }: { days: number[] }) {
   return (
-    <div style={{ display: 'flex', gap: 1, alignItems: 'center', maxWidth: '100%' }}>
+    <div style={{ display: 'flex', gap: 2, alignItems: 'center', maxWidth: '100%' }}>
       {days.map((r, i) => {
         let bg = 'var(--ok)';
         let title = 'Operational';
-        if (r < 0) {
-          bg = 'var(--bg3)';
-          title = 'No data';
-        } else if (r < 0.95) {
-          bg = 'var(--err)';
-          title = `${(r * 100).toFixed(1)}% — major issues`;
-        } else if (r < 0.99) {
-          bg = 'var(--warn)';
-          title = `${(r * 100).toFixed(1)}% — minor issues`;
-        } else {
-          title = `${(r * 100).toFixed(1)}% uptime`;
-        }
-        return <span key={i} title={title}
-          style={{ flex: 1, height: 24, background: bg, borderRadius: 1, opacity: 0.85 }} />;
+        if (r < 0)         { bg = 'var(--bg3)'; title = 'No data'; }
+        else if (r < 0.95) { bg = 'var(--err)'; title = `${(r * 100).toFixed(1)}% — major issues`; }
+        else if (r < 0.99) { bg = 'var(--warn)'; title = `${(r * 100).toFixed(1)}% — minor issues`; }
+        else               { title = `${(r * 100).toFixed(1)}% uptime`; }
+        return <span key={i} title={title} style={{
+          flex: 1, height: 28, background: bg,
+          borderRadius: 2, opacity: 0.9,
+        }} />;
       })}
     </div>
   );
@@ -192,26 +325,95 @@ function uptimePct(days: number[]): string {
   return (avg * 100).toFixed(2);
 }
 
-function IncidentCard({ i }: { i: IncidentRow }) {
-  const sevCls = i.severity === 'critical' ? 'b-err' : i.severity === 'warning' ? 'b-warn' : 'b-info';
+// IncidentList — groups by recency bucket so the visitor sees
+// "what's happening today" first without scanning the full
+// history. Matches status.claude.com's "Today / Yesterday /
+// older" layout.
+function IncidentList({ incidents }: { incidents: IncidentRow[] }) {
+  const now = Date.now();
+  const dayMs = 86400_000;
+  const startOfDay = (ts: number) => {
+    const d = new Date(ts / 1e6);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const buckets: Record<string, IncidentRow[]> = {};
+  const labelFor = (ts: number): string => {
+    const day = startOfDay(ts);
+    const today0 = today.getTime();
+    if (day === today0) return 'Today';
+    if (day === today0 - dayMs) return 'Yesterday';
+    if (now - day < 7 * dayMs) return 'This week';
+    if (now - day < 30 * dayMs) return 'This month';
+    return 'Earlier';
+  };
+  for (const i of incidents) {
+    const k = labelFor(i.startedAt);
+    (buckets[k] ??= []).push(i);
+  }
+  const order = ['Today', 'Yesterday', 'This week', 'This month', 'Earlier'];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+      {order.flatMap(k => buckets[k] ? [(
+        <div key={k}>
+          <div style={{
+            fontSize: 12, fontWeight: 600,
+            color: 'var(--text2)', marginBottom: 10,
+          }}>{k}</div>
+          <div style={{
+            border: '1px solid var(--border)', borderRadius: 8,
+            background: 'var(--bg1)', overflow: 'hidden',
+          }}>
+            {buckets[k].map((i, idx) => (
+              <IncidentItem key={i.id} i={i} first={idx === 0} />
+            ))}
+          </div>
+        </div>
+      )] : [])}
+    </div>
+  );
+}
+
+function IncidentItem({ i, first }: { i: IncidentRow; first: boolean }) {
+  const sevColor = i.severity === 'critical' ? 'var(--err)'
+    : i.severity === 'warning' ? 'var(--warn)' : 'var(--text3)';
+  const statusLine = i.status === 'resolved' ? 'Resolved'
+    : i.status === 'acknowledged' ? 'Investigating'
+    : 'Ongoing';
+  const started = new Date(i.startedAt / 1e6);
   return (
     <div style={{
-      padding: 14, borderRadius: 6, marginBottom: 10,
-      background: 'var(--bg2)', border: '1px solid var(--border)',
+      padding: '14px 18px',
+      borderTop: first ? 'none' : '1px solid var(--border)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span className={`badge ${sevCls}`}>{i.severity.toUpperCase()}</span>
-        <span style={{ fontWeight: 600 }}>{i.title}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <span style={{
+          fontSize: 10, fontWeight: 600,
+          color: sevColor,
+          textTransform: 'uppercase', letterSpacing: 0.6,
+        }}>
+          {i.severity}
+        </span>
+        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+          {i.title}
+        </span>
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
-          {i.status === 'resolved' ? 'Resolved' : i.status === 'acknowledged' ? 'Investigating' : 'Open'}
+          {statusLine}
         </span>
       </div>
       {i.body && (
-        <div style={{ color: 'var(--text2)', fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{i.body}</div>
+        <div style={{
+          color: 'var(--text2)', fontSize: 13, lineHeight: 1.55,
+          whiteSpace: 'pre-wrap', marginTop: 8,
+        }}>{i.body}</div>
       )}
-      <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 6 }}>
-        Started {new Date(i.startedAt / 1e6).toLocaleString()}
-        {i.resolvedAt && ` · Resolved ${new Date(i.resolvedAt / 1e6).toLocaleString()}`}
+      <div style={{
+        color: 'var(--text3)', fontSize: 11, marginTop: 8,
+        fontFamily: 'ui-monospace, monospace',
+      }}>
+        {started.toLocaleString()}
+        {i.resolvedAt && ` → ${new Date(i.resolvedAt / 1e6).toLocaleString()}`}
       </div>
     </div>
   );
@@ -230,9 +432,6 @@ function SubscribeForm() {
         body: JSON.stringify({ email }),
       });
       if (!r.ok) throw new Error(await r.text());
-      // v0.5.158 — server returns {status, message} with the
-      // double-opt-in copy. Fall back to a generic message if a
-      // pre-v0.5.158 deploy is still answering.
       const body = await r.json().catch(() => ({} as { message?: string }));
       setMsg({
         kind: 'ok',
@@ -248,21 +447,30 @@ function SubscribeForm() {
   };
   return (
     <div style={{
-      marginTop: 32, padding: 16, borderRadius: 8,
-      background: 'var(--bg2)', border: '1px solid var(--border)',
+      padding: 24,
+      borderRadius: 8,
+      background: 'var(--bg1)',
+      border: '1px solid var(--border)',
     }}>
-      <div style={{ fontWeight: 600, marginBottom: 8 }}>Get notified</div>
-      <p style={{ color: 'var(--text3)', fontSize: 12, marginBottom: 12 }}>
-        Subscribe to receive an email whenever an incident is opened or resolved.
+      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
+        Subscribe to updates
+      </div>
+      <p style={{ color: 'var(--text3)', fontSize: 12, margin: '6px 0 14px', lineHeight: 1.55 }}>
+        Get an email whenever an incident opens or resolves. You'll receive a
+        confirmation link first.
       </p>
       <form onSubmit={submit} style={{ display: 'flex', gap: 8 }}>
-        <input required type="email" value={email} onChange={e => setEmail(e.target.value)}
-          placeholder="you@example.com" style={{ flex: 1 }} />
-        <button type="submit" disabled={busy}>{busy ? 'Subscribing…' : 'Subscribe'}</button>
+        <input required type="email" value={email}
+          onChange={e => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          style={{ flex: 1 }} />
+        <button type="submit" disabled={busy}>
+          {busy ? 'Subscribing…' : 'Subscribe'}
+        </button>
       </form>
       {msg && (
         <div style={{
-          marginTop: 8, fontSize: 12,
+          marginTop: 10, fontSize: 12,
           color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)',
         }}>{msg.text}</div>
       )}

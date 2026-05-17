@@ -224,6 +224,14 @@ func (s *Server) Start() error {
 	// Deploy history with impact deltas — drives the Service
 	// detail page's "Recent deploys" panel (v0.5.189).
 	mux.HandleFunc("GET /api/services/{name}/deploy-history", s.getDeployHistory)
+	// Service dependency contracts (v0.5.191) — admin-curated
+	// architectural assertions ("A must call B", "A must NOT
+	// call B"). Admin-only read/write since the rules shape
+	// what counts as "broken" topology.
+	mux.HandleFunc("GET    /api/contracts",            auth.RequireRole(auth.RoleAdmin, s.listServiceContracts))
+	mux.HandleFunc("POST   /api/contracts",            auth.RequireRole(auth.RoleAdmin, s.upsertServiceContract))
+	mux.HandleFunc("DELETE /api/contracts/{id}",       auth.RequireRole(auth.RoleAdmin, s.deleteServiceContract))
+	mux.HandleFunc("GET    /api/contracts/violations", auth.RequireRole(auth.RoleAdmin, s.getContractViolations))
 	mux.HandleFunc("GET /api/services/{name}/metadata", s.getServiceMetadata)
 	mux.HandleFunc("PUT /api/services/{name}/metadata", auth.RequireAnyRole(editorRoles, s.putServiceMetadata))
 	mux.HandleFunc("GET /api/services-metadata", s.listServiceMetadata)

@@ -670,6 +670,28 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY email`,
 
+		// Service dependency contracts (v0.5.191). Operator-curated
+		// architectural assertions: "auth-service must call audit-log"
+		// (must-call) or "billing-api must NOT call user-profile
+		// directly" (forbidden). Evaluator checks every minute
+		// against topology_edges_5m; violations surface on the
+		// admin /admin/contracts page. Severity drives whether a
+		// violation is informational or paged.
+		`CREATE TABLE IF NOT EXISTS service_contracts (
+			id             String,
+			name           String,
+			service        String,
+			rule_type      LowCardinality(String),
+			target_service String,
+			description    String         DEFAULT '',
+			severity       LowCardinality(String) DEFAULT 'warning',
+			enabled        UInt8          DEFAULT 1,
+			created_by     String         DEFAULT '',
+			created_at     DateTime64(9)  DEFAULT now64(9),
+			version        UInt64         DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY id`,
+
 		// Trace snapshots — Grafana-style "share publicly" links for
 		// the trace detail page. Each row mints a URL-safe token that
 		// resolves to a trace_id, gated by `expires_at`. Public route

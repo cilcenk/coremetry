@@ -421,6 +421,20 @@ export const api = {
       body: JSON.stringify({ services }),
     }),
 
+  // Service dependency contracts (v0.5.191) — admin-only.
+  listContracts: () =>
+    get<import('./types').ServiceContract[]>(`/api/contracts`),
+  upsertContract: (c: Partial<import('./types').ServiceContract>) =>
+    request<import('./types').ServiceContract>(`/api/contracts`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  deleteContract: (id: string) =>
+    request<void>(`/api/contracts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  contractViolations: (windowMinutes = 30) =>
+    get<import('./types').ContractViolation[]>(
+      `/api/contracts/violations?${qs({ windowMinutes })}`),
+
   // Recent deploys + impact deltas for a service (v0.5.189).
   // One round-trip; backend computes before/after RED for each
   // deploy via partition-pruned spans queries.

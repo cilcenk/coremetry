@@ -1621,6 +1621,27 @@ export interface DBQueryStat {
   totalMs: number;
 }
 
+// Service dependency contracts (v0.5.191).
+export interface ServiceContract {
+  id: string;
+  name: string;
+  service: string;
+  ruleType: 'must-call' | 'forbidden';
+  targetService: string;
+  description: string;
+  severity: 'info' | 'warning' | 'critical';
+  enabled: boolean;
+  createdBy: string;
+  createdAt: number;
+}
+export interface ContractViolation {
+  contract: ServiceContract;
+  observed: boolean;
+  edgeCalls: number;
+  since: number;
+  detected: number;
+}
+
 // Deploy impact (v0.5.189) — before/after RED + signed deltas
 // for one service.version transition. Powers the "Recent
 // deploys" panel on the service detail page.

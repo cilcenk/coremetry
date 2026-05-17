@@ -91,6 +91,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/admin/audit',       label: 'nav.audit',      icon: '◇', adminOnly: true },
       { href: '/admin/sql',         label: 'nav.sql',        icon: '⌘', adminOnly: true },
       { href: '/admin/status-page', label: 'nav.statusPage', icon: '◫', adminOnly: true },
+      { href: '/admin/contracts',   label: 'nav.contracts',  icon: '⇄', adminOnly: true },
     ],
   },
 ];

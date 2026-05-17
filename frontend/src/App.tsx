@@ -54,6 +54,7 @@ const AdminCatalog      = lazy(() => import('./pages/AdminCatalog'));
 const AdminSql          = lazy(() => import('./pages/AdminSql'));
 const AdminStats        = lazy(() => import('./pages/AdminStats'));
 const AdminStatusPage   = lazy(() => import('./pages/AdminStatusPage'));
+const AdminContracts    = lazy(() => import('./pages/AdminContracts'));
 
 // Each lazy module's default export is the page component.
 // React Router doesn't enforce any naming convention beyond
@@ -109,6 +110,7 @@ export default function App() {
             <Route path="/admin/sql"          element={<AdminSql />} />
             <Route path="/admin/stats"        element={<AdminStats />} />
             <Route path="/admin/status-page"  element={<AdminStatusPage />} />
+            <Route path="/admin/contracts"    element={<AdminContracts />} />
             {/* Unknown path → bounce to Home so navigate() never
                 hits a dead route. The AuthProvider gates whether
                 the user actually sees Home or gets redirected to

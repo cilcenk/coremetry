@@ -391,6 +391,20 @@ export const api = {
         body: JSON.stringify({ text, limit }),
       }),
 
+  // Slow-query AI explain (v0.5.171). Body matches the row
+  // shape so the backend doesn't have to re-query CH — frontend
+  // already has stats + sample on hand.
+  copilotExplainSlowQuery: (body: {
+    service: string; statement: string; sampleStatement: string;
+    dbSystem: string; count: number;
+    avgMs: number; p95Ms: number; p99Ms: number; maxMs: number;
+    errorCount: number;
+  }) =>
+    request<{ explanation: string }>(`/api/copilot/explain-slow-query`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
   // Global slow-query catalog (v0.5.165). One row per
   // (service, normalised statement) ordered by total wall-clock
   // time. Optional db_system narrows to one engine.

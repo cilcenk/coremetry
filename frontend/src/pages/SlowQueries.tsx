@@ -6,6 +6,11 @@ import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
 
+// Per-row Copilot explain state — keeps the slow-query table
+// page lean while letting each expanded row hold its own AI
+// answer + loading flag without all rows sharing state.
+type ExplainState = 'idle' | 'busy' | { text: string } | { error: string };
+
 // /databases/slow-queries — global slow-query catalog (v0.5.165).
 // Answers "what query class is burning the most DB time across
 // the whole install?". Per-service view stays at /service?name=…
@@ -22,6 +27,32 @@ export default function SlowQueriesPage() {
   const [dbSystem, setDbSystem] = useState('');
   const [rows, setRows] = useState<SlowQueryRow[] | null | undefined>(undefined);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Per-row explain state — keyed on the same "service::stmt"
+  // composite the expand toggle uses. Resets implicitly when
+  // the operator changes range/filter (rows refetch → keys go
+  // stale → no orphan rendering risk).
+  const [explains, setExplains] = useState<Record<string, ExplainState>>({});
+  const askCopilot = async (key: string, r: SlowQueryRow) => {
+    setExplains(s => ({ ...s, [key]: 'busy' }));
+    try {
+      const resp = await api.copilotExplainSlowQuery({
+        service:         r.service,
+        statement:       r.statement,
+        sampleStatement: r.sampleStatement,
+        dbSystem:        r.dbSystem,
+        count:           r.count,
+        avgMs:           r.avgMs,
+        p95Ms:           r.p95Ms,
+        p99Ms:           r.p99Ms,
+        maxMs:           r.maxMs,
+        errorCount:      r.errorCount,
+      });
+      setExplains(s => ({ ...s, [key]: { text: resp.explanation } }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setExplains(s => ({ ...s, [key]: { error: msg } }));
+    }
+  };
 
   useEffect(() => {
     const { from, to } = timeRangeToNs(range);
@@ -157,13 +188,64 @@ export default function SlowQueriesPage() {
                               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                               color: 'var(--text2)',
                             }}>{r.sampleStatement}</pre>
-                            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
-                              <Link to={`/traces?service=${encodeURIComponent(r.service)}&db.statement=${encodeURIComponent(r.sampleStatement.slice(0, 60))}`}
-                                style={{ marginRight: 12 }}>
+                            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
+                              <Link to={`/traces?service=${encodeURIComponent(r.service)}&db.statement=${encodeURIComponent(r.sampleStatement.slice(0, 60))}`}>
                                 Search traces with this query →
                               </Link>
                               <span>Max: {r.maxMs.toFixed(0)} ms · P95: {r.p95Ms.toFixed(0)} ms</span>
+                              <span style={{ flex: 1 }} />
+                              {(() => {
+                                const ex = explains[key] ?? 'idle';
+                                if (ex === 'busy') {
+                                  return <span style={{ color: 'var(--text3)' }}>✨ Thinking…</span>;
+                                }
+                                return (
+                                  <button className="sec"
+                                    onClick={() => askCopilot(key, r)}
+                                    style={{
+                                      fontSize: 11, padding: '4px 10px',
+                                      color: 'var(--accent2)',
+                                    }}
+                                    title="Ask Copilot for the likely cause + one concrete remediation">
+                                    ✨ {ex === 'idle' ? 'Explain' : 'Re-ask'} Copilot
+                                  </button>
+                                );
+                              })()}
                             </div>
+                            {(() => {
+                              const ex = explains[key];
+                              if (!ex || ex === 'idle' || ex === 'busy') return null;
+                              if ('error' in ex) {
+                                return (
+                                  <div style={{
+                                    marginTop: 10, padding: 8,
+                                    background: 'rgba(255,82,82,0.08)',
+                                    border: '1px solid rgba(255,82,82,0.3)',
+                                    borderRadius: 4, fontSize: 12,
+                                    color: 'var(--err)',
+                                  }}>
+                                    Explain failed: {ex.error}
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div style={{
+                                  marginTop: 10, padding: 10,
+                                  background: 'var(--bg)',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: 4, fontSize: 12,
+                                  lineHeight: 1.55,
+                                  whiteSpace: 'pre-wrap',
+                                }}>
+                                  <div style={{
+                                    fontSize: 10, color: 'var(--accent2)',
+                                    textTransform: 'uppercase', letterSpacing: 0.4,
+                                    marginBottom: 6, fontWeight: 600,
+                                  }}>✨ Copilot</div>
+                                  {ex.text}
+                                </div>
+                              );
+                            })()}
                           </td>
                         </tr>
                       )}

@@ -361,6 +361,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/copilot/compare-traces",       s.copilotCompareTraces)
 	mux.HandleFunc("POST   /api/copilot/deploy-impact",        s.copilotDeployImpact)
 	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}",     s.copilotExplainSLO)
+	mux.HandleFunc("POST   /api/copilot/explain-slow-query",   s.copilotExplainSlowQuery)
 	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.copilotSuggestServiceTags))
 
 	// ── Incident management ───────────────────────────────────────
@@ -5572,6 +5573,83 @@ func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
 		"fastBurn":    fastRate,
 		"slowBurn":    slowRate,
 	})
+}
+
+// copilotExplainSlowQuery drives the "✨ Explain" button on a
+// row in the /databases/slow-queries catalog (v0.5.171). Takes
+// the normalised statement + a real sample + DB engine + the
+// aggregate stats and asks the model for the most likely
+// performance hazard + one concrete remediation.
+//
+// The body is operator-supplied (frontend already has all this
+// data on the row) so the handler is a thin shaper — no
+// re-query of the spans table needed.
+func (s *Server) copilotExplainSlowQuery(w http.ResponseWriter, r *http.Request) {
+	if !s.copilot.Configured() {
+		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		Service         string  `json:"service"`
+		Statement       string  `json:"statement"`
+		SampleStatement string  `json:"sampleStatement"`
+		DBSystem        string  `json:"dbSystem"`
+		Count           int     `json:"count"`
+		AvgMs           float64 `json:"avgMs"`
+		P95Ms           float64 `json:"p95Ms"`
+		P99Ms           float64 `json:"p99Ms"`
+		MaxMs           float64 `json:"maxMs"`
+		ErrorCount      int     `json:"errorCount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Statement) == "" {
+		http.Error(w, "statement required", http.StatusBadRequest)
+		return
+	}
+	// Cap submitted SQL — keeps the prompt cheap and avoids
+	// blowing up the ai_calls row when an operator triggers
+	// Explain on a 30KB ORM-emitted blob.
+	cap := func(s string, n int) string {
+		if len(s) > n {
+			return s[:n] + "… [truncated]"
+		}
+		return s
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Service: %s\n", body.Service)
+	fmt.Fprintf(&sb, "DB engine: %s\n", body.DBSystem)
+	fmt.Fprintf(&sb, "Calls in window: %d\n", body.Count)
+	if body.ErrorCount > 0 {
+		fmt.Fprintf(&sb, "Errors: %d (%.1f%%)\n", body.ErrorCount,
+			float64(body.ErrorCount)*100/float64(maxInt(1, body.Count)))
+	}
+	fmt.Fprintf(&sb, "Latency: avg=%.1fms · p95=%.0fms · p99=%.0fms · max=%.0fms\n",
+		body.AvgMs, body.P95Ms, body.P99Ms, body.MaxMs)
+	totalSec := body.AvgMs * float64(body.Count) / 1000
+	fmt.Fprintf(&sb, "Total wall-clock time spent in this query class: %.1fs\n", totalSec)
+	sb.WriteString("\nNormalized statement (literals replaced with ?):\n")
+	sb.WriteString(cap(body.Statement, 4000))
+	if body.SampleStatement != "" && body.SampleStatement != body.Statement {
+		sb.WriteString("\n\nReal sample with literals:\n")
+		sb.WriteString(cap(body.SampleStatement, 4000))
+	}
+
+	out, err := s.copilotExplain(r, copilot.SystemPromptSlowQuery(), sb.String())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"explanation": out})
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // buildCompareTracesPrompt produces the structured-diff user

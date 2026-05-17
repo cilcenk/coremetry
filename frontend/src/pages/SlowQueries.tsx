@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
+import { encodeFilters } from '@/lib/urlState';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
 
 // Per-row Copilot explain state — keeps the slow-query table
@@ -189,7 +190,20 @@ export default function SlowQueriesPage() {
                               color: 'var(--text2)',
                             }}>{r.sampleStatement}</pre>
                             <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
-                              <Link to={`/traces?service=${encodeURIComponent(r.service)}&db.statement=${encodeURIComponent(r.sampleStatement.slice(0, 60))}`}>
+                              <Link to={(() => {
+                                // v0.5.195 — previously this link
+                                // emitted ?db.statement=… which
+                                // Traces.tsx ignored (it only reads
+                                // the structured `filters` JSON
+                                // param). Encode a real LIKE filter
+                                // chip so the destination page
+                                // applies it on mount.
+                                const snippet = r.sampleStatement.slice(0, 60);
+                                const f = encodeFilters([
+                                  { k: 'db.statement', op: 'LIKE', v: [snippet] },
+                                ]);
+                                return `/traces?view=list&service=${encodeURIComponent(r.service)}&filters=${encodeURIComponent(f)}`;
+                              })()}>
                                 Search traces with this query →
                               </Link>
                               <span>Max: {r.maxMs.toFixed(0)} ms · P95: {r.p95Ms.toFixed(0)} ms</span>

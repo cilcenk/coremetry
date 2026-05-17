@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -633,12 +634,19 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// scanning every term in the inverted index, which is multi-second
 		// at our scale. AllowLeadingWildcard can be re-enabled via the
 		// field map if an operator really needs it.
+		//
+		// case_insensitive lets `level:error` match docs stored as
+		// `ERROR` on a keyword field. Without this flag, keyword
+		// fields are exact-match — the historical "level:error
+		// returns nothing" bug on indices that store severities
+		// uppercase.
 		must = append(must, map[string]any{
 			"query_string": map[string]any{
-				"query":                  f.Search,
+				"query":                  s.expandShorthand(f.Search),
 				"default_field":          s.fields.Body,
 				"default_operator":       "AND",
 				"allow_leading_wildcard": false,
+				"case_insensitive":       true,
 				"lenient":                true, // tolerate type mismatches (e.g. searching numeric column with a word)
 			},
 		})
@@ -653,6 +661,69 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		return map[string]any{"match_all": map[string]any{}}
 	}
 	return map[string]any{"bool": map[string]any{"must": must}}
+}
+
+// shorthandRe matches `<token>:<value>` (quoted or unquoted) in a Lucene
+// query string, anchored to start-of-string, whitespace, or an opening
+// paren so we don't rewrite a colon that's part of a value.
+var shorthandRe = regexp.MustCompile(
+	`(?i)(^|[\s(])(level|severity|service|trace|trace_id|traceid|span|span_id|spanid|message|body|pod|namespace|cluster|host):("[^"]+"|\S+)`)
+
+// expandShorthand rewrites common short field names to multi-shape
+// OR groups so the same query works against any shipping pipeline.
+// `level:error` becomes
+// `(log.level:error OR level:error OR severity:error OR severity_text:error OR SeverityText:error)`
+// — the same fallback chain mapHit already uses when reading values
+// back. Without this, an operator typing the obvious shorthand sees
+// zero hits even though the index does contain matching docs under a
+// differently-shaped field name.
+func (s *ESStore) expandShorthand(q string) string {
+	aliases := map[string][]string{
+		"level":     {s.fields.SeverityTx, "level", "severity", "severity_text", "SeverityText"},
+		"severity":  {s.fields.SeverityTx, "level", "severity", "severity_text", "SeverityText"},
+		"service":   {s.fields.Service, "service.name", "service_name", "serviceName", "ServiceName"},
+		"trace":     {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
+		"trace_id":  {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
+		"traceid":   {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
+		"span":      {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
+		"span_id":   {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
+		"spanid":    {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
+		"message":   {s.fields.Body, "message", "Body", "body", "log.message"},
+		"body":      {s.fields.Body, "message", "Body", "body", "log.message"},
+		"pod":       {"kubernetes.pod.name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
+		"namespace": {"kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
+		"cluster":   {"kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "openshift.cluster.name", "cluster"},
+		"host":      {"host.name", "host.hostname", "resource.host.name", "hostname", "host"},
+	}
+	return shorthandRe.ReplaceAllStringFunc(q, func(m string) string {
+		sub := shorthandRe.FindStringSubmatch(m)
+		if len(sub) != 4 {
+			return m
+		}
+		prefix, key, val := sub[1], strings.ToLower(sub[2]), sub[3]
+		fields, ok := aliases[key]
+		if !ok {
+			return m
+		}
+		// Dedupe — the configured override and the hard-coded
+		// fallback often collide (e.g. "log.level" appears twice).
+		seen := map[string]struct{}{}
+		parts := make([]string, 0, len(fields))
+		for _, f := range fields {
+			if f == "" {
+				continue
+			}
+			if _, dup := seen[f]; dup {
+				continue
+			}
+			seen[f] = struct{}{}
+			parts = append(parts, f+":"+val)
+		}
+		if len(parts) == 0 {
+			return m
+		}
+		return prefix + "(" + strings.Join(parts, " OR ") + ")"
+	})
 }
 
 // mapHit walks the source document using the configured field paths

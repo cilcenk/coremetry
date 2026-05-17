@@ -720,57 +720,7 @@ function FlowsView({ range }: { range: TimeRange }) {
               {visibleFlows.length}/{flows.length} flows
             </span>
           </div>
-          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
-          {visibleFlows.map((f, i) => (
-            <button key={i} type="button"
-              onClick={() => setPicked(f)}
-              style={{
-                textAlign: 'left', padding: 12, borderRadius: 6,
-                background: 'var(--bg2)', border: '1px solid var(--border)',
-                cursor: 'pointer', color: 'var(--text)',
-              }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                <span style={{ fontWeight: 700, fontSize: 13 }}>{f.rootOp}</span>
-                <span style={{ fontSize: 11, color: 'var(--text3)' }}>{f.rootService}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
-                  {fmtNum(f.traceCount)} traces
-                </span>
-              </div>
-              {f.p99Ns !== undefined && f.p99Ns > 0 && (() => {
-                // p99 latency chip — colour bands match the
-                // operator's mental model for "fast" vs "slow"
-                // user-visible flows. Tooltip carries the exact
-                // number so an ops review doesn't have to squint
-                // at a chip.
-                const p99Ms = f.p99Ns / 1e6;
-                const color = p99Ms > 5000 ? 'var(--err)'
-                  : p99Ms > 1000 ? 'var(--warn)'
-                  : 'var(--text3)';
-                const label = p99Ms >= 1000
-                  ? `${(p99Ms / 1000).toFixed(2)} s`
-                  : `${p99Ms.toFixed(0)} ms`;
-                return (
-                  <div style={{ marginTop: 4, fontSize: 11, color, fontFamily: 'ui-monospace, monospace' }}
-                       title={`p99 root-span duration: ${p99Ms.toFixed(2)} ms`}>
-                    p99 {label}
-                  </div>
-                );
-              })()}
-              <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {f.services.slice(0, 10).map(s => (
-                  <span key={s} style={{
-                    fontSize: 10, padding: '2px 6px', borderRadius: 3,
-                    background: 'var(--bg3)', border: '1px solid var(--border)',
-                    fontFamily: 'monospace',
-                  }}>{s}</span>
-                ))}
-                {f.services.length > 10 && (
-                  <span style={{ fontSize: 10, color: 'var(--text3)' }}>+{f.services.length - 10}</span>
-                )}
-              </div>
-            </button>
-          ))}
-          </div>
+          <FlowsByService flows={visibleFlows} hasSearch={!!term} onPick={setPicked} />
         </>
       )}
       {picked && (
@@ -835,6 +785,206 @@ function FlowsView({ range }: { range: TimeRange }) {
         </>
       )}
     </>
+  );
+}
+
+// FlowsByService — v0.5.178. Groups the flat business-flows
+// list by root service so a 200-flow install isn't an
+// undifferentiated wall of cards. Default-collapsed for groups
+// with >5 flows so the page loads scannable; default-expanded
+// when the operator narrowed via search (they're already
+// looking at a small subset). The group header surfaces
+// aggregate stats (total trace count + worst-flow p99) so the
+// operator can spot the "billing-api has 12 flows and one is
+// 3s p99" pattern without expanding the group.
+function FlowsByService({ flows, hasSearch, onPick }: {
+  flows: RootFlow[];
+  hasSearch: boolean;
+  onPick: (f: RootFlow) => void;
+}) {
+  const groups = useMemo(() => {
+    const byService = new Map<string, RootFlow[]>();
+    for (const f of flows) {
+      const arr = byService.get(f.rootService) ?? [];
+      arr.push(f);
+      byService.set(f.rootService, arr);
+    }
+    const out: Array<{
+      service: string;
+      flows: RootFlow[];
+      totalTraces: number;
+      maxP99Ns: number;
+    }> = [];
+    byService.forEach((fs, service) => {
+      let totalTraces = 0;
+      let maxP99Ns = 0;
+      for (const f of fs) {
+        totalTraces += f.traceCount;
+        if (f.p99Ns && f.p99Ns > maxP99Ns) maxP99Ns = f.p99Ns;
+      }
+      fs.sort((a, b) => b.traceCount - a.traceCount);
+      out.push({ service, flows: fs, totalTraces, maxP99Ns });
+    });
+    out.sort((a, b) => b.totalTraces - a.totalTraces);
+    return out;
+  }, [flows]);
+
+  // `overrides` flips a group's expanded state against its
+  // size-based default. Kept as a Set of service names rather
+  // than a Map<svc, bool> so the "expand all" / "collapse all"
+  // resets stay one-line.
+  const [overrides, setOverrides] = useState<Set<string>>(new Set());
+  const isExpanded = (g: typeof groups[number]) => {
+    const defaultExpanded = hasSearch || g.flows.length <= 5;
+    return overrides.has(g.service) ? !defaultExpanded : defaultExpanded;
+  };
+  const toggle = (svc: string) => {
+    setOverrides(prev => {
+      const next = new Set(prev);
+      if (next.has(svc)) next.delete(svc); else next.add(svc);
+      return next;
+    });
+  };
+  const expandAll = () => {
+    const next = new Set<string>();
+    for (const g of groups) {
+      const defaultExpanded = hasSearch || g.flows.length <= 5;
+      if (!defaultExpanded) next.add(g.service);
+    }
+    setOverrides(next);
+  };
+  const collapseAll = () => {
+    const next = new Set<string>();
+    for (const g of groups) {
+      const defaultExpanded = hasSearch || g.flows.length <= 5;
+      if (defaultExpanded) next.add(g.service);
+    }
+    setOverrides(next);
+  };
+
+  if (groups.length === 0) {
+    return <Empty icon="◇" title="No flows match the filter" />;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text3)' }}>
+        <span>{groups.length} service{groups.length === 1 ? '' : 's'}</span>
+        <span style={{ flex: 1 }} />
+        <button type="button" className="sec" onClick={expandAll}
+          style={{ fontSize: 11, padding: '3px 8px' }}>Expand all</button>
+        <button type="button" className="sec" onClick={collapseAll}
+          style={{ fontSize: 11, padding: '3px 8px' }}>Collapse all</button>
+      </div>
+      {groups.map(g => {
+        const open = isExpanded(g);
+        const worstP99Ms = g.maxP99Ns / 1e6;
+        const p99Color = worstP99Ms > 5000 ? 'var(--err)'
+          : worstP99Ms > 1000 ? 'var(--warn)'
+          : 'var(--text3)';
+        return (
+          <div key={g.service} style={{
+            border: '1px solid var(--border)', borderRadius: 6,
+            background: 'var(--bg2)', overflow: 'hidden',
+          }}>
+            <button type="button" onClick={() => toggle(g.service)}
+              style={{
+                width: '100%', textAlign: 'left',
+                display: 'flex', alignItems: 'baseline', gap: 10,
+                padding: '10px 12px',
+                background: 'transparent', border: 'none',
+                cursor: 'pointer', color: 'var(--text)',
+              }}>
+              <span style={{
+                fontSize: 11, color: 'var(--text3)',
+                fontFamily: 'ui-monospace, monospace', width: 14,
+              }}>{open ? '▼' : '▶'}</span>
+              <span style={{
+                fontWeight: 700, fontSize: 13,
+                fontFamily: 'ui-monospace, monospace',
+              }}>{g.service}</span>
+              <span style={{
+                fontSize: 10, padding: '1px 6px', borderRadius: 8,
+                background: 'var(--bg3)', color: 'var(--text2)',
+                fontFamily: 'ui-monospace, monospace',
+              }}>
+                {g.flows.length} flow{g.flows.length === 1 ? '' : 's'}
+              </span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                {fmtNum(g.totalTraces)} traces
+              </span>
+              {g.maxP99Ns > 0 && (
+                <span style={{
+                  fontSize: 11, color: p99Color,
+                  fontFamily: 'ui-monospace, monospace',
+                }} title="Worst p99 root-span duration across this service's flows">
+                  worst p99 {worstP99Ms >= 1000
+                    ? `${(worstP99Ms / 1000).toFixed(2)} s`
+                    : `${worstP99Ms.toFixed(0)} ms`}
+                </span>
+              )}
+            </button>
+            {open && (
+              <div style={{
+                borderTop: '1px solid var(--border)',
+                display: 'flex', flexDirection: 'column',
+              }}>
+                {g.flows.map((f, i) => (
+                  <button key={i} type="button" onClick={() => onPick(f)}
+                    style={{
+                      display: 'flex', flexDirection: 'column',
+                      gap: 4, textAlign: 'left',
+                      padding: '10px 12px 10px 36px',
+                      background: 'transparent', border: 'none',
+                      borderTop: i > 0 ? '1px solid var(--border)' : 'none',
+                      cursor: 'pointer', color: 'var(--text)',
+                    }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 12 }}>{f.rootOp}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+                        {fmtNum(f.traceCount)} traces
+                      </span>
+                      {f.p99Ns !== undefined && f.p99Ns > 0 && (() => {
+                        const p99Ms = f.p99Ns / 1e6;
+                        const color = p99Ms > 5000 ? 'var(--err)'
+                          : p99Ms > 1000 ? 'var(--warn)'
+                          : 'var(--text3)';
+                        const label = p99Ms >= 1000
+                          ? `${(p99Ms / 1000).toFixed(2)} s`
+                          : `${p99Ms.toFixed(0)} ms`;
+                        return (
+                          <span style={{
+                            fontSize: 11, color,
+                            fontFamily: 'ui-monospace, monospace',
+                          }}>p99 {label}</span>
+                        );
+                      })()}
+                    </div>
+                    {f.services.length > 1 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {f.services.slice(0, 10).map(s => (
+                          <span key={s} style={{
+                            fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                            background: 'var(--bg3)', color: 'var(--text3)',
+                            fontFamily: 'monospace',
+                          }}>{s}</span>
+                        ))}
+                        {f.services.length > 10 && (
+                          <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+                            +{f.services.length - 10}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

@@ -9,6 +9,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
+import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { fmtNs, tsLong, tsRel } from '@/lib/utils';
@@ -485,6 +486,11 @@ async function copyToClipboard(text: string): Promise<void> {
 // page; useful for handing a trace to support, customers, or anyone
 // outside Coremetry without giving them an account.
 function SharePopover({ traceId }: { traceId: string }) {
+  const { user } = useAuth();
+  // v0.5.202 — public-link mint + revoke are editor / admin only.
+  // Viewers can still copy the internal URL but the public-link
+  // section is hidden so they don't see a 403 from the server.
+  const canShare = user?.role === 'admin' || user?.role === 'editor';
   const wrapRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [internalCopied, setInternalCopied] = useState(false);
@@ -605,6 +611,8 @@ function SharePopover({ traceId }: { traceId: string }) {
             <span>{internalCopied ? 'Copied' : 'Copy current URL'}</span>
           </button>
 
+          {canShare && (
+            <>
           {/* Divider */}
           <div style={{ borderTop: '1px solid var(--border)', margin: '14px -12px' }} />
 
@@ -694,6 +702,8 @@ function SharePopover({ traceId }: { traceId: string }) {
                 ))}
               </div>
             </div>
+          )}
+            </>
           )}
         </div>
       )}

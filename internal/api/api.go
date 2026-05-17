@@ -252,12 +252,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/traces/export.csv", s.exportTracesCSV)
 	mux.HandleFunc("GET /api/traces/aggregate", s.getTraceAggregate)
 	mux.HandleFunc("GET /api/traces/{id}", s.getTrace)
-	// Public-share endpoints — POST mints a token (any signed-in
-	// user); GET resolves it without auth (the auth middleware's
-	// SkipPath allowlist lets it through).
-	mux.HandleFunc("POST /api/traces/{id}/share", s.createTraceSnapshot)
-	mux.HandleFunc("GET  /api/traces/{id}/shares", s.listTraceSnapshots)
-	mux.HandleFunc("DELETE /api/traces/share/{token}", s.revokeTraceSnapshot)
+	// Public-share endpoints — POST mints a token (editor+ only;
+	// viewers can read traces but not externalise them through a
+	// public link), GET resolves without auth (auth middleware's
+	// SkipPath allowlist lets it through), DELETE revokes (editor+
+	// so a viewer can't nuke other operators' active shares).
+	mux.HandleFunc("POST /api/traces/{id}/share",       auth.RequireAnyRole(editorRoles, s.createTraceSnapshot))
+	mux.HandleFunc("GET  /api/traces/{id}/shares",      s.listTraceSnapshots)
+	mux.HandleFunc("DELETE /api/traces/share/{token}",  auth.RequireAnyRole(editorRoles, s.revokeTraceSnapshot))
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
@@ -2142,7 +2144,9 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 }
 
 // createTraceSnapshot mints a public-share token for the requested
-// trace. Any authenticated user can mint one; the public viewer
+// trace. Editor / admin only (route-gated) — a viewer can read
+// traces in the UI but should not be able to externalise them
+// through a public link with no further auth. The public viewer
 // endpoint is gated only by token possession + expiry. Default
 // lifetime 24h; client can pass `?ttlHours=N` (capped to 30 days)
 // for longer-lived shares — vendors / support tickets routinely
@@ -2192,6 +2196,8 @@ func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 		host = v
 	}
 	publicURL := fmt.Sprintf("%s://%s/public/trace?token=%s", scheme, host, snap.Token)
+	s.audit(r, "trace_snapshot.create", "trace_snapshot", snap.Token,
+		fmt.Sprintf(`{"traceId":%q,"ttlHours":%d}`, id, ttlHours))
 	writeJSON(w, map[string]any{
 		"token":     snap.Token,
 		"url":       publicURL,
@@ -2222,10 +2228,10 @@ func (s *Server) listTraceSnapshots(w http.ResponseWriter, r *http.Request) {
 // setting its expires_at to now. The public viewer's expiry
 // gate already returns 404 for expired tokens, so the next
 // request from anyone holding the link gets the "Snapshot not
-// found or expired" empty state. Any authenticated user can
-// revoke any token — share links are a soft secret and the
-// blast radius of an over-eager revoke is just "operator
-// has to mint a new one".
+// found or expired" empty state. Editor / admin only (route-
+// gated) — without this a viewer could nuke other operators'
+// active shares, and the audit log only fingers "some viewer
+// did it" after the support call has already failed.
 func (s *Server) revokeTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
@@ -2236,6 +2242,7 @@ func (s *Server) revokeTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "trace_snapshot.revoke", "trace_snapshot", token, "")
 	writeJSON(w, map[string]string{"status": "revoked"})
 }
 

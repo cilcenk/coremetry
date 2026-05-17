@@ -41,7 +41,11 @@ const SUGGESTED_GROUPBY = [
 
 export default function MetricsPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
-  const [services, setServices] = useState<Service[]>([]);
+  // v0.5.198 — `services` eager cache dropped. FilterBuilder
+  // server-fetches service.name values via /api/attribute-values?q=
+  // when the operator types in the value field; the ServicePicker
+  // up top is already debounced server-side. The eager all-services
+  // load at billion-span scale was the page's biggest TTFI cost.
   // Metadata for the currently-picked metric (unit, type,
   // description). Populated by MetricNamePicker's onPick
   // callback so we don't have to eager-fetch the entire metric
@@ -62,8 +66,6 @@ export default function MetricsPage() {
   // Suggestion sources for filters and group-by
   const [hostValues, setHostValues] = useState<string[]>([]);
   const [instanceValues, setInstanceValues] = useState<string[]>([]);
-
-  useEffect(() => { api.services(timeRangeToNs(range)).then(s => setServices(s ?? [])).catch(() => {}); }, [range]);
 
   // Service swap → metric becomes stale. Clear the selection so
   // the operator picks fresh from the new service's catalog
@@ -162,7 +164,6 @@ export default function MetricsPage() {
         {/* Attribute filters */}
         <FilterBuilder value={filters} onChange={setFilters}
           suggestedValues={{
-            'service.name':   services.map(s => s.name),
             'host.name':      hostValues,
             'resource.host.name': hostValues,
             'resource.service.instance.id': instanceValues,

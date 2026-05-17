@@ -162,20 +162,13 @@ function TracesPageInner() {
   }, [range, view, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, navigate]);
 
   // Autocomplete option lists
-  const [services, setServices] = useState<string[]>([]);
-  const [operations, setOperations] = useState<string[]>([]);
-
-  useEffect(() => {
-    api.services(timeRangeToNs(range))
-      .then(svcs => setServices((svcs ?? []).map(s => s.name)))
-      .catch(() => setServices([]));
-  }, [range]);
-
-  useEffect(() => {
-    api.operations(draft.service, timeRangeToNs(range))
-      .then(ops => setOperations(ops ?? []))
-      .catch(() => setOperations([]));
-  }, [draft.service, range]);
+  // v0.5.198 — removed the eager api.services() + api.operations()
+  // catalogue loads here. FilterBuilder now fetches per-key values
+  // server-side via /api/attribute-values?q= (debounced) and the
+  // top-level ServicePicker / OperationPicker pickers already
+  // server-search. The seed arrays are dead weight at billion-span
+  // scale and were the page's biggest TTFI cost on installs with
+  // 10k+ services.
 
   // Total-count opt-in. Off by default for speed at scale (full DISTINCT
   // over a multi-billion-span table can take 10s+); the user can flip it
@@ -472,10 +465,10 @@ function TracesPageInner() {
         {/* Advanced multi-dimension filter chips (Tempo / Dynatrace style) */}
         <FilterBuilder value={advFilters} onChange={setAdvFilters}
           suggestedValues={{
-            'service.name': services,
-            'resource.service.name': services,
-            'name': operations,
-            'span.name': operations,
+            // service.name + name keys removed (v0.5.198) — they now
+            // server-search via /api/attribute-values?q=. Only
+            // small enum-shaped sets stay seed values; FilterBuilder
+            // merges these with server results.
             'kind': ['internal', 'server', 'client', 'producer', 'consumer'],
             'status_code': ['ok', 'error', 'unset'],
             'http.method': ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],

@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react';
-import { api } from '@/lib/api';
+import { MetricNamePicker } from '../MetricNamePicker';
 import type {
-  Panel, PanelType, PanelWidth, MetricInfo,
+  Panel, PanelType, PanelWidth,
   MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, MarkdownPanelConfig,
 } from '@/lib/types';
 
@@ -109,18 +108,18 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
 function MetricFields({ cfg, onChange }: {
   cfg: MetricPanelConfig; onChange: (c: MetricPanelConfig) => void;
 }) {
-  const [names, setNames] = useState<MetricInfo[]>([]);
-  useEffect(() => { api.metricNames('').then(n => setNames(n ?? [])); }, []);
+  // v0.5.198 — swapped the eager api.metricNames('') load for the
+  // server-side MetricNamePicker. At 10k+ metric installs the full
+  // catalogue blew up panel-editor TTFI; debounced search keeps
+  // the picker usable.
   const update = <K extends keyof MetricPanelConfig>(k: K, v: MetricPanelConfig[K]) =>
     onChange({ ...cfg, [k]: v });
   return (
     <>
       <Field label="Metric name">
-        <input list="metric-names" value={cfg.metricName ?? ''}
-          onChange={e => update('metricName', e.target.value)} style={{ width: '100%' }} />
-        <datalist id="metric-names">
-          {names.map(n => <option key={n.name} value={n.name} />)}
-        </datalist>
+        <MetricNamePicker service="" value={cfg.metricName ?? ''}
+          onChange={v => update('metricName', v)}
+          placeholder="search metrics…" width="100%" />
       </Field>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <Field label="Aggregation">

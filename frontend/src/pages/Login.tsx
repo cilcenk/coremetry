@@ -96,42 +96,43 @@ export default function LoginPage() {
       }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           {brand.logoDataUri ? (
-            // Operator-uploaded bank/company logo at the top. The
-            // OpenTelemetry mark + "Coremetry" word stay visible
-            // underneath as a subtle "powered by" so the OTel
-            // provenance isn't hidden behind a re-skin (v0.5.163 —
-            // earlier the uploaded logo simply replaced the
-            // bundled mark).
+            // Two-row layout when an operator logo is uploaded:
+            // (1) the custom logo dominates the header, (2) an
+            // "OpenTelemetry mark + Coremetry" co-branding row
+            // sits underneath on its own line so the OTel
+            // provenance + product name stay visible. Revised
+            // from v0.5.163's small "powered by" line which felt
+            // like an afterthought instead of co-branding.
             <>
               <img src={brand.logoDataUri} alt={brand.appName}
                    style={{ maxHeight: 72, maxWidth: 220, objectFit: 'contain' }} />
               <div style={{
-                marginTop: 10,
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                opacity: 0.75,
+                marginTop: 12,
+                display: 'inline-flex', alignItems: 'center', gap: 8,
               }}>
-                <TelescopeIcon size={14} />
-                <span style={{
-                  fontSize: 11, color: 'var(--text3)',
-                  letterSpacing: '0.4px',
-                }}>
-                  Powered by Coremetry
+                <TelescopeIcon size={22} />
+                <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: '0.5px' }}>
+                  Coremetry
                 </span>
               </div>
             </>
           ) : (
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: 64, height: 64, borderRadius: 16,
-              background: 'rgba(66,92,199,0.12)',
-              border: '1px solid rgba(66,92,199,0.35)',
-            }}>
-              <TelescopeIcon size={40} />
-            </div>
+            // No custom logo: the bundled mark + appName is the
+            // entire branding (unchanged from pre-v0.5.163).
+            <>
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 64, height: 64, borderRadius: 16,
+                background: 'rgba(66,92,199,0.12)',
+                border: '1px solid rgba(66,92,199,0.35)',
+              }}>
+                <TelescopeIcon size={40} />
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 700, marginTop: 10, letterSpacing: '0.5px' }}>
+                {brand.appName}
+              </div>
+            </>
           )}
-          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 10, letterSpacing: '0.5px' }}>
-            {brand.appName}
-          </div>
           <div style={{ color: 'var(--text3)', fontSize: 11, marginTop: 4 }}>
             {brand.loginTitle === `Sign in to ${brand.appName}`
               ? t('login.signInToContinue')

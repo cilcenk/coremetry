@@ -391,6 +391,17 @@ export const api = {
         body: JSON.stringify({ text, limit }),
       }),
 
+  // Topology exclude list (v0.5.176) — services muted from
+  // diagrams to keep hub-like infra (config server, identity,
+  // service mesh) from cluttering every render.
+  topologyExclude: () =>
+    get<{ services: string[] }>(`/api/topology/exclude`),
+  putTopologyExclude: (services: string[]) =>
+    request<{ services: string[] }>(`/api/topology/exclude`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ services }),
+    }),
+
   // Slow-query AI explain (v0.5.171). Body matches the row
   // shape so the backend doesn't have to re-query CH — frontend
   // already has stats + sample on hand.

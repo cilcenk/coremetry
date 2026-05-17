@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"html"
@@ -184,6 +186,82 @@ type ServiceTopologyNode struct {
 	Kind string `json:"kind"` // "service" | "db" | "queue" | "external"
 }
 
+// topologyExcludeKey persists the operator's curated list of
+// services to hide from the topology diagram (v0.5.176).
+// Stored as a JSON array under system_settings — admin edits via
+// Settings UI, individual service detail pages can also toggle
+// via a "Mute on topology" button. Useful for "hub-like" infra
+// services (kafka config server, service-mesh control plane,
+// identity service) that fan out to every other service and
+// turn the diagram into spaghetti.
+const topologyExcludeKey = "topology.exclude"
+
+// loadTopologyExclude reads the operator-curated exclude list.
+// Returns a map for O(1) lookup; empty when unset or corrupt.
+func (s *Server) loadTopologyExclude(ctx context.Context) map[string]bool {
+	raw, err := s.store.GetSetting(ctx, topologyExcludeKey)
+	if err != nil || len(raw) == 0 {
+		return map[string]bool{}
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return map[string]bool{}
+	}
+	out := make(map[string]bool, len(list))
+	for _, s := range list {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			out[s] = true
+		}
+	}
+	return out
+}
+
+// getTopologyExclude returns the current exclude list as JSON
+// (sorted, deduped) so the admin Settings page can render it.
+func (s *Server) getTopologyExclude(w http.ResponseWriter, r *http.Request) {
+	m := s.loadTopologyExclude(r.Context())
+	list := make([]string, 0, len(m))
+	for k := range m {
+		list = append(list, k)
+	}
+	sort.Strings(list)
+	writeJSON(w, map[string]any{"services": list})
+}
+
+// putTopologyExclude replaces the entire exclude list. Empty
+// array is valid (clears the mute).
+func (s *Server) putTopologyExclude(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Services []string `json:"services"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	// Dedupe + trim so repeated entries from an inattentive
+	// hand-edit collapse to one row.
+	seen := map[string]bool{}
+	cleaned := make([]string, 0, len(body.Services))
+	for _, sv := range body.Services {
+		sv = strings.TrimSpace(sv)
+		if sv == "" || seen[sv] {
+			continue
+		}
+		seen[sv] = true
+		cleaned = append(cleaned, sv)
+	}
+	sort.Strings(cleaned)
+	raw, _ := json.Marshal(cleaned)
+	if err := s.store.PutSetting(r.Context(), topologyExcludeKey, raw); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.audit(r, "settings.topology_exclude.update", "settings", topologyExcludeKey,
+		fmt.Sprintf(`{"count":%d}`, len(cleaned)))
+	writeJSON(w, map[string]any{"services": cleaned})
+}
+
 // getServiceTopology delivers the full service-level interaction
 // graph for a time window. No depth bound — the entire backend
 // fabric is small enough (tens to low hundreds of services) to
@@ -193,13 +271,14 @@ type ServiceTopologyNode struct {
 func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	const edgeCap = 5000
 	from, to := parseFromTo(r, 1*time.Hour)
+	exclude := s.loadTopologyExclude(r.Context())
 	// Cache key includes the rounded window so concurrent requests
-	// over the same minute share one CH round-trip. Topology view
-	// is a "what does the fabric look like" surface — sub-minute
-	// freshness isn't load-bearing, but the underlying self-join
-	// is heavy enough at production scale that caching is the
-	// difference between "snappy" and "30s timeouts".
-	key := fmt.Sprintf("topology-service:from=%d:to=%d", from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	// over the same minute share one CH round-trip. Exclude list
+	// folded into the key as a length so a Settings change
+	// invalidates the cache promptly; full hashing would be
+	// overkill at this scale.
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:exN=%d",
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), len(exclude))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
@@ -231,6 +310,15 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 				if knownServices[peer] {
 					continue
 				}
+			}
+			// Operator-curated topology exclude list (v0.5.176).
+			// Drops every edge touching a muted service so a
+			// hub-like infra component (config server, identity,
+			// service-mesh control plane) doesn't pollute every
+			// diagram. Filter on EITHER end — the muted service
+			// shouldn't appear as caller OR callee.
+			if exclude[e.ParentService] || exclude[e.ChildNode] {
+				continue
 			}
 			filtered = append(filtered, e)
 		}
@@ -343,7 +431,8 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
-	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d", rootService, rootOp, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	exclude := s.loadTopologyExclude(r.Context())
+	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d:exN=%d", rootService, rootOp, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), len(exclude))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
 		if err != nil {
@@ -366,6 +455,15 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 				if knownServices[peer] {
 					continue
 				}
+			}
+			// Operator-curated topology exclude list (v0.5.176).
+			// Drops every edge touching a muted service so a
+			// hub-like infra component (config server, identity,
+			// service-mesh control plane) doesn't pollute every
+			// diagram. Filter on EITHER end — the muted service
+			// shouldn't appear as caller OR callee.
+			if exclude[e.ParentService] || exclude[e.ChildNode] {
+				continue
 			}
 			filtered = append(filtered, e)
 		}

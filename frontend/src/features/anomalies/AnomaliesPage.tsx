@@ -374,6 +374,8 @@ export default function ProblemsPage() {
 // Exceptions page UX.
 function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const currentUserEmail = user?.email ?? '';
   const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>('open');
   const [sortBy, setSortBy] = useState<PSortKey>('started');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -615,6 +617,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                 <PSortTh col="rule"     label="Rule"     sort={sortBy} dir={sortDir} onSort={toggleSort} />
                 <PSortTh col="started"  label="Started"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
                 <PSortTh col="status"   label="Status"   sort={sortBy} dir={sortDir} onSort={toggleSort} />
+                <th>Assignee</th>
                 <th>Triage</th>
               </tr>
             </thead>
@@ -703,6 +706,11 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                         {p.status === 'open' && <span className="badge b-err">OPEN</span>}
                         {p.status === 'acknowledged' && <span className="badge b-warn">ACK</span>}
                         {p.status === 'resolved' && <span className="badge b-ok">RESOLVED</span>}
+                      </td>
+                      <td onClick={e => e.stopPropagation()} style={{ fontSize: 12 }}>
+                        <AssigneeCell problem={p}
+                          currentUserEmail={currentUserEmail}
+                          onChanged={() => problemsQ.refetch()} />
                       </td>
                       <td onClick={e => e.stopPropagation()}>
                         {/* Triage — opens the right-side drawer
@@ -1121,6 +1129,73 @@ function humanize(err: unknown): string {
     if (j && typeof j.error === 'string') return j.error;
   } catch {}
   return body || msg;
+}
+
+// AssigneeCell — v0.5.209 triage column. Renders the current
+// assignee (team name auto-set on open from service_metadata.
+// ownerTeam, OR an operator email after manual claim), with two
+// inline affordances:
+//   • "Take it" — PATCH self-email when the problem is
+//     unassigned or assigned to a team. One click, no modal.
+//   • Click-to-edit — prompt() lets the operator type any
+//     value (reassign to a teammate / change team / clear).
+// Kept dependency-light: no inline picker component, no
+// suggestions list. v2 can promote this to a typeahead against
+// the users table if the prompt() ergonomics annoy operators.
+function AssigneeCell({ problem, currentUserEmail, onChanged }: {
+  problem: Problem;
+  currentUserEmail: string;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const assignee = problem.assignee ?? '';
+  const isSelf = currentUserEmail !== '' && assignee === currentUserEmail;
+  const isTeam = assignee !== '' && !assignee.includes('@');
+
+  const set = async (next: string) => {
+    if (busy || next === assignee) return;
+    setBusy(true);
+    try { await api.setProblemAssignee(problem.id, next); onChanged(); }
+    finally { setBusy(false); }
+  };
+  const editPrompt = () => {
+    const v = window.prompt('Assignee (email or team name; empty = unassign):', assignee);
+    if (v === null) return;
+    void set(v.trim());
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      {assignee
+        ? (
+          <span onClick={editPrompt}
+            title="Click to reassign or clear"
+            style={{
+              padding: '2px 8px', borderRadius: 12,
+              background: isSelf ? 'rgba(34,197,94,0.12)'
+                       : isTeam ? 'rgba(56,139,253,0.10)'
+                       : 'rgba(168,85,247,0.10)',
+              border: '1px solid ' + (
+                isSelf ? 'rgba(34,197,94,0.45)'
+              : isTeam ? 'rgba(56,139,253,0.35)'
+              : 'rgba(168,85,247,0.35)'),
+              color: isSelf ? 'var(--ok)' : 'var(--accent2)',
+              cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>
+            {isTeam ? '👥 ' : ''}{assignee}
+          </span>
+        )
+        : <span style={{ color: 'var(--text3)' }}>—</span>}
+      {currentUserEmail !== '' && !isSelf && (
+        <button className="sec" disabled={busy}
+          onClick={() => void set(currentUserEmail)}
+          style={{ fontSize: 10, padding: '2px 6px' }}
+          title="Claim this problem for yourself">
+          Take it
+        </button>
+      )}
+    </span>
+  );
 }
 
 // SortTh is the generic accessible sort-header cell. Replaces the

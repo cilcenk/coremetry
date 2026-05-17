@@ -58,6 +58,14 @@ type Problem struct {
 	Threshold   float64 `json:"threshold"`
 	Status      string  `json:"status"`     // open | resolved
 	Description string  `json:"description"`
+	// Assignee (v0.5.209) — free-form string, two flavours:
+	//   • team name auto-set from service_metadata.owner_team
+	//     when the problem opens (so "payments" surfaces without
+	//     an operator action)
+	//   • email of a specific operator after manual claim/assign
+	// Empty = unassigned. Operator-editable via PATCH
+	// /api/problems/{id}/assignee.
+	Assignee    string  `json:"assignee,omitempty"`
 	StartedAt   int64   `json:"startedAt"`  // unix ns
 	ResolvedAt  *int64  `json:"resolvedAt,omitempty"`
 	// RunbookURL — composed at read time from the firing
@@ -431,7 +439,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description,
+		       value, threshold, status, description, assignee,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at
 		FROM problems FINAL `+wc.sql()+`
@@ -445,7 +453,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 		var p Problem
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
 			&p.StartedAt, &resolvedAt); err != nil {
 			return nil, err
 		}
@@ -471,7 +479,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description,
+		       value, threshold, status, description, assignee,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at
 		FROM problems FINAL
@@ -487,7 +495,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 		var p Problem
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
 			&p.StartedAt, &resolvedAt); err != nil {
 			return nil, err
 		}
@@ -511,14 +519,14 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 	var resolvedAt *time.Time
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description,
+		       value, threshold, status, description, assignee,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at
 		FROM problems FINAL
 		WHERE rule_id = ? AND service = ? AND status IN ('open', 'acknowledged')
 		ORDER BY started_at DESC LIMIT 1`, ruleID, service).
 		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
 			&p.StartedAt, &resolvedAt)
 	if err != nil { return nil, err }
 	if resolvedAt != nil {
@@ -568,6 +576,48 @@ func (s *Store) AcknowledgeProblems(ctx context.Context, ids []string, actor str
 	return count, nil
 }
 
+// GetProblem fetches a single problem by id, or nil when no
+// row matches. Lighter than ListProblems for the patch-one path.
+func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
+	var p Problem
+	var resolvedAt *time.Time
+	err := s.conn.QueryRow(ctx, `
+		SELECT id, rule_id, rule_name, severity, service, metric,
+		       value, threshold, status, description, assignee,
+		       toUnixTimestamp64Nano(started_at),
+		       resolved_at
+		FROM problems FINAL
+		WHERE id = ?
+		LIMIT 1`, id).
+		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.StartedAt, &resolvedAt)
+	if err != nil {
+		return nil, err
+	}
+	if resolvedAt != nil {
+		ns := resolvedAt.UnixNano()
+		p.ResolvedAt = &ns
+	}
+	return &p, nil
+}
+
+// SetProblemAssignee overwrites the assignee on a single problem.
+// Empty string clears the assignee — operator's explicit "take it
+// back to unassigned" action. ReplacingMergeTree handles the
+// dedupe; the upsert path is the same as every other write.
+func (s *Store) SetProblemAssignee(ctx context.Context, id, assignee string) error {
+	cur, err := s.GetProblem(ctx, id)
+	if err != nil {
+		return err
+	}
+	if cur == nil {
+		return fmt.Errorf("problem %q not found", id)
+	}
+	cur.Assignee = assignee
+	return s.UpsertProblem(ctx, *cur)
+}
+
 func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO problems")
 	if err != nil { return err }
@@ -578,7 +628,7 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 		resolvedAt = &t
 	}
 	if err := batch.Append(p.ID, p.RuleID, p.RuleName, p.Severity, p.Service,
-		p.Metric, p.Value, p.Threshold, p.Status, p.Description,
+		p.Metric, p.Value, p.Threshold, p.Status, p.Description, p.Assignee,
 		startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
 		return fmt.Errorf("append problem: %w", err)
 	}

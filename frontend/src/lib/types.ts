@@ -922,6 +922,11 @@ export interface Problem {
   threshold: number;
   status: string;       // open | resolved
   description: string;
+  // Triage assignee (v0.5.209). Two shapes:
+  //   • team name auto-set on open from service_metadata.ownerTeam
+  //   • email of an operator after manual claim
+  // Empty = unassigned.
+  assignee?: string;
   startedAt: number;
   resolvedAt?: number;
   // k8s/openshift clusters the firing service was active in

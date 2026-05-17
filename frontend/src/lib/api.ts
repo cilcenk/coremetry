@@ -703,6 +703,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
     }),
+  // Manual claim / reassign — empty string clears the assignee
+  // (back to unassigned). Server audits each call.
+  setProblemAssignee: (id: string, assignee: string) =>
+    request<{ id: string; assignee: string }>(`/api/problems/${encodeURIComponent(id)}/assignee`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignee }),
+    }),
   copilotExplainSLO: (id: string) =>
     request<{
       explanation: string;

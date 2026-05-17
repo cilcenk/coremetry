@@ -477,6 +477,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			threshold    Float64,
 			status       LowCardinality(String),       -- open | resolved
 			description  String,
+			assignee     String        DEFAULT '',     -- owner_team OR email after manual claim
 			started_at   DateTime64(9),
 			resolved_at  Nullable(DateTime64(9)),
 			updated_at   DateTime64(9) DEFAULT now64(9),
@@ -885,6 +886,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// opens within N seconds of the last resolution —
 		// kills threshold-jitter flapping at the boundary.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS cooldown_sec UInt32 DEFAULT 0`,
+		// v0.5.209 — triage assignee. Populated from service
+		// metadata's owner_team when the problem opens, then
+		// overridable by an operator claim via PATCH
+		// /api/problems/{id}/assignee. Empty = unassigned.
+		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS assignee String DEFAULT ''`,
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS sre_team String DEFAULT ''`,
 		// chat_channel — successor to slack_channel. Existing
 		// rows with a populated slack_channel keep showing it

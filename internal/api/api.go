@@ -307,6 +307,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/services/{name}/callees",  s.svcCallees)
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
 	mux.HandleFunc("POST   /api/problems/acknowledge",      auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
+	mux.HandleFunc("PATCH  /api/problems/{id}/assignee",    auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
 	mux.HandleFunc("GET    /api/alert-rules",               s.listAlertRules)
 	mux.HandleFunc("POST   /api/alert-rules",               auth.RequireAnyRole(editorRoles, s.createAlertRule))
 	mux.HandleFunc("PUT    /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.updateAlertRule))
@@ -6492,6 +6493,34 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 //
 // Editor-role gated; each successful call is appended to the
 // audit log so "who silenced this overnight" is answerable.
+// setProblemAssignee — manual claim / reassign. Editor + admin
+// only (route-gated). PATCH body: {"assignee": "<email or team>"}.
+// Empty string clears the assignee — same upsert path. Audit
+// log entry on every successful patch so the timeline shows
+// who claimed what.
+func (s *Server) setProblemAssignee(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "problem id required", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Assignee string `json:"assignee"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	body.Assignee = strings.TrimSpace(body.Assignee)
+	if err := s.store.SetProblemAssignee(r.Context(), id, body.Assignee); err != nil {
+		writeErr(w, err)
+		return
+	}
+	details, _ := json.Marshal(map[string]any{"id": id, "assignee": body.Assignee})
+	s.audit(r, "problem.assign", "problem", id, string(details))
+	writeJSON(w, map[string]any{"id": id, "assignee": body.Assignee})
+}
+
 func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs []string `json:"ids"`

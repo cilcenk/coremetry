@@ -681,25 +681,20 @@ function ExploreInner() {
           </button>
         </div>
 
-        {showFacets && (() => {
-          const { from, to } = timeRangeToNs(range);
-          return (
-            <div style={{ marginBottom: 12 }}>
-              <FacetsPanel from={from} to={to}
-                dsl={mode === 'advanced' ? dsl : undefined}
-                filters={filters.length > 0 ? encodeFilters(filters) : undefined}
-                onPickValue={(f) => {
-                  // Avoid duplicate chips when the operator
-                  // clicks the same value twice.
-                  if (filters.some(x => x.k === f.k && x.op === f.op &&
-                                        (x.v?.[0] ?? '') === (f.v?.[0] ?? ''))) {
-                    return;
-                  }
-                  setFilters([...filters, f]);
-                }} />
-            </div>
-          );
-        })()}
+        {showFacets && (
+          <div style={{ marginBottom: 12 }}>
+            <FacetsPanel range={range}
+              dsl={mode === 'advanced' ? dsl : undefined}
+              filters={filters.length > 0 ? encodeFilters(filters) : undefined}
+              onPickValue={(f) => {
+                if (filters.some(x => x.k === f.k && x.op === f.op &&
+                                      (x.v?.[0] ?? '') === (f.v?.[0] ?? ''))) {
+                  return;
+                }
+                setFilters([...filters, f]);
+              }} />
+          </div>
+        )}
 
         {/* Result mode toggle: Metric chart / Trace list / Repeats
             finder (all driven by the same filter + window).

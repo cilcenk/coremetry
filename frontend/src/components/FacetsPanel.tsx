@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Spinner } from './Spinner';
 import { api } from '@/lib/api';
-import { fmtNum } from '@/lib/utils';
-import type { Facet, FilterExpr } from '@/lib/types';
+import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import type { Facet, FilterExpr, TimeRange } from '@/lib/types';
 
 // FacetsPanel — Datadog-style trace tag explorer. Shows top-N
 // values for each well-known facet column (service.name,
@@ -12,20 +12,35 @@ import type { Facet, FilterExpr } from '@/lib/types';
 // /explore so the operator scans heavy tags and pivots without
 // retyping.
 //
-// Self-fetches on (from, to, dsl, filters) change with a 300ms
+// Self-fetches on (range, dsl, filters) change with a 300ms
 // debounce. Server caches 30s per param tuple; the panel itself
 // is lightweight to re-mount so we don't keep stale state when
 // the operator changes the window.
+//
+// v0.5.184 — accepts the TimeRange directly and resolves
+// from/to internally. Previously the parent called
+// timeRangeToNs(range) on every render which produced fresh
+// timestamps every paint (now() ticks); the effect re-fired
+// each time, the 300ms debounce window kept canceling, and the
+// spinner appeared to spin forever even though the data had
+// loaded. Owning the resolution + memoising it on range
+// identity fixes the regression at the source.
 export function FacetsPanel({
-  from, to, dsl, filters, onPickValue,
+  range, dsl, filters, onPickValue,
 }: {
-  from: number;
-  to: number;
+  range: TimeRange;
   dsl?: string;
   filters?: string;
   onPickValue: (filter: FilterExpr) => void;
 }) {
   const [data, setData] = useState<Facet[] | null | undefined>(undefined);
+  // Resolve range → {from, to} ONCE per range identity. The
+  // dependency is the range object reference (stable until
+  // the parent's setRange fires), not the timestamps that
+  // contain a moving now() inside preset windows.
+  const { from, to } = useMemo(() => timeRangeToNs(range),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [range]);
   useEffect(() => {
     setData(undefined);
     const h = setTimeout(() => {

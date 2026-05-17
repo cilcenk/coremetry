@@ -483,6 +483,40 @@ export interface TempoSettingsInput {
   orgId?: string;
 }
 
+// Unified triage inbox (v0.5.211) — merges Problems + Exception
+// groups + Anomaly events into one ranked list with a normalised
+// priority bucket so operators stop tab-hopping. Each kind keeps
+// its own drill-down ref (only one populated per row).
+export type InboxKind = 'problem' | 'exception' | 'anomaly';
+export interface InboxItem {
+  id: string;             // composite "<kind>:<nativeId>"
+  kind: InboxKind;
+  source: string;         // "Alert rule" | "Exception" | "Anomaly"
+  priority: 'P1' | 'P2' | 'P3';
+  priorityReason: string;
+  severity: string;
+  service: string;
+  title: string;
+  description: string;
+  startedAt: number;
+  lastSeen: number;
+  assignee?: string;
+  status: string;
+  clusters?: string[];
+  problem?: {
+    id: string; ruleId: string; metric: string;
+    value: number; threshold: number;
+  };
+  exception?: {
+    fingerprint: string; type: string; message: string;
+    occurrences: number;
+  };
+  anomaly?: {
+    id: string; kind: string; pattern: string;
+    peakRatio: number; currentRatio: number;
+  };
+}
+
 // Role hierarchy used everywhere. `editor` was introduced for the
 // LDAP enterprise rollout — admin/users/system-settings stay admin-
 // only, dashboards/monitors/alerts/incidents are open to editor too.

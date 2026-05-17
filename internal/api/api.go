@@ -308,6 +308,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
 	mux.HandleFunc("POST   /api/problems/acknowledge",      auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
 	mux.HandleFunc("PATCH  /api/problems/{id}/assignee",    auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
+	// Unified triage inbox (v0.5.211) — merges Problems +
+	// Exception groups + Anomaly events with a normalised
+	// priority blend so operators stop tab-hopping.
+	mux.HandleFunc("GET    /api/inbox",                     s.inbox)
 	mux.HandleFunc("GET    /api/alert-rules",               s.listAlertRules)
 	mux.HandleFunc("POST   /api/alert-rules",               auth.RequireAnyRole(editorRoles, s.createAlertRule))
 	mux.HandleFunc("PUT    /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.updateAlertRule))

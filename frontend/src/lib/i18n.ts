@@ -26,6 +26,7 @@ const EN: Catalog = {
   'navGroup.management':  'Management',
 
   // Sidebar
+  'nav.inbox':       'Inbox',
   'nav.incidents':   'Incidents',
   'nav.problems':    'Problems',
   'nav.anomalies':   'Anomalies',
@@ -119,6 +120,7 @@ const TR: Catalog = {
   'navGroup.management': 'Yönetim',
 
   // Sidebar
+  'nav.inbox':       'Gelen kutusu',
   'nav.incidents':   'Olaylar',
   'nav.problems':    'Sorunlar',
   'nav.anomalies':   'Anomaliler',

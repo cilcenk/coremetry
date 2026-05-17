@@ -37,6 +37,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: 'navGroup.triage',
     items: [
+      { href: '/inbox',     label: 'nav.inbox',     icon: '📥' },
       { href: '/incidents', label: 'nav.incidents', icon: '⚠' },
       { href: '/problems',  label: 'nav.problems',  icon: '!' },
       { href: '/anomalies', label: 'nav.anomalies', icon: '⚠' },

@@ -36,6 +36,7 @@ const Incident          = lazy(() => import('./pages/Incident'));
 // observation-only page (live streams + 24h history).
 const Problems          = lazy(() => import('./features/anomalies'));
 const Anomalies         = lazy(() => import('./features/anomalies/AnomalyStreamsPage'));
+const Inbox             = lazy(() => import('./pages/Inbox'));
 const Alerts            = lazy(() => import('./pages/Alerts'));
 const Slos              = lazy(() => import('./pages/Slos'));
 const Monitors          = lazy(() => import('./pages/Monitors'));
@@ -89,6 +90,7 @@ export default function App() {
             <Route path="/dashboard"      element={<Dashboard />} />
             <Route path="/incidents"      element={<Incidents />} />
             <Route path="/incident"       element={<Incident />} />
+            <Route path="/inbox"          element={<Inbox />} />
             <Route path="/problems"       element={<Problems />} />
             <Route path="/anomalies"      element={<Anomalies />} />
             <Route path="/exceptions"     element={<Navigate to="/problems" replace />} />

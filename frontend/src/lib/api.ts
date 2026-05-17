@@ -705,6 +705,11 @@ export const api = {
     }),
   // Manual claim / reassign — empty string clears the assignee
   // (back to unassigned). Server audits each call.
+  // Unified triage inbox (v0.5.211). Merges Problems +
+  // Exception groups + Anomaly events server-side with a
+  // common priority blend; returns at most `limit` items.
+  inbox: (params: { status?: 'open' | 'all'; service?: string; limit?: number } = {}) =>
+    get<import('./types').InboxItem[] | null>(`/api/inbox?${qs(params)}`),
   setProblemAssignee: (id: string, assignee: string) =>
     request<{ id: string; assignee: string }>(`/api/problems/${encodeURIComponent(id)}/assignee`, {
       method: 'PATCH',

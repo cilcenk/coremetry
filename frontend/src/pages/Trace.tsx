@@ -22,6 +22,12 @@ function TraceDetailInner() {
 
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
   const [spans, setSpans] = useState<SpanRow[] | null | undefined>(undefined);
+  // v0.5.208 — "clickhouse" when the trace lives in Coremetry's
+  // store, "tempo" when getTrace fell back to the external Tempo
+  // backend (Coremetry sampled it out). Drives the small banner
+  // above the waterfall so the operator doesn't mistake "trace
+  // resolved" for "Coremetry has full retention".
+  const [source, setSource] = useState<'clickhouse' | 'tempo' | undefined>(undefined);
   // selectedId + tab are URL-bound so a Share-button copy round-
   // trips: "open trace X with the rpc-call span focused on the Logs
   // tab" comes back identical when pasted in another browser.
@@ -48,7 +54,13 @@ function TraceDetailInner() {
     // "no logs for this trace" even when the log was
     // exactly the one they'd clicked from /logs to get here.
     setLogs(undefined);
-    api.trace(id).then(d => setSpans(d.spans ?? [])).catch(() => setSpans(null));
+    setSource(undefined);
+    api.trace(id)
+      .then(d => {
+        setSpans(d.spans ?? []);
+        setSource(d.source);
+      })
+      .catch(() => setSpans(null));
   }, [id]);
 
   useEffect(() => {
@@ -282,6 +294,20 @@ function TraceDetailInner() {
         {spans && spans.length === 0 && <Empty icon="⋮" title="Trace not found" />}
         {spans && spans.length > 0 && (
           <>
+            {source === 'tempo' && (
+              <div style={{
+                marginBottom: 10, padding: '6px 10px',
+                background: 'var(--bg2)',
+                border: '1px solid var(--border)',
+                borderLeft: '3px solid var(--accent2)',
+                borderRadius: 4,
+                fontSize: 11, color: 'var(--text2)',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }} title="Coremetry didn't have this trace in its own store; the spans below were fetched from the external Tempo backend configured in Settings → Tempo backend.">
+                <span style={{ fontFamily: 'monospace', color: 'var(--accent2)' }}>⇆</span>
+                <span><b>Source:</b> Tempo fallback · Coremetry sampled this trace out, the spans were read from the external Tempo backend.</span>
+              </div>
+            )}
             <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <CopilotExplain kind="trace" id={id} label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
               <CompareTracesButton aId={id} />

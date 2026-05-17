@@ -37,6 +37,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/profileconv"
 	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/sse"
+	"github.com/cilcenk/coremetry/internal/tempo"
 )
 
 type Server struct {
@@ -68,6 +69,13 @@ type Server struct {
 	copilot     *copilot.Service  // nil when AI key not configured
 	sampler     *sampling.Sampler // always set; Snapshot() reports current ratios
 	bus         *sse.Broker       // in-process SSE pub/sub for live UI updates
+	// tempo is the external Tempo backend (v0.5.208). When
+	// configured, getTrace falls back to Tempo on a CH miss so
+	// operators running Coremetry at 5% sampling + Tempo at
+	// 100% can still resolve long-tail trace IDs in the same
+	// /trace?id= URL. nil-safe — every accessor on the service
+	// short-circuits when the receiver is nil.
+	tempo       *tempo.Service
 
 	// Demo deployments only — when true, /api/auth/config returns
 	// initial admin credentials so the login page can pre-fill them.
@@ -121,6 +129,13 @@ func (s *Server) SetBackgroundConfig(b config.BackgroundConfig) {
 // by SPA after the server is listening.
 func (s *Server) SetVersion(v string) {
 	s.version = v
+}
+
+// SetTempo wires the external Tempo client. Always called from
+// main() with a non-nil service — Configured() reports whether the
+// operator has actually filled in the settings.
+func (s *Server) SetTempo(t *tempo.Service) {
+	s.tempo = t
 }
 
 type rateSample struct {
@@ -364,6 +379,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("PUT /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.putAnomalyPromotion))
 	mux.HandleFunc("GET /api/settings/ai",        auth.RequireRole(auth.RoleAdmin, s.getAISettings))
 	mux.HandleFunc("PUT /api/settings/ai",        auth.RequireRole(auth.RoleAdmin, s.putAISettings))
+	// External Tempo backend — admin-only because the token grants
+	// read access to every trace in the operator's Tempo cluster.
+	mux.HandleFunc("GET /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
+	mux.HandleFunc("PUT /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.putTempoSettings))
 	mux.HandleFunc("GET  /api/settings/ldap",        auth.RequireRole(auth.RoleAdmin, s.getLDAPSettings))
 	mux.HandleFunc("PUT  /api/settings/ldap",        auth.RequireRole(auth.RoleAdmin, s.putLDAPSettings))
 	mux.HandleFunc("POST /api/settings/ldap/test",   auth.RequireRole(auth.RoleAdmin, s.testLDAPConnection))
@@ -2133,13 +2152,35 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 	// that could change is late-arriving spans within the ingest
 	// window. The /trace?id= page is a deep-link that often gets
 	// reopened; this collapses the repeated full-trace span fetches.
+	//
+	// `source` distinguishes a CH-resident trace from a Tempo
+	// fallback so the frontend can banner-tag "this came from
+	// Tempo — Coremetry sampled it out". Cached under the same key
+	// either way; if CH eventually catches the trace, the 5min
+	// TTL bounds how long the operator sees the stale Tempo label.
 	key := "trace:" + id
 	s.serveCached(w, r, key, 5*time.Minute, func() (any, error) {
 		spans, err := s.store.GetTrace(r.Context(), id)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"traceId": id, "spans": spans}, nil
+		if len(spans) > 0 {
+			return map[string]any{"traceId": id, "spans": spans, "source": "clickhouse"}, nil
+		}
+		// CH miss → Tempo fallback. Skip cleanly when Tempo isn't
+		// configured. Errors from Tempo don't fail the whole
+		// request — the operator gets the same empty result they
+		// would have without the fallback, and an error log line
+		// fingers the misconfig.
+		if s.tempo != nil && s.tempo.Configured() {
+			tspans, terr := s.tempo.LookupTrace(r.Context(), id)
+			if terr != nil {
+				log.Printf("[tempo] lookup %q: %v", id, terr)
+			} else if len(tspans) > 0 {
+				return map[string]any{"traceId": id, "spans": tspans, "source": "tempo"}, nil
+			}
+		}
+		return map[string]any{"traceId": id, "spans": spans, "source": "clickhouse"}, nil
 	})
 }
 

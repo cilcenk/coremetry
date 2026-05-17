@@ -460,6 +460,29 @@ export interface AISettingsInput {
   baseUrl?: string;
 }
 
+// External Tempo backend (v0.5.208) — fallback for trace-by-id
+// when Coremetry sampled the trace out. GET returns the snapshot
+// (no token); PUT saves a new config. Empty `token` on PUT
+// preserves the previously stored token so the operator can
+// toggle Enabled / change orgId without retyping the key.
+export type TempoAuthType = '' | 'none' | 'bearer' | 'basic';
+export interface TempoSnapshot {
+  enabled: boolean;
+  baseUrl: string;
+  authType?: TempoAuthType;
+  hasToken: boolean;
+  username?: string;
+  orgId?: string;
+}
+export interface TempoSettingsInput {
+  enabled: boolean;
+  baseUrl: string;
+  authType?: TempoAuthType;
+  token?: string;
+  username?: string;
+  orgId?: string;
+}
+
 // Role hierarchy used everywhere. `editor` was introduced for the
 // LDAP enterprise rollout — admin/users/system-settings stay admin-
 // only, dashboards/monitors/alerts/incidents are open to editor too.
@@ -760,6 +783,12 @@ export interface SpanRow {
 export interface TraceDetailResponse {
   traceId: string;
   spans: SpanRow[];
+  // v0.5.208 — "clickhouse" when the trace was resolved from
+  // Coremetry's own store, "tempo" when it came from the
+  // external Tempo backend fallback (Coremetry sampled it out).
+  // Drives the small "from Tempo" banner above the waterfall so
+  // the operator doesn't conclude Coremetry retains everything.
+  source?: 'clickhouse' | 'tempo';
 }
 
 export interface LogRow {

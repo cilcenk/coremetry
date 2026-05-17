@@ -13,6 +13,7 @@ import type {
   StatusPageConfig, StatusComponent, StatusSubscriber,
   RetentionSpec,
   AISettings, AISettingsInput,
+  TempoSnapshot, TempoSettingsInput,
   Role, LDAPConfig, LDAPDirectoryUser,
 } from './types';
 
@@ -618,6 +619,17 @@ export const api = {
   getAISettings: () => get<AISettings>(`/api/settings/ai`),
   putAISettings: (s: AISettingsInput) =>
     request<AISettings>(`/api/settings/ai`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+
+  // Runtime settings: external Tempo backend (v0.5.208).
+  // GET returns the snapshot (no token); PUT saves a new config.
+  // An empty `token` in the PUT body preserves the previously
+  // stored token — operators only paste a new one to rotate.
+  getTempoSettings: () => get<TempoSnapshot>(`/api/settings/tempo`),
+  putTempoSettings: (s: TempoSettingsInput) =>
+    request<TempoSnapshot>(`/api/settings/tempo`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),

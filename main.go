@@ -33,6 +33,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/elasticml"
+	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/topology"
 )
 
@@ -430,10 +431,27 @@ func main() {
 			c.Host, c.Port, c.UseTLS, c.StartTLS, c.BaseDN)
 	}
 
+	// ── External Tempo backend (optional fallback for trace-by-id) ───────────
+	// Disabled by default — Configured() reports true only after
+	// the operator fills in the URL via Settings → Tempo. When
+	// enabled, getTrace falls back here on a CH miss so operators
+	// running Coremetry at low sampling + Tempo at 100% retention
+	// can still resolve long-tail trace IDs in the same /trace URL.
+	tempoSvc := tempo.New()
+	if err := tempoSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[tempo] load persisted config: %v", err)
+	}
+	if tempoSvc.Configured() {
+		t := tempoSvc.Snapshot()
+		log.Printf("[tempo] external backend enabled (baseUrl=%s authType=%s orgId=%s)",
+			t.BaseURL, t.AuthType, t.OrgID)
+	}
+
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, sampler, bus)
 	srv.SetVersion(Version)
 	srv.SetBackgroundConfig(cfg.Background)
+	srv.SetTempo(tempoSvc)
 	if cfg.Auth.DemoMode {
 		// Demo mode auto-signs the visitor in as the configured initial
 		// admin so they can poke at every screen, including admin-only

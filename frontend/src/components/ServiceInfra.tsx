@@ -62,6 +62,104 @@ export function ServiceInfra({ service, since = '15m' }: {
           <InfraTile key={s.metric} s={s} service={service} />
         ))}
       </div>
+      {/* CPU + Memory + RPS overlay (v0.5.194). Three lines on a
+          single 15-min chart, each normalised to its own range
+          so an operator can scan for correlated spikes ("CPU
+          went up at the same minute as RPS — saturation, not a
+          leak"). Shape > absolute values; the tiles above keep
+          the absolute numbers if the operator wants them. */}
+      <InfraTrendChart data={data} />
+    </div>
+  );
+}
+
+// InfraTrendChart — overlay of the three canonical infra
+// metrics over the same time window. Each line normalised to
+// [0..1] against its own max in the window so the shapes are
+// directly comparable even when CPU is "0.4 cores" and RPS is
+// "240 req/s". Renders nothing when fewer than two metrics are
+// available — a single line would just duplicate the tile.
+function InfraTrendChart({ data }: { data: InfraMetricSeries[] }) {
+  // Pick the three canonical slots. The InfraMetricSeries
+  // `metric` field is the slot name set server-side
+  // (cpu / memory / rps); we just look them up in the array.
+  const cpu = data.find(s => s.metric === 'cpu');
+  const mem = data.find(s => s.metric === 'memory');
+  const rps = data.find(s => s.metric === 'rps');
+  const lines: Array<{ label: string; color: string; unit: string; series: InfraMetricSeries }> = [];
+  if (cpu) lines.push({ label: 'CPU',    color: '#22c55e', unit: cpu.unit || '',    series: cpu });
+  if (mem) lines.push({ label: 'Memory', color: '#3b82f6', unit: mem.unit || 'B',   series: mem });
+  if (rps) lines.push({ label: 'RPS',    color: '#a855f7', unit: rps.unit || 'req/s', series: rps });
+  if (lines.length < 2) return null;
+
+  const W = 1000, H = 140, padL = 6, padR = 6, padT = 8, padB = 14;
+  // Common time axis = min/max across the three series. Most
+  // SDKs emit points at the same cadence; even when they
+  // don't, picking the union range keeps every line in frame.
+  const ts: number[] = [];
+  for (const l of lines) for (const p of l.series.points) ts.push(p.t);
+  if (ts.length === 0) return null;
+  const minT = Math.min(...ts);
+  const maxT = Math.max(...ts);
+  if (maxT === minT) return null;
+  const xOf = (t: number) => padL + ((t - minT) / (maxT - minT)) * (W - padL - padR);
+
+  // Per-series y-normalisation [0..1] against the line's own
+  // max. Mean and shape readable; absolute value lives on the
+  // tile above.
+  const norm = (series: InfraMetricSeries) => {
+    let max = 0;
+    for (const p of series.points) if (p.v > max) max = p.v;
+    if (max === 0) max = 1;
+    return series.points.map(p => ({ t: p.t, n: p.v / max, v: p.v }));
+  };
+  const yOf = (n: number) => padT + (1 - n) * (H - padT - padB);
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px dashed var(--border)' }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', gap: 12,
+        fontSize: 11, color: 'var(--text3)', marginBottom: 6,
+      }}>
+        <span style={{ fontWeight: 600, color: 'var(--text2)' }}>
+          Trend ({lines.length}-line overlay, normalised)
+        </span>
+        {lines.map(l => {
+          const last = l.series.points[l.series.points.length - 1]?.v ?? 0;
+          const lbl = l.label === 'Memory'
+            ? fmtBytes(last)
+            : l.label === 'RPS'
+            ? `${last.toFixed(1)}`
+            : `${(last * 100).toFixed(1)}%`;
+          return (
+            <span key={l.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 10, height: 2, background: l.color, display: 'inline-block' }} />
+              <span>{l.label}</span>
+              <span style={{ color: 'var(--text2)', fontFamily: 'ui-monospace, monospace' }}>{lbl}</span>
+            </span>
+          );
+        })}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
+        preserveAspectRatio="none"
+        style={{ display: 'block', background: 'var(--bg2)', borderRadius: 4 }}>
+        {/* Horizontal guide lines at 25/50/75% normalised */}
+        {[0.25, 0.5, 0.75].map(g => (
+          <line key={g} x1={padL} x2={W - padR} y1={yOf(g)} y2={yOf(g)}
+            stroke="var(--border)" strokeOpacity={0.35} />
+        ))}
+        {lines.map(l => {
+          const pts = norm(l.series);
+          if (pts.length === 0) return null;
+          const d = pts.map((p, i) =>
+            `${i === 0 ? 'M' : 'L'} ${xOf(p.t).toFixed(1)} ${yOf(p.n).toFixed(1)}`
+          ).join(' ');
+          return (
+            <path key={l.label} d={d} fill="none" stroke={l.color}
+              strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+          );
+        })}
+      </svg>
     </div>
   );
 }

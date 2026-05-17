@@ -374,6 +374,7 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 			Threshold:   r.Threshold,
 			Status:      "open",
 			Description: describeProblem(r, service, value),
+			Assignee:    e.defaultAssignee(ctx, service),
 			StartedAt:   time.Now().UnixNano(),
 		}
 		if err := e.store.UpsertProblem(ctx, p); err != nil {
@@ -680,6 +681,26 @@ func metricNeedsSampleFloor(metric string) bool {
 // measureCount returns the total span count for a service over
 // the window. Used by the MinSamples gate; one extra round-trip
 // per rule per tick (skipped when MinSamples == 0).
+// defaultAssignee resolves the team that should see a freshly-
+// opened Problem before anyone manually claims it. Looks at the
+// service's catalog metadata: owner_team wins (the team that
+// builds + ships the service), sre_team is the fallback for
+// services with no listed owner. Empty when no catalog row
+// exists yet — the operator can still claim manually.
+func (e *Evaluator) defaultAssignee(ctx context.Context, service string) string {
+	if service == "" {
+		return ""
+	}
+	md, err := e.store.GetServiceMetadata(ctx, service)
+	if err != nil || md == nil {
+		return ""
+	}
+	if md.OwnerTeam != "" {
+		return md.OwnerTeam
+	}
+	return md.SRETeam
+}
+
 func (e *Evaluator) measureCount(ctx context.Context, service string, window time.Duration) (uint64, error) {
 	cutoff := time.Now().Add(-window)
 	var n uint64

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ExploreViz, type ExploreVizKind } from './ExploreViz';
 import { Spinner } from './Spinner';
 import { ServicePicker } from './ServicePicker';
+import { MetricNamePicker } from './MetricNamePicker';
 import { Combobox } from './Combobox';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
@@ -23,13 +24,20 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
   initialService?: string;
   initialMetric?: string;
 }) {
-  const [service, setService] = useState(initialService);
-  const [metric, setMetric]   = useState(initialMetric);
-  const [names, setNames]     = useState<MetricInfo[]>([]);
-  const [series, setSeries]   = useState<ExploreSeries[] | null | undefined>(undefined);
+  const [service, setService]         = useState(initialService);
+  const [metric, setMetric]           = useState(initialMetric);
+  // Metadata for the picked metric (v0.5.181) — populated by
+  // MetricNamePicker's onPick callback. Replaces the prior
+  // eager-loaded names[] catalogue that dominated TTFI at 10k+
+  // metrics scale.
+  const [currentMeta, setCurrentMeta] = useState<MetricInfo | null>(null);
+  const [series, setSeries]           = useState<ExploreSeries[] | null | undefined>(undefined);
 
   useEffect(() => {
-    api.metricNames(service).then(n => setNames(n ?? []));
+    // Service swap → metric becomes stale; clear it so the
+    // operator re-picks against the new service's catalogue.
+    setMetric('');
+    setCurrentMeta(null);
   }, [service]);
 
   useEffect(() => {
@@ -81,7 +89,7 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
     }).catch(() => setSeries(null));
   }, [metric, service, range, compare]);
 
-  const unit = names.find(n => n.name === metric)?.unit;
+  const unit = currentMeta && currentMeta.name === metric ? currentMeta.unit : undefined;
 
   return (
     <>
@@ -91,8 +99,9 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
         <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>
           Metric:
         </span>
-        <Combobox value={metric} onChange={setMetric}
-          options={names.map(n => n.name)}
+        <MetricNamePicker service={service} value={metric}
+          onChange={setMetric}
+          onPick={setCurrentMeta}
           placeholder="Pick a metric…" width={300} />
         {unit && <span style={{ color: 'var(--text3)', fontSize: 11 }}>unit: {unit}</span>}
       </div>

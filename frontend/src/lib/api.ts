@@ -266,6 +266,14 @@ export const api = {
   operationNames: (service?: string, q?: string, limit = 200, offset = 0) =>
     get<{ names: string[]; total: number; hasMore: boolean }>(
       `/api/operation-names?${qs({ service, q, limit, offset })}`),
+  // Metric names with server-side search (v0.5.181). When q
+  // or limit/offset is present, the response shape switches to
+  // {names: MetricInfo[], total, hasMore} for the
+  // MetricNamePicker. The legacy api.metricNames() (no extra
+  // params) still returns the old MetricInfo[] shape.
+  metricNamesSearch: (service: string, q?: string, limit = 200, offset = 0) =>
+    get<{ names: MetricInfo[]; total: number; hasMore: boolean }>(
+      `/api/metrics/names?${qs({ service, q, limit, offset })}`),
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
   // surface as suggestions in addition to the hardcoded list.

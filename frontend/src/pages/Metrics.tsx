@@ -3,6 +3,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
+import { MetricNamePicker } from '@/components/MetricNamePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { ShareButton } from '@/components/ShareButton';
@@ -41,7 +42,14 @@ const SUGGESTED_GROUPBY = [
 export default function MetricsPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
   const [services, setServices] = useState<Service[]>([]);
-  const [metricNames, setMetricNames] = useState<MetricInfo[]>([]);
+  // Metadata for the currently-picked metric (unit, type,
+  // description). Populated by MetricNamePicker's onPick
+  // callback so we don't have to eager-fetch the entire metric
+  // catalogue just to display "ms · gauge · request_duration".
+  // v0.5.181 — previously this was derived from a full
+  // metricNames[] list eager-loaded on mount, which at 10k+
+  // metrics dominated the page's TTFI.
+  const [currentMeta, setCurrentMeta] = useState<MetricInfo | null>(null);
   const [service, setService] = useState('');
   const [metric, setMetric] = useState('');
   const [agg, setAgg] = useState('avg');
@@ -57,13 +65,13 @@ export default function MetricsPage() {
 
   useEffect(() => { api.services(timeRangeToNs(range)).then(s => setServices(s ?? [])).catch(() => {}); }, [range]);
 
+  // Service swap → metric becomes stale. Clear the selection so
+  // the operator picks fresh from the new service's catalog
+  // rather than seeing data for the wrong service via a metric
+  // that doesn't apply.
   useEffect(() => {
-    api.metricNames(service)
-      .then(m => {
-        setMetricNames(m ?? []);
-        if (metric && !(m ?? []).find(x => x.name === metric)) setMetric('');
-      })
-      .catch(() => setMetricNames([]));
+    setMetric('');
+    setCurrentMeta(null);
   }, [service]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pull dimension values for the current metric (host / instance) for combobox
@@ -87,7 +95,10 @@ export default function MetricsPage() {
     }).then(r => setSeries(r ?? [])).catch(() => setSeries(null));
   }, [metric, service, agg, filters, groupBy, step, range]);
 
-  const meta = metricNames.find(m => m.name === metric);
+  // Display meta only when the picker handed us metadata for
+  // the currently-typed metric — typing an arbitrary name
+  // before picking shows no meta, which is the right signal.
+  const meta = currentMeta && currentMeta.name === metric ? currentMeta : null;
   const unit = meta?.unit ?? '';
 
   const addGroupKey = (k: string) => {
@@ -129,8 +140,10 @@ export default function MetricsPage() {
           <ServicePicker value={service} onChange={setService}
             placeholder="(all)" width={170} />
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>Metric:</span>
-          <Combobox value={metric} onChange={setMetric}
-            options={metricNames.map(m => m.name)} placeholder="select metric…" width={280} />
+          <MetricNamePicker service={service} value={metric}
+            onChange={setMetric}
+            onPick={setCurrentMeta}
+            placeholder="select metric…" width={280} />
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>Agg:</span>
           <select value={agg} onChange={e => setAgg(e.target.value)}>
             {AGG_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}

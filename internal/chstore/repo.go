@@ -1998,25 +1998,71 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, err
 // ── Metric queries ────────────────────────────────────────────────────────────
 
 func (s *Store) GetMetricNames(ctx context.Context, service string) ([]MetricInfo, error) {
+	out, _, err := s.ListMetricNames(ctx, service, "", 0, 0)
+	return out, err
+}
+
+// ListMetricNames — server-side searchable counterpart for
+// MetricNamePicker (v0.5.181). Same wildcard semantics as
+// ListServiceNames / ListOperationNames: bare query = substring,
+// `*` and `?` honoured. Reads from metric_points; at billion-row
+// scale the DISTINCT GROUP BY is bounded by limit + the
+// 30s execution-time guard. A dedicated metric-name catalog MV
+// is the proper next step if this surfaces as slow; for now
+// the 30s API cache amortises load across concurrent operators.
+func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, limit, offset int) ([]MetricInfo, int, error) {
+	defaultUnlimited := limit == 0 && offset == 0 && pattern == ""
+	if limit <= 0 {
+		limit = 200
+	}
 	var wc whereClause
 	if service != "" {
 		wc.add("service_name = ?", service)
 	}
-	rows, err := s.conn.Query(ctx,
-		`SELECT DISTINCT metric, any(description), any(unit), any(instrument)
-		 FROM metric_points `+wc.sql()+
-			` GROUP BY metric ORDER BY metric`, wc.args...)
+	if pattern != "" {
+		like := strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
+		if !strings.ContainsAny(pattern, "*?") {
+			like = "%" + like + "%"
+		}
+		wc.add("metric ILIKE ?", like)
+	}
+
+	var total uint64
+	if !defaultUnlimited {
+		if err := s.conn.QueryRow(ctx,
+			"SELECT count(DISTINCT metric) FROM metric_points"+wc.sql()+
+				" SETTINGS max_execution_time = 30",
+			wc.args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	query := `SELECT metric, any(description), any(unit), any(instrument)
+		 FROM metric_points ` + wc.sql() +
+		` GROUP BY metric ORDER BY metric`
+	args := append([]any{}, wc.args...)
+	if !defaultUnlimited {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
+	query += " SETTINGS max_execution_time = 30"
+	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var out []MetricInfo
 	for rows.Next() {
 		var mi MetricInfo
-		rows.Scan(&mi.Name, &mi.Description, &mi.Unit, &mi.Type)
+		if err := rows.Scan(&mi.Name, &mi.Description, &mi.Unit, &mi.Type); err != nil {
+			return nil, 0, err
+		}
 		out = append(out, mi)
 	}
-	return out, rows.Err()
+	if defaultUnlimited {
+		total = uint64(len(out))
+	}
+	return out, int(total), rows.Err()
 }
 
 func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, from, to time.Time, limit int) ([]MetricPointRow, error) {

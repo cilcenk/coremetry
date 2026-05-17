@@ -2264,10 +2264,42 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getMetricNames now accepts q + limit + offset (v0.5.181) for
+// the MetricNamePicker debounced search. Legacy callers that
+// pass no params get the unlimited behaviour the response used
+// to have. New shape is {names, total, hasMore}; the response
+// type is conditional on the presence of `q` so older clients
+// (just calling /api/metrics/names?service=X) still receive a
+// plain MetricInfo[] body — no breaking change for the existing
+// /metrics page until it migrates to the new picker.
 func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
-	svc := r.URL.Query().Get("service")
-	s.serveCached(w, r, "metric-names:svc="+svc, 60*time.Second, func() (any, error) {
-		return s.store.GetMetricNames(r.Context(), svc)
+	q := r.URL.Query()
+	svc := q.Get("service")
+	pattern := strings.TrimSpace(q.Get("q"))
+	limit := parseInt(q.Get("limit"), 0)
+	offset := parseInt(q.Get("offset"), 0)
+	// Old shape — no pagination params → return MetricInfo[]
+	// like pre-v0.5.181 callers expect.
+	if pattern == "" && limit == 0 && offset == 0 {
+		s.serveCached(w, r, "metric-names:svc="+svc, 60*time.Second, func() (any, error) {
+			return s.store.GetMetricNames(r.Context(), svc)
+		})
+		return
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	key := fmt.Sprintf("metric-names:svc=%s:q=%s:limit=%d:offset=%d", svc, pattern, limit, offset)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		names, total, err := s.store.ListMetricNames(r.Context(), svc, pattern, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"names":   names,
+			"total":   total,
+			"hasMore": offset+len(names) < total,
+		}, nil
 	})
 }
 

@@ -9,8 +9,8 @@
 // signal clears) — the operator scans them rather than triages
 // them. For triage, see the assignable exception inbox on /problems.
 
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Card, Badge, Row } from '@/components/ui';
 import { ClusterChips } from '@/components/ClusterChips';
 import { CopilotExplain } from '@/components/CopilotExplain';
@@ -270,6 +270,20 @@ function SilencesSection({ items, onUnmute, onUnmuteAll }: {
 }
 
 function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
+  const [searchParams] = useSearchParams();
+  // ?event=<id> deep-link target. We scroll + flash the matching
+  // row when it appears so inbox navigation lands the operator
+  // on the right row visually, not just at the top of the list.
+  const highlight = searchParams.get('event') ?? '';
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
+  useEffect(() => {
+    if (!highlight) return;
+    const el = rowRefs.current[highlight];
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [highlight, items]);
+
   if (items === undefined || items.length === 0) return null;
   const active  = items.filter(e => e.status === 'active');
   const cleared = items.filter(e => e.status === 'cleared');
@@ -292,7 +306,12 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
           </tr></thead>
           <tbody>
             {items.map(e => (
-              <tr key={e.id}>
+              <tr key={e.id}
+                ref={el => { rowRefs.current[e.id] = el; }}
+                style={highlight === e.id ? {
+                  background: 'rgba(56,139,253,0.10)',
+                  outline: '1px solid var(--accent2)',
+                } : undefined}>
                 <td>
                   <span className={`badge ${e.status === 'active' ? 'b-err' : 'b-ok'}`} style={{ fontSize: 10 }}>
                     {e.status === 'active' ? 'ACTIVE' : 'CLEARED'}

@@ -88,7 +88,12 @@ export default function ProblemsPage() {
   const [total, setTotal] = useState(0);
   const PAGE_SIZE = 50;
   // Expanded fingerprint(s) — multiple groups can be open at once for compare-and-contrast.
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Seed with any ?exception=<fingerprint> the URL carries so a
+  // deep-link (e.g. from /inbox) lands with the right row open.
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const fp = searchParams.get('exception');
+    return new Set(fp ? [fp] : []);
+  });
 
   // Exception groups inbox — separate query because it depends
   // on tab + service filter; couldn't be folded into the shared
@@ -378,7 +383,12 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const currentUserEmail = user?.email ?? '';
-  const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>('open');
+  const [searchParams] = useSearchParams();
+  // When arriving via ?problem=<id> deep link, broaden the
+  // status pivot so the drawer can resolve the row even when
+  // it's acknowledged / resolved. Default 'open' otherwise.
+  const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>(
+    searchParams.get('problem') ? 'all' : 'open');
   const [sortBy, setSortBy] = useState<PSortKey>('priority');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Triage drawer state — id of the problem currently shown
@@ -386,7 +396,10 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // expansion; the same causal-correlation panel now lives
   // inside the drawer alongside the rule details + deploy
   // chip + AI buttons in one consolidated triage surface.
-  const [drawerProblemId, setDrawerProblemId] = useState<string | null>(null);
+  // Seed from ?problem=<id> so a deep-link (e.g. from /inbox)
+  // lands with the right drawer open.
+  const [drawerProblemId, setDrawerProblemId] = useState<string | null>(
+    () => searchParams.get('problem'));
   // Bulk-select state (v0.5.83). Operators can multi-select
   // problems and acknowledge them in one POST — typical
   // workflow during a fan-out incident where 20 alerts fire

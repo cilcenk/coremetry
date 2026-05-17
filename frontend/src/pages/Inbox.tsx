@@ -97,10 +97,18 @@ export default function InboxPage() {
     return out;
   }, [data]);
 
+  // Deep-link into the source surface with the specific row
+  // focused — Problems drawer for problems, expanded exception
+  // group, scrolled-to anomaly history row. Each destination
+  // page reads its respective query param on mount.
   const goToSource = (it: InboxItem) => {
-    if (it.kind === 'problem') navigate('/problems');
-    else if (it.kind === 'exception') navigate(`/problems?tab=exceptions`);
-    else if (it.kind === 'anomaly') navigate('/anomalies');
+    if (it.kind === 'problem' && it.problem) {
+      navigate(`/problems?problem=${encodeURIComponent(it.problem.id)}`);
+    } else if (it.kind === 'exception' && it.exception) {
+      navigate(`/problems?tab=open&exception=${encodeURIComponent(it.exception.fingerprint)}`);
+    } else if (it.kind === 'anomaly' && it.anomaly) {
+      navigate(`/anomalies?event=${encodeURIComponent(it.anomaly.id)}`);
+    }
   };
 
   return (

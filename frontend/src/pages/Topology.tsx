@@ -429,7 +429,7 @@ function ServiceView({ range }: { range: TimeRange }) {
       nodes: data.nodes.filter(n => keptSet.has(n.id)),
       edges: keepEdges,
     };
-  }, [data, topN, focus]);
+  }, [data, topN, focus, focusHops]);
 
   const layout = useMemo(
     () => layerServices(

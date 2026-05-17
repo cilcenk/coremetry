@@ -1654,8 +1654,22 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 	since := parseDuration(q.Get("since"), time.Hour)
 	limit := parseInt(q.Get("limit"), 200)
 	if limit > 1000 { limit = 1000 }
+	// v0.5.182 — optional `q` query for server-side substring /
+	// wildcard search on the value. Without this filter, high-
+	// cardinality attribute keys (http.url, db.statement) were
+	// stuck with whatever the top-200 by count happened to be;
+	// operators couldn't pick a long-tail value from the picker.
+	pattern := strings.TrimSpace(q.Get("q"))
+	var likeFilter string
+	if pattern != "" {
+		like := strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
+		if !strings.ContainsAny(pattern, "*?") {
+			like = "%" + like + "%"
+		}
+		likeFilter = like
+	}
 
-	cacheKey := fmt.Sprintf("attr-values:%s:since=%s:limit=%d", rawKey, q.Get("since"), limit)
+	cacheKey := fmt.Sprintf("attr-values:%s:since=%s:limit=%d:q=%s", rawKey, q.Get("since"), limit, pattern)
 	s.serveCached(w, r, cacheKey, 60*time.Second, func() (any, error) {
 		// Decide projection. The HTTP-layer attribute-key picker is
 		// allowed to send `resource.X` and `span.X` prefixes; strip
@@ -1672,6 +1686,14 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 
 		var sql string
 		var args []any
+		// Optional WHERE / HAVING fragment for the q filter — same
+		// shape regardless of which projection path we take. We
+		// apply it in HAVING for both paths so the alias `v` is
+		// always in scope (WHERE doesn't see SELECT aliases).
+		havingQ := ""
+		if likeFilter != "" {
+			havingQ = " AND v ILIKE ?"
+		}
 		if col, ok := chstore.WellKnownTraceCol[key]; ok && scope == "span" {
 			// Structured-column fast path. Column is already
 			// LowCardinality so the GROUP BY is cheap; cast to String
@@ -1682,10 +1704,15 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 				WHERE time >= now() - toIntervalSecond(?)
 				  AND %s != ''
 				GROUP BY v
+				HAVING 1=1%s
 				ORDER BY c DESC
 				LIMIT ?
-				SETTINGS max_execution_time = 30`, col, col)
-			args = []any{int64(since.Seconds()), limit}
+				SETTINGS max_execution_time = 30`, col, col, havingQ)
+			args = []any{int64(since.Seconds())}
+			if likeFilter != "" {
+				args = append(args, likeFilter)
+			}
+			args = append(args, limit)
 		} else {
 			// Array-lookup path. `has(...)` short-circuits the lookup
 			// so rows that don't have the key contribute nothing to
@@ -1700,11 +1727,15 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 				WHERE time >= now() - toIntervalSecond(?)
 				  AND has(%s, ?)
 				GROUP BY v
-				HAVING v != ''
+				HAVING v != ''%s
 				ORDER BY c DESC
 				LIMIT ?
-				SETTINGS max_execution_time = 30`, arrVals, arrKeys, arrKeys)
-			args = []any{key, int64(since.Seconds()), key, limit}
+				SETTINGS max_execution_time = 30`, arrVals, arrKeys, arrKeys, havingQ)
+			args = []any{key, int64(since.Seconds()), key}
+			if likeFilter != "" {
+				args = append(args, likeFilter)
+			}
+			args = append(args, limit)
 		}
 
 		rows, err := s.store.Conn().Query(r.Context(), sql, args...)

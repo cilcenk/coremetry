@@ -273,7 +273,9 @@ function ExploreInner() {
   // service-scoped). The MultiLineChart paints dashed vertical
   // lines at every deploy time so the operator can spot a
   // regression that coincides with a code ship.
-  const exploreRange = timeRangeToNs(range);
+  // Memoize so the relative range doesn't churn the
+  // useServiceDeploys query key on every render.
+  const exploreRange = useMemo(() => timeRangeToNs(range), [range]);
   const deploysQ = useServiceDeploys(
     exemplarCtx?.service ?? '',
     exploreRange.from,

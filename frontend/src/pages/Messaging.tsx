@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner } from '@/components/Spinner';
@@ -18,7 +18,10 @@ import type { TimeRange, MessagingInstance } from '@/lib/types';
 // so most refetches hit the warm slot.
 export default function MessagingPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '1h' });
-  const { from, to } = timeRangeToNs(range);
+  // Memoize on range identity — without this, a relative range
+  // resolved fresh every render reshuffles the useQuery key
+  // and the table refetches on every paint.
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const q = useQuery({
     queryKey: ['messaging', from, to],
     queryFn: () => api.messaging(from, to).then(r => r ?? []),

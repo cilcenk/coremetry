@@ -28,7 +28,10 @@ import type { TimeRange, DBInstance } from '@/lib/types';
 // audience scans the panel that matches their question.
 export default function DatabasesPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '1h' });
-  const { from, to } = timeRangeToNs(range);
+  // Memoize on range identity — without this, a relative range
+  // resolved fresh every render reshuffles the useQuery key
+  // and the table refetches on every paint.
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const q = useQuery({
     queryKey: ['databases', from, to],
     queryFn: () => api.databases(from, to).then(r => r ?? []),

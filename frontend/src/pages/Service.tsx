@@ -39,6 +39,14 @@ function ServiceDetailInner() {
   const [operations, setOperations] = useState<OperationSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Memoize the absolute window so JSX-level reads (passed as
+  // fromNs/toNs props to child fetchers) don't change identity
+  // on every render — without this, a relative range like
+  // { preset: '15m' } evaluates a fresh now() each paint and
+  // the children's useEffect([fromNs, toNs, …]) deps thrash
+  // into an infinite refetch.
+  const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
+
   useEffect(() => {
     if (!svc) return;
     setLoading(true);
@@ -215,11 +223,11 @@ function ServiceDetailInner() {
                 gets the categorical answer first, then drills
                 down into the rows. */}
             <SpanBreakdownChart service={svc}
-                                fromNs={timeRangeToNs(range).from}
-                                toNs={timeRangeToNs(range).to} />
+                                fromNs={rangeNs.from}
+                                toNs={rangeNs.to} />
             <DBQueriesPanel   service={svc}
-                              from={timeRangeToNs(range).from}
-                              to={timeRangeToNs(range).to} />
+                              from={rangeNs.from}
+                              to={rangeNs.to} />
             <OperationsTable service={svc} rows={operations} range={range} />
             {/* Latency heatmap (Honeycomb-style 2D density).
                 Reveals multi-modal distributions the P50/P99

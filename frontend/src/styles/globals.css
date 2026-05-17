@@ -404,7 +404,20 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 /* Compact rows — Tempo's new (Grafana 11+) trace view runs at
    ~22px so a 200-span trace fits in a screen without scrolling.
    The previous 26px felt heavier than the rest of the app. */
-.wf-row { display: flex; align-items: stretch; min-height: 22px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .07s; position: relative; }
+.wf-row {
+  display: flex; align-items: stretch; min-height: 22px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer; transition: background .07s; position: relative;
+  /* content-visibility: auto lets the browser skip rendering
+     waterfall rows that are off-screen (v0.5.183). Traces with
+     5k+ spans froze on initial paint without this — full JS
+     virtualization would force a fixed-height scroller which
+     breaks the page-level scroll the operator expects. The
+     contain-intrinsic-size hint reserves a placeholder so the
+     scrollbar stays accurate before measurement. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
+}
 .wf-row:last-child { border-bottom: none; }
 .wf-row:hover { background: var(--bg2); }
 .wf-row.wf-sel { background: rgba(56,139,253,.10); }

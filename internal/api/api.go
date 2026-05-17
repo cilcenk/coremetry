@@ -190,8 +190,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/topology",                  s.getTopology)
 	mux.HandleFunc("GET /api/topology/ops",              s.getTopologyOps)
 	mux.HandleFunc("GET /api/topology/service",          s.getServiceTopology)
-	mux.HandleFunc("GET /api/topology/exclude",          auth.RequireRole(auth.RoleAdmin, s.getTopologyExclude))
-	mux.HandleFunc("PUT /api/topology/exclude",          auth.RequireRole(auth.RoleAdmin, s.putTopologyExclude))
+	// Topology mute (v0.5.176/177): read open to any auth'd user
+	// so viewers see the current muted state on the service
+	// detail chip; mutation gated to admin+editor — viewer can
+	// look, not touch.
+	mux.HandleFunc("GET /api/topology/exclude",          s.getTopologyExclude)
+	mux.HandleFunc("PUT /api/topology/exclude",          auth.RequireAnyRole(editorRoles, s.putTopologyExclude))
 	mux.HandleFunc("GET /api/topology/flows",            s.getRootFlows)
 	mux.HandleFunc("GET /api/topology/flow",             s.getFlowTopology)
 	mux.HandleFunc("GET /api/topology/drawio",           s.exportTopologyDrawIO)

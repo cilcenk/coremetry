@@ -14,7 +14,9 @@ import { useAuth } from '@/components/AuthProvider';
 // the next time their page refetches (60s topology cache).
 export function TopologyMuteChip({ service }: { service: string }) {
   const { user } = useAuth();
-  const canEdit = user?.role === 'admin';
+  // Viewer can SEE the muted state but can't toggle it
+  // (v0.5.177). Editor / admin get the click action.
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [muted, setMuted] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [list, setList] = useState<string[]>([]);
@@ -29,7 +31,11 @@ export function TopologyMuteChip({ service }: { service: string }) {
       .catch(() => { setMuted(false); });
   }, [service]);
 
-  if (muted === null || !canEdit) return null;
+  if (muted === null) return null;
+  // Viewer-mode: only render the chip if the service IS muted —
+  // surfaces the state to the operator without adding a non-
+  // functional button to every service page they visit.
+  if (!canEdit && !muted) return null;
 
   const toggle = async () => {
     setBusy(true);
@@ -48,18 +54,24 @@ export function TopologyMuteChip({ service }: { service: string }) {
     }
   };
 
-  return (
-    <button type="button" onClick={toggle} disabled={busy}
-      className="sec"
-      title={muted
+  const tip = canEdit
+    ? (muted
         ? 'Currently hidden from topology diagrams. Click to un-mute.'
-        : 'Hide this service from topology diagrams (useful for hub-like infra)'}
+        : 'Hide this service from topology diagrams (useful for hub-like infra)')
+    : 'This service is muted from topology diagrams. Admin or editor role required to change.';
+
+  return (
+    <button type="button"
+      onClick={canEdit ? toggle : undefined}
+      disabled={busy || !canEdit}
+      className="sec"
+      title={tip}
       style={{
         fontSize: 11, padding: '5px 10px', borderRadius: 6,
         background: muted ? 'rgba(255,158,77,0.15)' : 'var(--bg3)',
         border: muted ? '1px solid rgba(255,158,77,0.4)' : '1px solid var(--border)',
         color: muted ? 'var(--warn)' : 'var(--text2)',
-        cursor: busy ? 'wait' : 'pointer',
+        cursor: !canEdit ? 'default' : busy ? 'wait' : 'pointer',
         fontFamily: 'ui-monospace, monospace',
       }}>
       {muted ? '🔇 Muted on topology' : '🔇 Mute on topology'}

@@ -8,6 +8,7 @@ import { ServiceCharts } from '@/components/ServiceCharts';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { SamplingChip } from '@/components/SamplingChip';
+import { TopologyMuteChip } from '@/components/TopologyMuteChip';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
 import { ServiceInfra } from '@/components/ServiceInfra';
@@ -103,6 +104,7 @@ function ServiceDetailInner() {
               <KPI label="Avg" value={`${info.avgDurationMs.toFixed(1)}ms`} />
               <KPI label="P99" value={`${info.p99DurationMs.toFixed(1)}ms`} />
               <SamplingChip service={svc} spanCount={info.spanCount} range={range} />
+              <TopologyMuteChip service={svc} />
             </>
           )}
           <Link to={`/service/backtrace?name=${encodeURIComponent(svc)}`} style={{

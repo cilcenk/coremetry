@@ -190,6 +190,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/topology",                  s.getTopology)
 	mux.HandleFunc("GET /api/topology/ops",              s.getTopologyOps)
 	mux.HandleFunc("GET /api/topology/service",          s.getServiceTopology)
+	mux.HandleFunc("GET /api/topology/exclude",          auth.RequireRole(auth.RoleAdmin, s.getTopologyExclude))
+	mux.HandleFunc("PUT /api/topology/exclude",          auth.RequireRole(auth.RoleAdmin, s.putTopologyExclude))
 	mux.HandleFunc("GET /api/topology/flows",            s.getRootFlows)
 	mux.HandleFunc("GET /api/topology/flow",             s.getFlowTopology)
 	mux.HandleFunc("GET /api/topology/drawio",           s.exportTopologyDrawIO)

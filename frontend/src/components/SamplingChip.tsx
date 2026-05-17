@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
-import type { SamplingSettings } from '@/lib/types';
+import { timeRangeToNs, fmtNum } from '@/lib/utils';
+import type { SamplingSettings, TimeRange } from '@/lib/types';
 
 // SamplingChip — surfaces the head-sampling decision for a single
 // service inline on the service detail page (v0.5.166). The
@@ -20,12 +21,32 @@ import type { SamplingSettings } from '@/lib/types';
 // custom; only admin/editor can save (viewers see read-only).
 const PRESETS = [1.0, 0.5, 0.1, 0.05, 0.01];
 
-export function SamplingChip({ service }: { service: string }) {
+export function SamplingChip({ service, spanCount, range }: {
+  service: string;
+  // Recent span volume + the window it was observed over —
+  // both optional. When provided (v0.5.168) the popover shows
+  // per-preset "≈ X spans/day kept" projections so the operator
+  // sees the volume impact before flipping the knob, not after
+  // the storage bill arrives.
+  spanCount?: number;
+  range?: TimeRange;
+}) {
   const { user } = useAuth();
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [s, setS] = useState<SamplingSettings | null | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Spans-per-day estimate normalised from the observed window.
+  // We use this to project per-preset retention volumes. The
+  // estimate is naïve (linear extrapolation) but matches the
+  // operator's mental model better than a "%" alone.
+  let spansPerDay: number | null = null;
+  if (spanCount && range) {
+    const { from, to } = timeRangeToNs(range);
+    const seconds = Math.max(1, (to - from) / 1e9);
+    spansPerDay = spanCount * (86400 / seconds);
+  }
 
   useEffect(() => {
     api.getSampling().then(setS).catch(() => setS(null));
@@ -116,7 +137,14 @@ export function SamplingChip({ service }: { service: string }) {
               textTransform: 'uppercase', letterSpacing: 0.4,
               marginBottom: 4,
             }}>Quick presets</div>
-            {PRESETS.map(p => (
+            {PRESETS.map(p => {
+              // Projected spans/day kept at this preset, factoring
+              // in the always-keep floor (errors + roots stay).
+              // Without recent volume data we just show the ratio.
+              const projected = spansPerDay !== null
+                ? Math.round(spansPerDay * p)
+                : null;
+              return (
               <button key={p} type="button"
                 disabled={busy}
                 onClick={() => save(p)}
@@ -132,9 +160,14 @@ export function SamplingChip({ service }: { service: string }) {
                 <span style={{
                   fontSize: 10, color: 'var(--text3)',
                   fontFamily: 'ui-monospace, monospace',
-                }}>{p.toString()}</span>
+                }}>
+                  {projected !== null
+                    ? `≈ ${fmtNum(projected)}/d`
+                    : p.toString()}
+                </span>
               </button>
-            ))}
+              );
+            })}
             <div style={{
               borderTop: '1px solid var(--border)',
               marginTop: 6, paddingTop: 6,
@@ -159,6 +192,12 @@ export function SamplingChip({ service }: { service: string }) {
               padding: '6px 8px 2px', lineHeight: 1.4,
             }}>
               Errors and root spans always bypass the ratio.
+              {spansPerDay !== null && (
+                <div style={{ marginTop: 4, color: 'var(--text2)' }}>
+                  Current volume ≈ <b>{fmtNum(Math.round(spansPerDay))}</b> spans/day
+                  {' '}(extrapolated from selected window).
+                </div>
+              )}
               {s.alwaysKeepErrors === false && (
                 <div style={{ color: 'var(--warn)', marginTop: 2 }}>
                   ⚠ "always keep errors" is currently OFF — errors will be sampled at this rate too.

@@ -102,7 +102,7 @@ function ServiceDetailInner() {
                 cls={info.errorRate > 5 ? 'err' : info.errorRate > 0 ? 'warn' : 'ok'} />
               <KPI label="Avg" value={`${info.avgDurationMs.toFixed(1)}ms`} />
               <KPI label="P99" value={`${info.p99DurationMs.toFixed(1)}ms`} />
-              <SamplingChip service={svc} />
+              <SamplingChip service={svc} spanCount={info.spanCount} range={range} />
             </>
           )}
           <Link to={`/service/backtrace?name=${encodeURIComponent(svc)}`} style={{

@@ -228,6 +228,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/graph", s.getServiceGraph)
 	mux.HandleFunc("GET /api/services/sparklines", s.getServiceSparklines)
 	mux.HandleFunc("GET /api/service-names",       s.getServiceNames)
+	mux.HandleFunc("GET /api/operation-names",     s.getOperationNames)
 	mux.HandleFunc("GET /api/attribute-keys",      s.getAttributeKeys)
 	mux.HandleFunc("GET /api/attribute-values",    s.getAttributeValues)
 	mux.HandleFunc("GET /api/operations", s.getOperations)
@@ -1517,6 +1518,35 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 //   - "*pay"    → suffix match (LIKE '%pay')
 //   - "*pay*"   → explicit substring (same as plain "pay")
 //   - "p?y"     → '?' becomes single-char wildcard (LIKE 'p_y')
+// getOperationNames — operations-picker counterpart to
+// getServiceNames (v0.5.180). Server-side substring / wildcard
+// search over operation_summary_5m so a 10k-operation service
+// stays usable in a dropdown. Same wildcard semantics as
+// /api/service-names: bare query = substring, `*` and `?`
+// honoured.
+func (s *Server) getOperationNames(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	service := strings.TrimSpace(q.Get("service"))
+	pattern := strings.TrimSpace(q.Get("q"))
+	limit := parseInt(q.Get("limit"), 200)
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := parseInt(q.Get("offset"), 0)
+	key := fmt.Sprintf("op-names:svc=%s:q=%s:limit=%d:offset=%d", service, pattern, limit, offset)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		names, total, err := s.store.ListOperationNames(r.Context(), service, pattern, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"names":   names,
+			"total":   total,
+			"hasMore": offset+len(names) < total,
+		}, nil
+	})
+}
+
 func (s *Server) getServiceNames(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	pattern := strings.TrimSpace(q.Get("q"))

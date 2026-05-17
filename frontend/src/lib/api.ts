@@ -260,6 +260,12 @@ export const api = {
   serviceNames: (q?: string, limit = 200, offset = 0) =>
     get<{ names: string[]; total: number; hasMore: boolean }>(
       `/api/service-names?${qs({ q, limit, offset })}`),
+  // Operations picker counterpart (v0.5.180). Service filter
+  // recommended at scale — a global op list across 10k services
+  // is past the point of being useful in a dropdown.
+  operationNames: (service?: string, q?: string, limit = 200, offset = 0) =>
+    get<{ names: string[]; total: number; hasMore: boolean }>(
+      `/api/operation-names?${qs({ service, q, limit, offset })}`),
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
   // surface as suggestions in addition to the hardcoded list.

@@ -37,6 +37,63 @@ type ServiceSummaryRow struct {
 //   - "?"        → single-char wildcard
 // SQL LIKE special chars in user input ('%', '_') are escaped first so
 // they're matched literally rather than acting as inadvertent wildcards.
+// ListOperationNames — operations-picker counterpart to
+// ListServiceNames (v0.5.180). Reads operation_summary_5m so
+// the GROUP BY is cheap even at billions of spans / tens of
+// thousands of operations per service. Service filter is
+// optional but recommended at scale — a global op listing on
+// an install with 10k services × 100 ops/service is
+// approaching the limits of "useful in a dropdown".
+//
+// Wildcard semantics match ListServiceNames: `*` and `?` map
+// to CH `%` / `_`; bare strings are wrapped in `%…%` for
+// substring match. Returns (names, total, err) so the UI can
+// surface "showing 200 of 12,345 — refine" hints.
+func (s *Store) ListOperationNames(ctx context.Context, service, pattern string, limit, offset int) ([]string, int, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	var wc whereClause
+	if service != "" {
+		wc.add("service_name = ?", service)
+	}
+	if pattern != "" {
+		like := strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
+		if !strings.ContainsAny(pattern, "*?") {
+			like = "%" + like + "%"
+		}
+		wc.add("name ILIKE ?", like)
+	}
+
+	var total uint64
+	if err := s.conn.QueryRow(ctx,
+		"SELECT count(DISTINCT name) FROM operation_summary_5m"+wc.sql()+
+			" SETTINGS max_execution_time = 30",
+		wc.args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args := append(append([]any{}, wc.args...), limit, offset)
+	rows, err := s.conn.Query(ctx,
+		"SELECT DISTINCT name FROM operation_summary_5m"+wc.sql()+
+			" ORDER BY name LIMIT ? OFFSET ?"+
+			" SETTINGS max_execution_time = 30",
+		args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, n)
+	}
+	return out, int(total), rows.Err()
+}
+
 func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, offset int) ([]string, int, error) {
 	if limit <= 0 {
 		limit = 200

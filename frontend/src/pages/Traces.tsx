@@ -7,6 +7,7 @@ import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Combobox } from '@/components/Combobox';
+import { OperationPicker } from '@/components/OperationPicker';
 import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { TraceVolumeHistogram } from '@/components/TraceVolumeHistogram';
@@ -368,8 +369,9 @@ function TracesPageInner() {
           <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
             placeholder="Service…" width={170}
             onEnter={(v) => apply(v)} />
-          <Combobox value={draft.search} onChange={v => setDraft({ ...draft, search: v })}
-            options={operations} placeholder="Operation…" width={240} onEnter={() => apply()} />
+          <OperationPicker service={draft.service}
+            value={draft.search} onChange={v => setDraft({ ...draft, search: v })}
+            placeholder="Operation…" width={240} onEnter={() => apply()} />
           <input placeholder="Min ms" value={draft.minMs} onChange={e => setDraft({ ...draft, minMs: e.target.value })}
             type="number" style={{ width: 72 }} />
           <input placeholder="Max ms" value={draft.maxMs} onChange={e => setDraft({ ...draft, maxMs: e.target.value })}

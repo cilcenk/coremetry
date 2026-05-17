@@ -3,6 +3,15 @@ import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
 import type { DeployHistoryRow } from '@/lib/types';
 
+// Per-row Copilot explain state (v0.5.192). Keyed by deploy
+// version+time inside the panel so each row remembers its own
+// answer + loading flag without all rows sharing state.
+type ExplainState =
+  | { kind: 'idle' }
+  | { kind: 'busy' }
+  | { kind: 'ok'; text: string }
+  | { kind: 'err'; msg: string };
+
 // DeployHistoryPanel — "Recent deploys" panel on the service
 // detail page (v0.5.189). Continuous benchmarking: for each of
 // the last N deploys, show the before/after RED diff so an
@@ -21,12 +30,37 @@ import type { DeployHistoryRow } from '@/lib/types';
 export function DeployHistoryPanel({ service }: { service: string }) {
   const [rows, setRows] = useState<DeployHistoryRow[] | null | undefined>(undefined);
   const [expanded, setExpanded] = useState<number | null>(null);
+  // Per-deploy explain state, keyed by version+time so the
+  // map stays correct even if the deploy list re-fetches.
+  const [explains, setExplains] = useState<Record<string, ExplainState>>({});
+  const [copilotEnabled, setCopilotEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
     api.deployHistory(service, 5, 600)
       .then(r => setRows(r ?? []))
       .catch(() => setRows(null));
+    // Probe the copilot once — if it's not configured, hide
+    // the Explain button rather than show a button that always
+    // 503's. Same gate other CopilotExplain surfaces use.
+    api.copilotConfig().then(c => setCopilotEnabled(c.enabled)).catch(() => setCopilotEnabled(false));
   }, [service]);
+
+  const askCopilot = async (row: DeployHistoryRow) => {
+    const key = `${row.deploy.version}-${row.deploy.timeUnixNs}`;
+    setExplains(s => ({ ...s, [key]: { kind: 'busy' } }));
+    try {
+      const r = await api.copilotDeployImpact({
+        service,
+        version: row.deploy.version,
+        deployTimeNs: row.deploy.timeUnixNs,
+        windowSec: 600,
+      });
+      setExplains(s => ({ ...s, [key]: { kind: 'ok', text: r.explanation } }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setExplains(s => ({ ...s, [key]: { kind: 'err', msg } }));
+    }
+  };
 
   // Don't render anything while loading — keeps the service
   // page layout stable rather than flashing a spinner.
@@ -86,7 +120,61 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                 )}
               </div>
               {open && r.impact && (
-                <ExpandedDiff imp={r.impact} />
+                <>
+                  <ExpandedDiff imp={r.impact} />
+                  {/* Inline Copilot explain — opt-in per row.
+                      Hidden when the copilot isn't configured
+                      so we don't render a button that just
+                      503's. Stop click propagation so the
+                      row's expand toggle doesn't also fire. */}
+                  {copilotEnabled && (() => {
+                    const key = `${r.deploy.version}-${r.deploy.timeUnixNs}`;
+                    const st = explains[key] ?? { kind: 'idle' as const };
+                    return (
+                      <div style={{ marginTop: 10 }}
+                        onClick={e => e.stopPropagation()}>
+                        {st.kind === 'busy' && (
+                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                            ✨ Thinking…
+                          </span>
+                        )}
+                        {(st.kind === 'idle' || st.kind === 'err') && (
+                          <button className="sec"
+                            onClick={() => askCopilot(r)}
+                            style={{
+                              fontSize: 11, padding: '4px 10px',
+                              color: 'var(--accent2)',
+                            }}
+                            title="Ask Copilot whether this deploy looks clean, regressed, or rollback-worthy">
+                            ✨ {st.kind === 'err' ? 'Re-ask' : 'Explain'} deploy
+                          </button>
+                        )}
+                        {st.kind === 'err' && (
+                          <span style={{
+                            marginLeft: 8, fontSize: 11, color: 'var(--err)',
+                          }}>{st.msg}</span>
+                        )}
+                        {st.kind === 'ok' && (
+                          <div style={{
+                            marginTop: 4, padding: 10,
+                            background: 'var(--bg)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 4, fontSize: 12,
+                            lineHeight: 1.55,
+                            whiteSpace: 'pre-wrap',
+                          }}>
+                            <div style={{
+                              fontSize: 10, color: 'var(--accent2)',
+                              textTransform: 'uppercase', letterSpacing: 0.4,
+                              marginBottom: 6, fontWeight: 600,
+                            }}>✨ Copilot</div>
+                            {st.text}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </>
               )}
             </div>
           );

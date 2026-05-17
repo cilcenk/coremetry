@@ -181,7 +181,15 @@ function AttrKeyTable({ rows }: { rows: { key: string; distinctValues: number; o
             const tone = r.distinctValues > 1000 ? 'danger'
                        : r.distinctValues > 200 ? 'warning' : 'neutral';
             return (
-              <tr key={i}>
+              // content-visibility: auto lets the browser skip
+              // off-screen rows on initial paint — at high-
+              // cardinality installs this table can hit a few
+              // thousand attribute keys and lock the page
+              // without it.
+              <tr key={i} style={{
+                contentVisibility: 'auto',
+                containIntrinsicSize: 'auto 32px',
+              }}>
                 <td className="mono">{r.key}</td>
                 <td className="num mono">
                   <Badge tone={tone}>{fmtNum(r.distinctValues)}</Badge>
@@ -385,7 +393,10 @@ function ColumnTable({ rows }: { rows: { table: string; column: string; compress
         </tr></thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i}>
+            <tr key={i} style={{
+              contentVisibility: 'auto',
+              containIntrinsicSize: 'auto 32px',
+            }}>
               <td className="mono" style={{ color: 'var(--text2)' }}>{r.table}</td>
               <td className="mono">{r.column}</td>
               <td className="num mono">{fmtBytes(r.compressedBytes)}</td>

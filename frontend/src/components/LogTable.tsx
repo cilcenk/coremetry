@@ -72,13 +72,12 @@ export function LogTable({
       return next;
     });
   };
-  // Pod + Cluster columns only show on /logs (hideTraceColumn=
-  // false). On the trace detail's Logs tab we keep the layout
-  // tight because the waterfall sits next to it; resource
-  // attrs are still inspectable via the expanded row's Resource
-  // disclosure (v0.5.197 added the columns to /logs after
-  // operator request).
-  const cols = hideTraceColumn ? 4 : 7;
+  // Pod + Cluster columns show on both surfaces. v0.5.212 split
+  // them out from the hideTraceColumn flag (which still gates the
+  // Trace deep-link column) so the trace detail Logs tab also
+  // shows where each log came from — operators were expanding
+  // every row just to read the resource attrs.
+  const cols = hideTraceColumn ? 6 : 7;
   return (
     <div className="table-wrap">
       <table>
@@ -87,8 +86,8 @@ export function LogTable({
             <th>Time</th>
             <th>Sev</th>
             <th>Service</th>
-            {!hideTraceColumn && <th>Pod</th>}
-            {!hideTraceColumn && <th>Cluster</th>}
+            <th>Pod</th>
+            <th>Cluster</th>
             <th>Message</th>
             {!hideTraceColumn && <th>Trace</th>}
           </tr>
@@ -162,18 +161,14 @@ function LogRow({
             {l.serviceName || '—'}
           </span>
         </td>
-        {!hideTraceColumn && (
-          <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
-              title={pod || 'no k8s.pod.name resource attr'}>
-            {pod ? truncMid(pod, 22) : '—'}
-          </td>
-        )}
-        {!hideTraceColumn && (
-          <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
-              title={cluster || 'no k8s.cluster.name / openshift.cluster.name resource attr'}>
-            {cluster || '—'}
-          </td>
-        )}
+        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+            title={pod || 'no k8s.pod.name resource attr'}>
+          {pod ? truncMid(pod, 22) : '—'}
+        </td>
+        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+            title={cluster || 'no k8s.cluster.name / openshift.cluster.name resource attr'}>
+          {cluster || '—'}
+        </td>
         <td style={{ maxWidth: 480 }} title={l.body}>{l.body}</td>
         {!hideTraceColumn && (
           <td className="mono">

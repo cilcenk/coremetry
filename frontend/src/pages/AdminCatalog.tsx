@@ -186,7 +186,16 @@ function DisplayRow({ row, onEdit }: { row: Row; onEdit: () => void }) {
   const m = row.meta;
   const hasAny = m.ownerTeam || m.sreTeam || m.chatChannel || m.runbookUrl || m.oncallUrl || m.repository;
   return (
-    <tr style={{ opacity: row.hasTraffic ? 1 : 0.55 }}>
+    <tr style={{
+      opacity: row.hasTraffic ? 1 : 0.55,
+      // content-visibility: auto lets the browser skip rendering
+      // off-screen rows (v0.5.199). At 1000+ services the catalog
+      // table locked the page on initial paint without this.
+      // intrinsicSize is a single-row placeholder so the scrollbar
+      // stays accurate before measurement.
+      contentVisibility: 'auto',
+      containIntrinsicSize: 'auto 36px',
+    }}>
       <td className="mono">
         <span style={{ fontWeight: 600 }}>{row.service}</span>
         {!row.hasTraffic && (

@@ -305,6 +305,21 @@ function ServiceView({ range }: { range: TimeRange }) {
   // overview to a specific service without losing the time range.
   const [topN, setTopN] = useState(30);
   const [focus, setFocus] = useState('');
+  // Esc clears the focus and pops the diagram back to the
+  // top-N overview (v0.5.173). The other shortcut entry points
+  // (edge-panel close, incident drawer close) already use Esc;
+  // this matches the operator's expectation. Guard: only fires
+  // when a focus is active and no other modal is open — the
+  // global keyboard layer pauses in editable inputs anyway, so
+  // typing in the search box doesn't blow up the focus.
+  useEffect(() => {
+    if (!focus) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFocus('');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focus]);
   // How many hops to expand around the focused service. 1 = just
   // direct neighbors; 2 = neighbors-of-neighbors; up to 4 keeps
   // the diagram readable. Only used when focus is set; the top-N

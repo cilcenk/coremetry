@@ -221,6 +221,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/{name}/runtime",   s.getServiceRuntime)
 	mux.HandleFunc("GET /api/services/{name}/db-queries", s.getServiceDBQueries)
 	mux.HandleFunc("GET /api/services/{name}/deploys", s.getServiceDeploys)
+	// Deploy history with impact deltas — drives the Service
+	// detail page's "Recent deploys" panel (v0.5.189).
+	mux.HandleFunc("GET /api/services/{name}/deploy-history", s.getDeployHistory)
 	mux.HandleFunc("GET /api/services/{name}/metadata", s.getServiceMetadata)
 	mux.HandleFunc("PUT /api/services/{name}/metadata", auth.RequireAnyRole(editorRoles, s.putServiceMetadata))
 	mux.HandleFunc("GET /api/services-metadata", s.listServiceMetadata)
@@ -1136,6 +1139,82 @@ func (s *Server) getServiceDeploys(w http.ResponseWriter, r *http.Request) {
 		name, from.UnixNano(), to.UnixNano())
 	s.serveCached(w, r, key, time.Minute, func() (any, error) {
 		return s.store.GetServiceDeploys(r.Context(), name, from, to)
+	})
+}
+
+// getDeployHistory returns the last N deploys of a service +
+// each one's before/after RED diff in one round-trip
+// (v0.5.189). Powers the "Recent deploys" panel on the Service
+// detail page — answers "did the last few releases regress
+// p99 / error rate?" without N+1 client requests.
+//
+// Continuous benchmarking: as soon as a deploy completes,
+// operators want a clear "clean / regression / partial" signal.
+// The AI Copilot "Explain deploy" path covers the prose answer;
+// this endpoint covers the raw numbers + delta so the panel
+// renders instantly while the AI explain is opt-in.
+//
+// Defaults: last 5 deploys over a 24h lookback window; 10-min
+// before/after windows for each impact compute. The impact
+// queries are cheap (countIf + quantileIf on the partition-
+// pruned spans table) — 5 deploys × 1 query each = sub-second
+// at billion-span scale, then cached 60s.
+func (s *Server) getDeployHistory(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	limit := parseInt(q.Get("limit"), 5)
+	if limit <= 0 || limit > 30 {
+		limit = 5
+	}
+	lookbackHours := parseInt(q.Get("lookbackHours"), 24)
+	if lookbackHours <= 0 || lookbackHours > 30*24 {
+		lookbackHours = 24
+	}
+	windowSec := parseInt(q.Get("windowSec"), 600)
+	if windowSec <= 0 || windowSec > 6*3600 {
+		windowSec = 600
+	}
+	to := time.Now()
+	from := to.Add(-time.Duration(lookbackHours) * time.Hour)
+
+	key := fmt.Sprintf("deploy-history:svc=%s:lim=%d:back=%d:win=%d",
+		name, limit, lookbackHours, windowSec)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		deploys, err := s.store.GetServiceDeploys(r.Context(), name, from, to)
+		if err != nil {
+			return nil, err
+		}
+		// GetServiceDeploys returns ascending by first-seen — for
+		// "recent" we want the newest at index 0, so reverse +
+		// truncate. Skip deploys with very small span counts —
+		// stragglers, not real deploys.
+		type historyRow struct {
+			Deploy chstore.Deploy        `json:"deploy"`
+			Impact *chstore.DeployImpact `json:"impact"`
+		}
+		out := []historyRow{}
+		for i := len(deploys) - 1; i >= 0 && len(out) < limit; i-- {
+			d := deploys[i]
+			if d.SpanCount < 5 {
+				// straggler instance, not a real deploy
+				continue
+			}
+			imp, err := s.store.ComputeDeployImpact(
+				r.Context(), name, d.Version, d.TimeUnixNs, windowSec)
+			if err != nil {
+				// Best-effort — failed impact compute doesn't
+				// hide the deploy itself; UI shows "—" deltas.
+				log.Printf("[deploy-history] impact %s/%s: %v", name, d.Version, err)
+				out = append(out, historyRow{Deploy: d, Impact: nil})
+				continue
+			}
+			out = append(out, historyRow{Deploy: d, Impact: imp})
+		}
+		return out, nil
 	})
 }
 

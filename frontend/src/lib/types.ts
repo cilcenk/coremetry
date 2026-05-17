@@ -1621,6 +1621,37 @@ export interface DBQueryStat {
   totalMs: number;
 }
 
+// Deploy impact (v0.5.189) — before/after RED + signed deltas
+// for one service.version transition. Powers the "Recent
+// deploys" panel on the service detail page.
+export interface DeployImpactStats {
+  count: number;
+  rps: number;
+  errorRate: number;  // 0..1
+  p99Ms: number;
+  avgMs: number;
+}
+export interface DeployImpact {
+  service: string;
+  version: string;
+  deployTimeNs: number;
+  windowSec: number;
+  before: DeployImpactStats;
+  after: DeployImpactStats;
+  p99DeltaPct: number;
+  avgDeltaPct: number;
+  errorRateDeltaPct: number;
+}
+export interface DeployHistoryRow {
+  deploy: {
+    service: string;
+    version: string;
+    timeUnixNs: number;
+    spanCount: number;
+  };
+  impact: DeployImpact | null;
+}
+
 // SlowQueryRow — same as DBQueryStat plus the originating
 // service. Drives the global slow-query catalog (v0.5.165) on
 // /databases/slow-queries — operator-facing answer to "what

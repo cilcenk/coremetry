@@ -10,6 +10,7 @@ import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { SamplingChip } from '@/components/SamplingChip';
 import { TopologyMuteChip } from '@/components/TopologyMuteChip';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
+import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
 import { ServiceInfra } from '@/components/ServiceInfra';
 import { Sparkline } from '@/components/Sparkline';
@@ -193,6 +194,12 @@ function ServiceDetailInner() {
         {loading && <Spinner />}
         {!loading && (
           <>
+            {/* Deploy history (v0.5.189) — continuous benchmarking.
+                Renders only when the service emits service.version;
+                self-hides if there are no deploys in the lookback
+                window so it doesn't add visual weight for
+                un-versioned services. */}
+            <DeployHistoryPanel service={svc} />
             <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
             <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
             <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />

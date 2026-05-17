@@ -421,6 +421,13 @@ export const api = {
       body: JSON.stringify({ services }),
     }),
 
+  // Recent deploys + impact deltas for a service (v0.5.189).
+  // One round-trip; backend computes before/after RED for each
+  // deploy via partition-pruned spans queries.
+  deployHistory: (service: string, limit = 5, windowSec = 600) =>
+    get<import('./types').DeployHistoryRow[]>(
+      `/api/services/${encodeURIComponent(service)}/deploy-history?${qs({ limit, windowSec })}`),
+
   // Slow-query AI explain (v0.5.171). Body matches the row
   // shape so the backend doesn't have to re-query CH — frontend
   // already has stats + sample on hand.

@@ -51,8 +51,20 @@ export default function PublicStatusPage() {
       .then(setData)
       .catch(() => setData(null));
     load();
-    const t = setInterval(load, 30_000);
-    return () => clearInterval(t);
+    // Skip the poll when the tab is hidden — public status is a
+    // background-pinned page for many viewers; without this guard
+    // a dozen idle tabs each fire one round-trip every 30s,
+    // multiplied by every operator who pinned it.
+    const tick = () => { if (!document.hidden) load(); };
+    const t = setInterval(tick, 30_000);
+    // Refresh immediately on tab focus so a returning operator
+    // sees current state, not whatever staleness was paused on.
+    const onVis = () => { if (!document.hidden) load(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, []);
 
   if (data === undefined) {

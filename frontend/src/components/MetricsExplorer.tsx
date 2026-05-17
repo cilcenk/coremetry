@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExploreViz, type ExploreVizKind } from './ExploreViz';
 import { Spinner } from './Spinner';
 import { ServicePicker } from './ServicePicker';
@@ -33,7 +33,19 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
   const [currentMeta, setCurrentMeta] = useState<MetricInfo | null>(null);
   const [series, setSeries]           = useState<ExploreSeries[] | null | undefined>(undefined);
 
+  // Track first mount so the "clear metric on service swap"
+  // effect doesn't wipe the deep-linked initialMetric the moment
+  // the page renders. Previously this fired on mount too —
+  // operators clicking an infra tile (/explore?source=metrics&
+  // service=...&metric=system.cpu.utilization) landed on an
+  // empty metric picker because the effect ran once with the
+  // initial `service` and immediately reset `metric`.
+  const firstServiceChange = useRef(true);
   useEffect(() => {
+    if (firstServiceChange.current) {
+      firstServiceChange.current = false;
+      return;
+    }
     // Service swap → metric becomes stale; clear it so the
     // operator re-picks against the new service's catalogue.
     setMetric('');

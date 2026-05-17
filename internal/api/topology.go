@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"hash/fnv"
 	"html"
 	"net/http"
 	"sort"
@@ -196,6 +197,30 @@ type ServiceTopologyNode struct {
 // turn the diagram into spaghetti.
 const topologyExcludeKey = "topology.exclude"
 
+// excludeKeyDigest produces a short stable cache-key fragment
+// for the exclude list (v0.5.187). Previously we keyed only on
+// the list LENGTH which caused cache poisoning: two different
+// 1-element sets ({"foo"} and {"bar"}) collided and served
+// each other's cached topology data. Now we sort + FNV the
+// entries so any two distinct sets produce distinct digests
+// while the same set across calls produces a stable one.
+func excludeKeyDigest(m map[string]bool) string {
+	if len(m) == 0 {
+		return "0"
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h := fnv.New64a()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%x", h.Sum64())
+}
+
 // loadTopologyExclude reads the operator-curated exclude list.
 // Returns a map for O(1) lookup; empty when unset or corrupt.
 func (s *Server) loadTopologyExclude(ctx context.Context) map[string]bool {
@@ -274,11 +299,12 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	exclude := s.loadTopologyExclude(r.Context())
 	// Cache key includes the rounded window so concurrent requests
 	// over the same minute share one CH round-trip. Exclude list
-	// folded into the key as a length so a Settings change
-	// invalidates the cache promptly; full hashing would be
-	// overkill at this scale.
-	key := fmt.Sprintf("topology-service:from=%d:to=%d:exN=%d",
-		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), len(exclude))
+	// folded in via FNV digest (v0.5.187) — previously we used
+	// just the length which caused cross-set cache poisoning when
+	// two different 1-element sets collided.
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s",
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
+		excludeKeyDigest(exclude))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
@@ -432,7 +458,10 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
 	exclude := s.loadTopologyExclude(r.Context())
-	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d:exN=%d", rootService, rootOp, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), len(exclude))
+	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d:ex=%s",
+		rootService, rootOp,
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
+		excludeKeyDigest(exclude))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
 		if err != nil {

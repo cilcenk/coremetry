@@ -51,19 +51,83 @@ function colorFor(cat: string): string {
   return `hsl(${h % 360}, 55%, 55%)`;
 }
 
+// Per-service collapsed/expanded preference. localStorage so
+// operators who want span breakdown hidden by default on a busy
+// service detail page keep that preference across refreshes.
+// v0.5.193 — added the collapse toggle; previously the chart was
+// always expanded, which made the service detail's vertical
+// scroll-length painful on services where the breakdown was a
+// once-a-week glance.
+const COLLAPSED_KEY = 'coremetry-span-breakdown-collapsed';
+
+function readCollapsedSet(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch { return new Set(); }
+}
+function writeCollapsedSet(s: Set<string>) {
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(Array.from(s))); } catch { /* ignore */ }
+}
+
 export function SpanBreakdownChart({ service, fromNs, toNs }: {
   service: string; fromNs: number; toNs: number;
 }) {
   const [data, setData] = useState<BreakdownPoint[] | null | undefined>(undefined);
   const [hover, setHover] = useState<{ x: number; idx: number } | null>(null);
+  const [collapsed, setCollapsed] = useState<boolean>(() => readCollapsedSet().has(service));
 
+  // Persist toggle state per-service so a fresh visit reopens
+  // in the operator's last orientation.
+  const toggle = () => {
+    setCollapsed(prev => {
+      const next = !prev;
+      const cur = readCollapsedSet();
+      if (next) cur.add(service); else cur.delete(service);
+      writeCollapsedSet(cur);
+      return next;
+    });
+  };
+
+  // Skip the data fetch when collapsed — the chart isn't on
+  // screen, no point asking the backend for a stacked-area
+  // payload every range change. Re-expand triggers the fetch
+  // via the dependency on `collapsed`.
   useEffect(() => {
-    if (!service) return;
+    if (!service || collapsed) return;
     setData(undefined);
     api.spanBreakdown(service, fromNs, toNs)
       .then(d => setData(d ?? []))
       .catch(() => setData(null));
-  }, [service, fromNs, toNs]);
+  }, [service, fromNs, toNs, collapsed]);
+
+  // Collapsed mode = just the header with a click-to-expand
+  // affordance. Doesn't render the SVG, doesn't paint the
+  // legend — saves a measurable chunk of layout time on
+  // services with 20+ categories.
+  if (collapsed) {
+    return (
+      <div style={{
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        borderRadius: 8, padding: 12, marginTop: 18,
+      }}>
+        <button type="button" onClick={toggle}
+          style={{
+            display: 'flex', alignItems: 'baseline', gap: 8,
+            width: '100%', textAlign: 'left',
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--text)', padding: 0,
+          }}>
+          <span style={{ fontSize: 11, color: 'var(--text3)',
+            fontFamily: 'ui-monospace, monospace' }}>▶</span>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>Span breakdown</span>
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+            collapsed — click to expand
+          </span>
+        </button>
+      </div>
+    );
+  }
 
   // Discover the active categories + their total ms across the
   // window. The legend ranks categories by total so the busiest
@@ -146,12 +210,20 @@ export function SpanBreakdownChart({ service, fromNs, toNs }: {
       background: 'var(--bg1)', border: '1px solid var(--border)',
       borderRadius: 8, padding: 12, marginTop: 18,
     }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+      <button type="button" onClick={toggle}
+        style={{
+          display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8,
+          width: '100%', textAlign: 'left',
+          background: 'transparent', border: 'none', cursor: 'pointer',
+          color: 'var(--text)', padding: 0,
+        }}>
+        <span style={{ fontSize: 11, color: 'var(--text3)',
+          fontFamily: 'ui-monospace, monospace' }}>▼</span>
         <span style={{ fontSize: 13, fontWeight: 700 }}>Span breakdown</span>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
           where the service spends its time — stacked by category
         </span>
-      </div>
+      </button>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
            onMouseMove={onMove} onMouseLeave={onLeave}
            style={{ display: 'block' }}>

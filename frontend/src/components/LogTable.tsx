@@ -165,7 +165,7 @@ function LogRow({
             {attrs.length > 0 && (
               <table className="kv-table"><tbody>
                 {attrs.map(([k, v]) => (
-                  <tr key={k}><td>{k}</td><td>{String(v)}</td></tr>
+                  <tr key={k}><td title={k}>{k}</td><td>{String(v)}</td></tr>
                 ))}
               </tbody></table>
             )}
@@ -176,7 +176,7 @@ function LogRow({
                 </summary>
                 <table className="kv-table"><tbody>
                   {res.map(([k, v]) => (
-                    <tr key={k}><td>{k}</td><td>{String(v)}</td></tr>
+                    <tr key={k}><td title={k}>{k}</td><td>{String(v)}</td></tr>
                   ))}
                 </tbody></table>
               </details>

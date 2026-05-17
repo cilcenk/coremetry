@@ -737,9 +737,21 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
    past its container, pre-wrap so multi-line values (SQL, stack frames,
    process command args) keep their structure, overflow-wrap: anywhere
    so a long unbreakable token still wraps instead of overflowing. */
-.kv-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+/* kv-table — key/value attribute table used by trace logs +
+   span detail. v0.5.188 swapped table-layout: fixed for auto
+   so long OTel keys (kubernetes.container.name,
+   k8s.pod.uid, db.connection_string.length) render in full
+   instead of being clipped at the prior fixed 180px column.
+   min-width keeps short keys aligned in a consistent rail;
+   max-width caps pathological cases (entire URI as an attribute
+   key) at half the row so the value column doesn't disappear. */
+.kv-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
 .kv-table td { padding: 3px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-.kv-table td:first-child { color: var(--text2); white-space: nowrap; width: 180px; }
+.kv-table td:first-child {
+  color: var(--text2); white-space: nowrap;
+  min-width: 180px; max-width: 50%;
+  overflow: hidden; text-overflow: ellipsis;
+}
 .kv-table td:last-child { font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 
 /* Metrics */

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go vet ./...)",
+      "Bash(go vet *)",
+      "Bash(go list *)",
+      "Bash(make docker-up)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(helm template *)",
+      "Bash(helm lint *)",
+      "Bash(helm show *)",
+      "Bash(helm pull *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose config *)"
+    ]
+  }
+}

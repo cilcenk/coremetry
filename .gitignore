@@ -58,3 +58,8 @@ clickhouse-data/
 grafana-data/
 frontend/dist/bundle-analysis.html
 VERSION.txt
+
+# Claude Code — shared settings + skills land in the repo, but
+# per-developer overrides (.claude/settings.local.json) stay
+# private.
+.claude/settings.local.json

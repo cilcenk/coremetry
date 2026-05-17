@@ -160,6 +160,87 @@ export default function AlertsPage() {
       alert('Failed to delete preset: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
+  // Export / import (v0.5.172). Export bundles every preset
+  // currently visible to the operator — personal + team-shared
+  // (the server-side ListSavedViews already filters to "mine
+  // OR shared") — into a JSON file. Import re-creates each
+  // entry as a personal preset on the current user; the
+  // operator can re-share via the save-with-shared path if
+  // they have admin role.
+  const exportPresets = () => {
+    if (presets.length === 0) {
+      alert('No presets to export.');
+      return;
+    }
+    const payload = {
+      // Versioned envelope so a future format change can
+      // refuse old files cleanly instead of producing broken
+      // imports.
+      schema: 'coremetry-alert-presets/v1',
+      exportedAt: new Date().toISOString(),
+      presets: presets.map(p => ({
+        name: p.name,
+        draft: p.draft,
+        // shared flag is informational — re-importing on a
+        // different install always starts as personal.
+        shared: p.shared,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `coremetry-alert-presets-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  const importPresets = async (file: File) => {
+    let text: string;
+    try { text = await file.text(); }
+    catch (e) { alert('Failed to read file: ' + (e instanceof Error ? e.message : String(e))); return; }
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); }
+    catch { alert('File is not valid JSON.'); return; }
+    // Loose shape match — we accept both the envelope above
+    // AND a bare array (e.g. an operator hand-edits a
+    // sub-set), so the export round-trip is forgiving.
+    let entries: Array<{ name: string; draft: Partial<AlertRule> }> = [];
+    const env = parsed as {
+      schema?: string;
+      presets?: Array<{ name?: string; draft?: Partial<AlertRule> }>;
+    };
+    if (env && Array.isArray(env.presets)) {
+      entries = env.presets.flatMap(p => p.name && p.draft ? [{ name: p.name, draft: p.draft }] : []);
+    } else if (Array.isArray(parsed)) {
+      entries = (parsed as Array<{ name?: string; draft?: Partial<AlertRule> }>)
+        .flatMap(p => p.name && p.draft ? [{ name: p.name, draft: p.draft }] : []);
+    }
+    if (entries.length === 0) {
+      alert('No valid presets found in the file.');
+      return;
+    }
+    if (!confirm(`Import ${entries.length} preset${entries.length === 1 ? '' : 's'}?`)) {
+      return;
+    }
+    // Parallel create — the server-side endpoint dedups by
+    // (name, page) per owner so re-importing is idempotent.
+    const results = await Promise.allSettled(entries.map(e =>
+      api.createSavedView({
+        name: e.name,
+        page: 'alert-template',
+        queryString: JSON.stringify(e.draft),
+      })
+    ));
+    const failed = results.filter(r => r.status === 'rejected').length;
+    reloadPresets();
+    if (failed > 0) {
+      alert(`Imported ${entries.length - failed} preset${entries.length - failed === 1 ? '' : 's'}; ${failed} failed.`);
+    }
+  };
   // Non-null while editing — `id` of the row we're editing. Drives the
   // form's "Update" vs "Save" copy and decides between PUT and POST on
   // submit.
@@ -473,45 +554,76 @@ export default function AlertsPage() {
                     </button>
                   ))}
                 </div>
-                {presets.length > 0 && (
-                  <>
-                    <div style={{
-                      fontSize: 11, color: 'var(--text2)',
-                      fontWeight: 600, letterSpacing: '0.5px',
-                      textTransform: 'uppercase', margin: '10px 0 6px',
-                    }}>
-                      My presets
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {presets.map(p => (
-                        <span key={p.id} style={{
-                          display: 'inline-flex', alignItems: 'center',
-                          gap: 4, padding: '4px 4px 4px 10px',
-                          borderRadius: 14,
-                          background: 'var(--bg2)',
-                          border: '1px solid var(--border)',
-                          fontSize: 11,
-                        }}>
-                          <button type="button" onClick={() => setDraft({ ...emptyDraft, ...p.draft })}
-                            title={`Load preset · ${p.shared ? 'shared with team' : 'personal'}`}
-                            style={{
-                              background: 'transparent', border: 'none',
-                              padding: 0, color: 'inherit', cursor: 'pointer',
-                              fontSize: 11,
-                            }}>
-                            {p.shared ? '◍ ' : '★ '}{p.name}
-                          </button>
-                          <button type="button" onClick={() => deletePreset(p.id)}
-                            title="Delete preset"
-                            style={{
-                              background: 'transparent', border: 'none',
-                              padding: '0 6px', color: 'var(--err)',
-                              cursor: 'pointer', fontSize: 12,
-                            }}>×</button>
-                        </span>
-                      ))}
-                    </div>
-                  </>
+                <div style={{
+                  display: 'flex', alignItems: 'baseline', gap: 10,
+                  margin: '10px 0 6px',
+                }}>
+                  <div style={{
+                    fontSize: 11, color: 'var(--text2)',
+                    fontWeight: 600, letterSpacing: '0.5px',
+                    textTransform: 'uppercase',
+                  }}>
+                    My presets
+                  </div>
+                  <span style={{ flex: 1 }} />
+                  {presets.length > 0 && (
+                    <button type="button" className="sec"
+                      onClick={exportPresets}
+                      style={{ fontSize: 11, padding: '3px 8px' }}
+                      title="Download all visible presets as a JSON file">
+                      ↓ Export
+                    </button>
+                  )}
+                  <label className="sec"
+                    style={{
+                      fontSize: 11, padding: '3px 8px',
+                      borderRadius: 6, border: '1px solid var(--border)',
+                      cursor: 'pointer', background: 'var(--bg3)',
+                    }}
+                    title="Upload a JSON file exported from another Coremetry install">
+                    ↑ Import
+                    <input type="file" accept="application/json,.json"
+                      style={{ display: 'none' }}
+                      onChange={e => {
+                        const f = e.target.files?.[0];
+                        if (f) { importPresets(f); e.target.value = ''; }
+                      }} />
+                  </label>
+                </div>
+                {presets.length > 0 ? (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {presets.map(p => (
+                      <span key={p.id} style={{
+                        display: 'inline-flex', alignItems: 'center',
+                        gap: 4, padding: '4px 4px 4px 10px',
+                        borderRadius: 14,
+                        background: 'var(--bg2)',
+                        border: '1px solid var(--border)',
+                        fontSize: 11,
+                      }}>
+                        <button type="button" onClick={() => setDraft({ ...emptyDraft, ...p.draft })}
+                          title={`Load preset · ${p.shared ? 'shared with team' : 'personal'}`}
+                          style={{
+                            background: 'transparent', border: 'none',
+                            padding: 0, color: 'inherit', cursor: 'pointer',
+                            fontSize: 11,
+                          }}>
+                          {p.shared ? '◍ ' : '★ '}{p.name}
+                        </button>
+                        <button type="button" onClick={() => deletePreset(p.id)}
+                          title="Delete preset"
+                          style={{
+                            background: 'transparent', border: 'none',
+                            padding: '0 6px', color: 'var(--err)',
+                            cursor: 'pointer', fontSize: 12,
+                          }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    None yet — save the current draft or import a JSON bundle.
+                  </div>
                 )}
               </div>
             )}

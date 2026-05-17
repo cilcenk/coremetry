@@ -32,7 +32,7 @@ export {
 export {
   useAlertRules,
   useCreateAlertRule, useUpdateAlertRule,
-  useDeleteAlertRule, useEnableAlertRule,
+  useDeleteAlertRule, useEnableAlertRule, useDisableAlertRule,
 } from './alerts';
 export { useLogs } from './logs';
 export {

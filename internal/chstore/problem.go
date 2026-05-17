@@ -365,10 +365,18 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 	return batch.Send()
 }
 
+// DeleteAlertRule removes the row entirely (ALTER … DELETE)
+// rather than the previous soft-disable pattern — operators
+// hitting Delete expect the rule to go AWAY from the list, not
+// stay around as a disabled tombstone. Matches the precedent
+// already established by monitors / status-page components /
+// notification channels. Built-in rules are still resurrected
+// on next boot from the seed list, so deleting a preset gives
+// the operator a clean slate without a permanent "ghost" row.
+// Disable-without-delete remains available through
+// SetAlertRuleEnabled (toggled by the noisy-rules bulk path).
 func (s *Store) DeleteAlertRule(ctx context.Context, id string) error {
-	// Soft delete via a tombstone row with enabled=0; ReplacingMergeTree will
-	// keep the latest version. (No real DELETE on MergeTree without alter.)
-	return s.SetAlertRuleEnabled(ctx, id, false)
+	return s.conn.Exec(ctx, `ALTER TABLE alert_rules DELETE WHERE id = ?`, id)
 }
 
 // SetAlertRuleEnabled flips a rule's enabled flag. Used by both the

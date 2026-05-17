@@ -42,3 +42,7 @@ export function useDeleteAlertRule() {
 export function useEnableAlertRule() {
   return useAlertMutation<string>(api.enableAlertRule);
 }
+
+export function useDisableAlertRule() {
+  return useAlertMutation<string>(api.disableAlertRule);
+}

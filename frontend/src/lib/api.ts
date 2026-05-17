@@ -1000,6 +1000,8 @@ export const api = {
     request<void>(`/api/alert-rules/${id}`, { method: 'DELETE' }),
   enableAlertRule: (id: string) =>
     request<void>(`/api/alert-rules/${id}/enable`, { method: 'POST' }),
+  disableAlertRule: (id: string) =>
+    request<void>(`/api/alert-rules/${id}/disable`, { method: 'POST' }),
 
   // ── Auth ─────────────────────────────────────────────────────────────────
   authConfig: () => get<AuthConfigResponse>('/api/auth/config'),

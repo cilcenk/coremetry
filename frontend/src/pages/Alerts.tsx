@@ -6,7 +6,7 @@ import { useAuth } from '@/components/AuthProvider';
 import {
   useAlertRules,
   useCreateAlertRule, useUpdateAlertRule,
-  useDeleteAlertRule, useEnableAlertRule,
+  useDeleteAlertRule, useEnableAlertRule, useDisableAlertRule,
 } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
@@ -252,8 +252,9 @@ export default function AlertsPage() {
   const rules = rulesQ.isLoading ? undefined : rulesQ.data ?? [];
   const createRule = useCreateAlertRule();
   const updateRule = useUpdateAlertRule();
-  const deleteRule = useDeleteAlertRule();
-  const enableRule = useEnableAlertRule();
+  const deleteRule  = useDeleteAlertRule();
+  const enableRule  = useEnableAlertRule();
+  const disableRule = useDisableAlertRule();
 
   // Service list for the picker — kept on raw fetch since
   // it's a one-shot lookup and the cache value doesn't really
@@ -371,7 +372,7 @@ export default function AlertsPage() {
     }
     setBulkBusy(true);
     try {
-      await Promise.allSettled(ids.map(id => deleteRule.mutateAsync(id)));
+      await Promise.allSettled(ids.map(id => disableRule.mutateAsync(id)));
       setSelected(new Set());
       api.alertTuningNoisyRules('24h', 10)
         .then(r => setNoisy((r?.rules ?? []).filter(n => n.suggestion !== '')))
@@ -401,9 +402,16 @@ export default function AlertsPage() {
     }
     cancelForm();
   };
+  // remove = hard delete (DELETE /api/alert-rules/{id} actually
+  // removes the row now, per v0.5.175). `disable` is the soft
+  // counterpart for the "I want to silence this but keep the
+  // definition" case.
   const remove = async (id: string) => {
-    if (!confirm('Disable this rule?')) return;
+    if (!confirm('Delete this rule permanently? The definition will be removed. Use Disable if you want to silence it without losing the rule.')) return;
     await deleteRule.mutateAsync(id);
+  };
+  const disable = async (id: string) => {
+    await disableRule.mutateAsync(id);
   };
   const enable = async (id: string) => {
     await enableRule.mutateAsync(id);
@@ -773,8 +781,16 @@ export default function AlertsPage() {
                     <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                       <button className="sec" onClick={() => startEdit(r)}>Edit</button>
                       {r.enabled
-                        ? <button className="sec" onClick={() => remove(r.id)}>Disable</button>
+                        ? <button className="sec" onClick={() => disable(r.id)}
+                            title="Silence the rule without removing its definition">
+                            Disable
+                          </button>
                         : <button className="sec" onClick={() => enable(r.id)}>Enable</button>}
+                      <button className="sec" onClick={() => remove(r.id)}
+                        title="Remove the rule entirely from ClickHouse"
+                        style={{ color: 'var(--err)' }}>
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}

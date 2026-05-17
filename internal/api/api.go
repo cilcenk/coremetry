@@ -277,6 +277,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("PUT    /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.updateAlertRule))
 	mux.HandleFunc("DELETE /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.deleteAlertRule))
 	mux.HandleFunc("POST   /api/alert-rules/{id}/enable",   auth.RequireAnyRole(editorRoles, s.enableAlertRule))
+	mux.HandleFunc("POST   /api/alert-rules/{id}/disable",  auth.RequireAnyRole(editorRoles, s.disableAlertRule))
 	mux.HandleFunc("GET    /api/alert-rules/baseline",      auth.RequireAnyRole(editorRoles, s.getAlertBaseline))
 	mux.HandleFunc("GET /api/health", s.getHealth)
 	mux.HandleFunc("GET /api/version", s.getVersion)
@@ -6351,6 +6352,21 @@ func (s *Server) enableAlertRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err); return
 	}
 	s.audit(r, "alert_rule.enable", "alert_rule", id, "")
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// disableAlertRule is the soft-disable counterpart of
+// deleteAlertRule (v0.5.175 — DELETE now hard-removes the row).
+// Used by the noisy-rules bulk action where the operator wants
+// the rule out of the firing path but still wants the
+// definition kept around for an easy re-enable if the silence
+// turns out to be wrong.
+func (s *Server) disableAlertRule(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.store.SetAlertRuleEnabled(r.Context(), id, false); err != nil {
+		writeErr(w, err); return
+	}
+	s.audit(r, "alert_rule.disable", "alert_rule", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

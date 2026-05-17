@@ -173,6 +173,14 @@ export default function AIObservabilityPage() {
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
             {calls ? `${calls.length} call${calls.length === 1 ? '' : 's'}` : ''}
           </span>
+          {calls && calls.length > 0 && (
+            <button className="sec"
+              onClick={() => exportCallsCSV(calls, rates)}
+              style={{ fontSize: 11, padding: '3px 10px' }}
+              title="Download the currently-filtered calls as a CSV (with computed cost)">
+              ↓ CSV
+            </button>
+          )}
         </div>
 
         {/* Recent calls table */}
@@ -435,4 +443,52 @@ function Kv({ k, v }: { k: string; v: string }) {
       <div style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace', marginTop: 2 }}>{v}</div>
     </div>
   );
+}
+
+// CSV escape — RFC 4180 minimum: wrap fields that contain
+// commas/quotes/newlines in double quotes, and double-up any
+// embedded quotes. We omit BOM since modern Excel handles UTF-8
+// fine and operators piping into pandas/duckdb prefer it
+// without.
+function csvField(v: string | number): string {
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+// exportCallsCSV — v0.5.174. Bundles the operator's currently-
+// filtered ai_calls rows into a CSV file with a computed cost
+// column (uses the same rate table the page renders with).
+// Prompt + response samples are deliberately omitted — they can
+// be 4KB each and the operator can drill in via the table row
+// for individual inspection.
+function exportCallsCSV(calls: AICall[], rates: AIRateTable) {
+  const header = [
+    'createdAt', 'surface', 'provider', 'model', 'status',
+    'durationMs', 'inputTokens', 'outputTokens', 'estCostUsd',
+    'userEmail', 'userId', 'errorMsg',
+  ];
+  const lines: string[] = [header.join(',')];
+  for (const c of calls) {
+    const cost = costForCall(rates, c.model, c.inputTokens, c.outputTokens);
+    lines.push([
+      new Date(c.createdAt / 1e6).toISOString(),
+      c.surface, c.provider, c.model, c.status,
+      c.durationMs, c.inputTokens, c.outputTokens,
+      cost === null ? '' : cost.toFixed(6),
+      c.userEmail ?? '', c.userId ?? '',
+      c.errorMsg ?? '',
+    ].map(csvField).join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `coremetry-ai-calls-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }

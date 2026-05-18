@@ -594,18 +594,12 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 func (s *ESStore) buildQuery(f Filter) map[string]any {
 	must := []any{}
 
-	// trace_id correlation queries without an explicit time range
-	// were scanning the full retention window — operators with
-	// 90d log retention hit multi-second waits for a one-trace
-	// lookup. v0.5.219 implicitly caps to the last 24h when
-	// TraceID is set and the caller didn't supply bounds. Traces
-	// don't legitimately span days; 24h covers ingest lag from
-	// any realistic shipper. Spans the caller did pass through
-	// (e.g. the trace detail Logs tab with ±5min around the
-	// waterfall) take precedence.
-	if f.TraceID != "" && f.From.IsZero() && f.To.IsZero() {
-		f.From = time.Now().Add(-24 * time.Hour)
-	}
+	// v0.5.223 — v0.5.219 used to auto-cap unbounded trace_id
+	// lookups to 24h for speed; that quietly hid older traces
+	// (clicked from saved-share links, exception samples, etc.)
+	// Removed. terminate_after below still keeps the typical
+	// "1-100 line trace" lookup fast on big indices without
+	// trading off completeness for older traces.
 
 	// Time range
 	if !f.From.IsZero() || !f.To.IsZero() {

@@ -51,7 +51,11 @@ export default function AIObservabilityPage() {
       api.aiSeries({ from, to }).then(s => setSeries(s ?? [])).catch(() => setSeries([]));
     };
     tick();
-    timer = window.setInterval(tick, 60_000);
+    // v0.5.248 — skip the refresh when the tab is hidden so
+    // backgrounded operator sessions don't re-query CH every
+    // minute. Foreground operator sees fresh stats on focus
+    // (the next tick fires within 60s).
+    timer = window.setInterval(() => { if (!document.hidden) tick(); }, 60_000);
     return () => { if (timer) clearInterval(timer); };
   }, [range]);
 

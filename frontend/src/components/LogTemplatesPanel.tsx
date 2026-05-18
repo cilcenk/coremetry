@@ -35,8 +35,9 @@ export function LogTemplatesPanel({
     };
     fetchOnce();
     // 30s refresh — server caches the read for 30s so the
-    // poll is cheap on the API side.
-    const id = setInterval(fetchOnce, 30_000);
+    // poll is cheap on the API side. v0.5.248 — pause when
+    // the tab is hidden (mobile battery + idle API traffic).
+    const id = setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
     return () => { cancelled = true; clearInterval(id); };
   }, [sort]);
 

@@ -41,8 +41,10 @@ export function LivePatternsPanel({
     };
     fetchOnce();
     // 30s poll; the server caches the agg for 60s so half of
-    // these are no-ops at the ES layer.
-    const id = setInterval(fetchOnce, 30_000);
+    // these are no-ops at the ES layer. v0.5.248 — pause when
+    // the tab is hidden so we don't run significant_text on a
+    // backgrounded operator session.
+    const id = setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 

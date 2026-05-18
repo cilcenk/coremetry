@@ -36,8 +36,10 @@ export function LogPatternStrip({ onSelect }: {
     fetchOnce();
     // Same 30s cadence as the rest of the page's auto-refresh
     // hooks — at billion-log/day this poll is cheap (60s server
-    // cache fronts the detector run).
-    const id = setInterval(fetchOnce, 30_000);
+    // cache fronts the detector run). v0.5.248 — skip when the
+    // tab is hidden so we don't burn mobile/laptop battery on
+    // unfocused windows.
+    const id = setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 

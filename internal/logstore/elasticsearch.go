@@ -615,9 +615,8 @@ func (s *ESStore) Facets(ctx context.Context, f Filter, fields []FacetField, top
 		for i, ef := range esFields {
 			aggs[fmt.Sprintf("%s_%d", field, i)] = map[string]any{
 				"terms": map[string]any{
-					"field":         ef,
-					"size":          topN,
-					"missing_bucket": false,
+					"field": ef,
+					"size":  topN,
 				},
 			}
 		}

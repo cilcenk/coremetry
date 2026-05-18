@@ -590,6 +590,137 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	return out, nil
 }
 
+// Facets runs N terms aggregations against the same filter Search
+// uses, returning top-N (value, count) buckets per dimension. One
+// round-trip — all aggs go in a single search request with size:0.
+//
+// Field-name resolution follows the same fallback chains the
+// frontend renders from. For pod / cluster we wrap multiple
+// candidate keyword fields in a bool/should so any one matching
+// document contributes its value to whichever subfield exists —
+// ES `aggregations.filters.terms` would be cleaner but adds a
+// nested bucket the UI doesn't need; we just merge the buckets
+// client-side under one key.
+func (s *ESStore) Facets(ctx context.Context, f Filter, fields []FacetField, topN int) (FacetResult, error) {
+	if topN <= 0 || topN > 100 {
+		topN = 10
+	}
+	query := s.buildQuery(f)
+
+	aggs := map[string]any{}
+	for _, field := range fields {
+		esFields := facetESFields(s, field)
+		// Build one terms agg per candidate field; we merge them
+		// client-side below. Pure terms keeps cluster cost low.
+		for i, ef := range esFields {
+			aggs[fmt.Sprintf("%s_%d", field, i)] = map[string]any{
+				"terms": map[string]any{
+					"field":         ef,
+					"size":          topN,
+					"missing_bucket": false,
+				},
+			}
+		}
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"size":  0,
+		"query": query,
+		"aggs":  aggs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	tru := true
+	req := esapi.SearchRequest{
+		Index:             []string{s.cfg.Index},
+		Body:              bytes.NewReader(body),
+		AllowNoIndices:    &tru,
+		IgnoreUnavailable: &tru,
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return nil, fmt.Errorf("ES facets: %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, parseESError("facets", res, s.cfg.Index)
+	}
+	var raw struct {
+		Aggregations map[string]any `json:"aggregations"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decode ES facets: %w", err)
+	}
+
+	out := FacetResult{}
+	for _, field := range fields {
+		merged := map[string]int64{}
+		esFields := facetESFields(s, field)
+		for i := range esFields {
+			agg, ok := raw.Aggregations[fmt.Sprintf("%s_%d", field, i)].(map[string]any)
+			if !ok {
+				continue
+			}
+			bs, _ := agg["buckets"].([]any)
+			for _, b := range bs {
+				bm, _ := b.(map[string]any)
+				key, _ := bm["key"].(string)
+				cnt, _ := bm["doc_count"].(float64)
+				if key == "" {
+					continue
+				}
+				merged[key] += int64(cnt)
+			}
+		}
+		// Pick top-N by merged count.
+		buckets := make([]FacetBucket, 0, len(merged))
+		for k, v := range merged {
+			buckets = append(buckets, FacetBucket{Value: k, Count: v})
+		}
+		// Manual sort desc by count — small slice, no stdlib needed.
+		for i := 1; i < len(buckets); i++ {
+			for j := i; j > 0 && buckets[j].Count > buckets[j-1].Count; j-- {
+				buckets[j], buckets[j-1] = buckets[j-1], buckets[j]
+			}
+		}
+		if len(buckets) > topN {
+			buckets = buckets[:topN]
+		}
+		out[field] = buckets
+	}
+	return out, nil
+}
+
+// facetESFields returns the candidate ES field paths for a given
+// facet dimension. Multiple fields for pod + cluster mirror the
+// shipper-conventions fallback chain the frontend rendering uses.
+// Each name gets a `.keyword` suffix because the terms aggregation
+// requires an unanalyzed subfield on text-mapped fields.
+func facetESFields(s *ESStore, f FacetField) []string {
+	switch f {
+	case FacetService:
+		return []string{s.fields.Service + ".keyword"}
+	case FacetSeverity:
+		return []string{s.fields.SeverityTx + ".keyword"}
+	case FacetPod:
+		return []string{
+			"kubernetes.pod_name.keyword",
+			"k8s.pod.name.keyword",
+			"kubernetes.pod.name.keyword",
+			"pod_name.keyword",
+		}
+	case FacetCluster:
+		return []string{
+			"openshift.labels.cluster.keyword",
+			"openshift.cluster.name.keyword",
+			"k8s.cluster.name.keyword",
+			"kubernetes.cluster_name.keyword",
+		}
+	}
+	return nil
+}
+
 // buildQuery constructs the ES bool/must query corresponding to a Filter.
 func (s *ESStore) buildQuery(f Filter) map[string]any {
 	must := []any{}

@@ -3,6 +3,7 @@ package logstore
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -160,4 +161,114 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		out = append(out, *byName[n])
 	}
 	return out, rows.Err()
+}
+
+// Facets returns top-N (value, count) buckets per requested facet
+// dimension, scoped to the same Filter as Search. Each requested
+// facet runs as its own grouped count query against the logs
+// table — at billion-log/day the per-facet pass is fast because
+// the WHERE clause is the same partition-pruned set Search
+// already uses; the GROUP BY column is LowCardinality for
+// service_name + severity_text, and for pod/cluster we read
+// the resource_attributes map by key.
+func (s *CHStore) Facets(ctx context.Context, f Filter, fields []FacetField, topN int) (FacetResult, error) {
+	if topN <= 0 || topN > 100 {
+		topN = 10
+	}
+	from, to := f.From, f.To
+	if from.IsZero() {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+
+	baseWC := []string{"time >= ?", "time <= ?"}
+	baseArgs := []any{from, to}
+	if f.Service != "" {
+		baseWC = append(baseWC, "service_name = ?")
+		baseArgs = append(baseArgs, f.Service)
+	}
+	if f.Search != "" {
+		baseWC = append(baseWC, "multiSearchAnyCaseInsensitive(body, [?])")
+		baseArgs = append(baseArgs, f.Search)
+	}
+	if f.SeverityMin > 0 {
+		baseWC = append(baseWC, "severity_num >= ?")
+		baseArgs = append(baseArgs, f.SeverityMin)
+	}
+	if f.TraceID != "" {
+		baseWC = append(baseWC, "trace_id = ?")
+		baseArgs = append(baseArgs, f.TraceID)
+	}
+	whereSQL := strings.Join(baseWC, " AND ")
+
+	out := FacetResult{}
+	for _, field := range fields {
+		expr := facetCHExpr(field)
+		if expr == "" {
+			out[field] = nil
+			continue
+		}
+		sql := fmt.Sprintf(`
+			SELECT %s AS v, count() AS c
+			FROM logs
+			WHERE %s
+			GROUP BY v
+			ORDER BY c DESC
+			LIMIT ?
+			SETTINGS max_execution_time = 10`, expr, whereSQL)
+		args := append([]any{}, baseArgs...)
+		args = append(args, topN)
+		rows, err := s.store.Conn().Query(ctx, sql, args...)
+		if err != nil {
+			return out, err
+		}
+		var buckets []FacetBucket
+		for rows.Next() {
+			var v string
+			var c uint64
+			if err := rows.Scan(&v, &c); err != nil {
+				rows.Close()
+				return out, err
+			}
+			if v == "" {
+				continue
+			}
+			buckets = append(buckets, FacetBucket{Value: v, Count: int64(c)})
+		}
+		rows.Close()
+		out[field] = buckets
+	}
+	return out, nil
+}
+
+// facetCHExpr maps a FacetField to a ClickHouse expression
+// against the logs table. Pod + cluster read from
+// resource_attributes by key — preferring the operator's actual
+// shipper field names first (same order as the LogTable.tsx
+// fallback chain).
+func facetCHExpr(f FacetField) string {
+	switch f {
+	case FacetService:
+		return "service_name"
+	case FacetSeverity:
+		return "if(severity_text != '', severity_text, toString(severity_num))"
+	case FacetPod:
+		// CH's map lookup returns '' for missing keys, not NULL —
+		// coalesce would pick the first key always. multiIf walks
+		// the chain, taking each non-empty value in turn.
+		return `multiIf(
+			resource_attributes['kubernetes.pod_name'] != '', resource_attributes['kubernetes.pod_name'],
+			resource_attributes['k8s.pod.name']        != '', resource_attributes['k8s.pod.name'],
+			resource_attributes['kubernetes.pod.name'] != '', resource_attributes['kubernetes.pod.name'],
+			resource_attributes['pod_name'])`
+	case FacetCluster:
+		return `multiIf(
+			resource_attributes['openshift.labels.cluster'] != '', resource_attributes['openshift.labels.cluster'],
+			resource_attributes['openshift.cluster.name']   != '', resource_attributes['openshift.cluster.name'],
+			resource_attributes['k8s.cluster.name']         != '', resource_attributes['k8s.cluster.name'],
+			resource_attributes['kubernetes.cluster_name'])`
+	}
+	return ""
 }

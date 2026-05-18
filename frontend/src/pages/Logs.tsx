@@ -10,6 +10,7 @@ import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
+import { LogsFacetSidebar } from '@/components/LogsFacetSidebar';
 import { Pager } from '@/components/Pager';
 import { useLogs } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
@@ -161,6 +162,48 @@ function LogsInner() {
     const empty = { service: '', search: '', severity: 0, traceId: '', spanId: '' };
     setDraft(empty); setFilter(empty); setPage(0);
   };
+
+  // Facet sidebar click handler (v0.5.226). Service buckets set
+  // the service picker directly; the rest fold into the search
+  // box as `key:value` KQL clauses. Clicking an already-active
+  // value clears it instead of re-appending. Auto-applies — the
+  // sidebar is a click-to-filter affordance, not a draft input.
+  const applyFacet = (field: import('@/components/LogsFacetSidebar').FacetField, value: string) => {
+    if (field === 'service') {
+      const next = filter.service === value
+        ? { ...filter, service: '' }
+        : { ...filter, service: value };
+      setDraft(d => ({ ...d, service: next.service }));
+      setFilter(next);
+      setPage(0);
+      return;
+    }
+    // Map to KQL key. severity → level, pod → kubernetes.pod_name, etc.
+    const map: Record<string, string> = {
+      severity: 'level',
+      pod:      'kubernetes.pod_name',
+      cluster:  'openshift.labels.cluster',
+    };
+    const k = map[field];
+    if (!k) return;
+    // Toggle: if the search already contains `key:value` (with
+    // optional quotes) strip it; otherwise append with AND glue.
+    const re = new RegExp(`(?:^|\\s+AND\\s+|\\s+)${k.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}:"?${value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}"?`);
+    let nextSearch: string;
+    if (re.test(filter.search)) {
+      nextSearch = filter.search.replace(re, ' ').replace(/\s+AND\s+AND\s+/g, ' AND ').trim()
+        .replace(/^AND\s+/, '').replace(/\s+AND$/, '');
+    } else {
+      const sep = filter.search ? ' AND ' : '';
+      // Quote the value when it has whitespace; otherwise plain.
+      const v = /\s/.test(value) ? `"${value}"` : value;
+      nextSearch = `${filter.search}${sep}${k}:${v}`;
+    }
+    const next = { ...filter, search: nextSearch };
+    setDraft(d => ({ ...d, search: nextSearch }));
+    setFilter(next);
+    setPage(0);
+  };
   const clearTraceLock = () => {
     const next = { ...filter, traceId: '', spanId: '' };
     setFilter(next); setDraft(d => ({ ...d, traceId: '', spanId: '' }));
@@ -187,7 +230,9 @@ function LogsInner() {
   return (
     <>
       <Topbar title="Logs" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <div id="content" style={{ display: 'flex', alignItems: 'flex-start' }}>
+        <LogsFacetSidebar range={range} filter={filter} onApplyValue={applyFacet} />
+        <div style={{ flex: 1, minWidth: 0 }}>
         <SavedViewsBar page="logs" />
         {filter.traceId && (
           <div className="trace-lock">
@@ -315,6 +360,7 @@ function LogsInner() {
                    extras={<>{total.toLocaleString()} total</>} />
           </>
         )}
+        </div>
       </div>
     </>
   );

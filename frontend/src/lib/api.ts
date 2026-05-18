@@ -400,6 +400,12 @@ export const api = {
   // mapping leaves. Server caches 60s.
   logsFields: () => get<{ fields: string[]; backend: string }>(
     `/api/logs/fields`),
+  // Faceted sidebar buckets (v0.5.226). Same filter shape as
+  // /api/logs; returns top-N (value, count) per dimension so the
+  // UI can render click-to-add filter chips à la Kibana Discover.
+  logsFacets: (params: LogsParams & { topN?: number }) =>
+    get<Record<string, Array<{ value: string; count: number }>> | null>(
+      `/api/logs/facets?${qs(params)}`),
   // Similar-traces lookup (v0.5.141). more_like_this on the
   // configured body field + trace.id terms aggregation. ES-only;
   // CH backend returns 400.

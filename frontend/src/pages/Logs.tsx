@@ -12,6 +12,8 @@ import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { Pager } from '@/components/Pager';
+import { buildKibanaURL } from '@/lib/kibanaLink';
+import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
@@ -26,6 +28,30 @@ const SEV_OPTIONS = [
   { v: 17, label: 'ERROR+' },
   { v: 21, label: 'FATAL' },
 ];
+
+// Compose a KQL clause from the current filter state so the
+// Kibana deep-link lands on the same slice. service / trace_id
+// become per-field clauses; the free-text search string passes
+// through verbatim (it's already KQL on this page). Returned
+// string may be empty — Kibana handles "no query" cleanly.
+function buildKQLFromFilter(f: {
+  service: string; search: string; severity: number; traceId: string; spanId: string;
+}): string {
+  const parts: string[] = [];
+  if (f.service) parts.push(`service.name:"${f.service.replace(/"/g, '\\"')}"`);
+  if (f.traceId) parts.push(`trace.id:"${f.traceId}"`);
+  if (f.spanId)  parts.push(`span.id:"${f.spanId}"`);
+  if (f.severity > 0) {
+    // Map OTel severity number to a level name range; Kibana's
+    // log.level field typically holds the canonical text.
+    const min = f.severity;
+    if (min >= 21) parts.push('log.level:"FATAL"');
+    else if (min >= 17) parts.push('log.level:("FATAL" OR "ERROR")');
+    else if (min >= 13) parts.push('log.level:("FATAL" OR "ERROR" OR "WARN")');
+  }
+  if (f.search.trim()) parts.push(f.search.trim());
+  return parts.join(' AND ');
+}
 
 function LogsInner() {
   const [searchParams] = useSearchParams();
@@ -138,6 +164,15 @@ function LogsInner() {
   // already documented in the placeholder).
   const [fields, setFields] = useState<string[]>([]);
   const [showFieldsHint, setShowFieldsHint] = useState(false);
+  // Kibana deep-link config (v0.5.236). Loaded once on mount;
+  // when disabled or unconfigured, buildKibanaURL returns null
+  // and the button doesn't render.
+  const [kibana, setKibana] = useState<KibanaSettings | null>(null);
+  useEffect(() => {
+    api.getKibanaSettings()
+      .then(s => setKibana(s ?? null))
+      .catch(() => setKibana(null));
+  }, []);
   useEffect(() => {
     api.logsFields()
       .then(d => setFields(d.fields ?? []))
@@ -299,6 +334,32 @@ function LogsInner() {
             title="Auto-refresh every 2 seconds with the latest logs">
             {live ? '⏸ Pause Live' : '▶ Live tail'}
           </button>
+          {/* External Kibana deep-link (v0.5.236). Hidden unless
+              the admin has filled in Settings → Kibana link.
+              Carries the current filter context — service /
+              trace-id / search clauses become KQL; window
+              becomes the time range — so the operator lands on
+              the same slice they're looking at here. */}
+          {(() => {
+            const kql = buildKQLFromFilter(filter);
+            const href = buildKibanaURL(kibana, {
+              fromNs: from ?? undefined,
+              toNs: to ?? undefined,
+              kql,
+            });
+            if (!href) return null;
+            return (
+              <a href={href} target="_blank" rel="noopener"
+                className="sec"
+                title="Open the current filter slice in Kibana Discover"
+                style={{
+                  fontSize: 12, padding: '5px 12px',
+                  textDecoration: 'none', color: 'var(--accent2)',
+                }}>
+                ↗ Discover in Kibana
+              </a>
+            );
+          })()}
         </div>
 
         {/* Field-mapping chips (v0.5.137). Toggled via the ƒ

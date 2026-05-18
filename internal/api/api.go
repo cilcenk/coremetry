@@ -389,6 +389,11 @@ func (s *Server) Start() error {
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
 	mux.HandleFunc("PUT /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.putTempoSettings))
+	// External Kibana deep-link config (v0.5.236). GET is open
+	// to any signed-in user — the Logs page renders the link
+	// for everyone; only the admin can change the base URL.
+	mux.HandleFunc("GET /api/settings/kibana",    s.getKibanaSettings)
+	mux.HandleFunc("PUT /api/settings/kibana",    auth.RequireRole(auth.RoleAdmin, s.putKibanaSettings))
 	mux.HandleFunc("GET  /api/settings/ldap",        auth.RequireRole(auth.RoleAdmin, s.getLDAPSettings))
 	mux.HandleFunc("PUT  /api/settings/ldap",        auth.RequireRole(auth.RoleAdmin, s.putLDAPSettings))
 	mux.HandleFunc("POST /api/settings/ldap/test",   auth.RequireRole(auth.RoleAdmin, s.testLDAPConnection))

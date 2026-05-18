@@ -487,6 +487,17 @@ export interface TempoSettingsInput {
   insecureSkipVerify?: boolean;
 }
 
+// External Kibana deep-link config (v0.5.236). Operator-curated
+// link target so Logs page rows can offer an "Open in Kibana
+// Discover" jump. Empty / disabled = no link rendered.
+export interface KibanaSettings {
+  enabled: boolean;
+  baseUrl: string;
+  // Optional Kibana data view id to pin the Discover panel to a
+  // specific index pattern. Empty = let Kibana pick the default.
+  dataView?: string;
+}
+
 // Unified triage inbox (v0.5.211) — merges Problems + Exception
 // groups + Anomaly events into one ranked list with a normalised
 // priority bucket so operators stop tab-hopping. Each kind keeps

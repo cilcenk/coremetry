@@ -14,6 +14,7 @@ import type {
   RetentionSpec,
   AISettings, AISettingsInput,
   TempoSnapshot, TempoSettingsInput,
+  KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
 } from './types';
 
@@ -636,6 +637,15 @@ export const api = {
   getTempoSettings: () => get<TempoSnapshot>(`/api/settings/tempo`),
   putTempoSettings: (s: TempoSettingsInput) =>
     request<TempoSnapshot>(`/api/settings/tempo`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  // External Kibana deep-link (v0.5.236). GET is open to every
+  // signed-in user so the Logs page can render the link; PUT
+  // is admin-only.
+  getKibanaSettings: () => get<KibanaSettings>(`/api/settings/kibana`),
+  putKibanaSettings: (s: KibanaSettings) =>
+    request<KibanaSettings>(`/api/settings/kibana`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),

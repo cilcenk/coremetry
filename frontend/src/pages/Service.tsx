@@ -138,6 +138,18 @@ function ServiceDetailInner() {
           }} title="Continuous profiling — CPU + heap flamegraphs for this service">
             🔥 Profiles
           </Link>
+          {/* Logs deep-link (v0.5.225). Same one-hop jump as
+              Profiles — opens /logs filtered to this service so
+              an operator who spots an error spike on the RED
+              charts above lands on the matching log stream
+              without a sidebar trip. */}
+          <Link to={`/logs?service=${encodeURIComponent(svc)}`} style={{
+            fontSize: 12, padding: '5px 12px',
+            background: 'var(--bg3)', border: '1px solid var(--border)',
+            borderRadius: 6, color: 'var(--accent2)', textDecoration: 'none',
+          }} title="Open /logs filtered to this service">
+            ≡ Logs
+          </Link>
         </div>
         {/* Service catalog metadata — owner team / oncall /
             runbook / repo. Operator-curated; falls back to a

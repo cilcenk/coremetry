@@ -220,11 +220,13 @@ function ServiceDetailInner() {
                 window so it doesn't add visual weight for
                 un-versioned services. */}
             <DeployHistoryPanel service={svc} />
-            {/* Span breakdown sits ABOVE the infra 15min tiles
-                (v0.5.237): the categorical "where does this
-                service spend its time?" answer should land first,
-                before the operator scrolls past CPU / Memory /
-                RPS to the per-operation table. */}
+            {/* Operations + SpanBreakdown sit at the top of the
+                detail layout (v0.5.238). Operations row first
+                (per-endpoint RED), SpanBreakdown immediately
+                below it so the categorical "where does the time
+                go" view drops in right under the row the
+                operator just scanned. */}
+            <OperationsTable service={svc} rows={operations} range={range} />
             <SpanBreakdownChart service={svc}
                                 fromNs={rangeNs.from}
                                 toNs={rangeNs.to} />
@@ -240,7 +242,6 @@ function ServiceDetailInner() {
             <DBQueriesPanel   service={svc}
                               from={rangeNs.from}
                               to={rangeNs.to} />
-            <OperationsTable service={svc} rows={operations} range={range} />
             {/* Latency heatmap (Honeycomb-style 2D density).
                 Reveals multi-modal distributions the P50/P99
                 line charts hide — "P99 is fine but 5% of

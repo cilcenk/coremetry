@@ -35,6 +35,13 @@ type LatencyHeatmap struct {
 	// MaxCount = peak cell value, useful for the frontend to
 	// pick a colour scale without a full re-scan.
 	MaxCount uint32 `json:"maxCount"`
+	// SamplingRate (v0.5.238) — fraction of trace IDs read to
+	// produce this heatmap. 1.0 = full pass; <1.0 = sampled. UI
+	// surfaces a small "sampled at 10%" tag when this drops below
+	// 1 so the operator knows the absolute counts are
+	// extrapolated. Shape stays accurate; only the absolute
+	// scale is multiplied by 1/SamplingRate.
+	SamplingRate float64 `json:"samplingRate,omitempty"`
 }
 
 // GetLatencyHeatmap runs a single CH GROUP BY against the
@@ -79,9 +86,39 @@ func (s *Store) GetLatencyHeatmap(
 		stepSec = 1
 	}
 
+	// Scale guardrail (v0.5.238): on wide windows the per-row
+	// log10 + floor + GROUP BY hashing blew past the 30s
+	// max_execution_time on billion-span installs. Solution:
+	// hash-sample trace IDs deterministically and multiply the
+	// counts back up in Go. Shape is preserved (distribution
+	// over time × duration); absolute counts are extrapolated.
+	//
+	// Sampling kicks in only when the window exceeds 1h — short
+	// windows are small enough to scan fully, and operators
+	// staring at a 15-min window expect exact counts. The
+	// fraction picks 1-in-N where N = 10 for ≤6h, N = 25 for
+	// ≤24h, N = 100 beyond. Hash on trace_id so all spans of a
+	// trace land in or out together (preserves multi-modal
+	// signal — outlier traces aren't half-counted).
+	sampleN := 1
+	windowHours := to.Sub(from).Hours()
+	switch {
+	case windowHours > 24:
+		sampleN = 100
+	case windowHours > 6:
+		sampleN = 25
+	case windowHours > 1:
+		sampleN = 10
+	}
+
 	wc := whereClause{}
 	wc.add("time >= ?", from)
 	wc.add("time <= ?", to)
+	if sampleN > 1 {
+		// cityHash64 is built-in to CH and lighter than sipHash64
+		// for non-cryptographic sampling.
+		wc.add(fmt.Sprintf("cityHash64(trace_id) %% %d = 0", sampleN))
+	}
 	ApplyFilters(&wc, filters)
 
 	sql := fmt.Sprintf(`
@@ -144,9 +181,13 @@ func (s *Store) GetLatencyHeatmap(
 		if row < 0 || row >= totalBins {
 			continue
 		}
-		counts[col][row] = uint32(cnt)
-		if uint32(cnt) > maxCnt {
-			maxCnt = uint32(cnt)
+		// Scale back up when sampling is in effect — the SELECT
+		// only saw 1/N of the trace IDs, so multiply each
+		// per-cell count by N to estimate the full distribution.
+		scaled := uint32(cnt) * uint32(sampleN)
+		counts[col][row] = scaled
+		if scaled > maxCnt {
+			maxCnt = scaled
 		}
 	}
 
@@ -155,6 +196,7 @@ func (s *Store) GetLatencyHeatmap(
 		DurationBins: durBins,
 		Counts:       counts,
 		MaxCount:     maxCnt,
+		SamplingRate: 1.0 / float64(sampleN),
 	}, rows.Err()
 }
 

@@ -1686,6 +1686,13 @@ export interface LatencyHeatmap {
   durationBins: number[];   // upper bound in ms per bin, len = M
   counts: number[][];       // [N][M] grid
   maxCount: number;
+  // Fraction of trace IDs the backend actually scanned to
+  // produce this heatmap (v0.5.238). 1.0 = full pass; <1.0 =
+  // hash-sampled to keep wide-window queries under the
+  // 30s execution cap. UI surfaces a "sampled at 10%" tag
+  // when this drops below 1 so the operator knows the
+  // absolute counts are extrapolated.
+  samplingRate?: number;
 }
 
 // Deploy — one observed (service, service.version) entry.

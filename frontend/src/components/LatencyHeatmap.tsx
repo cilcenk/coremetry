@@ -166,10 +166,30 @@ export function LatencyHeatmap({ data, height = 220 }: {
     });
   };
 
+  // Sampling indicator (v0.5.238) — when the backend ran a
+  // hash-sample to keep wide windows under the execution cap,
+  // surface a small tag so the operator knows the cell counts
+  // are extrapolated (×1/samplingRate). Shape stays accurate.
+  const samplingRate = data.samplingRate ?? 1;
+  const sampledTag = samplingRate < 1 ? `Sampled at ${(samplingRate * 100).toFixed(0)}%` : null;
+
   return (
     <div ref={containerRef}
          style={{ position: 'relative', width: '100%' }}
          onMouseLeave={() => setHover(null)}>
+      {sampledTag && (
+        <div style={{
+          position: 'absolute', top: 6, right: 6, zIndex: 4,
+          fontSize: 10, padding: '2px 6px', borderRadius: 10,
+          background: 'rgba(250,204,21,0.12)',
+          border: '1px solid rgba(250,204,21,0.40)',
+          color: 'var(--warn, #facc15)',
+          pointerEvents: 'none',
+          fontFamily: 'ui-monospace, monospace',
+        }} title="Wide windows are hash-sampled by trace_id to keep the query under the execution cap; cell counts are estimated by multiplying back up.">
+          {sampledTag}
+        </div>
+      )}
       <canvas ref={canvasRef}
               style={{ display: 'block', cursor: 'crosshair' }}
               onMouseMove={onMouseMove} />

@@ -6,10 +6,10 @@ description: Show the prioritised work queue. Use whenever the user types "kuyru
 # /kuyruk — prioritised work queue
 
 `kuyruk` is Cenk's standing pattern for "what's next" — see
-`CLAUDE.md` under Workflow. Goal of this skill: present the
-current state of work in a form that takes <5 seconds to scan,
-followed by "Hangisi?" so the operator picks rather than reading
-more analysis.
+`CLAUDE.md` under "Workflow / Daily". Goal of this skill: present
+the current state of work in a form that takes <5 seconds to
+scan, followed by "Hangisi?" so the operator picks rather than
+reading more analysis.
 
 ## Steps
 
@@ -33,10 +33,17 @@ making one up.
 
 Group items into 2-4 buckets, in this priority order:
 
-1. **Bugs / regressions** (`bug-fix`, "Operator-reported", "broken in prod")
-2. **Scale / perf** (anything tagged scale-audit findings, slow endpoints, render jank)
-3. **Features** (new functionality the operator explicitly asked for)
-4. **Polish** (consistency sweeps, refactors, low-impact UX nits)
+1. **Bugs / regressions** (`bug-fix`, "Operator-reported", "broken
+   in prod"). Per CLAUDE.md, these interrupt feature work and
+   ship as `v0.5.X+1` immediately — never batched.
+2. **Scale / perf** — anything violating the CLAUDE.md "Hard
+   constraints" (eager pickers, unbounded tables, missing
+   `document.hidden` guards, MV-bypass on hot reads, cache-key
+   digests) or breaching a "Performance budget" p99. Findings
+   from `/scale-audit` queue here.
+3. **Features** — new functionality the operator explicitly asked
+   for.
+4. **Polish** — consistency sweeps, refactors, low-impact UX nits.
 
 Drop "ideas I had once" — only items the user explicitly
 mentioned or that came out of agent investigation. The queue is
@@ -50,7 +57,7 @@ Annotate each with a rough time estimate from this scale:
 - `~1 saat` — feature with backend + frontend + types
 - `~2 saat` — refactor, multi-file change, new schema column
 - `~yarım gün` — bigger refactor; flag this — usually wants
-  splitting up
+  splitting up via `/spec` first
 
 Without a real estimate, omit rather than guess. Operator can ask
 if they care.
@@ -98,3 +105,7 @@ get cut. See [[feedback-terse-responses]] in memory.
 - **Don't include items already in_progress as also pending.**
   An in-progress item gets its own line at the top labelled
   "(in progress)" — never duplicate.
+- **Don't conflate work-queue priority with incident triage.**
+  The P1/P2/P3 hierarchy in CLAUDE.md is for `Problem` rows on
+  the Inbox/Topology — a different surface. Use the
+  bugs/scale/features/polish buckets here.

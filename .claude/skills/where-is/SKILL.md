@@ -40,6 +40,8 @@ Examples:
 - `/where-is trace sampling decision logic`
 - `/where-is the alert noisy-rule evaluator`
 - `/where-is the topology aggregator goroutine`
+- `/where-is the Drain templater`
+- `/where-is system_settings hydration on boot`
 
 ## Steps
 
@@ -51,11 +53,35 @@ prompt should be:
 ```
 You are looking for: "<concept verbatim>"
 
-Coremetry codebase. Survey across:
-  - internal/**.go        (backend logic, CH queries, handlers)
-  - frontend/src/**.tsx   (UI components, pages)
-  - frontend/src/**.ts    (types, API client, query hooks)
-  - .claude/skills/**.md  (existing slash commands if related)
+Coremetry codebase. The "What goes WHERE" map in CLAUDE.md
+covers the canonical paths; common search surfaces:
+
+  Backend (Go):
+    - internal/otlp/         OTLP ingest
+    - internal/chstore/      CH writes + queries
+    - internal/logstore/     ES/CH-agnostic log reads
+    - internal/tempo/        external trace fallback
+    - internal/api/          HTTP handlers + cache wrapper
+    - internal/evaluator/    alert evaluator
+    - internal/anomaly/      curated + recorder
+    - internal/templater/    Drain
+    - internal/notify/       notification fan-out
+    - internal/auth/, internal/ldap/   auth
+    - internal/copilot/      AI + system prompts
+    - internal/sampling/     sampling
+    - internal/topology/     topology batch correlator
+    - internal/chmigrate/    schema migrations
+
+  Frontend:
+    - frontend/src/pages/        page roots
+    - frontend/src/components/   panels + shared widgets
+    - frontend/src/lib/types.ts  shared types
+    - frontend/src/lib/api.ts    client methods
+    - frontend/src/App.tsx       route registry
+    - frontend/src/components/Sidebar.tsx  nav registry
+
+  Skills:
+    - .claude/skills/**.md   slash command definitions
 
 For each hit:
   - file:line (markdown link form: [filename](path#L42))

@@ -1,15 +1,21 @@
 ---
 name: copilot-surface
-description: Add a new AI Copilot "✨ Explain" surface to Coremetry — system prompt, API handler, wrapper, frontend button. Use when the user wants AI explanation behaviour on a new page/panel (e.g. "explain this metric anomaly", "explain this database query").
+description: Add a new AI Copilot "✨ Explain" surface to Coremetry — system prompt, API handler, wrapper, frontend button. Use when the user wants AI explanation behaviour on a new page/panel (e.g. "explain this metric anomaly", "explain this database query"). Routes through `s.copilotExplain(r, …)` so the /ai surface attribution stays accurate.
 ---
 
 # /copilot-surface — add a new AI explain surface
 
 Each "✨ Explain X" button in Coremetry follows a well-trodden
-pattern (see internal/copilot/copilot.go bottom for prior art:
+pattern (see `internal/copilot/copilot.go` bottom for prior art:
 SystemPromptTrace, SystemPromptSpan, SystemPromptSLOBurn,
 SystemPromptSlowQuery, etc.). This skill walks the agent through
 the 5 files to touch + the conventions to follow.
+
+The 10-step "When you ship a new feature" checklist in CLAUDE.md
+collapses to 5 here because Copilot surfaces are read-only and
+share the existing infrastructure — no schema change, no settings
+persistence (Copilot config already lives in `system_settings`),
+no audit row (Copilot is configured-or-not, not RBAC-gated).
 
 ## Args
 
@@ -24,7 +30,8 @@ If omitted, ask the user. Don't invent a surface name.
   bottom, exported as `SystemPromptX() string`.
 - All Copilot endpoints go through `s.copilotExplain(r, ...)`
   wrapper so the /ai surface attribution stays accurate.
-  Never call `s.copilot.Explain` directly.
+  Never call `s.copilot.Explain` directly — that bypasses the
+  `ai_calls` recorder and the `/ai` page goes blind.
 - Surface name is derived from the URL path
   (`/api/copilot/explain-X` → `"explain-X"`) by the helper in
   `internal/api/ai_observability.go`.
@@ -65,7 +72,7 @@ Patterns to copy:
 - Demand ONE best fix, not a menu.
 - Explicit "don't hedge" / "don't speculate" at the end.
 
-### 2. `internal/api/api.go`
+### 2. `internal/api/api.go` (route)
 
 Register the route:
 
@@ -74,7 +81,8 @@ mux.HandleFunc("POST /api/copilot/explain-X", s.copilotExplainX)
 ```
 
 Same auth gate as other Copilot endpoints (no role wrapper —
-the Copilot itself is configured-or-not).
+the Copilot itself is configured-or-not). If the surface needs
+data the operator wouldn't otherwise see, gate it.
 
 ### 3. `internal/api/api.go` (handler)
 
@@ -112,8 +120,10 @@ func (s *Server) copilotExplainX(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Critical: use `s.copilotExplain(r, …)`, NOT `s.copilot.Explain(r.Context(), …)`.
-The wrapper attributes the call to the surface for /ai analytics.
+**Critical:** use `s.copilotExplain(r, …)`, NOT
+`s.copilot.Explain(r.Context(), …)`. The wrapper attributes the
+call to the surface for `/ai` analytics + records the `ai_calls`
+row. Direct calls silently break the dashboard.
 
 ### 4. `frontend/src/lib/api.ts`
 
@@ -126,6 +136,10 @@ copilotExplainX: (body: { /* matching the handler body */ }) =>
     body: JSON.stringify(body),
   }),
 ```
+
+If you need a shared type for the response, add it to
+`lib/types.ts` rather than re-declaring in the component
+(CLAUDE.md "Frontend type discipline").
 
 ### 5. Frontend button
 
@@ -173,9 +187,12 @@ After the 5 files are touched:
 1. `go build ./...` — handler + system prompt compile.
 2. `cd frontend && npx tsc --noEmit` — api.ts + button type-check.
 3. Trigger the button manually in the running app (or simulate
-   via `curl -X POST /api/copilot/explain-X -d '{…}'`); verify a
-   row lands in /ai with surface = "explain-X" + sensible token
-   counts.
+   via `curl -X POST /api/copilot/explain-X -d '{…}'`).
+4. **Verify `/ai` attribution.** A row should land with
+   `surface = "explain-X"` + sensible token counts. If the row
+   doesn't appear, you've bypassed `s.copilotExplain` somewhere
+   — that's the single most common failure mode and the whole
+   point of the wrapper.
 
 ## Then ship
 
@@ -198,3 +215,8 @@ operator click.
   The whole point of the wrapper is operator visibility into
   AI usage. Verify the surface name appears in /ai before
   shipping.
+- **Don't add a new Copilot config setting per surface.**
+  Provider/model/key all live in `system_settings` under the
+  existing `copilot` key — that's what `LoadPersisted` already
+  hydrates. New surfaces consume the same config, don't fan
+  out new ones.

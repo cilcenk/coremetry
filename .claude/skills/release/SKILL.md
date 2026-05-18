@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a Coremetry release — compute next v0.5.X tag, commit, push, kick off docker-up in background. Use when the user says "release", "ship", or finishes a coherent change and wants it shipped.
+description: Cut a Coremetry release — compute next v0.5.X tag, commit, push, kick off docker-up in background. Use when the user says "release", "ship", or finishes a coherent change and wants it shipped. Gates on `go build ./...` (backend) and `cd frontend && npx tsc --noEmit` (frontend) per CLAUDE.md.
 ---
 
 # /release — ship a Coremetry change
@@ -42,10 +42,12 @@ git tag --sort=-v:refname | grep -E '^v0\.5\.[0-9]+$' | head -1
 Increment the patch component by 1. Example: previous tag `v0.5.188`
 → next is `v0.5.189`. The series is monotonic; never re-use a tag.
 
-### 3. Type-check + build
+### 3. Type-check + build — the gate
 
-Per CLAUDE.md, gate the commit on a clean type-check / build.
-Run in parallel based on which file types changed:
+Per CLAUDE.md "When you ship a new feature" steps 9 + 10:
+TypeScript is law, `go build` is law. Gate the commit on a clean
+type-check / build. Run in parallel based on which file types
+changed:
 - If any `frontend/**/*.tsx` or `frontend/**/*.ts` changed:
   `cd frontend && npx tsc --noEmit`
 - If any `*.go` changed: `go build ./...`
@@ -112,7 +114,7 @@ blocks the conversation.
 If a previous `make docker-up` is still running (the user can see
 this in `docker ps` if needed), tell them rather than starting a
 second one — the rebuild lock will fight itself and produce a
-broken image.
+broken image. CLAUDE.md is explicit: one rebuild at a time.
 
 ### 8. Confirm
 
@@ -129,8 +131,8 @@ Example confirmation:
   issue and create a NEW commit (the failed one didn't exist).
   Amending past tags risks losing the previous push.
 - **Don't push --force.** Ever. Even on a tag.
-- **Don't skip the type-check.** A red build that ships breaks the
-  rebuild cycle and the operator has to revert.
+- **Don't skip the type-check / build.** A red build that ships
+  breaks the rebuild cycle and the operator has to revert.
 - **Don't re-use a tag.** If `v0.5.X` exists, the next is X+1, even
   if X was a no-op or got reverted.
 - **Don't combine unrelated changes.** If the working tree has two
@@ -139,3 +141,6 @@ Example confirmation:
 - **Bug fix commits go IMMEDIATELY.** Don't batch a bug fix into a
   feature commit — ship the bug fix as its own v0.5.X+1 right after
   the prior release.
+- **Don't `make docker-up` while another rebuild is in flight.**
+  BuildKit serialises layer cache; concurrent rebuilds fight and
+  one of the resulting images will be broken.

@@ -12,6 +12,12 @@ wrong API shape, the wrong UX surface, and burning 30 min
 before pivoting. This skill removes that cost by surfacing a
 1-minute spec for explicit approval BEFORE the edit phase.
 
+The spec's "Files" section follows the 10-step "When you ship a
+new feature" checklist in CLAUDE.md — backend → cache → auth →
+audit → settings → frontend type → frontend client → frontend
+component → ts gate → go gate. That ordering is the path that's
+proven not to need rework.
+
 ## When to use
 
 - The user describes a feature in 1-2 sentences and the
@@ -42,30 +48,44 @@ Produce a markdown spec with these sections, in this order:
 1-3 sentences restating the user's intent in concrete terms.
 Catches misunderstanding early.
 
-## Files
-- path/to/file.go (+N lines, what gets added)
-- frontend/src/foo.tsx (new file, ~X lines)
-- ...
-Order: backend schema → backend handler → backend route →
-frontend type → frontend client → frontend component → frontend
-wiring. Same order /copilot-surface uses.
+## Files (in shipping order)
+Backend, top-down (per CLAUDE.md's 10-step checklist):
+- internal/chstore/foo.go (+N lines) — new MV query method
+- internal/api/api.go (+N lines) — route + handler + serveCached + audit + auth gate
+Then frontend, top-down:
+- frontend/src/lib/types.ts (+N lines) — new shared type
+- frontend/src/lib/api.ts (+N lines) — client method
+- frontend/src/components/FooPanel.tsx (new file, ~X lines)
+- frontend/src/pages/Foo.tsx (+N lines) — wire the panel + loading/empty states
+Gates (these stay implicit in the workflow, no need to list):
+- cd frontend && npx tsc --noEmit
+- go build ./...
 
 ## API surface
 - `GET/POST/PUT /api/<path>` — body shape (1 line)
-- ...
-Mention auth gate: admin / editor / viewer / public.
+- Auth gate: admin / editor / viewer / public
+- Cache wrapper: serveCached key inputs (call out the digest if
+  any input is a set)
+- Audit row: kind.action if it mutates state
 
 ## Schema changes
-- CH table additions / ALTERs
-- system_settings keys
+- CH table additions / ALTERs (and the migration file)
+- system_settings keys + the LoadPersisted/SavePersisted owner
 - Or "none" if read-only.
+Reminder: per-user state goes in `saved_views` with
+`page='<kind>'`, not a new table.
 
 ## UX surface
 - Where it shows up (which page, which panel, what affordance)
 - One-line interaction sketch ("operator clicks foo → modal opens → enters bar → submit")
+- Loading / empty / error states — name the component used
+  (shared `<Spinner/>` and `<Empty/>`)
+- Permission visibility: viewer SEES the state (chip), not blank
 
 ## Risk
 Low / Medium / High + one sentence on the dominant risk.
+Reference performance budgets if relevant: p99 target, polling
+cadence, whether the read needs an MV.
 
 ## Estimate
 ~10 dk | ~30 dk | ~1 saat | ~2 saat | ~yarım gün
@@ -89,14 +109,17 @@ Empty if everything's obvious.
    - "Like the Sampling tab in Settings.tsx"
    - "Like the OperationPicker pattern"
    - "Like the saved_views table with page='X'"
+   - "Like the Tempo `LoadPersisted` template"
    When in doubt, dispatch an `Explore` subagent for the
    pattern search rather than burning main-session context.
 
 3. **Identify open questions.** Common ones:
    - Auth gate: admin vs editor vs viewer
-   - Storage: existing table vs new
+   - Storage: existing table vs new (default existing)
    - Visibility: per-user vs team-shared
    - Empty / error UX: spinner vs blank vs CTA
+   - Read source: MV vs raw spans (default MV when one exists)
+   - Cache TTL + key digest for any set-shaped input
    List them. The operator decides up front rather than at
    minute 25 when the question becomes a pivot.
 
@@ -128,3 +151,6 @@ Empty if everything's obvious.
 - **Don't drift into the next feature.** Stay focused on
   the user's single ask. If they want "X and also Y",
   spec X and mention "Y as follow-up".
+- **Don't propose a new schema for user-saved state.** The
+  default is `saved_views`. If the spec says "new table",
+  defend why before the operator wastes time on a migration.

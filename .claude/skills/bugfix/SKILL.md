@@ -46,15 +46,48 @@ This is the slow step. Don't skip it.
 - For backend bugs: read the relevant handler + the chstore
   method it calls. Cache key bugs hide in `serveCached(...)`
   signatures — see v0.5.187 for the precedent.
-- For "constantly loading" / "spinner forever": almost always a
-  useEffect dep that's not reference-stable (objects/arrays
-  recreated on every render). See v0.5.184.
-- For "cross-tenant data leak" / "I see the wrong service": cache
-  key audit. See v0.5.187.
 
 If after 5 minutes of investigation there's no clear lead, ASK
 the operator for repro steps rather than guessing — they have
 context you don't.
+
+### 2a. Coremetry's bug-pattern catalogue
+
+Common shapes of past bugs — try these first when the symptom
+matches:
+
+- **"Spinner never stops" / "constantly loading"** — almost
+  always a `useEffect` dep that's not reference-stable. Often
+  `timeRangeToNs(range)` called inline (v0.5.184) producing
+  fresh `from`/`to` every render. Fix: memoise on `range`
+  identity OR call inside `useEffect` body.
+- **"Wrong tenant's data" / "I see service X under service Y"**
+  — cache key audit. `len(set)` digests cross-poison
+  (v0.5.187). Fix: sorted + FNV digest.
+- **"Page is slow" / "this endpoint takes 10s"** — read endpoint
+  is aggregating raw `spans` when an MV exists. Check `FROM
+  spans GROUP BY ...` patterns; swap to `service_summary_5m`
+  etc. per CLAUDE.md invariant #3.
+- **"Setting reverts on restart" / "I configured X but lost it"**
+  — config service missing `LoadPersisted(ctx, store)` at boot.
+  See `internal/tempo/client.go` for the template.
+- **"AI usage isn't appearing on /ai"** — Copilot handler is
+  calling `s.copilot.Explain` direct instead of routing through
+  `s.copilotExplain(r, ...)` wrapper. The wrapper writes the
+  `ai_calls` row.
+- **"Logs page is empty even though ES has data"** — detector or
+  query is hitting `chstore` direct instead of `logstore.Store`.
+  When `COREMETRY_LOGS_BACKEND=elasticsearch` the CH-coupled
+  path returns 0.
+- **"Polling on a backgrounded tab burns my battery"** —
+  `setInterval` lacks the `document.hidden` guard (v0.5.248
+  pattern). Wrap the callback.
+- **"Label clipped" / "text cut off mid-word"** — `table-layout:
+  fixed` + `white-space: nowrap` + small fixed width. Fix:
+  `min-width` + `max-width` + `ellipsis` + `title` for tooltip.
+- **"ES query rejects with unknown field"** — historical
+  `query_string` with `case_insensitive: true` (v0.5.231). ES
+  8.x rejects. Standard analyzer already case-folds.
 
 ### 3. Name the root cause
 

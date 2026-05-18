@@ -220,6 +220,14 @@ function ServiceDetailInner() {
                 window so it doesn't add visual weight for
                 un-versioned services. */}
             <DeployHistoryPanel service={svc} />
+            {/* Span breakdown sits ABOVE the infra 15min tiles
+                (v0.5.237): the categorical "where does this
+                service spend its time?" answer should land first,
+                before the operator scrolls past CPU / Memory /
+                RPS to the per-operation table. */}
+            <SpanBreakdownChart service={svc}
+                                fromNs={rangeNs.from}
+                                toNs={rangeNs.to} />
             <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
             <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
             <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
@@ -229,14 +237,6 @@ function ServiceDetailInner() {
                 performance per cluster" without a per-cluster
                 pivot in Explore. */}
             <ServiceClusterBreakdown service={svc} range={range} />
-            {/* Span breakdown — Elastic-APM "where does this
-                service spend its time?" stacked-area view sits
-                above the DB / operations tables so the operator
-                gets the categorical answer first, then drills
-                down into the rows. */}
-            <SpanBreakdownChart service={svc}
-                                fromNs={rangeNs.from}
-                                toNs={rangeNs.to} />
             <DBQueriesPanel   service={svc}
                               from={rangeNs.from}
                               to={rangeNs.to} />

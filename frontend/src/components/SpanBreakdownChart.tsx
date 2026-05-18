@@ -101,10 +101,37 @@ export function SpanBreakdownChart({ service, fromNs, toNs }: {
       .catch(() => setData(null));
   }, [service, fromNs, toNs, collapsed]);
 
+  // Discover the active categories + their total ms across the
+  // window. The legend ranks categories by total so the busiest
+  // band is anchored to the bottom of the stack (visually
+  // stable — the slim "internal" doesn't shift up when a noisy
+  // category appears).
+  //
+  // v0.5.237 — moved ABOVE the early-return for the collapsed
+  // mode. Conditional hook ordering was a Rules-of-Hooks
+  // violation: toggling collapsed changed the hook count
+  // between renders and React threw at runtime.
+  const stack = useMemo(() => {
+    if (!data || data.length === 0) return null;
+    const totals: Record<string, number> = {};
+    for (const p of data) {
+      for (const [k, v] of Object.entries(p.kinds)) {
+        totals[k] = (totals[k] ?? 0) + v;
+      }
+    }
+    const cats = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+    const stackedMax = data.reduce((m, p) => {
+      const sum = cats.reduce((s, c) => s + (p.kinds[c] ?? 0), 0);
+      return Math.max(m, sum);
+    }, 0);
+    return { cats, totals, stackedMax };
+  }, [data]);
+
   // Collapsed mode = just the header with a click-to-expand
   // affordance. Doesn't render the SVG, doesn't paint the
   // legend — saves a measurable chunk of layout time on
-  // services with 20+ categories.
+  // services with 20+ categories. All hooks above so the
+  // ordering stays stable across collapsed ↔ expanded.
   if (collapsed) {
     return (
       <div style={{
@@ -128,27 +155,6 @@ export function SpanBreakdownChart({ service, fromNs, toNs }: {
       </div>
     );
   }
-
-  // Discover the active categories + their total ms across the
-  // window. The legend ranks categories by total so the busiest
-  // band is anchored to the bottom of the stack (visually
-  // stable — the slim "internal" doesn't shift up when a noisy
-  // category appears).
-  const stack = useMemo(() => {
-    if (!data || data.length === 0) return null;
-    const totals: Record<string, number> = {};
-    for (const p of data) {
-      for (const [k, v] of Object.entries(p.kinds)) {
-        totals[k] = (totals[k] ?? 0) + v;
-      }
-    }
-    const cats = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
-    const stackedMax = data.reduce((m, p) => {
-      const sum = cats.reduce((s, c) => s + (p.kinds[c] ?? 0), 0);
-      return Math.max(m, sum);
-    }, 0);
-    return { cats, totals, stackedMax };
-  }, [data]);
 
   if (data === undefined) return <div style={{ padding: 14 }}><Spinner /></div>;
   if (data === null) return (

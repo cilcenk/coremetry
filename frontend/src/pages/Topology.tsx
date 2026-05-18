@@ -523,7 +523,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             anchor={focus || undefined}
           />
           {selectedEdge && (
-            <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} />
+            <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} simplified={!!focus} />
           )}
           {incidentDrawerFor && (
             <IncidentDrawer service={incidentDrawerFor}
@@ -1279,6 +1279,11 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const proto = e.protocol.toUpperCase();
           const top = e.topLabels[0] || '';
           const more = e.distinctLabels > 1 ? ` (+${e.distinctLabels - 1})` : '';
+          // Focus mode (anchor set) drops endpoint/operation
+          // labels so the operator's chosen service shows as
+          // pure service-to-service. Operation-level detail
+          // still lives on the Operation deep-dive tab.
+          const focused = !!anchor;
           const match = isEdgeMatch(e);
           // Latency-tint: edges with p99 > 1s shift toward red so a
           // slow strand stands out even before reading the label.
@@ -1300,7 +1305,9 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                 <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4}
                   fontSize={10} fill={strokeOverride} textAnchor="middle"
                   style={{ pointerEvents: 'none' }}>
-                  {`${proto} ${truncate(top, 28)}${more}`}
+                  {focused
+                    ? `${proto} · ${fmtNum(Number(e.calls))}`
+                    : `${proto} ${truncate(top, 28)}${more}`}
                 </text>
               )}
               {showLabel && (
@@ -1496,10 +1503,14 @@ function OpTopologySVG({ layers, edges, anchor }: {
   );
 }
 
-function EdgeDetailPanel({ edge, onClose, range }: {
+function EdgeDetailPanel({ edge, onClose, range, simplified }: {
   edge: ServiceTopologyEdge;
   onClose: () => void;
   range?: TimeRange;
+  // simplified — focus mode collapses the endpoint list so the
+  // panel reads as a clean service-to-service summary. Operation
+  // detail still lives on the Operation deep-dive tab.
+  simplified?: boolean;
 }) {
   // Per-instance breakdown for infra edges (v0.5.142). Lazy-
   // fetched the first time the panel renders for a db/queue
@@ -1543,19 +1554,30 @@ function EdgeDetailPanel({ edge, onClose, range }: {
           {edge.parentService} → {edge.childNode}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-          {edge.protocol.toUpperCase()} · {fmtNum(edge.calls)} calls · {edge.distinctLabels} endpoint{edge.distinctLabels === 1 ? '' : 's'}
+          {edge.protocol.toUpperCase()} · {fmtNum(edge.calls)} calls
+          {!simplified && ` · ${edge.distinctLabels} endpoint${edge.distinctLabels === 1 ? '' : 's'}`}
         </div>
         <button type="button" onClick={onClose} className="sec"
           style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }}>
           Close
         </button>
       </div>
-      <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace' }}>
-        {edge.topLabels.map((label, i) => <li key={i}>{label}</li>)}
-      </ul>
-      {edge.distinctLabels > edge.topLabels.length && (
-        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)' }}>
-          Showing top {edge.topLabels.length} of {edge.distinctLabels} distinct endpoints.
+      {!simplified && (
+        <>
+          <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace' }}>
+            {edge.topLabels.map((label, i) => <li key={i}>{label}</li>)}
+          </ul>
+          {edge.distinctLabels > edge.topLabels.length && (
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text3)' }}>
+              Showing top {edge.topLabels.length} of {edge.distinctLabels} distinct endpoints.
+            </div>
+          )}
+        </>
+      )}
+      {simplified && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+          Focus mode — service-to-service summary. Switch to the
+          Operation deep-dive tab for per-endpoint breakdowns.
         </div>
       )}
       {isInfra && (

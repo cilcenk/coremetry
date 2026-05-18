@@ -45,6 +45,8 @@ export default function InboxPage() {
     return new Set<InboxKind>(['problem', 'exception', 'anomaly']);
   });
   const [serviceFilter, setServiceFilter] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState('');
+  const [sreFilter, setSreFilter] = useState('');
 
   const togglePrio = (p: string) => {
     setPrioSet(prev => {
@@ -75,10 +77,16 @@ export default function InboxPage() {
 
   useEffect(() => {
     setData(undefined);
-    api.inbox({ status: statusFilter, service: serviceFilter || undefined, limit: 300 })
+    api.inbox({
+      status: statusFilter,
+      service: serviceFilter || undefined,
+      ownerTeam: ownerFilter || undefined,
+      sreTeam: sreFilter || undefined,
+      limit: 300,
+    })
       .then(r => setData(r ?? []))
       .catch(() => setData(null));
-  }, [statusFilter, serviceFilter]);
+  }, [statusFilter, serviceFilter, ownerFilter, sreFilter]);
 
   const filtered = useMemo(() => {
     if (!data) return data;
@@ -95,6 +103,24 @@ export default function InboxPage() {
       out[it.kind] = (out[it.kind] ?? 0) + 1;
     }
     return out;
+  }, [data]);
+
+  // Distinct team values from the current result set drive the
+  // dropdown options. Server-side filter narrows the list, so
+  // selecting a team and then opening the dropdown again still
+  // shows the remaining teams — the operator can stack
+  // (owner=X then sre=Y) without losing visibility.
+  const { ownerOptions, sreOptions } = useMemo(() => {
+    const owners = new Set<string>();
+    const sres   = new Set<string>();
+    for (const it of data ?? []) {
+      if (it.ownerTeam) owners.add(it.ownerTeam);
+      if (it.sreTeam)   sres.add(it.sreTeam);
+    }
+    return {
+      ownerOptions: [...owners].sort(),
+      sreOptions:   [...sres].sort(),
+    };
   }, [data]);
 
   // Deep-link into the source surface with the specific row
@@ -182,6 +208,27 @@ export default function InboxPage() {
 
           <span style={{ flex: 1 }} />
 
+          {/* Team filters (v0.5.234). Distinct values come from
+              the current result set so an operator can stack
+              owner + SRE narrows without losing the option list.
+              Empty option = "all". Server-side filter (no client
+              re-fetch shaping) so the result count drops
+              accurately as the operator narrows. */}
+          <select value={ownerFilter}
+            onChange={e => setOwnerFilter(e.target.value)}
+            title="Filter by service.ownerTeam"
+            style={{ fontSize: 12, padding: '4px 8px', minWidth: 130 }}>
+            <option value="">Owner: all</option>
+            {ownerOptions.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <select value={sreFilter}
+            onChange={e => setSreFilter(e.target.value)}
+            title="Filter by service.sreTeam"
+            style={{ fontSize: 12, padding: '4px 8px', minWidth: 130 }}>
+            <option value="">SRE: all</option>
+            {sreOptions.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+
           <input value={serviceFilter}
             onChange={e => setServiceFilter(e.target.value)}
             placeholder="Filter by service…"
@@ -240,26 +287,46 @@ export default function InboxPage() {
                       {(it.ownerTeam || it.sreTeam) && (
                         <div style={{ marginTop: 2, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {it.ownerTeam && (
-                            <span title="Owner team (service catalog)"
+                            <button type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setOwnerFilter(ownerFilter === it.ownerTeam ? '' : (it.ownerTeam ?? ''));
+                              }}
+                              title={ownerFilter === it.ownerTeam
+                                ? `Clear owner filter`
+                                : `Filter inbox to owner ${it.ownerTeam}`}
                               style={{
+                                all: 'unset', cursor: 'pointer',
                                 fontSize: 10, padding: '1px 6px', borderRadius: 10,
-                                background: 'rgba(56,139,253,0.08)',
-                                border: '1px solid rgba(56,139,253,0.25)',
+                                background: ownerFilter === it.ownerTeam
+                                  ? 'rgba(56,139,253,0.22)' : 'rgba(56,139,253,0.08)',
+                                border: '1px solid rgba(56,139,253,0.30)',
                                 color: 'var(--accent2)', whiteSpace: 'nowrap',
+                                fontWeight: ownerFilter === it.ownerTeam ? 600 : 400,
                               }}>
                               👥 {it.ownerTeam}
-                            </span>
+                            </button>
                           )}
                           {it.sreTeam && (
-                            <span title="SRE / on-call team (service catalog)"
+                            <button type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setSreFilter(sreFilter === it.sreTeam ? '' : (it.sreTeam ?? ''));
+                              }}
+                              title={sreFilter === it.sreTeam
+                                ? `Clear SRE filter`
+                                : `Filter inbox to SRE ${it.sreTeam}`}
                               style={{
+                                all: 'unset', cursor: 'pointer',
                                 fontSize: 10, padding: '1px 6px', borderRadius: 10,
-                                background: 'rgba(168,85,247,0.08)',
-                                border: '1px solid rgba(168,85,247,0.30)',
+                                background: sreFilter === it.sreTeam
+                                  ? 'rgba(168,85,247,0.22)' : 'rgba(168,85,247,0.08)',
+                                border: '1px solid rgba(168,85,247,0.35)',
                                 color: 'var(--accent2)', whiteSpace: 'nowrap',
+                                fontWeight: sreFilter === it.sreTeam ? 600 : 400,
                               }}>
                               🛡 {it.sreTeam}
-                            </span>
+                            </button>
                           )}
                         </div>
                       )}

@@ -85,6 +85,8 @@ type InboxAnomalyRef struct {
 func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	service := strings.TrimSpace(q.Get("service"))
+	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
+	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
 	statusFilter := strings.TrimSpace(q.Get("status")) // open (default) | all
 	if statusFilter == "" {
 		statusFilter = "open"
@@ -94,7 +96,8 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 
-	cacheKey := fmt.Sprintf("inbox:status=%s:svc=%s:limit=%d", statusFilter, service, limit)
+	cacheKey := fmt.Sprintf("inbox:status=%s:svc=%s:owner=%s:sre=%s:limit=%d",
+		statusFilter, service, ownerTeam, sreTeam, limit)
 	s.serveCached(w, r, cacheKey, 10*time.Second, func() (any, error) {
 		ctx := r.Context()
 		items := make([]InboxItem, 0, 256)
@@ -163,6 +166,26 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				items[i].OwnerTeam = md.OwnerTeam
 				items[i].SRETeam = md.SRETeam
 			}
+		}
+
+		// Team filter — applies AFTER enrichment so the operator
+		// can narrow to "the rows whose service is owned by team
+		// X". Matches an empty value with empty (so the chip "—"
+		// for unattributed rows works), and ignores case so URL
+		// pastes between dashboards / chat don't surface a
+		// false-negative on a mismatched capitalisation.
+		if ownerTeam != "" || sreTeam != "" {
+			filtered := items[:0]
+			for _, it := range items {
+				if ownerTeam != "" && !strings.EqualFold(it.OwnerTeam, ownerTeam) {
+					continue
+				}
+				if sreTeam != "" && !strings.EqualFold(it.SRETeam, sreTeam) {
+					continue
+				}
+				filtered = append(filtered, it)
+			}
+			items = filtered
 		}
 
 		// Stable rank: priority desc, then most-recent-activity.

@@ -225,6 +225,7 @@ export function SpanBreakdownChart({ service, fromNs, toNs }: {
         </span>
       </button>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
+           preserveAspectRatio="none"
            onMouseMove={onMove} onMouseLeave={onLeave}
            style={{ display: 'block' }}>
         {/* Y-axis ticks + labels */}

@@ -714,7 +714,11 @@ export const api = {
   // Unified triage inbox (v0.5.211). Merges Problems +
   // Exception groups + Anomaly events server-side with a
   // common priority blend; returns at most `limit` items.
-  inbox: (params: { status?: 'open' | 'all'; service?: string; limit?: number } = {}) =>
+  inbox: (params: {
+    status?: 'open' | 'all'; service?: string;
+    ownerTeam?: string; sreTeam?: string;
+    limit?: number;
+  } = {}) =>
     get<import('./types').InboxItem[] | null>(`/api/inbox?${qs(params)}`),
   setProblemAssignee: (id: string, assignee: string) =>
     request<{ id: string; assignee: string }>(`/api/problems/${encodeURIComponent(id)}/assignee`, {

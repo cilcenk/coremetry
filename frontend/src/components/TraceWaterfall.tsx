@@ -57,16 +57,20 @@ interface Row {
 // gRPC server has both `rpc.system` and (rarely) `http.method`; we
 // pick RPC first because that's what's actually being executed.
 type SpanCategory = { tag: string; color: string };
-// Muted, low-saturation palette to match the service-badge band —
-// chips read as categorical metadata without competing visually with
-// the operation name.
+// v0.5.249 — modern category chip palette aligned to the
+// Tailwind v3 -500 family (matches the new hashColor palette
+// + the rest of the UI's modern hue stack). The previous muted
+// Tempo-classic chips lacked saturation; on dark UI they
+// blended into the bar band. The -500 shades have consistent
+// lightness so all four categories read at the same visual
+// weight regardless of which one is most common in a trace.
 function categoryOf(s: SpanRow): SpanCategory | null {
   const a = s.attributes ?? {};
-  if (a['db.system'])        return { tag: 'DB',   color: '#c89651' }; // amber-tan
-  if (a['messaging.system']) return { tag: 'MQ',   color: '#4fb6c5' }; // turquoise
-  if (a['rpc.system'])       return { tag: 'RPC',  color: '#b06b3a' }; // sienna copper
+  if (a['db.system'])        return { tag: 'DB',   color: '#F59E0B' }; // amber-500
+  if (a['messaging.system']) return { tag: 'MQ',   color: '#06B6D4' }; // cyan-500
+  if (a['rpc.system'])       return { tag: 'RPC',  color: '#8B5CF6' }; // violet-500
   if (a['http.method'] || a['http.request.method']) {
-    return { tag: 'HTTP', color: '#5b8def' };                          // sky blue
+    return { tag: 'HTTP', color: '#3B82F6' };                          // blue-500
   }
   return null;
 }
@@ -300,7 +304,7 @@ export function TraceWaterfall({
   // own colour and made traces look noisier than the topology
   // actually was.)
   const colorFor = (s: SpanRow) =>
-    s.statusCode === 'error' ? '#ff5252' : hashColor(s.serviceName);
+    s.statusCode === 'error' ? '#EF4444' : hashColor(s.serviceName); // red-500
 
   return (
     <div id="wf-outer" ref={containerRef}>

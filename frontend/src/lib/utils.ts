@@ -131,26 +131,33 @@ export function tsRel(ns: number): string {
 // rather than vibrant — same hue coverage (cool / green / warm /
 // purple) Tempo uses, just polished. Red and pink stay out (red is
 // the error overlay; pink is a standing user no-go).
+// v0.5.249 — modernised palette aligned to the Tailwind v3
+// -500 shade family (the de-facto "Datadog 2023+ / Grafana 11
+// / Honeycomb" hue stack). Higher saturation than the prior
+// Tempo-classic muted set; calibrated lightness so each colour
+// reads cleanly on dark UI backgrounds without WCAG contrast
+// failures. Red (#EF4444) is reserved for the error overlay;
+// pink is operator-no-go.
 const COLORS = [
-  // Cool — blues, cyan, teal
-  '#4A90D9',  // clean blue
-  '#5FA8DC',  // sky blue
-  '#4FB6C5',  // turquoise
-  '#5FB39C',  // teal-green
+  // Cool — indigo / blue / sky / cyan / teal
+  '#6366F1',  // indigo-500
+  '#3B82F6',  // blue-500
+  '#0EA5E9',  // sky-500
+  '#06B6D4',  // cyan-500
+  '#14B8A6',  // teal-500
 
-  // Greens
-  '#6FA86F',  // sage green
-  '#588E48',  // forest green
+  // Greens — emerald / green / lime
+  '#10B981',  // emerald-500
+  '#22C55E',  // green-500
+  '#84CC16',  // lime-500
 
-  // Warm — yellow, gold, orange, tan
-  '#D4A537',  // amber gold
-  '#E0913A',  // clean orange
-  '#C46A2C',  // burnt orange
-  '#C28456',  // warm tan
+  // Warm — amber / orange
+  '#F59E0B',  // amber-500
+  '#F97316',  // orange-500
 
-  // Purple
-  '#8A6FB5',  // muted purple
-  '#A899D9',  // lavender
+  // Purple — violet / purple
+  '#8B5CF6',  // violet-500
+  '#A855F7',  // purple-500
 ];
 export function hashColor(s: string): string {
   let h = 5381;

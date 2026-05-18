@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AggregatedStructure } from './AggregatedStructure';
 import { AggregateFlame } from './AggregateFlame';
+import { AggregateTopology } from './AggregateTopology';
 import { Spinner } from './Spinner';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
@@ -20,7 +21,7 @@ import type { AggSpanNode } from '@/lib/types';
 //
 // The panel starts collapsed so /service makes zero structure-
 // related round-trips until the operator opens it.
-type View = 'tree' | 'flame';
+type View = 'tree' | 'flame' | 'topology';
 
 // Scope = "what spans does the aggregation walk into".
 //   • cross    — every descendant of the focused-service entry
@@ -111,6 +112,8 @@ export function ServiceStructure({ service, since = '10m' }: {
                          hint="Chronological waterfall — what the service does end-to-end" />
                 <ViewTab active={view === 'flame'} onClick={() => setView('flame')} label="Flame"
                          hint="Where time is actually spent — width = total time across sampled traces" />
+                <ViewTab active={view === 'topology'} onClick={() => setView('topology')} label="Topology"
+                         hint="Service-to-service projection of the same sampled traces — who this service actually calls" />
                 {/* Scope toggle. Same idea as Datadog APM's
                     "service profile" vs "trace flame" split:
                     do you want to see only this service's
@@ -123,8 +126,9 @@ export function ServiceStructure({ service, since = '10m' }: {
                 <ViewTab active={scope === 'internal'} onClick={() => setScope('internal')} label="Internal only"
                          hint="Clip the walk at the service boundary — what this service does in its own process" />
               </div>
-              {view === 'tree'  && <AggregatedStructure roots={data.roots} />}
-              {view === 'flame' && <AggregateFlame      roots={data.roots} />}
+              {view === 'tree'     && <AggregatedStructure roots={data.roots} />}
+              {view === 'flame'    && <AggregateFlame      roots={data.roots} />}
+              {view === 'topology' && <AggregateTopology   roots={data.roots} />}
             </>
           )}
         </div>

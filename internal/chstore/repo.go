@@ -2030,7 +2030,7 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 	var total uint64
 	if !defaultUnlimited {
 		if err := s.conn.QueryRow(ctx,
-			"SELECT count(DISTINCT metric) FROM metric_points"+wc.sql()+
+			"SELECT count(DISTINCT metric) FROM metric_points "+wc.sql()+
 				" SETTINGS max_execution_time = 30",
 			wc.args...).Scan(&total); err != nil {
 			return nil, 0, err

@@ -67,7 +67,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 
 	var total uint64
 	if err := s.conn.QueryRow(ctx,
-		"SELECT count(DISTINCT name) FROM operation_summary_5m"+wc.sql()+
+		"SELECT count(DISTINCT name) FROM operation_summary_5m "+wc.sql()+
 			" SETTINGS max_execution_time = 30",
 		wc.args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -75,7 +75,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 
 	args := append(append([]any{}, wc.args...), limit, offset)
 	rows, err := s.conn.Query(ctx,
-		"SELECT DISTINCT name FROM operation_summary_5m"+wc.sql()+
+		"SELECT DISTINCT name FROM operation_summary_5m "+wc.sql()+
 			" ORDER BY name LIMIT ? OFFSET ?"+
 			" SETTINGS max_execution_time = 30",
 		args...)

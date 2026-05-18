@@ -692,39 +692,58 @@ func (s *ESStore) Facets(ctx context.Context, f Filter, fields []FacetField, top
 }
 
 // facetESFields returns the candidate ES field paths for a given
-// facet dimension. Multiple fields for pod + cluster mirror the
-// shipper-conventions fallback chain the frontend rendering uses.
-// Each name gets a `.keyword` suffix because the terms aggregation
-// requires an unanalyzed subfield on text-mapped fields.
+// facet dimension. Each candidate gets a TWO-form pass:
+//   • the base field name (case where the field is already
+//     mapped as keyword — observed on the OTel ES exporter's
+//     default mapping for k8s.cluster.name + kubernetes.pod.name)
+//   • the `.keyword` subfield (case where the base is text)
+// Empty buckets from the wrong form silently merge with the
+// matching one downstream, so we cover both index shapes
+// without a mapping lookup. v0.5.232 added both forms after the
+// dotted "kubernetes.pod.name" mapping showed up empty against
+// our previous keyword-suffixed chain.
 func facetESFields(s *ESStore, f FacetField) []string {
 	switch f {
 	case FacetService:
-		return []string{s.fields.Service + ".keyword"}
+		return withKeywordVariants(s.fields.Service)
 	case FacetSeverity:
-		return []string{s.fields.SeverityTx + ".keyword"}
+		return withKeywordVariants(s.fields.SeverityTx)
 	case FacetPod:
-		return []string{
-			"kubernetes.pod_name.keyword",
-			"k8s.pod.name.keyword",
-			"kubernetes.pod.name.keyword",
-			"pod_name.keyword",
-		}
+		return withKeywordVariants(
+			"kubernetes.pod.name",        // OTel ES exporter default
+			"kubernetes.pod_name",        // some Filebeat/Vector pipelines
+			"k8s.pod.name",               // OTel resource attr canonical
+			"pod_name",
+		)
 	case FacetContainer:
-		return []string{
-			"kubernetes.container_name.keyword",
-			"k8s.container.name.keyword",
-			"container.name.keyword",
-			"container_name.keyword",
-		}
+		return withKeywordVariants(
+			"kubernetes.container.name",
+			"kubernetes.container_name",
+			"k8s.container.name",
+			"container.name",
+			"container_name",
+		)
 	case FacetCluster:
-		return []string{
-			"openshift.labels.cluster.keyword",
-			"openshift.cluster.name.keyword",
-			"k8s.cluster.name.keyword",
-			"kubernetes.cluster_name.keyword",
-		}
+		return withKeywordVariants(
+			"k8s.cluster.name",
+			"kubernetes.cluster.name",
+			"openshift.cluster.name",
+			"openshift.labels.cluster",
+			"kubernetes.cluster_name",
+		)
 	}
 	return nil
+}
+
+// withKeywordVariants emits both the base field name AND its
+// `.keyword` subfield form for each input, so terms aggregations
+// hit whichever shape the index actually has.
+func withKeywordVariants(names ...string) []string {
+	out := make([]string, 0, len(names)*2)
+	for _, n := range names {
+		out = append(out, n, n+".keyword")
+	}
+	return out
 }
 
 // buildQuery constructs the ES bool/must query corresponding to a Filter.

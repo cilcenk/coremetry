@@ -1166,12 +1166,27 @@ function layerOpNodes(
     });
     frontier = next;
   }
-  data.nodes.forEach(n => { if (!hop.has(n.id)) hop.set(n.id, 0); });
-  const maxHop = Math.max(...Array.from(hop.values()));
-  const layers: TopologyNode[][] = Array.from({ length: maxHop + 1 }, () => []);
+  // v0.5.247 — orphan nodes (in data.nodes but never reached
+  // by BFS) used to fall through to column 0, mixing them with
+  // the root seeds. Service topology's layerServices puts
+  // them at maxH+1 (rightmost) so they stay visible without
+  // distorting the root column. Op view now matches.
+  let maxH = 0;
+  hop.forEach(v => { if (v > maxH) maxH = v; });
+  data.nodes.forEach(n => { if (!hop.has(n.id)) hop.set(n.id, maxH + 1); });
+  const finalMaxHop = Math.max(...Array.from(hop.values()));
+  const layers: TopologyNode[][] = Array.from({ length: finalMaxHop + 1 }, () => []);
   data.nodes.forEach(n => layers[hop.get(n.id) ?? 0].push(n));
-  layers.forEach(layer => layer.sort((a, b) =>
-    a.service.localeCompare(b.service) || a.op.localeCompare(b.op)));
+  // Sort within each column: anchor goes first (so the
+  // operator's focal point pins to the top of its column),
+  // then by service + op alphabetically for stability across
+  // refreshes.
+  const anchorID = rootOp ? `${root}|${rootOp}` : '';
+  layers.forEach(layer => layer.sort((a, b) => {
+    if (a.id === anchorID) return -1;
+    if (b.id === anchorID) return 1;
+    return a.service.localeCompare(b.service) || a.op.localeCompare(b.op);
+  }));
   return layers;
 }
 

@@ -10,7 +10,7 @@ import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
-import { LogsFacetSidebar } from '@/components/LogsFacetSidebar';
+import { LogsHistogram } from '@/components/LogsHistogram';
 import { Pager } from '@/components/Pager';
 import { useLogs } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
@@ -204,34 +204,6 @@ function LogsInner() {
     setPage(0);
   };
 
-  // Facet sidebar click handler (v0.5.226). Service buckets set
-  // the service picker directly; the rest fold into the search
-  // box as `key:value` KQL clauses. Clicking an already-active
-  // value clears it instead of re-appending. Auto-applies — the
-  // sidebar is a click-to-filter affordance, not a draft input.
-  const applyFacet = (field: import('@/components/LogsFacetSidebar').FacetField, value: string) => {
-    if (field === 'service') {
-      const next = filter.service === value
-        ? { ...filter, service: '' }
-        : { ...filter, service: value };
-      setDraft(d => ({ ...d, service: next.service }));
-      setFilter(next);
-      setPage(0);
-      return;
-    }
-    const map: Record<string, string> = {
-      severity:   'level',
-      namespace:  'kubernetes.namespace.name',
-      deployment: 'kubernetes.deployment.name',
-      pod:        'kubernetes.pod.name',
-      container:  'kubernetes.container.name',
-      cluster:    'k8s.cluster.name',
-    };
-    const k = map[field];
-    if (!k) return;
-    toggleSearchClause(k, value, false);
-  };
-
   // Expanded-row KvRow click-to-filter handlers (v0.5.229).
   // Operator clicks ⊕ on any attribute / resource attribute →
   // adds key:value to search. ⊖ → adds NOT key:value.
@@ -263,9 +235,7 @@ function LogsInner() {
   return (
     <>
       <Topbar title="Logs" range={range} onRangeChange={setRange} />
-      <div id="content" style={{ display: 'flex', alignItems: 'flex-start' }}>
-        <LogsFacetSidebar range={range} filter={filter} onApplyValue={applyFacet} />
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <div id="content">
         <SavedViewsBar page="logs" />
         {filter.traceId && (
           <div className="trace-lock">
@@ -367,6 +337,13 @@ function LogsInner() {
           </div>
         )}
 
+        {/* Severity-stacked histogram (v0.5.235) — spike of errors
+            stands out against the background INFO traffic without
+            reading the count column. Hidden when neither a time
+            range nor a trace pin is set; renders nothing on
+            empty data. */}
+        <LogsHistogram range={{ from, to }} filter={filter} />
+
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
         {data && logs.length === 0 && (
           filter.traceId ? (
@@ -395,7 +372,6 @@ function LogsInner() {
                    extras={<>{total.toLocaleString()} total</>} />
           </>
         )}
-        </div>
       </div>
     </>
   );

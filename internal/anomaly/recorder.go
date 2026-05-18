@@ -7,6 +7,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/logstore"
 )
 
 // Recorder is the persistence side of the anomaly system. The
@@ -24,6 +25,8 @@ import (
 // don't need a separate sweep job.
 type Recorder struct {
 	store    *chstore.Store
+	logs     logstore.Store // v0.5.241 — drives DetectLogPatterns so the log-anomaly recorder
+	                       // works against whichever backend is wired (CH or ES).
 	interval time.Duration
 	window   time.Duration
 	lock     cache.Lock // for multi-replica deployments
@@ -35,14 +38,14 @@ const recorderLockKey = "coremetry:lock:anomaly-recorder"
 // each tick scans `window` of recent data. Default 60s tick is
 // fine for the human-grade "anomalies in the last hour" UX —
 // faster ticks just multiply CH load with no operator benefit.
-func NewRecorder(store *chstore.Store, interval, window time.Duration, lock cache.Lock) *Recorder {
+func NewRecorder(store *chstore.Store, logs logstore.Store, interval, window time.Duration, lock cache.Lock) *Recorder {
 	if interval == 0 {
 		interval = 60 * time.Second
 	}
 	if window == 0 {
 		window = 5 * time.Minute
 	}
-	return &Recorder{store: store, interval: interval, window: window, lock: lock}
+	return &Recorder{store: store, logs: logs, interval: interval, window: window, lock: lock}
 }
 
 // Start kicks the recorder into a goroutine. Caller cancels via
@@ -84,7 +87,7 @@ func (r *Recorder) tick(ctx context.Context) {
 	now := time.Now()
 
 	// ── Log-pattern anomalies ─────────────────────────────────
-	logHits, err := DetectLogPatterns(ctx, r.store, r.window)
+	logHits, err := DetectLogPatterns(ctx, r.logs, r.window)
 	if err != nil {
 		log.Printf("[anomaly-recorder] log patterns: %v", err)
 	}

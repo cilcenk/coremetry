@@ -276,12 +276,9 @@ func main() {
 	// on demo deployments without recompiling.
 	go anomaly.New(store, cfg.Background.AnomalyInterval, lockImpl, notifier).Start(ctx)
 
-	// ── Anomaly recorder ─────────────────────────────────────────────────────
-	// Persists log-pattern + trace-op detections into anomaly_events
-	// so the operator can later answer "did this fire in the last
-	// hour, even if it has cleared". Without this the /anomalies
-	// page only ever shows the live snapshot.
-	anomaly.NewRecorder(store, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(ctx)
+	// Anomaly recorder lives further down — needs logsStore so
+	// the log-pattern detector path can target whichever backend
+	// is wired (CH or ES). See below the buildLogStore() call.
 
 	// ── Synthetic monitor runner (HTTP probes + heartbeat absence) ───────────
 	// Lock-gated so HA replicas don't double-probe; emits state-change
@@ -393,6 +390,14 @@ func main() {
 		log.Fatalf("logs backend: %v", err)
 	}
 	log.Printf("[logs] read backend: %s", logsStore.Backend())
+
+	// ── Anomaly recorder (v0.5.241 — needs logsStore) ────────────────────────
+	// Persists log-pattern + trace-op detections into anomaly_events.
+	// log-pattern detector runs through the logstore abstraction so
+	// it works against whichever backend is wired (CH or ES); ES
+	// path uses _msearch so all curated patterns ship in one HTTP
+	// round-trip even at billion-log scale.
+	anomaly.NewRecorder(store, logsStore, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(ctx)
 
 	// ── AI Copilot (optional) ────────────────────────────────────────────────
 	// Always created — env vars are the boot-time default, DB overrides

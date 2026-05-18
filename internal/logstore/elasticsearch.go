@@ -590,6 +590,215 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	return out, nil
 }
 
+// CountPatterns batches all N pattern probes into a SINGLE ES
+// `_msearch` HTTP round-trip. At billion-log scale on an
+// external cluster, the per-call overhead (TLS, request parse,
+// shard coordination) dominates the per-pattern cost; sending
+// all 11 patterns as one request lets ES schedule the shard
+// fan-out internally and drops wall time from ~N×network_rtt
+// to ~1×network_rtt + max(pattern_cost).
+//
+// Per pattern: tokens become a `query_string` OR clause against
+// the body field (inverted-index lookup), two filter aggs split
+// the cur vs base window counts, top_hits returns a sample +
+// the latest timestamp, terms returns the dominant service.
+// Regex itself is ignored — detector authors must ship tokens
+// that have zero false-negatives vs the regex.
+//
+// Empty Tokens = drop the probe (returns zero stats). Skips
+// the regex-fallback path because regex queries on a billion-
+// doc index are pathological.
+func (s *ESStore) CountPatterns(
+	ctx context.Context,
+	pats []PatternSpec,
+	curStart, baseStart, now time.Time,
+) ([]PatternStats, error) {
+	out := make([]PatternStats, len(pats))
+	if len(pats) == 0 {
+		return out, nil
+	}
+
+	curFrom := curStart.UTC().Format(time.RFC3339Nano)
+	baseFrom := baseStart.UTC().Format(time.RFC3339Nano)
+	curEnd := now.UTC().Format(time.RFC3339Nano)
+
+	// Build the _msearch body: alternating header + body lines,
+	// one pair per pattern. Empty-token patterns get a no-op
+	// header+body so the response array length matches the
+	// input index — easier than maintaining a sparse mapping.
+	var ndjson strings.Builder
+	tru := true
+	for _, pat := range pats {
+		header := map[string]any{
+			"index":               s.cfg.Index,
+			"allow_no_indices":    tru,
+			"ignore_unavailable":  tru,
+		}
+		hb, _ := json.Marshal(header)
+		ndjson.Write(hb)
+		ndjson.WriteByte('\n')
+
+		if len(pat.Tokens) == 0 {
+			// Empty body: match_none returns 0 docs cheaply, keeps
+			// the response slot aligned to the input index.
+			ndjson.WriteString(`{"size":0,"query":{"match_none":{}}}` + "\n")
+			continue
+		}
+
+		tokenQuery := buildPatternTokenQuery(pat.Tokens, s.fields.Body)
+		body := map[string]any{
+			"size": 0,
+			"query": map[string]any{
+				"query_string": map[string]any{
+					"query":                  tokenQuery,
+					"default_field":          s.fields.Body,
+					"default_operator":       "OR",
+					"allow_leading_wildcard": false,
+					"lenient":                true,
+				},
+			},
+			"aggs": map[string]any{
+				"cur_window": map[string]any{
+					"filter": map[string]any{
+						"range": map[string]any{
+							s.fields.Timestamp: map[string]any{
+								"gte": curFrom, "lt": curEnd,
+							},
+						},
+					},
+					"aggs": map[string]any{
+						"by_service": map[string]any{
+							"terms": map[string]any{
+								"field": s.fields.Service + ".keyword",
+								"size":  1,
+							},
+						},
+						"sample": map[string]any{
+							"top_hits": map[string]any{
+								"size":    1,
+								"_source": []string{s.fields.Body, s.fields.Timestamp},
+								"sort": []any{
+									map[string]any{
+										s.fields.Timestamp: map[string]any{
+											"order":         "desc",
+											"unmapped_type": "date",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				"base_window": map[string]any{
+					"filter": map[string]any{
+						"range": map[string]any{
+							s.fields.Timestamp: map[string]any{
+								"gte": baseFrom, "lt": curFrom,
+							},
+						},
+					},
+				},
+			},
+		}
+		bb, _ := json.Marshal(body)
+		ndjson.Write(bb)
+		ndjson.WriteByte('\n')
+	}
+
+	// `_msearch` ships all sub-queries in one HTTP call. The ES
+	// coordinating node parallelises shard fan-out internally,
+	// so we pay one network round-trip + one fan-out, not N.
+	req := esapi.MsearchRequest{
+		Body: strings.NewReader(ndjson.String()),
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return out, fmt.Errorf("ES msearch count-patterns: %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return out, parseESError("msearch count-patterns", res, s.cfg.Index)
+	}
+
+	var raw struct {
+		Responses []struct {
+			Aggregations struct {
+				Cur struct {
+					DocCount  float64 `json:"doc_count"`
+					ByService struct {
+						Buckets []struct {
+							Key string `json:"key"`
+						} `json:"buckets"`
+					} `json:"by_service"`
+					Sample struct {
+						Hits struct {
+							Hits []struct {
+								Source map[string]any `json:"_source"`
+							} `json:"hits"`
+						} `json:"hits"`
+					} `json:"sample"`
+				} `json:"cur_window"`
+				Base struct {
+					DocCount float64 `json:"doc_count"`
+				} `json:"base_window"`
+			} `json:"aggregations"`
+			// Per-sub-query errors land per-response, not at the
+			// top level — ES returns 200 with mixed success/error
+			// items. We log + zero-out the failing slot.
+			Error any `json:"error,omitempty"`
+		} `json:"responses"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+		return out, fmt.Errorf("decode ES msearch: %w", err)
+	}
+
+	for i, r := range raw.Responses {
+		if i >= len(out) {
+			break
+		}
+		if r.Error != nil {
+			// Sub-query failed (e.g. service.name.keyword not
+			// mapped). Leave zero stats; detector skips it.
+			continue
+		}
+		stats := PatternStats{
+			Cur:  uint64(r.Aggregations.Cur.DocCount),
+			Base: uint64(r.Aggregations.Base.DocCount),
+		}
+		if len(r.Aggregations.Cur.ByService.Buckets) > 0 {
+			stats.Service = r.Aggregations.Cur.ByService.Buckets[0].Key
+		}
+		if len(r.Aggregations.Cur.Sample.Hits.Hits) > 0 {
+			src := r.Aggregations.Cur.Sample.Hits.Hits[0].Source
+			if v, ok := src[s.fields.Body].(string); ok {
+				stats.Sample = v
+			}
+			if v, ok := src[s.fields.Timestamp].(string); ok {
+				if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+					stats.LastSeenNs = t.UnixNano()
+				}
+			}
+		}
+		out[i] = stats
+	}
+	return out, nil
+}
+
+// buildPatternTokenQuery composes the detector tokens into a
+// Lucene query_string clause: `body:"tok1" OR body:"tok2" OR …`
+// Quoted phrases so dashes / dots inside tokens (e.g. "401",
+// "ora-", "tls: handshake") parse as literal substrings rather
+// than as boolean expressions.
+func buildPatternTokenQuery(tokens []string, bodyField string) string {
+	parts := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		t = strings.ReplaceAll(t, `\`, `\\`)
+		t = strings.ReplaceAll(t, `"`, `\"`)
+		parts = append(parts, fmt.Sprintf(`%s:"%s"`, bodyField, t))
+	}
+	return strings.Join(parts, " OR ")
+}
+
 // Facets runs N terms aggregations against the same filter Search
 // uses, returning top-N (value, count) buckets per dimension. One
 // round-trip — all aggs go in a single search request with size:0.

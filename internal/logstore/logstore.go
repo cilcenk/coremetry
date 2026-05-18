@@ -78,9 +78,50 @@ type FacetBucket struct {
 // FacetResult maps each requested facet to its top-N buckets.
 type FacetResult map[FacetField][]FacetBucket
 
+// PatternSpec is the cross-backend description of a "find log
+// lines that look like this" probe. Both backends consume it:
+//
+//   - ClickHouse evaluates Regex against the body field with the
+//     Tokens list driving the tokenbf_v1 prefilter so granules
+//     with none of the tokens are pruned before the regex pass.
+//   - Elasticsearch ignores Regex (regex queries are slow on
+//     large indices) and uses Tokens directly as a query_string
+//     OR clause against the body field — inverted-index lookup
+//     stays sub-second at billion-log scale.
+//
+// Tokens are lowercase substrings the body must contain when
+// the regex matches. The detector author picks them so the OR
+// clause has zero false-negatives vs the regex.
+type PatternSpec struct {
+	Regex  string
+	Tokens []string
+}
+
+// PatternStats is the per-pattern signal a detector consumes:
+// counts in the "current" + "baseline" windows, a representative
+// service + sample, and the most recent occurrence time.
+type PatternStats struct {
+	Cur        uint64
+	Base       uint64
+	Service    string
+	Sample     string
+	LastSeenNs int64
+}
+
 // Store is the read interface every backend implements.
 type Store interface {
 	Search(ctx context.Context, f Filter) (*Page, error)
+
+	// CountPatterns returns per-pattern current-window +
+	// baseline-window counts, services, and samples. Plural form
+	// so backends can batch — at billion-log scale on ES, an
+	// _msearch with all N pattern bodies in a single HTTP
+	// round-trip beats N parallel _search calls. CH backend
+	// iterates sequentially (queries are cheap behind the
+	// tokenbf_v1 skip index). Result slice index matches the
+	// input slice index; empty PatternStats indicates "no match
+	// in current window" (detector ignores these).
+	CountPatterns(ctx context.Context, pats []PatternSpec, curStart, baseStart, now time.Time) ([]PatternStats, error)
 
 	// Histogram returns one bucketed timeseries per group_value for
 	// the requested filter. Powers the Logs source in /explore — the

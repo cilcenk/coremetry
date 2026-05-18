@@ -7103,7 +7103,11 @@ func (s *Server) getLogPatternAnomalies(w http.ResponseWriter, r *http.Request) 
 	window := parseDuration(r.URL.Query().Get("window"), 5*time.Minute)
 	key := fmt.Sprintf("anomaly:log-patterns:window=%s", window)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		hits, err := anomaly.DetectLogPatterns(r.Context(), s.store, window)
+		// v0.5.241 — pass the logstore (not chstore) so the
+		// detector runs against whichever backend is wired:
+		// CH path = match() + tokenbf prefilter; ES path =
+		// query_string token-OR.
+		hits, err := anomaly.DetectLogPatterns(r.Context(), s.logs, window)
 		if err != nil {
 			return nil, err
 		}

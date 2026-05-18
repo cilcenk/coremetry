@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/logstore"
 )
 
 // LogPatternAnomaly is one production-grade signal pattern that
@@ -84,7 +84,15 @@ var patterns = []logPattern{
 //
 // At 1B logs/day this completes in well under a second cold;
 // warm requests serve directly from Redis.
-func DetectLogPatterns(ctx context.Context, store *chstore.Store, window time.Duration) ([]LogPatternAnomaly, error) {
+//
+// v0.5.241 — refactored to take a logstore.Store instead of
+// *chstore.Store so the detector works against BOTH the CH and
+// the ES log backend. CH path remains the regex+tokenbf prefilter
+// route; ES path uses query_string token-OR against the body
+// field (regex is ignored; tokens must be zero-false-negative
+// vs the regex). Cross-backend correctness depends on detector
+// authors keeping the Tokens list synchronized with the Regex.
+func DetectLogPatterns(ctx context.Context, store logstore.Store, window time.Duration) ([]LogPatternAnomaly, error) {
 	now := time.Now()
 	curStart := now.Add(-window)
 	// Trailing baseline = 1h (or the longer of 1h vs 12×window).
@@ -99,7 +107,18 @@ func DetectLogPatterns(ctx context.Context, store *chstore.Store, window time.Du
 	}
 	baseStart := now.Add(-baseLookback)
 
-	conn := store.Conn()
+	// One batched call covers all patterns. CH iterates
+	// internally; ES batches via _msearch so we pay one HTTP
+	// round-trip total — at billion-log/day on an external ES
+	// cluster, that's the only way to keep wall time bounded.
+	specs := make([]logstore.PatternSpec, len(patterns))
+	for i, p := range patterns {
+		specs[i] = logstore.PatternSpec{Regex: p.Regex, Tokens: p.Tokens}
+	}
+	stats, err := store.CountPatterns(ctx, specs, curStart, baseStart, now)
+	if err != nil {
+		return nil, err
+	}
 
 	type result struct {
 		anomaly LogPatternAnomaly
@@ -113,44 +132,15 @@ func DetectLogPatterns(ctx context.Context, store *chstore.Store, window time.Du
 		i, p := i, p // capture for the goroutine
 		go func() {
 			defer wg.Done()
-			// Single round-trip: countIf splits current vs
-			// baseline by the time predicate, while a single
-			// regex `match()` eval per row avoids re-scanning
-			// the same body twice. anyHeavy() biases the
-			// representative service to the most frequent.
-			var (
-				cur, base uint64
-				service   string
-				sample    string
-				lastNs    int64
-			)
-			// Token prefilter (tokenbf_v1 index on body): granules
-			// without any of the indicator substrings are skipped
-			// before regex evaluation. At 1B logs/day this is the
-			// difference between a sub-second scan and a many-
-			// second one. Tokens are inlined as a constant SQL
-			// literal because they're hard-coded above (zero
-			// untrusted input).
-			tokensSQL := buildTokenLiteral(p.Tokens)
-			where := "time >= ? AND time < ? AND match(body, ?)"
-			if tokensSQL != "" {
-				where = "time >= ? AND time < ? AND multiSearchAnyCaseInsensitive(body, " + tokensSQL + ") AND match(body, ?)"
-			}
-			err := conn.QueryRow(ctx, `
-				SELECT
-				  countIf(time >= ?)                                      AS cur,
-				  countIf(time <  ?)                                      AS base,
-				  anyHeavyIf(service_name, time >= ?)                     AS svc,
-				  anyIf(body, time >= ?)                                  AS sample,
-				  toUnixTimestamp64Nano(maxIf(time, time >= ?))           AS last_ns
-				FROM logs
-				WHERE `+where,
-				curStart, curStart, curStart, curStart, curStart,
-				baseStart, now, p.Regex,
-			).Scan(&cur, &base, &service, &sample, &lastNs)
-			if err != nil || cur == 0 {
+			st := stats[i]
+			if st.Cur == 0 {
 				return
 			}
+			cur := st.Cur
+			base := st.Base
+			service := st.Service
+			sample := st.Sample
+			lastNs := st.LastSeenNs
 
 			// Normalise the trailing baseline to the same window
 			// length as `cur` so a spike is "current rate is 2x+
@@ -220,23 +210,6 @@ func DetectLogPatterns(ctx context.Context, store *chstore.Store, window time.Du
 		return out[i].CurrentCount > out[j].CurrentCount
 	})
 	return out, nil
-}
-
-// buildTokenLiteral renders a Go []string as the CH array
-// literal `['t1', 't2', …]` for inlining into the WHERE clause.
-// Tokens are hard-coded above (no user input ever flows here),
-// so the only sanitisation is escaping embedded single quotes
-// to keep the SQL valid for tokens that themselves contain
-// apostrophes — defensive even though none of ours do today.
-func buildTokenLiteral(tokens []string) string {
-	if len(tokens) == 0 {
-		return ""
-	}
-	parts := make([]string, len(tokens))
-	for i, t := range tokens {
-		parts[i] = "'" + strings.ReplaceAll(t, "'", "\\'") + "'"
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func truncateSample(s string, n int) string {

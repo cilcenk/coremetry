@@ -163,6 +163,72 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	return out, rows.Err()
 }
 
+// CountPatterns matches each detector pattern against the raw
+// logs table. CH path runs sequentially because each query is
+// already cheap behind the tokenbf_v1 skip index — granules
+// without any of the tokens get pruned before the per-row regex
+// eval. ES batches via _msearch (see elasticsearch.go) because
+// its per-pattern cost dominates the round-trip cost there.
+func (s *CHStore) CountPatterns(
+	ctx context.Context,
+	pats []PatternSpec,
+	curStart, baseStart, now time.Time,
+) ([]PatternStats, error) {
+	out := make([]PatternStats, len(pats))
+	for i, pat := range pats {
+		stats, err := s.countOnePattern(ctx, pat, curStart, baseStart, now)
+		if err != nil {
+			return out, err
+		}
+		out[i] = stats
+	}
+	return out, nil
+}
+
+func (s *CHStore) countOnePattern(
+	ctx context.Context,
+	pat PatternSpec,
+	curStart, baseStart, now time.Time,
+) (PatternStats, error) {
+	var out PatternStats
+	tokensSQL := chBuildTokenLiteral(pat.Tokens)
+	where := "time >= ? AND time < ? AND match(body, ?)"
+	if tokensSQL != "" {
+		where = "time >= ? AND time < ? AND multiSearchAnyCaseInsensitive(body, " + tokensSQL + ") AND match(body, ?)"
+	}
+	sql := `
+		SELECT
+		  countIf(time >= ?)                                      AS cur,
+		  countIf(time <  ?)                                      AS base,
+		  anyHeavyIf(service_name, time >= ?)                     AS svc,
+		  anyIf(body, time >= ?)                                  AS sample,
+		  toUnixTimestamp64Nano(maxIf(time, time >= ?))           AS last_ns
+		FROM logs
+		WHERE ` + where
+	err := s.store.Conn().QueryRow(ctx, sql,
+		curStart, curStart, curStart, curStart, curStart,
+		baseStart, now, pat.Regex,
+	).Scan(&out.Cur, &out.Base, &out.Service, &out.Sample, &out.LastSeenNs)
+	if err != nil {
+		return PatternStats{}, err
+	}
+	return out, nil
+}
+
+// chBuildTokenLiteral renders []string as a CH array literal
+// `['t1', 't2', …]` for inlining. Tokens are detector-supplied
+// (no untrusted input) so we just escape embedded single quotes.
+func chBuildTokenLiteral(tokens []string) string {
+	if len(tokens) == 0 {
+		return ""
+	}
+	parts := make([]string, len(tokens))
+	for i, t := range tokens {
+		parts[i] = "'" + strings.ReplaceAll(t, "'", "\\'") + "'"
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
 // Facets returns top-N (value, count) buckets per requested facet
 // dimension, scoped to the same Filter as Search. Each requested
 // facet runs as its own grouped count query against the logs

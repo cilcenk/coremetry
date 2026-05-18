@@ -280,6 +280,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
 	mux.HandleFunc("GET /api/logs/facets",     s.getLogsFacets)
+	// v0.5.243 — unsupervised "what tokens are statistically
+	// rare in the current window vs baseline" pass. ES-only
+	// (CH returns empty); 60s cache fronts the expensive agg.
+	mux.HandleFunc("GET /api/logs/patterns",   s.getLogsSignificantPatterns)
 	mux.HandleFunc("POST /api/logs/similar",   s.getLogsSimilarTraces)
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
@@ -2413,6 +2417,56 @@ func (s *Server) getLogsFacets(w http.ResponseWriter, r *http.Request) {
 			out[string(k)] = v
 		}
 		return out, nil
+	})
+}
+
+// getLogsSignificantPatterns runs the ES `significant_text`
+// aggregation over (curStart, now) using the (baseStart, curStart)
+// window as the baseline — surfaces tokens that just got rare-
+// vs-usual. CH backend returns an empty list (no native
+// equivalent at billion-row scale). 60s server cache fronts the
+// expensive agg so a /logs reload hits Redis, not ES.
+func (s *Server) getLogsSignificantPatterns(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	curWindow := parseDuration(q.Get("window"), 15*time.Minute)
+	if curWindow > time.Hour {
+		curWindow = time.Hour
+	}
+	baseline := parseDuration(q.Get("baseline"), 24*time.Hour)
+	if baseline > 24*time.Hour {
+		baseline = 24 * time.Hour
+	}
+	if baseline <= curWindow {
+		// Baseline must outweigh the cur window or the rare-vs-
+		// baseline math is degenerate. Floor at 4x the cur
+		// window so a 15min cur sees at least an hour of
+		// background.
+		baseline = 4 * curWindow
+	}
+	topN := parseInt(q.Get("topN"), 25)
+	if topN <= 0 || topN > 100 {
+		topN = 25
+	}
+	now := time.Now()
+	curStart := now.Add(-curWindow)
+	baseStart := curStart.Add(-baseline)
+
+	key := fmt.Sprintf("logs-significant:cur=%s:bg=%s:topN=%d",
+		curWindow, baseline, topN)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		hits, err := s.logs.SignificantPatterns(r.Context(), curStart, baseStart, now, topN)
+		if err != nil {
+			return nil, err
+		}
+		if hits == nil {
+			hits = []logstore.SignificantPattern{}
+		}
+		return map[string]any{
+			"backend":   s.logs.Backend(),
+			"window":    curWindow.String(),
+			"baseline":  baseline.String(),
+			"patterns":  hits,
+		}, nil
 	})
 }
 

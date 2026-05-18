@@ -215,6 +215,21 @@ func (s *CHStore) countOnePattern(
 	return out, nil
 }
 
+// SignificantPatterns has no efficient native equivalent on CH
+// at billion-row scale (would need a tokenize + frequency-vs-
+// baseline pass per query, which doesn't reuse any of CH's
+// indexes). Returns nil so the API surface stays uniform; the
+// frontend already hides the panel on empty results. Operators
+// on the CH backend get coverage via the curated regex detector
+// + saved-search alerts.
+func (s *CHStore) SignificantPatterns(
+	ctx context.Context,
+	curStart, baseStart, now time.Time,
+	topN int,
+) ([]SignificantPattern, error) {
+	return nil, nil
+}
+
 // chBuildTokenLiteral renders []string as a CH array literal
 // `['t1', 't2', …]` for inlining. Tokens are detector-supplied
 // (no untrusted input) so we just escape embedded single quotes.

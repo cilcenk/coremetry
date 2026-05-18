@@ -12,6 +12,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogPatternStrip } from '@/components/LogPatternStrip';
+import { LivePatternsPanel } from '@/components/LivePatternsPanel';
 import { Pager } from '@/components/Pager';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
@@ -440,6 +441,21 @@ function LogsInner() {
           setDraft(d => ({ ...d, search: s, service: sv || d.service }));
           setFilter(next);
           setPage(0);
+        }} />
+
+        {/* Live patterns panel (v0.5.243) — ES significant_text
+            unsupervised over (last 15min vs last 24h). Surfaces
+            tokens that just got over-represented vs baseline:
+            new exception types, rare error codes, unusual
+            phrases. Click a chip → narrow search to that token.
+            Hidden on CH backend (no native equivalent at
+            billion-row scale). */}
+        <LivePatternsPanel onSelect={token => {
+          // Use the shorthand "body" key; the backend's
+          // expandShorthand rewrites it to an OR across all
+          // body-field candidates (message / Body / log.message)
+          // so the filter works regardless of mapping.
+          toggleSearchClause('body', token, false);
         }} />
 
         {/* Severity-stacked histogram (v0.5.235) — spike of errors

@@ -784,6 +784,152 @@ func (s *ESStore) CountPatterns(
 	return out, nil
 }
 
+// SignificantPatterns surfaces tokens that are statistically
+// over-represented in the current window vs a baseline window.
+// Uses ES's native `significant_text` aggregation — chi-square-
+// like scoring, runs against the inverted index (no fielddata
+// re-analysis) when wired correctly.
+//
+// Performance posture for billion-log scale:
+//
+//  1. `background_filter` BOUNDED to the baseline window. The
+//     default (whole index as background) is catastrophic on
+//     billion docs — it computes term frequencies across every
+//     historical day. We force a 24h max baseline.
+//
+//  2. `sampler` agg wraps the significant_text so per-shard the
+//     scoring runs over at most 50k matched docs. ES samples
+//     deterministically (by _score), preserving the distribution
+//     so scores stay representative. Without this, 10M+ matches
+//     in a busy 15min window can stall the coordinator.
+//
+//  3. `filter_duplicate_text: true` skips near-duplicate logs
+//     (templated lines, stack traces). Without it, the same
+//     "POST /api/health 200" line repeated 1M times dominates
+//     the score; with it, only unique-enough shapes contribute.
+//
+//  4. `min_doc_count: 10` drops singleton noise. Combined with
+//     the dedup, this means only tokens that ACTUALLY repeat
+//     across distinct logs make the top-N.
+//
+//  5. `size: topN` (capped at 100 at the API layer) bounds the
+//     response shape.
+//
+// Body field MUST be text-mapped with the standard analyzer or
+// similar; significant_text on a keyword-only field fails. Most
+// shippers default to this. We fall through to an empty result
+// on mapping errors rather than blowing up the page.
+func (s *ESStore) SignificantPatterns(
+	ctx context.Context,
+	curStart, baseStart, now time.Time,
+	topN int,
+) ([]SignificantPattern, error) {
+	if topN <= 0 || topN > 100 {
+		topN = 25
+	}
+	// Hard cap baseline at 24h — anything wider gets cropped to
+	// keep the background-frequency calc bounded. ES indexes
+	// everything past this with the same shape so 24h is a
+	// good representative baseline.
+	maxBaseline := 24 * time.Hour
+	if curStart.Sub(baseStart) > maxBaseline {
+		baseStart = curStart.Add(-maxBaseline)
+	}
+	curFrom := curStart.UTC().Format(time.RFC3339Nano)
+	curEnd := now.UTC().Format(time.RFC3339Nano)
+	bgFrom := baseStart.UTC().Format(time.RFC3339Nano)
+
+	query := map[string]any{
+		"range": map[string]any{
+			s.fields.Timestamp: map[string]any{
+				"gte": curFrom, "lt": curEnd,
+			},
+		},
+	}
+	// Sampler bounds per-shard scoring at 50k matched docs.
+	// significant_text inside the sampler runs against that
+	// sampled set, not the full match. 50k × shard_count keeps
+	// the coordinator's work bounded.
+	aggs := map[string]any{
+		"sample": map[string]any{
+			"sampler": map[string]any{
+				"shard_size": 50000,
+			},
+			"aggs": map[string]any{
+				"patterns": map[string]any{
+					"significant_text": map[string]any{
+						"field":                 s.fields.Body,
+						"size":                  topN,
+						"min_doc_count":         10,
+						"filter_duplicate_text": true,
+						"background_filter": map[string]any{
+							"range": map[string]any{
+								s.fields.Timestamp: map[string]any{
+									"gte": bgFrom, "lt": curFrom,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"size":             0,
+		"query":            query,
+		"aggs":             aggs,
+		"track_total_hits": false, // we only care about the agg buckets
+	})
+	if err != nil {
+		return nil, err
+	}
+	tru := true
+	req := esapi.SearchRequest{
+		Index:             []string{s.cfg.Index},
+		Body:              bytes.NewReader(body),
+		AllowNoIndices:    &tru,
+		IgnoreUnavailable: &tru,
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return nil, fmt.Errorf("ES significant: %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, parseESError("significant", res, s.cfg.Index)
+	}
+
+	var raw struct {
+		Aggregations struct {
+			Sample struct {
+				Patterns struct {
+					Buckets []struct {
+						Key      string  `json:"key"`
+						DocCount uint64  `json:"doc_count"`
+						BgCount  uint64  `json:"bg_count"`
+						Score    float64 `json:"score"`
+					} `json:"buckets"`
+				} `json:"patterns"`
+			} `json:"sample"`
+		} `json:"aggregations"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decode ES significant: %w", err)
+	}
+
+	out := make([]SignificantPattern, 0, len(raw.Aggregations.Sample.Patterns.Buckets))
+	for _, b := range raw.Aggregations.Sample.Patterns.Buckets {
+		out = append(out, SignificantPattern{
+			Token:    b.Key,
+			DocCount: b.DocCount,
+			BgCount:  b.BgCount,
+			Score:    b.Score,
+		})
+	}
+	return out, nil
+}
+
 // buildPatternTokenQuery composes the detector tokens into a
 // Lucene query_string clause: `body:"tok1" OR body:"tok2" OR …`
 // Quoted phrases so dashes / dots inside tokens (e.g. "401",

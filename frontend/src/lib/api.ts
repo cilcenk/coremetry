@@ -401,6 +401,16 @@ export const api = {
   // mapping leaves. Server caches 60s.
   logsFields: () => get<{ fields: string[]; backend: string }>(
     `/api/logs/fields`),
+  // ES significant_text — tokens that just got rare-vs-usual.
+  // 60s server cache. CH backend returns empty patterns list;
+  // UI hides the panel in that case.
+  logsSignificantPatterns: (params: { window?: string; baseline?: string; topN?: number } = {}) =>
+    get<{
+      backend: string;
+      window: string;
+      baseline: string;
+      patterns: Array<{ token: string; docCount: number; bgCount: number; score: number }>;
+    }>(`/api/logs/patterns?${qs(params)}`),
   // Faceted sidebar buckets (v0.5.226). Same filter shape as
   // /api/logs; returns top-N (value, count) per dimension so the
   // UI can render click-to-add filter chips à la Kibana Discover.

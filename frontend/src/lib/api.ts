@@ -411,6 +411,11 @@ export const api = {
       baseline: string;
       patterns: Array<{ token: string; docCount: number; bgCount: number; score: number }>;
     }>(`/api/logs/patterns?${qs(params)}`),
+  // Drain-extracted log templates (v0.5.244). Backed by the
+  // templater puller goroutine; first_seen sticky across
+  // restarts so the "what's new since X" sort is meaningful.
+  logsTemplates: (params: { sort?: 'first_seen' | 'last_seen' | 'count'; since?: string; limit?: number } = {}) =>
+    get<import('./types').LogTemplate[]>(`/api/logs/templates?${qs(params)}`),
   // Faceted sidebar buckets (v0.5.226). Same filter shape as
   // /api/logs; returns top-N (value, count) per dimension so the
   // UI can render click-to-add filter chips à la Kibana Discover.

@@ -13,6 +13,7 @@ import { LogTable } from '@/components/LogTable';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogPatternStrip } from '@/components/LogPatternStrip';
 import { LivePatternsPanel } from '@/components/LivePatternsPanel';
+import { LogTemplatesPanel } from '@/components/LogTemplatesPanel';
 import { Pager } from '@/components/Pager';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
@@ -456,6 +457,22 @@ function LogsInner() {
           // body-field candidates (message / Body / log.message)
           // so the filter works regardless of mapping.
           toggleSearchClause('body', token, false);
+        }} />
+
+        {/* Drain-extracted templates (v0.5.244) — persistent
+            log-shape ledger. Default sort: first_seen desc so
+            new shapes land first. Click a template → search
+            box gets the two most distinctive tokens from that
+            shape (Java class names + logger paths rank
+            highest in the scorer). */}
+        <LogTemplatesPanel onSelectTemplate={substring => {
+          // Substring search is body-field bound; the backend
+          // shorthand expander rewrites "body:" to the right
+          // field for the configured ES mapping.
+          const next = { ...filter, search: substring };
+          setDraft(d => ({ ...d, search: substring }));
+          setFilter(next);
+          setPage(0);
         }} />
 
         {/* Severity-stacked histogram (v0.5.235) — spike of errors

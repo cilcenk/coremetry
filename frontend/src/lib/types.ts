@@ -1407,6 +1407,22 @@ export interface TraceOpAnomaly {
 // One curated log-shape anomaly — either brand new in the
 // detection window or up 2x+ over baseline. Pattern + regex
 // match the server-side definitions in internal/anomaly/log_patterns.go.
+// LogTemplate — Drain-3 extracted template persisted in
+// chstore.log_templates (v0.5.244). first_seen is sticky on the
+// CH upsert so the "what just started firing?" signal stays
+// meaningful across restarts. Services is capped at 5 at the
+// templater layer.
+export interface LogTemplate {
+  id: string;
+  template: string;
+  firstSeen: number;     // unix ns
+  lastSeen: number;
+  totalCount: number;
+  services: string[];
+  exceptionType?: string;
+  sample: string;
+}
+
 export interface LogPatternAnomaly {
   pattern: string;        // human-readable name
   regex: string;          // re2 used for matching

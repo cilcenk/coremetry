@@ -34,6 +34,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/tempo"
+	"github.com/cilcenk/coremetry/internal/templater"
 	"github.com/cilcenk/coremetry/internal/topology"
 )
 
@@ -402,6 +403,15 @@ func main() {
 	// path uses _msearch so all curated patterns ship in one HTTP
 	// round-trip even at billion-log scale.
 	anomaly.NewRecorder(store, logsStore, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(ctx)
+
+	// ── Drain-3 log template puller (v0.5.244) ────────────────────────────────
+	// Periodic sample-based extractor. Every 5min samples 1000
+	// recent logs from whichever backend is wired (CH or ES),
+	// runs them through the Drain-3 templater, upserts the
+	// resulting clusters into log_templates so the operator can
+	// see "what shapes are firing" + "what's new since X".
+	// Lock-gated for HA.
+	go templater.New(store, logsStore, 5*time.Minute, 1000, lockImpl).Start(ctx)
 
 	// ── AI Copilot (optional) ────────────────────────────────────────────────
 	// Always created — env vars are the boot-time default, DB overrides

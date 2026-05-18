@@ -892,6 +892,25 @@ func (s *Store) migrate(ctx context.Context) error {
 		// defined KQL → rate-threshold" rules. Evaluator
 		// switches paths based on len(log_query) > 0.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS log_query String DEFAULT ''`,
+		// v0.5.244 — Drain-extracted log templates ledger. Puller
+		// goroutine pulls a sample of recent logs every 5min,
+		// runs them through the Drain-3 templater, upserts the
+		// resulting templates here. first_seen is sticky (the
+		// upsert path reads + preserves the earliest value)
+		// so the "new template since X" signal stays meaningful
+		// across restarts.
+		`CREATE TABLE IF NOT EXISTS log_templates (
+			id             String,
+			template       String,
+			first_seen     DateTime64(9),
+			last_seen      DateTime64(9),
+			total_count    UInt64,
+			services       Array(LowCardinality(String)),
+			exception_type LowCardinality(String) DEFAULT '',
+			sample         String,
+			version        UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY id`,
 		// v0.5.209 — triage assignee. Populated from service
 		// metadata's owner_team when the problem opens, then
 		// overridable by an operator claim via PATCH

@@ -284,6 +284,10 @@ func (s *Server) Start() error {
 	// rare in the current window vs baseline" pass. ES-only
 	// (CH returns empty); 60s cache fronts the expensive agg.
 	mux.HandleFunc("GET /api/logs/patterns",   s.getLogsSignificantPatterns)
+	// v0.5.244 — Drain-extracted log template ledger. Persistent
+	// templates with sticky first_seen so the operator can ask
+	// "what shape just started appearing?".
+	mux.HandleFunc("GET /api/logs/templates",  s.getLogsTemplates)
 	mux.HandleFunc("POST /api/logs/similar",   s.getLogsSimilarTraces)
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
@@ -2467,6 +2471,43 @@ func (s *Server) getLogsSignificantPatterns(w http.ResponseWriter, r *http.Reque
 			"baseline":  baseline.String(),
 			"patterns":  hits,
 		}, nil
+	})
+}
+
+// getLogsTemplates surfaces the Drain-extracted log templates
+// persisted by the templater puller. Sortable by first_seen
+// (newest templates land first → "what just started firing?"),
+// last_seen (recent activity) or total_count (busiest).
+// 30s server cache fronts the read so the panel refresh is
+// cheap.
+func (s *Server) getLogsTemplates(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sortBy := strings.TrimSpace(q.Get("sort"))
+	if sortBy == "" {
+		sortBy = "first_seen"
+	}
+	sinceDur := parseDuration(q.Get("since"), 24*time.Hour)
+	limit := parseInt(q.Get("limit"), 50)
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	since := time.Now().Add(-sinceDur).UnixNano()
+
+	key := fmt.Sprintf("logs-templates:sort=%s:since=%s:limit=%d",
+		sortBy, sinceDur, limit)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		rows, err := s.store.ListLogTemplates(r.Context(), chstore.ListLogTemplatesFilter{
+			SinceNs: since,
+			SortBy:  sortBy,
+			Limit:   limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rows == nil {
+			rows = []chstore.LogTemplate{}
+		}
+		return rows, nil
 	})
 }
 

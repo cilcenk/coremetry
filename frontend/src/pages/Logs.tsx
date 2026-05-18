@@ -220,10 +220,12 @@ function LogsInner() {
       return;
     }
     const map: Record<string, string> = {
-      severity:  'level',
-      pod:       'kubernetes.pod_name',
-      container: 'kubernetes.container_name',
-      cluster:   'openshift.labels.cluster',
+      severity:   'level',
+      namespace:  'kubernetes.namespace.name',
+      deployment: 'kubernetes.deployment.name',
+      pod:        'kubernetes.pod.name',
+      container:  'kubernetes.container.name',
+      cluster:    'k8s.cluster.name',
     };
     const k = map[field];
     if (!k) return;

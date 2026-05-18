@@ -62,7 +62,9 @@ type FacetField string
 const (
 	FacetService   FacetField = "service"
 	FacetSeverity  FacetField = "severity"
-	FacetPod       FacetField = "pod"
+	FacetNamespace  FacetField = "namespace"
+	FacetDeployment FacetField = "deployment"
+	FacetPod        FacetField = "pod"
 	FacetContainer FacetField = "container"
 	FacetCluster   FacetField = "cluster"
 )

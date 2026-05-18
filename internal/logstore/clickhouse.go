@@ -254,6 +254,19 @@ func facetCHExpr(f FacetField) string {
 		return "service_name"
 	case FacetSeverity:
 		return "if(severity_text != '', severity_text, toString(severity_num))"
+	case FacetNamespace:
+		return `multiIf(
+			resource_attributes['kubernetes.namespace.name']  != '', resource_attributes['kubernetes.namespace.name'],
+			resource_attributes['kubernetes.namespace_name']  != '', resource_attributes['kubernetes.namespace_name'],
+			resource_attributes['k8s.namespace.name']         != '', resource_attributes['k8s.namespace.name'],
+			resource_attributes['namespace'])`
+	case FacetDeployment:
+		return `multiIf(
+			resource_attributes['kubernetes.deployment.name']  != '', resource_attributes['kubernetes.deployment.name'],
+			resource_attributes['kubernetes.deployment_name']  != '', resource_attributes['kubernetes.deployment_name'],
+			resource_attributes['k8s.deployment.name']         != '', resource_attributes['k8s.deployment.name'],
+			resource_attributes['kubernetes.labels.app']       != '', resource_attributes['kubernetes.labels.app'],
+			resource_attributes['deployment'])`
 	case FacetPod:
 		// CH's map lookup returns '' for missing keys, not NULL —
 		// coalesce would pick the first key always. multiIf walks

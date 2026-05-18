@@ -708,6 +708,21 @@ func facetESFields(s *ESStore, f FacetField) []string {
 		return withKeywordVariants(s.fields.Service)
 	case FacetSeverity:
 		return withKeywordVariants(s.fields.SeverityTx)
+	case FacetNamespace:
+		return withKeywordVariants(
+			"kubernetes.namespace.name",
+			"kubernetes.namespace_name",
+			"k8s.namespace.name",
+			"namespace",
+		)
+	case FacetDeployment:
+		return withKeywordVariants(
+			"kubernetes.deployment.name",
+			"kubernetes.deployment_name",
+			"k8s.deployment.name",
+			"kubernetes.labels.app",
+			"deployment",
+		)
 	case FacetPod:
 		return withKeywordVariants(
 			"kubernetes.pod.name",        // OTel ES exporter default
@@ -857,7 +872,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 // query string, anchored to start-of-string, whitespace, or an opening
 // paren so we don't rewrite a colon that's part of a value.
 var shorthandRe = regexp.MustCompile(
-	`(?i)(^|[\s(])(level|severity|service|trace|trace_id|traceid|span|span_id|spanid|message|body|pod|container|namespace|cluster|host):("[^"]+"|\S+)`)
+	`(?i)(^|[\s(])(level|severity|service|trace|trace_id|traceid|span|span_id|spanid|message|body|pod|container|deployment|namespace|cluster|host):("[^"]+"|\S+)`)
 
 // expandShorthand rewrites common short field names to multi-shape
 // OR groups so the same query works against any shipping pipeline.
@@ -880,9 +895,10 @@ func (s *ESStore) expandShorthand(q string) string {
 		"spanid":    {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
 		"message":   {s.fields.Body, "message", "Body", "body", "log.message"},
 		"body":      {s.fields.Body, "message", "Body", "body", "log.message"},
-		"pod":       {"kubernetes.pod_name", "kubernetes.pod.name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
-		"container": {"kubernetes.container_name", "k8s.container.name", "container.name", "container_name", "container"},
-		"namespace": {"kubernetes.namespace_name", "kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
+		"pod":        {"kubernetes.pod.name", "kubernetes.pod_name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
+		"container":  {"kubernetes.container.name", "kubernetes.container_name", "k8s.container.name", "container.name", "container_name", "container"},
+		"namespace":  {"kubernetes.namespace.name", "kubernetes.namespace_name", "kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
+		"deployment": {"kubernetes.deployment.name", "kubernetes.deployment_name", "k8s.deployment.name", "kubernetes.labels.app", "deployment"},
 		"cluster":   {"openshift.labels.cluster", "openshift.cluster.name", "kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "kubernetes.cluster_name", "cluster"},
 		"host":      {"host.name", "host.hostname", "resource.host.name", "hostname", "host"},
 	}

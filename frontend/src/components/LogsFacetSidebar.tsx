@@ -17,28 +17,33 @@ import { timeRangeToNs } from '@/lib/utils';
 type FacetBucket = { value: string; count: number };
 type Facets = Record<string, FacetBucket[]>;
 
-type FacetField = 'service' | 'severity' | 'pod' | 'container' | 'cluster';
+type FacetField = 'service' | 'severity' | 'namespace' | 'deployment' | 'pod' | 'container' | 'cluster';
 
 const FACET_TITLES: Record<FacetField, string> = {
-  service:   'Service',
-  severity:  'Severity',
-  pod:       'Pod',
-  container: 'Container',
-  cluster:   'Cluster',
+  service:    'Service',
+  severity:   'Severity',
+  namespace:  'Namespace',
+  deployment: 'Deployment',
+  pod:        'Pod',
+  container:  'Container',
+  cluster:    'Cluster',
 };
 
 const FACET_QUERY_FIELD: Record<FacetField, string> = {
-  service:   'service.name',
-  severity:  'level',
-  // Pod / container / cluster use the operator's actual shipper
-  // field names — matches the LogTable display chain.
-  // expandShorthand on the backend also accepts these as
-  // shorthand keys (pod:, container:, cluster:) and rewrites to
-  // an OR group across the candidate fields so installs using
-  // different shapes still match.
-  pod:       'kubernetes.pod_name',
-  container: 'kubernetes.container_name',
-  cluster:   'openshift.labels.cluster',
+  service:    'service.name',
+  severity:   'level',
+  // namespace / deployment / pod / container / cluster all use
+  // the OTel-canonical dotted form (kubernetes.<thing>.name) as
+  // the literal KQL key the sidebar emits. expandShorthand on
+  // the backend rewrites these via an OR across the candidate
+  // chain so installs that emit snake_case (kubernetes.pod_name)
+  // or OpenShift label form (openshift.labels.cluster) still
+  // match without changing the UI.
+  namespace:  'kubernetes.namespace.name',
+  deployment: 'kubernetes.deployment.name',
+  pod:        'kubernetes.pod.name',
+  container:  'kubernetes.container.name',
+  cluster:    'k8s.cluster.name',
 };
 
 export function LogsFacetSidebar({

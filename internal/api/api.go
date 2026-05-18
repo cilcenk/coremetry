@@ -2384,6 +2384,8 @@ func (s *Server) getLogsFacets(w http.ResponseWriter, r *http.Request) {
 	wantFields := []logstore.FacetField{
 		logstore.FacetService,
 		logstore.FacetSeverity,
+		logstore.FacetNamespace,
+		logstore.FacetDeployment,
 		logstore.FacetPod,
 		logstore.FacetContainer,
 		logstore.FacetCluster,

@@ -102,9 +102,16 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		items := make([]InboxItem, 0, 256)
 
+		// v0.5.245 — service filter is now case-insensitive
+		// substring across all three sources. Per-source SQL
+		// filters dropped (each capped at 200 rows so a wider
+		// fan-out is cheap); the substring narrow happens once
+		// over the merged item list below. Operator typing
+		// "java" now matches "java-demo", "java-frontend",
+		// etc. without remembering the exact service name.
 		// ── Problems ─────────────────────────────────────────────
 		probs, err := s.store.ListProblems(ctx, chstore.ProblemFilter{
-			Status: pickStatus(statusFilter), Service: service, Limit: 200,
+			Status: pickStatus(statusFilter), Limit: 200,
 		})
 		if err != nil {
 			return nil, err
@@ -121,7 +128,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 
 		// ── Exception groups ─────────────────────────────────────
 		exFilter := chstore.ExceptionGroupFilter{
-			State: pickExceptionState(statusFilter), Service: service, Limit: 200,
+			State: pickExceptionState(statusFilter), Limit: 200,
 		}
 		exGroups, err := s.store.ListExceptionGroups(ctx, exFilter)
 		if err != nil {
@@ -139,13 +146,25 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		for _, e := range evs {
-			if service != "" && e.Service != service {
-				continue
-			}
 			if statusFilter == "open" && e.Status != "active" {
 				continue
 			}
 			items = append(items, anomalyToInbox(e))
+		}
+
+		// v0.5.245 — case-insensitive substring service filter
+		// applied across the merged item set. Operator types
+		// "java" → matches "java-demo", "java-frontend", etc.
+		// Empty value (no filter) leaves items untouched.
+		if service != "" {
+			needle := strings.ToLower(service)
+			filtered := items[:0]
+			for _, it := range items {
+				if strings.Contains(strings.ToLower(it.Service), needle) {
+					filtered = append(filtered, it)
+				}
+			}
+			items = filtered
 		}
 
 		// Team enrichment — one batch lookup over the service

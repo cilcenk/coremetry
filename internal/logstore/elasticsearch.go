@@ -801,13 +801,23 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// fields are exact-match — the historical "level:error
 		// returns nothing" bug on indices that store severities
 		// uppercase.
+		// `case_insensitive` was added in v0.5.201 but the ES
+		// JSON parser at the query_string level rejects it as of
+		// 8.x (the doc claims 7.10+; in practice the option only
+		// lives on term/wildcard/prefix clauses). Removed in
+		// v0.5.231 — the standard analyzer already folds case
+		// on text fields, and keyword-field exact matches inherit
+		// the operator's chosen case (same behaviour as Kibana
+		// Discover). For uppercase keyword values (`level:ERROR`)
+		// the shorthand expander above multi-shapes through
+		// "level" / "severity_text" etc, one of which usually
+		// matches the indexed casing.
 		must = append(must, map[string]any{
 			"query_string": map[string]any{
 				"query":                  s.expandShorthand(f.Search),
 				"default_field":          s.fields.Body,
 				"default_operator":       "AND",
 				"allow_leading_wildcard": false,
-				"case_insensitive":       true,
 				"lenient":                true, // tolerate type mismatches (e.g. searching numeric column with a word)
 			},
 		})

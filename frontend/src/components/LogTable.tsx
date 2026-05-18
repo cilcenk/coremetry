@@ -7,6 +7,65 @@ import type { LogRow } from '@/lib/types';
 // Middle-truncate so long pod names like `payment-api-7d6f9b54c5-xkv2m`
 // stay scannable in a column (keeps the deployment prefix + the
 // random suffix, drops the middle hash).
+// KvRow renders one (key, value) row in the expanded log's
+// attribute table with Kibana-style "click to filter" affordances
+// — small ⊕ + ⊖ icons that show on hover. ⊕ adds `key:value`
+// to the parent's filter, ⊖ adds `NOT key:value`. The callbacks
+// are optional so surfaces without a filter state (trace detail
+// Logs tab) silently omit the buttons.
+function KvRow({ k, v, onAdd, onExclude }: {
+  k: string; v: string;
+  onAdd?: (key: string, value: string) => void;
+  onExclude?: (key: string, value: string) => void;
+}) {
+  // The buttons only render at all when a callback was provided.
+  // CSS hover state (kv-actions visible only on tr:hover) keeps
+  // the table tidy when the operator is just reading.
+  const canFilter = !!(onAdd || onExclude);
+  return (
+    <tr className={canFilter ? 'kv-filterable' : ''}>
+      <td title={k}>{k}</td>
+      <td>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span>{v}</span>
+          {canFilter && (
+            <span className="kv-actions" style={{
+              display: 'inline-flex', gap: 2,
+            }}>
+              {onAdd && (
+                <button type="button"
+                  onClick={(e) => { e.stopPropagation(); onAdd(k, v); }}
+                  title={`Filter for ${k}: ${v}`}
+                  style={{
+                    all: 'unset', cursor: 'pointer',
+                    padding: '0 5px', borderRadius: 3,
+                    fontSize: 11, lineHeight: '14px',
+                    color: 'var(--accent2)',
+                    background: 'rgba(56,139,253,0.10)',
+                    border: '1px solid rgba(56,139,253,0.30)',
+                  }}>⊕</button>
+              )}
+              {onExclude && (
+                <button type="button"
+                  onClick={(e) => { e.stopPropagation(); onExclude(k, v); }}
+                  title={`Filter out ${k}: ${v}`}
+                  style={{
+                    all: 'unset', cursor: 'pointer',
+                    padding: '0 5px', borderRadius: 3,
+                    fontSize: 11, lineHeight: '14px',
+                    color: 'var(--err)',
+                    background: 'rgba(239,68,68,0.10)',
+                    border: '1px solid rgba(239,68,68,0.30)',
+                  }}>⊖</button>
+              )}
+            </span>
+          )}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
 function truncMid(s: string, max: number): string {
   if (s.length <= max) return s;
   const half = Math.floor((max - 1) / 2);
@@ -55,6 +114,8 @@ export function LogTable({
   expandedIds,
   onToggleExpand,
   extraExpanded,
+  onFilterAdd,
+  onFilterExclude,
 }: {
   logs: LogRow[];
   hideTraceColumn?: boolean;
@@ -70,6 +131,13 @@ export function LogTable({
   expandedIds?: Set<number>;
   onToggleExpand?: (id: number) => void;
   extraExpanded?: (l: LogRow) => React.ReactNode;
+  // Kibana-style "click any field value to filter" (v0.5.229).
+  // When set, the expanded row's kv-table renders per-field
+  // ⊕ / ⊖ buttons that fold the key:value into the parent's
+  // filter state. Omitted on surfaces where the parent has no
+  // filter to mutate (e.g. trace detail Logs tab).
+  onFilterAdd?: (key: string, value: string) => void;
+  onFilterExclude?: (key: string, value: string) => void;
 }) {
   const [localExpanded, setLocalExpanded] = useState<Set<number>>(new Set());
   const expanded = expandedIds ?? localExpanded;
@@ -122,6 +190,8 @@ export function LogTable({
                   toggle(l.id);
                 }}
                 extraExpanded={extraExpanded}
+                onFilterAdd={onFilterAdd}
+                onFilterExclude={onFilterExclude}
               />
             );
           })}
@@ -133,6 +203,7 @@ export function LogTable({
 
 function LogRow({
   l, idx, cols, hideTraceColumn, selected, expanded, onClick, extraExpanded,
+  onFilterAdd, onFilterExclude,
 }: {
   l: LogRow;
   idx: number;
@@ -142,6 +213,8 @@ function LogRow({
   expanded: boolean;
   onClick: () => void;
   extraExpanded?: (l: LogRow) => React.ReactNode;
+  onFilterAdd?: (key: string, value: string) => void;
+  onFilterExclude?: (key: string, value: string) => void;
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
@@ -221,7 +294,8 @@ function LogRow({
             {attrs.length > 0 && (
               <table className="kv-table"><tbody>
                 {attrs.map(([k, v]) => (
-                  <tr key={k}><td title={k}>{k}</td><td>{String(v)}</td></tr>
+                  <KvRow key={k} k={k} v={String(v)}
+                    onAdd={onFilterAdd} onExclude={onFilterExclude} />
                 ))}
               </tbody></table>
             )}
@@ -232,7 +306,8 @@ function LogRow({
                 </summary>
                 <table className="kv-table"><tbody>
                   {res.map(([k, v]) => (
-                    <tr key={k}><td title={k}>{k}</td><td>{String(v)}</td></tr>
+                    <KvRow key={k} k={k} v={String(v)}
+                      onAdd={onFilterAdd} onExclude={onFilterExclude} />
                   ))}
                 </tbody></table>
               </details>

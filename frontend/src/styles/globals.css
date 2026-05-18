@@ -754,6 +754,16 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 }
 .kv-table td:last-child { font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 
+/* Kibana-style click-to-filter affordance (v0.5.229). Buttons
+   hidden by default to keep the row tidy; reveal on hover so
+   the operator can scan without visual noise + still click
+   when they decide to narrow. tr.kv-filterable hover changes
+   the row background subtly to telegraph that the row is
+   actionable. */
+.kv-actions { opacity: 0; transition: opacity 80ms ease-out; }
+.kv-filterable:hover .kv-actions { opacity: 1; }
+.kv-filterable:hover td { background: rgba(56,139,253,0.05); }
+
 /* Metrics */
 #metric-chart-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 14px; }
 canvas { max-width: 100%; }

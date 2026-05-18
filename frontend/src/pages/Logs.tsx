@@ -163,6 +163,44 @@ function LogsInner() {
     setDraft(empty); setFilter(empty); setPage(0);
   };
 
+  // Append/remove a `key:value` clause from the search box.
+  // `negate=true` produces a `NOT key:value` clause. Used by both
+  // the facet sidebar and the expanded-row KvRow click-to-filter
+  // buttons. Auto-applies (commits filter + resets page).
+  const toggleSearchClause = (key: string, value: string, negate = false) => {
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const k = escapeRe(key);
+    const v = escapeRe(value);
+    // Match the existing clause (with or without NOT, with or
+    // without surrounding quotes). One regex finds both
+    // positive + negative forms so an exact ⊕ → ⊖ toggle works
+    // without duplicate clauses piling up.
+    const re = new RegExp(`(?:^|\\s+AND\\s+|\\s+)(?:NOT\\s+)?${k}:"?${v}"?`);
+    let nextSearch: string;
+    if (re.test(filter.search)) {
+      // Already present (either form) — strip it.
+      nextSearch = filter.search.replace(re, ' ')
+        .replace(/\s+AND\s+AND\s+/g, ' AND ').trim()
+        .replace(/^AND\s+/, '').replace(/\s+AND$/, '');
+      // If the operator clicked a different sense (⊕ on a row
+      // already excluded, or vice versa), re-add the new form.
+      const alreadyNegated = new RegExp(`(?:^|\\s+AND\\s+|\\s+)NOT\\s+${k}:"?${v}"?`).test(filter.search);
+      if (alreadyNegated !== negate) {
+        const sep = nextSearch ? ' AND ' : '';
+        const quoted = /\s/.test(value) ? `"${value}"` : value;
+        nextSearch = `${nextSearch}${sep}${negate ? 'NOT ' : ''}${key}:${quoted}`;
+      }
+    } else {
+      const sep = filter.search ? ' AND ' : '';
+      const quoted = /\s/.test(value) ? `"${value}"` : value;
+      nextSearch = `${filter.search}${sep}${negate ? 'NOT ' : ''}${key}:${quoted}`;
+    }
+    const next = { ...filter, search: nextSearch };
+    setDraft(d => ({ ...d, search: nextSearch }));
+    setFilter(next);
+    setPage(0);
+  };
+
   // Facet sidebar click handler (v0.5.226). Service buckets set
   // the service picker directly; the rest fold into the search
   // box as `key:value` KQL clauses. Clicking an already-active
@@ -178,7 +216,6 @@ function LogsInner() {
       setPage(0);
       return;
     }
-    // Map to KQL key. severity → level, pod → kubernetes.pod_name, etc.
     const map: Record<string, string> = {
       severity:  'level',
       pod:       'kubernetes.pod_name',
@@ -187,24 +224,14 @@ function LogsInner() {
     };
     const k = map[field];
     if (!k) return;
-    // Toggle: if the search already contains `key:value` (with
-    // optional quotes) strip it; otherwise append with AND glue.
-    const re = new RegExp(`(?:^|\\s+AND\\s+|\\s+)${k.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}:"?${value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}"?`);
-    let nextSearch: string;
-    if (re.test(filter.search)) {
-      nextSearch = filter.search.replace(re, ' ').replace(/\s+AND\s+AND\s+/g, ' AND ').trim()
-        .replace(/^AND\s+/, '').replace(/\s+AND$/, '');
-    } else {
-      const sep = filter.search ? ' AND ' : '';
-      // Quote the value when it has whitespace; otherwise plain.
-      const v = /\s/.test(value) ? `"${value}"` : value;
-      nextSearch = `${filter.search}${sep}${k}:${v}`;
-    }
-    const next = { ...filter, search: nextSearch };
-    setDraft(d => ({ ...d, search: nextSearch }));
-    setFilter(next);
-    setPage(0);
+    toggleSearchClause(k, value, false);
   };
+
+  // Expanded-row KvRow click-to-filter handlers (v0.5.229).
+  // Operator clicks ⊕ on any attribute / resource attribute →
+  // adds key:value to search. ⊖ → adds NOT key:value.
+  const addFromRow      = (key: string, value: string) => toggleSearchClause(key, value, false);
+  const excludeFromRow  = (key: string, value: string) => toggleSearchClause(key, value, true);
   const clearTraceLock = () => {
     const next = { ...filter, traceId: '', spanId: '' };
     setFilter(next); setDraft(d => ({ ...d, traceId: '', spanId: '' }));
@@ -356,6 +383,8 @@ function LogsInner() {
             <LogTable logs={logs} nav={tableNav}
               expandedIds={expanded}
               onToggleExpand={toggle}
+              onFilterAdd={addFromRow}
+              onFilterExclude={excludeFromRow}
               extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
             <Pager page={page} pageSize={100} total={total} onPage={setPage}
                    extras={<>{total.toLocaleString()} total</>} />

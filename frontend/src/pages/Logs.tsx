@@ -169,6 +169,14 @@ function LogsInner() {
   // buttons. Auto-applies (commits filter + resets page).
   const toggleSearchClause = (key: string, value: string, negate = false) => {
     const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Always wrap values in double quotes — Lucene treats many
+    // characters as operators (`-`, `/`, `:`, `*`, etc.) and a
+    // bare hostname like "my-host-7f-abc" is parsed as a boolean
+    // expression rather than a literal. Inside quotes only `\`
+    // and `"` are special, which we escape. v0.5.230 caught a
+    // `host.hostname:my-host-abc` filter never matching.
+    const phraseQuote = (s: string) =>
+      `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
     const k = escapeRe(key);
     const v = escapeRe(value);
     // Match the existing clause (with or without NOT, with or
@@ -178,22 +186,17 @@ function LogsInner() {
     const re = new RegExp(`(?:^|\\s+AND\\s+|\\s+)(?:NOT\\s+)?${k}:"?${v}"?`);
     let nextSearch: string;
     if (re.test(filter.search)) {
-      // Already present (either form) — strip it.
+      const alreadyNegated = new RegExp(`(?:^|\\s+AND\\s+|\\s+)NOT\\s+${k}:"?${v}"?`).test(filter.search);
       nextSearch = filter.search.replace(re, ' ')
         .replace(/\s+AND\s+AND\s+/g, ' AND ').trim()
         .replace(/^AND\s+/, '').replace(/\s+AND$/, '');
-      // If the operator clicked a different sense (⊕ on a row
-      // already excluded, or vice versa), re-add the new form.
-      const alreadyNegated = new RegExp(`(?:^|\\s+AND\\s+|\\s+)NOT\\s+${k}:"?${v}"?`).test(filter.search);
       if (alreadyNegated !== negate) {
         const sep = nextSearch ? ' AND ' : '';
-        const quoted = /\s/.test(value) ? `"${value}"` : value;
-        nextSearch = `${nextSearch}${sep}${negate ? 'NOT ' : ''}${key}:${quoted}`;
+        nextSearch = `${nextSearch}${sep}${negate ? 'NOT ' : ''}${key}:${phraseQuote(value)}`;
       }
     } else {
       const sep = filter.search ? ' AND ' : '';
-      const quoted = /\s/.test(value) ? `"${value}"` : value;
-      nextSearch = `${filter.search}${sep}${negate ? 'NOT ' : ''}${key}:${quoted}`;
+      nextSearch = `${filter.search}${sep}${negate ? 'NOT ' : ''}${key}:${phraseQuote(value)}`;
     }
     const next = { ...filter, search: nextSearch };
     setDraft(d => ({ ...d, search: nextSearch }));

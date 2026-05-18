@@ -11,6 +11,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { LogsHistogram } from '@/components/LogsHistogram';
+import { LogPatternStrip } from '@/components/LogPatternStrip';
 import { Pager } from '@/components/Pager';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
@@ -397,6 +398,22 @@ function LogsInner() {
             </div>
           </div>
         )}
+
+        {/* Log anomaly strip (v0.5.239) — curated patterns
+            (OOMKilled / panic / NPE / deadlock / TLS / etc.)
+            that are NEW or 2×+ over baseline. Click a chip →
+            narrow the table to that pattern + its firing
+            service. Renders nothing when there's no signal. */}
+        <LogPatternStrip onSelect={({ search: s, service: sv }) => {
+          const next = {
+            ...filter,
+            search: s,
+            service: sv || filter.service,
+          };
+          setDraft(d => ({ ...d, search: s, service: sv || d.service }));
+          setFilter(next);
+          setPage(0);
+        }} />
 
         {/* Severity-stacked histogram (v0.5.235) — spike of errors
             stands out against the background INFO traffic without

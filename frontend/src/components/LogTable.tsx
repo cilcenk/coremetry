@@ -13,6 +13,18 @@ function truncMid(s: string, max: number): string {
   return s.slice(0, half) + '…' + s.slice(s.length - half);
 }
 
+// firstNonEmpty picks the first argument that is a non-empty
+// string. Stricter than ??-chains because some shippers emit
+// "" / null for canonical OTel attrs while the snake_case
+// alternative carries the real value; we want to keep walking
+// the chain past those.
+function firstNonEmpty(...vals: Array<string | undefined | null>): string {
+  for (const v of vals) {
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  return '';
+}
+
 // LogTable — the shared rendering for log lists used by:
 //
 //   • /logs (Logs.tsx) — full-feature table with the trace
@@ -133,24 +145,26 @@ function LogRow({
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
-  // k8s pod + cluster columns. Fallback chains cover the
-  // common shipper conventions an operator might emit (v0.5.216
-  // added the snake_case + openshift.labels variants reported
-  // by the operator's pipeline):
-  //   Pod:     k8s.pod.name → kubernetes.pod_name → kubernetes.pod.name → pod_name
-  //   Cluster: openshift.labels.cluster → openshift.cluster.name → k8s.cluster.name → kubernetes.cluster_name
-  // First match wins; falls back to —.
+  // k8s pod + cluster columns. v0.5.224 promoted the operator's
+  // actual fields to the front of each chain (kubernetes.pod_name,
+  // openshift.labels.cluster) — earlier order had k8s.pod.name
+  // first which short-circuited at "" on pipelines that emit
+  // BOTH an empty canonical OTel attr AND the real snake_case
+  // one. firstNonEmpty also treats "" as missing so an
+  // empty-but-present attr doesn't block the fallback.
   const ra = l.resourceAttributes ?? {};
-  const pod = ra['k8s.pod.name']
-    ?? ra['kubernetes.pod_name']
-    ?? ra['kubernetes.pod.name']
-    ?? ra['pod_name']
-    ?? '';
-  const cluster = ra['openshift.labels.cluster']
-    ?? ra['openshift.cluster.name']
-    ?? ra['k8s.cluster.name']
-    ?? ra['kubernetes.cluster_name']
-    ?? '';
+  const pod = firstNonEmpty(
+    ra['kubernetes.pod_name'],
+    ra['k8s.pod.name'],
+    ra['kubernetes.pod.name'],
+    ra['pod_name'],
+  );
+  const cluster = firstNonEmpty(
+    ra['openshift.labels.cluster'],
+    ra['openshift.cluster.name'],
+    ra['k8s.cluster.name'],
+    ra['kubernetes.cluster_name'],
+  );
   return (
     <>
       <tr onClick={onClick}

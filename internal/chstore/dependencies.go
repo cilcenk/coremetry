@@ -472,6 +472,11 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	// as a partial — operators viewing the trailing edge see a
 	// slightly understated count for the last <5min, which is
 	// acceptable given the cost-of-load trade.
+	// v0.5.240 — LIMIT bumped 200→5000. Operators with the
+	// "DBA fleet" topology (hundreds of databases across
+	// services) hit the prior cap; rows were silently dropped
+	// past the top-200. Frontend already filter-narrows client
+	// side so a wide return is fine for the wire.
 	rows, err := s.conn.Query(ctx, `
 		SELECT db_system,
 		       instance,
@@ -484,7 +489,7 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY db_system, instance
 		ORDER BY span_count DESC
-		LIMIT 200
+		LIMIT 5000
 		SETTINGS max_execution_time = 15`, from, to)
 	if err != nil {
 		return nil, err
@@ -617,6 +622,10 @@ func (s *Store) discoverReceiverInstances(
 	// — receivers commonly emit a self-naming attr like this on
 	// every datapoint.
 	specificAttr := metricPrefix + "instance.name"
+	// v0.5.240 — LIMIT bumped 100→2000. The "DBA fleet" topology
+	// (hundreds of receiver-instrumented DBs per engine kind)
+	// hit the prior cap. ORDER BY inst stays alphabetical so the
+	// result is deterministic; frontend filter narrows further.
 	q := `
 		SELECT coalesce(
 			nullIf(attr_values[indexOf(attr_keys, ?)], ''),
@@ -631,7 +640,7 @@ func (s *Store) discoverReceiverInstances(
 		GROUP BY inst
 		HAVING inst != ''
 		ORDER BY inst
-		LIMIT 100
+		LIMIT 2000
 		SETTINGS max_execution_time = 8`
 	rows, err := s.conn.Query(ctx, q, specificAttr, from, to, metricPrefix)
 	if err != nil {

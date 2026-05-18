@@ -391,7 +391,14 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// the end with null values rather than erroring the whole
 	// search — operator sees the trace-scoped logs in best-
 	// effort time order instead of a silent empty tab.
-	body, err := json.Marshal(map[string]any{
+	// terminate_after stops each shard once it's seen N matches.
+	// For trace_id lookups (typically 1-100 log lines) this lets
+	// ES skip the rest of every shard once the page is filled,
+	// dramatically cutting wall time on large indices. We pick
+	// 10× the requested page so paging still works while keeping
+	// the early-stop tight. Skip when no trace_id is set so
+	// general searches still return accurate total_hits.
+	searchBody := map[string]any{
 		"query": query,
 		"sort": []any{
 			map[string]any{
@@ -404,7 +411,17 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		"from":             from,
 		"size":             limit,
 		"track_total_hits": true,
-	})
+	}
+	if f.TraceID != "" {
+		// Cap at 10× the page so paging works, min 1000 — a single
+		// trace's log fan-out is bounded.
+		t := limit * 10
+		if t < 1000 {
+			t = 1000
+		}
+		searchBody["terminate_after"] = t
+	}
+	body, err := json.Marshal(searchBody)
 	if err != nil {
 		return nil, err
 	}
@@ -576,6 +593,19 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 // buildQuery constructs the ES bool/must query corresponding to a Filter.
 func (s *ESStore) buildQuery(f Filter) map[string]any {
 	must := []any{}
+
+	// trace_id correlation queries without an explicit time range
+	// were scanning the full retention window — operators with
+	// 90d log retention hit multi-second waits for a one-trace
+	// lookup. v0.5.219 implicitly caps to the last 24h when
+	// TraceID is set and the caller didn't supply bounds. Traces
+	// don't legitimately span days; 24h covers ingest lag from
+	// any realistic shipper. Spans the caller did pass through
+	// (e.g. the trace detail Logs tab with ±5min around the
+	// waterfall) take precedence.
+	if f.TraceID != "" && f.From.IsZero() && f.To.IsZero() {
+		f.From = time.Now().Add(-24 * time.Hour)
+	}
 
 	// Time range
 	if !f.From.IsZero() || !f.To.IsZero() {

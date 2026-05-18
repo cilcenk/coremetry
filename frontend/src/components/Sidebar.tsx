@@ -42,7 +42,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: '',
     items: [
-      { href: '/inbox',     label: 'nav.inbox',     icon: '📥' },
+      { href: '/inbox',     label: 'nav.inbox',     icon: '▣' },
     ],
   },
   {

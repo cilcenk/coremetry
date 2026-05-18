@@ -60,10 +60,11 @@ type Page struct {
 type FacetField string
 
 const (
-	FacetService  FacetField = "service"
-	FacetSeverity FacetField = "severity"
-	FacetPod      FacetField = "pod"
-	FacetCluster  FacetField = "cluster"
+	FacetService   FacetField = "service"
+	FacetSeverity  FacetField = "severity"
+	FacetPod       FacetField = "pod"
+	FacetContainer FacetField = "container"
+	FacetCluster   FacetField = "cluster"
 )
 
 // FacetBucket is one (value, count) pair from a facet aggregation.

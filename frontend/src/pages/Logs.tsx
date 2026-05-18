@@ -180,9 +180,10 @@ function LogsInner() {
     }
     // Map to KQL key. severity → level, pod → kubernetes.pod_name, etc.
     const map: Record<string, string> = {
-      severity: 'level',
-      pod:      'kubernetes.pod_name',
-      cluster:  'openshift.labels.cluster',
+      severity:  'level',
+      pod:       'kubernetes.pod_name',
+      container: 'kubernetes.container_name',
+      cluster:   'openshift.labels.cluster',
     };
     const k = map[field];
     if (!k) return;

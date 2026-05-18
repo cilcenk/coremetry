@@ -17,24 +17,28 @@ import { timeRangeToNs } from '@/lib/utils';
 type FacetBucket = { value: string; count: number };
 type Facets = Record<string, FacetBucket[]>;
 
-type FacetField = 'service' | 'severity' | 'pod' | 'cluster';
+type FacetField = 'service' | 'severity' | 'pod' | 'container' | 'cluster';
 
 const FACET_TITLES: Record<FacetField, string> = {
-  service:  'Service',
-  severity: 'Severity',
-  pod:      'Pod',
-  cluster:  'Cluster',
+  service:   'Service',
+  severity:  'Severity',
+  pod:       'Pod',
+  container: 'Container',
+  cluster:   'Cluster',
 };
 
 const FACET_QUERY_FIELD: Record<FacetField, string> = {
-  service:  'service.name',
-  severity: 'level',
-  // Pod/cluster use the operator's actual shipper field names —
-  // matches the LogTable display chain. expandShorthand on the
-  // backend covers the alternatives so this also works on
-  // pipelines that emit k8s.pod.name etc.
-  pod:      'kubernetes.pod_name',
-  cluster:  'openshift.labels.cluster',
+  service:   'service.name',
+  severity:  'level',
+  // Pod / container / cluster use the operator's actual shipper
+  // field names — matches the LogTable display chain.
+  // expandShorthand on the backend also accepts these as
+  // shorthand keys (pod:, container:, cluster:) and rewrites to
+  // an OR group across the candidate fields so installs using
+  // different shapes still match.
+  pod:       'kubernetes.pod_name',
+  container: 'kubernetes.container_name',
+  cluster:   'openshift.labels.cluster',
 };
 
 export function LogsFacetSidebar({

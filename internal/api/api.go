@@ -2385,6 +2385,7 @@ func (s *Server) getLogsFacets(w http.ResponseWriter, r *http.Request) {
 		logstore.FacetService,
 		logstore.FacetSeverity,
 		logstore.FacetPod,
+		logstore.FacetContainer,
 		logstore.FacetCluster,
 	}
 	key := fmt.Sprintf("logs-facets:%s:%s:%s:%d:%d:%s:%d",

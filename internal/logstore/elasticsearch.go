@@ -709,6 +709,13 @@ func facetESFields(s *ESStore, f FacetField) []string {
 			"kubernetes.pod.name.keyword",
 			"pod_name.keyword",
 		}
+	case FacetContainer:
+		return []string{
+			"kubernetes.container_name.keyword",
+			"k8s.container.name.keyword",
+			"container.name.keyword",
+			"container_name.keyword",
+		}
 	case FacetCluster:
 		return []string{
 			"openshift.labels.cluster.keyword",
@@ -821,7 +828,7 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 // query string, anchored to start-of-string, whitespace, or an opening
 // paren so we don't rewrite a colon that's part of a value.
 var shorthandRe = regexp.MustCompile(
-	`(?i)(^|[\s(])(level|severity|service|trace|trace_id|traceid|span|span_id|spanid|message|body|pod|namespace|cluster|host):("[^"]+"|\S+)`)
+	`(?i)(^|[\s(])(level|severity|service|trace|trace_id|traceid|span|span_id|spanid|message|body|pod|container|namespace|cluster|host):("[^"]+"|\S+)`)
 
 // expandShorthand rewrites common short field names to multi-shape
 // OR groups so the same query works against any shipping pipeline.
@@ -845,6 +852,7 @@ func (s *ESStore) expandShorthand(q string) string {
 		"message":   {s.fields.Body, "message", "Body", "body", "log.message"},
 		"body":      {s.fields.Body, "message", "Body", "body", "log.message"},
 		"pod":       {"kubernetes.pod_name", "kubernetes.pod.name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
+		"container": {"kubernetes.container_name", "k8s.container.name", "container.name", "container_name", "container"},
 		"namespace": {"kubernetes.namespace_name", "kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
 		"cluster":   {"openshift.labels.cluster", "openshift.cluster.name", "kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "kubernetes.cluster_name", "cluster"},
 		"host":      {"host.name", "host.hostname", "resource.host.name", "hostname", "host"},

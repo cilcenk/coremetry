@@ -263,6 +263,12 @@ func facetCHExpr(f FacetField) string {
 			resource_attributes['k8s.pod.name']        != '', resource_attributes['k8s.pod.name'],
 			resource_attributes['kubernetes.pod.name'] != '', resource_attributes['kubernetes.pod.name'],
 			resource_attributes['pod_name'])`
+	case FacetContainer:
+		return `multiIf(
+			resource_attributes['kubernetes.container_name'] != '', resource_attributes['kubernetes.container_name'],
+			resource_attributes['k8s.container.name']        != '', resource_attributes['k8s.container.name'],
+			resource_attributes['container.name']            != '', resource_attributes['container.name'],
+			resource_attributes['container_name'])`
 	case FacetCluster:
 		return `multiIf(
 			resource_attributes['openshift.labels.cluster'] != '', resource_attributes['openshift.labels.cluster'],

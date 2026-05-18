@@ -1,0 +1,43 @@
+# Grafana Tempo — monolithic single-binary config for local POC.
+# Local-disk storage (no S3) keeps the demo zero-dep. Plenty for
+# testing the Coremetry fallback path; switch to s3/gcs backend
+# for any realistic deployment.
+
+server:
+  http_listen_port: 3200          # /api/traces, /ready, /metrics
+  grpc_listen_port: 9095          # OTLP gRPC ingest
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  trace_idle_period: 10s
+  max_block_duration: 1m
+
+compactor:
+  compaction:
+    block_retention: 24h          # local POC — keep a day of traces
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+# Single-tenant mode — no X-Scope-OrgID required on reads.
+# Coremetry's Tempo client can leave OrgID empty.
+multitenancy_enabled: false
+
+# Limits — generous for a POC, tune for real workloads.
+overrides:
+  defaults:
+    ingestion:
+      max_traces_per_user: 50000

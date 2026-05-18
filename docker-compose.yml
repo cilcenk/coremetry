@@ -193,6 +193,30 @@ services:
       retries: 30
     restart: unless-stopped
 
+  # ── Grafana Tempo (monolithic, local-disk, POC fallback target) ────────────
+  # Single-binary Tempo so an operator can exercise the
+  # Settings → Tempo backend fallback locally. The OTel
+  # collector below tees traces to Tempo at 100% while feeding
+  # Coremetry through a probabilistic sampler (default 30%) so
+  # ~70% of trace IDs end up Tempo-only — pasting one of those
+  # IDs into /trace exercises the v0.5.208 fallback path.
+  #
+  # Storage: local disk, 24h retention. Fine for POC, swap to
+  # backend: s3/gcs in tempo-config.yaml for real deployments.
+  #
+  # In-cluster URL for the Coremetry Tempo client (Settings →
+  # Tempo backend): http://tempo:3200
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: coremetry-tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # query API + UI
+    restart: unless-stopped
+
   # OpenTelemetry Collector — apps send here, collector forwards to coremetry.
   # Standard OTLP ports (4317/4318) are exposed on the host as 14317/14318
   # so they don't clash with coremetry's direct ports.
@@ -294,6 +318,81 @@ services:
       - coremetry
     restart: unless-stopped
 
+  # ── JBoss demo (WildFly + JFR + OTel javaagent) ─────────────────────────────
+  # Jakarta EE 10 WAR deployed on WildFly. Same auto-instrumentation
+  # pattern as java-demo, swapped onto a JBoss-family runtime so an
+  # operator can see what their Undertow / RESTEasy traces look like
+  # without standing one up themselves. Three pillars:
+  #
+  #   1. OTel javaagent — traces, metrics, logs, all zero-code. Covers
+  #      Undertow HTTP server, RESTEasy JAX-RS, JDK HttpClient (used by
+  #      the self-driving LoadDriver inside the WAR), JUL logging.
+  #
+  #   2. -XX:StartFlightRecording — JVM's native JFR streamed to a
+  #      ring file in /opt/jfr. Continuous, capped at 128M / 10min.
+  #      An operator can `docker cp coremetry-jboss-demo:/opt/jfr/recording.jfr .`
+  #      and open it in JDK Mission Control if they want to dig in.
+  #
+  #   3. Pyroscope agent (JFR format) + Coremetry profile-pusher
+  #      sidecar — push profiling data to both the Pyroscope UI and
+  #      Coremetry's /v1/profiles endpoint.
+  #
+  # The WAR includes an @Startup singleton (LoadDriver) that fires
+  # ~2 rps against its own endpoints. No external traffic generator
+  # needed; just `docker compose --profile demo up`.
+  jboss-demo:
+    build:
+      context: ./jboss-demo
+    container_name: coremetry-jboss-demo
+    environment:
+      OTEL_SERVICE_NAME: jboss-demo
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=demo,host.name=jboss-demo-1,service.version=0.1.0,k8s.cluster.name=prod-eu-west,k8s.namespace.name=demo,jvm.runtime=wildfly-34"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_INSTRUMENTATION_JAVA_UTIL_LOGGING_ENABLED: "true"
+      OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_ENABLED: "true"
+      OTEL_METRIC_EXPORT_INTERVAL: "10000"
+      OTEL_PROPAGATORS: "tracecontext,baggage"
+      # OTel agent's default `simple` log mode writes its own
+      # startup banner via JUL — that forces the JVM to install
+      # the default LogManager before WildFly can swap in
+      # jboss-logmanager, which fails the logging subsystem boot
+      # (WFLYLOG0078). Suppressing the agent's banner lets
+      # WildFly own JUL. Application-side trace + log emission
+      # still works because OTel's logback/JUL appenders are
+      # installed at runtime, not at premain.
+      OTEL_JAVAAGENT_LOGGING: "none"
+      # Pyroscope continuous profiling (JFR format under the hood).
+      PYROSCOPE_APPLICATION_NAME: "jboss-demo"
+      PYROSCOPE_SERVER_ADDRESS: "http://pyroscope:4040"
+      PYROSCOPE_FORMAT: "jfr"
+      PYROSCOPE_PROFILING_INTERVAL: "10s"
+      # Pyroscope tag keys are restricted to [a-zA-Z_][a-zA-Z0-9_]*
+      # — dotted OTel-style keys (`deployment.environment`) get
+      # rejected with 400 every push. Use underscore-flattened
+      # names here; the OTEL_RESOURCE_ATTRIBUTES above still emits
+      # the dotted ECS form to the OTel collector for traces.
+      PYROSCOPE_LABELS: "service_name=jboss-demo,deployment_environment=demo"
+      # Coremetry profile-pusher sidecar (independent of Pyroscope).
+      COREMETRY_URL: "http://coremetry:8088"
+      PROFILE_INTERVAL_SEC: "15"
+      PROFILE_WINDOW_SEC: "10"
+      PROFILE_ENGINE: wall
+      # Self-driving traffic — 0 disables the LoadDriver and the WAR
+      # only serves external calls. 2 rps is enough to populate
+      # Coremetry without burning a laptop.
+      JBOSS_DEMO_RPS: "2"
+    ports:
+      - "8081:8080"   # JBoss HTTP — avoids clashing with java-demo on 8080
+    depends_on:
+      - otel-collector
+      - coremetry
+    restart: unless-stopped
+    profiles: ["demo", "jboss"]
+
   # ── Multi-service traffic generator (8 services, real OTLP) ─────────────────
   # Emits realistic cross-service traces over OTLP HTTP — frontend →
   # api-gateway → (product-service / order-service → payment-service /
@@ -312,3 +411,4 @@ services:
 volumes:
   clickhouse-data:
   grafana-data:
+  tempo-data:

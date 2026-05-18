@@ -1,10 +1,15 @@
 # OpenTelemetry Collector configuration for Coremetry.
 #
-# Pipeline:
+# Pipelines:
 #   apps  ──▶ otel-collector (OTLP gRPC :4317 / HTTP :4318)
-#         ──▶ batch + memory_limiter
-#         ─┬─▶ otlp/coremetry (traces + metrics; logs too, for fallback)
-#          └─▶ elasticsearch  (logs only — Coremetry's UI reads from ES)
+#         ─┬─▶ otlp/coremetry  (traces sampled 30% + metrics 100%
+#          │                   + logs 100% via ES exporter)
+#          ├─▶ otlp/tempo      (traces 100% — Coremetry's Tempo-backend
+#          │                   fallback reads from here when the 30%
+#          │                   sample missed a trace_id)
+#          └─▶ elasticsearch   (logs 100% — Coremetry's ES log
+#                              backend reads from here when
+#                              COREMETRY_LOGS_BACKEND=elasticsearch)
 
 receivers:
   otlp:
@@ -36,6 +41,16 @@ processors:
       - key: telemetry.processed_by
         value: otel-collector
         action: upsert
+
+  # Probabilistic sampler — drops traces by trace_id hash BEFORE
+  # the coremetry exporter. Tempo gets 100% (separate pipeline
+  # below), so trace IDs Coremetry drops are still resolvable
+  # via Settings → Tempo backend fallback on /trace?id=...
+  # 30% keeps a useful slice in Coremetry while leaving ~70%
+  # of trace IDs as Tempo-only — exactly the case the fallback
+  # is built for.
+  probabilistic_sampler/coremetry:
+    sampling_percentage: 30
 
 exporters:
   # Send everything to Coremetry over OTLP/gRPC (insecure inside the docker network).
@@ -74,6 +89,24 @@ exporters:
       max_interval: 30s
       max_requests: 5
 
+  # Tempo OTLP sink — receives 100% of traces (no sampler in
+  # the pipeline below). Coremetry's Settings → Tempo backend
+  # points at http://tempo:3200 to read these back when the
+  # 30% Coremetry slice missed a trace_id.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+
   # Useful for debugging — toggle verbosity to "detailed" to see payloads.
   debug:
     verbosity: basic
@@ -92,10 +125,19 @@ service:
     logs:
       level: info
   pipelines:
-    traces:
+    # Coremetry trace pipeline — sampled at 30% via
+    # probabilistic_sampler so the rest land Tempo-only and
+    # exercise the fallback.
+    traces/coremetry:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, probabilistic_sampler/coremetry, batch]
+      exporters:  [otlp/coremetry]
+    # Tempo trace pipeline — 100% retention. Same receivers,
+    # no sampler.
+    traces/tempo:
       receivers:  [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters:  [otlp/coremetry]
+      exporters:  [otlp/tempo]
     metrics:
       receivers:  [otlp]
       processors: [memory_limiter, resource, batch]

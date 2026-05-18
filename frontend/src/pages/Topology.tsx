@@ -1435,22 +1435,42 @@ function OpTopologySVG({ layers, edges, anchor }: {
   // with an accent border so the operator's eye lands on it.
   anchor?: string;
 }) {
-  const op_node_w = 200, op_node_h = 48, op_col_w = 280, op_row_h = 64;
-  const pos = new Map<string, { x: number; y: number }>();
-  layers.forEach((layer, hop) => layer.forEach((n, i) => pos.set(n.id, { x: hop * op_col_w, y: i * op_row_h })));
+  // v0.5.246 — node + layout dimensions now reuse the SAME
+  // constants as the Service topology view (NODE_W / NODE_H /
+  // COL_W / ROW_H). Visual parity = the operator can switch
+  // tabs without their eye recalibrating "small boxes here,
+  // big boxes there". Bigger boxes also leave room for the
+  // service + op two-line label + edge metadata.
   const maxRows = Math.max(1, ...layers.map(l => l.length));
-  const width = Math.max(1, layers.length) * op_col_w;
-  const height = maxRows * op_row_h + 20;
+  const totalHeight = maxRows * ROW_H;
+  // Vertical centring per column — when a column has fewer
+  // rows than the max, push it down so the diagram doesn't
+  // read as "top-heavy on column 0". Same trick the
+  // AggregateTopology service-detail panel uses (v0.5.222).
+  const colYOffset = layers.map(col =>
+    Math.floor((maxRows - col.length) * ROW_H / 2));
+  const pos = new Map<string, { x: number; y: number }>();
+  layers.forEach((layer, hop) => layer.forEach((n, i) =>
+    pos.set(n.id, { x: hop * COL_W, y: colYOffset[hop] + i * ROW_H })));
+  const width = Math.max(1, layers.length) * COL_W;
+  const height = totalHeight + 20;
   const maxCalls = Math.max(1, ...edges.map(e => Number(e.calls) || 0));
   const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+
+  // Threshold for showing inline call-count labels on edges:
+  // top third by call volume only, so a busy graph isn't
+  // overlaid with hundreds of tiny labels.
+  const sortedCalls = [...edges].map(e => Number(e.calls) || 0).sort((a, b) => b - a);
+  const callThreshold = sortedCalls[Math.floor(sortedCalls.length / 3)] ?? 0;
+
   return (
     <div style={{
-      overflow: 'auto', maxHeight: '60vh',
+      overflow: 'auto', maxHeight: '70vh',
       border: '1px solid var(--border)', borderRadius: 6,
       background: 'var(--bg2)', padding: 12, marginBottom: 16,
     }}>
-      <svg width={width} height={height}
-        viewBox={`-10 -10 ${width + 40} ${height + 40}`}
+      <svg width={width + 40} height={height + 40}
+        viewBox={`-20 -20 ${width + 40} ${height + 40}`}
         xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
         <defs>
           <marker id="op-arrow" viewBox="0 0 10 10" refX="9" refY="5"
@@ -1462,17 +1482,40 @@ function OpTopologySVG({ layers, edges, anchor }: {
           const src = pos.get(`${e.parentService}|${e.parentOp}`);
           const dst = pos.get(`${e.childService}|${e.childOp}`);
           if (!src || !dst) return null;
-          const x1 = src.x + op_node_w, y1 = src.y + op_node_h / 2;
-          const x2 = dst.x,             y2 = dst.y + op_node_h / 2;
+          const x1 = src.x + NODE_W, y1 = src.y + NODE_H / 2;
+          const x2 = dst.x,          y2 = dst.y + NODE_H / 2;
           const mx = (x1 + x2) / 2;
+          // 1-4px stroke width scaled to call volume. Same
+          // scale as the Service topology so the two views
+          // read identically.
           const sw = 1 + (Number(e.calls) / maxCalls) * 3;
+          const showLabel = Number(e.calls) >= callThreshold;
+          // Heuristic protocol tag from the parent op shape:
+          // HTTP-ish ops contain "/" or upper-case HTTP method
+          // prefix; others read as RPC. Cheap inference so we
+          // can colour-code edges without changing the
+          // backend TopologyEdge shape. Misses are visually
+          // harmless (fall through to neutral grey).
+          const proto = inferOpProtocol(e.parentOp, e.childOp);
+          const strokeColor = proto === 'http' ? '#4A90D9'
+                            : proto === 'rpc'  ? '#8A6FB5'
+                            : 'var(--text3)';
           return (
-            <path key={i}
-              d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-              stroke="var(--text3)" strokeWidth={sw} fill="none"
-              markerEnd="url(#op-arrow)" opacity={0.55}>
-              <title>{`${e.parentService}.${e.parentOp} → ${e.childService}.${e.childOp} · ${fmtNum(e.calls)} calls`}</title>
-            </path>
+            <g key={i}>
+              <path
+                d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+                stroke={strokeColor} strokeWidth={sw} fill="none"
+                markerEnd="url(#op-arrow)" opacity={0.65}>
+                <title>{`${e.parentService}.${e.parentOp} → ${e.childService}.${e.childOp}\n${fmtNum(e.calls)} calls in window`}</title>
+              </path>
+              {showLabel && (
+                <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4}
+                  fontSize={10} fill={strokeColor} textAnchor="middle"
+                  style={{ pointerEvents: 'none' }}>
+                  {fmtNum(Number(e.calls))}
+                </text>
+              )}
+            </g>
           );
         })}
         {layers.flatMap(layer => layer.map(n => {
@@ -1483,17 +1526,26 @@ function OpTopologySVG({ layers, edges, anchor }: {
           const strokeW = isAnchor ? 3 : 1.5;
           return (
             <g key={n.id} transform={`translate(${p.x}, ${p.y})`}>
-              <rect width={op_node_w} height={op_node_h} rx={6} ry={6}
+              {/* Anchor halo — same visual treatment the
+                  Service topology uses for the focused node so
+                  the operator's chosen root pops at a glance. */}
+              {isAnchor && (
+                <rect x={-4} y={-4} width={NODE_W + 8} height={NODE_H + 8}
+                  rx={10} ry={10} fill="none"
+                  stroke="var(--accent2)" strokeWidth={1}
+                  strokeDasharray="4 4" opacity={0.6} />
+              )}
+              <rect width={NODE_W} height={NODE_H} rx={8} ry={8}
                 fill={color} fillOpacity={isAnchor ? 0.28 : 0.16}
                 stroke={strokeColor} strokeWidth={strokeW}>
                 <title>{`${n.service}.${n.op}${isAnchor ? ' · focused' : ''}`}</title>
               </rect>
-              <text x={10} y={19} fontSize={12} fontWeight={600} fill="var(--text)">
-                {truncate(n.service, 26)}
+              <text x={12} y={22} fontSize={13} fontWeight={700} fill="var(--text)">
+                {truncate(n.service, 28)}
               </text>
-              <text x={10} y={36} fontSize={11} fill="var(--text3)"
+              <text x={12} y={42} fontSize={11} fill="var(--text3)"
                 fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace">
-                {truncate(n.op, 28)}
+                {truncate(n.op, 32)}
               </text>
             </g>
           );
@@ -1501,6 +1553,21 @@ function OpTopologySVG({ layers, edges, anchor }: {
       </svg>
     </div>
   );
+}
+
+// inferOpProtocol — best-effort protocol tag from operation
+// names. HTTP ops typically contain a "/" (path) or start
+// with an HTTP method like "GET ", "POST "; everything else
+// reads as RPC / internal. Used to colour-code edges in the
+// operation view since the TopologyEdge shape doesn't carry
+// an explicit protocol field. False matches just fall back
+// to neutral grey — harmless.
+function inferOpProtocol(parentOp: string, childOp: string): 'http' | 'rpc' | 'unknown' {
+  const o = (childOp || parentOp).trim();
+  if (/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s/i.test(o)) return 'http';
+  if (o.includes('/')) return 'http';
+  if (o.includes('.') && /^[a-z]+\.[A-Z]/.test(o)) return 'rpc'; // pkg.Method style
+  return 'unknown';
 }
 
 function EdgeDetailPanel({ edge, onClose, range, simplified }: {

@@ -391,6 +391,10 @@ func main() {
 	}
 	log.Printf("[logs] read backend: %s", logsStore.Backend())
 
+	// Wire the log backend into the evaluator so saved-search
+	// log alerts (rules with LogQuery != "") can count matches.
+	evalr.SetLogs(logsStore)
+
 	// ── Anomaly recorder (v0.5.241 — needs logsStore) ────────────────────────
 	// Persists log-pattern + trace-op detections into anomaly_events.
 	// log-pattern detector runs through the logstore abstraction so

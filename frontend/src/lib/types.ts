@@ -938,6 +938,12 @@ export interface AlertRule {
   forSec?: number;       // sustained breach gate
   minSamples?: number;   // sample-count floor
   cooldownSec?: number;  // post-resolution silence
+  // Saved-search log alert (v0.5.242). When populated, the
+  // evaluator counts log matches via the logstore in this
+  // window and compares to threshold via comparator — instead
+  // of running the span-derived Metric path. Operator-defined
+  // anomaly coverage to complement the curated regex detector.
+  logQuery?: string;
   createdAt: number;
 }
 

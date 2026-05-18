@@ -17,6 +17,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/notify"
 )
 
@@ -24,6 +25,7 @@ const lockKey = "coremetry:lock:evaluator"
 
 type Evaluator struct {
 	store    *chstore.Store
+	logs     logstore.Store // v0.5.242 — drives the saved-search log alert path
 	interval time.Duration
 	lock     cache.Lock
 	notifier *notify.Notifier
@@ -65,6 +67,13 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 		lastResolved: make(map[breachKey]time.Time),
 	}
 }
+
+// SetLogs wires the log backend so the saved-search alert path
+// (rules with LogQuery != "") can count matches via logstore.
+// Called from main() once buildLogStore has resolved the
+// backend — keeps the New() constructor lean + avoids
+// reordering boot-time wiring around the evaluator.
+func (e *Evaluator) SetLogs(logs logstore.Store) { e.logs = logs }
 
 // Start runs the evaluation loop until ctx is cancelled. Built-in rules
 // are seeded by every replica — that's safe (UpsertAlertRule is idempotent
@@ -282,6 +291,16 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 }
 
 func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string) {
+	// Saved-search log alerts (v0.5.242) bypass the per-service
+	// span-metric path entirely. The KQL itself carries any
+	// service / pod / level filter the operator wants; the
+	// evaluator just counts matches in the window and compares
+	// to the threshold. We special-case BEFORE the service
+	// guard because log_query rules use service="".
+	if r.LogQuery != "" {
+		e.evaluateLogQuery(ctx, r)
+		return
+	}
 	if service == "" {
 		return
 	}
@@ -429,6 +448,119 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 			e.lastResolved[key] = time.Now()
 			e.breachMu.Unlock()
 			log.Printf("[evaluator] PROBLEM RESOLVED: %s · %s", service, r.Metric)
+		}
+	}
+}
+
+// evaluateLogQuery handles a saved-search alert (v0.5.242). The
+// rule's LogQuery is a KQL clause; we count matches in the
+// window via the logstore and compare to Threshold. Open /
+// resolve mirrors the metric path so the existing
+// notification + incident-attach + cooldown machinery still
+// applies. Service is left empty on the resulting Problem —
+// the KQL itself can scope to one service via service.name:"X".
+func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
+	if e.logs == nil {
+		log.Printf("[evaluator] log_query %s: logs backend not wired", r.ID)
+		return
+	}
+	window := time.Duration(r.WindowSec) * time.Second
+	if window == 0 {
+		window = time.Minute
+	}
+	now := time.Now()
+	page, err := e.logs.Search(ctx, logstore.Filter{
+		Search: r.LogQuery,
+		From:   now.Add(-window),
+		To:     now,
+		Limit:  1, // hits the cap but we only need .Total
+	})
+	if err != nil {
+		log.Printf("[evaluator] log_query measure %s: %v", r.ID, err)
+		return
+	}
+	value := float64(page.Total)
+	breached := compare(value, r.Comparator, r.Threshold)
+
+	// Sustained-breach + cooldown machinery same as the metric
+	// path — key on (rule, "" service) so the maps stay
+	// segregated from per-service rules.
+	key := breachKey{RuleID: r.ID, Service: ""}
+	if breached && r.ForSec > 0 {
+		e.breachMu.Lock()
+		first, seen := e.breachSince[key]
+		if !seen {
+			e.breachSince[key] = now
+			e.breachMu.Unlock()
+			return
+		}
+		e.breachMu.Unlock()
+		if now.Sub(first) < time.Duration(r.ForSec)*time.Second {
+			return
+		}
+	}
+	if !breached {
+		e.breachMu.Lock()
+		delete(e.breachSince, key)
+		e.breachMu.Unlock()
+	}
+
+	open, err := e.store.FindOpenProblem(ctx, r.ID, "")
+	hasOpen := err == nil && open != nil && open.ID != ""
+
+	switch {
+	case breached && !hasOpen:
+		if r.CooldownSec > 0 {
+			e.breachMu.Lock()
+			rt, seen := e.lastResolved[key]
+			e.breachMu.Unlock()
+			if seen && now.Sub(rt) < time.Duration(r.CooldownSec)*time.Second {
+				return
+			}
+		}
+		p := chstore.Problem{
+			ID:          newID(),
+			RuleID:      r.ID,
+			RuleName:    r.Name,
+			Severity:    r.Severity,
+			Service:     "",
+			Metric:      "log_query",
+			Value:       value,
+			Threshold:   r.Threshold,
+			Status:      "open",
+			Description: fmt.Sprintf("log_query matched %d in last %s (threshold %s %.0f) — query: %s",
+				page.Total, window, r.Comparator, r.Threshold, r.LogQuery),
+			StartedAt:   now.UnixNano(),
+		}
+		if err := e.store.UpsertProblem(ctx, p); err != nil {
+			log.Printf("[evaluator] open log-query problem: %v", err)
+			return
+		}
+		log.Printf("[evaluator] PROBLEM OPENED (log_query): %s = %d (threshold %s %.0f)",
+			r.Name, page.Total, r.Comparator, r.Threshold)
+		if _, err := e.store.AttachProblemToIncident(ctx, p); err != nil {
+			log.Printf("[evaluator] log-query incident attach: %v", err)
+		}
+		if e.notifier != nil {
+			go e.notifier.SendProblemAlert(context.Background(), p)
+		}
+	case breached && hasOpen:
+		open.Value = value
+		if err := e.store.UpsertProblem(ctx, *open); err != nil {
+			log.Printf("[evaluator] refresh log-query problem: %v", err)
+		}
+	case !breached && hasOpen:
+		resolvedAt := now.UnixNano()
+		open.Status = "resolved"
+		open.ResolvedAt = &resolvedAt
+		open.Value = value
+		if err := e.store.UpsertProblem(ctx, *open); err != nil {
+			log.Printf("[evaluator] resolve log-query problem: %v", err)
+		} else {
+			e.breachMu.Lock()
+			e.lastResolved[key] = now
+			e.breachMu.Unlock()
+			log.Printf("[evaluator] PROBLEM RESOLVED (log_query): %s", r.Name)
 		}
 	}
 }

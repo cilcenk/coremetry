@@ -165,6 +165,17 @@ function LogsInner() {
   // already documented in the placeholder).
   const [fields, setFields] = useState<string[]>([]);
   const [showFieldsHint, setShowFieldsHint] = useState(false);
+  // Save-as-alert modal state (v0.5.242). null = closed; an
+  // object = open with this draft.
+  const [alertDraft, setAlertDraft] = useState<{
+    name: string;
+    threshold: number;
+    windowSec: number;
+    severity: string;
+  } | null>(null);
+  const [alertSaving, setAlertSaving] = useState(false);
+  const [alertMsg, setAlertMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
   // Kibana deep-link config (v0.5.236). Loaded once on mount;
   // when disabled or unconfigured, buildKibanaURL returns null
   // and the button doesn't render.
@@ -329,6 +340,22 @@ function LogsInner() {
           </select>
           <button onClick={apply}>Search</button>
           <button className="sec" onClick={reset}>Reset</button>
+          {/* Save as alert (v0.5.242) — opens a modal that turns
+              the current KQL into a saved-search alert rule
+              ("page me when this query returns > N matches in
+              X minutes"). Disabled when the search box is empty
+              — saving "alert on everything" is rarely the
+              operator's intent. */}
+          {draft.search.trim() !== '' && (
+            <button className="sec"
+              onClick={() => setAlertDraft({
+                name: '', threshold: 10, windowSec: 60, severity: 'warning',
+              })}
+              title="Save this query as an alert rule"
+              style={{ fontSize: 12 }}>
+              🔔 Save as alert
+            </button>
+          )}
           <button className={live ? 'live-on' : 'sec'}
             onClick={() => setLive(v => !v)}
             style={{ marginLeft: 'auto' }}
@@ -451,7 +478,130 @@ function LogsInner() {
           </>
         )}
       </div>
+      {alertDraft && (
+        <SaveAsAlertModal
+          query={filter.search}
+          draft={alertDraft}
+          onChange={setAlertDraft}
+          saving={alertSaving}
+          msg={alertMsg}
+          onClose={() => { setAlertDraft(null); setAlertMsg(null); }}
+          onSave={async () => {
+            if (!alertDraft) return;
+            setAlertSaving(true); setAlertMsg(null);
+            try {
+              await api.createAlertRule({
+                name: alertDraft.name || `Log alert: ${filter.search.slice(0, 40)}`,
+                service: '',
+                metric: 'log_query',
+                comparator: '>',
+                threshold: alertDraft.threshold,
+                windowSec: alertDraft.windowSec,
+                severity: alertDraft.severity,
+                enabled: true,
+                logQuery: filter.search,
+              });
+              setAlertMsg({ kind: 'ok', text: 'Saved — rule is now evaluating on every tick.' });
+              setTimeout(() => { setAlertDraft(null); setAlertMsg(null); }, 1200);
+            } catch (err) {
+              setAlertMsg({ kind: 'err',
+                text: err instanceof Error ? err.message : 'Save failed' });
+            } finally {
+              setAlertSaving(false);
+            }
+          }} />
+      )}
     </>
+  );
+}
+
+// SaveAsAlertModal — small overlay that turns the current /logs
+// KQL into a saved-search alert rule (v0.5.242). Operator picks
+// a threshold (count > N), window (seconds), severity. Channels
+// come from the existing notifier wiring on the backend so we
+// don't ask the operator to re-pick them here — alerts go to the
+// same channels as every other firing rule.
+function SaveAsAlertModal({
+  query, draft, onChange, saving, msg, onClose, onSave,
+}: {
+  query: string;
+  draft: { name: string; threshold: number; windowSec: number; severity: string };
+  onChange: (next: typeof draft) => void;
+  saving: boolean;
+  msg: { kind: 'ok' | 'err'; text: string } | null;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+      display: 'grid', placeItems: 'center', zIndex: 200,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 460, padding: 20, borderRadius: 8,
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
+          Save as alert rule
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
+          Page when this query returns more than the threshold inside the
+          chosen window. Rule evaluates on every evaluator tick (default 1m).
+        </div>
+        <label style={{ display: 'block', marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Rule name</div>
+          <input value={draft.name}
+            onChange={e => onChange({ ...draft, name: e.target.value })}
+            placeholder={`Log alert: ${query.slice(0, 30)}…`}
+            style={{ width: '100%' }} />
+        </label>
+        <label style={{ display: 'block', marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>KQL clause</div>
+          <pre style={{
+            margin: 0, padding: 8, borderRadius: 4, fontSize: 12,
+            background: 'var(--bg0)', border: '1px solid var(--border)',
+            fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          }}>{query}</pre>
+        </label>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 12 }}>
+          <label>
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Threshold (matches &gt;)</div>
+            <input type="number" min={0} value={draft.threshold}
+              onChange={e => onChange({ ...draft, threshold: Number(e.target.value) || 0 })}
+              style={{ width: '100%' }} />
+          </label>
+          <label>
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Window (sec)</div>
+            <input type="number" min={10} value={draft.windowSec}
+              onChange={e => onChange({ ...draft, windowSec: Number(e.target.value) || 60 })}
+              style={{ width: '100%' }} />
+          </label>
+          <label>
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Severity</div>
+            <select value={draft.severity}
+              onChange={e => onChange({ ...draft, severity: e.target.value })}
+              style={{ width: '100%' }}>
+              <option value="info">info</option>
+              <option value="warning">warning</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+        </div>
+        {msg && (
+          <div style={{ marginBottom: 10, fontSize: 12,
+            color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)' }}>
+            {msg.text}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="sec" onClick={onClose} disabled={saving}>Cancel</button>
+          <button onClick={onSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save rule'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -461,6 +461,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			for_sec      UInt32       DEFAULT 0,
 			min_samples  UInt32       DEFAULT 0,
 			cooldown_sec UInt32       DEFAULT 0,
+			log_query    String       DEFAULT '',     -- saved-search log alert (v0.5.242)
 			created_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -886,6 +887,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// opens within N seconds of the last resolution —
 		// kills threshold-jitter flapping at the boundary.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS cooldown_sec UInt32 DEFAULT 0`,
+		// v0.5.242 — saved-search log alerts. Empty for the
+		// existing span-metric rules; populated for "operator-
+		// defined KQL → rate-threshold" rules. Evaluator
+		// switches paths based on len(log_query) > 0.
+		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS log_query String DEFAULT ''`,
 		// v0.5.209 — triage assignee. Populated from service
 		// metadata's owner_team when the problem opens, then
 		// overridable by an operator claim via PATCH

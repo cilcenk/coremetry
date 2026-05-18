@@ -54,8 +54,13 @@ processors:
 
 exporters:
   # Send everything to Coremetry over OTLP/gRPC (insecure inside the docker network).
+  # `dns:///` prefix forces the gRPC DNS resolver to re-resolve the target on
+  # connection failures — without it, the collector caches Coremetry's container
+  # IP from the first connection and keeps trying it after a `make docker-up`
+  # rebuild assigns a new IP, silently dropping ~30min of metrics until manual
+  # `docker restart coremetry-otel-collector`.
   otlp/coremetry:
-    endpoint: coremetry:4317
+    endpoint: dns:///coremetry:4317
     tls:
       insecure: true
     sending_queue:

@@ -2153,18 +2153,13 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		http.Error(w, "trace id required", http.StatusBadRequest); return
 	}
-	// 5min cache. A trace is immutable once stored — the only thing
-	// that could change is late-arriving spans within the ingest
-	// window. The /trace?id= page is a deep-link that often gets
-	// reopened; this collapses the repeated full-trace span fetches.
-	//
-	// `source` distinguishes a CH-resident trace from a Tempo
-	// fallback so the frontend can banner-tag "this came from
-	// Tempo — Coremetry sampled it out". Cached under the same key
-	// either way; if CH eventually catches the trace, the 5min
-	// TTL bounds how long the operator sees the stale Tempo label.
+	// 30s cache. A trace is immutable once stored, but a
+	// just-flipped Tempo backend setting should rescue stale
+	// "not found" entries within a short window — hence the
+	// short TTL. `source` distinguishes CH-resident vs Tempo-
+	// fallback so the frontend can banner-tag the result.
 	key := "trace:" + id
-	s.serveCached(w, r, key, 5*time.Minute, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		spans, err := s.store.GetTrace(r.Context(), id)
 		if err != nil {
 			return nil, err
@@ -2175,7 +2170,7 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 		// CH miss → Tempo fallback. Skip cleanly when Tempo isn't
 		// configured. Errors from Tempo don't fail the whole
 		// request — the operator gets the same empty result they
-		// would have without the fallback, and an error log line
+		// would have without the fallback, and a [tempo] log line
 		// fingers the misconfig.
 		if s.tempo != nil && s.tempo.Configured() {
 			tspans, terr := s.tempo.LookupTrace(r.Context(), id)

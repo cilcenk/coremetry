@@ -292,18 +292,51 @@ type otlpBatch struct {
 }
 
 type otlpSpan struct {
-	TraceID           string     `json:"traceId"`
-	SpanID            string     `json:"spanId"`
-	ParentSpanID      string     `json:"parentSpanId"`
-	Name              string     `json:"name"`
-	Kind              int        `json:"kind"`
-	StartTimeUnixNano string     `json:"startTimeUnixNano"`
-	EndTimeUnixNano   string     `json:"endTimeUnixNano"`
-	Attributes        []otlpAttr `json:"attributes"`
+	TraceID           string      `json:"traceId"`
+	SpanID            string      `json:"spanId"`
+	ParentSpanID      string      `json:"parentSpanId"`
+	Name              string      `json:"name"`
+	// Kind is encoded as either an int (Tempo gRPC-to-JSON path)
+	// OR the canonical OTLP enum string ("SPAN_KIND_SERVER") —
+	// real-world Tempo deployments emit the string form. Same
+	// shape applies to Status.Code. otlpEnum unmarshals both
+	// without forcing a custom UnmarshalJSON on otlpSpan itself.
+	Kind              otlpEnum    `json:"kind"`
+	StartTimeUnixNano string      `json:"startTimeUnixNano"`
+	EndTimeUnixNano   string      `json:"endTimeUnixNano"`
+	Attributes        []otlpAttr  `json:"attributes"`
 	Status            struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Code    otlpEnum `json:"code"`
+		Message string   `json:"message"`
 	} `json:"status"`
+}
+
+// otlpEnum stores an OTLP proto enum value submitted as either
+// its int code or its string name (the JSON pb mapping uses
+// strings; old proto-to-JSON paths use ints). Holds both so
+// downstream code can pick whichever form it prefers.
+type otlpEnum struct {
+	Int int
+	Str string
+}
+
+func (e *otlpEnum) UnmarshalJSON(data []byte) error {
+	// Try int first — most compact + cheapest path.
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		e.Int = n
+		return nil
+	}
+	// Fall back to string. Surfaces "SPAN_KIND_SERVER" /
+	// "STATUS_CODE_OK" etc.
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		e.Str = s
+		return nil
+	}
+	// Unknown shape — leave zero. Caller falls back to
+	// the default mapping ("internal" / "unset").
+	return nil
 }
 
 type otlpAttr struct {
@@ -340,6 +373,53 @@ func (a otlpAttr) String() string {
 // string convention. 0 = unspecified → "internal" (the safe
 // default; matches Coremetry's own ingest path).
 var kindMap = []string{"internal", "internal", "server", "client", "producer", "consumer"}
+
+// mapSpanKind handles both int + string OTLP encodings. Real
+// Tempo deployments emit the enum NAME ("SPAN_KIND_SERVER")
+// rather than the int — older proto-to-JSON paths emit the int.
+// Defaults to "internal" so unknown shapes don't get dropped.
+func mapSpanKind(k otlpEnum) string {
+	if k.Str != "" {
+		switch k.Str {
+		case "SPAN_KIND_SERVER":
+			return "server"
+		case "SPAN_KIND_CLIENT":
+			return "client"
+		case "SPAN_KIND_PRODUCER":
+			return "producer"
+		case "SPAN_KIND_CONSUMER":
+			return "consumer"
+		case "SPAN_KIND_INTERNAL", "SPAN_KIND_UNSPECIFIED":
+			return "internal"
+		}
+	}
+	if k.Int >= 0 && k.Int < len(kindMap) {
+		return kindMap[k.Int]
+	}
+	return "internal"
+}
+
+// mapStatusCode mirrors mapSpanKind for the OTLP status code
+// enum. STATUS_CODE_UNSET (default) → "unset".
+func mapStatusCode(c otlpEnum) string {
+	if c.Str != "" {
+		switch c.Str {
+		case "STATUS_CODE_OK":
+			return "ok"
+		case "STATUS_CODE_ERROR":
+			return "error"
+		case "STATUS_CODE_UNSET":
+			return "unset"
+		}
+	}
+	switch c.Int {
+	case 1:
+		return "ok"
+	case 2:
+		return "error"
+	}
+	return "unset"
+}
 
 func parseOTLPTrace(data []byte) ([]chstore.SpanRow, error) {
 	var t otlpTrace
@@ -387,17 +467,8 @@ func parseOTLPTrace(data []byte) ([]chstore.SpanRow, error) {
 				}
 				start, _ := strconv.ParseInt(sp.StartTimeUnixNano, 10, 64)
 				end, _ := strconv.ParseInt(sp.EndTimeUnixNano, 10, 64)
-				kind := "internal"
-				if sp.Kind >= 0 && sp.Kind < len(kindMap) {
-					kind = kindMap[sp.Kind]
-				}
-				statusCode := "unset"
-				switch sp.Status.Code {
-				case 1:
-					statusCode = "ok"
-				case 2:
-					statusCode = "error"
-				}
+				kind := mapSpanKind(sp.Kind)
+				statusCode := mapStatusCode(sp.Status.Code)
 				row := chstore.SpanRow{
 					TraceID:            decodeID(sp.TraceID),
 					SpanID:             decodeID(sp.SpanID),

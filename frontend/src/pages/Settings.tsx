@@ -2796,6 +2796,7 @@ function TempoTab() {
   const [orgId, setOrgId] = useState('');
   const [token, setToken] = useState('');
   const [hasToken, setHasToken] = useState(false);
+  const [insecureSkipVerify, setInsecureSkipVerify] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -2807,6 +2808,7 @@ function TempoTab() {
       setUsername(s.username || '');
       setOrgId(s.orgId || '');
       setHasToken(s.hasToken);
+      setInsecureSkipVerify(!!s.insecureSkipVerify);
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);
@@ -2818,7 +2820,7 @@ function TempoTab() {
       const next = await api.putTempoSettings({
         enabled, baseUrl, authType,
         token, // empty preserved on the server side
-        username, orgId,
+        username, orgId, insecureSkipVerify,
       });
       setHasToken(next.hasToken);
       setToken('');
@@ -2845,7 +2847,7 @@ function TempoTab() {
       // for "stop using my creds".
       const next = await api.putTempoSettings({
         enabled, baseUrl, authType: 'none',
-        username, orgId,
+        username, orgId, insecureSkipVerify,
       });
       setAuthType('none');
       setHasToken(next.hasToken);
@@ -2948,6 +2950,17 @@ function TempoTab() {
             onChange={e => setOrgId(e.target.value)}
             placeholder="leave empty for single-tenant"
             style={{ width: '100%' }} />
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <input type="checkbox" checked={insecureSkipVerify}
+            onChange={e => setInsecureSkipVerify(e.target.checked)} />
+          <span style={{ fontSize: 13 }}>
+            Skip TLS verification
+            <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+              (self-signed certs / POC only)
+            </span>
+          </span>
         </label>
 
         {msg && (

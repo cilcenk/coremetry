@@ -35,12 +35,13 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Enabled  bool   `json:"enabled"`
-		BaseURL  string `json:"baseUrl"`
-		AuthType string `json:"authType"`
-		Token    string `json:"token"`
-		Username string `json:"username"`
-		OrgID    string `json:"orgId"`
+		Enabled            bool   `json:"enabled"`
+		BaseURL            string `json:"baseUrl"`
+		AuthType           string `json:"authType"`
+		Token              string `json:"token"`
+		Username           string `json:"username"`
+		OrgID              string `json:"orgId"`
+		InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -69,12 +70,13 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 	// empty `token` = keep prior; non-empty = replace.
 	cur := s.tempo.CurrentSettings()
 	cfg := tempo.Settings{
-		Enabled:  in.Enabled,
-		BaseURL:  in.BaseURL,
-		AuthType: in.AuthType,
-		Token:    in.Token,
-		Username: in.Username,
-		OrgID:    in.OrgID,
+		Enabled:            in.Enabled,
+		BaseURL:            in.BaseURL,
+		AuthType:           in.AuthType,
+		Token:              in.Token,
+		Username:           in.Username,
+		OrgID:              in.OrgID,
+		InsecureSkipVerify: in.InsecureSkipVerify,
 	}
 	if cfg.Token == "" {
 		cfg.Token = cur.Token
@@ -88,11 +90,12 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 	// the only secret-adjacent bit and it's already part of the
 	// GET response shape.
 	details, _ := json.Marshal(map[string]any{
-		"enabled":  snap.Enabled,
-		"baseUrl":  snap.BaseURL,
-		"authType": snap.AuthType,
-		"hasToken": snap.HasToken,
-		"orgId":    snap.OrgID,
+		"enabled":            snap.Enabled,
+		"baseUrl":            snap.BaseURL,
+		"authType":           snap.AuthType,
+		"hasToken":           snap.HasToken,
+		"orgId":              snap.OrgID,
+		"insecureSkipVerify": snap.InsecureSkipVerify,
 	})
 	s.audit(r, "settings.tempo.update", "settings", "tempo", string(details))
 	writeJSON(w, snap)

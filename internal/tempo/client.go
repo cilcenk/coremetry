@@ -11,6 +11,7 @@ package tempo
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -44,17 +45,23 @@ type Settings struct {
 	// OrgID — X-Scope-OrgID header for multi-tenant Tempo (Grafana
 	// Cloud requires this; self-hosted single-tenant ignores it).
 	OrgID    string `json:"orgId,omitempty"`
+	// InsecureSkipVerify disables TLS certificate verification on
+	// the HTTPS path. Useful for self-hosted Tempo behind a
+	// self-signed cert during a POC; left off by default since
+	// production deployments should fix their PKI instead.
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 }
 
 // Snapshot is the version returned by GET /api/settings/tempo.
 // Mirrors Settings but masks the token + adds a HasToken signal.
 type Snapshot struct {
-	Enabled  bool   `json:"enabled"`
-	BaseURL  string `json:"baseUrl"`
-	AuthType string `json:"authType,omitempty"`
-	HasToken bool   `json:"hasToken"`
-	Username string `json:"username,omitempty"`
-	OrgID    string `json:"orgId,omitempty"`
+	Enabled            bool   `json:"enabled"`
+	BaseURL            string `json:"baseUrl"`
+	AuthType           string `json:"authType,omitempty"`
+	HasToken           bool   `json:"hasToken"`
+	Username           string `json:"username,omitempty"`
+	OrgID              string `json:"orgId,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
 }
 
 // Service is the per-process Tempo client. Holds the live config
@@ -68,7 +75,7 @@ type Service struct {
 
 func New() *Service {
 	return &Service{
-		cli: &http.Client{Timeout: 30 * time.Second},
+		cli: newTempoHTTPClient(false),
 	}
 }
 
@@ -126,13 +133,33 @@ func (s *Service) SavePersisted(ctx context.Context, store settingsStore, cfg Se
 
 // Configure swaps the live config. Called by SavePersisted +
 // LoadPersisted; safe for concurrent reads via the RWMutex.
+// Also rebuilds the HTTP client when the TLS-verify flag flips
+// so an admin toggling "Skip TLS verify" takes effect without
+// restarting the process.
 func (s *Service) Configure(cfg Settings) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	prevInsecure := s.cfg.InsecureSkipVerify
 	s.cfg = cfg
+	if s.cli == nil || prevInsecure != cfg.InsecureSkipVerify {
+		s.cli = newTempoHTTPClient(cfg.InsecureSkipVerify)
+	}
+}
+
+// newTempoHTTPClient builds an http.Client tuned for cold S3-
+// backed lookup latency (30s ceiling) with TLS verification
+// optionally relaxed. We construct a fresh client on each
+// config change so a previous-cert-policy connection in the
+// pool doesn't outlive the toggle.
+func newTempoHTTPClient(insecureSkipVerify bool) *http.Client {
+	tr := &http.Transport{}
+	if insecureSkipVerify {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: tr}
 }
 
 // Snapshot returns the public config view (no token).
@@ -143,12 +170,13 @@ func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return Snapshot{
-		Enabled:  s.cfg.Enabled,
-		BaseURL:  s.cfg.BaseURL,
-		AuthType: s.cfg.AuthType,
-		HasToken: s.cfg.Token != "",
-		Username: s.cfg.Username,
-		OrgID:    s.cfg.OrgID,
+		Enabled:            s.cfg.Enabled,
+		BaseURL:            s.cfg.BaseURL,
+		AuthType:           s.cfg.AuthType,
+		HasToken:           s.cfg.Token != "",
+		Username:           s.cfg.Username,
+		OrgID:              s.cfg.OrgID,
+		InsecureSkipVerify: s.cfg.InsecureSkipVerify,
 	}
 }
 

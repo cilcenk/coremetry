@@ -473,6 +473,9 @@ export interface TempoSnapshot {
   hasToken: boolean;
   username?: string;
   orgId?: string;
+  // v0.5.218 — operators with self-signed Tempo certs in POC
+  // can flip this on to skip TLS chain verification. Default off.
+  insecureSkipVerify?: boolean;
 }
 export interface TempoSettingsInput {
   enabled: boolean;
@@ -481,6 +484,7 @@ export interface TempoSettingsInput {
   token?: string;
   username?: string;
   orgId?: string;
+  insecureSkipVerify?: boolean;
 }
 
 // Unified triage inbox (v0.5.211) — merges Problems + Exception

@@ -133,13 +133,24 @@ function LogRow({
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
-  // k8s pod + cluster columns (v0.5.197). Cluster name resolves
-  // from openshift.cluster.name first, then k8s.cluster.name, so
-  // OpenShift installs that emit both prefer the OCP-specific
-  // value the operator recognises. Falls back to —.
-  const pod = l.resourceAttributes?.['k8s.pod.name'] ?? '';
-  const cluster = l.resourceAttributes?.['openshift.cluster.name']
-    ?? l.resourceAttributes?.['k8s.cluster.name'] ?? '';
+  // k8s pod + cluster columns. Fallback chains cover the
+  // common shipper conventions an operator might emit (v0.5.216
+  // added the snake_case + openshift.labels variants reported
+  // by the operator's pipeline):
+  //   Pod:     k8s.pod.name → kubernetes.pod_name → kubernetes.pod.name → pod_name
+  //   Cluster: openshift.labels.cluster → openshift.cluster.name → k8s.cluster.name → kubernetes.cluster_name
+  // First match wins; falls back to —.
+  const ra = l.resourceAttributes ?? {};
+  const pod = ra['k8s.pod.name']
+    ?? ra['kubernetes.pod_name']
+    ?? ra['kubernetes.pod.name']
+    ?? ra['pod_name']
+    ?? '';
+  const cluster = ra['openshift.labels.cluster']
+    ?? ra['openshift.cluster.name']
+    ?? ra['k8s.cluster.name']
+    ?? ra['kubernetes.cluster_name']
+    ?? '';
   return (
     <>
       <tr onClick={onClick}
@@ -162,11 +173,11 @@ function LogRow({
           </span>
         </td>
         <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
-            title={pod || 'no k8s.pod.name resource attr'}>
+            title={pod || 'no k8s.pod.name / kubernetes.pod_name resource attr'}>
           {pod ? truncMid(pod, 22) : '—'}
         </td>
         <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
-            title={cluster || 'no k8s.cluster.name / openshift.cluster.name resource attr'}>
+            title={cluster || 'no openshift.labels.cluster / openshift.cluster.name / k8s.cluster.name resource attr'}>
           {cluster || '—'}
         </td>
         <td style={{ maxWidth: 480 }} title={l.body}>{l.body}</td>

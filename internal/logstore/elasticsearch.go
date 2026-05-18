@@ -690,9 +690,9 @@ func (s *ESStore) expandShorthand(q string) string {
 		"spanid":    {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
 		"message":   {s.fields.Body, "message", "Body", "body", "log.message"},
 		"body":      {s.fields.Body, "message", "Body", "body", "log.message"},
-		"pod":       {"kubernetes.pod.name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
-		"namespace": {"kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
-		"cluster":   {"kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "openshift.cluster.name", "cluster"},
+		"pod":       {"kubernetes.pod_name", "kubernetes.pod.name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
+		"namespace": {"kubernetes.namespace_name", "kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
+		"cluster":   {"openshift.labels.cluster", "openshift.cluster.name", "kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "kubernetes.cluster_name", "cluster"},
 		"host":      {"host.name", "host.hostname", "resource.host.name", "hostname", "host"},
 	}
 	return shorthandRe.ReplaceAllStringFunc(q, func(m string) string {

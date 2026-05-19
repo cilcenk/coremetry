@@ -2119,3 +2119,21 @@ func (w *whereClause) sql() string {
 	}
 	return "WHERE " + strings.Join(w.conds, " AND ")
 }
+
+// BuildFilterWhere returns the SQL `WHERE ...` fragment + the
+// positional args for a given FilterExpr[] (v0.5.261). Public
+// adapter so packages outside chstore (currently internal/api's
+// context-aware attribute-keys handler) can build filtered
+// queries without depending on the internal whereClause type or
+// re-implementing ApplyFilters' translation logic.
+//
+// Returns ("", nil) for an empty filter set — caller can safely
+// concat the result onto a base SQL string without checking.
+func BuildFilterWhere(filters []FilterExpr) (string, []any) {
+	if len(filters) == 0 {
+		return "", nil
+	}
+	var wc whereClause
+	ApplyFilters(&wc, filters)
+	return wc.sql(), wc.args
+}

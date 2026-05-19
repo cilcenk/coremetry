@@ -53,27 +53,47 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
   // as picker suggestions instead of relying on the operator typing the
   // exact key from memory. Resource-scoped keys are prefixed with
   // "resource." so they slot into the right backend lookup.
-  const [observedKeys, setObservedKeys] = useState<string[]>([]);
+  //
+  // v0.5.261 — context-aware. When the operator already has filters
+  // active, the suggester scans for keys WITH data under those
+  // filters (not the global top-N), so the dropdown matches the
+  // slice they're already looking at. Re-fetches when the filter
+  // chip set changes.
+  const [observedKeys, setObservedKeys] = useState<{ key: string; count: number }[]>([]);
   useEffect(() => {
-    api.attributeKeys('1h', 500)
+    const filterCtx = value.length > 0 ? JSON.stringify(value) : undefined;
+    api.attributeKeys('1h', 500, filterCtx)
       .then(rows => setObservedKeys(
-        (rows ?? []).map(r => r.scope === 'resource' ? `resource.${r.key}` : r.key)
+        (rows ?? []).map(r => ({
+          key: r.scope === 'resource' ? `resource.${r.key}` : r.key,
+          count: r.count,
+        }))
       ))
       .catch(() => setObservedKeys([]));
-  }, []);
+  }, [JSON.stringify(value)]);
   const allKeys = useMemo(() => {
-    // Union + dedupe; preserve static keys first so the most-common
-    // OTel semconv ones lead the dropdown, then live keys (which the
-    // browser's substring filter narrows down as the operator types).
+    // v0.5.261 — observed-by-count first (real data leads), then
+    // static OTel semconv suggestions for anything still missing.
+    // Previous order (static-first) buried real custom attributes
+    // below stale hardcoded keys; the new ordering matches the
+    // operator's mental model "what's in MY data right now".
     const seen = new Set<string>();
     const out: string[] = [];
-    for (const k of [...SUGGESTED_KEYS, ...observedKeys]) {
+    for (const o of observedKeys) {
+      if (seen.has(o.key)) continue;
+      seen.add(o.key);
+      out.push(o.key);
+    }
+    for (const k of SUGGESTED_KEYS) {
       if (seen.has(k)) continue;
       seen.add(k);
       out.push(k);
     }
     return out;
   }, [observedKeys]);
+  // Top-5 hint surfaced under the picker so the operator sees
+  // "what's heavy right now" without scrolling the dropdown.
+  const topHints = observedKeys.slice(0, 5);
 
   const addOrUpdate = (next: FilterExpr) => {
     if (!next.k.trim()) return;
@@ -118,18 +138,23 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
           onCancel={() => setDraft(null)}
           suggestedValues={suggestedValues}
           keyOptions={allKeys}
+          topHints={topHints}
         />
       )}
     </div>
   );
 }
 
-function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions }: {
+function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, topHints }: {
   draft: FilterExpr;
   onSave: (f: FilterExpr) => void;
   onCancel: () => void;
   suggestedValues?: Record<string, string[]>;
   keyOptions: string[];
+  // v0.5.261 — top-5 observed-by-count attribute keys, used as a
+  // one-click hint row above the picker so the operator doesn't
+  // have to scroll the dropdown to find what's heavy.
+  topHints: { key: string; count: number }[];
 }) {
   const [local, setLocal] = useState<FilterExpr>(draft);
   const needsValue = NEEDS_VALUE[local.op];
@@ -197,6 +222,14 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions }: {
     onSave({ k: local.k.trim(), op: local.op, v });
   };
 
+  // fmtCount — compact human-readable count for the hint chips.
+  const fmtCount = (n: number) => {
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+    return String(n);
+  };
+
   return (
     <div className="fb-form">
       <div className="fb-form-grid">
@@ -206,6 +239,34 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions }: {
             options={keyOptions} placeholder="e.g. http.status_code or function_code" width={260}
             onEnter={submit} />
         </label>
+        {/* v0.5.261 — context-aware top-5 hint row. Click → instant
+            key pick. Counts are scoped to the filter set currently
+            on the chips, so the operator sees "what's heaviest in
+            THIS slice" not the global top-N. */}
+        {topHints.length > 0 && !local.k && (
+          <div style={{
+            gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap',
+            gap: 6, alignItems: 'center', marginTop: -2, marginBottom: 2,
+          }}>
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>top in this slice:</span>
+            {topHints.map(h => (
+              <button key={h.key} type="button"
+                onClick={() => setLocal({ ...local, k: h.key })}
+                style={{
+                  fontSize: 10, padding: '1px 6px', borderRadius: 8,
+                  background: 'var(--bg1)', border: '1px solid var(--border)',
+                  color: 'var(--text)', cursor: 'pointer',
+                  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                }}
+                title={`${h.count.toLocaleString()} spans carry this attribute under the active filter set`}>
+                {h.key}
+                <span style={{ marginLeft: 4, color: 'var(--text3)' }}>
+                  {fmtCount(h.count)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <label>
           <span>Op</span>
           <select value={local.op}

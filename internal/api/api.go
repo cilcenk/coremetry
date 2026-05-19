@@ -1745,24 +1745,51 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 	if limit > 1000 {
 		limit = 1000
 	}
-	key := fmt.Sprintf("attr-keys:since=%s:limit=%d", q.Get("since"), limit)
+	// v0.5.261 — context-aware attribute suggester. When the
+	// operator already has a filter set in /explore, the
+	// dropdown should show attribute keys with data UNDER those
+	// filters, not the global top-N. Filters arrive as a
+	// JSON-encoded FilterExpr[] under `filters`; empty / missing
+	// keeps the old global-scan behaviour.
+	rawFilters := q.Get("filters")
+	filters := parseFilters(rawFilters)
+
+	key := fmt.Sprintf("attr-keys:since=%s:limit=%d:f=%s",
+		q.Get("since"), limit, rawFilters)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		// One query unions span + resource keys; the scope tag tells
-		// the UI which prefix (span. / resource.) to apply when
-		// inserting the chosen key into a filter expression.
-		rows, err := s.store.Conn().Query(r.Context(), `
+		// Time floor — same on both union branches.
+		timeWhere := "WHERE time >= now() - toIntervalSecond(?)"
+		// Filter-derived WHERE fragment via the public chstore
+		// helper so we don't need to reach into the package's
+		// internal whereClause type. AND-merge with the time
+		// floor for each union branch.
+		filterSQL, filterArgs := chstore.BuildFilterWhere(filters)
+		extra := ""
+		if filterSQL != "" {
+			extra = " AND " + strings.TrimPrefix(filterSQL, "WHERE ")
+		}
+
+		sqlText := `
 			SELECT scope, k, count() AS c FROM (
-				SELECT 'span'     AS scope, arrayJoin(attr_keys) AS k FROM coremetry.spans
-				WHERE time >= now() - toIntervalSecond(?)
+				SELECT 'span'     AS scope, arrayJoin(attr_keys) AS k
+				FROM coremetry.spans ` + timeWhere + extra + `
 				UNION ALL
-				SELECT 'resource' AS scope, arrayJoin(res_keys)  AS k FROM coremetry.spans
-				WHERE time >= now() - toIntervalSecond(?)
+				SELECT 'resource' AS scope, arrayJoin(res_keys)  AS k
+				FROM coremetry.spans ` + timeWhere + extra + `
 			)
 			GROUP BY scope, k
 			ORDER BY c DESC
 			LIMIT ?
-			SETTINGS max_execution_time = 30`,
-			int64(since.Seconds()), int64(since.Seconds()), limit)
+			SETTINGS max_execution_time = 30`
+		// Args layout: span(time, filter-args...), resource(time, filter-args...), limit
+		secs := int64(since.Seconds())
+		args := []any{secs}
+		args = append(args, filterArgs...)
+		args = append(args, secs)
+		args = append(args, filterArgs...)
+		args = append(args, limit)
+
+		rows, err := s.store.Conn().Query(r.Context(), sqlText, args...)
 		if err != nil {
 			return nil, err
 		}

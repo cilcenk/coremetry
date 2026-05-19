@@ -279,9 +279,17 @@ export const api = {
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
   // surface as suggestions in addition to the hardcoded list.
-  attributeKeys: (since = '1h', limit = 500) =>
-    get<{ scope: 'span' | 'resource'; key: string; count: number }[] | null>(
-      `/api/attribute-keys?since=${since}&limit=${limit}`),
+  attributeKeys: (since = '1h', limit = 500, filters?: string) => {
+    // v0.5.261 — optional filter context. When the operator has
+    // active filters in /explore, pass them through so the
+    // suggester returns attribute keys with data UNDER those
+    // filters (not the global top-N). Empty / undefined keeps
+    // the old global-scan behaviour.
+    const qsParts = [`since=${since}`, `limit=${limit}`];
+    if (filters && filters !== '[]') qsParts.push(`filters=${encodeURIComponent(filters)}`);
+    return get<{ scope: 'span' | 'resource'; key: string; count: number }[] | null>(
+      `/api/attribute-keys?${qsParts.join('&')}`);
+  },
   // Top-N values observed for a single attribute key. Powers the
   // FilterBuilder value autocomplete; cached server-side 60s with
   // a Redis fast-path (so 100 SREs opening the picker run 1 CH

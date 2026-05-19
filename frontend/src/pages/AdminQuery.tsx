@@ -29,12 +29,16 @@ const SAMPLE_QUERIES = [
     text: `spans | summarize error_rate() by bin(time, 1m)`,
   },
   {
+    label: 'P99 split by service',
+    text: `spans | summarize p99(duration_ms) by service.name, bin(time, 1m)`,
+  },
+  {
     label: 'HTTP 5xx counts on 5s buckets',
     text: `spans | filter http.status_code >= "500" | summarize count() by bin(time, 5s)`,
   },
   {
-    label: 'Metric: HTTP server duration p99',
-    text: `metrics http.server.duration | summarize p99(value) by bin(time, 1m)`,
+    label: 'Metric: HTTP server duration p99 by service',
+    text: `metrics http.server.duration | summarize p99(value) by service.name, bin(time, 1m)`,
   },
 ];
 

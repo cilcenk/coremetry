@@ -48,6 +48,7 @@ func (s *Server) runDQL(w http.ResponseWriter, r *http.Request) {
 			Filters:     plan.Filters,
 			Aggregation: plan.Aggregation,
 			Field:       plan.Field,
+			GroupBy:     plan.GroupBy,
 			From:        from, To: to,
 			StepSeconds: plan.StepSeconds,
 		}
@@ -57,6 +58,7 @@ func (s *Server) runDQL(w http.ResponseWriter, r *http.Request) {
 			Name:        plan.MetricName,
 			Filters:     plan.Filters,
 			Aggregation: plan.Aggregation,
+			GroupBy:     plan.GroupBy,
 			From:        from, To: to,
 			StepSeconds: plan.StepSeconds,
 		}

@@ -1261,6 +1261,23 @@ export const api = {
   // MGET); safe to poll at 5-10s in the admin page.
   listClusterMembers: () =>
     request<{ members: ClusterMember[]; selfId: string }>(`/api/admin/cluster`),
+  // copilotNLToQuery — v0.5.255 natural-language → DSL converter.
+  // Operator types "yesterday's slow checkouts"; we return the
+  // filter set + time range the SPA applies to /explore. Server
+  // validates ops + presets so a hallucinated payload never
+  // reaches the FilterBuilder.
+  copilotNLToQuery: (prompt: string) =>
+    request<{
+      filters: { k: string; op: string; v: string[] }[];
+      range: { preset: string };
+      explain: string;
+      warning?: string;
+      raw?: string;
+    }>(`/api/copilot/nl-to-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    }),
 };
 
 export interface ClusterMember {

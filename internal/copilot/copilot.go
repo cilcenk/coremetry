@@ -967,3 +967,98 @@ structured say "looks fine — investigate locking / autovacuum
 / cache hit rate" plainly.`
 
 func SystemPromptSlowQuery() string { return systemSlowQuery }
+
+// systemNLToQuery — v0.5.255. Operator types a plain-English
+// description of what they're looking for ("yesterday's slow
+// checkouts", "5xx from the auth service last hour") on the
+// /explore search bar; the model converts it to a strict-JSON
+// {filters, range} payload the SPA can apply directly.
+//
+// JSON-only output is enforced. Bad output → SPA shows
+// "couldn't parse — try rephrasing". The model is told to omit
+// the field rather than guess; partial filters beat fabricated
+// ones.
+//
+// Schema embedded in the prompt:
+//
+//   filters: [{ k: <attribute key>, op: <FilterOp>, v: [<string>] }]
+//   range: { preset: <preset id> }
+//
+//   Allowed attribute keys (lowercase, dot-separated):
+//     service.name, http.status_code, http.method, http.route,
+//     http.url, http.user_agent, db.system, db.statement,
+//     rpc.system, rpc.service, rpc.method, messaging.system,
+//     messaging.destination, exception.type, exception.message,
+//     status_code, kind, duration_ms, span.name, peer.service,
+//     resource.deployment.environment, resource.k8s.namespace,
+//     resource.k8s.pod.name, resource.k8s.cluster.name,
+//     resource.host.name, resource.service.version,
+//     resource.service.instance.id, resource.process.runtime.name
+//   …plus any custom resource.* / span attribute the operator's
+//   instrumentation emits — pass it through verbatim if the
+//   user names it.
+//
+//   Allowed ops: =, !=, LIKE, NOT LIKE, IN, NOT IN, >, >=, <, <=,
+//   EXISTS, NOT EXISTS.
+//   LIKE uses SQL-style % wildcards; quote literal % / _.
+//
+//   Allowed range presets:
+//     1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 24h, 2d, 3d, 7d, 14d, 30d
+//   Default to 1h when the user doesn't name a time window.
+//   "yesterday" → 24h, "last week" → 7d, "today" → 24h,
+//   "right now / last few minutes" → 15m.
+const systemNLToQuery = `You convert plain-English trace-search descriptions
+into a Coremetry filter JSON payload.
+
+OUTPUT a SINGLE JSON object with these fields and NOTHING ELSE:
+
+  {
+    "filters": [ { "k": "<attr>", "op": "<op>", "v": ["<val>"] }, ... ],
+    "range":   { "preset": "<preset>" },
+    "explain": "<one-sentence summary of how you parsed this>"
+  }
+
+Allowed attribute keys (lowercase, dot-separated):
+  service.name, http.status_code, http.method, http.route, http.url,
+  http.user_agent, db.system, db.statement, rpc.system, rpc.service,
+  rpc.method, messaging.system, messaging.destination,
+  exception.type, exception.message, status_code, kind, duration_ms,
+  span.name, peer.service, resource.deployment.environment,
+  resource.k8s.namespace, resource.k8s.pod.name, resource.k8s.cluster.name,
+  resource.host.name, resource.service.version,
+  resource.service.instance.id, resource.process.runtime.name
+…plus any custom resource.* / span attribute the user names verbatim.
+
+Allowed ops: =, !=, LIKE, NOT LIKE, IN, NOT IN, >, >=, <, <=,
+EXISTS, NOT EXISTS. LIKE uses SQL-style % wildcards.
+
+Allowed range presets:
+  1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 24h, 2d, 3d, 7d, 14d, 30d.
+Default to 1h when the user doesn't name a window.
+  "yesterday" → 24h
+  "last week" → 7d
+  "today" → 24h
+  "right now / last few minutes" → 15m
+  "this morning" → 24h
+
+Examples:
+
+User: "yesterday's slow checkouts"
+Output: {"filters":[{"k":"http.route","op":"LIKE","v":["%checkout%"]},{"k":"duration_ms","op":">","v":["1000"]}],"range":{"preset":"24h"},"explain":"slow (>1s) requests to any checkout route in the last 24h"}
+
+User: "5xx from auth-service last hour"
+Output: {"filters":[{"k":"service.name","op":"=","v":["auth-service"]},{"k":"http.status_code","op":">=","v":["500"]}],"range":{"preset":"1h"},"explain":"server-error responses from auth-service in the last hour"}
+
+User: "kafka producer errors today"
+Output: {"filters":[{"k":"messaging.system","op":"=","v":["kafka"]},{"k":"kind","op":"=","v":["producer"]},{"k":"status_code","op":"=","v":["error"]}],"range":{"preset":"24h"},"explain":"errored Kafka producer spans in the last 24h"}
+
+Rules:
+  • OMIT any field you can't confidently infer — empty filters[]
+    + default range is better than fabricated keys.
+  • Use single elements in "v": [...] unless the user clearly
+    lists multiple (e.g. "GET or POST" → op=IN, v=["GET","POST"]).
+  • Numeric values still go in "v" as strings.
+  • DO NOT echo the user's input — just the JSON.
+  • NO preamble, NO trailing prose, NO markdown fences.`
+
+func SystemPromptNLToQuery() string { return systemNLToQuery }

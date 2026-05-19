@@ -426,6 +426,9 @@ func (s *Server) Start() error {
 	// ── AI Copilot ─────────────────────────────────────────────────
 	mux.HandleFunc("GET    /api/copilot/config",            s.copilotConfig)
 	mux.HandleFunc("POST   /api/copilot/explain-trace/{id}", s.copilotExplainTrace)
+	// v0.5.255 — natural-language → DSL filter converter. /explore
+	// gets a "✦ Natural language" input that feeds this endpoint.
+	mux.HandleFunc("POST   /api/copilot/nl-to-query",       s.copilotNLToQuery)
 	mux.HandleFunc("POST   /api/copilot/explain-span/{traceId}", s.copilotExplainSpan)
 	mux.HandleFunc("POST   /api/copilot/explain-problem/{id}", s.copilotExplainProblem)
 	mux.HandleFunc("POST   /api/copilot/explain-incident/{id}", s.copilotExplainIncident)

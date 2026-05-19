@@ -65,6 +65,11 @@ type Plan struct {
 	Field       string               // empty for count/rate/error_rate; the column for quantile/avg
 	MetricName  string               // metrics-table-only — the metric being queried
 	StepSeconds int                  // 0 = auto-pick from window width
+	// GroupBy — attribute keys to split the series by (Kusto-style
+	// `summarize count() by service.name`). Each group becomes a
+	// distinct line in the result series. bin(time, N) is handled
+	// separately via StepSeconds; the GroupBy list excludes it.
+	GroupBy []string
 }
 
 // Compile parses a DQL string into a Plan. Returns a wrapped
@@ -230,18 +235,74 @@ func parseSummarize(plan *Plan, expr string) error {
 	}
 
 	if byPart != "" {
-		if !strings.HasPrefix(byPart, "bin(time,") {
-			return fmt.Errorf("only bin(time, …) grouping is supported (got %q)", byPart)
+		// Multi-group support (v0.5.266): the `by` clause is a
+		// comma-separated list of either attribute keys or one
+		// `bin(time, dur)` entry. Order doesn't matter; the
+		// parser pulls the bin out and treats the rest as the
+		// GroupBy attribute list.
+		parts := splitByCommaTopLevel(byPart)
+		for _, raw := range parts {
+			tok := strings.TrimSpace(raw)
+			if tok == "" {
+				continue
+			}
+			if strings.HasPrefix(tok, "bin(time,") {
+				inner := strings.TrimSuffix(strings.TrimPrefix(tok, "bin(time,"), ")")
+				inner = strings.TrimSpace(inner)
+				secs, err := parseDuration(inner)
+				if err != nil {
+					return fmt.Errorf("bin(time, …) duration: %w", err)
+				}
+				if plan.StepSeconds != 0 {
+					return fmt.Errorf("multiple bin(time, …) entries in `by` clause")
+				}
+				plan.StepSeconds = secs
+			} else {
+				// Plain attribute key — append to the GroupBy
+				// list. Validation (well-known column vs.
+				// attribute lookup) happens downstream in
+				// chstore.QuerySpanMetric.
+				plan.GroupBy = append(plan.GroupBy, tok)
+			}
 		}
-		inner := strings.TrimSuffix(strings.TrimPrefix(byPart, "bin(time,"), ")")
-		inner = strings.TrimSpace(inner)
-		secs, err := parseDuration(inner)
-		if err != nil {
-			return fmt.Errorf("bin(time, …) duration: %w", err)
-		}
-		plan.StepSeconds = secs
 	}
 	return nil
+}
+
+// splitByCommaTopLevel splits on commas outside parenthesised
+// expressions — so `service.name, bin(time, 1m)` splits into
+// two parts and the bin's internal `1m,...` (none here, but
+// future-proof) doesn't fragment.
+func splitByCommaTopLevel(s string) []string {
+	var out []string
+	depth := 0
+	var cur strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '(':
+			depth++
+			cur.WriteByte(c)
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			cur.WriteByte(c)
+		case ',':
+			if depth == 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			} else {
+				cur.WriteByte(c)
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // splitPipes splits the input on top-level `|`. Quoted strings
@@ -318,14 +379,18 @@ func firstWord(s string) string {
 // queries); this preview is illustrative, not executed.
 func (p *Plan) SQLPreview(from, to time.Time) string {
 	var b strings.Builder
+	bucketSecs := p.StepSeconds
+	if bucketSecs <= 0 {
+		bucketSecs = 60
+	}
+	// SELECT clause: bucket + every GROUP BY column + value.
 	switch p.Table {
 	case TableSpans:
-		b.WriteString("SELECT toStartOfInterval(time, INTERVAL ")
-		if p.StepSeconds > 0 {
-			fmt.Fprintf(&b, "%d SECOND) AS bucket, ", p.StepSeconds)
-		} else {
-			b.WriteString("60 SECOND) AS bucket, ")
+		fmt.Fprintf(&b, "SELECT toStartOfInterval(time, INTERVAL %d SECOND) AS bucket", bucketSecs)
+		for _, g := range p.GroupBy {
+			fmt.Fprintf(&b, ",\n       %s AS %s", g, sqlAlias(g))
 		}
+		b.WriteString(",\n       ")
 		b.WriteString(aggToSQLFragment(p.Aggregation, p.Field))
 		b.WriteString(" AS value\nFROM spans\nWHERE time >= '")
 		b.WriteString(from.UTC().Format("2006-01-02 15:04:05"))
@@ -335,14 +400,18 @@ func (p *Plan) SQLPreview(from, to time.Time) string {
 		for _, f := range p.Filters {
 			fmt.Fprintf(&b, "\n  AND %s %s '%s'", f.Key, f.Op, escapeSQL(firstString(f.Values)))
 		}
-		b.WriteString("\nGROUP BY bucket\nORDER BY bucket\nSETTINGS max_execution_time = 30")
-	case TableMetrics:
-		b.WriteString("SELECT toStartOfInterval(time, INTERVAL ")
-		if p.StepSeconds > 0 {
-			fmt.Fprintf(&b, "%d SECOND) AS bucket, ", p.StepSeconds)
-		} else {
-			b.WriteString("60 SECOND) AS bucket, ")
+		// GROUP BY: bucket first, then every attr.
+		b.WriteString("\nGROUP BY bucket")
+		for _, g := range p.GroupBy {
+			fmt.Fprintf(&b, ", %s", sqlAlias(g))
 		}
+		b.WriteString("\nORDER BY bucket\nSETTINGS max_execution_time = 30")
+	case TableMetrics:
+		fmt.Fprintf(&b, "SELECT toStartOfInterval(time, INTERVAL %d SECOND) AS bucket", bucketSecs)
+		for _, g := range p.GroupBy {
+			fmt.Fprintf(&b, ",\n       %s AS %s", g, sqlAlias(g))
+		}
+		b.WriteString(",\n       ")
 		b.WriteString(aggToSQLFragment(p.Aggregation, "value"))
 		b.WriteString(" AS value\nFROM metric_points\nWHERE metric = '")
 		b.WriteString(escapeSQL(p.MetricName))
@@ -355,9 +424,22 @@ func (p *Plan) SQLPreview(from, to time.Time) string {
 		for _, f := range p.Filters {
 			fmt.Fprintf(&b, "\n  AND %s %s '%s'", f.Key, f.Op, escapeSQL(firstString(f.Values)))
 		}
-		b.WriteString("\nGROUP BY bucket\nORDER BY bucket\nSETTINGS max_execution_time = 30")
+		b.WriteString("\nGROUP BY bucket")
+		for _, g := range p.GroupBy {
+			fmt.Fprintf(&b, ", %s", sqlAlias(g))
+		}
+		b.WriteString("\nORDER BY bucket\nSETTINGS max_execution_time = 30")
 	}
 	return b.String()
+}
+
+// sqlAlias returns a CH-safe alias for a group-by key by
+// replacing dots with underscores (CH allows dots in unquoted
+// identifiers only for table.column refs). Pure preview helper
+// — actual query uses the chstore.SpanMetricFilter.GroupBy
+// which does the right thing on its own.
+func sqlAlias(k string) string {
+	return strings.ReplaceAll(k, ".", "_")
 }
 
 func aggToSQLFragment(agg, field string) string {

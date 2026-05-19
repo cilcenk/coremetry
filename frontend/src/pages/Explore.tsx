@@ -6,6 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Combobox } from '@/components/Combobox';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
+import { RedPanel } from '@/components/RedPanel';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { BubbleUpPanel } from '@/components/BubbleUpPanel';
 import { FacetsPanel } from '@/components/FacetsPanel';
@@ -148,7 +149,7 @@ const STEP_OPTIONS = [
 ];
 
 type Source = 'spans' | 'metrics' | 'logs';
-type Viz = 'line' | 'bar' | 'topN' | 'kpi' | 'heatmap';
+type Viz = 'line' | 'bar' | 'topN' | 'kpi' | 'heatmap' | 'red';
 
 function ExploreInner() {
   const navigate = useNavigate();
@@ -168,7 +169,7 @@ function ExploreInner() {
   // result. Spans source ignores it for the traces result mode.
   const [viz, setViz] = useState<Viz>(() => {
     const v = searchParams.get('viz') as Viz;
-    return ['line', 'bar', 'topN', 'kpi', 'heatmap'].includes(v) ? v : 'line';
+    return ['line', 'bar', 'topN', 'kpi', 'heatmap', 'red'].includes(v) ? v : 'line';
   });
   const [compare, setCompare] = useState(searchParams.get('compare') === 'true');
 
@@ -414,6 +415,14 @@ function ExploreInner() {
             const msg = String(err?.message ?? err);
             setQueryError(msg.includes('DSL') ? msg : null);
           });
+      } else if (viz === 'red') {
+        // RED panel manages its own fetches internally (three
+        // parallel spanMetric calls with shared syncKey). Bypass
+        // the single-series state machine here so we don't fire
+        // a duplicate fourth query on top of those three.
+        // setSeries clears the loading-state so a switch back
+        // to line/bar/topN/kpi paints fresh.
+        setSeries(null);
       } else {
         setSeries(undefined);
         setCompareSeries(undefined);
@@ -631,6 +640,7 @@ function ExploreInner() {
             <option value="topN">Top-N</option>
             <option value="kpi">KPI</option>
             <option value="heatmap">Heatmap</option>
+            <option value="red">RED panel</option>
           </select>
           <label style={{ display: 'flex', alignItems: 'center', gap: 5,
                           color: 'var(--text2)', cursor: 'pointer', fontSize: 12, marginLeft: 8 }}
@@ -651,14 +661,14 @@ function ExploreInner() {
             to line when "heatmap" is selected at the top. */}
         {source === 'metrics' && (
           <MetricsExplorer range={range}
-            viz={viz === 'heatmap' ? 'line' : viz}
+            viz={viz === 'heatmap' || viz === 'red' ? 'line' : viz}
             compare={compare}
             initialService={searchParams.get('service') ?? ''}
             initialMetric={searchParams.get('metric') ?? ''} />
         )}
         {source === 'logs' && (
           <LogsExplorer range={range}
-            viz={viz === 'heatmap' ? 'line' : viz}
+            viz={viz === 'heatmap' || viz === 'red' ? 'line' : viz}
             compare={compare} />
         )}
         {source !== 'spans' && null}
@@ -999,14 +1009,26 @@ name ~ checkout`}
           </>
         )}
 
+        {/* ── Metric mode · RED panel (Uptrace-style stacked trio) ─────────────── */}
+        {resultMode === 'metric' && viz === 'red' && (() => {
+          const { from, to } = timeRangeToNs(range);
+          return (
+            <RedPanel
+              filters={mode === 'builder' ? filters : []}
+              dsl={mode === 'advanced' && dsl.trim() ? dsl : undefined}
+              from={from} to={to}
+              groupBy={groupBy} step={step} field={field} />
+          );
+        })()}
+
         {/* ── Metric mode · line/bar/topN/kpi viz ─────────────────────────────── */}
-        {resultMode === 'metric' && viz !== 'heatmap' && series === undefined && <Spinner />}
-        {resultMode === 'metric' && viz !== 'heatmap' && series && series.length === 0 && (
+        {resultMode === 'metric' && viz !== 'heatmap' && viz !== 'red' && series === undefined && <Spinner />}
+        {resultMode === 'metric' && viz !== 'heatmap' && viz !== 'red' && series && series.length === 0 && (
           <Empty icon="◎" title="No data for this query">
             Try a wider time range, fewer filters, or remove split keys.
           </Empty>
         )}
-        {resultMode === 'metric' && viz !== 'heatmap' && series && series.length > 0 && (
+        {resultMode === 'metric' && viz !== 'heatmap' && viz !== 'red' && series && series.length > 0 && (
           <>
             <div style={{
               background: 'var(--bg1)', border: '1px solid var(--border)',

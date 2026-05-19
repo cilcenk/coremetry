@@ -95,7 +95,6 @@ func Compile(q string) (*Plan, error) {
 		return nil, fmt.Errorf("metrics queries must name the metric — use `metrics http.server.duration | …`")
 	case "logs":
 		plan.Table = TableLogs
-		return nil, fmt.Errorf("logs DQL not yet implemented — use the /logs page for now")
 	default:
 		// Metrics-with-name shortcut: `metrics <name> | filter …`
 		if strings.HasPrefix(tbl, "metrics ") {

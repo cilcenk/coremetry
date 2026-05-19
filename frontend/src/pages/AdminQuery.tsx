@@ -40,6 +40,14 @@ const SAMPLE_QUERIES = [
     label: 'Metric: HTTP server duration p99 by service',
     text: `metrics http.server.duration | summarize p99(value) by service.name, bin(time, 1m)`,
   },
+  {
+    label: 'Logs: count by service',
+    text: `logs | summarize count() by service.name, bin(time, 1m)`,
+  },
+  {
+    label: 'Logs: count by severity',
+    text: `logs | summarize count() by severity, bin(time, 1m)`,
+  },
 ];
 
 interface QueryResult {
@@ -101,13 +109,15 @@ export default function AdminQueryPage() {
       <div id="content">
         <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text2)' }}>
           Coremetry's <b>unified query language</b> — Kusto-flavoured pipe shape.
-          One syntax across spans + metrics. Tables: <code>spans</code>,{' '}
-          <code>metrics &lt;name&gt;</code>. Operators: <code>filter</code>,{' '}
-          <code>summarize</code>. Aggregations: <code>count()</code>,{' '}
-          <code>rate()</code>, <code>error_rate()</code>, <code>p50</code>/
-          <code>p95</code>/<code>p99</code>/<code>avg</code>/<code>max</code>/
-          <code>min(field)</code>. Time bucket: <code>by bin(time, 1m)</code>{' '}
-          (s/m/h/d). Logs deferred — use <code>/logs</code> for now.
+          One syntax across spans + metrics + logs. Tables: <code>spans</code>,{' '}
+          <code>metrics &lt;name&gt;</code>, <code>logs</code>. Operators:{' '}
+          <code>filter</code>, <code>summarize</code>. Aggregations:{' '}
+          <code>count()</code>, <code>rate()</code>, <code>error_rate()</code>,{' '}
+          <code>p50</code>/<code>p95</code>/<code>p99</code>/<code>avg</code>/
+          <code>max</code>/<code>min(field)</code>. Time bucket:{' '}
+          <code>by bin(time, 1m)</code> (s/m/h/d). Logs limited to{' '}
+          <code>count()</code> + groupBy <code>service</code> / <code>severity</code>{' '}
+          (logstore-backed; works on ES or CH backend).
         </div>
 
         <div className="controls" style={{ marginBottom: 10, gap: 6, flexWrap: 'wrap' }}>

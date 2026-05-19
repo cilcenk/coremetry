@@ -60,7 +60,7 @@ const (
 // dispatcher reads this and calls the matching chstore method.
 type Plan struct {
 	Table       Table
-	Filters     []chstore.FilterExpr // AND-joined predicates
+	Filters     []chstore.FilterExpr // AND-joined predicates (target side, post-join)
 	Aggregation string               // count, rate, error_rate, p50/p95/p99/avg/max/min
 	Field       string               // empty for count/rate/error_rate; the column for quantile/avg
 	MetricName  string               // metrics-table-only — the metric being queried
@@ -70,6 +70,22 @@ type Plan struct {
 	// distinct line in the result series. bin(time, N) is handled
 	// separately via StepSeconds; the GroupBy list excludes it.
 	GroupBy []string
+
+	// JoinTarget (v0.5.271) — when set, the query is a
+	// cross-signal join. The flow becomes:
+	//
+	//   1. Run a trace_id discovery query against `Table` with
+	//      `SourceFilters` (the filters that appear BEFORE the
+	//      `join` operator).
+	//   2. Re-query `JoinTarget` with `Filters` (the AFTER
+	//      filters) + WHERE trace_id IN (discovered set).
+	//   3. Aggregate the target rows.
+	//
+	// The join key is fixed at "trace.id" for the MVP — the
+	// only cross-signal key OTel actually carries everywhere.
+	JoinTarget    Table
+	JoinKey       string                 // defaults to "trace.id"
+	SourceFilters []chstore.FilterExpr   // pre-join filters on Table
 }
 
 // Compile parses a DQL string into a Plan. Returns a wrapped
@@ -135,9 +151,53 @@ func applyStep(plan *Plan, step string) error {
 		return parseFilter(plan, strings.TrimSpace(strings.TrimPrefix(step, "where")))
 	case strings.HasPrefix(step, "summarize"):
 		return parseSummarize(plan, strings.TrimSpace(strings.TrimPrefix(step, "summarize")))
+	case strings.HasPrefix(step, "join"):
+		return parseJoin(plan, strings.TrimSpace(strings.TrimPrefix(step, "join")))
 	default:
 		return fmt.Errorf("unknown operator: %s", firstWord(step))
 	}
+}
+
+// parseJoin handles `join <target> [on <key>]` (v0.5.271). When
+// encountered, every filter added so far is reclassified as
+// pre-join (SourceFilters); subsequent filters target the
+// joined table. Only ONE join allowed per query in the MVP.
+func parseJoin(plan *Plan, expr string) error {
+	if plan.JoinTarget != "" {
+		return fmt.Errorf("only one join per query is supported")
+	}
+	// Migrate existing filters to the source-side list (they
+	// were collected against the source table before we knew a
+	// join was coming).
+	plan.SourceFilters = plan.Filters
+	plan.Filters = nil
+
+	// Tokenise: "logs" or "logs on trace.id"
+	tokens := strings.Fields(expr)
+	if len(tokens) == 0 {
+		return fmt.Errorf("join needs a target table: `join logs [on trace.id]`")
+	}
+	switch tokens[0] {
+	case "spans":
+		plan.JoinTarget = TableSpans
+	case "metrics":
+		plan.JoinTarget = TableMetrics
+	case "logs":
+		plan.JoinTarget = TableLogs
+	default:
+		return fmt.Errorf("unknown join target %q (try spans / metrics / logs)", tokens[0])
+	}
+	plan.JoinKey = "trace.id"
+	if len(tokens) >= 3 && tokens[1] == "on" {
+		plan.JoinKey = tokens[2]
+	}
+	// MVP: only trace.id supported. Anything else is a clear
+	// error so the operator doesn't get silent wrong results.
+	if plan.JoinKey != "trace.id" && plan.JoinKey != "trace_id" && plan.JoinKey != "traceId" {
+		return fmt.Errorf("only `on trace.id` is supported in this release (got %q)", plan.JoinKey)
+	}
+	plan.JoinKey = "trace.id"
+	return nil
 }
 
 // parseFilter handles `filter ident op value`. Quoted values

@@ -1162,6 +1162,38 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		must = append(must, traceTermsAny(s.fields.TraceID, s.fields.Body,
 			strings.ToLower(f.TraceID), "trace"))
 	}
+	// v0.5.271 — multi-trace filter for the DQL cross-signal
+	// join. ES bool/should over an array of trace_ids spread
+	// across the same four common field shapes the
+	// single-trace path tries. Lower-cased so the keyword
+	// term-lookups match the convention OTel emits.
+	if len(f.TraceIDs) > 0 {
+		ids := make([]string, 0, len(f.TraceIDs))
+		for _, id := range f.TraceIDs {
+			ids = append(ids, strings.ToLower(id))
+		}
+		// terms query — ES short-circuits non-existent fields
+		// the same way it does for traceTermsAny, so we
+		// expand across the four common shapes.
+		fields := []string{s.fields.TraceID, "trace.id", "TraceId", "trace_id", "traceId"}
+		seen := map[string]bool{}
+		shouldClauses := []any{}
+		for _, fld := range fields {
+			if fld == "" || seen[fld] {
+				continue
+			}
+			seen[fld] = true
+			shouldClauses = append(shouldClauses, map[string]any{
+				"terms": map[string]any{fld: ids},
+			})
+		}
+		must = append(must, map[string]any{
+			"bool": map[string]any{
+				"should":               shouldClauses,
+				"minimum_should_match": 1,
+			},
+		})
+	}
 	if f.SpanID != "" {
 		must = append(must, traceTermsAny(s.fields.SpanID, s.fields.Body,
 			strings.ToLower(f.SpanID), "span"))

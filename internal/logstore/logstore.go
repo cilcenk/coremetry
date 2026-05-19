@@ -26,6 +26,12 @@ type Filter struct {
 	From, To    time.Time
 	SeverityMin uint8     // OTel severity number ≥ this; 0 = no filter
 	TraceID     string
+	// TraceIDs (v0.5.271) — multi-trace filter for the DQL
+	// cross-signal join. When non-empty, backends should
+	// match ANY trace_id in the list (OR semantics) in
+	// addition to / instead of TraceID. Single-string TraceID
+	// stays primary for the existing /logs page UX.
+	TraceIDs    []string
 	SpanID      string
 	Limit       int
 	Offset      int

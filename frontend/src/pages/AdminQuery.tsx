@@ -48,6 +48,14 @@ const SAMPLE_QUERIES = [
     label: 'Logs: count by severity',
     text: `logs | summarize count() by severity, bin(time, 1m)`,
   },
+  {
+    label: 'Cross-signal: logs in errored traces',
+    text: `spans | filter status_code == "error" | join logs on trace.id | summarize count() by bin(time, 1m)`,
+  },
+  {
+    label: 'Cross-signal: spans in slow checkouts',
+    text: `spans | filter http.route == "/checkout" | filter duration_ms > "1000" | join spans on trace.id | summarize p99(duration_ms) by service.name, bin(time, 1m)`,
+  },
 ];
 
 interface QueryResult {
@@ -111,13 +119,13 @@ export default function AdminQueryPage() {
           Coremetry's <b>unified query language</b> — Kusto-flavoured pipe shape.
           One syntax across spans + metrics + logs. Tables: <code>spans</code>,{' '}
           <code>metrics &lt;name&gt;</code>, <code>logs</code>. Operators:{' '}
-          <code>filter</code>, <code>summarize</code>. Aggregations:{' '}
-          <code>count()</code>, <code>rate()</code>, <code>error_rate()</code>,{' '}
-          <code>p50</code>/<code>p95</code>/<code>p99</code>/<code>avg</code>/
-          <code>max</code>/<code>min(field)</code>. Time bucket:{' '}
-          <code>by bin(time, 1m)</code> (s/m/h/d). Logs limited to{' '}
-          <code>count()</code> + groupBy <code>service</code> / <code>severity</code>{' '}
-          (logstore-backed; works on ES or CH backend).
+          <code>filter</code>, <code>summarize</code>, <code>join &lt;target&gt; on trace.id</code>.{' '}
+          Aggregations: <code>count()</code>, <code>rate()</code>,{' '}
+          <code>error_rate()</code>, <code>p50</code>/<code>p95</code>/
+          <code>p99</code>/<code>avg</code>/<code>max</code>/<code>min(field)</code>.
+          Time bucket: <code>by bin(time, 1m)</code> (s/m/h/d). Cross-signal join
+          resolves up to 1000 trace_ids from the source, then runs the target
+          aggregation scoped to that set.
         </div>
 
         <div className="controls" style={{ marginBottom: 10, gap: 6, flexWrap: 'wrap' }}>

@@ -43,6 +43,38 @@ func (s *Server) runDQL(w http.ResponseWriter, r *http.Request) {
 		from = to.Add(-15 * time.Minute)
 	}
 
+	// v0.5.271 — cross-signal join. Resolve source trace_ids
+	// once, splice them into the target Filters as a
+	// trace.id IN (...) predicate, then run the target
+	// aggregation through its normal path. Limit caps at 1000
+	// traces to keep the synthetic IN clause planner-friendly.
+	if plan.JoinTarget != "" {
+		traceIDs, jerr := s.store.DistinctTraceIDsForFilters(
+			r.Context(), plan.SourceFilters, from, to, 1000)
+		if jerr != nil {
+			writeErr(w, jerr)
+			return
+		}
+		if len(traceIDs) == 0 {
+			writeJSON(w, map[string]any{
+				"plan":   plan,
+				"sql":    plan.SQLPreview(from, to),
+				"series": []chstore.SpanMetricSeries{},
+				"window": map[string]int64{"fromNs": from.UnixNano(), "toNs": to.UnixNano()},
+				"joinTraceCount": 0,
+			})
+			return
+		}
+		plan.Filters = append(plan.Filters, chstore.FilterExpr{
+			Key:    "trace.id",
+			Op:     "IN",
+			Values: traceIDs,
+		})
+		// Switch the effective table for the rest of the
+		// dispatch below — the target now drives the query.
+		plan.Table = plan.JoinTarget
+	}
+
 	var series []chstore.SpanMetricSeries
 	switch plan.Table {
 	case dql.TableSpans:
@@ -117,8 +149,15 @@ func runLogsHistogram(r *http.Request, logs logstore.Store, plan *dql.Plan, from
 		switch fe.Key {
 		case "service.name", "service":
 			f.Service = val
-		case "trace.id", "traceId", "traceID":
-			f.TraceID = val
+		case "trace.id", "traceId", "traceID", "trace_id":
+			// v0.5.271 — IN op carries the DQL join's
+			// discovered trace_id list. Single-value falls
+			// back to TraceID for the existing UI path.
+			if fe.Op == "IN" && len(fe.Values) > 0 {
+				f.TraceIDs = append(f.TraceIDs, fe.Values...)
+			} else {
+				f.TraceID = val
+			}
 		case "span.id", "spanId":
 			f.SpanID = val
 		default:

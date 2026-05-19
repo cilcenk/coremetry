@@ -107,6 +107,17 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		wc += " AND trace_id = ?"
 		args = append(args, f.TraceID)
 	}
+	// v0.5.271 — multi-trace filter for the DQL cross-signal
+	// join. AND-merge with the single-trace TraceID; mostly
+	// they're mutually exclusive in practice (UI uses one,
+	// join executor uses the other).
+	if len(f.TraceIDs) > 0 {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(f.TraceIDs)), ",")
+		wc += " AND trace_id IN (" + placeholders + ")"
+		for _, id := range f.TraceIDs {
+			args = append(args, id)
+		}
+	}
 
 	// Top-20 groups by total count (mirrors the ES path's
 	// terms.size:20 cap). Without this a high-cardinality group

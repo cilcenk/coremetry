@@ -302,12 +302,19 @@ func hexBytes(hexStr string) []byte {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 func (s *Server) collectTagNames(ctx context.Context) ([]string, error) {
+	// v0.5.272 — added max_execution_time=5 across all four
+	// Tempo-datasource tag/value helpers. At billion-row scale
+	// the un-capped scan can burn 5-10s of CH time per
+	// Grafana datasource autocomplete keystroke; the 5s
+	// ceiling prevents the explorer from starving the rest of
+	// the queue.
 	rows, err := s.store.Conn().Query(ctx, `
 		SELECT DISTINCT k FROM (
 		    SELECT arrayJoin(attr_keys) AS k FROM spans WHERE time > now() - INTERVAL 24 HOUR
 		    UNION ALL
 		    SELECT arrayJoin(res_keys)  AS k FROM spans WHERE time > now() - INTERVAL 24 HOUR
-		) ORDER BY k LIMIT 1000`)
+		) ORDER BY k LIMIT 1000
+		SETTINGS max_execution_time = 5`)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	var out []string
@@ -329,14 +336,16 @@ func (s *Server) collectTagNames(ctx context.Context) ([]string, error) {
 func (s *Server) collectTagNamesScoped(ctx context.Context) (span []string, res []string, err error) {
 	rs, err := s.store.Conn().Query(ctx, `
 		SELECT DISTINCT arrayJoin(attr_keys) AS k FROM spans
-		WHERE time > now() - INTERVAL 24 HOUR LIMIT 1000`)
+		WHERE time > now() - INTERVAL 24 HOUR LIMIT 1000
+		SETTINGS max_execution_time = 5`)
 	if err != nil { return nil, nil, err }
 	for rs.Next() { var k string; rs.Scan(&k); span = append(span, k) }
 	rs.Close()
 
 	rs, err = s.store.Conn().Query(ctx, `
 		SELECT DISTINCT arrayJoin(res_keys) AS k FROM spans
-		WHERE time > now() - INTERVAL 24 HOUR LIMIT 1000`)
+		WHERE time > now() - INTERVAL 24 HOUR LIMIT 1000
+		SETTINGS max_execution_time = 5`)
 	if err != nil { return nil, nil, err }
 	for rs.Next() { var k string; rs.Scan(&k); res = append(res, k) }
 	rs.Close()
@@ -349,13 +358,13 @@ func (s *Server) collectTagValues(ctx context.Context, key string) ([]string, er
 	var args []any
 	switch key {
 	case "service.name", "service":
-		sql = `SELECT DISTINCT service_name FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY service_name LIMIT 500`
+		sql = `SELECT DISTINCT service_name FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY service_name LIMIT 500 SETTINGS max_execution_time = 5`
 	case "name":
-		sql = `SELECT DISTINCT name FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY name LIMIT 500`
+		sql = `SELECT DISTINCT name FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY name LIMIT 500 SETTINGS max_execution_time = 5`
 	case "kind":
-		sql = `SELECT DISTINCT kind FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY kind LIMIT 50`
+		sql = `SELECT DISTINCT kind FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY kind LIMIT 50 SETTINGS max_execution_time = 5`
 	case "status":
-		sql = `SELECT DISTINCT status_code FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY status_code`
+		sql = `SELECT DISTINCT status_code FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY status_code SETTINGS max_execution_time = 5`
 	default:
 		// Generic attribute lookup (try span attrs first, fall back to resource).
 		key2 := strings.TrimPrefix(strings.TrimPrefix(key, "span."), "resource.")
@@ -366,7 +375,8 @@ func (s *Server) collectTagValues(ctx context.Context, key string) ([]string, er
 			    UNION ALL
 			    SELECT res_values[indexOf(res_keys, ?)] AS v FROM spans
 			    WHERE time > now() - INTERVAL 24 HOUR
-			) WHERE v != '' ORDER BY v LIMIT 500`
+			) WHERE v != '' ORDER BY v LIMIT 500
+			SETTINGS max_execution_time = 5`
 		args = []any{key2, key2}
 	}
 	rows, err := s.store.Conn().Query(ctx, sql, args...)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
@@ -41,12 +41,17 @@ export function SamplingChip({ service, spanCount, range }: {
   // We use this to project per-preset retention volumes. The
   // estimate is naïve (linear extrapolation) but matches the
   // operator's mental model better than a "%" alone.
-  let spansPerDay: number | null = null;
-  if (spanCount && range) {
+  // v0.5.272 — memoised: timeRangeToNs(range) calls now() on
+  // every invocation, so the bare call in the render body
+  // produced fresh from/to numbers per render → any downstream
+  // useEffect treating spansPerDay as a dep refetched in a
+  // loop. v0.5.184 regression pattern.
+  const spansPerDay = useMemo<number | null>(() => {
+    if (!spanCount || !range) return null;
     const { from, to } = timeRangeToNs(range);
     const seconds = Math.max(1, (to - from) / 1e9);
-    spansPerDay = spanCount * (86400 / seconds);
-  }
+    return spanCount * (86400 / seconds);
+  }, [spanCount, range]);
 
   useEffect(() => {
     api.getSampling().then(setS).catch(() => setS(null));

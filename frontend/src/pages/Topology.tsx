@@ -665,6 +665,14 @@ function FlowsView({ range }: { range: TimeRange }) {
   const [top, setTop] = useState(100);
   const [search, setSearch] = useState('');
 
+  // v0.5.272 — memoised time-range tuple for the per-flow
+  // draw.io export <a href={…}> below. Without it, the bare
+  // timeRangeToNs(range) inside the IIFE re-computed now() on
+  // every render, producing a fresh URL each pass (link
+  // flicker + downstream perf trap). Memo gates on range
+  // identity.
+  const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
+
   useEffect(() => {
     setFlows(undefined);
     setPicked(null);
@@ -745,14 +753,11 @@ function FlowsView({ range }: { range: TimeRange }) {
             {/* Per-flow draw.io export (v0.5.145). Same window as
                 the inline view; backend reuses the service-level
                 XML builder restricted to this flow's traces. */}
-            <a href={(() => {
-                 const { from, to } = timeRangeToNs(range);
-                 return api.flowTopologyDrawIOURL({
-                   root_service: picked.rootService,
-                   root_op:      picked.rootOp,
-                   from, to,
-                 });
-               })()}
+            <a href={api.flowTopologyDrawIOURL({
+                 root_service: picked.rootService,
+                 root_op:      picked.rootOp,
+                 from: rangeNs.from, to: rangeNs.to,
+               })}
                className="sec"
                style={{
                  marginLeft: 'auto', fontSize: 11, padding: '4px 10px',

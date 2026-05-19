@@ -45,6 +45,9 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 	if rows, ok := s.tryServiceMVFastPath(ctx, f); ok {
 		return rows, nil
 	}
+	if rows, ok := s.tryOperationMVFastPath(ctx, f); ok {
+		return rows, nil
+	}
 
 	// ── Build WHERE ───────────────────────────────────────────────────────────
 	var wc whereClause
@@ -265,6 +268,185 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 		    %s AS gk,
 		    %s AS v
 		FROM service_summary_5m
+		WHERE %s
+		GROUP BY bucket, gk
+		ORDER BY gk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 30`,
+		step, groupSelect, aggExpr, strings.Join(whereClauses, " AND "))
+
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+
+	seriesMap := make(map[string]*SpanMetricSeries)
+	var order []string
+	for rows.Next() {
+		var bucket uint64
+		var gk []string
+		var val *float64
+		if err := rows.Scan(&bucket, &gk, &val); err != nil {
+			return nil, false
+		}
+		key := strings.Join(gk, "|")
+		ser, ok := seriesMap[key]
+		if !ok {
+			ser = &SpanMetricSeries{GroupKey: gk}
+			seriesMap[key] = ser
+			order = append(order, key)
+		}
+		v := 0.0
+		if val != nil {
+			v = *val
+		}
+		ser.Points = append(ser.Points, SpanMetricPoint{Time: int64(bucket), Value: v})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false
+	}
+	out := make([]SpanMetricSeries, 0, len(order))
+	for _, k := range order {
+		out = append(out, *seriesMap[k])
+	}
+	return out, true
+}
+
+// tryOperationMVFastPath (v0.5.269) routes eligible
+// QuerySpanMetric queries to operation_summary_5m — the same
+// pattern as tryServiceMVFastPath but with operation as the
+// second dimension. Powers "RED by operation" style queries
+// (DQL: `spans | summarize p99(duration_ms) by service.name,
+// name, bin(time, 5m)`) without ever touching raw spans.
+//
+// Eligibility:
+//   • step ≥ 300s
+//   • GroupBy contains "name" (operation), optionally
+//     "service.name". The two-key set ["service.name","name"]
+//     splits per (service, operation); ["name"] alone is
+//     valid when a service filter pins the scope.
+//   • Filters are all service.name = X with op =.
+//   • Agg in the MV's state set (same as the service fast-path).
+//
+// When GroupBy is just ["name"] without a service filter we
+// reject — the MV would return cross-service operation rows
+// which probably isn't what the operator meant.
+func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) ([]SpanMetricSeries, bool) {
+	step := f.StepSeconds
+	if step <= 0 {
+		span := f.To.Sub(f.From).Seconds()
+		switch {
+		case span <= 24*3600:
+			return nil, false
+		case span <= 7*24*3600:
+			step = 1800
+		default:
+			step = 3600
+		}
+	}
+	if step < 300 {
+		return nil, false
+	}
+
+	// GroupBy gate: must include "name"; service.name is
+	// optional. Normalise so the SQL emit is deterministic.
+	hasName := false
+	hasService := false
+	for _, k := range f.GroupBy {
+		switch k {
+		case "name", "operation":
+			hasName = true
+		case "service.name", "service_name":
+			hasService = true
+		default:
+			return nil, false
+		}
+	}
+	if !hasName {
+		return nil, false
+	}
+
+	// Filter gate.
+	var serviceFilter string
+	for _, fe := range f.Filters {
+		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
+			serviceFilter = fe.Values[0]
+			continue
+		}
+		return nil, false
+	}
+
+	// If groupBy is just ["name"] WITHOUT a service filter,
+	// the MV scan would mix operations from every service —
+	// probably not what the operator wanted. Refuse.
+	if !hasService && serviceFilter == "" {
+		return nil, false
+	}
+
+	field := f.Field
+	if field == "" {
+		field = "duration_ms"
+	}
+	if field != "duration_ms" {
+		return nil, false
+	}
+	var aggExpr string
+	switch f.Aggregation {
+	case "", "count":
+		aggExpr = "toNullable(toFloat64(countMerge(span_count_state)))"
+	case "rate":
+		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
+	case "error_rate":
+		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
+	case "errors":
+		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)))"
+	case "avg":
+		aggExpr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
+	case "p50":
+		aggExpr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6))"
+	case "p95":
+		aggExpr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6))"
+	case "p99":
+		aggExpr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6))"
+	default:
+		return nil, false
+	}
+
+	// Build groupSelect — order matches f.GroupBy exactly so
+	// the wire-format keys line up with what the operator
+	// asked for (service.name first if both, else just name).
+	var groupSelect string
+	switch {
+	case hasService && hasName:
+		// Match the operator's f.GroupBy order so the chip
+		// tuple "service / operation" reads naturally.
+		if len(f.GroupBy) >= 2 && (f.GroupBy[0] == "service.name" || f.GroupBy[0] == "service_name") {
+			groupSelect = "[service_name, name]"
+		} else {
+			groupSelect = "[name, service_name]"
+		}
+	case hasName && !hasService:
+		groupSelect = "[name]"
+	default:
+		// Service-only group should have been caught by the
+		// service fast-path. Defensive — refuse.
+		return nil, false
+	}
+
+	whereClauses := []string{"time_bucket >= ?", "time_bucket <= ?"}
+	args := []any{f.From, f.To}
+	if serviceFilter != "" {
+		whereClauses = append(whereClauses, "service_name = ?")
+		args = append(args, serviceFilter)
+	}
+
+	sql := fmt.Sprintf(`
+		SELECT
+		    toUnixTimestamp(toStartOfInterval(time_bucket, INTERVAL %d SECOND)) * 1000000000 AS bucket,
+		    %s AS gk,
+		    %s AS v
+		FROM operation_summary_5m
 		WHERE %s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket

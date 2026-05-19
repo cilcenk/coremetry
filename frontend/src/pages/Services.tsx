@@ -46,6 +46,29 @@ export default function ServicesPage() {
   }, []);
   const [sortBy, setSortBy] = useState<SortKey>('errorRate');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // v0.5.276 — pinned services. localStorage Set; pinned rows
+  // float to the top of the list regardless of sort, then sort
+  // applies within both groups. Persists per-browser (per-
+  // operator, basically) — no server state needed.
+  const PINNED_KEY = 'coremetry-pinned-services';
+  const [pinned, setPinned] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(PINNED_KEY);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch { return new Set(); }
+  });
+  const togglePin = (name: string) => {
+    setPinned(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      try { localStorage.setItem(PINNED_KEY, JSON.stringify([...next])); }
+      catch { /* quota / private mode — silently no-op */ }
+      return next;
+    });
+  };
   // Page-based pagination — 50 services per page, ranked by span
   // count server-side. Prev/Next walk the long tail; no 'Load all'
   // anymore because a single fetch of 10k+ services stalls the
@@ -171,7 +194,7 @@ export default function ServicesPage() {
     const minS = parseFloat(minSpans);
     const minP = parseFloat(minP99);
     const term = serviceFilter.trim().toLowerCase();
-    return data.filter(s => {
+    const filtered = data.filter(s => {
       if (term) {
         const md = catalog[s.name];
         const matches =
@@ -185,7 +208,18 @@ export default function ServicesPage() {
       if (!isNaN(minP) && s.p99DurationMs < minP) return false;
       return true;
     });
-  }, [data, serviceFilter, errorsOnly, minSpans, minP99, catalog]);
+    // v0.5.276 — pinned float to top. Server already sorted the
+    // page by the chosen column; partition into [pinned, rest]
+    // while preserving the server-side order within each group.
+    if (pinned.size === 0) return filtered;
+    const pinnedRows: typeof filtered = [];
+    const restRows: typeof filtered = [];
+    for (const row of filtered) {
+      if (pinned.has(row.name)) pinnedRows.push(row);
+      else restRows.push(row);
+    }
+    return [...pinnedRows, ...restRows];
+  }, [data, serviceFilter, errorsOnly, minSpans, minP99, catalog, pinned]);
 
   const apply = () => setCommittedFilter(serviceFilter.trim());
 
@@ -485,6 +519,25 @@ export default function ServicesPage() {
                           {...rowClickHandlers(`/service?name=${encodeURIComponent(s.name)}`,
                                                () => goToService(s.name))}>
                         <td>
+                          {/* v0.5.276 — pin star. Click toggles
+                              localStorage; pinned services float to
+                              the top of the list regardless of
+                              sort. Operator's 3-5 daily-touched
+                              services stay sticky. */}
+                          <button type="button"
+                            onClick={e => { e.stopPropagation(); togglePin(s.name); }}
+                            title={pinned.has(s.name)
+                              ? 'Unpin — service falls back into the sorted list'
+                              : 'Pin — float to top of the list'}
+                            style={{
+                              all: 'unset', cursor: 'pointer',
+                              fontSize: 13, marginRight: 6,
+                              color: pinned.has(s.name) ? 'var(--warn, #facc15)' : 'var(--text3)',
+                              opacity: pinned.has(s.name) ? 1 : 0.4,
+                              transition: 'opacity .15s, color .15s',
+                            }}>
+                            {pinned.has(s.name) ? '★' : '☆'}
+                          </button>
                           {/* v0.5.274 — auto-scored health dot.
                               Red/yellow/green from errorRate +
                               open problem counts (computed

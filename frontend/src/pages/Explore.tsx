@@ -8,6 +8,7 @@ import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { RedPanel } from '@/components/RedPanel';
 import { HeatmapCellExemplars, type HeatmapCellRef } from '@/components/HeatmapCellExemplars';
+import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { BubbleUpPanel } from '@/components/BubbleUpPanel';
 import { FacetsPanel } from '@/components/FacetsPanel';
@@ -629,6 +630,13 @@ function ExploreInner() {
     <>
       <Topbar title="Explore" range={range} onRangeChange={setRange} />
       <div id="content">
+        {/* v0.5.275 — Saved views bar. Same component /traces +
+            /logs + /problems + /anomalies use. Operator builds a
+            useful filter+DSL+viz combo, hits "Save", picks a
+            name → URL search-string persists in saved_views;
+            recall via the dropdown or 1-9 keyboard shortcut. */}
+        <SavedViewsBar page="explore" />
+
         {/* Source tabs — Spans (rich legacy workspace), Metrics
             (raw OTel metric_points + label split-by), Logs
             (timeseries from CH or external ES). All three share

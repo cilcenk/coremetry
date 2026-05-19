@@ -183,7 +183,12 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: "false"
-      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      # 1g heap (v0.5.257-fix) — 512m was OOM'ing under sustained
+      # ingest (exit 137 → restart loop → /api/logs returns
+      # connection-refused). 1g handles the demo workload + a
+      # ~30min window of significant_text aggs without
+      # collecting the heap into the ground.
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
     ports:
       - "9200:9200"
     healthcheck:

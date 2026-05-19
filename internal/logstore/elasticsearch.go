@@ -1372,7 +1372,53 @@ func (s *ESStore) mapHit(id string, src map[string]any) *LogRecord {
 		s.fields.SeverityTx: true, s.fields.SeverityNo: true,
 	}
 	flatten("", src, r.Attributes, skip)
+	// v0.5.281 — Operator-reported: Pod / Cluster columns blank on
+	// ES installs. ES flatten() dumped every non-canonical field
+	// into Attributes, but the LogTable frontend reads pod /
+	// cluster off `resourceAttributes`. The CH backend already
+	// populates ResourceAttributes from the OTLP resource map; the
+	// ES path has no such split, so we mirror known OTel-resource
+	// prefixes into ResourceAttributes here. Same map entries
+	// remain in Attributes so existing facet / KvRow click-to-
+	// filter paths keep working.
+	for k, v := range r.Attributes {
+		if looksLikeResourceAttr(k) {
+			r.ResourceAttributes[k] = v
+			delete(r.Attributes, k)
+		}
+	}
 	return r
+}
+
+// looksLikeResourceAttr returns true when the dotted key matches
+// one of the OTel-spec resource attribute namespaces. Used by the
+// ES mapHit to route flattened fields into ResourceAttributes so
+// the frontend's pod / cluster / namespace columns light up
+// without a per-pipeline mapping override.
+func looksLikeResourceAttr(k string) bool {
+	switch {
+	case strings.HasPrefix(k, "service."),
+		strings.HasPrefix(k, "host."),
+		strings.HasPrefix(k, "k8s."),
+		strings.HasPrefix(k, "kubernetes."),
+		strings.HasPrefix(k, "openshift."),
+		strings.HasPrefix(k, "container."),
+		strings.HasPrefix(k, "deployment."),
+		strings.HasPrefix(k, "cloud."),
+		strings.HasPrefix(k, "os."),
+		strings.HasPrefix(k, "process."),
+		strings.HasPrefix(k, "telemetry."),
+		strings.HasPrefix(k, "faas."),
+		strings.HasPrefix(k, "device."):
+		return true
+	}
+	// Bare snake_case shipper conventions (Filebeat / Vector) —
+	// no namespace prefix, but unambiguously resource-y.
+	switch k {
+	case "pod_name", "container_name", "namespace", "hostname", "host":
+		return true
+	}
+	return false
 }
 
 // readPathAny tries the configured `primary` path first, then

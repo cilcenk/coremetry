@@ -288,6 +288,11 @@ func (s *Server) Start() error {
 	// so the browser triggers a download rather than rendering.
 	mux.HandleFunc("GET /api/traces/export.csv", s.exportTracesCSV)
 	mux.HandleFunc("GET /api/traces/aggregate", s.getTraceAggregate)
+	// v0.5.264 — trace shape clustering. Groups traces by their
+	// sorted-unique (service, operation) fingerprint; surfaces
+	// the dominant call-pattern cohorts. Sample-based so the
+	// query stays under the 30s ceiling at billion-span scale.
+	mux.HandleFunc("GET /api/traces/shapes",    s.getTraceShapes)
 	mux.HandleFunc("GET /api/traces/{id}", s.getTrace)
 	// Public-share endpoints — POST mints a token (editor+ only;
 	// viewers can read traces but not externalise them through a

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTableNav } from '@/lib/useTableNav';
 import { Topbar } from '@/components/Topbar';
+import { TraceShapesView } from '@/components/TraceShapesView';
 import { IconSearch } from '@/components/icons';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -18,7 +19,7 @@ import { tsShort, timeRangeToNs, fmtNum, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import type { TracesResponse, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
 
-type View = 'list' | 'aggregate';
+type View = 'list' | 'aggregate' | 'shapes';
 // Group-by dimensions match the server-side whitelist + a special
 // 'attr' bucket meaning 'use the custom attribute key in the
 // adjacent input'. Adding new dimensions is server-side only —
@@ -321,6 +322,11 @@ function TracesPageInner() {
             <button onClick={() => setView('list')}
               className={view === 'list' ? 'active' : ''}>
               Traces
+            </button>
+            <button onClick={() => setView('shapes')}
+              className={view === 'shapes' ? 'active' : ''}
+              title="Cluster traces by their (service, operation) signature — find dominant call patterns at a glance">
+              Shapes
             </button>
           </div>
           {view === 'aggregate' && (
@@ -646,6 +652,15 @@ function TracesPageInner() {
               {agg.length} groups · grouped by <b style={{ color: 'var(--accent2)' }}>{groupBy}</b> · sorted by <b>{aggSort}</b> {aggOrder} · click a row to drill down
             </div>
           </>
+        )}
+
+        {/* v0.5.264 — Trace shape clustering view. Groups
+            traces by their sorted-unique (service, operation)
+            signature; surfaces dominant call-pattern cohorts.
+            Sample-based at 10% so the underlying CH query
+            stays under the 30s ceiling. */}
+        {view === 'shapes' && (
+          <TraceShapesView range={range} service={filter.service || undefined} />
         )}
       </div>
     </>

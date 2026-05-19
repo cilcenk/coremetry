@@ -196,7 +196,17 @@ export function MultiLineChart({
             stroke: color,
             fill: color + '22',
             width: 2,
-            points: { show: times.length <= 100, size: 4 },
+            // Point markers (v0.5.257 — was: ≤100 only). Bumped
+            // ceiling to ≤500 so denser charts still surface
+            // individual datapoints — operator can hover any
+            // bucket to read the exact value without squinting
+            // at the smoothed line. Auto-tunes size down past
+            // 200 so we don't end up with a continuous "fat
+            // sausage" look on busy charts.
+            points: {
+              show: times.length <= 500,
+              size: times.length <= 100 ? 5 : times.length <= 200 ? 3.5 : 2.5,
+            },
             value: (_u: uPlot, v: number | null) => fmtSmart(v, unit),
           } satisfies uPlot.Series;
         }),
@@ -222,7 +232,12 @@ export function MultiLineChart({
         },
       ],
       cursor: {
-        x: true, y: true, focus: { prox: 30 },
+        // Tighter prox (v0.5.257 — was 30) so the operator can
+        // step through nearby points without the cursor leaking
+        // onto adjacent series. Datadog / Uptrace tooltips snap
+        // at ~15px; 30 was a wider catch-net that made dense
+        // multi-series charts feel "imprecise".
+        x: true, y: true, focus: { prox: 15 },
         // Drag-zoom: x-axis only. uPlot's built-in select
         // mechanism + setScale=true handles the visual zoom;
         // onZoom (below, in hooks.setSelect) propagates the

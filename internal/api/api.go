@@ -7344,7 +7344,15 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		return s.store.EnrichAnomaliesWithClusters(r.Context(), rows, time.Hour), nil
+		rows = s.store.EnrichAnomaliesWithClusters(r.Context(), rows, time.Hour)
+		// v0.5.286 — attach the most recent deploy per service
+		// in the 30 min preceding each event's startedAt so the
+		// /anomalies page can answer "did this break because of a
+		// deploy?" without a context switch. Uses the v0.5.283
+		// effective-version chain (Helm labels, image tags) so
+		// installs with no service.version still correlate.
+		rows = s.store.EnrichAnomaliesWithDeploys(r.Context(), rows, 30*time.Minute)
+		return rows, nil
 	})
 }
 

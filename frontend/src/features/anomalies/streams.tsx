@@ -400,6 +400,9 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
                     {e.service || '—'}
                   </Link>
                   <ClusterChips clusters={e.clusters} />
+                  {e.recentDeploy && (
+                    <DeployChip d={e.recentDeploy} service={e.service} />
+                  )}
                 </td>
                 <td style={{ fontSize: 11, color: 'var(--text2)' }}>
                   {e.kind === 'log_pattern' ? 'log'
@@ -477,5 +480,41 @@ function LogPatternsSection({ items, onMute }: {
         ))}
       </div>
     </Card>
+  );
+}
+
+// DeployChip — v0.5.286. Inline chip on the anomaly row when a
+// service deploy landed within 30 min before the anomaly fired.
+// Hot tint (red) for deploys ≤ 5 min before — the post-deploy
+// smoking-gun window the Problem priority logic also uses
+// (chstore/problem.go computeProblemPriority).
+function DeployChip({ d, service }: {
+  d: { version: string; ageSeconds: number; timeUnixNs: number };
+  service: string;
+}) {
+  const ageMin = Math.max(1, Math.round(d.ageSeconds / 60));
+  const ageLabel = ageMin >= 60
+    ? `${Math.round(ageMin / 60)}h before`
+    : `${ageMin}m before`;
+  const hot = d.ageSeconds <= 5 * 60;
+  const palette = hot
+    ? { bg: 'rgba(239,68,68,0.14)', border: 'rgba(239,68,68,0.50)', color: 'var(--err)' }
+    : { bg: 'rgba(212,165,55,0.10)', border: 'rgba(212,165,55,0.35)', color: 'var(--warn, #d4a537)' };
+  return (
+    <Link to={`/service?name=${encodeURIComponent(service)}#deploys`}
+      title={`Service ${service} deployed v${d.version} at ${new Date(d.timeUnixNs / 1e6).toLocaleString()} — ${ageLabel}. Likely-cause window: ≤ 5 min.`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        marginLeft: 8, marginTop: 2,
+        padding: '1px 7px', borderRadius: 10, fontSize: 10,
+        background: palette.bg, border: `1px solid ${palette.border}`,
+        color: palette.color, textDecoration: 'none',
+        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+        verticalAlign: 'middle',
+      }}>
+      <span style={{ fontWeight: 700 }}>↑ deploy</span>
+      <span>{d.version}</span>
+      <span style={{ opacity: 0.75 }}>· {ageLabel}</span>
+    </Link>
   );
 }

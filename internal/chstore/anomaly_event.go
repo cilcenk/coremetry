@@ -32,6 +32,14 @@ type AnomalyEvent struct {
 	// Enriched at read time (no schema migration); empty for
 	// services without cluster attrs.
 	Clusters []string `json:"clusters,omitempty"`
+	// RecentDeploy — v0.5.286. Most recent deploy of this
+	// service observed within `lookback` (default 30m) before
+	// StartedAt. Populated at READ time by
+	// EnrichAnomaliesWithDeploys so the /anomalies page can
+	// show a "deployed v1.2.3 · 4m before" chip — collapses
+	// the "did this break because of a deploy?" question into
+	// a single glance.
+	RecentDeploy *RecentDeploy `json:"recentDeploy,omitempty"`
 }
 
 // FingerprintAnomaly stitches the same (kind, pattern, service)

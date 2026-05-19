@@ -612,6 +612,24 @@ function OperationView({ params, setParams, range }: {
   const drawioHref = data && root
     ? api.topologyDrawIOURL({ root, depth, from: data.from, to: data.to }) : '';
 
+  // v0.5.285 — Operator-reported: depth>=3 graphs show op nodes
+  // colored by hashColor(parent service). Different colors are
+  // different downstream service flows, but the eye can't track
+  // a single colored chain through 50+ nodes. This `colorFilter`
+  // state holds an optionally-selected service name; chips
+  // below the controls let the operator pick one service color
+  // → only that service's nodes + the edges touching them stay
+  // fully opaque; everything else fades to 18%. Same dim level
+  // as the existing search-highlight in ServiceView so the two
+  // controls feel uniform.
+  const [colorFilter, setColorFilter] = useState<string | null>(null);
+  const uniqueServices = useMemo(() => {
+    if (!data) return [] as string[];
+    const set = new Set<string>();
+    data.nodes.forEach(n => set.add(n.service));
+    return Array.from(set).sort();
+  }, [data]);
+
   return (
     <>
       <div className="controls" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
@@ -667,8 +685,59 @@ function OperationView({ params, setParams, range }: {
           <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
             {data.nodes.length} nodes · {data.edges.length} edges · depth {data.depth}
           </div>
+          {uniqueServices.length > 1 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              flexWrap: 'wrap', marginBottom: 8,
+              padding: '6px 0',
+              borderTop: '1px dashed var(--border)',
+              borderBottom: '1px dashed var(--border)',
+            }}>
+              <span style={{
+                fontSize: 11, color: 'var(--text3)',
+                textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700,
+                marginRight: 4,
+              }}>Filter by service color</span>
+              {uniqueServices.map(svc => {
+                const isPicked = colorFilter === svc;
+                const c = hashColor(svc);
+                return (
+                  <button key={svc} type="button"
+                    onClick={() => setColorFilter(isPicked ? null : svc)}
+                    title={isPicked ? `Showing ${svc} only — click to clear` : `Show only ${svc}'s ops`}
+                    style={{
+                      all: 'unset', cursor: 'pointer',
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '2px 8px', borderRadius: 12, fontSize: 11,
+                      border: `1px solid ${isPicked ? c : 'var(--border)'}`,
+                      background: isPicked
+                        ? `color-mix(in srgb, ${c} 22%, transparent)`
+                        : 'transparent',
+                      color: isPicked ? 'var(--text)' : 'var(--text2)',
+                      fontWeight: isPicked ? 700 : 500,
+                      opacity: colorFilter && !isPicked ? 0.55 : 1,
+                    }}>
+                    <span style={{
+                      width: 9, height: 9, borderRadius: '50%',
+                      background: c, display: 'inline-block',
+                    }} />
+                    {svc}
+                  </button>
+                );
+              })}
+              {colorFilter && (
+                <button type="button" onClick={() => setColorFilter(null)}
+                  style={{
+                    all: 'unset', cursor: 'pointer', fontSize: 11,
+                    color: 'var(--text3)', marginLeft: 4,
+                  }}
+                  title="Clear color filter">✕ clear</button>
+              )}
+            </div>
+          )}
           <OpTopologySVG layers={layers} edges={data.edges}
-            anchor={rootOp ? `${root}|${rootOp}` : undefined} />
+            anchor={rootOp ? `${root}|${rootOp}` : undefined}
+            colorFilter={colorFilter} />
         </>
       )}
     </>
@@ -1493,13 +1562,24 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   );
 }
 
-function OpTopologySVG({ layers, edges, anchor }: {
+function OpTopologySVG({ layers, edges, anchor, colorFilter }: {
   layers: TopologyNode[][];
   edges: TopologyResponse['edges'];
   // v0.5.160 — `{service}|{op}` id of the anchored root. Drawn
   // with an accent border so the operator's eye lands on it.
   anchor?: string;
+  // v0.5.285 — when set, nodes from other services fade to 18%
+  // opacity and edges that don't touch the filtered service also
+  // fade. Matches the search-highlight pattern in ServiceView so
+  // the operator can isolate one colored flow at high depth.
+  colorFilter?: string | null;
 }) {
+  const isNodeInFilter = (n: TopologyNode) =>
+    !colorFilter || n.service === colorFilter;
+  const isEdgeInFilter = (e: TopologyResponse['edges'][number]) =>
+    !colorFilter
+      || e.parentService === colorFilter
+      || e.childService  === colorFilter;
   // v0.5.246 — node + layout dimensions now reuse the SAME
   // constants as the Service topology view (NODE_W / NODE_H /
   // COL_W / ROW_H). Visual parity = the operator can switch
@@ -1565,8 +1645,9 @@ function OpTopologySVG({ layers, edges, anchor }: {
           const strokeColor = proto === 'http' ? '#4A90D9'
                             : proto === 'rpc'  ? '#8A6FB5'
                             : 'var(--text3)';
+          const inFilter = isEdgeInFilter(e);
           return (
-            <g key={i}>
+            <g key={i} opacity={inFilter ? 1 : 0.18}>
               <path
                 d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                 stroke={strokeColor} strokeWidth={sw} fill="none"
@@ -1589,8 +1670,10 @@ function OpTopologySVG({ layers, edges, anchor }: {
           const isAnchor = !!anchor && n.id === anchor;
           const strokeColor = isAnchor ? 'var(--accent2)' : color;
           const strokeW = isAnchor ? 3 : 1.5;
+          const inFilter = isNodeInFilter(n);
           return (
-            <g key={n.id} transform={`translate(${p.x}, ${p.y})`}>
+            <g key={n.id} transform={`translate(${p.x}, ${p.y})`}
+               opacity={inFilter ? 1 : 0.18}>
               {/* Anchor halo — same visual treatment the
                   Service topology uses for the focused node so
                   the operator's chosen root pops at a glance. */}

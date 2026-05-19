@@ -709,6 +709,53 @@ func (s *Store) AcknowledgeProblems(ctx context.Context, ids []string, actor str
 	return count, nil
 }
 
+// OpenProblemCounts is the per-service open-problem tally
+// (v0.5.274). Powers the /services health badge. Counts the
+// max severity per service so the badge can flip yellow on a
+// warning AND red on a critical without a second query.
+type OpenProblemCounts struct {
+	Critical int `json:"critical"`
+	Warning  int `json:"warning"`
+	Info     int `json:"info"`
+}
+
+// GetOpenProblemCountsByService returns per-service tallies of
+// currently-open problems grouped by severity. Single FINAL
+// scan over the problems table — bounded by `status =
+// 'open'` so the row count is tiny even on a busy install
+// (open problems are a triage state, not a historical archive).
+func (s *Store) GetOpenProblemCountsByService(ctx context.Context) (map[string]OpenProblemCounts, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT service, severity, count() AS c
+		FROM problems FINAL
+		WHERE status IN ('open', 'acknowledged')
+		GROUP BY service, severity
+		SETTINGS max_execution_time = 5`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]OpenProblemCounts{}
+	for rows.Next() {
+		var service, severity string
+		var c uint64
+		if err := rows.Scan(&service, &severity, &c); err != nil {
+			return nil, err
+		}
+		entry := out[service]
+		switch severity {
+		case "critical":
+			entry.Critical += int(c)
+		case "warning":
+			entry.Warning += int(c)
+		default:
+			entry.Info += int(c)
+		}
+		out[service] = entry
+	}
+	return out, rows.Err()
+}
+
 // GetProblem fetches a single problem by id, or nil when no
 // row matches. Lighter than ListProblems for the patch-one path.
 func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {

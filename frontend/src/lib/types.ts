@@ -7,6 +7,13 @@ export interface Service {
   p99DurationMs: number;
   apdex: number;            // 0..1 user-satisfaction score
   apdexThresholdMs: number; // T (default 200)
+  // Auto-scored health badge (v0.5.274). Computed at READ time
+  // on the backend from errorRate + open-problem counts;
+  // missing on rows where the problem-count lookup failed
+  // (renderer treats missing as no badge).
+  health?: 'green' | 'yellow' | 'red';
+  healthReason?: string;
+  openProblems?: number;
 }
 
 // Topology view (v0.5.100) — operation-level call graph rooted at

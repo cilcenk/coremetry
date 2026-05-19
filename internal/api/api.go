@@ -833,6 +833,18 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		if hasMore {
 			rows = rows[:limit]
 		}
+		// v0.5.274 — auto-score health per service from
+		// errorRate + open-problem counts. Single FINAL scan
+		// over the problems table; bounded by status=open so
+		// the row count is tiny.
+		counts, perr := s.store.GetOpenProblemCountsByService(r.Context())
+		if perr == nil {
+			for i := range rows {
+				c := counts[rows[i].Name]
+				rows[i].OpenProblems = c.Critical + c.Warning + c.Info
+				rows[i].Health, rows[i].HealthReason = scoreHealth(&rows[i], c)
+			}
+		}
 		return map[string]any{
 			"services": rows,
 			"hasMore":  hasMore,
@@ -840,6 +852,37 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 			"limit":    limit,
 		}, nil
 	})
+}
+
+// scoreHealth (v0.5.274) — Datadog-Watchdog-style red/yellow/
+// green verdict per service. Blend rules, in order:
+//
+//   RED:    1+ open critical problem
+//        OR errorRate > 5%
+//   YELLOW: 1+ open warning problem
+//        OR errorRate > 1%
+//        OR 1+ open info problem
+//   GREEN:  otherwise
+//
+// Operator sees the firing rule in HealthReason so the badge
+// is auditable. Reason text is short — meant for a tooltip.
+func scoreHealth(svc *chstore.ServiceSummary, c chstore.OpenProblemCounts) (string, string) {
+	if c.Critical > 0 {
+		return "red", fmt.Sprintf("%d open critical", c.Critical)
+	}
+	if svc.ErrorRate > 5 {
+		return "red", fmt.Sprintf("error rate %.1f%%", svc.ErrorRate)
+	}
+	if c.Warning > 0 {
+		return "yellow", fmt.Sprintf("%d open warning", c.Warning)
+	}
+	if svc.ErrorRate > 1 {
+		return "yellow", fmt.Sprintf("error rate %.1f%%", svc.ErrorRate)
+	}
+	if c.Info > 0 {
+		return "yellow", fmt.Sprintf("%d open info", c.Info)
+	}
+	return "green", ""
 }
 
 // getSystemStats returns the meta-observability snapshot — today's

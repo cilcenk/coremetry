@@ -492,6 +492,200 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 	return out, true
 }
 
+// tryOperationMVFastPathMulti (v0.5.273) is the batched peer
+// of tryOperationMVFastPath — same eligibility, but selects N
+// aggregation columns in one operation_summary_5m scan + emits
+// one result map keyed by the operator-given spec names.
+//
+// Powers ServiceCharts on /service?name=X (the "rate +
+// error_rate + p99 by operation" triple) at month-scale where
+// the raw spans path would otherwise hit the 30s execution
+// ceiling — operator-reported regression that surfaced after
+// v0.5.268/269 only covered the single-version.
+func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBatchFilter) (map[string][]SpanMetricSeries, bool) {
+	step := f.StepSeconds
+	if step <= 0 {
+		span := f.To.Sub(f.From).Seconds()
+		switch {
+		case span <= 24*3600:
+			return nil, false
+		case span <= 7*24*3600:
+			step = 1800
+		default:
+			step = 3600
+		}
+	}
+	if step < 300 {
+		return nil, false
+	}
+
+	// GroupBy gate: must include "name"; service.name optional.
+	hasName, hasService := false, false
+	for _, k := range f.GroupBy {
+		switch k {
+		case "name", "operation":
+			hasName = true
+		case "service.name", "service_name":
+			hasService = true
+		default:
+			return nil, false
+		}
+	}
+	if !hasName {
+		return nil, false
+	}
+
+	// Filter gate: only service.name = X.
+	var serviceFilter string
+	for _, fe := range f.Filters {
+		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
+			serviceFilter = fe.Values[0]
+			continue
+		}
+		return nil, false
+	}
+	if !hasService && serviceFilter == "" {
+		return nil, false
+	}
+
+	// Every spec must be MV-supported. Field must be duration_ms
+	// (the only column the MV pre-aggregates). Build aggExpr
+	// per spec; the SQL emits them as v0/v1/v2 aliases so the
+	// scan position-aliasing matches the agg order.
+	aggExprs := make([]string, 0, len(f.Aggs))
+	for _, a := range f.Aggs {
+		field := a.Field
+		if field == "" {
+			field = "duration_ms"
+		}
+		if field != "duration_ms" {
+			return nil, false
+		}
+		var expr string
+		switch a.Aggregation {
+		case "", "count":
+			expr = "toNullable(toFloat64(countMerge(span_count_state)))"
+		case "rate":
+			expr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
+		case "error_rate":
+			expr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
+		case "errors":
+			expr = "toNullable(toFloat64(countMerge(error_count_state)))"
+		case "avg":
+			expr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
+		case "p50":
+			expr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6))"
+		case "p95":
+			expr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6))"
+		case "p99":
+			expr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6))"
+		default:
+			return nil, false
+		}
+		aggExprs = append(aggExprs, expr)
+	}
+
+	// Build groupSelect — matches operator's f.GroupBy order.
+	var groupSelect string
+	switch {
+	case hasService && hasName:
+		if len(f.GroupBy) >= 2 && (f.GroupBy[0] == "service.name" || f.GroupBy[0] == "service_name") {
+			groupSelect = "[service_name, name]"
+		} else {
+			groupSelect = "[name, service_name]"
+		}
+	case hasName:
+		groupSelect = "[name]"
+	default:
+		return nil, false
+	}
+
+	selectParts := []string{
+		fmt.Sprintf("toUnixTimestamp(toStartOfInterval(time_bucket, INTERVAL %d SECOND)) * 1000000000 AS bucket", step),
+		groupSelect + " AS gk",
+	}
+	for i, e := range aggExprs {
+		selectParts = append(selectParts, fmt.Sprintf("%s AS v%d", e, i))
+	}
+
+	whereClauses := []string{"time_bucket >= ?", "time_bucket <= ?"}
+	args := []any{f.From, f.To}
+	if serviceFilter != "" {
+		whereClauses = append(whereClauses, "service_name = ?")
+		args = append(args, serviceFilter)
+	}
+
+	sql := fmt.Sprintf(`
+		SELECT %s
+		FROM operation_summary_5m
+		WHERE %s
+		GROUP BY bucket, gk
+		ORDER BY gk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 30`,
+		strings.Join(selectParts, ",\n        "),
+		strings.Join(whereClauses, " AND "))
+
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+
+	// Per-agg seriesMap, one per spec.
+	type seriesAcc struct {
+		byKey map[string]*SpanMetricSeries
+		order []string
+	}
+	accs := make([]seriesAcc, len(f.Aggs))
+	for i := range accs {
+		accs[i].byKey = map[string]*SpanMetricSeries{}
+	}
+
+	// Scan into a dynamic-width row: (bucket, gk, v0, v1, ...).
+	scanArgs := make([]any, 2+len(f.Aggs))
+	for rows.Next() {
+		var bucket uint64
+		var gk []string
+		vals := make([]*float64, len(f.Aggs))
+		scanArgs[0] = &bucket
+		scanArgs[1] = &gk
+		for i := range vals {
+			scanArgs[2+i] = &vals[i]
+		}
+		if err := rows.Scan(scanArgs...); err != nil {
+			return nil, false
+		}
+		key := strings.Join(gk, "|")
+		for i := range f.Aggs {
+			ser, ok := accs[i].byKey[key]
+			if !ok {
+				ser = &SpanMetricSeries{GroupKey: gk}
+				accs[i].byKey[key] = ser
+				accs[i].order = append(accs[i].order, key)
+			}
+			v := 0.0
+			if vals[i] != nil {
+				v = *vals[i]
+			}
+			ser.Points = append(ser.Points, SpanMetricPoint{Time: int64(bucket), Value: v})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false
+	}
+
+	out := make(map[string][]SpanMetricSeries, len(f.Aggs))
+	for i, a := range f.Aggs {
+		series := make([]SpanMetricSeries, 0, len(accs[i].order))
+		for _, k := range accs[i].order {
+			series = append(series, *accs[i].byKey[k])
+		}
+		out[a.Name] = series
+	}
+	return out, true
+}
+
 // SpanMetricBatchFilter computes N aggregations over the same
 // span selection in a single CH query. Drives the Service
 // detail page's "rate + error_rate + p99" chart row (and the
@@ -528,6 +722,17 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	if len(f.Aggs) == 0 {
 		return map[string][]SpanMetricSeries{}, nil
 	}
+	// ── MV fast-path (v0.5.273) ───────────────────────────────────────────────
+	// ServiceCharts on /service?name=X fires this batch every
+	// time the operator changes range. At month-scale the raw-
+	// spans GROUP BY otherwise burns 5-30s of CH time per call.
+	// The single-agg paths got MV-routing in v0.5.268/269; this
+	// is the missing peer for the batched ("rate + error_rate
+	// + p99 in one CH pass") variant.
+	if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
+		return out, nil
+	}
+
 	// ── Build WHERE ───────────────────────────────────────────────────────────
 	var wc whereClause
 	if !f.From.IsZero() {

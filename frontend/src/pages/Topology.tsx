@@ -325,6 +325,14 @@ function ServiceView({ range }: { range: TimeRange }) {
   // the diagram readable. Only used when focus is set; the top-N
   // pick handles the no-focus case.
   const [focusHops, setFocusHops] = useState(1);
+  // v0.5.282 — Operator-reported: focusing a service used to
+  // expand BOTH callers and callees (bidirectional BFS), but for
+  // most workflows the question is "what does this service kick
+  // off / depend on, downstream". Default 'down' renders only the
+  // selected service + its callees + their dependencies. 'both'
+  // restores the old caller-and-callee fan for blame-style
+  // root-cause walks.
+  const [focusDir, setFocusDir] = useState<'down' | 'both'>('down');
   // Substring search across nodes in the current visible subgraph.
   // Doesn't filter the diagram — it highlights matches so the
   // operator can find a service inside a 100-node graph without
@@ -384,9 +392,11 @@ function ServiceView({ range }: { range: TimeRange }) {
   const visible = useMemo(() => {
     if (!data) return null;
     if (focus) {
-      // BFS outward AND inward from focus up to focusHops layers.
-      // Both directions matter: callers (incoming edges) are as
-      // important as callees for triage.
+      // BFS from focus up to focusHops layers. v0.5.282 — default
+      // 'down' only follows outgoing edges (callees); 'both'
+      // keeps the legacy bidirectional expansion for blame-style
+      // walks. Edges to/from nodes outside the kept set get
+      // dropped so the diagram doesn't carry phantom stubs.
       const keepNodes = new Set<string>([focus]);
       let frontier = new Set<string>([focus]);
       for (let h = 0; h < focusHops; h++) {
@@ -395,7 +405,8 @@ function ServiceView({ range }: { range: TimeRange }) {
           if (frontier.has(e.parentService) && !keepNodes.has(e.childNode)) {
             next.add(e.childNode);
           }
-          if (frontier.has(e.childNode) && !keepNodes.has(e.parentService)) {
+          if (focusDir === 'both'
+              && frontier.has(e.childNode) && !keepNodes.has(e.parentService)) {
             next.add(e.parentService);
           }
         });
@@ -429,14 +440,15 @@ function ServiceView({ range }: { range: TimeRange }) {
       nodes: data.nodes.filter(n => keptSet.has(n.id)),
       edges: keepEdges,
     };
-  }, [data, topN, focus, focusHops]);
+  }, [data, topN, focus, focusHops, focusDir]);
 
   const layout = useMemo(
     () => layerServices(
       visible ? { ...data!, nodes: visible.nodes, edges: visible.edges } : null,
       focus || undefined,
+      focusDir,
     ),
-    [visible, data, focus]
+    [visible, data, focus, focusDir]
   );
 
   if (data === undefined) return <Spinner />;
@@ -481,6 +493,18 @@ function ServiceView({ range }: { range: TimeRange }) {
               style={{ width: 100 }}
               title="How many hops outward from the focused service to include" />
             <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)' }}>{focusHops}</span>
+            {/* v0.5.282 — direction toggle. Default 'down' so the
+                anchor sits at column 0 and only callees fan out
+                to the right. 'both' restores the legacy
+                bidirectional view (callers on the left) for
+                blame-style walks. */}
+            <label style={{ fontSize: 12, color: 'var(--text2)', marginLeft: 4 }}>Direction</label>
+            <select value={focusDir} onChange={e => setFocusDir(e.target.value as 'down' | 'both')}
+              style={{ fontSize: 12, padding: '3px 6px' }}
+              title="Downstream-only puts the focused service at column 0 and shows what it calls. Bidirectional also includes callers on the left.">
+              <option value="down">↳ downstream</option>
+              <option value="both">⇆ both</option>
+            </select>
           </>
         )}
         <input type="search" placeholder="Search…" value={search}
@@ -1016,6 +1040,12 @@ function FlowsByService({ flows, hasSearch, onPick }: {
 function layerServices(
   data: ServiceTopologyResponse | null | undefined,
   anchor?: string,
+  // v0.5.282 — 'down' (default) renders only callees of the
+  // anchor so the anchor sits at column 0 and the diagram reads
+  // strictly left-to-right. 'both' restores the legacy
+  // signed-column layout (callers in negative columns shifted
+  // to the left of the anchor).
+  focusDir: 'down' | 'both' = 'down',
 ): Map<string, number> {
   const layer = new Map<string, number>();
   if (!data) return layer;
@@ -1045,17 +1075,22 @@ function layerServices(
       });
       frontier = next;
     }
-    // Backward BFS — follow incoming edges → callers.
-    frontier = [anchor];
-    while (frontier.length > 0) {
-      const next: string[] = [];
-      frontier.forEach(id => {
-        const h = bwd.get(id)!;
-        (inAdj.get(id) || []).forEach(p => {
-          if (!bwd.has(p)) { bwd.set(p, h + 1); next.push(p); }
+    // Backward BFS — follow incoming edges → callers. Skipped
+    // in 'down' mode so the anchor stays at column 0 and the
+    // diagram reads strictly left→right; restored for 'both'
+    // (caller context for blame walks).
+    if (focusDir === 'both') {
+      frontier = [anchor];
+      while (frontier.length > 0) {
+        const next: string[] = [];
+        frontier.forEach(id => {
+          const h = bwd.get(id)!;
+          (inAdj.get(id) || []).forEach(p => {
+            if (!bwd.has(p)) { bwd.set(p, h + 1); next.push(p); }
+          });
         });
-      });
-      frontier = next;
+        frontier = next;
+      }
     }
     // Signed column: callees positive, callers negative, anchor 0.
     // A node reachable BOTH ways (cycles, e.g. mutual call) picks
@@ -1275,7 +1310,17 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
       border: '1px solid var(--border)', borderRadius: 6,
       background: 'var(--bg2)', padding: 12, marginBottom: 16,
     }}>
-      <svg width={width} height={height}
+      {/* v0.5.282 — width/height MUST match the viewBox area
+          (width+40 × height+40, since the viewBox starts at
+          -10,-10 to allow a 10px halo around the leftmost +
+          topmost boxes). Earlier `width={width}` paired with
+          `width+40` viewBox produced a `width/(width+40)` scale
+          factor, so a 1-column diagram (width=280) rendered
+          boxes at ~87% intrinsic size while a 6-column diagram
+          (width=1680) rendered at ~98% — operator saw "some
+          service boxes smaller than others". Now 1 viewBox
+          unit = 1 CSS pixel regardless of column count. */}
+      <svg width={width + 40} height={height + 40}
         viewBox={`-10 -10 ${width + 40} ${height + 40}`}
         xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
         <defs>

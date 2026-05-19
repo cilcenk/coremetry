@@ -342,20 +342,24 @@ function LogsInner() {
           </select>
           <button onClick={apply}>Search</button>
           <button className="sec" onClick={reset}>Reset</button>
-          {/* Save as alert (v0.5.242) — opens a modal that turns
-              the current KQL into a saved-search alert rule
-              ("page me when this query returns > N matches in
-              X minutes"). Disabled when the search box is empty
-              — saving "alert on everything" is rarely the
-              operator's intent. */}
+          {/* Create watcher (v0.5.252 — was: 🔔 Save as alert).
+              Refactored to mirror Elasticsearch Watcher's mental
+              model: Trigger / Condition / Action sections, so the
+              operator reads the rule as a sentence ("Every 1m,
+              count(<query>) over last 60s > 10 → page warning")
+              instead of three flat inputs. Backend payload is
+              unchanged — same saved-search alert rule introduced
+              in v0.5.242. Emoji dropped at operator request:
+              status-bar buttons should look professional, not
+              messaging-app-ish. */}
           {draft.search.trim() !== '' && (
             <button className="sec"
               onClick={() => setAlertDraft({
                 name: '', threshold: 10, windowSec: 60, severity: 'warning',
               })}
-              title="Save this query as an alert rule"
+              title="Create a watcher — periodic poll of this query with a threshold + notification"
               style={{ fontSize: 12 }}>
-              🔔 Save as alert
+              Create watcher
             </button>
           )}
           <button className={live ? 'live-on' : 'sec'}
@@ -548,12 +552,15 @@ function LogsInner() {
   );
 }
 
-// SaveAsAlertModal — small overlay that turns the current /logs
-// KQL into a saved-search alert rule (v0.5.242). Operator picks
-// a threshold (count > N), window (seconds), severity. Channels
-// come from the existing notifier wiring on the backend so we
-// don't ask the operator to re-pick them here — alerts go to the
-// same channels as every other firing rule.
+// SaveAsAlertModal — Watcher-style overlay (v0.5.252, was the flat
+// "Save as alert" of v0.5.242). Mirrors Elasticsearch Watcher's
+// three-pane shape: Trigger (cadence) / Input + Condition (the
+// query + threshold + window) / Action (severity). The operator
+// reads it as a sentence — "Every tick, when count(query) > N in
+// last Ws, page <severity>". Cadence is currently fixed to the
+// evaluator tick (1m default); surfacing it as a labelled section
+// makes the model explicit + opens the door to per-watcher
+// frequency overrides later without another UI refactor.
 function SaveAsAlertModal({
   query, draft, onChange, saving, msg, onClose, onSave,
 }: {
@@ -565,62 +572,145 @@ function SaveAsAlertModal({
   onClose: () => void;
   onSave: () => void;
 }) {
+  const sevColor = draft.severity === 'critical' ? 'var(--err)'
+    : draft.severity === 'warning' ? 'var(--warn, #f0b352)'
+    : 'var(--text2)';
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
       display: 'grid', placeItems: 'center', zIndex: 200,
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: 460, padding: 20, borderRadius: 8,
+        width: 540, padding: 20, borderRadius: 8,
         background: 'var(--bg2)', border: '1px solid var(--border)',
       }}>
-        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
-          Save as alert rule
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 2 }}>
+          New watcher
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
-          Page when this query returns more than the threshold inside the
-          chosen window. Rule evaluates on every evaluator tick (default 1m).
+        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14 }}>
+          Polls the saved query on every evaluator tick, fires + fans out to
+          notification channels when the threshold is breached. Same
+          mechanism the alert evaluator uses for metric / span rules; logs
+          ride the same fire-once-per-window de-dupe and severity routing.
         </div>
+
+        {/* Sentence preview — the operator's mental model in one
+            line, derived live from the inputs below. Datadog +
+            Elastic Watcher both surface this; it removes the
+            "wait what does this rule actually do" beat. */}
+        <div style={{
+          padding: '8px 10px', marginBottom: 14,
+          background: 'var(--bg0)', border: '1px solid var(--border)',
+          borderRadius: 4, fontSize: 12, lineHeight: 1.6,
+          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+        }}>
+          <span style={{ color: 'var(--text3)' }}>Every</span>{' '}
+          <b>1m</b>{' '}
+          <span style={{ color: 'var(--text3)' }}>when count of matches in last</span>{' '}
+          <b>{draft.windowSec}s</b>{' '}
+          <span style={{ color: 'var(--text3)' }}>is</span>{' '}
+          <b>&gt; {draft.threshold}</b>{' '}
+          <span style={{ color: 'var(--text3)' }}>→ open a</span>{' '}
+          <b style={{ color: sevColor }}>{draft.severity}</b>{' '}
+          <span style={{ color: 'var(--text3)' }}>incident</span>
+        </div>
+
         <label style={{ display: 'block', marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Rule name</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)',
+            textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+            Name
+          </div>
           <input value={draft.name}
             onChange={e => onChange({ ...draft, name: e.target.value })}
-            placeholder={`Log alert: ${query.slice(0, 30)}…`}
+            placeholder={`watcher: ${query.slice(0, 32)}…`}
             style={{ width: '100%' }} />
         </label>
-        <label style={{ display: 'block', marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>KQL clause</div>
+
+        {/* Trigger — runs on every evaluator tick today. Surfaced
+            as a labelled, disabled control to make Watcher's
+            "schedule" pane explicit, even though we only expose
+            one cadence. */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)',
+            textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+            Trigger
+          </div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 8px', borderRadius: 4,
+            background: 'var(--bg0)', border: '1px dashed var(--border)',
+            fontSize: 12, color: 'var(--text2)',
+          }}>
+            <span>Every</span>
+            <code style={{ color: 'var(--text)', fontFamily: 'ui-monospace, monospace' }}>1m</code>
+            <span style={{ color: 'var(--text3)' }}>
+              (evaluator tick — per-rule schedule coming in a later release)
+            </span>
+          </div>
+        </div>
+
+        {/* Input — the operator's query. Read-only; Cancel +
+            re-search to tweak. Watcher's "input" pane usually
+            shows a real ES query; ours surfaces the KQL the
+            operator already wrote on the page. */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)',
+            textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+            Input — Query
+          </div>
           <pre style={{
             margin: 0, padding: 8, borderRadius: 4, fontSize: 12,
             background: 'var(--bg0)', border: '1px solid var(--border)',
             fontFamily: 'ui-monospace, SFMono-Regular, monospace',
             whiteSpace: 'pre-wrap', wordBreak: 'break-all',
           }}>{query}</pre>
-        </label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 12 }}>
-          <label>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Threshold (matches &gt;)</div>
-            <input type="number" min={0} value={draft.threshold}
-              onChange={e => onChange({ ...draft, threshold: Number(e.target.value) || 0 })}
-              style={{ width: '100%' }} />
-          </label>
-          <label>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Window (sec)</div>
-            <input type="number" min={10} value={draft.windowSec}
-              onChange={e => onChange({ ...draft, windowSec: Number(e.target.value) || 60 })}
-              style={{ width: '100%' }} />
-          </label>
-          <label>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Severity</div>
+        </div>
+
+        {/* Condition — threshold + window. The Watcher equivalent
+            of `ctx.payload.hits.total > N over last Ws`. */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)',
+            textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+            Condition
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <label>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>Matches &gt;</div>
+              <input type="number" min={0} value={draft.threshold}
+                onChange={e => onChange({ ...draft, threshold: Number(e.target.value) || 0 })}
+                style={{ width: '100%' }} />
+            </label>
+            <label>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>Window (sec)</div>
+              <input type="number" min={10} value={draft.windowSec}
+                onChange={e => onChange({ ...draft, windowSec: Number(e.target.value) || 60 })}
+                style={{ width: '100%' }} />
+            </label>
+          </div>
+        </div>
+
+        {/* Action — severity. Channels resolved server-side by the
+            notifier match rules; no per-rule channel pick here. */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)',
+            textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
+            Action
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}>Open a</span>
             <select value={draft.severity}
               onChange={e => onChange({ ...draft, severity: e.target.value })}
-              style={{ width: '100%' }}>
+              style={{ minWidth: 130, color: sevColor, fontWeight: 600 }}>
               <option value="info">info</option>
               <option value="warning">warning</option>
               <option value="critical">critical</option>
             </select>
-          </label>
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+              incident · routed to matching notification channels
+            </span>
+          </div>
         </div>
+
         {msg && (
           <div style={{ marginBottom: 10, fontSize: 12,
             color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)' }}>
@@ -630,7 +720,7 @@ function SaveAsAlertModal({
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="sec" onClick={onClose} disabled={saving}>Cancel</button>
           <button onClick={onSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save rule'}
+            {saving ? 'Saving…' : 'Create watcher'}
           </button>
         </div>
       </div>

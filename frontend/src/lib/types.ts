@@ -1010,6 +1010,13 @@ export interface Problem {
     timeUnixNs: number;
     ageSeconds: number;
   };
+  // AI auto-explain summary (v0.5.254) — populated by the
+  // background problemExplainer goroutine within ~30s of a critical
+  // problem opening. Empty when Copilot isn't configured or the
+  // problem hasn't been processed yet. The UI shows a small chip;
+  // clicking it expands the full blurb inline.
+  aiSummary?: string;
+  aiSummaryAt?: number;
 }
 
 export interface ServiceEdgeStats {

@@ -781,9 +781,43 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             ⬇ {p.recentDeploy.version} · {fmtAge(p.recentDeploy.ageSeconds)} before
                           </span>
                         )}
+                        {p.aiSummary && (
+                          // AI auto-explain chip (v0.5.254). The
+                          // background problemExplainer fills this
+                          // within ~30s of a critical fire; tooltip
+                          // shows the full blurb so the operator
+                          // gets first-look context without
+                          // clicking through. ✦ = "Copilot output"
+                          // visual anchor, matches the existing
+                          // operator-clicked Explain affordances.
+                          <span
+                            onClick={e => e.stopPropagation()}
+                            title={p.aiSummary}
+                            style={{
+                              marginLeft: 8, fontSize: 11,
+                              padding: '2px 8px', borderRadius: 12,
+                              background: 'rgba(139,92,246,0.10)',
+                              border: '1px solid rgba(139,92,246,0.40)',
+                              color: 'var(--accent2, #a78bfa)',
+                              whiteSpace: 'nowrap', cursor: 'help',
+                            }}>
+                            ✦ AI insight
+                          </span>
+                        )}
                         {isAnomaly && (
                           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
                             {p.description}
+                          </div>
+                        )}
+                        {p.aiSummary && (
+                          <div style={{
+                            fontSize: 11, color: 'var(--text2)', marginTop: 4,
+                            padding: 6, borderRadius: 4,
+                            background: 'rgba(139,92,246,0.05)',
+                            borderLeft: '2px solid rgba(139,92,246,0.4)',
+                            whiteSpace: 'pre-wrap',
+                          }}>
+                            {p.aiSummary}
                           </div>
                         )}
                       </td>

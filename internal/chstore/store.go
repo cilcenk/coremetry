@@ -877,6 +877,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		// role's `pages` list further restricts which sidebar
 		// entries the user sees. Empty = use base role unrestricted.
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_role LowCardinality(String) DEFAULT ''`,
+		// v0.5.254 — Problem AI auto-explain. The background
+		// problemExplainer goroutine fills these for open critical
+		// problems within ~30s of opening; the UI surfaces the
+		// summary as an "AI insight" chip. Empty = no explanation
+		// yet (or AI Copilot disabled).
+		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary String DEFAULT ''`,
+		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS runbook_url String DEFAULT ''`,
 		// v0.5.126 sustained-breach gate. 0 = open immediately
 		// (legacy behaviour). When > 0 the evaluator only opens a

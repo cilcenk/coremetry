@@ -473,6 +473,15 @@ func main() {
 			t.BaseURL, t.AuthType, t.OrgID)
 	}
 
+	// ── Problem AI auto-explainer (v0.5.254) ─────────────────────────────────
+	// Every 30s, fills the ai_summary column on newly-opened critical
+	// problems via the Copilot. Operator sees "why fired + first
+	// checks" pre-baked when they open /problems / /inbox, instead of
+	// having to click "✨ Explain" themselves. HA-gated like every
+	// other worker so multi-pod runs don't duplicate-call the LLM.
+	// Configured()=false (no API key) silently noops the worker.
+	go anomaly.NewProblemExplainer(store, copilotSvc, lockImpl).Start(ctx)
+
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
 	// Cluster membership service (v0.5.253) — per-pod heartbeat
 	// + member listing for /admin/cluster. Always created (Noop

@@ -122,6 +122,15 @@ type Problem struct {
 	// Driven by the same logic that sets Priority; surfaces in
 	// the UI tooltip so the rule is auditable, not magic.
 	PriorityReason string      `json:"priorityReason,omitempty"`
+	// AISummary (v0.5.254) — short LLM-generated context blurb
+	// answering "why did this fire + what to look at first". Filled
+	// asynchronously by the problemExplainer goroutine within ~30s
+	// of problem open (critical severity only by default). Empty
+	// when the explainer hasn't run yet OR the AI Copilot isn't
+	// configured. AISummaryAt is the unix-ns timestamp of the last
+	// generation; lets the UI show "AI insight · 12s ago".
+	AISummary    string `json:"aiSummary,omitempty"`
+	AISummaryAt  int64  `json:"aiSummaryAt,omitempty"`
 }
 
 // RecentDeploy is the compact deploy signal attached to a
@@ -562,7 +571,8 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 		SELECT id, rule_id, rule_name, severity, service, metric,
 		       value, threshold, status, description, assignee,
 		       toUnixTimestamp64Nano(started_at),
-		       resolved_at
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
 		FROM problems FINAL `+wc.sql()+`
 		ORDER BY started_at DESC
 		LIMIT ?`, append(wc.args, f.Limit)...)
@@ -575,7 +585,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
-			&p.StartedAt, &resolvedAt); err != nil {
+			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
 			return nil, err
 		}
 		if resolvedAt != nil {
@@ -602,7 +612,8 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 		SELECT id, rule_id, rule_name, severity, service, metric,
 		       value, threshold, status, description, assignee,
 		       toUnixTimestamp64Nano(started_at),
-		       resolved_at
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
 		FROM problems FINAL
 		WHERE service = ? AND rule_id = ? AND status = 'resolved'
 		ORDER BY started_at DESC
@@ -617,7 +628,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
-			&p.StartedAt, &resolvedAt); err != nil {
+			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
 			return nil, err
 		}
 		if resolvedAt != nil {
@@ -642,13 +653,14 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 		SELECT id, rule_id, rule_name, severity, service, metric,
 		       value, threshold, status, description, assignee,
 		       toUnixTimestamp64Nano(started_at),
-		       resolved_at
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
 		FROM problems FINAL
 		WHERE rule_id = ? AND service = ? AND status IN ('open', 'acknowledged')
 		ORDER BY started_at DESC LIMIT 1`, ruleID, service).
 		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
-			&p.StartedAt, &resolvedAt)
+			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
 	if err != nil { return nil, err }
 	if resolvedAt != nil {
 		ns := resolvedAt.UnixNano()
@@ -706,13 +718,14 @@ func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
 		SELECT id, rule_id, rule_name, severity, service, metric,
 		       value, threshold, status, description, assignee,
 		       toUnixTimestamp64Nano(started_at),
-		       resolved_at
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
 		FROM problems FINAL
 		WHERE id = ?
 		LIMIT 1`, id).
 		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
-			&p.StartedAt, &resolvedAt)
+			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
 	if err != nil {
 		return nil, err
 	}
@@ -740,7 +753,17 @@ func (s *Store) SetProblemAssignee(ctx context.Context, id, assignee string) err
 }
 
 func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO problems")
+	// Explicit column list (v0.5.254 — was: column-order INSERT).
+	// The ai_summary / ai_summary_at columns are populated
+	// asynchronously by the problemExplainer goroutine, so the
+	// evaluator's upsert must NOT clobber them on every poll. The
+	// explicit list excludes them — CH falls back to the existing
+	// stored value via ReplacingMergeTree's version-merge once the
+	// explainer writes a row with the summary set.
+	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO problems
+		(id, rule_id, rule_name, severity, service, metric, value,
+		 threshold, status, description, assignee, started_at,
+		 resolved_at, updated_at, version)`)
 	if err != nil { return err }
 	startedAt := time.Unix(0, p.StartedAt).UTC()
 	var resolvedAt *time.Time
@@ -752,6 +775,48 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 		p.Metric, p.Value, p.Threshold, p.Status, p.Description, p.Assignee,
 		startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
 		return fmt.Errorf("append problem: %w", err)
+	}
+	return batch.Send()
+}
+
+// UpsertProblemAISummary writes just the AI-explain blurb without
+// touching any of the evaluator-owned fields. ReplacingMergeTree
+// keeps the highest-version row at read time; this insert wins
+// over a same-tick evaluator upsert because the explainer always
+// runs after the problem has been opened (later wall-clock = newer
+// version).
+//
+// Reads other fields back from the existing row first so the
+// resulting full row is consistent — otherwise the merge'd row
+// would have value/threshold/etc collapsing to defaults on the
+// "summary-only" version.
+func (s *Store) UpsertProblemAISummary(ctx context.Context, problemID, summary string) error {
+	row, err := s.GetProblem(ctx, problemID)
+	if err != nil || row == nil {
+		return err // problem disappeared (resolved + GC'd) — drop silently
+	}
+	row.AISummary = summary
+	row.AISummaryAt = time.Now().UnixNano()
+
+	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO problems
+		(id, rule_id, rule_name, severity, service, metric, value,
+		 threshold, status, description, assignee, started_at,
+		 resolved_at, updated_at, version, ai_summary, ai_summary_at)`)
+	if err != nil {
+		return err
+	}
+	startedAt := time.Unix(0, row.StartedAt).UTC()
+	var resolvedAt *time.Time
+	if row.ResolvedAt != nil {
+		t := time.Unix(0, *row.ResolvedAt).UTC()
+		resolvedAt = &t
+	}
+	summaryAt := time.Unix(0, row.AISummaryAt).UTC()
+	if err := batch.Append(row.ID, row.RuleID, row.RuleName, row.Severity, row.Service,
+		row.Metric, row.Value, row.Threshold, row.Status, row.Description, row.Assignee,
+		startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano()),
+		row.AISummary, summaryAt); err != nil {
+		return fmt.Errorf("append problem ai-summary: %w", err)
 	}
 	return batch.Send()
 }

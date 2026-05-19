@@ -39,6 +39,33 @@ type RecentDeployEntry struct {
 	SpanCount     uint64 `json:"spanCount"`
 }
 
+// v0.5.278 — placeholder versions that aren't real deploys.
+// Operator-reported: Java apps emit Maven's default
+// "0.0.1-SNAPSHOT" when devs don't override it, so the deploy
+// detector flagged every pod restart as a fresh deploy. Same
+// shape for k8s `latest` tags and the "dev" / "unknown"
+// placeholders OTel SDKs sometimes default to.
+//
+// CH-readable form: any version IN this list is excluded from
+// the deploy listing. Container.image.tag is consulted as a
+// fallback when service.version is empty or placeholder.
+const placeholderVersionList = `('', '0.0.1', '0.0.1-SNAPSHOT', '1.0-SNAPSHOT', 'latest', 'dev', 'unknown', 'snapshot', 'main', 'master', 'HEAD')`
+
+// effectiveVersionExpr is the SQL fragment that picks a real
+// version per row: prefer service.version when non-placeholder;
+// fall back to container.image.tag / k8s.container.image.tag;
+// otherwise empty (caller filters those out).
+const effectiveVersionExpr = `
+  multiIf(
+    res_values[indexOf(res_keys, 'service.version')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'service.version')],
+    res_values[indexOf(res_keys, 'container.image.tag')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'container.image.tag')],
+    res_values[indexOf(res_keys, 'k8s.container.image.tag')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'k8s.container.image.tag')],
+    ''
+  )`
+
 // GetRecentDeploys returns service.version transitions
 // first-seen in the requested window, ordered most-recent
 // first. Cross-service "what changed" signal for the global
@@ -62,21 +89,29 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 		limit = 100
 	}
 	cutoff := time.Now().Add(-since)
-	rows, err := s.conn.Query(ctx, `
+	// v0.5.278 — placeholder filter + image-tag fallback (see
+	// effectiveVersionExpr / placeholderVersionList). Operator-
+	// reported: Java apps emitting Maven's default
+	// "0.0.1-SNAPSHOT" turned every pod restart into a "deploy"
+	// in the banner.
+	sql := `
 		SELECT
 		  service_name,
-		  arrayFirst(x -> x.1 = 'service.version', arrayZip(res_keys, res_values)).2 AS version,
+		  ` + effectiveVersionExpr + ` AS version,
 		  toUnixTimestamp64Nano(min(time)) AS first_seen,
 		  count() AS span_count
 		FROM spans
 		WHERE time >= ?
-		  AND has(res_keys, 'service.version')
+		  AND (has(res_keys, 'service.version')
+		    OR has(res_keys, 'container.image.tag')
+		    OR has(res_keys, 'k8s.container.image.tag'))
 		GROUP BY service_name, version
-		HAVING first_seen >= ?  -- exclude pre-window deploys whose version is still emitting
+		HAVING version != ''
+		   AND first_seen >= ?
 		ORDER BY first_seen DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 5`,
-		cutoff, cutoff.UnixNano(), limit)
+		SETTINGS max_execution_time = 5`
+	rows, err := s.conn.Query(ctx, sql, cutoff, cutoff.UnixNano(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -216,15 +251,22 @@ func (s *Store) ComputeDeployImpact(
 func (s *Store) GetServiceDeploys(
 	ctx context.Context, service string, from, to time.Time,
 ) ([]Deploy, error) {
-	const sql = `
+	// v0.5.278 — same placeholder filter + image-tag fallback
+	// as GetRecentDeploys. The service detail page's Deploy
+	// History panel was the loudest victim of the
+	// "0.0.1-SNAPSHOT" Maven default — every restart looked
+	// like a deploy.
+	sql := `
 		SELECT
-			res_values[indexOf(res_keys, 'service.version')] AS version,
+			` + effectiveVersionExpr + `                     AS version,
 			toUnixTimestamp64Nano(min(time))                 AS first_seen_ns,
 			count()                                          AS span_count
 		FROM spans
 		WHERE service_name = ?
 		  AND time >= ? AND time <= ?
-		  AND has(res_keys, 'service.version')
+		  AND (has(res_keys, 'service.version')
+		    OR has(res_keys, 'container.image.tag')
+		    OR has(res_keys, 'k8s.container.image.tag'))
 		GROUP BY version
 		HAVING version != ''
 		ORDER BY first_seen_ns ASC

@@ -670,7 +670,7 @@ func (s *ESStore) CountPatterns(
 						"by_service": map[string]any{
 							"terms": map[string]any{
 								"field": s.fields.Service + ".keyword",
-								"size":  1,
+								"size":  5, // v0.5.287 — top-5 services per pattern
 							},
 						},
 						"sample": map[string]any{
@@ -727,7 +727,8 @@ func (s *ESStore) CountPatterns(
 					DocCount  float64 `json:"doc_count"`
 					ByService struct {
 						Buckets []struct {
-							Key string `json:"key"`
+							Key      string  `json:"key"`
+							DocCount float64 `json:"doc_count"`
 						} `json:"buckets"`
 					} `json:"by_service"`
 					Sample struct {
@@ -767,6 +768,13 @@ func (s *ESStore) CountPatterns(
 		}
 		if len(r.Aggregations.Cur.ByService.Buckets) > 0 {
 			stats.Service = r.Aggregations.Cur.ByService.Buckets[0].Key
+			// v0.5.287 — keep the full top-5 for the per-service
+			// rosette on the /logs LogPatternStrip.
+			for _, b := range r.Aggregations.Cur.ByService.Buckets {
+				stats.TopServices = append(stats.TopServices, PatternServiceHit{
+					Service: b.Key, Count: uint64(b.DocCount),
+				})
+			}
 		}
 		if len(r.Aggregations.Cur.Sample.Hits.Hits) > 0 {
 			src := r.Aggregations.Cur.Sample.Hits.Hits[0].Source

@@ -112,6 +112,20 @@ type PatternStats struct {
 	Service    string
 	Sample     string
 	LastSeenNs int64
+	// TopServices — v0.5.287. Per-service breakdown of the
+	// current-window hits, sorted by count desc. Up to 5 entries.
+	// Populated by both backends when Cur > 0 so the
+	// /logs LogPatternStrip can show "fires on these N services"
+	// rosette without a follow-up call. Empty when only one
+	// service or when the backend doesn't track it.
+	TopServices []PatternServiceHit
+}
+
+// PatternServiceHit pairs a service name with how many times it
+// produced the pattern in the current detection window.
+type PatternServiceHit struct {
+	Service string `json:"service"`
+	Count   uint64 `json:"count"`
 }
 
 // SignificantPattern is one statistically-anomalous token surfaced

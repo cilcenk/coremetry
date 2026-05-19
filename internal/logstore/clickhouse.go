@@ -223,6 +223,42 @@ func (s *CHStore) countOnePattern(
 	if err != nil {
 		return PatternStats{}, err
 	}
+	// v0.5.287 — per-service breakdown for the current window
+	// (top 5). Only fires when cur > 0 so the no-match common
+	// case stays one query. The WHERE clause + tokenbf prefilter
+	// matches the aggregate above, so the same granules are
+	// pruned + the LowCardinality service_name GROUP BY is
+	// in-memory after the existing scan.
+	if out.Cur > 0 {
+		topSQL := `
+			SELECT service_name, count() AS cnt
+			FROM logs
+			WHERE time >= ? AND time < ? AND ` +
+			func() string {
+				if tokensSQL != "" {
+					return "multiSearchAnyCaseInsensitive(body, " + tokensSQL + ") AND match(body, ?)"
+				}
+				return "match(body, ?)"
+			}() + `
+			GROUP BY service_name
+			ORDER BY cnt DESC
+			LIMIT 5
+			SETTINGS max_execution_time = 5`
+		topRows, terr := s.store.Conn().Query(ctx, topSQL, curStart, now, pat.Regex)
+		if terr == nil {
+			defer topRows.Close()
+			for topRows.Next() {
+				var svc string
+				var cnt uint64
+				if err := topRows.Scan(&svc, &cnt); err != nil {
+					break
+				}
+				out.TopServices = append(out.TopServices, PatternServiceHit{
+					Service: svc, Count: cnt,
+				})
+			}
+		}
+	}
 	return out, nil
 }
 

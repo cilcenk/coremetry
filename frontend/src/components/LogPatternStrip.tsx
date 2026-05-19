@@ -63,6 +63,10 @@ export function LogPatternStrip({ onSelect }: {
             // (e.g. "panic:" / "OOMKilled" / "Deadlock").
             search: searchTermFor(a),
             service: a.service || '',
+          })}
+          onPickService={(svc) => onSelect({
+            search: searchTermFor(a),
+            service: svc,
           })} />
       ))}
       {hits.length > 12 && (
@@ -74,9 +78,10 @@ export function LogPatternStrip({ onSelect }: {
   );
 }
 
-function PatternChip({ anomaly, onClick }: {
+function PatternChip({ anomaly, onClick, onPickService }: {
   anomaly: LogPatternAnomaly;
   onClick: () => void;
+  onPickService: (svc: string) => void;
 }) {
   const isNew = anomaly.kind === 'new';
   const palette = isNew
@@ -85,37 +90,80 @@ function PatternChip({ anomaly, onClick }: {
   const tag = isNew
     ? 'NEW'
     : `${anomaly.ratio.toFixed(1)}×`;
+  // v0.5.287 — per-service rosette beneath the main chip when
+  // the pattern fires on more than one service. Operator can
+  // tap a specific service to narrow filter to (pattern + svc),
+  // or tap the main chip for the global "fires on any of these"
+  // view.
+  const topSvcs = anomaly.topServices ?? [];
+  const showRosette = topSvcs.length > 1;
   return (
-    <button type="button" onClick={onClick}
-      title={`${anomaly.pattern} — ${fmtNum(anomaly.currentCount)} hits in the last 5min` +
-        (anomaly.baselineCount > 0 ? ` (baseline ${fmtNum(anomaly.baselineCount)})` : '') +
-        (anomaly.service ? `\nservice: ${anomaly.service}` : '') +
-        (anomaly.sample ? `\nsample: ${anomaly.sample.slice(0, 200)}` : '') +
-        '\n\nClick to filter the log stream to this pattern.'}
-      style={{
-        all: 'unset', cursor: 'pointer',
-        display: 'inline-flex', alignItems: 'center', gap: 6,
-        padding: '3px 8px', borderRadius: 12,
-        background: palette.bg, border: `1px solid ${palette.border}`,
-        color: palette.color, fontSize: 11, whiteSpace: 'nowrap',
-      }}>
-      <span style={{
-        fontSize: 9, fontWeight: 700,
-        padding: '0 4px', borderRadius: 8,
-        background: 'rgba(0,0,0,0.20)',
-      }}>{tag}</span>
-      <span style={{ fontWeight: 600 }}>{anomaly.pattern}</span>
-      <span style={{ color: 'var(--text3)', fontFamily: 'ui-monospace, monospace' }}>
-        {fmtNum(anomaly.currentCount)}
-      </span>
-      {anomaly.service && (
+    <span style={{
+      display: 'inline-flex', flexDirection: 'column', gap: 3,
+      alignItems: 'flex-start',
+    }}>
+      <button type="button" onClick={onClick}
+        title={`${anomaly.pattern} — ${fmtNum(anomaly.currentCount)} hits in the last 5min` +
+          (anomaly.baselineCount > 0 ? ` (baseline ${fmtNum(anomaly.baselineCount)})` : '') +
+          (anomaly.service ? `\ntop service: ${anomaly.service}` : '') +
+          (showRosette ? `\nfires on: ${topSvcs.map(s => `${s.service} (${s.count})`).join(', ')}` : '') +
+          (anomaly.sample ? `\nsample: ${anomaly.sample.slice(0, 200)}` : '') +
+          '\n\nClick to filter the log stream to this pattern.'}
+        style={{
+          all: 'unset', cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '3px 8px', borderRadius: 12,
+          background: palette.bg, border: `1px solid ${palette.border}`,
+          color: palette.color, fontSize: 11, whiteSpace: 'nowrap',
+        }}>
         <span style={{
-          color: 'var(--text3)', fontSize: 10,
-          padding: '0 4px', borderRadius: 6,
-          background: 'var(--bg3)',
-        }}>{anomaly.service}</span>
+          fontSize: 9, fontWeight: 700,
+          padding: '0 4px', borderRadius: 8,
+          background: 'rgba(0,0,0,0.20)',
+        }}>{tag}</span>
+        <span style={{ fontWeight: 600 }}>{anomaly.pattern}</span>
+        <span style={{ color: 'var(--text3)', fontFamily: 'ui-monospace, monospace' }}>
+          {fmtNum(anomaly.currentCount)}
+        </span>
+        {!showRosette && anomaly.service && (
+          <span style={{
+            color: 'var(--text3)', fontSize: 10,
+            padding: '0 4px', borderRadius: 6,
+            background: 'var(--bg3)',
+          }}>{anomaly.service}</span>
+        )}
+      </button>
+      {showRosette && (
+        <span style={{
+          display: 'inline-flex', flexWrap: 'wrap', gap: 3,
+          paddingLeft: 4, alignItems: 'center',
+        }}>
+          {topSvcs.slice(0, 4).map(s => (
+            <button key={s.service} type="button"
+              onClick={(e) => { e.stopPropagation(); onPickService(s.service); }}
+              title={`Narrow filter to ${anomaly.pattern} on ${s.service} (${fmtNum(s.count)} hits)`}
+              style={{
+                all: 'unset', cursor: 'pointer',
+                fontSize: 10, padding: '1px 6px', borderRadius: 8,
+                background: 'var(--bg3)', color: 'var(--text2)',
+                border: '1px solid var(--border)',
+                fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                whiteSpace: 'nowrap',
+              }}>
+              {s.service}
+              <span style={{ color: 'var(--text3)', marginLeft: 4 }}>
+                {fmtNum(s.count)}
+              </span>
+            </button>
+          ))}
+          {topSvcs.length > 4 && (
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+              +{topSvcs.length - 4}
+            </span>
+          )}
+        </span>
       )}
-    </button>
+    </span>
   );
 }
 

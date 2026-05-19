@@ -25,6 +25,12 @@ type LogPatternAnomaly struct {
 	Service        string  `json:"service"`        // service emitting most matches in current window
 	Sample         string  `json:"sample"`         // representative log body, truncated
 	LastSeenNs     int64   `json:"lastSeenNs"`
+	// TopServices — v0.5.287. Per-service breakdown of current
+	// window hits, top 5, count desc. The /logs LogPatternStrip
+	// renders these as a rosette under the pattern chip so the
+	// operator can see "OOMKilled fires on foo-svc (12) and
+	// bar-svc (3)" without expanding or filtering.
+	TopServices []logstore.PatternServiceHit `json:"topServices,omitempty"`
 }
 
 type logPattern struct {
@@ -200,6 +206,7 @@ func DetectLogPatterns(ctx context.Context, store logstore.Store, window time.Du
 					Service:       service,
 					Sample:        truncateSample(sample, 240),
 					LastSeenNs:    lastNs,
+					TopServices:   st.TopServices,
 				},
 				ok: true,
 			}

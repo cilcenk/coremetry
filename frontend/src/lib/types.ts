@@ -1464,6 +1464,11 @@ export interface LogPatternAnomaly {
   service: string;
   sample: string;
   lastSeenNs: number;
+  // v0.5.287 — per-service breakdown of current-window hits.
+  // Top 5, count desc. LogPatternStrip renders this as a
+  // rosette under the chip so operators see "fires on these
+  // N services" without expanding.
+  topServices?: { service: string; count: number }[];
 }
 
 // One entry in the service-level neighbours response — a single

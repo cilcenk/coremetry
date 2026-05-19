@@ -19,6 +19,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chmigrate"
+	"github.com/cilcenk/coremetry/internal/cluster"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/consumer"
@@ -473,7 +474,16 @@ func main() {
 	}
 
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
+	// Cluster membership service (v0.5.253) — per-pod heartbeat
+	// + member listing for /admin/cluster. Always created (Noop
+	// cache → single-member view), so the admin page works the
+	// same in dev as in a 10-pod K8s deployment.
+	clusterSvc := cluster.New(cacheImpl, Version)
+	go clusterSvc.Start(ctx)
+	log.Printf("[cluster] pod id %s", clusterSvc.MyID())
+
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, sampler, bus)
+	srv.SetCluster(clusterSvc)
 	srv.SetVersion(Version)
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)

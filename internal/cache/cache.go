@@ -22,6 +22,14 @@ type Cache interface {
 	Get(ctx context.Context, key string) ([]byte, bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 	Del(ctx context.Context, key string) error
+	// ScanPrefix returns every value whose key matches the given
+	// prefix (Redis SCAN MATCH + MGET). Returned values are the
+	// stored bytes; expired / missing keys silently drop out.
+	// Used by the cluster membership service (v0.5.253) to list
+	// every live pod's heartbeat without exposing the raw Redis
+	// client through the abstraction. Noop returns (nil, nil) so
+	// single-instance dev falls back to a 1-member view.
+	ScanPrefix(ctx context.Context, prefix string) ([][]byte, error)
 	// Ping reports liveness of the underlying cache. Noop returns nil
 	// (treats cache-disabled mode as healthy — there's no remote to be
 	// down). Used by the status page.
@@ -53,6 +61,7 @@ func NewNoop() (Cache, Lock) { return noopCache{}, noopLock{} }
 func (noopCache) Get(context.Context, string) ([]byte, bool, error)   { return nil, false, nil }
 func (noopCache) Set(context.Context, string, []byte, time.Duration) error { return nil }
 func (noopCache) Del(context.Context, string) error                   { return nil }
+func (noopCache) ScanPrefix(context.Context, string) ([][]byte, error) { return nil, nil }
 func (noopCache) Ping(context.Context) error                          { return nil }
 
 // Noop lock = always-leader. Correct for single-instance deployments

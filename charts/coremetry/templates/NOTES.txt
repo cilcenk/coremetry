@@ -43,6 +43,18 @@ Coremetry has been installed.
   Either set redis.enabled=true or configure redis.external.url.
 {{- end }}
 
+5. Multi-pod HA (v0.5.253+):
+{{- if $redisURL }}
+   Redis is wired ✓ — every background worker uses a per-tick Redis
+   lock so scaling out is safe. To run N replicas:
+       helm upgrade {{ .Release.Name }} --set replicaCount=N ...
+   View the live roster at /admin/cluster (admin role required) —
+   each pod heartbeats every 10s, stale-out after 30s.
+{{- else }}
+   ⚠ HA requires Redis (see above). With redis.enabled=false the
+   default replicaCount stays at 1.
+{{- end }}
+
 {{- if eq .Values.secrets.initialAdminPassword "admin" }}
 
 ⚠ The initial admin password is the chart default ("admin"). Override

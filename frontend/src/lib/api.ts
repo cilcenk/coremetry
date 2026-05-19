@@ -1255,7 +1255,23 @@ export const api = {
     }),
   listAvailablePages: () =>
     request<{ pages: AvailablePage[] }>(`/api/admin/pages`),
+  // Cluster membership — v0.5.253. Lists every replica that
+  // wrote a heartbeat in the last 30s. Single-instance mode
+  // returns one member; HA returns N. Cheap (single SCAN +
+  // MGET); safe to poll at 5-10s in the admin page.
+  listClusterMembers: () =>
+    request<{ members: ClusterMember[]; selfId: string }>(`/api/admin/cluster`),
 };
+
+export interface ClusterMember {
+  id: string;          // pod id (hostname + 4-byte hex suffix)
+  hostname: string;    // raw $HOSTNAME
+  version: string;     // build tag stamped via -ldflags
+  startedAt: number;   // unix ns
+  lastSeen: number;    // unix ns
+  isThisPod: boolean;  // true for the pod that served the request
+  leaderLocks?: string[]; // only present when this pod holds active locks
+}
 
 export interface MaintenanceWindow {
   id: string;

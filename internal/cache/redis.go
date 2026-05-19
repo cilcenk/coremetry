@@ -57,6 +57,48 @@ func (r *redisCache) Del(ctx context.Context, key string) error {
 	return r.cli.Del(ctx, key).Err()
 }
 
+// ScanPrefix returns the value of every key matching `prefix*`.
+// Uses SCAN (cursor-paginated, non-blocking) so a large keyspace
+// doesn't stall the server, then a single MGET for the values.
+// Missing / expired keys collapse out of the result quietly.
+// Used by the cluster membership service (v0.5.253).
+func (r *redisCache) ScanPrefix(ctx context.Context, prefix string) ([][]byte, error) {
+	var (
+		keys   []string
+		cursor uint64
+	)
+	for {
+		batch, next, err := r.cli.Scan(ctx, cursor, prefix+"*", 200).Result()
+		if err != nil {
+			return nil, fmt.Errorf("redis scan: %w", err)
+		}
+		keys = append(keys, batch...)
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	vals, err := r.cli.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis mget: %w", err)
+	}
+	out := make([][]byte, 0, len(vals))
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		s, _ := v.(string)
+		if s == "" {
+			continue
+		}
+		out = append(out, []byte(s))
+	}
+	return out, nil
+}
+
 func (r *redisCache) Ping(ctx context.Context) error {
 	return r.cli.Ping(ctx).Err()
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/cluster"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/ldap"
@@ -76,6 +77,12 @@ type Server struct {
 	// /trace?id= URL. nil-safe — every accessor on the service
 	// short-circuits when the receiver is nil.
 	tempo       *tempo.Service
+
+	// cluster — per-pod heartbeat / membership service (v0.5.253).
+	// Always non-nil when Set; the service degenerates to a single-
+	// pod view when Redis is absent so handlers don't need to nil-
+	// check before calling Members.
+	cluster     *cluster.Service
 
 	// Demo deployments only — when true, /api/auth/config returns
 	// initial admin credentials so the login page can pre-fill them.
@@ -136,6 +143,14 @@ func (s *Server) SetVersion(v string) {
 // operator has actually filled in the settings.
 func (s *Server) SetTempo(t *tempo.Service) {
 	s.tempo = t
+}
+
+// SetCluster wires the per-pod heartbeat / membership service
+// (v0.5.253). Always called from main() — the service degenerates
+// to a single-pod view when Redis isn't configured so handlers
+// don't need to nil-check before calling Members.
+func (s *Server) SetCluster(c *cluster.Service) {
+	s.cluster = c
 }
 
 type rateSample struct {
@@ -521,6 +536,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/admin/custom-roles",      auth.RequireRole(auth.RoleAdmin, s.upsertCustomRole))
 	mux.HandleFunc("DELETE /api/admin/custom-roles/{name}", auth.RequireRole(auth.RoleAdmin, s.deleteCustomRole))
 	mux.HandleFunc("GET    /api/admin/pages",             auth.RequireRole(auth.RoleAdmin, s.listAvailablePages))
+
+	// Cluster membership — multi-pod HA visibility (v0.5.253).
+	// Single round-trip: SCAN coremetry:pod:* in Redis + MGET. Empty
+	// list (no Redis) falls back to a single-pod view.
+	mux.HandleFunc("GET    /api/admin/cluster",           auth.RequireRole(auth.RoleAdmin, s.listClusterMembers))
 
 	// Tempo-compatible API (Grafana datasource integration)
 	s.registerTempoRoutes(mux)

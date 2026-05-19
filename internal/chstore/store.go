@@ -871,6 +871,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		// install has tens to low-hundreds of teams; values
 		// repeat heavily across the user list.
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS team LowCardinality(String) DEFAULT ''`,
+		// custom_role — optional pointer into the operator-defined
+		// custom role catalog (system_settings key "custom_roles").
+		// Only meaningful when the base role is viewer; the custom
+		// role's `pages` list further restricts which sidebar
+		// entries the user sees. Empty = use base role unrestricted.
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_role LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS runbook_url String DEFAULT ''`,
 		// v0.5.126 sustained-breach gate. 0 = open immediately
 		// (legacy behaviour). When > 0 the evaluator only opens a

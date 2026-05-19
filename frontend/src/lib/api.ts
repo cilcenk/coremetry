@@ -1229,6 +1229,32 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
     }),
+  // setUserCustomRole assigns or clears the custom-role pointer
+  // (v0.5.251). Only valid when the base role is viewer; server
+  // rejects with 400 otherwise. Empty string clears.
+  setUserCustomRole: (id: string, customRole: string) =>
+    request<{ customRole: string }>(`/api/users/${id}/custom-role`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customRole }),
+    }),
+  // Custom-role catalog (admin only). The /api/admin/pages endpoint
+  // is the single source of truth for what page IDs are pickable —
+  // the Settings → Roles checkbox grid is populated from it.
+  listCustomRoles: () =>
+    request<{ roles: CustomRole[] }>(`/api/admin/custom-roles`),
+  upsertCustomRole: (role: CustomRole) =>
+    request<CustomRole>(`/api/admin/custom-roles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(role),
+    }),
+  deleteCustomRole: (name: string) =>
+    request<void>(`/api/admin/custom-roles/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+  listAvailablePages: () =>
+    request<{ pages: AvailablePage[] }>(`/api/admin/pages`),
 };
 
 export interface MaintenanceWindow {
@@ -1243,12 +1269,31 @@ export interface MaintenanceWindow {
   disabled: boolean;
 }
 
-export interface AuthUser { id: string; email: string; role: string; }
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: string;
+  // Custom-role pointer (v0.5.251). Only set when role === 'viewer'
+  // AND an admin has assigned an existing custom role. The resolved
+  // page list is shipped alongside so the SPA filters the sidebar +
+  // route guard without a second fetch.
+  customRole?: string;
+  customRolePages?: string[];
+}
 export interface UserRow extends AuthUser {
   disabled: boolean;
   authProvider: string;  // 'local' | 'oidc'
   team: string;          // free-text grouping label, '' when unassigned
   createdAt: number;     // unix ns
+}
+export interface CustomRole {
+  name: string;
+  pages: string[];   // sidebar route paths (e.g. '/inbox')
+}
+export interface AvailablePage {
+  id: string;        // route path / Sidebar href
+  label: string;     // i18n key
+  group: string;     // group heading i18n key ('' for ungrouped)
 }
 export interface LoginResponse {
   token: string;

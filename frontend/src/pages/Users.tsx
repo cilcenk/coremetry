@@ -3,13 +3,14 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
-import { api, type UserRow } from '@/lib/api';
+import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
 import { tsLong } from '@/lib/utils';
 
 export default function UsersPage() {
   const { user: me } = useAuth();
   const [users, setUsers] = useState<UserRow[] | null | undefined>(undefined);
+  const [customRoles, setCustomRoles] = useState<CustomRole[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [resetFor, setResetFor] = useState<UserRow | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -17,6 +18,10 @@ export default function UsersPage() {
   const refresh = () => {
     setUsers(undefined);
     api.listUsers().then(u => setUsers(u ?? [])).catch(() => setUsers(null));
+    // Custom-role catalog drives the per-row picker — fetched once
+    // alongside the user list, refreshed on every change so a role
+    // added in Settings → Roles appears here without a hard reload.
+    api.listCustomRoles().then(r => setCustomRoles(r.roles ?? [])).catch(() => setCustomRoles([]));
   };
   useEffect(refresh, []);
 
@@ -111,6 +116,7 @@ export default function UsersPage() {
                 <tr>
                   <th>Email</th>
                   <th>Role</th>
+                  <th>Custom role</th>
                   <th>Team</th>
                   <th>Provider</th>
                   <th>Created</th>
@@ -135,6 +141,9 @@ export default function UsersPage() {
                       </td>
                       <td>
                         <RoleEditor user={u} isMe={isMe} onChanged={refresh} />
+                      </td>
+                      <td>
+                        <CustomRoleEditor user={u} catalog={customRoles} onChanged={refresh} />
                       </td>
                       <td>
                         <TeamEditor user={u} suggestions={teamOptions} onChanged={refresh} />
@@ -393,6 +402,60 @@ function RoleEditor({ user, isMe, onChanged }: {
         </span>
       )}
     </span>
+  );
+}
+
+// CustomRoleEditor renders the per-user custom-role pointer. Only
+// surfaces when the base role is viewer; admin/editor get a hyphen
+// because custom roles cannot further restrict their access. Empty
+// catalog also hides the picker — there's nothing to pick. The
+// dropdown's first option is the "no custom role" sentinel; picking
+// it clears the pointer server-side via api.setUserCustomRole('').
+function CustomRoleEditor({ user, catalog, onChanged }: {
+  user: UserRow;
+  catalog: CustomRole[];
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  if (user.role !== 'viewer') {
+    return <span style={{ color: 'var(--text3)' }}>—</span>;
+  }
+  if (catalog.length === 0) {
+    return (
+      <span style={{ fontSize: 11, color: 'var(--text3)' }}
+            title="No custom roles defined yet — create one in Settings → Custom roles">
+        (none defined)
+      </span>
+    );
+  }
+
+  const apply = async (next: string) => {
+    if (next === (user.customRole ?? '')) return;
+    setBusy(true);
+    try {
+      await api.setUserCustomRole(user.id, next);
+      onChanged();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <select value={user.customRole ?? ''} disabled={busy}
+      onChange={e => apply(e.target.value)}
+      style={{ fontSize: 11, padding: '2px 6px', minWidth: 130,
+               fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}
+      title="Pick a custom role to restrict this viewer to a subset of pages">
+      <option value="">— unrestricted —</option>
+      {catalog.map(r => (
+        <option key={r.name} value={r.name}>
+          {r.name} ({r.pages.length} page{r.pages.length === 1 ? '' : 's'})
+        </option>
+      ))}
+    </select>
   );
 }
 

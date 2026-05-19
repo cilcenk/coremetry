@@ -68,6 +68,11 @@ type Service struct {
 	trustedHeader  *TrustedHeaderOptions
 	trustedCIDRs   []*net.IPNet
 	userStore      UserLookup
+	// customRoles — operator-defined subsets of viewer's page
+	// access, loaded from system_settings at boot. Mutations go
+	// through Upsert/Delete which re-persist atomically. Empty
+	// map = no custom roles configured (default).
+	customRoles    map[string]CustomRole
 }
 
 // TrustedHeaderOptions is the auth.Service-side mirror of the

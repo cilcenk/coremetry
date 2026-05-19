@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { ShortcutsHelp } from './ShortcutsHelp';
@@ -7,6 +8,31 @@ import { useEventStream } from '@/lib/queries';
 import { useShortcuts } from '@/lib/keyboard';
 import { isPublicPath } from '@/lib/auth-paths';
 import { useBranding } from '@/lib/branding';
+
+// ALWAYS_ALLOWED — routes the custom-role guard NEVER blocks, even
+// when the user has a restrictive role. Profile/Login/PublicStatus
+// must stay reachable so the operator can change their password +
+// log out + reach the public surface; / (Home) and /public/trace
+// are likewise infrastructure rather than nav surfaces.
+const ALWAYS_ALLOWED = new Set(['/', '/login', '/profile', '/public-status', '/public/trace']);
+
+// isPathAllowed mirrors the Sidebar's isActive() logic — a custom-
+// role page `/traces` allows any `/trace*` URL (trace detail,
+// compare); a `/dashboards` allows `/dashboard` (singular detail).
+// Anything not in the allowed list (or in ALWAYS_ALLOWED) returns
+// false → the guard redirects to the first allowed page.
+function isPathAllowed(pathname: string, allowedPages: string[]): boolean {
+  if (ALWAYS_ALLOWED.has(pathname)) return true;
+  for (const p of allowedPages) {
+    if (pathname === p) return true;
+    if (pathname.startsWith(p + '/')) return true;
+    if (p === '/traces' && pathname.startsWith('/trace')) return true;
+    if (p === '/dashboards' && pathname.startsWith('/dashboard')) return true;
+    if (p === '/services' && pathname.startsWith('/service')) return true;
+    if (p === '/databases' && pathname.startsWith('/databases/')) return true;
+  }
+  return false;
+}
 
 // AppShell is the layout-route wrapper. React Router renders the
 // active child route inside <Outlet/>. Public pages (login,
@@ -58,6 +84,22 @@ export function AppShell() {
     ],
     [navigate],
   );
+
+  // Custom-role route guard (v0.5.251). When the user has a
+  // customRolePages list, redirect any URL outside that set to
+  // the first allowed page. Effect-based so the redirect doesn't
+  // race the render; ALWAYS_ALLOWED keeps Profile / Home reachable
+  // for password change + logout regardless of role restrictions.
+  useEffect(() => {
+    if (!user || isPublic) return;
+    const allowed = user.customRolePages;
+    if (!allowed) return; // unrestricted (admin/editor/plain viewer)
+    if (isPathAllowed(pathname, allowed)) return;
+    // Empty allowed list → strand on Profile so the operator can at
+    // least change password / log out. Non-empty → first allowed.
+    const target = allowed.length > 0 ? allowed[0] : '/profile';
+    if (pathname !== target) navigate(target, { replace: true });
+  }, [user, pathname, isPublic, navigate]);
 
   if (isPublic) {
     return <Outlet />;

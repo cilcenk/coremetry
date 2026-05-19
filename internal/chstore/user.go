@@ -18,6 +18,11 @@ type User struct {
 	// users-list UI groups "Unassigned" separately so an admin
 	// can see who still needs labelling.
 	Team      string `json:"team"`
+	// CustomRole — optional pointer into the auth.Service custom-role
+	// catalog. Only meaningful when Role == viewer; otherwise ignored
+	// (admin/editor get no further restriction). Empty = no custom
+	// role, unrestricted viewer.
+	CustomRole string `json:"customRole,omitempty"`
 	CreatedAt int64  `json:"createdAt"` // unix nanoseconds
 }
 
@@ -25,14 +30,14 @@ type User struct {
 // Returns (nil, nil) when no row matches — callers treat that as "unknown user".
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, disabled, auth_provider, team,
+		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
 		       toUnixTimestamp64Nano(created_at)
 		FROM users FINAL
 		WHERE email = ? AND disabled = 0
 		LIMIT 1`, email)
 	var u User
 	var disabled uint8
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
 		// clickhouse-go returns sql.ErrNoRows analogue; surface as nil/nil.
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
@@ -45,14 +50,14 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error)
 
 func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, disabled, auth_provider, team,
+		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
 		       toUnixTimestamp64Nano(created_at)
 		FROM users FINAL
 		WHERE id = ? AND disabled = 0
 		LIMIT 1`, id)
 	var u User
 	var disabled uint8
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
@@ -72,7 +77,7 @@ func (s *Store) CountUsers(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) UpsertUser(ctx context.Context, u User) error {
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users (id, email, password_hash, role, disabled, auth_provider, team)")
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users (id, email, password_hash, role, disabled, auth_provider, team, custom_role)")
 	if err != nil {
 		return fmt.Errorf("prepare users: %w", err)
 	}
@@ -84,7 +89,14 @@ func (s *Store) UpsertUser(ctx context.Context, u User) error {
 	if provider == "" {
 		provider = "local"
 	}
-	if err := batch.Append(u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team); err != nil {
+	// Custom role only applies when base role is viewer; defensively
+	// clear it for admin/editor so a stale assignment doesn't surface
+	// after a role promotion.
+	custom := u.CustomRole
+	if u.Role != "viewer" {
+		custom = ""
+	}
+	if err := batch.Append(u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team, custom); err != nil {
 		return fmt.Errorf("append user: %w", err)
 	}
 	return batch.Send()
@@ -94,7 +106,7 @@ func (s *Store) UpsertUser(ctx context.Context, u User) error {
 // hidden — they're effectively deleted from the UI's perspective.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, email, password_hash, role, disabled, auth_provider, team,
+		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
 		       toUnixTimestamp64Nano(created_at)
 		FROM users FINAL
 		WHERE disabled = 0
@@ -107,7 +119,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var disabled uint8
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0
@@ -127,7 +139,7 @@ func (s *Store) ListUsersByTeam(ctx context.Context, team string) ([]User, error
 		return nil, nil
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, email, password_hash, role, disabled, auth_provider, team,
+		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
 		       toUnixTimestamp64Nano(created_at)
 		FROM users FINAL
 		WHERE disabled = 0 AND lower(team) = lower(?)
@@ -140,7 +152,7 @@ func (s *Store) ListUsersByTeam(ctx context.Context, team string) ([]User, error
 	for rows.Next() {
 		var u User
 		var disabled uint8
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0

@@ -292,7 +292,19 @@ export function Sidebar() {
         </div>
         <div id="nav">
           {NAV_GROUPS.map((group, idx) => {
-            const items = group.items.filter(n => !n.adminOnly || user?.role === 'admin');
+            // Two-stage filter (v0.5.251):
+            //   (1) adminOnly entries hide for non-admins (unchanged).
+            //   (2) Custom-role pages list, when present, restricts a
+            //       viewer to ONLY the named entries. nil/undefined =
+            //       no restriction (default viewer); empty array =
+            //       explicit "no nav at all", surfaced as a banner
+            //       state but no usable links.
+            const allowed = user?.customRolePages;
+            const items = group.items.filter(n => {
+              if (n.adminOnly && user?.role !== 'admin') return false;
+              if (allowed && !allowed.includes(n.href)) return false;
+              return true;
+            });
             if (items.length === 0) return null;
             // Active route auto-expands its group so the operator
             // never loses the highlight when navigating.

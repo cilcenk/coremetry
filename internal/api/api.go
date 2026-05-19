@@ -512,6 +512,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/users/{id}/password",    auth.RequireRole(auth.RoleAdmin, s.resetUserPassword))
 	mux.HandleFunc("PUT    /api/users/{id}/role",        auth.RequireRole(auth.RoleAdmin, s.setUserRole))
 	mux.HandleFunc("PUT    /api/users/{id}/team",        auth.RequireRole(auth.RoleAdmin, s.setUserTeam))
+	mux.HandleFunc("PUT    /api/users/{id}/custom-role", auth.RequireRole(auth.RoleAdmin, s.setUserCustomRole))
+
+	// Custom roles — operator-defined viewer subsets (v0.5.251).
+	// Page list is sourced from a single backend registry so the
+	// sidebar + checkbox grid + custom-role pages share IDs.
+	mux.HandleFunc("GET    /api/admin/custom-roles",      auth.RequireRole(auth.RoleAdmin, s.listCustomRoles))
+	mux.HandleFunc("POST   /api/admin/custom-roles",      auth.RequireRole(auth.RoleAdmin, s.upsertCustomRole))
+	mux.HandleFunc("DELETE /api/admin/custom-roles/{name}", auth.RequireRole(auth.RoleAdmin, s.deleteCustomRole))
+	mux.HandleFunc("GET    /api/admin/pages",             auth.RequireRole(auth.RoleAdmin, s.listAvailablePages))
 
 	// Tempo-compatible API (Grafana datasource integration)
 	s.registerTempoRoutes(mux)
@@ -3272,10 +3281,33 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"token":     tok,
 		"expiresAt": exp.UnixNano(),
-		"user": map[string]string{
-			"id": user.ID, "email": user.Email, "role": user.Role,
-		},
+		"user":      s.userPayload(user),
 	})
+}
+
+// userPayload builds the small JSON shape returned by /api/auth/login,
+// /api/auth/me, and the user-mgmt endpoints. Resolves the custom-role
+// pointer to its concrete `pages` list at serialise time so the SPA
+// doesn't need a second fetch on every navigation. Returns a flat
+// map (not a struct) because the field set varies — customRole +
+// customRolePages only appear when the user has a valid pointer.
+func (s *Server) userPayload(u *chstore.User) map[string]any {
+	out := map[string]any{
+		"id":    u.ID,
+		"email": u.Email,
+		"role":  u.Role,
+	}
+	// Only viewers get a custom-role restriction. Defensive guard
+	// mirrors UpsertUser — a stale pointer on an admin/editor row
+	// should be ignored, never enforced.
+	if u.Role == auth.RoleViewer && u.CustomRole != "" {
+		pages := s.auth.CustomRolePages(u.CustomRole)
+		if pages != nil {
+			out["customRole"] = u.CustomRole
+			out["customRolePages"] = pages
+		}
+	}
+	return out
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -3292,9 +3324,20 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"not authenticated"}`, http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, map[string]string{
-		"id": c.UserID, "email": c.Email, "role": c.Role,
-	})
+	// Hydrate from the store so customRole + customRolePages reach
+	// the SPA on every page load. The JWT only carries the base
+	// role; custom-role assignments live in the row.
+	u, err := s.store.GetUserByID(r.Context(), c.UserID)
+	if err != nil || u == nil {
+		// Fall back to claim data — keeps /api/auth/me honest when
+		// the row is temporarily unreachable. Custom-role gating
+		// will simply not apply this round.
+		writeJSON(w, map[string]any{
+			"id": c.UserID, "email": c.Email, "role": c.Role,
+		})
+		return
+	}
+	writeJSON(w, s.userPayload(u))
 }
 
 // loginViaLDAP runs the directory bind for the entered credentials,
@@ -4317,13 +4360,23 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		if provider == "" {
 			provider = "local"
 		}
-		out = append(out, map[string]interface{}{
+		row := map[string]interface{}{
 			"id": u.ID, "email": u.Email, "role": u.Role,
 			"disabled":     u.Disabled,
 			"authProvider": provider,
 			"team":         u.Team,
 			"createdAt":    u.CreatedAt,
-		})
+		}
+		// Surface customRole + resolved pages for the admin Users
+		// page. Same defensive guard as userPayload: only viewers
+		// with a valid pointer get the fields populated.
+		if u.Role == auth.RoleViewer && u.CustomRole != "" {
+			if pages := s.auth.CustomRolePages(u.CustomRole); pages != nil {
+				row["customRole"] = u.CustomRole
+				row["customRolePages"] = pages
+			}
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, out)
 }

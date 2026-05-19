@@ -328,6 +328,12 @@ func main() {
 	if err := seedInitialAdmin(ctx, store, cfg.Auth); err != nil {
 		log.Printf("[auth] seed initial admin: %v", err)
 	}
+	// Custom-role catalog — operator-defined viewer subsets, persisted
+	// in system_settings. Failure to load is non-fatal: the service
+	// boots with no custom roles and the admin can recreate them later.
+	if err := authSvc.LoadPersistedCustomRoles(ctx, store); err != nil {
+		log.Printf("[auth] load custom roles: %v", err)
+	}
 	// ── Trusted-header auth (oauth2-proxy / IAP / Cloudflare Access)
 	// When enabled, identity headers from an upstream proxy take
 	// the place of OIDC. Refuses to boot if trusted_proxies is

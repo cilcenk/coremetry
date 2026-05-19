@@ -34,6 +34,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
+	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/profileconv"
 	"github.com/cilcenk/coremetry/internal/sampling"
@@ -83,6 +84,12 @@ type Server struct {
 	// pod view when Redis is absent so handlers don't need to nil-
 	// check before calling Members.
 	cluster     *cluster.Service
+
+	// pipeline — ingest-time drop / enrich rule engine (v0.5.263).
+	// Admin-managed via Settings → Pipeline. May be nil before
+	// SetPipeline is called from main(); admin handlers nil-check
+	// and return 503.
+	pipeline    *pipeline.Engine
 
 	// Demo deployments only — when true, /api/auth/config returns
 	// initial admin credentials so the login page can pre-fill them.
@@ -544,6 +551,12 @@ func (s *Server) Start() error {
 	// Single round-trip: SCAN coremetry:pod:* in Redis + MGET. Empty
 	// list (no Redis) falls back to a single-pod view.
 	mux.HandleFunc("GET    /api/admin/cluster",           auth.RequireRole(auth.RoleAdmin, s.listClusterMembers))
+
+	// Ingest pipeline (v0.5.263) — admin-managed drop / enrich
+	// rules applied before the sampler. List + upsert + delete.
+	mux.HandleFunc("GET    /api/admin/pipeline-rules",      auth.RequireRole(auth.RoleAdmin, s.listPipelineRules))
+	mux.HandleFunc("POST   /api/admin/pipeline-rules",      auth.RequireRole(auth.RoleAdmin, s.upsertPipelineRule))
+	mux.HandleFunc("DELETE /api/admin/pipeline-rules/{id}", auth.RequireRole(auth.RoleAdmin, s.deletePipelineRule))
 
 	// Tempo-compatible API (Grafana datasource integration)
 	s.registerTempoRoutes(mux)

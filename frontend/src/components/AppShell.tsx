@@ -8,6 +8,7 @@ import { useEventStream } from '@/lib/queries';
 import { useShortcuts } from '@/lib/keyboard';
 import { isPublicPath } from '@/lib/auth-paths';
 import { useBranding } from '@/lib/branding';
+import { PageLoader } from './Spinner';
 
 // ALWAYS_ALLOWED — routes the custom-role guard NEVER blocks, even
 // when the user has a restrictive role. Profile/Login/PublicStatus
@@ -105,14 +106,13 @@ export function AppShell() {
     return <Outlet />;
   }
   if (loading) {
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, display: 'grid', placeItems: 'center',
-        color: 'var(--text3)', fontSize: 13,
-      }}>
-        Loading…
-      </div>
-    );
+    // v0.5.262 — centered OTel-mark loader instead of the bare
+    // "Loading…" text. Matches the Suspense splash fallback used
+    // for lazy routes so the app's initial paint reads as a
+    // single coherent "loading" state, not two different
+    // styles depending on whether the bundle or the auth check
+    // is the slow path.
+    return <PageLoader />;
   }
   if (!user) {
     // AuthProvider is in the middle of redirecting to /login.

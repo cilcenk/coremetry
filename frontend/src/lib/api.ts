@@ -1305,10 +1305,18 @@ export const api = {
 export interface PipelineRule {
   id: string;
   name: string;
-  kind: 'drop' | 'enrich';
+  kind: 'drop' | 'enrich' | 'sample';
   signal: 'spans' | 'logs' | 'metrics';
   enabled: boolean;
   when: { key: string; op: '=' | '!=' | 'contains' | 'startsWith' | 'endsWith'; value: string };
+  // Enrich rules only — resource attribute key/value pairs to
+  // set when the predicate matches. Existing keys are
+  // overridden, new keys append.
+  setAttributes?: Record<string, string>;
+  // Sample rules only — probability in [0, 1] of keeping the
+  // span when the predicate matches. 1.0 = always keep
+  // (no-op), 0.0 = always drop (use a drop rule instead).
+  rate?: number;
 }
 
 export interface ClusterMember {

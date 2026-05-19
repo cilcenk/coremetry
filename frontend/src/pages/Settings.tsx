@@ -204,6 +204,16 @@ function PipelineTab() {
                   <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
                     {r.when.key} <b>{r.when.op}</b>{' '}
                     <span style={{ color: 'var(--text2)' }}>"{r.when.value}"</span>
+                    {r.kind === 'enrich' && r.setAttributes && Object.entries(r.setAttributes).map(([k, v]) => (
+                      <span key={k} style={{ marginLeft: 8, color: 'var(--accent2)' }}>
+                        → {k}=<b>"{v}"</b>
+                      </span>
+                    ))}
+                    {r.kind === 'sample' && r.rate != null && (
+                      <span style={{ marginLeft: 8, color: 'var(--accent2)' }}>
+                        keep <b>{(r.rate * 100).toFixed(1)}%</b>
+                      </span>
+                    )}
                   </td>
                   <td>
                     <input type="checkbox" checked={r.enabled} onChange={() => toggle(r)} />
@@ -246,6 +256,19 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
   const [whenKey, setWhenKey] = useState(existing?.when.key ?? 'service.name');
   const [whenOp,  setWhenOp]  = useState<PipelineRule['when']['op']>(existing?.when.op ?? '=');
   const [whenVal, setWhenVal] = useState(existing?.when.value ?? '');
+  // v0.5.270 — enrich + sample fields. Enrich uses a single
+  // key/value pair for the MVP (multi-attr could come later
+  // via a chip list — start narrow).
+  const [enrichKey, setEnrichKey] = useState<string>(() => {
+    const m = existing?.setAttributes ?? {};
+    return Object.keys(m)[0] ?? '';
+  });
+  const [enrichVal, setEnrichVal] = useState<string>(() => {
+    const m = existing?.setAttributes ?? {};
+    const k = Object.keys(m)[0];
+    return k ? m[k] : '';
+  });
+  const [rate, setRate] = useState<number>(existing?.rate ?? 0.1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -253,12 +276,21 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await api.upsertPipelineRule({
+      const body: PipelineRule = {
         id: existing?.id ?? '',
         name: name.trim(),
         kind, signal, enabled,
         when: { key: whenKey.trim(), op: whenOp, value: whenVal.trim() },
-      });
+      };
+      if (kind === 'enrich') {
+        body.setAttributes = enrichKey.trim()
+          ? { [enrichKey.trim()]: enrichVal.trim() }
+          : {};
+      }
+      if (kind === 'sample') {
+        body.rate = rate;
+      }
+      await api.upsertPipelineRule(body);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -293,7 +325,8 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
               <select value={kind} onChange={e => setKind(e.target.value as PipelineRule['kind'])}
                 style={{ width: '100%' }}>
                 <option value="drop">Drop — discard the matching signal</option>
-                <option value="enrich" disabled>Enrich (coming soon)</option>
+                <option value="enrich">Enrich — set a resource attribute</option>
+                <option value="sample">Sample — keep at probability</option>
               </select>
             </div>
             <div>
@@ -332,6 +365,45 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
               Custom attributes via <code>attr.foo</code> / <code>resource.foo</code> prefix.
             </div>
           </div>
+
+          {/* v0.5.270 — enrich-only fields */}
+          {kind === 'enrich' && (
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+                Set resource attribute
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 3fr', gap: 8 }}>
+                <input value={enrichKey} onChange={e => setEnrichKey(e.target.value)}
+                  placeholder="e.g. team, region, cluster"
+                  style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+                <input value={enrichVal} onChange={e => setEnrichVal(e.target.value)}
+                  placeholder="value"
+                  style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Sets a resource attribute on every matching span. Existing keys are
+                overridden. Multi-attribute support coming later — start with one.
+              </div>
+            </div>
+          )}
+
+          {/* v0.5.270 — sample-only fields */}
+          {kind === 'sample' && (
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+                Keep rate ({(rate * 100).toFixed(1)}%)
+              </label>
+              <input type="range" min={0} max={1} step={0.01}
+                value={rate} onChange={e => setRate(Number(e.target.value))}
+                style={{ width: '100%' }} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Probability of keeping each matching span. 1.0 = no-op; 0.0 = use a
+                drop rule instead. Runs BEFORE the global head sampler — that may
+                still further sample the kept spans.
+              </div>
+            </div>
+          )}
+
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
             Enabled

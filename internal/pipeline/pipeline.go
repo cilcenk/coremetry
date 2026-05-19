@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"strings"
 	"sync"
 
@@ -38,7 +39,8 @@ type RuleKind string
 
 const (
 	KindDrop   RuleKind = "drop"   // drop the signal entirely
-	KindEnrich RuleKind = "enrich" // (reserved; not yet applied)
+	KindEnrich RuleKind = "enrich" // add / override a resource attribute (v0.5.270)
+	KindSample RuleKind = "sample" // probabilistic keep at Rate (v0.5.270)
 )
 
 // Signal scopes the rule to a single OTel signal type.
@@ -82,6 +84,20 @@ type Rule struct {
 	Signal  Signal    `json:"signal"`
 	Enabled bool      `json:"enabled"`
 	When    Condition `json:"when"`
+
+	// SetAttributes — enrich rules only (v0.5.270). When the
+	// rule matches, every key/value pair is written to the
+	// span's RESOURCE attributes (overrides if the key
+	// already exists). Empty map = no-op.
+	SetAttributes map[string]string `json:"setAttributes,omitempty"`
+
+	// Rate — sample rules only (v0.5.270). Keep probability
+	// in [0, 1]; 1.0 = keep everything (no-op), 0.0 = drop
+	// everything (use a drop rule instead). Random keep
+	// decision is local to this rule — the global head
+	// sampler still runs afterwards and may further sample
+	// the matching span out.
+	Rate float64 `json:"rate,omitempty"`
 }
 
 // Engine evaluates the active rule set against each incoming
@@ -154,8 +170,18 @@ func (e *Engine) Upsert(ctx context.Context, st store, r Rule) (Rule, error) {
 	if r.ID == "" {
 		r.ID = fmt.Sprintf("rule-%x", uniqHash(r.Name))
 	}
-	if r.Kind != KindDrop && r.Kind != KindEnrich {
+	if r.Kind != KindDrop && r.Kind != KindEnrich && r.Kind != KindSample {
 		return Rule{}, fmt.Errorf("unknown rule kind %q", r.Kind)
+	}
+	if r.Kind == KindSample {
+		if r.Rate < 0 || r.Rate > 1 {
+			return Rule{}, fmt.Errorf("sample rate must be in [0, 1], got %v", r.Rate)
+		}
+	}
+	if r.Kind == KindEnrich {
+		if len(r.SetAttributes) == 0 {
+			return Rule{}, fmt.Errorf("enrich rule needs at least one attribute to set")
+		}
 	}
 	if r.Signal != SignalSpans && r.Signal != SignalLogs && r.Signal != SignalMetrics {
 		return Rule{}, fmt.Errorf("unknown signal %q", r.Signal)
@@ -223,11 +249,22 @@ func (e *Engine) Delete(ctx context.Context, st store, id string) error {
 // the caller bumps its dropped-by-pipeline counter and never
 // touches the consumer buffer.
 //
+// Rule evaluation walks the catalog in order. Multiple rules
+// can match a single span:
+//   • Drop short-circuits — first matching drop wins, span
+//     is gone.
+//   • Sample probability-rolls against rule.Rate; failure to
+//     keep returns false (treated as dropped by the
+//     ingester). Continues to subsequent rules only when the
+//     keep roll succeeded.
+//   • Enrich mutates the span's resource attributes in place
+//     and continues; a later drop / sample may still discard.
+//
 // Hot-path discipline:
-//   - read lock per call (uncontended in steady state)
-//   - no allocations
-//   - no map lookups (well-known fields branch directly)
-//   - early-return on the first drop match
+//   • read lock per call (uncontended in steady state)
+//   • single math/rand/v2 call per sample-rule (lockless)
+//   • no map lookups for well-known fields
+//   • early-return on the first drop / drop-by-sample match
 func (e *Engine) AcceptSpan(sp *chstore.Span) bool {
 	if sp == nil {
 		return true
@@ -249,12 +286,56 @@ func (e *Engine) AcceptSpan(sp *chstore.Span) bool {
 		if !matchSpan(r.When, sp) {
 			continue
 		}
-		if r.Kind == KindDrop {
+		switch r.Kind {
+		case KindDrop:
 			return false
+		case KindSample:
+			// v0.5.270 — probabilistic keep. math/rand/v2 is
+			// lockless so the per-span overhead is a single
+			// cmpxchg-free Float64() call. Rate < 0 already
+			// rejected at Upsert; defensive clamp here mirrors
+			// what the operator intent (kept rate 0 → drop).
+			if r.Rate <= 0 || rand.Float64() >= r.Rate {
+				return false
+			}
+		case KindEnrich:
+			// v0.5.270 — set / override resource attributes
+			// on the live span. Resource attrs (not span
+			// attrs) is the right scope: enrichment usually
+			// adds infra context (cluster, region, team)
+			// that conceptually belongs to the SOURCE, not
+			// the specific operation.
+			applyEnrich(sp, r.SetAttributes)
 		}
-		// Enrich: not yet applied. Reserved for v0.5.264+.
 	}
 	return true
+}
+
+// applyEnrich writes the given key/value pairs into the span's
+// parallel-array resource attributes. Existing keys are
+// overridden in-place; new keys append. Mutates the slice
+// headers via the pointer so the caller doesn't need to
+// re-assign. Hot-path: no allocation when every key already
+// exists (the common case after a brief warm-up).
+func applyEnrich(sp *chstore.Span, set map[string]string) {
+	for k, v := range set {
+		// Try in-place override first — the common case once
+		// the slices have been seeded once.
+		hit := false
+		for i := 0; i < len(sp.ResKeys); i++ {
+			if sp.ResKeys[i] == k {
+				if i < len(sp.ResValues) {
+					sp.ResValues[i] = v
+				}
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			sp.ResKeys = append(sp.ResKeys, k)
+			sp.ResValues = append(sp.ResValues, v)
+		}
+	}
 }
 
 // matchSpan evaluates a Condition against a span. Well-known

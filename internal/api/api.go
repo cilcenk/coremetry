@@ -561,6 +561,10 @@ func (s *Server) Start() error {
 	// Single round-trip: SCAN coremetry:pod:* in Redis + MGET. Empty
 	// list (no Redis) falls back to a single-pod view.
 	mux.HandleFunc("GET    /api/admin/cluster",           auth.RequireRole(auth.RoleAdmin, s.listClusterMembers))
+	// v0.5.277 — "what changed" banner data. Open problem
+	// counts + recent service.version transitions. Cheap
+	// (15s cache); polled from the global AppShell.
+	mux.HandleFunc("GET    /api/recent-changes",          s.getRecentChanges)
 
 	// Ingest pipeline (v0.5.263) — admin-managed drop / enrich
 	// rules applied before the sampler. List + upsert + delete.

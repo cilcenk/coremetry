@@ -30,6 +30,71 @@ type Deploy struct {
 	SpanCount     int    `json:"spanCount"`
 }
 
+// RecentDeployEntry is one row from GetRecentDeploys —
+// powers the "what changed" page-top banner (v0.5.277).
+type RecentDeployEntry struct {
+	Service       string `json:"service"`
+	Version       string `json:"version"`
+	FirstSeenNs   int64  `json:"firstSeenNs"`
+	SpanCount     uint64 `json:"spanCount"`
+}
+
+// GetRecentDeploys returns service.version transitions
+// first-seen in the requested window, ordered most-recent
+// first. Cross-service "what changed" signal for the global
+// banner — operator sees "frontend just shipped v1.2.3 14m
+// ago" the moment they open ANY page.
+//
+// CH posture: scans the (service_name, time) primary key
+// inside the time bound, then min()s per (service, version)
+// pair so a service that's been emitting the same version
+// for hours doesn't dominate the result. Limit 20 caps the
+// banner footprint; SETTINGS max_execution_time = 5 keeps it
+// snappy enough to fire from a global 30s poll.
+func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit int) ([]RecentDeployEntry, error) {
+	if since <= 0 {
+		since = 30 * time.Minute
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	cutoff := time.Now().Add(-since)
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+		  service_name,
+		  arrayFirst(x -> x.1 = 'service.version', arrayZip(res_keys, res_values)).2 AS version,
+		  toUnixTimestamp64Nano(min(time)) AS first_seen,
+		  count() AS span_count
+		FROM spans
+		WHERE time >= ?
+		  AND has(res_keys, 'service.version')
+		GROUP BY service_name, version
+		HAVING first_seen >= ?  -- exclude pre-window deploys whose version is still emitting
+		ORDER BY first_seen DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 5`,
+		cutoff, cutoff.UnixNano(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RecentDeployEntry{}
+	for rows.Next() {
+		var r RecentDeployEntry
+		if err := rows.Scan(&r.Service, &r.Version, &r.FirstSeenNs, &r.SpanCount); err != nil {
+			return nil, err
+		}
+		if r.Version == "" {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // GetServiceDeploys returns every distinct service.version
 // observed for `service` in the time window, ordered by first
 // appearance. Each row carries the first-seen timestamp — the

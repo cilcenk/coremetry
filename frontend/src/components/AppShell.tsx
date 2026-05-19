@@ -9,6 +9,7 @@ import { useShortcuts } from '@/lib/keyboard';
 import { isPublicPath } from '@/lib/auth-paths';
 import { useBranding } from '@/lib/branding';
 import { PageLoader } from './Spinner';
+import { WhatChangedBanner } from './WhatChangedBanner';
 
 // ALWAYS_ALLOWED — routes the custom-role guard NEVER blocks, even
 // when the user has a restrictive role. Profile/Login/PublicStatus
@@ -121,7 +122,13 @@ export function AppShell() {
   return (
     <div id="app">
       <Sidebar />
-      <div id="main"><Outlet /></div>
+      {/* v0.5.277 — page-top "what changed" ribbon. Open
+          critical/warning counts + recent service.version
+          transitions. Self-hides on a quiet install. */}
+      <div id="main">
+        <WhatChangedBanner />
+        <Outlet />
+      </div>
       {/* ShortcutsHelp owns its own '?' binding + the modal
           render. Mount once at the shell so the help modal
           is reachable from any page without per-page wiring. */}

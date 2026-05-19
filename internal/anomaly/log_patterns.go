@@ -48,6 +48,7 @@ type logPattern struct {
 // Order doesn't matter; the response is sorted by ratio desc.
 var patterns = []logPattern{
 	{"Oracle errors (ORA-)",   `ORA-[0-9]+`,                                                                                                                  []string{"ora-"}},
+	{"Oracle TNS errors",      `TNS-[0-9]+`,                                                                                                                  []string{"tns-"}},
 	{"Out of memory",          `OutOfMemoryError|out of memory|OOMKilled|cannot allocate memory`,                                                             []string{"outofmemoryerror", "out of memory", "oomkilled", "cannot allocate"}},
 	{"Null pointer",           `NullPointerException|null pointer dereference|null pointer exception`,                                                        []string{"nullpointer", "null pointer"}},
 	{"Database deadlock",      `[Dd]eadlock|deadlock detected`,                                                                                               []string{"deadlock"}},
@@ -58,6 +59,21 @@ var patterns = []logPattern{
 	{"Auth failures",          `(?i)401 Unauthorized|invalid credentials|access denied|forbidden`,                                                            []string{"401", "credentials", "access denied", "forbidden"}},
 	{"Disk full",              `no space left on device|disk full|ENOSPC`,                                                                                    []string{"no space left", "disk full", "enospc"}},
 	{"Java exceptions",        `(ClassCast|IllegalState|IllegalArgument|UnsupportedOperation|ArrayIndexOutOfBounds|ConcurrentModification|NumberFormat|StackOverflow)Exception`, []string{"exception"}},
+	// v0.5.284 — JBoss / WildFly / Spring Boot / JDBC stack
+	// patterns. Operator runs a Java estate (JBoss + Spring
+	// Boot + Oracle); the generic Java patterns above missed
+	// the framework-specific shapes that come up on prod
+	// failures — bean wiring, deployment hooks, Hikari pool
+	// exhaustion. Each token list is lowercase and represents
+	// substrings the body MUST contain when the regex matches
+	// (case-insensitive prefilter).
+	{"JBoss / WildFly errors", `(WFLY|JBAS)[0-9]+`,                                                                                                           []string{"wfly", "jbas"}},
+	{"JBoss deployment fail",  `Failed to start service|Deployment ".*" was rolled back|service .* in service registry has failed`,                          []string{"failed to start service", "was rolled back", "service registry"}},
+	{"Spring app failed",      `APPLICATION FAILED TO START|Error starting ApplicationContext`,                                                              []string{"application failed to start", "error starting applicationcontext"}},
+	{"Spring bean failure",    `(BeanCreation|NoSuchBeanDefinition|BeanInstantiation|UnsatisfiedDependency|CircularDependency)Exception`,                    []string{"beancreation", "nosuchbeandefinition", "beaninstantiation", "unsatisfieddependency", "circulardependency"}},
+	{"JDBC pool exhausted",    `HikariPool-.* - Connection is not available|connection pool .*exhausted|IJ000453|IJ000655|Could not acquire JDBC Connection`, []string{"hikaripool", "exhausted", "ij000453", "ij000655", "could not acquire jdbc"}},
+	{"Hibernate / JPA",        `(LazyInitialization|OptimisticLock|StaleObjectState|TransactionTimedOut|TransactionRequired)Exception`,                      []string{"lazyinitialization", "optimisticlock", "staleobjectstate", "transactiontimedout", "transactionrequired"}},
+	{"DB constraint violation",`(DataIntegrityViolation|ConstraintViolation|SQLIntegrityConstraintViolation)Exception`,                                       []string{"dataintegrityviolation", "constraintviolation", "sqlintegrityconstraint"}},
 }
 
 // DetectLogPatterns runs each pattern against the raw `logs` CH

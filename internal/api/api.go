@@ -7238,12 +7238,18 @@ func (s *Server) deleteSLO(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
+	// v0.5.280 — accepted counters added so the Topbar live
+	// activity ticker can derive per-second rates client-side
+	// (delta of cumulative ÷ elapsed).
 	writeJSON(w, map[string]interface{}{
-		"status":        "ok",
-		"spans_queued":  s.ing.Spans.QueueLen(),
-		"logs_queued":   s.ing.Logs.QueueLen(),
-		"metrics_queued": s.ing.Metrics.QueueLen(),
-		"spans_dropped": s.ing.Spans.Dropped(),
+		"status":           "ok",
+		"spans_queued":     s.ing.Spans.QueueLen(),
+		"logs_queued":      s.ing.Logs.QueueLen(),
+		"metrics_queued":   s.ing.Metrics.QueueLen(),
+		"spans_dropped":    s.ing.Spans.Dropped(),
+		"spans_accepted":   s.ing.Spans.Accepted(),
+		"logs_accepted":    s.ing.Logs.Accepted(),
+		"metrics_accepted": s.ing.Metrics.Accepted(),
 	})
 }
 

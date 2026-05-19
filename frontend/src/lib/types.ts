@@ -891,6 +891,11 @@ export interface HealthInfo {
   logs_queued: number;
   metrics_queued: number;
   spans_dropped: number;
+  // v0.5.280 — cumulative accepted counters for the Topbar
+  // live activity ticker (client computes per-sec delta).
+  spans_accepted?: number;
+  logs_accepted?: number;
+  metrics_accepted?: number;
 }
 
 export type SortColumn = 'time' | 'duration' | 'spans' | 'service' | 'operation' | 'status';

@@ -20,6 +20,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chmigrate"
 	"github.com/cilcenk/coremetry/internal/cluster"
+	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/consumer"
@@ -207,6 +208,19 @@ func main() {
 		log.Printf("[sampling] load persisted: %v", err)
 	}
 	ing.SetSampler(sampler)
+
+	// Ingest-time pipeline (v0.5.263) — operator-defined drop /
+	// enrich rules evaluated BEFORE the sampler. Loads its rule
+	// set from system_settings at boot; admin PUTs through
+	// /api/admin/pipeline-rules re-persist + immediately apply.
+	// Load failure is non-fatal (empty rule set → engine is a
+	// no-op).
+	pipelineEng := pipeline.New()
+	if err := pipelineEng.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[pipeline] load persisted: %v", err)
+	}
+	pipelineEng.LogStats()
+	ing.SetPipeline(pipelineEng)
 	{
 		s := sampler.Snapshot()
 		log.Printf("[sampling] default=%.2f overrides=%d keepErrors=%v keepRoots=%v",
@@ -493,6 +507,7 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, sampler, bus)
 	srv.SetCluster(clusterSvc)
+	srv.SetPipeline(pipelineEng)
 	srv.SetVersion(Version)
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)

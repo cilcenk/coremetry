@@ -1269,6 +1269,20 @@ export const api = {
   // MGET); safe to poll at 5-10s in the admin page.
   listClusterMembers: () =>
     request<{ members: ClusterMember[]; selfId: string }>(`/api/admin/cluster`),
+  // Pipeline rules — operator-defined drop / enrich applied
+  // BEFORE the sampler at OTLP ingest (v0.5.263).
+  listPipelineRules: () =>
+    request<{ rules: PipelineRule[] }>(`/api/admin/pipeline-rules`),
+  upsertPipelineRule: (r: PipelineRule) =>
+    request<PipelineRule>(`/api/admin/pipeline-rules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(r),
+    }),
+  deletePipelineRule: (id: string) =>
+    request<void>(`/api/admin/pipeline-rules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
   // copilotNLToQuery — v0.5.255 natural-language → DSL converter.
   // Operator types "yesterday's slow checkouts"; we return the
   // filter set + time range the SPA applies to /explore. Server
@@ -1287,6 +1301,15 @@ export const api = {
       body: JSON.stringify({ prompt }),
     }),
 };
+
+export interface PipelineRule {
+  id: string;
+  name: string;
+  kind: 'drop' | 'enrich';
+  signal: 'spans' | 'logs' | 'metrics';
+  enabled: boolean;
+  when: { key: string; op: '=' | '!=' | 'contains' | 'startsWith' | 'endsWith'; value: string };
+}
 
 export interface ClusterMember {
   id: string;          // pod id (hostname + 4-byte hex suffix)

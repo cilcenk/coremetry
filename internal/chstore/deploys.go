@@ -40,6 +40,9 @@ type RecentDeployEntry struct {
 }
 
 // v0.5.278 — placeholder versions that aren't real deploys.
+// v0.5.283 — broadened to cover more Maven/Gradle/Node defaults
+// plus unresolved literal placeholders (`${project.version}`).
+//
 // Operator-reported: Java apps emit Maven's default
 // "0.0.1-SNAPSHOT" when devs don't override it, so the deploy
 // detector flagged every pod restart as a fresh deploy. Same
@@ -49,12 +52,28 @@ type RecentDeployEntry struct {
 // CH-readable form: any version IN this list is excluded from
 // the deploy listing. Container.image.tag is consulted as a
 // fallback when service.version is empty or placeholder.
-const placeholderVersionList = `('', '0.0.1', '0.0.1-SNAPSHOT', '1.0-SNAPSHOT', 'latest', 'dev', 'unknown', 'snapshot', 'main', 'master', 'HEAD')`
+const placeholderVersionList = `(
+    '', '0.0.1', '0.0.1-SNAPSHOT', '0.1.0-SNAPSHOT',
+    '1.0-SNAPSHOT', '1.0.0-SNAPSHOT',
+    '${project.version}', '${version}',
+    'latest', 'dev', 'unknown', 'snapshot',
+    'main', 'master', 'HEAD',
+    'null', 'none', 'n/a', 'NULL'
+  )`
 
 // effectiveVersionExpr is the SQL fragment that picks a real
 // version per row: prefer service.version when non-placeholder;
 // fall back to container.image.tag / k8s.container.image.tag;
+// then to Helm convention labels (app.kubernetes.io/version,
+// projected by the OTel k8s receiver as
+// k8s.{pod,deployment}.labels.app_kubernetes_io_version);
 // otherwise empty (caller filters those out).
+//
+// v0.5.283 — extended the chain with Helm / k8s label sources.
+// On platforms where the build pipeline doesn't override
+// service.version but DOES set the standard
+// app.kubernetes.io/version label on the Deployment (Helm
+// default), this is the only real version signal we'll see.
 const effectiveVersionExpr = `
   multiIf(
     res_values[indexOf(res_keys, 'service.version')] NOT IN ` + placeholderVersionList + `,
@@ -63,6 +82,14 @@ const effectiveVersionExpr = `
       res_values[indexOf(res_keys, 'container.image.tag')],
     res_values[indexOf(res_keys, 'k8s.container.image.tag')] NOT IN ` + placeholderVersionList + `,
       res_values[indexOf(res_keys, 'k8s.container.image.tag')],
+    res_values[indexOf(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')],
+    res_values[indexOf(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')],
+    res_values[indexOf(res_keys, 'k8s.deployment.labels.version')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'k8s.deployment.labels.version')],
+    res_values[indexOf(res_keys, 'helm.chart.version')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'helm.chart.version')],
     ''
   )`
 
@@ -104,7 +131,11 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 		WHERE time >= ?
 		  AND (has(res_keys, 'service.version')
 		    OR has(res_keys, 'container.image.tag')
-		    OR has(res_keys, 'k8s.container.image.tag'))
+		    OR has(res_keys, 'k8s.container.image.tag')
+		    OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.deployment.labels.version')
+		    OR has(res_keys, 'helm.chart.version'))
 		GROUP BY service_name, version
 		HAVING version != ''
 		   AND first_seen >= ?
@@ -266,7 +297,11 @@ func (s *Store) GetServiceDeploys(
 		  AND time >= ? AND time <= ?
 		  AND (has(res_keys, 'service.version')
 		    OR has(res_keys, 'container.image.tag')
-		    OR has(res_keys, 'k8s.container.image.tag'))
+		    OR has(res_keys, 'k8s.container.image.tag')
+		    OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.deployment.labels.version')
+		    OR has(res_keys, 'helm.chart.version'))
 		GROUP BY version
 		HAVING version != ''
 		ORDER BY first_seen_ns ASC

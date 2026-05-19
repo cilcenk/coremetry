@@ -27,6 +27,70 @@ const PALETTE = [
   'rgba(232,78,78,0.90)',
 ];
 
+// Z-score outlier detection (v0.5.256). For each cell, z =
+// (count - μ) / σ where μ + σ are taken over non-zero cells in
+// the whole grid. Cells with z ≥ OUTLIER_Z get a contrasting
+// outline so the eye snaps to "this latency band is unusually
+// busy for this window". 2.5σ covers the top ~0.6% of cells
+// under a normal distribution — empirically the right cut for
+// span heatmaps where the bulk of cells are quiet and the
+// interesting ones spike.
+const OUTLIER_Z = 2.5;
+
+interface HeatmapStats {
+  mean: number;
+  stddev: number;
+  // outliers[col][row] = true when that cell's z-score ≥ OUTLIER_Z.
+  // Stored as a flat Set of "col,row" strings so the tooltip can
+  // O(1)-check the hover cell without re-deriving z on every move.
+  outliers: Set<string>;
+}
+
+function computeHeatmapStats(data: Heatmap): HeatmapStats {
+  // Stats over NON-ZERO cells only — empty cells would drag the
+  // mean to ~0 and inflate every other cell's z-score. The
+  // intuition matches the operator's: outlier = "this filled cell
+  // is way busier than the other filled cells", not "this cell
+  // exists at all".
+  let sum = 0, n = 0;
+  for (let i = 0; i < data.counts.length; i++) {
+    const col = data.counts[i];
+    if (!col) continue;
+    for (let j = 0; j < col.length; j++) {
+      const c = col[j];
+      if (c > 0) { sum += c; n++; }
+    }
+  }
+  if (n === 0) {
+    return { mean: 0, stddev: 0, outliers: new Set() };
+  }
+  const mean = sum / n;
+  let sqSum = 0;
+  for (let i = 0; i < data.counts.length; i++) {
+    const col = data.counts[i];
+    if (!col) continue;
+    for (let j = 0; j < col.length; j++) {
+      const c = col[j];
+      if (c > 0) { sqSum += (c - mean) * (c - mean); }
+    }
+  }
+  const stddev = Math.sqrt(sqSum / Math.max(1, n));
+  const outliers = new Set<string>();
+  if (stddev > 0) {
+    for (let i = 0; i < data.counts.length; i++) {
+      const col = data.counts[i];
+      if (!col) continue;
+      for (let j = 0; j < col.length; j++) {
+        const c = col[j];
+        if (c > 0 && (c - mean) / stddev >= OUTLIER_Z) {
+          outliers.add(i + ',' + j);
+        }
+      }
+    }
+  }
+  return { mean, stddev, outliers };
+}
+
 export function LatencyHeatmap({ data, height = 220 }: {
   data: Heatmap;
   height?: number;
@@ -36,7 +100,12 @@ export function LatencyHeatmap({ data, height = 220 }: {
   const [hover, setHover] = useState<{
     x: number; y: number;
     time: number; durMs: number; count: number;
+    z: number; isOutlier: boolean;
   } | null>(null);
+  // Stats are recomputed when `data` changes; cheap (O(N*M)
+  // single pass) and avoids a useMemo deopt + dep churn.
+  const statsRef = useRef<HeatmapStats>({ mean: 0, stddev: 0, outliers: new Set() });
+  statsRef.current = computeHeatmapStats(data);
 
   // Re-paint on data / dimension change. We don't memo the
   // result — paint is fast and React re-renders when hover
@@ -79,6 +148,7 @@ export function LatencyHeatmap({ data, height = 220 }: {
       // can range over 4 decades; linear mapping makes the
       // mode invisible. log(count+1)/log(max+1) → [0,1].
       const lmax = Math.log(max + 1);
+      const stats = statsRef.current;
       for (let i = 0; i < cols; i++) {
         for (let j = 0; j < rows; j++) {
           const c = data.counts[i]?.[j] ?? 0;
@@ -91,6 +161,22 @@ export function LatencyHeatmap({ data, height = 220 }: {
           const x = padL + i * cellW;
           const y = padT + (rows - 1 - j) * cellH;
           ctx.fillRect(x, y, Math.ceil(cellW) + 0.5, Math.ceil(cellH) + 0.5);
+        }
+      }
+      // Outlier highlight pass (v0.5.256). Painted AFTER the
+      // base fill so the outline sits on top of the cell colour.
+      // Bright amber stroke makes outliers visually pop without
+      // changing the underlying density palette — the operator's
+      // colour intuition for "warm = busy" is preserved.
+      if (stats.outliers.size > 0) {
+        ctx.strokeStyle = 'rgba(250,204,21,0.95)';
+        ctx.lineWidth = 1.5;
+        for (const key of stats.outliers) {
+          const [iStr, jStr] = key.split(',');
+          const i = +iStr, j = +jStr;
+          const x = padL + i * cellW;
+          const y = padT + (rows - 1 - j) * cellH;
+          ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, cellW - 1), Math.max(1, cellH - 1));
         }
       }
 
@@ -158,11 +244,15 @@ export function LatencyHeatmap({ data, height = 220 }: {
       setHover(null); return;
     }
     const c = data.counts[col]?.[row] ?? 0;
+    const stats = statsRef.current;
+    const z = c > 0 && stats.stddev > 0 ? (c - stats.mean) / stats.stddev : 0;
     setHover({
       x, y,
       time: data.times[col],
       durMs: data.durationBins[row],
       count: c,
+      z,
+      isOutlier: stats.outliers.has(col + ',' + row),
     });
   };
 
@@ -212,6 +302,30 @@ export function LatencyHeatmap({ data, height = 220 }: {
           <div style={{ color: 'var(--text2)' }}>
             ≤ {fmtSmart(hover.durMs, 'ms')} · {hover.count.toLocaleString()} spans
           </div>
+          {hover.count > 0 && (
+            <div style={{
+              color: hover.isOutlier ? 'var(--warn, #facc15)' : 'var(--text3)',
+              fontSize: 10, marginTop: 2,
+            }}>
+              z = {hover.z.toFixed(2)}{hover.isOutlier && ' · outlier'}
+            </div>
+          )}
+        </div>
+      )}
+      {/* Outlier legend — only renders when at least one outlier
+          is painted, so quiet heatmaps don't carry visual noise.
+          Sits bottom-right; mirrors the sampledTag's top-right slot. */}
+      {statsRef.current.outliers.size > 0 && (
+        <div style={{
+          position: 'absolute', bottom: 6, right: 6, zIndex: 4,
+          fontSize: 10, padding: '2px 6px', borderRadius: 10,
+          background: 'rgba(250,204,21,0.10)',
+          border: '1px solid rgba(250,204,21,0.40)',
+          color: 'var(--warn, #facc15)',
+          pointerEvents: 'none',
+          fontFamily: 'ui-monospace, monospace',
+        }} title={`Cells with z-score ≥ ${OUTLIER_Z} (count > mean + ${OUTLIER_Z}σ over non-empty cells)`}>
+          {statsRef.current.outliers.size} outlier{statsRef.current.outliers.size === 1 ? '' : 's'}
         </div>
       )}
     </div>

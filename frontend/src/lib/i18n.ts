@@ -53,6 +53,7 @@ const EN: Catalog = {
   'nav.catalog':     'Service catalog',
   'nav.audit':       'Audit log',
   'nav.sql':         'SQL playground',
+  'nav.query':       'Query (DQL)',
   'nav.statusPage':  'Public Status Page',
 
   // Login
@@ -148,6 +149,7 @@ const TR: Catalog = {
   'nav.catalog':     'Servis kataloğu',
   'nav.audit':       'Denetim kaydı',
   'nav.sql':         'SQL editörü',
+  'nav.query':       'Sorgu (DQL)',
   'nav.statusPage':  'Genel Durum Sayfası',
 
   // Login

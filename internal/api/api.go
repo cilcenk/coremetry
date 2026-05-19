@@ -293,6 +293,11 @@ func (s *Server) Start() error {
 	// the dominant call-pattern cohorts. Sample-based so the
 	// query stays under the 30s ceiling at billion-span scale.
 	mux.HandleFunc("GET /api/traces/shapes",    s.getTraceShapes)
+	// v0.5.265 — Unified query language (DQL-lite). Operator
+	// admin-types pipe-shape queries; backend compiles to a
+	// chstore Plan + executes via the same hot path the UI
+	// builders use.
+	mux.HandleFunc("POST /api/query/run",       auth.RequireRole(auth.RoleAdmin, s.runDQL))
 	mux.HandleFunc("GET /api/traces/{id}", s.getTrace)
 	// Public-share endpoints — POST mints a token (editor+ only;
 	// viewers can read traces but not externalise them through a

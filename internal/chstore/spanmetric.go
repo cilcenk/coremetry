@@ -33,6 +33,19 @@ type SpanMetricPoint struct {
 // QuerySpanMetric computes the requested aggregation over the matching spans,
 // bucketed by step seconds, optionally split by 1+ group keys.
 func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]SpanMetricSeries, error) {
+	// ── MV fast-path (v0.5.268) ───────────────────────────────────────────────
+	// When the query maps onto service_summary_5m's columns
+	// (group by service.name only, step ≥ 5min, no
+	// attribute filters, agg in the MV's state set), route to
+	// the MV. Same eligibility shape GetTraceAggregate uses
+	// (line 1521 in repo.go) — sub-second on billion-row
+	// installs where the raw GROUP BY would otherwise burn
+	// 5-10s of CH time. Fall through on MV error so a
+	// regression here doesn't blank the page.
+	if rows, ok := s.tryServiceMVFastPath(ctx, f); ok {
+		return rows, nil
+	}
+
 	// ── Build WHERE ───────────────────────────────────────────────────────────
 	var wc whereClause
 	if !f.From.IsZero() {
@@ -135,6 +148,166 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		out = append(out, *seriesMap[k])
 	}
 	return out, rows.Err()
+}
+
+// tryServiceMVFastPath (v0.5.268) routes eligible
+// QuerySpanMetric queries to service_summary_5m. Eligibility
+// gate:
+//
+//   • step ≥ 300s (the MV's bucket granularity; we re-bucket
+//     bigger windows via toStartOfInterval on time_bucket)
+//   • GroupBy is empty OR exactly ["service.name"]
+//   • Filters all key on service.name with op = (the MV only
+//     has service_name as a dimension; any other predicate
+//     would need raw spans)
+//   • Aggregation is one the MV's states can serve:
+//     count, rate, error_rate, errors, avg, p50, p95, p99
+//
+// Returns (series, true) on a successful MV read; (nil, false)
+// when the query isn't eligible or the MV query errors so the
+// caller falls through to the raw-spans path.
+//
+// Same numerical model the /api/services page already serves
+// (quantilesMergeState / countMerge); the operator's quantile
+// estimate is consistent across surfaces.
+func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([]SpanMetricSeries, bool) {
+	// Auto-step preview — mirrors the switch below so the
+	// eligibility check matches the bucket we'd actually run.
+	step := f.StepSeconds
+	if step <= 0 {
+		span := f.To.Sub(f.From).Seconds()
+		switch {
+		case span <= 24*3600:
+			// auto would pick something sub-5min; not eligible.
+			return nil, false
+		case span <= 7*24*3600:
+			step = 1800
+		default:
+			step = 3600
+		}
+	}
+	if step < 300 {
+		return nil, false
+	}
+
+	// GroupBy gate.
+	switch len(f.GroupBy) {
+	case 0:
+	case 1:
+		if f.GroupBy[0] != "service.name" && f.GroupBy[0] != "service_name" {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+
+	// Filter gate — only service.name = X allowed; everything
+	// else needs raw spans.
+	var serviceFilter string
+	for _, fe := range f.Filters {
+		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
+			serviceFilter = fe.Values[0]
+			continue
+		}
+		return nil, false
+	}
+
+	// Aggregation gate.
+	field := f.Field
+	if field == "" {
+		field = "duration_ms"
+	}
+	if field != "duration_ms" {
+		// MV only has duration; non-duration aggs can't use it.
+		return nil, false
+	}
+	var aggExpr string
+	switch f.Aggregation {
+	case "", "count":
+		aggExpr = "toNullable(toFloat64(countMerge(span_count_state)))"
+	case "rate":
+		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
+	case "error_rate":
+		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
+	case "errors":
+		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)))"
+	case "avg":
+		aggExpr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
+	case "p50":
+		aggExpr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6))"
+	case "p95":
+		aggExpr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6))"
+	case "p99":
+		aggExpr = "toNullable(toFloat64(arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6))"
+	default:
+		return nil, false
+	}
+
+	// Build the query. We re-bucket the MV's 5min slots into
+	// the operator's requested step via toStartOfInterval on
+	// time_bucket. WHERE clause on time_bucket prunes
+	// partitions efficiently.
+	groupSelect := "[]::Array(String)"
+	if len(f.GroupBy) == 1 {
+		groupSelect = "[service_name]"
+	}
+	var whereClauses []string
+	args := []any{f.From, f.To}
+	whereClauses = append(whereClauses, "time_bucket >= ?", "time_bucket <= ?")
+	if serviceFilter != "" {
+		whereClauses = append(whereClauses, "service_name = ?")
+		args = append(args, serviceFilter)
+	}
+
+	sql := fmt.Sprintf(`
+		SELECT
+		    toUnixTimestamp(toStartOfInterval(time_bucket, INTERVAL %d SECOND)) * 1000000000 AS bucket,
+		    %s AS gk,
+		    %s AS v
+		FROM service_summary_5m
+		WHERE %s
+		GROUP BY bucket, gk
+		ORDER BY gk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 30`,
+		step, groupSelect, aggExpr, strings.Join(whereClauses, " AND "))
+
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+
+	seriesMap := make(map[string]*SpanMetricSeries)
+	var order []string
+	for rows.Next() {
+		var bucket uint64
+		var gk []string
+		var val *float64
+		if err := rows.Scan(&bucket, &gk, &val); err != nil {
+			return nil, false
+		}
+		key := strings.Join(gk, "|")
+		ser, ok := seriesMap[key]
+		if !ok {
+			ser = &SpanMetricSeries{GroupKey: gk}
+			seriesMap[key] = ser
+			order = append(order, key)
+		}
+		v := 0.0
+		if val != nil {
+			v = *val
+		}
+		ser.Points = append(ser.Points, SpanMetricPoint{Time: int64(bucket), Value: v})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false
+	}
+	out := make([]SpanMetricSeries, 0, len(order))
+	for _, k := range order {
+		out = append(out, *seriesMap[k])
+	}
+	return out, true
 }
 
 // SpanMetricBatchFilter computes N aggregations over the same

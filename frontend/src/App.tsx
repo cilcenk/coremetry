@@ -3,7 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Spinner } from './components/Spinner';
+import { PageLoader } from './components/Spinner';
 
 // All route components are code-split via React.lazy so the
 // initial bundle stays small. The loader fallback is the
@@ -67,7 +67,7 @@ export default function App() {
   return (
     <ErrorBoundary>
     <AuthProvider>
-      <Suspense fallback={<Spinner />}>
+      <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route element={<AppShell />}>
             <Route path="/"               element={<Home />} />

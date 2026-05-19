@@ -297,21 +297,31 @@ function ServiceView({ range }: { range: TimeRange }) {
   // v0.5.152 — service name whose open-problems drawer is open
   // (clicked the red ring or "!" badge). Null = drawer closed.
   const [incidentDrawerFor, setIncidentDrawerFor] = useState<string | null>(null);
-  // Top-N + focus controls. In production a single full render is
-  // unusable past ~50 services; default to top 30 by total call
-  // volume so the page loads with a readable overview. "Focus on"
-  // overrides the top-N pick — it shows only the focused service
-  // + its 1-hop neighbors so an operator can pivot from the
-  // overview to a specific service without losing the time range.
-  const [topN, setTopN] = useState(30);
-  const [focus, setFocus] = useState('');
+  // v0.5.288 — topN / focus / focusHops / focusDir all promoted
+  // from useState to URL state via useSearchParams. Lets a saved
+  // view ("eu-west payment-svc downstream, 2 hops") survive page
+  // reloads and become a shareable link. Same approach the
+  // OperationView already uses for root/root_op/depth.
+  const [params, setParams] = useSearchParams();
+  const topN     = Math.max(10, Math.min(200, parseInt(params.get('top') || '30', 10) || 30));
+  const focus    = params.get('focus') || '';
+  const focusHops = Math.max(1, Math.min(4, parseInt(params.get('hops') || '1', 10) || 1));
+  const focusDir = (params.get('dir') === 'both') ? 'both' as const : 'down' as const;
+  const setURLParam = useCallback((key: string, v: string | null) => {
+    setParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (v == null || v === '') p.delete(key); else p.set(key, v);
+      return p;
+    }, { replace: true });
+  }, [setParams]);
+  const setTopN     = (v: number) => setURLParam('top',   v === 30  ? null : String(v));
+  const setFocus    = (v: string) => setURLParam('focus', v);
+  const setFocusHops = (v: number) => setURLParam('hops',  v === 1   ? null : String(v));
+  const setFocusDir = (v: 'down' | 'both') => setURLParam('dir', v === 'down' ? null : v);
   // Esc clears the focus and pops the diagram back to the
-  // top-N overview (v0.5.173). The other shortcut entry points
-  // (edge-panel close, incident drawer close) already use Esc;
-  // this matches the operator's expectation. Guard: only fires
-  // when a focus is active and no other modal is open — the
-  // global keyboard layer pauses in editable inputs anyway, so
-  // typing in the search box doesn't blow up the focus.
+  // top-N overview (v0.5.173). Guard against firing in editable
+  // inputs (search box etc.) — global keyboard layer already
+  // pauses there.
   useEffect(() => {
     if (!focus) return;
     const onKey = (e: KeyboardEvent) => {
@@ -319,20 +329,10 @@ function ServiceView({ range }: { range: TimeRange }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // setFocus is stable via setParams identity but is recreated
+    // each render; deps on focus only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
-  // How many hops to expand around the focused service. 1 = just
-  // direct neighbors; 2 = neighbors-of-neighbors; up to 4 keeps
-  // the diagram readable. Only used when focus is set; the top-N
-  // pick handles the no-focus case.
-  const [focusHops, setFocusHops] = useState(1);
-  // v0.5.282 — Operator-reported: focusing a service used to
-  // expand BOTH callers and callees (bidirectional BFS), but for
-  // most workflows the question is "what does this service kick
-  // off / depend on, downstream". Default 'down' renders only the
-  // selected service + its callees + their dependencies. 'both'
-  // restores the old caller-and-callee fan for blame-style
-  // root-cause walks.
-  const [focusDir, setFocusDir] = useState<'down' | 'both'>('down');
   // Substring search across nodes in the current visible subgraph.
   // Doesn't filter the diagram — it highlights matches so the
   // operator can find a service inside a 100-node graph without
@@ -612,17 +612,15 @@ function OperationView({ params, setParams, range }: {
   const drawioHref = data && root
     ? api.topologyDrawIOURL({ root, depth, from: data.from, to: data.to }) : '';
 
-  // v0.5.285 — Operator-reported: depth>=3 graphs show op nodes
-  // colored by hashColor(parent service). Different colors are
-  // different downstream service flows, but the eye can't track
-  // a single colored chain through 50+ nodes. This `colorFilter`
-  // state holds an optionally-selected service name; chips
-  // below the controls let the operator pick one service color
-  // → only that service's nodes + the edges touching them stay
-  // fully opaque; everything else fades to 18%. Same dim level
-  // as the existing search-highlight in ServiceView so the two
-  // controls feel uniform.
-  const [colorFilter, setColorFilter] = useState<string | null>(null);
+  // v0.5.285 — service color filter; v0.5.288 — promoted to URL
+  // state (`color` param) so saved views remember "only foo-svc"
+  // and a shareable link lands on the same isolated flow.
+  const colorFilter = params.get('color') || null;
+  const setColorFilter = (v: string | null) => setParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('color', v); else p.delete('color');
+    return p;
+  }, { replace: true });
   const uniqueServices = useMemo(() => {
     if (!data) return [] as string[];
     const set = new Set<string>();

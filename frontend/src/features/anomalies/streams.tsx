@@ -284,14 +284,90 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
     }
   }, [highlight, items]);
 
+  // v0.5.279 — split active vs cleared. Operator-reported:
+  // "çok fazla anomali gözüküyor aktif/cleared birlikte" —
+  // the mixed list buried the firing rows under cleared
+  // history. Now active rows render in a dedicated section
+  // (always visible, loud red badges); cleared rows go into
+  // a collapsible "Cleared" group that defaults to collapsed
+  // when there are >10 of them.
+  const [showCleared, setShowCleared] = useState(false);
   if (items === undefined || items.length === 0) return null;
   const active  = items.filter(e => e.status === 'active');
   const cleared = items.filter(e => e.status === 'cleared');
+  // Default expanded when the cleared set is small enough to
+  // glance at; collapsed when it's noisy.
+  const defaultExpanded = cleared.length <= 10;
+  const expanded = showCleared || defaultExpanded;
   return (
     <AnomalyShell
       title="Anomaly history (last 24h)"
       hint={`${active.length} active · ${cleared.length} cleared`}
       count={items.length}>
+      {active.length > 0 && (
+        <AnomalyTable rows={active}
+          rowRefs={rowRefs} highlight={highlight}
+          title={`Active (${active.length})`} />
+      )}
+      {active.length === 0 && (
+        <div style={{
+          padding: '12px 14px', fontSize: 12, color: 'var(--text2)',
+          background: 'rgba(34,197,94,0.05)',
+          border: '1px solid rgba(34,197,94,0.20)',
+          borderRadius: 4, marginBottom: 12,
+        }}>
+          <span style={{ color: 'var(--ok, #22c55e)', marginRight: 6 }}>✓</span>
+          No active anomalies in the last 24h.
+          {cleared.length > 0 && ` ${cleared.length} cleared event${cleared.length === 1 ? '' : 's'} below.`}
+        </div>
+      )}
+      {cleared.length > 0 && (
+        <div style={{ marginTop: active.length > 0 ? 14 : 0 }}>
+          <button type="button"
+            onClick={() => setShowCleared(v => !v)}
+            style={{
+              all: 'unset', cursor: 'pointer',
+              fontSize: 12, fontWeight: 600, color: 'var(--text2)',
+              padding: '6px 0', display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>
+            <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+              {expanded ? '▼' : '▶'}
+            </span>
+            Cleared ({cleared.length})
+            <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 4 }}>
+              — resolved anomalies, kept for forensics
+            </span>
+          </button>
+          {expanded && (
+            <div style={{ marginTop: 6, opacity: 0.85 }}>
+              <AnomalyTable rows={cleared}
+                rowRefs={rowRefs} highlight={highlight} />
+            </div>
+          )}
+        </div>
+      )}
+    </AnomalyShell>
+  );
+}
+
+// AnomalyTable — extracted from HistorySection so the active +
+// cleared groups share one render path (v0.5.279). Same
+// columns / styling as before; only the title row above the
+// table is optional now.
+function AnomalyTable({ rows, rowRefs, highlight, title }: {
+  rows: AnomalyEvent[];
+  rowRefs: React.MutableRefObject<Record<string, HTMLTableRowElement | null>>;
+  highlight: string;
+  title?: string;
+}) {
+  return (
+    <div>
+      {title && (
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: 'var(--err)',
+          marginBottom: 6,
+        }}>{title}</div>
+      )}
       <div className="table-wrap">
         <table>
           <thead><tr>
@@ -305,7 +381,7 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
             <th style={{ width: 70 }}>AI</th>
           </tr></thead>
           <tbody>
-            {items.map(e => (
+            {rows.map(e => (
               <tr key={e.id}
                 ref={el => { rowRefs.current[e.id] = el; }}
                 style={highlight === e.id ? {
@@ -341,7 +417,7 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
           </tbody>
         </table>
       </div>
-    </AnomalyShell>
+    </div>
   );
 }
 

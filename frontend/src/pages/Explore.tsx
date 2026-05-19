@@ -139,12 +139,15 @@ const REPEAT_PRESETS: RepeatPreset[] = [
 // "split by service.name" with a fresh deploy. Default 10.
 const TOPN_OPTIONS = [5, 10, 20, 50];
 
+// v0.5.259 — sub-10s steps. See Metrics.tsx for the rationale.
 const STEP_OPTIONS = [
-  { v: 0,   label: 'Auto' },
-  { v: 10,  label: '10 s' },
-  { v: 30,  label: '30 s' },
-  { v: 60,  label: '1 min' },
-  { v: 300, label: '5 min' },
+  { v: 0,    label: 'Auto' },
+  { v: 1,    label: '1 s' },
+  { v: 5,    label: '5 s' },
+  { v: 10,   label: '10 s' },
+  { v: 30,   label: '30 s' },
+  { v: 60,   label: '1 min' },
+  { v: 300,  label: '5 min' },
   { v: 1800, label: '30 min' },
 ];
 

@@ -22,8 +22,14 @@ const AGG_OPTIONS = [
   { v: 'p99',  label: 'P99' },
 ];
 
+// v0.5.259 — sub-10s steps for short-window deep-dives. 1s + 5s
+// expose the OTel point-precision metrics actually carry — at
+// ingest rate ~10/sec per metric we were artificially folding
+// 10 samples into one bucket on a 10min view.
 const STEP_OPTIONS = [
   { v: 0,    label: 'Auto' },
+  { v: 1,    label: '1 s' },
+  { v: 5,    label: '5 s' },
   { v: 10,   label: '10 s' },
   { v: 30,   label: '30 s' },
   { v: 60,   label: '1 min' },

@@ -46,12 +46,15 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 	// ── Bucket size ───────────────────────────────────────────────────────────
 	step := f.StepSeconds
 	if step <= 0 {
+		// v0.5.259 — same sub-10s ramp as metricquery.go.
 		span := f.To.Sub(f.From).Seconds()
 		switch {
-		case span <= 600:        step = 10  // ≤10m → 10s
-		case span <= 3600:       step = 30  // ≤1h  → 30s
-		case span <= 6*3600:     step = 60  // ≤6h  → 1m
-		case span <= 24*3600:    step = 300 // ≤1d  → 5m
+		case span <= 120:        step = 1   // ≤2m   → 1s
+		case span <= 600:        step = 5   // ≤10m  → 5s
+		case span <= 1800:       step = 10  // ≤30m  → 10s
+		case span <= 3600:       step = 30  // ≤1h   → 30s
+		case span <= 6*3600:     step = 60  // ≤6h   → 1m
+		case span <= 24*3600:    step = 300 // ≤1d   → 5m
 		case span <= 7*24*3600:  step = 1800
 		default:                 step = 3600
 		}

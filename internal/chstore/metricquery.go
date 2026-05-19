@@ -41,12 +41,20 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 
 	step := f.StepSeconds
 	if step <= 0 {
+		// v0.5.259 — sub-10s auto-steps for short windows. ≤2min
+		// now picks 1s (120 buckets), ≤10min picks 5s (120
+		// buckets) — exposing the point-precision OTel metrics
+		// actually carry instead of folding them into 10s
+		// smears. Existing wider-window rungs unchanged so
+		// 24h/7d/30d performance budgets stay intact.
 		span := f.To.Sub(f.From).Seconds()
 		switch {
-		case span <= 600:        step = 10
-		case span <= 3600:       step = 30
-		case span <= 6*3600:     step = 60
-		case span <= 24*3600:    step = 300
+		case span <= 120:        step = 1   // ≤2m   → 1s  (120 buckets)
+		case span <= 600:        step = 5   // ≤10m  → 5s  (120 buckets)
+		case span <= 1800:       step = 10  // ≤30m  → 10s (180 buckets)
+		case span <= 3600:       step = 30  // ≤1h   → 30s
+		case span <= 6*3600:     step = 60  // ≤6h   → 1m
+		case span <= 24*3600:    step = 300 // ≤1d   → 5m
 		case span <= 7*24*3600:  step = 1800
 		default:                 step = 3600
 		}

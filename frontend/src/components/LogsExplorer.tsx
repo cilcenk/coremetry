@@ -39,7 +39,12 @@ export function LogsExplorer({ range, viz, compare }: {
     setSeries(undefined);
     const { from, to } = timeRangeToNs(range);
     const windowMs = (to - from) / 1e6;
-    const auto = Math.max(15, Math.round(windowMs / 1000 / 60)); // ~60 buckets
+    // v0.5.259 — sub-15s auto-bucket on short windows so a
+    // 1-minute view doesn't smear into 15s slabs. Target ~60
+    // buckets; floor at 1s so per-second log spikes still
+    // surface. Capped at 1800 for very wide windows.
+    const windowSec = windowMs / 1000;
+    const auto = Math.max(1, Math.min(1800, Math.round(windowSec / 60)));
     const bs = bucketSec > 0 ? bucketSec : auto;
 
     const fetchOne = (fromNs: number, toNs: number) => api.logsTimeseries({
@@ -95,6 +100,10 @@ export function LogsExplorer({ range, viz, compare }: {
         </span>
         <select value={bucketSec} onChange={e => setBucketSec(Number(e.target.value))}>
           <option value={0}>auto</option>
+          {/* v0.5.259 — sub-15s buckets for short-window log
+              traffic deep-dives (per-second spike vs. 1m smear). */}
+          <option value={1}>1s</option>
+          <option value={5}>5s</option>
           <option value={15}>15s</option>
           <option value={60}>1m</option>
           <option value={300}>5m</option>

@@ -2599,8 +2599,13 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 		TraceID:     q.Get("traceId"),
 	}
 	bucketSec := parseInt(q.Get("bucketSec"), 30)
-	if bucketSec < 5 {
-		bucketSec = 5
+	// v0.5.259 — was: floor 5s. Lowered to 1s so the operator can
+	// see per-second log surges on a short window. ES + CH both
+	// handle 1s date_histogram fine; the cost is bucket count
+	// (max 86400 if operator picks 1s on a 24h window — uncached
+	// but bounded).
+	if bucketSec < 1 {
+		bucketSec = 1
 	}
 	if bucketSec > 86400 {
 		bucketSec = 86400

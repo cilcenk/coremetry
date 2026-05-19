@@ -110,6 +110,16 @@ type ServiceSummary struct {
 	//   apdex = (satisfied + tolerating/2) / total
 	Apdex            float64 `json:"apdex"`
 	ApdexThresholdMs float64 `json:"apdexThresholdMs"`
+	// Health (v0.5.274) — auto-scored red/yellow/green badge.
+	// Computed at READ time in the api layer from errorRate +
+	// open problem counts. NOT stored in the MV; recomputed on
+	// every /api/services response so a freshly-opened
+	// critical flips the badge immediately. The HealthReason
+	// string explains the rule that fired so the operator
+	// can argue with the verdict.
+	Health         string `json:"health,omitempty"`         // "" | "green" | "yellow" | "red"
+	HealthReason   string `json:"healthReason,omitempty"`   // short string e.g. "1 open critical"
+	OpenProblems   int    `json:"openProblems,omitempty"`   // count of all open problems on this service
 }
 
 // ── Exception aggregate (Errors page) ────────────────────────────────────────

@@ -485,6 +485,14 @@ export default function ServicesPage() {
                           {...rowClickHandlers(`/service?name=${encodeURIComponent(s.name)}`,
                                                () => goToService(s.name))}>
                         <td>
+                          {/* v0.5.274 — auto-scored health dot.
+                              Red/yellow/green from errorRate +
+                              open problem counts (computed
+                              server-side at read time). Title
+                              surfaces the firing rule so the
+                              badge is auditable. */}
+                          <HealthDot health={s.health} reason={s.healthReason}
+                            openProblems={s.openProblems} />
                           <span style={{ fontWeight: 600 }}>{s.name}</span>
                           {/* Runtime fingerprint pill — pulled from
                               the per-list batch fetch (one query
@@ -604,5 +612,37 @@ function SortTh({ col, label, sort, dir, onSort, align }: {
       {label}
       <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
     </th>
+  );
+}
+
+// HealthDot — v0.5.274 Datadog-Watchdog-style service health
+// pill. 8×8 dot colored by the server-computed health verdict;
+// tooltip surfaces the firing rule so the operator can argue
+// with the badge. Missing health (older row / problem-count
+// lookup failed) renders nothing — fail-soft.
+function HealthDot({ health, reason, openProblems }: {
+  health?: 'green' | 'yellow' | 'red';
+  reason?: string;
+  openProblems?: number;
+}) {
+  if (!health) return null;
+  const color = health === 'red' ? 'var(--err)'
+              : health === 'yellow' ? 'var(--warn, #facc15)'
+              : 'var(--ok, #22c55e)';
+  const title = reason
+    ? `${health.toUpperCase()} · ${reason}${openProblems ? ` · ${openProblems} open problem${openProblems === 1 ? '' : 's'}` : ''}`
+    : `${health.toUpperCase()} · healthy${openProblems ? ` · ${openProblems} open` : ''}`;
+  return (
+    <span title={title}
+      style={{
+        display: 'inline-block', width: 8, height: 8,
+        borderRadius: '50%', background: color,
+        marginRight: 8, verticalAlign: 'middle',
+        boxShadow: health === 'red'
+          ? '0 0 0 2px rgba(220,38,38,0.20)'
+          : health === 'yellow'
+          ? '0 0 0 2px rgba(250,204,21,0.18)'
+          : 'none',
+      }} />
   );
 }

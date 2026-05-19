@@ -409,6 +409,125 @@ func (s *Store) EnrichProblemsWithDeploys(ctx context.Context, problems []Proble
 	return problems
 }
 
+// EnrichAnomaliesWithDeploys is the AnomalyEvent twin of
+// EnrichProblemsWithDeploys. v0.5.286 — same one-shot
+// bulk-query pattern (one round-trip regardless of how many
+// services / events are in the slice). Each event's
+// RecentDeploy points at the most recent deploy of that
+// service whose first_seen falls in
+// [event.startedAt-lookback, event.startedAt]. Uses the
+// effectiveVersionExpr chain (v0.5.283) so Helm-only
+// installs (app.kubernetes.io/version label) and image-tag
+// fallbacks correlate too, not just bare service.version.
+func (s *Store) EnrichAnomaliesWithDeploys(ctx context.Context, events []AnomalyEvent, lookback time.Duration) []AnomalyEvent {
+	if len(events) == 0 {
+		return events
+	}
+	services := map[string]struct{}{}
+	var minStarted, maxStarted int64
+	for i, e := range events {
+		if e.Service == "" {
+			continue
+		}
+		services[e.Service] = struct{}{}
+		if i == 0 || e.StartedAt < minStarted {
+			minStarted = e.StartedAt
+		}
+		if e.StartedAt > maxStarted {
+			maxStarted = e.StartedAt
+		}
+	}
+	if len(services) == 0 {
+		return events
+	}
+	svcList := make([]any, 0, len(services))
+	for s := range services {
+		svcList = append(svcList, s)
+	}
+	from := time.Unix(0, minStarted).Add(-lookback)
+	to := time.Unix(0, maxStarted)
+
+	holders := ""
+	for i := range svcList {
+		if i > 0 {
+			holders += ","
+		}
+		holders += "?"
+	}
+	// v0.5.286 — uses effectiveVersionExpr (the same Helm /
+	// image-tag / placeholder-filtered chain GetRecentDeploys
+	// uses) so the correlation finds deploys even when
+	// service.version stays at "0.0.1-SNAPSHOT" or the
+	// pipeline only ships labels via Helm.
+	sql := `
+		SELECT service_name,
+		       ` + effectiveVersionExpr + ` AS version,
+		       toUnixTimestamp64Nano(min(time))                 AS first_seen_ns
+		FROM spans
+		WHERE service_name IN (` + holders + `)
+		  AND time >= ? AND time <= ?
+		  AND (has(res_keys, 'service.version')
+		    OR has(res_keys, 'container.image.tag')
+		    OR has(res_keys, 'k8s.container.image.tag')
+		    OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.deployment.labels.version')
+		    OR has(res_keys, 'helm.chart.version'))
+		GROUP BY service_name, version
+		HAVING version != ''
+		ORDER BY service_name, first_seen_ns ASC
+		SETTINGS max_execution_time = 10`
+	args := append([]any{}, svcList...)
+	args = append(args, from, to)
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return events
+	}
+	defer rows.Close()
+	type d struct {
+		version string
+		ns      int64
+	}
+	byService := map[string][]d{}
+	for rows.Next() {
+		var svc, ver string
+		var ns int64
+		if err := rows.Scan(&svc, &ver, &ns); err != nil {
+			return events
+		}
+		byService[svc] = append(byService[svc], d{ver, ns})
+	}
+	if err := rows.Err(); err != nil {
+		return events
+	}
+	lookbackNs := int64(lookback)
+	for i := range events {
+		list := byService[events[i].Service]
+		if len(list) == 0 {
+			continue
+		}
+		var pick *d
+		for j := len(list) - 1; j >= 0; j-- {
+			if list[j].ns > events[i].StartedAt {
+				continue
+			}
+			if list[j].ns < events[i].StartedAt-lookbackNs {
+				break
+			}
+			pick = &list[j]
+			break
+		}
+		if pick != nil {
+			events[i].RecentDeploy = &RecentDeploy{
+				Version:    pick.version,
+				TimeUnixNs: pick.ns,
+				AgeSeconds: (events[i].StartedAt - pick.ns) / 1e9,
+			}
+		}
+	}
+	return events
+}
+
 // EnrichProblemsWithRunbooks resolves each problem's
 // RunbookURL from (a) the alert rule that fired or (b) the
 // service catalog metadata as a fallback. Two single-shot

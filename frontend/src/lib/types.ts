@@ -1407,6 +1407,18 @@ export interface AnomalyEvent {
   // k8s/openshift clusters where the anomaly's service was
   // active around the detection — read-time enriched.
   clusters?: string[];
+  // v0.5.286 — most recent deploy of this service observed
+  // in the 30 min preceding startedAt, or absent. Read-time
+  // enriched from the v0.5.283 effective-version chain
+  // (service.version → image.tag → Helm labels). The page
+  // renders a "deployed v1.2.3 · 4m before" chip so the
+  // operator can answer "is this a deploy-induced regression?"
+  // without leaving /anomalies.
+  recentDeploy?: {
+    version: string;
+    timeUnixNs: number;
+    ageSeconds: number;
+  };
 }
 
 // Per-operation error anomaly — a (service, operation) tuple

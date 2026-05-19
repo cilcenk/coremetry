@@ -91,9 +91,14 @@ function computeHeatmapStats(data: Heatmap): HeatmapStats {
   return { mean, stddev, outliers };
 }
 
-export function LatencyHeatmap({ data, height = 220 }: {
+export function LatencyHeatmap({ data, height = 220, onCellClick }: {
   data: Heatmap;
   height?: number;
+  // v0.5.260 — operator-clickable cells for trace exemplars.
+  // Caller receives the cell's (timeNs, lowDurMs, highDurMs)
+  // and can fetch matching traces. Honeycomb's classic
+  // "click the slow band, see what trace ran there" workflow.
+  onCellClick?: (cell: { timeNs: number; lowDurMs: number; highDurMs: number; count: number }) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -256,6 +261,41 @@ export function LatencyHeatmap({ data, height = 220 }: {
     });
   };
 
+  // Click → trace-exemplar drill-down (v0.5.260). Same cell math
+  // as the hover handler. Bounds the time window to a half-bucket
+  // either side of the cell's centre time, and the latency band
+  // to (prev_bin, this_bin] so the caller can filter spans
+  // precisely to the slice the operator clicked.
+  const onClickCell = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!onCellClick) return;
+    const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+    const w = rect.width;
+    const cols = data.times.length;
+    const rows = data.durationBins.length;
+    const padL = 56, padB = 22, padT = 4, padR = 4;
+    const plotW = Math.max(1, w - padL - padR);
+    const plotH = Math.max(1, height - padT - padB);
+    const cellW = plotW / cols;
+    const cellH = plotH / rows;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if (x < padL || y < padT || y > height - padB) return;
+    const col = Math.floor((x - padL) / cellW);
+    const rowFromTop = Math.floor((y - padT) / cellH);
+    const row = (rows - 1) - rowFromTop;
+    if (col < 0 || col >= cols || row < 0 || row >= rows) return;
+    const c = data.counts[col]?.[row] ?? 0;
+    if (c === 0) return; // empty cell — nothing to drill into
+    const highDurMs = data.durationBins[row];
+    const lowDurMs = row > 0 ? data.durationBins[row - 1] : 0;
+    onCellClick({
+      timeNs: data.times[col],
+      lowDurMs,
+      highDurMs,
+      count: c,
+    });
+  };
+
   // Sampling indicator (v0.5.238) — when the backend ran a
   // hash-sample to keep wide windows under the execution cap,
   // surface a small tag so the operator knows the cell counts
@@ -281,8 +321,9 @@ export function LatencyHeatmap({ data, height = 220 }: {
         </div>
       )}
       <canvas ref={canvasRef}
-              style={{ display: 'block', cursor: 'crosshair' }}
-              onMouseMove={onMouseMove} />
+              style={{ display: 'block', cursor: onCellClick ? 'pointer' : 'crosshair' }}
+              onMouseMove={onMouseMove}
+              onClick={onClickCell} />
       {hover && (
         <div style={{
           position: 'absolute', pointerEvents: 'none',

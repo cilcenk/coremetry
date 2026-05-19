@@ -250,13 +250,16 @@ export function ServiceCharts({ service, range, onZoom }: {
           service={service}
           deploys={deploysQ.data ?? []} />
       </div>
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 10,
-      }}>
+      {/* v0.5.260 — switched 3-column grid → vertical stack.
+          Uptrace / Datadog put RED triples vertically so the
+          operator reads the same x-axis across all three at a
+          glance instead of traversing horizontally. Each chart
+          gets the full row width, more y-axis room, and the
+          synced cursor (syncKey) reads top-to-bottom naturally. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <ChartCard title="RPS by operation">
           <MultiLineChart series={rpsSeries ?? []} unit="rps"
-                          height={140}
+                          height={180}
                           deploys={deployMarkers}
                           syncKey={syncKey}
                           compareSeries={rpsPrev ?? undefined}
@@ -266,7 +269,7 @@ export function ServiceCharts({ service, range, onZoom }: {
         </ChartCard>
         <ChartCard title="Error rate by operation">
           <MultiLineChart series={errSeries ?? []} unit="%"
-                          height={140}
+                          height={180}
                           deploys={deployMarkers}
                           thresholds={errorThresholds}
                           syncKey={syncKey}
@@ -277,7 +280,7 @@ export function ServiceCharts({ service, range, onZoom }: {
         </ChartCard>
         <ChartCard title="P99 latency by operation">
           <MultiLineChart series={p99Series ?? []} unit="ms"
-                          height={140}
+                          height={180}
                           deploys={deployMarkers}
                           thresholds={latencyThresholds}
                           syncKey={syncKey}

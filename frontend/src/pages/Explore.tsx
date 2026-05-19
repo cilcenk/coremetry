@@ -7,6 +7,7 @@ import { Combobox } from '@/components/Combobox';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { RedPanel } from '@/components/RedPanel';
+import { HeatmapCellExemplars, type HeatmapCellRef } from '@/components/HeatmapCellExemplars';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { BubbleUpPanel } from '@/components/BubbleUpPanel';
 import { FacetsPanel } from '@/components/FacetsPanel';
@@ -94,6 +95,13 @@ const METRIC_PRESETS: MetricPreset[] = [
   { key: 'avglat',  label: 'Avg latency',      hint: 'Mean duration — best for noisy quantile sets',     agg: 'avg',        field: 'duration_ms', viz: 'line', groupBy: ['service.name'] },
   { key: 'count',   label: 'Span count',       hint: 'Raw count per bucket, no normalisation',           agg: 'count',      field: 'duration_ms', viz: 'bar' },
   { key: 'heatmap', label: 'Latency heatmap',  hint: 'Honeycomb-style 2D density (time × log-duration)', agg: 'count',      field: 'duration_ms', viz: 'heatmap' },
+  // v0.5.260 — Uptrace-style "group by operation signature".
+  // Splits by (service.name, name) together so every distinct
+  // service+operation pair gets its own line. Pairs with the
+  // RED viz so the operator sees rate / errors / p99 broken
+  // down per operation in one click — Uptrace's `group by
+  // _group_id` killer view, native to Coremetry.
+  { key: 'red-op',  label: 'RED by operation', hint: 'Rate + errors + p99 stacked, broken down by (service, operation)', agg: 'rate', field: 'duration_ms', viz: 'red',  groupBy: ['service.name', 'name'] },
 ];
 
 // REPEAT_PRESETS — one-click pick of (groupBy, minRepeats) that
@@ -199,6 +207,10 @@ function ExploreInner() {
   // apples (last 1h vs the 1h before). Empty = no compare.
   const [compareSeries, setCompareSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [heatmap, setHeatmap] = useState<Heatmap | null | undefined>(undefined);
+  // v0.5.260 — Heatmap cell-click drill: opens HeatmapCellExemplars
+  // modal showing the trace cohort that produced the clicked
+  // (time bucket × latency band).
+  const [cellExemplar, setCellExemplar] = useState<HeatmapCellRef | null>(null);
   // BubbleUp panel — operator-driven attribute investigation.
   // The most-recently-added filter chip becomes the
   // "selection" predicate; everything before it is the
@@ -1006,7 +1018,13 @@ name ~ checkout`}
                   {' '}{heatmap.durationBins.length} log-scale latency bins
                   · peak cell {heatmap.maxCount.toLocaleString()} spans
                 </div>
-                <LatencyHeatmap data={heatmap} />
+                <LatencyHeatmap data={heatmap}
+                  onCellClick={(cell) => setCellExemplar({
+                    timeNs: cell.timeNs,
+                    lowDurMs: cell.lowDurMs,
+                    highDurMs: cell.highDurMs,
+                    count: cell.count,
+                  })} />
               </div>
             )}
           </>
@@ -1366,6 +1384,28 @@ name ~ checkout`}
           </>
         )}
         </>)}
+
+        {/* v0.5.260 — Heatmap cell-click exemplars modal. Renders
+            globally at the end of the page so its z-index sits
+            on top of every other surface; closes via Esc,
+            backdrop click, or "Open trace" navigation. */}
+        {cellExemplar && (() => {
+          // Bucket width — estimate from the rendered heatmap's
+          // time array (one bucket = times[1] - times[0]); fall
+          // back to a 60s default if we somehow don't have two
+          // buckets.
+          const bucketWidthNs = (heatmap && heatmap.times.length >= 2)
+            ? heatmap.times[1] - heatmap.times[0]
+            : 60 * 1e9;
+          return (
+            <HeatmapCellExemplars
+              cell={cellExemplar}
+              bucketWidthNs={bucketWidthNs}
+              filters={mode === 'builder' ? filters : []}
+              dsl={mode === 'advanced' && dsl.trim() ? dsl : undefined}
+              onClose={() => setCellExemplar(null)} />
+          );
+        })()}
       </div>
     </>
   );

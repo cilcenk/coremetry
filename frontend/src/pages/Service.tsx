@@ -457,20 +457,16 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   const [sortBy, setSortBy] = useState<OpSortKey>('impact');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  // Drill-down to Explore with both service.name + name pre-filtered.
-  // Same pattern as the services-page sparkline click-throughs so the
-  // user lands in a familiar view.
-  const opHref = (op: string) => {
-    const q = buildQuery([
-      ['range', encodeRange(range)],
-      ['filters', encodeFilters([
-        { k: 'service.name', op: '=', v: [service] },
-        { k: 'name',         op: '=', v: [op] },
-      ])],
-      ['result', 'traces'],
-    ]);
-    return `/explore?${q}`;
-  };
+  // v0.5.313 — Operator-reported: drill-down used to land on
+  // /traces (familiar view with the trace list + aggregate
+  // tabs). Recent refactor pushed it to /explore which the
+  // operator finds less direct. Reverted to /traces with the
+  // service pre-selected and the operation name as the search
+  // term. /traces' free-text search matches span name out of
+  // the box, so an operation like "POST /payment" lands on
+  // exactly the traces that touched it.
+  const opHref = (op: string) =>
+    `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}`;
 
   const sorted = useMemo(() => {
     const cmp = (a: OperationSummary, b: OperationSummary): number => {

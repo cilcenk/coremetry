@@ -994,13 +994,20 @@ export const api = {
   // recent problems, operations table). Server fans out to
   // CH in parallel goroutines; cached 15s. Replaces the
   // legacy three-call Promise.all on Service.tsx mount.
-  serviceBundle: (svc: string, r: RangeParams) =>
-    get<{
+  // v0.5.300 — `refresh: true` appends `?refresh=1`, which the
+  // server's serveCached middleware honors as "skip cache, force
+  // recompute". Used as a one-shot rescue when the page detects
+  // an empty operations array on a service that clearly has
+  // traffic — see Service.tsx auto-refresh path.
+  serviceBundle: (svc: string, r: RangeParams, opts: { refresh?: boolean } = {}) => {
+    const params = opts.refresh ? { ...r, refresh: 1 } : r;
+    return get<{
       service:    Service | null;
       problems:   import('./types').Problem[] | null;
       operations: OperationSummary[] | null;
       deploys:    import('./types').Deploy[] | null;
-    }>(`/api/services/${encodeURIComponent(svc)}/bundle?${qs(r)}`),
+    }>(`/api/services/${encodeURIComponent(svc)}/bundle?${qs(params)}`);
+  },
   serviceCallers: (svc: string, since: string) =>
     get<ServiceEdgeStats[] | null>(`/api/services/${encodeURIComponent(svc)}/callers?since=${since}`),
   serviceCallees: (svc: string, since: string) =>

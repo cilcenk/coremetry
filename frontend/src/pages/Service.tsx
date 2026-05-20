@@ -81,22 +81,47 @@ function ServiceDetailInner() {
     // resolves instantly (cache HIT) instead of firing its
     // own /api/services/.../deploys round trip below the
     // fold. Same window the bundle is for.
+    let cancelled = false;
+    const applyBundle = (b: Awaited<ReturnType<typeof api.serviceBundle>>) => {
+      if (cancelled) return;
+      setInfo(b?.service ?? null);
+      setProblems(b?.problems ?? []);
+      setOperations(b?.operations ?? []);
+      if (b?.deploys) {
+        queryClient.setQueryData(
+          keys.deploys.forService(svc, r.from ?? 0, r.to ?? 0),
+          b.deploys,
+        );
+      }
+    };
     api.serviceBundle(svc, r)
-      .then(b => {
-        setInfo(b?.service ?? null);
-        setProblems(b?.problems ?? []);
-        setOperations(b?.operations ?? []);
-        if (b?.deploys) {
-          queryClient.setQueryData(
-            keys.deploys.forService(svc, r.from ?? 0, r.to ?? 0),
-            b.deploys,
-          );
+      .then(async (b) => {
+        applyBundle(b);
+        // v0.5.300 — Operator-reported: at scale (test env) the
+        // bundle occasionally returned operations=[] even when
+        // the service summary itself shows spans > 0. Backend
+        // now has an MV→raw-spans fallback (chstore repo), but
+        // a stale Redis cache from BEFORE the backend fix might
+        // still serve the empty array. Once. Auto-refresh
+        // (?refresh=1 bypasses the cache + recomputes) when we
+        // detect that signature: service has traffic AND
+        // operations came up empty AND the bundle wasn't already
+        // forced. Cached afterward so this is a one-shot rescue.
+        if (!cancelled
+            && b
+            && b.service && b.service.spanCount > 0
+            && (!b.operations || b.operations.length === 0)) {
+          const refreshed = await api.serviceBundle(svc, r, { refresh: true })
+            .catch(() => null);
+          if (refreshed) applyBundle(refreshed);
         }
       })
       .catch(() => {
+        if (cancelled) return;
         setInfo(null); setProblems([]); setOperations([]);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [svc, range, queryClient]);
 
   if (!svc) {

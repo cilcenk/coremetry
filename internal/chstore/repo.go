@@ -575,21 +575,33 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	}
 
 	// Read path: MV when the window is at least one full bucket
-	// (5 min) wide AND ends more than ~30s in the past (so the
-	// AggregatingMergeTree has had a chance to flush). Otherwise
-	// fall back to raw spans — which is fine because a <5min
-	// window is small enough that the raw scan is cheap anyway.
-	// MV path is 100-1000× faster on the typical "/services/foo
-	// operations over 1h" cold load.
+	// (5 min) wide. v0.5.300 — Operator-reported (test env):
+	// MV returning 0 rows for services that DO have traffic.
+	// At scale this can happen for several real reasons: MV
+	// sync delay on fresh OTLP batches, AggregatingMergeTree
+	// parts not yet merged, sharded CH `optimize_skip_unused_shards`
+	// pruning the wrong shard, clock skew between Coremetry pod
+	// and CH cluster. Instead of trusting the empty result, fall
+	// through to the raw-spans path (bounded by max_execution_time
+	// + LIMIT below) which sees the freshly-inserted rows
+	// directly. The cache TTL on the calling endpoint then
+	// stores the rescued result so the same operator click
+	// within 60s hits Redis. Logged so the operator can see
+	// which path is serving each request.
 	useMV := winEnd.Sub(winStart) >= 5*time.Minute
 	if useMV {
 		out, err := s.queryOperationsFromMV(ctx, service, winStart, winEnd)
-		if err == nil {
+		if err != nil {
+			log.Printf("[ops] service=%s MV path errored: %v — falling through to raw spans",
+				service, err)
+		} else if len(out) > 0 {
+			log.Printf("[ops] service=%s MV path served %d operations (window=%s)",
+				service, len(out), winEnd.Sub(winStart))
 			return out, nil
+		} else {
+			log.Printf("[ops] service=%s MV path empty (window=%s) — falling through to raw spans (likely MV sync delay / shard prune / clock skew)",
+				service, winEnd.Sub(winStart))
 		}
-		// Don't fail the page if the MV is broken (post-upgrade,
-		// missing migration, etc.). Log and fall through to the
-		// raw-spans path so the operator still gets a result.
 	}
 
 	var wc whereClause
@@ -613,7 +625,9 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		FROM spans `+wc.sql()+`
 		GROUP BY name
 		ORDER BY span_count DESC
-		LIMIT 500`,
+		LIMIT 500
+		SETTINGS max_execution_time = 20,
+		         optimize_skip_unused_shards = 0`,
 		append([]any{apdexT, apdexT, apdexT * 4}, wc.args...)...)
 	if err != nil {
 		return nil, err

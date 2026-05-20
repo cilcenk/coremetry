@@ -370,10 +370,17 @@ function ServiceView({ range }: { range: TimeRange }) {
       .then(m => setMetaByService(m ?? {}))
       .catch(() => setMetaByService({}));
   }, []);
+  // v0.5.310 — noise toggle. Default = noise hidden (clean
+  // OTel-native business-flow view; backend drops self-edges,
+  // /health|/metrics infra ops, sub-0.5% volume long tail).
+  // Operators chasing odd patterns can flip to 'show' to get
+  // the legacy unfiltered topology.
+  const noiseShow = params.get('noise') === 'show';
+  const setNoiseShow = (v: boolean) => setURLParam('noise', v ? 'show' : null);
   useEffect(() => {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
-    api.serviceTopology({ from, to })
+    api.serviceTopology({ from, to, noise: noiseShow ? 'show' : undefined })
       // Normalise: nil slices from older backend / empty windows
       // marshal as JSON null, which crashes data.edges.forEach.
       // Belt-and-braces with the server-side fix.
@@ -383,7 +390,7 @@ function ServiceView({ range }: { range: TimeRange }) {
         edges: d?.edges ?? [],
       }))
       .catch(() => setData(null));
-  }, [range]);
+  }, [range, noiseShow]);
 
   // Compute the visible subgraph from the raw response based on
   // the two controls. All filtering is client-side because the
@@ -511,6 +518,18 @@ function ServiceView({ range }: { range: TimeRange }) {
           onChange={e => setSearch(e.target.value)}
           style={{ fontSize: 12, padding: '3px 8px', width: 140 }}
           title="Highlight nodes matching this text" />
+        {/* v0.5.310 — noise toggle. OFF (default) = OTel-native
+            business-flow view: backend drops self-loops, infra
+            ops (/health, /metrics, /-/, ping), and sub-0.5%
+            volume long-tail edges. ON = legacy unfiltered. */}
+        <label style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          fontSize: 12, color: 'var(--text2)',
+        }} title="Show self-edges, /health probes, /metrics scrapes, and sub-0.5%-volume long-tail edges. OFF by default for a clean business-flow view.">
+          <input type="checkbox" checked={noiseShow}
+            onChange={e => setNoiseShow(e.target.checked)} />
+          Show noise
+        </label>
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
           {focus
             ? `Focused on ${focus}: ${showingNodes} nodes / ${showingEdges} edges`

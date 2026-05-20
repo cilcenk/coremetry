@@ -9,6 +9,7 @@ import (
 	"html"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -293,18 +294,85 @@ func (s *Server) putTopologyExclude(w http.ResponseWriter, r *http.Request) {
 // render in one view; the SVG layout below handles overflow via
 // scrolling. The depth-bounded op-level view at /api/topology
 // remains in place for "what does service X talk to" deep dives.
+// looksLikeInfraEdge — v0.5.310. Returns true when an edge's
+// top operation labels match the canonical "platform plumbing"
+// patterns: /health probes, /metrics scrapes, keepalive pings,
+// service-mesh sidecar paths. These contribute noise to the
+// business-flow topology view; operators triage from RED
+// charts + the inbox, not from a health-probe edge.
+//
+// Heuristic over labels (not regex) keeps it cheap — runs per
+// edge, no compilation. Case-insensitive substring match. False
+// negatives are fine (real edge survives); false positives are
+// the risk — kept the pattern list tight so a legitimate edge
+// like /api/v1/users/{id}/healthcheck-status is unlikely to
+// match.
+var infraOpFragments = []string{
+	"/health", "/healthz", "/healthcheck", "/livez", "/readyz",
+	"/metrics", "/-/metrics", "/prometheus", "/actuator/prometheus",
+	"/actuator/health", "/actuator/info",
+	"/ping", "/heartbeat", "/keepalive",
+	"/.well-known/", "/-/ready", "/-/healthy",
+}
+
+func looksLikeInfraEdge(topLabels []string) bool {
+	if len(topLabels) == 0 {
+		return false
+	}
+	// Edge is infra-only if EVERY one of its top labels is infra.
+	// (top_labels is up to 5 most-frequent ops; one health probe
+	// among 4 real endpoints still surfaces.)
+	for _, l := range topLabels {
+		lower := strings.ToLower(l)
+		matched := false
+		for _, frag := range infraOpFragments {
+			if strings.Contains(lower, frag) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	const edgeCap = 5000
 	from, to := parseFromTo(r, 1*time.Hour)
 	exclude := s.loadTopologyExclude(r.Context())
+	// v0.5.310 — Service Topology Redux. Operator-reported the
+	// previous view was "karman çorman" (messy) at scale — kafka
+	// self-loops from cache-refresh ate the canvas; tiny edges
+	// from healthchecks / metrics scraping cluttered the diagram.
+	// New noise filter is ON by default; operator can flip
+	// ?noise=show to get the legacy unfiltered view.
+	//   • hide_self  — drop edges where parent == child (typical
+	//                  cache refresh / pub-sub fanout to self)
+	//   • min_call_pct — drop edges contributing <X% of total
+	//                    window call volume (default 0.5%)
+	//   • hide_infra — drop edges whose top_labels match an
+	//                  infra pattern (/health, /ping, /metrics,
+	//                  /-/, cache.refresh, .keep-alive)
+	noiseShow := r.URL.Query().Get("noise") == "show"
+	minCallPct := 0.5
+	if v := r.URL.Query().Get("min_call_pct"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			minCallPct = f
+		}
+	}
+	if noiseShow {
+		minCallPct = 0
+	}
 	// Cache key includes the rounded window so concurrent requests
 	// over the same minute share one CH round-trip. Exclude list
 	// folded in via FNV digest (v0.5.187) — previously we used
 	// just the length which caused cross-set cache poisoning when
 	// two different 1-element sets collided.
-	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s",
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s:noise=%v:mp=%.2f",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
-		excludeKeyDigest(exclude))
+		excludeKeyDigest(exclude), noiseShow, minCallPct)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
@@ -329,6 +397,18 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 				knownServices[e.ChildNode] = true
 			}
 		}
+		// v0.5.310 — total call volume across the window, used
+		// for the minCallPct threshold below. Computed BEFORE
+		// any filtering so a healthy noise edge doesn't shift
+		// the cutoff relative to actual fleet activity.
+		var totalCalls uint64
+		for _, e := range edges {
+			totalCalls += e.Calls
+		}
+		minCalls := uint64(0)
+		if minCallPct > 0 && totalCalls > 0 {
+			minCalls = uint64(float64(totalCalls) * minCallPct / 100)
+		}
 		filtered := edges[:0]
 		for _, e := range edges {
 			if e.NodeKind == "external" {
@@ -345,6 +425,30 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			// shouldn't appear as caller OR callee.
 			if exclude[e.ParentService] || exclude[e.ChildNode] {
 				continue
+			}
+			// v0.5.310 — noise filters (default ON, ?noise=show
+			// disables). Each filter is independent so future
+			// per-axis toggles cost nothing.
+			if !noiseShow {
+				// Self-loop: kafka pub-sub fanout to self, cache
+				// refresh, "talk to your own ingress" — almost
+				// always noise rather than topology signal.
+				if e.ParentService == e.ChildNode {
+					continue
+				}
+				// Infrastructure-only top labels — /health
+				// probes, /metrics scrapes, keepalive pings.
+				// Operator looking at topology cares about
+				// business flow, not infra plumbing.
+				if looksLikeInfraEdge(e.TopLabels) {
+					continue
+				}
+				// Long-tail edges below the operator-configurable
+				// percent floor. 0.5% default — at 1M calls/h
+				// window that drops anything under 5k calls.
+				if minCalls > 0 && e.Calls < minCalls {
+					continue
+				}
 			}
 			filtered = append(filtered, e)
 		}

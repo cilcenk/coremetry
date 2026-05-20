@@ -215,7 +215,10 @@ export const api = {
   // Service-level topology (v0.5.102) — full backend graph with
   // protocol/method labels + infra nodes. No depth bound; the
   // service fabric is generally small enough to draw whole.
-  serviceTopology: (params: { from?: number; to?: number }) =>
+  // v0.5.310 — `noise` param: 'show' disables the backend noise
+  // filter (self-edges, infra ops, sub-0.5% volume) and returns
+  // the legacy full graph. Default = filtered.
+  serviceTopology: (params: { from?: number; to?: number; noise?: 'show' }) =>
     get<import('./types').ServiceTopologyResponse>(`/api/topology/service?${qs(params)}`),
   serviceTopologyDrawIOURL: (params: { from?: number; to?: number }) =>
     `/api/topology/service/drawio?${qs(params)}`,

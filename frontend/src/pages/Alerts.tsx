@@ -249,7 +249,19 @@ export default function AlertsPage() {
   // Rules query + 4 mutations. Each mutation auto-invalidates
   // the rules cache on success — no manual refresh() coordinator.
   const rulesQ = useAlertRules();
-  const rules = rulesQ.isLoading ? undefined : rulesQ.data ?? [];
+  const rulesAll = rulesQ.isLoading ? undefined : rulesQ.data ?? [];
+  // v0.5.305 — filter chip strip: All / Metric / Watcher.
+  // Watchers = saved-search log alerts (metric='log_query');
+  // operators asked to see them on this page alongside metric
+  // rules with a clear visual scope.
+  const [ruleKind, setRuleKind] = useState<'all' | 'metric' | 'watcher'>('all');
+  const rules = !rulesAll ? undefined : rulesAll.filter(r => {
+    if (ruleKind === 'all') return true;
+    const isWatcher = r.metric === 'log_query';
+    return ruleKind === 'watcher' ? isWatcher : !isWatcher;
+  });
+  const watcherCount = rulesAll?.filter(r => r.metric === 'log_query').length ?? 0;
+  const metricCount  = (rulesAll?.length ?? 0) - watcherCount;
   const createRule = useCreateAlertRule();
   const updateRule = useUpdateAlertRule();
   const deleteRule  = useDeleteAlertRule();
@@ -748,6 +760,34 @@ export default function AlertsPage() {
         )}
 
         {rules === undefined && <Spinner />}
+        {/* v0.5.305 — kind filter chips so operators can scope
+            the table to just their watchers (saved log alerts)
+            without scrolling past 50+ metric rules. */}
+        {rulesAll && rulesAll.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
+            {([
+              { key: 'all',     label: 'All',     count: rulesAll.length },
+              { key: 'metric',  label: 'Metric',  count: metricCount },
+              { key: 'watcher', label: 'Watcher', count: watcherCount },
+            ] as const).map(t => (
+              <button key={t.key}
+                onClick={() => setRuleKind(t.key)}
+                className={ruleKind === t.key ? '' : 'sec'}
+                style={{ fontSize: 12, padding: '3px 10px' }}
+                title={t.key === 'watcher'
+                  ? 'Saved log-search alerts created via /logs Create watcher'
+                  : t.key === 'metric'
+                  ? 'Metric-threshold alerts (RPS / error rate / p99 / etc.)'
+                  : 'All alert rules'}>
+                {t.label}
+                <span style={{
+                  marginLeft: 6, fontSize: 10, color: 'var(--text3)',
+                  fontFamily: 'ui-monospace, monospace',
+                }}>{t.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {rules && rules.length === 0 && <Empty icon="🔔" title="No alert rules" />}
         {rules && rules.length > 0 && (
           <div className="table-wrap">
@@ -765,20 +805,61 @@ export default function AlertsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rules.map(r => (
+                {rules.map(r => {
+                  // v0.5.305 — Watchers (Logs → Create watcher;
+                  // saved-search alerts) live in the same
+                  // alert_rules table with metric='log_query'.
+                  // Surface them with their own badge + render
+                  // the saved query in the Condition column so
+                  // the operator can tell at a glance which row
+                  // is a watcher vs a metric alert.
+                  const isWatcher = r.metric === 'log_query';
+                  return (
                   <tr key={r.id}>
                     <td><b>{r.name}</b></td>
-                    <td className="mono">{r.service || '— all —'}</td>
-                    <td className="mono">{r.metric} {r.comparator} {r.threshold}</td>
+                    <td className="mono">{r.service || (isWatcher ? '— logs —' : '— all —')}</td>
+                    <td className="mono" style={{ maxWidth: 380 }}>
+                      {isWatcher ? (
+                        <>
+                          <code title={r.logQuery}
+                            style={{
+                              display: 'inline-block', maxWidth: '100%',
+                              overflow: 'hidden', textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap', verticalAlign: 'middle',
+                              padding: '1px 4px', borderRadius: 3,
+                              background: 'var(--bg3)', fontSize: 11,
+                            }}>
+                            {r.logQuery || '(empty)'}
+                          </code>
+                          <span style={{ color: 'var(--text3)', marginLeft: 6 }}>
+                            count {r.comparator} {r.threshold}
+                          </span>
+                        </>
+                      ) : (
+                        <>{r.metric} {r.comparator} {r.threshold}</>
+                      )}
+                    </td>
                     <td>{r.windowSec / 60} min</td>
                     <td><SeverityBadge s={r.severity} /></td>
                     <td>{r.enabled
                       ? <span className="badge b-ok">ON</span>
                       : <span className="badge b-gray">OFF</span>}</td>
-                    <td>{r.builtIn
-                      ? <span className="badge b-info">BUILT-IN</span>
-                      : <span className="badge b-gray">custom</span>}</td>
+                    <td>
+                      {isWatcher
+                        ? <span className="badge b-info" title="Saved log-search alert created via /logs Create watcher">WATCHER</span>
+                        : r.builtIn
+                          ? <span className="badge b-info">BUILT-IN</span>
+                          : <span className="badge b-gray">metric</span>}
+                    </td>
                     <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      {isWatcher && (
+                        <a className="sec"
+                          href={`/logs?q=${encodeURIComponent(r.logQuery || '')}`}
+                          title="Open the saved log search in /logs"
+                          style={{ textDecoration: 'none' }}>
+                          ↗ logs
+                        </a>
+                      )}
                       <button className="sec" onClick={() => startEdit(r)}>Edit</button>
                       {r.enabled
                         ? <button className="sec" onClick={() => disable(r.id)}
@@ -793,7 +874,8 @@ export default function AlertsPage() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

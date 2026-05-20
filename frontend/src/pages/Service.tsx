@@ -249,9 +249,15 @@ function ServiceDetailInner() {
             )}
             {tab === 'details' && (
               <>
-                {/* DeployHistory + RED charts lead the Details
-                    tab — they're the "summary" view that
-                    contextualises everything beneath. */}
+                {/* v0.5.295 — Operator-reported: ServiceInfra
+                    (pod / host instances, the "where is this
+                    service ACTUALLY running" view) leads the
+                    Details tab. Operators reach for it first
+                    when triaging, more than for RED summaries. */}
+                <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
+                {/* DeployHistory + RED charts come next — the
+                    "summary" view that contextualises everything
+                    beneath. */}
                 <DeployHistoryPanel service={svc} />
                 <ServiceCharts service={svc} range={range}
                   onZoom={(fromUnixSec, toUnixSec) => {
@@ -266,19 +272,11 @@ function ServiceDetailInner() {
                 <SpanBreakdownChart service={svc}
                                     fromNs={rangeNs.from}
                                     toNs={rangeNs.to} />
-                {/* Upstream / downstream — who calls and who is
-                    called. Operator usually opens these to chase
-                    a regression's blast radius. */}
-                {/* v0.5.294 — Operator-reported: these three
-                    high-value panels (upstream/downstream,
-                    structure, DB queries) start expanded on
-                    the Details tab so the operator doesn't
-                    have to click each header. Lazy-fetch
-                    semantics unchanged; cost is identical to
-                    a manual open. */}
+                {/* v0.5.294 — Upstream / Structure / DB pre-
+                    expanded so operators don't click 3 headers
+                    after switching tabs. Lazy-fetch unchanged. */}
                 <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
                 <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
-                <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
                 <ServiceClusterBreakdown service={svc} range={range} />
                 <DBQueriesPanel   service={svc}
                                   from={rangeNs.from}

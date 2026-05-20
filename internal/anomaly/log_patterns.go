@@ -31,6 +31,17 @@ type LogPatternAnomaly struct {
 	// operator can see "OOMKilled fires on foo-svc (12) and
 	// bar-svc (3)" without expanding or filtering.
 	TopServices []logstore.PatternServiceHit `json:"topServices,omitempty"`
+	// Tokens — v0.5.306. The lowercase body substrings any of
+	// which guarantees a regex match. Exposed to the frontend
+	// so the /anomalies "logs ↗" link can build a precise OR
+	// query that lands on the actual log lines, instead of
+	// the previous behaviour (link only narrowed to the
+	// service). E.g. "Disk full" carries
+	//   ["no space left", "disk full", "enospc"]
+	// → link becomes /logs?service=X&q=("no space left" OR
+	// "disk full" OR "enospc"). Curated per pattern in the
+	// patterns[] slice below.
+	Tokens []string `json:"tokens,omitempty"`
 }
 
 type logPattern struct {
@@ -207,6 +218,7 @@ func DetectLogPatterns(ctx context.Context, store logstore.Store, window time.Du
 					Sample:        truncateSample(sample, 240),
 					LastSeenNs:    lastNs,
 					TopServices:   st.TopServices,
+					Tokens:        p.Tokens,
 				},
 				ok: true,
 			}

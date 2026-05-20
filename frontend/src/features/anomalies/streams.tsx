@@ -455,8 +455,16 @@ function LogPatternsSection({ items, onMute }: {
               }} title={a.pattern}>
                 {a.pattern}
               </span>
-              <Link to={`/logs?service=${encodeURIComponent(a.service)}`}
-                    style={{ fontSize: 11, color: 'var(--accent2)', flexShrink: 0 }}>
+              {/* v0.5.306 — link now narrows to the pattern's
+                  body tokens too, not just the service. Builds
+                  an OR query from a.tokens so a "Disk full"
+                  anomaly lands the operator on the actual
+                  matching log lines ("no space left" OR "disk
+                  full" OR "enospc"). Falls back to service-only
+                  when tokens absent (older backends). */}
+              <Link to={logsLinkForPattern(a)}
+                    style={{ fontSize: 11, color: 'var(--accent2)', flexShrink: 0 }}
+                    title="Open /logs filtered to this pattern + service">
                 logs ↗
               </Link>
               <SnoozeButton onMute={d => onMute('log_pattern', a.pattern, a.service, d)} />
@@ -481,6 +489,28 @@ function LogPatternsSection({ items, onMute }: {
       </div>
     </Card>
   );
+}
+
+// logsLinkForPattern — v0.5.306. Builds a /logs URL that
+// narrows to both the service AND the body substrings the
+// detector pattern matches on. Token list comes from the
+// curated patterns[] slice in internal/anomaly/log_patterns.go,
+// exposed via LogPatternAnomaly.tokens. Multiple tokens are
+// OR'd; single-token patterns get a bare body match. Falls
+// back to service-only when tokens are absent so older API
+// responses still produce a usable link.
+function logsLinkForPattern(a: LogPatternAnomaly): string {
+  const params = new URLSearchParams();
+  if (a.service) params.set('service', a.service);
+  const toks = a.tokens ?? [];
+  if (toks.length > 0) {
+    const quoted = toks.map(t => `"${t.replace(/"/g, '\\"')}"`);
+    const q = toks.length === 1
+      ? quoted[0]
+      : `(${quoted.join(' OR ')})`;
+    params.set('q', q);
+  }
+  return `/logs?${params.toString()}`;
 }
 
 // DeployChip — v0.5.286. Inline chip on the anomaly row when a

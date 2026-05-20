@@ -1469,6 +1469,11 @@ export interface LogPatternAnomaly {
   // rosette under the chip so operators see "fires on these
   // N services" without expanding.
   topServices?: { service: string; count: number }[];
+  // v0.5.306 — lowercase body substrings the regex implies.
+  // Used by /anomalies + /logs deep-links to build a precise
+  // OR query that lands the operator on the actual matching
+  // log lines (vs. v0.5.305 which only filtered by service).
+  tokens?: string[];
 }
 
 // One entry in the service-level neighbours response — a single

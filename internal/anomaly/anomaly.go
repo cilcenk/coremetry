@@ -179,6 +179,16 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 // fetchBuckets returns the requested metric in 5-minute buckets over the
 // configured history window, ascending in time. The most recent bucket is
 // the "current" sample.
+//
+// v0.5.296 — Scale-audit critical: previously these three queries scanned
+// raw `spans` with a GROUP BY over the focal service's 24h history. At
+// billion-span scale + 100s of services × 3 metrics × every detector tick,
+// that's the heaviest hot path in the system. Switched to
+// service_summary_5m which already carries the aggregate states we need
+// (count, error_count, quantile TDigest). Each query now reads ~288 rows
+// per service (24h × 12 buckets/h) and merges in-memory — sub-millisecond
+// regardless of underlying span volume. LIMIT + SETTINGS still added as
+// belt-and-braces in case the MV grows past our expectations.
 func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]float64, error) {
 	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 	conn := d.store.Conn()
@@ -187,22 +197,34 @@ func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]
 	switch metric {
 	case "error_rate":
 		sql = `
-			SELECT toUnixTimestamp(toStartOfInterval(time, INTERVAL 5 MINUTE)) AS t,
-			       countIf(status_code='error') / nullIf(count(),0) * 100 AS v
-			FROM spans WHERE service_name = ? AND time >= ?
-			GROUP BY t ORDER BY t`
+			SELECT toUnixTimestamp(time_bucket)                                              AS t,
+			       countMerge(error_count_state) / nullIf(countMerge(span_count_state), 0) * 100 AS v
+			FROM service_summary_5m
+			WHERE service_name = ? AND time_bucket >= ?
+			GROUP BY t
+			ORDER BY t
+			LIMIT 1000
+			SETTINGS max_execution_time = 10`
 	case "request_rate":
 		sql = `
-			SELECT toUnixTimestamp(toStartOfInterval(time, INTERVAL 5 MINUTE)) AS t,
-			       count() / 300.0 AS v
-			FROM spans WHERE service_name = ? AND time >= ?
-			GROUP BY t ORDER BY t`
+			SELECT toUnixTimestamp(time_bucket)            AS t,
+			       countMerge(span_count_state) / 300.0    AS v
+			FROM service_summary_5m
+			WHERE service_name = ? AND time_bucket >= ?
+			GROUP BY t
+			ORDER BY t
+			LIMIT 1000
+			SETTINGS max_execution_time = 10`
 	case "p99_ms":
 		sql = `
-			SELECT toUnixTimestamp(toStartOfInterval(time, INTERVAL 5 MINUTE)) AS t,
-			       quantile(0.99)(duration) / 1e6 AS v
-			FROM spans WHERE service_name = ? AND time >= ?
-			GROUP BY t ORDER BY t`
+			SELECT toUnixTimestamp(time_bucket)                              AS t,
+			       quantilesMerge(0.5, 0.95, 0.99)(duration_q_state)[3] / 1e6 AS v
+			FROM service_summary_5m
+			WHERE service_name = ? AND time_bucket >= ?
+			GROUP BY t
+			ORDER BY t
+			LIMIT 1000
+			SETTINGS max_execution_time = 10`
 	default:
 		return nil, fmt.Errorf("unknown metric %q", metric)
 	}

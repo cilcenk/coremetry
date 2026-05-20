@@ -477,12 +477,19 @@ function ExploreInner() {
       }
     } else if (resultMode === 'traces') {
       // Traces mode — same filters/DSL feed the trace search instead.
+      // v0.5.314 — Operator-reported: hits the 50 default limit
+      // ceiling and doesn't know there are more rows. Switched
+      // count mode from default 'skip' (omits total) to 'approx'
+      // so the table footer can show "N of M matched, raise
+      // limit to see more". Approx mode is fast (counts over
+      // the same paginated scan + an O(1) hasMore probe).
       setTraces(undefined);
       api.traces({
         filters: filterArg, dsl: dslArg,
         from, to,
         sort: 'time', order: 'desc',
         limit: traceLimit,
+        count: 'approx',
         extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
       })
         .then(r => { setTraces(r.traces ?? []); setTraceTotal(r.total ?? 0); })
@@ -824,8 +831,28 @@ function ExploreInner() {
           <div className="controls">
             <span style={{ color: 'var(--text2)', fontSize: 12 }}>Limit:</span>
             <select value={traceLimit} onChange={e => setTraceLimit(Number(e.target.value))}>
-              {[20, 50, 100, 200, 500].map(n => <option key={n} value={n}>{n} traces</option>)}
+              {/* v0.5.314 — raised cap to 5000. At billion-span
+                  scale a busy 24h window can have 10k+ matching
+                  traces; the old 500 ceiling silently dropped
+                  the long tail. */}
+              {[20, 50, 100, 200, 500, 1000, 2000, 5000].map(n => <option key={n} value={n}>{n} traces</option>)}
             </select>
+            {/* v0.5.314 — surface the approx total from the
+                response so the operator can SEE there are more
+                rows than the current limit shows. Red when
+                limit-bound (operator should raise it). */}
+            {traces && traceTotal > 0 && (
+              <span style={{
+                color: traces.length >= traceLimit && traceTotal > traces.length
+                  ? 'var(--err)' : 'var(--text2)',
+                fontSize: 12, fontWeight: 600,
+              }}>
+                Showing {fmtNum(traces.length)} of ~{fmtNum(traceTotal)}
+                {traces.length >= traceLimit && traceTotal > traces.length && (
+                  <> — raise limit to see more</>
+                )}
+              </span>
+            )}
             <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 'auto' }}>
               Sorted by start time desc
             </span>

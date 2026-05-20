@@ -26,12 +26,17 @@ const NATURAL_DIR: Record<SortKey, 'asc' | 'desc'> = {
   errorCount: 'desc',
 };
 
-export function DBQueriesPanel({ service, from, to }: {
+export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
   service: string;
   from: number;
   to: number;
+  // v0.5.294 — render expanded on first paint when the caller
+  // has already signalled "show me details" (Service detail
+  // Details tab). Per-row expand-for-EXPLAIN still works
+  // independently.
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState<DBQueryStat[] | null | undefined>(undefined);
   const [sortBy, setSortBy] = useState<SortKey>('totalMs');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');

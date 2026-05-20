@@ -14,11 +14,17 @@ import type { NeighborStat } from '@/lib/types';
 // Each chip carries a (×N traces · M calls) badge so the operator
 // reads call frequency at a glance. Panel starts collapsed; the
 // first open lazy-fetches the data, identical to ServiceStructure.
-export function ServiceNeighbors({ service, since = '10m' }: {
+export function ServiceNeighbors({ service, since = '10m', defaultOpen = false }: {
   service: string;
   since?: string;
+  // v0.5.294 — when true, the panel renders expanded on first
+  // paint instead of waiting for the operator to click the
+  // header. Used from the Service detail Details tab where
+  // the operator has already signalled "show me everything"
+  // by switching tabs.
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState<{
     upstream?: NeighborStat[];
     downstream?: NeighborStat[];

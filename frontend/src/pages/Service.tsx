@@ -269,14 +269,21 @@ function ServiceDetailInner() {
                 {/* Upstream / downstream — who calls and who is
                     called. Operator usually opens these to chase
                     a regression's blast radius. */}
-                <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
-                <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
-                {/* Infra / cluster / DB context. */}
+                {/* v0.5.294 — Operator-reported: these three
+                    high-value panels (upstream/downstream,
+                    structure, DB queries) start expanded on
+                    the Details tab so the operator doesn't
+                    have to click each header. Lazy-fetch
+                    semantics unchanged; cost is identical to
+                    a manual open. */}
+                <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
+                <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
                 <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
                 <ServiceClusterBreakdown service={svc} range={range} />
                 <DBQueriesPanel   service={svc}
                                   from={rangeNs.from}
-                                  to={rangeNs.to} />
+                                  to={rangeNs.to}
+                                  defaultOpen />
                 {/* Honeycomb-style 2D density at the bottom
                     of Details — heaviest panel + multi-modal
                     insight only relevant once the operator has

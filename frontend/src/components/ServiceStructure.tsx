@@ -35,11 +35,16 @@ type View = 'tree' | 'flame' | 'topology';
 //                things it calls are".
 type Scope = 'cross' | 'internal';
 
-export function ServiceStructure({ service, since = '10m' }: {
+export function ServiceStructure({ service, since = '10m', defaultOpen = false }: {
   service: string;
   since?: string;
+  // v0.5.294 — render expanded on first paint when the caller
+  // has already signalled "show me details" (Service detail
+  // Details tab). Lazy-fetch still happens inside the open
+  // branch, so the cost is the same as a manual click.
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [view, setView] = useState<View>('tree');
   const [scope, setScope] = useState<Scope>('cross');
   const [data, setData] = useState<{

@@ -228,24 +228,15 @@ function ServiceDetailInner() {
         {loading && <Spinner />}
         {!loading && (
           <>
-            {/* Header: persistent context regardless of tab. */}
-            <DeployHistoryPanel service={svc} />
-            <ServiceCharts service={svc} range={range}
-              onZoom={(fromUnixSec, toUnixSec) => {
-                setRange({
-                  preset: 'custom',
-                  fromMs: Math.round(fromUnixSec * 1000),
-                  toMs: Math.round(toUnixSec * 1000),
-                });
-              }} />
-
-            {/* v0.5.292 — tabbed layout. Operations is the
-                default landing tab (per-endpoint RED is the
-                operator's daily entry point); Details collects
-                everything else (categorical / topology /
-                infra / DB / heatmap). Tab persists in the URL
-                so a saved link / refresh keeps the operator on
-                their chosen sub-view. */}
+            {/* v0.5.293 — Operator-reported: tabs go immediately
+                under the KPI / problems header so the
+                Operations table is the FIRST body element on
+                the page. DeployHistoryPanel + ServiceCharts
+                moved into Details (they remain the headline
+                summary view but no longer outrank the
+                per-endpoint table). Tab persists in the URL
+                so a saved link / refresh lands on the same
+                sub-view. */}
             <TabStrip
               tab={tab}
               onChange={setTab}
@@ -258,6 +249,18 @@ function ServiceDetailInner() {
             )}
             {tab === 'details' && (
               <>
+                {/* DeployHistory + RED charts lead the Details
+                    tab — they're the "summary" view that
+                    contextualises everything beneath. */}
+                <DeployHistoryPanel service={svc} />
+                <ServiceCharts service={svc} range={range}
+                  onZoom={(fromUnixSec, toUnixSec) => {
+                    setRange({
+                      preset: 'custom',
+                      fromMs: Math.round(fromUnixSec * 1000),
+                      toMs: Math.round(toUnixSec * 1000),
+                    });
+                  }} />
                 {/* SpanBreakdown — categorical "where does the
                     time go" breakdown. */}
                 <SpanBreakdownChart service={svc}

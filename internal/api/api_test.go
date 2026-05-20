@@ -214,6 +214,45 @@ func TestSanitizePasswordPreservesInternalSpace(t *testing.T) {
 	}
 }
 
+// v0.5.291 — operator-reported regression: LDAP users couldn't
+// log in despite correct-looking passwords. Root cause turned
+// out to be a NEW invisible-character source (NBSP and zero-
+// width chars from Word / PDF copy) the v0.5.87 fix didn't
+// cover. Lock the broader contract here.
+
+func TestSanitizePasswordStripsZeroWidth(t *testing.T) {
+	// Use numeric \u / \U escapes so the source file stays
+	// BOM-free (a literal U+FEFF in source is flagged by gopls
+	// + several linters even when valid inside a string).
+	cases := []struct {
+		name string
+		mid  rune
+	}{
+		{"SOFT_HYPHEN", 0x00AD},
+		{"ZWSP", 0x200B},
+		{"ZWNJ", 0x200C},
+		{"ZWJ", 0x200D},
+		{"WORD_JOIN", 0x2060},
+		{"BOM_ZWNBSP", 0xFEFF},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := "se" + string(c.mid) + "cret"
+			if got := sanitizePassword(in); got != "secret" {
+				t.Errorf("got %q want %q", got, "secret")
+			}
+		})
+	}
+}
+
+func TestSanitizePasswordTrimsNonAsciiWhitespace(t *testing.T) {
+	// NBSP (U+00A0) and narrow NBSP (U+202F) at edges should
+	// be trimmed — common Word copy-paste artifact.
+	if got := sanitizePassword(" hunter2 "); got != "hunter2" {
+		t.Errorf("NBSP trim: got %q want %q", got, "hunter2")
+	}
+}
+
 func itoa(n int64) string {
 	const digits = "0123456789"
 	if n == 0 {

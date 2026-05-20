@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/sync/singleflight"
 
@@ -3323,20 +3324,45 @@ func newID(n int) string {
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 // sanitizePassword strips paste-mangle artifacts that would
-// otherwise silently break bcrypt/LDAP compare: leading and
-// trailing whitespace (a common copy-paste mishap from password
-// managers / chat apps), and soft-hyphen (U+00AD) anywhere in
-// the string. Soft-hyphen renders as nothing, so it can't be
-// part of a real password but does survive paste from rendered
-// HTML. We deliberately do NOT rewrite visible homoglyphs like
-// en-/em-dash for hyphen — those could be legitimate characters
-// and the matching i18n hint on the login screen already tells
-// the user to retype if it looks suspicious.
+// otherwise silently break bcrypt/LDAP compare. v0.5.291 —
+// Operator-reported regression: LDAP users hitting "invalid
+// credentials" with the right password again. The v0.5.87 fix
+// covered soft-hyphen + ASCII whitespace but not the broader
+// invisible-character set that survives paste from Word / PDF /
+// rendered HTML.
+//
+// What we strip:
+//   • Edge whitespace via unicode.IsSpace — covers NBSP (U+00A0),
+//     narrow NBSP (U+202F), and the 17 other Unicode space
+//     characters Go's TrimSpace already handles.
+//   • Anywhere in string:
+//       U+00AD  soft-hyphen          (invisible, conditional break)
+//       U+200B  zero-width space     (Word / PDF copy)
+//       U+200C  zero-width non-joiner
+//       U+200D  zero-width joiner
+//       U+2060  word joiner          (invisible)
+//       U+FEFF  zero-width no-break / BOM (common in Word copy)
+//
+// We deliberately do NOT rewrite visible homoglyphs (en/em-dash
+// for hyphen, smart quotes, etc.) — those could be intentional
+// characters in a password and the login screen's i18n hint
+// already tells users to retype if their paste looks suspicious.
 func sanitizePassword(p string) string {
-	const softHyphen = '­'
-	p = strings.TrimSpace(p)
-	if strings.ContainsRune(p, softHyphen) {
-		p = strings.ReplaceAll(p, string(softHyphen), "")
+	orig := p
+	p = strings.TrimFunc(p, unicode.IsSpace)
+	p = strings.Map(func(r rune) rune {
+		switch r {
+		case 0x00AD, // soft-hyphen
+			0x200B, 0x200C, 0x200D, // zero-width space / non-joiner / joiner
+			0x2060,                  // word joiner
+			0xFEFF:                  // zero-width no-break (BOM)
+			return -1
+		}
+		return r
+	}, p)
+	if p != orig {
+		log.Printf("[auth] password sanitized — submitted len=%d, after strip=%d (likely paste-mangle: invisible/zero-width chars or non-ASCII whitespace)",
+			len(orig), len(p))
 	}
 	return p
 }

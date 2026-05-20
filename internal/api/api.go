@@ -384,9 +384,14 @@ func (s *Server) Start() error {
 	// SQL playground — admin only; readonly=2 + 60s cap on the
 	// CH side, allow-list of SELECT/WITH/SHOW/DESCRIBE/EXPLAIN
 	// on the application side.
-	mux.HandleFunc("POST /api/admin/sql/query",       s.execSQL)
-	mux.HandleFunc("GET  /api/admin/sql/schema",      s.sqlSchema)
-	mux.HandleFunc("POST /api/admin/sql/elastic",     s.execElasticSQL)
+	// v0.5.297 — admin-only route gates. Both handlers had inline
+	// auth checks, but the middleware wrapper is the convention
+	// across the rest of the admin surface (catches the route at
+	// registration time so a future refactor can't accidentally
+	// drop the inline check).
+	mux.HandleFunc("POST /api/admin/sql/query",       auth.RequireRole(auth.RoleAdmin, s.execSQL))
+	mux.HandleFunc("GET  /api/admin/sql/schema",      auth.RequireRole(auth.RoleAdmin, s.sqlSchema))
+	mux.HandleFunc("POST /api/admin/sql/elastic",     auth.RequireRole(auth.RoleAdmin, s.execElasticSQL))
 	// Saved views — per-user CRUD (server scopes by session).
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)
@@ -920,7 +925,14 @@ func (s *Server) getCorrelations(w http.ResponseWriter, r *http.Request) {
 	windowSec := parseInt(q.Get("windowSec"), 600)
 	baselineSec := parseInt(q.Get("baselineSec"), windowSec*4)
 
-	key := fmt.Sprintf("correlate:at=%d:w=%d:b=%d", at.UnixNano(), windowSec, baselineSec)
+	// v0.5.297 — bucket `at` to the minute so concurrent
+	// triage clicks landing in the same 60s share the cache
+	// round-trip. Pre-bucket the key used raw nanoseconds →
+	// near-zero hit rate across operators clicking "Why?" in
+	// the same incident. 30s cache TTL × 60s bucket means a
+	// second click within the minute always hits Redis.
+	atBucketed := at.Truncate(time.Minute).Unix()
+	key := fmt.Sprintf("correlate:at=%d:w=%d:b=%d", atBucketed, windowSec, baselineSec)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.GetCorrelatedChanges(r.Context(), at, windowSec, baselineSec)
 	})

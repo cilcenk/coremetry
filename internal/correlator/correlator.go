@@ -68,18 +68,25 @@ func (c *Correlator) Start(ctx context.Context) {
 }
 
 func (c *Correlator) refresh(ctx context.Context) error {
-	// 1h window so a service that only handles low-RPS traffic
-	// still appears in the sample. The map's job is to know
-	// neighbours, not measure them.
-	m, err := c.store.GetServiceMap(ctx, time.Hour, 200)
+	// v0.5.304 — read from the pre-aggregated topology_edges_5m
+	// MV instead of GetServiceMap. The previous path walked a
+	// sample of trace IDs over a 1h window of raw `spans`,
+	// which at billion-span scale tripped the CH 30s
+	// max_execution_time on boot. The MV is already
+	// 5-min-bucketed by (parent_service, child_node), so the
+	// adjacency read is sub-second regardless of underlying
+	// volume. 1h window keeps the original recall — services
+	// with low-RPS traffic still show up if they had a single
+	// bucket in that window.
+	edges, err := c.store.GetServiceAdjacency(ctx, time.Hour)
 	if err != nil {
 		return err
 	}
-	if m == nil || len(m.Edges) == 0 {
+	if len(edges) == 0 {
 		return nil // keep previous map; never replace with empty
 	}
 	next := map[string]map[string]struct{}{}
-	for _, e := range m.Edges {
+	for _, e := range edges {
 		// 1-hop bidirectional — caller knows callee, callee
 		// knows caller.
 		ensure(next, e.Caller)[e.Callee] = struct{}{}
@@ -90,7 +97,7 @@ func (c *Correlator) refresh(ctx context.Context) error {
 	c.updatedAt = time.Now()
 	c.mu.Unlock()
 	log.Printf("[correlator] adjacency refreshed (%d services, %d edges)",
-		len(next), len(m.Edges))
+		len(next), len(edges))
 	return nil
 }
 

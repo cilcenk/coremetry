@@ -56,6 +56,26 @@ function ServiceDetailInner() {
   const tab = (searchParams.get('tab') as ServiceTab | null) === 'details'
     ? 'details' as const
     : 'operations' as const;
+  // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
+  // the Details tab body actually exists in the DOM. Browser
+  // doesn't auto-scroll because the target node is rendered
+  // AFTER the initial paint (bundle fetch + tab gate). The
+  // ?tab=details&#deploys link from /deploys depends on this.
+  useEffect(() => {
+    if (loading) return;
+    const hash = window.location.hash;
+    if (!hash) return;
+    const id = hash.replace(/^#/, '');
+    if (!id) return;
+    // Wait one frame so the conditional <div id="..."> has
+    // landed in the DOM before we try to scroll.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }, [loading, tab]);
   const setTab = (next: ServiceTab) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
     if (next === 'operations') p.delete('tab'); else p.set('tab', next);
@@ -288,7 +308,12 @@ function ServiceDetailInner() {
                     DeployHistory + ServiceCharts. The operator
                     lands on these without scrolling. */}
                 <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
-                <DeployHistoryPanel service={svc} />
+                {/* v0.5.307 — #deploys anchor so /deploys page
+                    "history →" link can scroll-to here after
+                    landing on Details tab. */}
+                <div id="deploys">
+                  <DeployHistoryPanel service={svc} />
+                </div>
                 <ServiceCharts service={svc} range={range}
                   onZoom={(fromUnixSec, toUnixSec) => {
                     setRange({

@@ -755,6 +755,14 @@ function FlowsView({ range }: { range: TimeRange }) {
   // root endpoints. Pre-aggregated table, so widening is cheap.
   const [top, setTop] = useState(100);
   const [search, setSearch] = useState('');
+  // v0.5.290 — when a flow is picked and its subgraph spans
+  // multiple services, the operator can isolate one downstream
+  // chain by clicking its hashColor chip. Same plumbing as the
+  // OperationView color filter (v0.5.285), reused via
+  // ServiceTopologySVG's new colorFilter prop. Cleared on
+  // pick change so picking a fresh flow starts unfiltered.
+  const [flowColorFilter, setFlowColorFilter] = useState<string | null>(null);
+  useEffect(() => { setFlowColorFilter(null); }, [picked]);
 
   // v0.5.272 — memoised time-range tuple for the per-flow
   // draw.io export <a href={…}> below. Without it, the bare
@@ -868,10 +876,17 @@ function FlowsView({ range }: { range: TimeRange }) {
               <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
                 {pickedData.nodes.length} nodes · {pickedData.edges.length} edges
               </div>
+              {pickedData.nodes.length > 2 && (
+                <FlowColorFilterStrip
+                  nodes={pickedData.nodes}
+                  value={flowColorFilter}
+                  onChange={setFlowColorFilter} />
+              )}
               <ServiceTopologySVG
                 nodes={pickedData.nodes} edges={pickedData.edges}
                 layout={layerServices(pickedData)}
                 onEdgeClick={setSelectedEdge}
+                colorFilter={flowColorFilter}
               />
               {selectedEdge && (
                 <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} />
@@ -881,6 +896,71 @@ function FlowsView({ range }: { range: TimeRange }) {
         </>
       )}
     </>
+  );
+}
+
+// FlowColorFilterStrip — v0.5.290. Per-service color chip
+// strip rendered above the picked-flow SVG, mirroring the
+// OperationView strip (v0.5.285). Only service-kind nodes
+// become chips (db / queue / external have fixed kind colors
+// rather than hashColor-by-name, so filtering by them isn't
+// meaningful in this surface).
+function FlowColorFilterStrip({ nodes, value, onChange }: {
+  nodes: ServiceTopologyNode[];
+  value: string | null;
+  onChange: (v: string | null) => void;
+}) {
+  const services = nodes.filter(n => n.kind === 'service');
+  if (services.length <= 1) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 6,
+      flexWrap: 'wrap', marginBottom: 8,
+      padding: '6px 0',
+      borderTop: '1px dashed var(--border)',
+      borderBottom: '1px dashed var(--border)',
+    }}>
+      <span style={{
+        fontSize: 11, color: 'var(--text3)',
+        textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700,
+        marginRight: 4,
+      }}>Filter by service color</span>
+      {services.map(n => {
+        const isPicked = value === n.id;
+        const c = hashColor(n.name);
+        return (
+          <button key={n.id} type="button"
+            onClick={() => onChange(isPicked ? null : n.id)}
+            title={isPicked ? `Showing ${n.name} only — click to clear` : `Show only ${n.name}'s edges`}
+            style={{
+              all: 'unset', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '2px 8px', borderRadius: 12, fontSize: 11,
+              border: `1px solid ${isPicked ? c : 'var(--border)'}`,
+              background: isPicked
+                ? `color-mix(in srgb, ${c} 22%, transparent)`
+                : 'transparent',
+              color: isPicked ? 'var(--text)' : 'var(--text2)',
+              fontWeight: isPicked ? 700 : 500,
+              opacity: value && !isPicked ? 0.55 : 1,
+            }}>
+            <span style={{
+              width: 9, height: 9, borderRadius: '50%',
+              background: c, display: 'inline-block',
+            }} />
+            {n.name}
+          </button>
+        );
+      })}
+      {value && (
+        <button type="button" onClick={() => onChange(null)}
+          style={{
+            all: 'unset', cursor: 'pointer', fontSize: 11,
+            color: 'var(--text3)', marginLeft: 4,
+          }}
+          title="Clear color filter">✕ clear</button>
+      )}
+    </div>
   );
 }
 
@@ -1320,7 +1400,7 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor, colorFilter }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
@@ -1340,7 +1420,17 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   // with a thicker accent border so the operator's eye lands on
   // it immediately.
   anchor?: string;
+  // v0.5.290 — service node id; when set, only that service +
+  // edges touching it stay fully opaque, everything else fades
+  // to 18% (same dim level as the search-highlight). Same idea
+  // as OpTopologySVG's colorFilter (v0.5.285) — gives FlowsView
+  // a one-click "isolate one downstream chain" affordance.
+  colorFilter?: string | null;
 }) {
+  const isNodeInColorFilter = (n: ServiceTopologyNode) =>
+    !colorFilter || n.id === colorFilter;
+  const isEdgeInColorFilter = (e: ServiceTopologyEdge) =>
+    !colorFilter || e.parentService === colorFilter || e.childNode === colorFilter;
   // Search highlighting: a node "matches" when its name includes
   // the (case-insensitive) substring. Edges match when EITHER end
   // matches. Non-matching geometry fades to 0.18 opacity so the
@@ -1425,8 +1515,12 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           if (e.p99Ms > 1000) strokeOverride = '#dc2626';
           else if (e.p99Ms > 250) strokeOverride = '#d97706';
           const p99 = e.p99Ms > 0 ? ` · p99 ${e.p99Ms.toFixed(0)}ms` : '';
+          const inColor = isEdgeInColorFilter(e);
           return (
-            <g key={i} style={{ cursor: 'pointer', opacity: match ? 1 : 0.18 }}
+            <g key={i} style={{
+                 cursor: 'pointer',
+                 opacity: match && inColor ? 1 : 0.18,
+               }}
                onClick={() => onEdgeClick(e)}>
               <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                 stroke={strokeOverride} strokeWidth={sw} fill="none"
@@ -1464,9 +1558,13 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           // /messaging. External nodes stay non-clickable since
           // there's nothing past the outbound boundary.
           const clickable = !!onNodeClick && n.kind !== 'external';
+          const inColor = isNodeInColorFilter(n);
           return (
             <g key={n.id} transform={`translate(${p.x}, ${p.y})`}
-               style={{ opacity: match ? 1 : 0.18, cursor: clickable ? 'pointer' : 'default' }}
+               style={{
+                 opacity: match && inColor ? 1 : 0.18,
+                 cursor: clickable ? 'pointer' : 'default',
+               }}
                onClick={clickable ? () => onNodeClick(n) : undefined}>
               {hasIncident && (
                 <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}

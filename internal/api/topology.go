@@ -186,6 +186,16 @@ type ServiceTopologyNode struct {
 	ID   string `json:"id"`   // canonical id used by edges (service name OR "db:postgresql")
 	Name string `json:"name"` // display label, sans prefix for infra ("postgresql" not "db:postgresql")
 	Kind string `json:"kind"` // "service" | "db" | "queue" | "external"
+	// v0.5.312 — Phase 2 enrichment for the topology redux:
+	// soft-cluster the diagram by k8s.namespace / service.namespace
+	// and paint each node with a health badge from open-problems
+	// count. Both are read-time-enriched (no schema change), nil-
+	// safe (omitempty), so older frontends keep working.
+	Namespace    string `json:"namespace,omitempty"`
+	Health       string `json:"health,omitempty"`       // "" | "green" | "yellow" | "red"
+	HealthReason string `json:"healthReason,omitempty"` // short "2 open criticals" etc.
+	OpenCritical int    `json:"openCritical,omitempty"`
+	OpenWarning  int    `json:"openWarning,omitempty"`
 }
 
 // topologyExcludeKey persists the operator's curated list of
@@ -478,6 +488,39 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			nodesOut = append(nodesOut, n)
 		}
 		sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+		// v0.5.312 — Phase 2 enrichment: namespace (for soft
+		// cluster grouping in the renderer) + open-problem
+		// counts (for health colouring). Both done after the
+		// node set is final so we look up only what's actually
+		// rendered. Soft-fail: a CH error on either lookup
+		// leaves nodes un-enriched but doesn't blank the
+		// diagram.
+		nsMap, _ := s.store.GetServiceNamespaces(r.Context(), time.Hour)
+		probMap, _ := s.store.GetOpenProblemCountsByService(r.Context())
+		for i := range nodesOut {
+			if nodesOut[i].Kind != "service" {
+				continue
+			}
+			if ns, ok := nsMap[nodesOut[i].Name]; ok {
+				nodesOut[i].Namespace = ns
+			}
+			if p, ok := probMap[nodesOut[i].Name]; ok {
+				nodesOut[i].OpenCritical = p.Critical
+				nodesOut[i].OpenWarning = p.Warning
+				switch {
+				case p.Critical > 0:
+					nodesOut[i].Health = "red"
+					nodesOut[i].HealthReason = fmtCount(p.Critical, "open critical")
+				case p.Warning > 0:
+					nodesOut[i].Health = "yellow"
+					nodesOut[i].HealthReason = fmtCount(p.Warning, "open warning")
+				default:
+					nodesOut[i].Health = "green"
+				}
+			} else {
+				nodesOut[i].Health = "green"
+			}
+		}
 		// Empty-window safety: nil edge slice marshals as JSON
 		// `null` which makes the SPA's `data.edges.forEach` crash.
 		// Same shape every call so the frontend can stay defensive-
@@ -493,6 +536,16 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			Truncated: len(edges) >= edgeCap,
 		}, nil
 	})
+}
+
+// fmtCount — short pluralised count helper for HealthReason
+// strings ("1 open critical" / "3 open criticals"). Inline to
+// avoid pulling a full pluralization package for this one site.
+func fmtCount(n int, label string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", label)
+	}
+	return fmt.Sprintf("%d %ss", n, label)
 }
 
 // FlowsResponse lists the top root-anchored business flows in a

@@ -377,6 +377,19 @@ function ServiceView({ range }: { range: TimeRange }) {
   // the legacy unfiltered topology.
   const noiseShow = params.get('noise') === 'show';
   const setNoiseShow = (v: boolean) => setURLParam('noise', v ? 'show' : null);
+  // v0.5.312 — protocol filter. Empty = show all. Selected
+  // = show only those. Comma-separated in URL for sharability.
+  // Protocols come from edge.protocol: http / rpc / db / kafka /
+  // internal. Stored as a Set for O(1) lookup.
+  const protoCSV = params.get('proto') || '';
+  const protoFilter = new Set(
+    protoCSV.split(',').map(s => s.trim()).filter(Boolean),
+  );
+  const toggleProto = (p: string) => {
+    const next = new Set(protoFilter);
+    if (next.has(p)) next.delete(p); else next.add(p);
+    setURLParam('proto', next.size === 0 ? null : [...next].join(','));
+  };
   useEffect(() => {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
@@ -449,13 +462,30 @@ function ServiceView({ range }: { range: TimeRange }) {
     };
   }, [data, topN, focus, focusHops, focusDir]);
 
+  // v0.5.312 — protocol filter applied to the post-topN visible
+  // set. Done outside the topN memo so toggling a protocol
+  // doesn't force a re-rank of the heaviest-N pick.
+  const visibleFiltered = useMemo(() => {
+    if (!visible || protoFilter.size === 0) return visible;
+    const keepEdges = visible.edges.filter(e => protoFilter.has(e.protocol));
+    const keepIds = new Set<string>();
+    keepEdges.forEach(e => { keepIds.add(e.parentService); keepIds.add(e.childNode); });
+    return {
+      nodes: visible.nodes.filter(n => keepIds.has(n.id)),
+      edges: keepEdges,
+    };
+    // protoFilter is a Set recreated each render; we read its
+    // contents via protoCSV which IS stable across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, protoCSV]);
+
   const layout = useMemo(
     () => layerServices(
-      visible ? { ...data!, nodes: visible.nodes, edges: visible.edges } : null,
+      visibleFiltered ? { ...data!, nodes: visibleFiltered.nodes, edges: visibleFiltered.edges } : null,
       focus || undefined,
       focusDir,
     ),
-    [visible, data, focus, focusDir]
+    [visibleFiltered, data, focus, focusDir]
   );
 
   if (data === undefined) return <Spinner />;
@@ -465,8 +495,8 @@ function ServiceView({ range }: { range: TimeRange }) {
   }
   const totalNodes = data.nodes.length;
   const totalEdges = data.edges.length;
-  const showingNodes = visible?.nodes.length ?? 0;
-  const showingEdges = visible?.edges.length ?? 0;
+  const showingNodes = visibleFiltered?.nodes.length ?? 0;
+  const showingEdges = visibleFiltered?.edges.length ?? 0;
   // Build the focus-picker options from the full node list so the
   // operator can pivot to any service even when it's not in the
   // current top-N slice.
@@ -530,6 +560,41 @@ function ServiceView({ range }: { range: TimeRange }) {
             onChange={e => setNoiseShow(e.target.checked)} />
           Show noise
         </label>
+        {/* v0.5.312 — protocol filter chips. Empty filter = all
+            visible. Click a chip to scope; click again to unscope.
+            Saved-view friendly via URL ?proto=http,db. */}
+        <span style={{ fontSize: 12, color: 'var(--text2)', marginLeft: 4 }}>Proto</span>
+        {(['http', 'rpc', 'db', 'kafka', 'internal'] as const).map(p => {
+          const picked = protoFilter.size === 0 || protoFilter.has(p);
+          const palette: Record<string, string> = {
+            http: '#4A90D9', rpc: '#8A6FB5', db: '#6c8ebf',
+            kafka: '#d6b656', internal: '#999',
+          };
+          const c = palette[p];
+          return (
+            <button key={p} type="button"
+              onClick={() => toggleProto(p)}
+              title={protoFilter.size === 0
+                ? `Click to show only ${p.toUpperCase()} edges`
+                : picked ? `Hide ${p.toUpperCase()} edges` : `Show ${p.toUpperCase()} edges too`}
+              style={{
+                all: 'unset', cursor: 'pointer',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 10, fontSize: 11,
+                border: `1px solid ${picked ? c : 'var(--border)'}`,
+                background: picked ? `color-mix(in srgb, ${c} 18%, transparent)` : 'transparent',
+                color: picked ? 'var(--text)' : 'var(--text3)',
+                fontWeight: picked ? 600 : 400,
+                opacity: picked ? 1 : 0.55,
+              }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%',
+                background: c, display: 'inline-block',
+              }} />
+              {p}
+            </button>
+          );
+        })}
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
           {focus
             ? `Focused on ${focus}: ${showingNodes} nodes / ${showingEdges} edges`
@@ -551,13 +616,13 @@ function ServiceView({ range }: { range: TimeRange }) {
           Edge query hit its 5k cap — heaviest strands only. Narrow the time range for full coverage.
         </div>
       )}
-      {visible && visible.nodes.length === 0 && (
+      {visibleFiltered && visibleFiltered.nodes.length === 0 && (
         <Empty icon="◇" title={focus ? `No interactions for ${focus} in this window` : 'No matches'} />
       )}
-      {visible && visible.nodes.length > 0 && (
+      {visibleFiltered && visibleFiltered.nodes.length > 0 && (
         <>
           <ServiceTopologySVG
-            nodes={visible.nodes} edges={visible.edges} layout={layout}
+            nodes={visibleFiltered.nodes} edges={visibleFiltered.edges} layout={layout}
             onEdgeClick={setSelectedEdge} search={search}
             incidentServices={incidentServices}
             onNodeClick={onNodeClick}
@@ -1507,6 +1572,50 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
             </marker>
           ))}
         </defs>
+        {/* v0.5.312 — namespace soft-cluster outlines, drawn
+            BEFORE edges + nodes so they sit behind. Groups
+            services by n.namespace; ignores nodes without one
+            (most infra nodes — db/queue/external — don't carry
+            a namespace, which is correct). Bounding box
+            inflated by 12px so nodes don't kiss the border. */}
+        {(() => {
+          type Group = { ns: string; xs: number[]; ys: number[] };
+          const byNs = new Map<string, Group>();
+          for (const n of nodes) {
+            if (!n.namespace || n.kind !== 'service') continue;
+            const p = pos.get(n.id);
+            if (!p) continue;
+            let g = byNs.get(n.namespace);
+            if (!g) { g = { ns: n.namespace, xs: [], ys: [] }; byNs.set(n.namespace, g); }
+            g.xs.push(p.x, p.x + NODE_W);
+            g.ys.push(p.y, p.y + NODE_H);
+          }
+          const out: React.ReactNode[] = [];
+          byNs.forEach((g, ns) => {
+            if (g.xs.length < 4) return; // need >=2 nodes to cluster
+            const x0 = Math.min(...g.xs) - 12;
+            const x1 = Math.max(...g.xs) + 12;
+            const y0 = Math.min(...g.ys) - 24;
+            const y1 = Math.max(...g.ys) + 12;
+            const color = hashColor(ns);
+            out.push(
+              <g key={`ns-${ns}`} style={{ pointerEvents: 'none' }}>
+                <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0}
+                  rx={10} ry={10} fill={color} fillOpacity={0.05}
+                  stroke={color} strokeOpacity={0.45}
+                  strokeWidth={1} strokeDasharray="4 4" />
+                <text x={x0 + 8} y={y0 + 14} fontSize={10}
+                  fill={color} fillOpacity={0.85}
+                  fontFamily="ui-monospace, SFMono-Regular, monospace"
+                  fontWeight={600}
+                  style={{ textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                  {ns}
+                </text>
+              </g>
+            );
+          });
+          return out;
+        })()}
         {edges.map((e, i) => {
           const src = pos.get(e.parentService);
           const dst = pos.get(e.childNode);
@@ -1585,18 +1694,33 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                  cursor: clickable ? 'pointer' : 'default',
                }}
                onClick={clickable ? () => onNodeClick(n) : undefined}>
-              {hasIncident && (
-                <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}
-                  rx={10} ry={10} fill="none"
-                  stroke="#dc2626" strokeWidth={2.4} strokeDasharray="4 3"
-                  style={{ cursor: onIncidentClick ? 'pointer' : 'inherit' }}
-                  onClick={onIncidentClick ? (e) => {
-                    e.stopPropagation();
-                    onIncidentClick(n);
-                  } : undefined}>
-                  <title>Click to view open problems on this service</title>
-                </rect>
-              )}
+              {/* v0.5.312 — three-state health ring (red /
+                  yellow / faint green). Replaces the binary
+                  "hasIncident" red dash ring; reads n.health
+                  populated by the backend's open-problem
+                  enrichment. Red = open critical, Yellow =
+                  open warning, Green = clean (subtle, doesn't
+                  scream).  Falls back to hasIncident when the
+                  backend hasn't enriched yet. */}
+              {(() => {
+                const h = n.health ?? (hasIncident ? 'red' : '');
+                if (!h || h === 'green') return null;
+                const isRed = h === 'red';
+                const color = isRed ? '#dc2626' : '#d97706';
+                return (
+                  <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}
+                    rx={10} ry={10} fill="none"
+                    stroke={color} strokeWidth={2.4}
+                    strokeDasharray={isRed ? '4 3' : '5 4'}
+                    style={{ cursor: onIncidentClick ? 'pointer' : 'inherit' }}
+                    onClick={onIncidentClick ? (e) => {
+                      e.stopPropagation();
+                      onIncidentClick(n);
+                    } : undefined}>
+                    <title>{n.healthReason || 'Click to view open problems on this service'}</title>
+                  </rect>
+                );
+              })()}
               {(() => {
                 const md = metaByService?.[n.name];
                 const team = md?.ownerTeam || md?.sreTeam || '';

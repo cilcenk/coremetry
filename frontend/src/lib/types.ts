@@ -42,6 +42,14 @@ export interface ServiceTopologyNode {
   id: string;
   name: string;
   kind: ServiceTopologyNodeKind;
+  // v0.5.312 — Phase 2 redux fields. Namespace drives the
+  // soft-cluster grouping; health* drive the per-node
+  // red/yellow/green ring. All optional + nil-safe.
+  namespace?: string;
+  health?: '' | 'green' | 'yellow' | 'red';
+  healthReason?: string;
+  openCritical?: number;
+  openWarning?: number;
 }
 export interface ServiceTopologyEdge {
   parentService: string;

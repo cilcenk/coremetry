@@ -418,6 +418,20 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	if service == "" {
 		return nil, fmt.Errorf("queryOperationsFromMV: service required")
 	}
+	// v0.5.299 — Operator-reported: "No operations" on services
+	// that DO have traffic. Root cause: time_bucket holds the
+	// bucket START (toStartOfInterval(time, 5 MINUTE)). When the
+	// window's winStart isn't aligned to a 5-min boundary, the
+	// `time_bucket >= winStart` predicate excludes the bucket
+	// that CONTAINS winStart — even though that bucket holds
+	// spans inside the operator's window. Example: service
+	// deploys at 10:03, all spans land in bucket 10:00;
+	// operator opens detail at 10:18 with 15m default →
+	// winStart=10:03 → bucket 10:00 excluded → empty table.
+	// Fix: align winStart down to the bucket boundary in the
+	// WHERE so any bucket whose 5-min slot OVERLAPS the window
+	// is included.
+	bucketStart := winStart.Truncate(5 * time.Minute)
 	// First pass: aggregate rollup per name across the window.
 	const apdexT = 200.0
 	rows, err := s.conn.Query(ctx, `
@@ -441,7 +455,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		         optimize_read_in_order = 1,
 		         optimize_aggregation_in_order = 1,
 		         optimize_skip_unused_shards = 1`,
-		service, winStart, winEnd)
+		service, bucketStart, winEnd)
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +509,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		GROUP BY name, bidx
 		SETTINGS max_execution_time = 10,
 		         optimize_skip_unused_shards = 1`,
-		winStart, bucketSec, service, winStart, winEnd)
+		bucketStart, bucketSec, service, bucketStart, winEnd)
 	if err != nil {
 		// Sparkline failure non-fatal — return aggregates without.
 		return out, nil

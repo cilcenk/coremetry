@@ -5,6 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceStructure } from '@/components/ServiceStructure';
 import { ServiceCharts } from '@/components/ServiceCharts';
+import { LazyMount } from '@/components/LazyMount';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { SamplingChip } from '@/components/SamplingChip';
@@ -274,15 +275,19 @@ function ServiceDetailInner() {
             )}
             {tab === 'details' && (
               <>
-                {/* v0.5.295 — Operator-reported: ServiceInfra
-                    (pod / host instances, the "where is this
-                    service ACTUALLY running" view) leads the
-                    Details tab. Operators reach for it first
-                    when triaging, more than for RED summaries. */}
+                {/* v0.5.302 — Above-the-fold panels stay eager
+                    (operator sees them instantly); everything
+                    further down wraps in <LazyMount> so it
+                    fetches only when scrolled into view. Before:
+                    Details open fired ~12 parallel CH queries
+                    in a burst → CH busy → blank-then-pop flash.
+                    Now: 3 immediate queries, the rest queue
+                    progressively. Mounted panels stay mounted
+                    so scroll-back keeps the data. */}
+                {/* Above-the-fold (eager): ServiceInfra +
+                    DeployHistory + ServiceCharts. The operator
+                    lands on these without scrolling. */}
                 <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
-                {/* DeployHistory + RED charts come next — the
-                    "summary" view that contextualises everything
-                    beneath. */}
                 <DeployHistoryPanel service={svc} />
                 <ServiceCharts service={svc} range={range}
                   onZoom={(fromUnixSec, toUnixSec) => {
@@ -292,26 +297,34 @@ function ServiceDetailInner() {
                       toMs: Math.round(toUnixSec * 1000),
                     });
                   }} />
-                {/* SpanBreakdown — categorical "where does the
-                    time go" breakdown. */}
-                <SpanBreakdownChart service={svc}
-                                    fromNs={rangeNs.from}
-                                    toNs={rangeNs.to} />
-                {/* v0.5.294 — Upstream / Structure / DB pre-
-                    expanded so operators don't click 3 headers
-                    after switching tabs. Lazy-fetch unchanged. */}
-                <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
-                <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
-                <ServiceClusterBreakdown service={svc} range={range} />
-                <DBQueriesPanel   service={svc}
-                                  from={rangeNs.from}
-                                  to={rangeNs.to}
-                                  defaultOpen />
-                {/* Honeycomb-style 2D density at the bottom
-                    of Details — heaviest panel + multi-modal
-                    insight only relevant once the operator has
-                    drilled past the headline RED chart. */}
-                <ServiceLatencyHeatmap service={svc} range={range} />
+                {/* Below-the-fold (lazy): each panel waits
+                    until ~200px from the viewport before mounting
+                    + fetching. minHeight is sized to the typical
+                    rendered panel so the page doesn't jump as
+                    panels resolve. */}
+                <LazyMount minHeight={220}>
+                  <SpanBreakdownChart service={svc}
+                                      fromNs={rangeNs.from}
+                                      toNs={rangeNs.to} />
+                </LazyMount>
+                <LazyMount minHeight={300}>
+                  <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
+                </LazyMount>
+                <LazyMount minHeight={300}>
+                  <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
+                </LazyMount>
+                <LazyMount minHeight={140}>
+                  <ServiceClusterBreakdown service={svc} range={range} />
+                </LazyMount>
+                <LazyMount minHeight={300}>
+                  <DBQueriesPanel   service={svc}
+                                    from={rangeNs.from}
+                                    to={rangeNs.to}
+                                    defaultOpen />
+                </LazyMount>
+                <LazyMount minHeight={360}>
+                  <ServiceLatencyHeatmap service={svc} range={range} />
+                </LazyMount>
               </>
             )}
           </>

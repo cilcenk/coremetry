@@ -28,8 +28,10 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
+type ServiceTab = 'operations' | 'details';
+
 function ServiceDetailInner() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const svc = searchParams.get('name') ?? '';
 
   const queryClient = useQueryClient();
@@ -46,6 +48,18 @@ function ServiceDetailInner() {
   // the children's useEffect([fromNs, toNs, …]) deps thrash
   // into an infinite refetch.
   const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
+
+  // v0.5.292 — tab in URL so a refresh / shareable link lands
+  // on the same sub-view. Default = Operations (the operator's
+  // daily entry point).
+  const tab = (searchParams.get('tab') as ServiceTab | null) === 'details'
+    ? 'details' as const
+    : 'operations' as const;
+  const setTab = (next: ServiceTab) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (next === 'operations') p.delete('tab'); else p.set('tab', next);
+    return p;
+  }, { replace: true });
 
   useEffect(() => {
     if (!svc) return;
@@ -214,60 +228,59 @@ function ServiceDetailInner() {
         {loading && <Spinner />}
         {!loading && (
           <>
-            {/* Deploy history (v0.5.189) — continuous benchmarking.
-                Renders only when the service emits service.version;
-                self-hides if there are no deploys in the lookback
-                window so it doesn't add visual weight for
-                un-versioned services. */}
+            {/* Header: persistent context regardless of tab. */}
             <DeployHistoryPanel service={svc} />
-            {/* Operations + SpanBreakdown sit at the top of the
-                detail layout (v0.5.238). Operations row first
-                (per-endpoint RED), SpanBreakdown immediately
-                below it so the categorical "where does the time
-                go" view drops in right under the row the
-                operator just scanned. */}
-            <OperationsTable service={svc} rows={operations} range={range} />
-            <SpanBreakdownChart service={svc}
-                                fromNs={rangeNs.from}
-                                toNs={rangeNs.to} />
-            <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
-            <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
-            <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
-            {/* Per-cluster RED breakdown. Renders only when the
-                service has traffic from 2+ k8s/openshift clusters.
-                Lets an operator spot "same service, different
-                performance per cluster" without a per-cluster
-                pivot in Explore. */}
-            <ServiceClusterBreakdown service={svc} range={range} />
-            <DBQueriesPanel   service={svc}
-                              from={rangeNs.from}
-                              to={rangeNs.to} />
-            {/* Latency heatmap (Honeycomb-style 2D density).
-                Reveals multi-modal distributions the P50/P99
-                line charts hide — "P99 is fine but 5% of
-                users hit the slow band" reads instantly off
-                this grid. Toggleable so operators who don't
-                find the view useful can collapse it without
-                paying the load. */}
-            <ServiceLatencyHeatmap service={svc} range={range} />
-            {/* Compact RED time-series at the bottom — RPS,
-                error rate, P99 latency. SLOs paint threshold
-                lines automatically; deploys paint vertical
-                markers; sync cursors keep the three panels
-                in lockstep. */}
             <ServiceCharts service={svc} range={range}
               onZoom={(fromUnixSec, toUnixSec) => {
-                // Dynatrace-style drag-to-zoom on any RED
-                // panel — selecting a range narrows the
-                // page's TimeRange so every chart + the
-                // operations table re-fetch for that window.
-                // Same pattern v0.5.23 wired on dashboards.
                 setRange({
                   preset: 'custom',
                   fromMs: Math.round(fromUnixSec * 1000),
                   toMs: Math.round(toUnixSec * 1000),
                 });
               }} />
+
+            {/* v0.5.292 — tabbed layout. Operations is the
+                default landing tab (per-endpoint RED is the
+                operator's daily entry point); Details collects
+                everything else (categorical / topology /
+                infra / DB / heatmap). Tab persists in the URL
+                so a saved link / refresh keeps the operator on
+                their chosen sub-view. */}
+            <TabStrip
+              tab={tab}
+              onChange={setTab}
+              opCount={operations.length} />
+
+            {tab === 'operations' && (
+              <OperationsTable service={svc} rows={operations} range={range}
+                preset={range.preset}
+                onWiden={() => setRange({ preset: '1h' })} />
+            )}
+            {tab === 'details' && (
+              <>
+                {/* SpanBreakdown — categorical "where does the
+                    time go" breakdown. */}
+                <SpanBreakdownChart service={svc}
+                                    fromNs={rangeNs.from}
+                                    toNs={rangeNs.to} />
+                {/* Upstream / downstream — who calls and who is
+                    called. Operator usually opens these to chase
+                    a regression's blast radius. */}
+                <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
+                <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} />
+                {/* Infra / cluster / DB context. */}
+                <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
+                <ServiceClusterBreakdown service={svc} range={range} />
+                <DBQueriesPanel   service={svc}
+                                  from={rangeNs.from}
+                                  to={rangeNs.to} />
+                {/* Honeycomb-style 2D density at the bottom
+                    of Details — heaviest panel + multi-modal
+                    insight only relevant once the operator has
+                    drilled past the headline RED chart. */}
+                <ServiceLatencyHeatmap service={svc} range={range} />
+              </>
+            )}
           </>
         )}
       </div>
@@ -311,7 +324,65 @@ function impactOf(r: OperationSummary): number {
   return r.avgDurationMs * r.spanCount;
 }
 
-function OperationsTable({ service, rows, range }: { service: string; rows: OperationSummary[]; range: TimeRange }) {
+// v0.5.292 — TabStrip sits between the persistent header
+// (KPIs / problems / deploy markers / RED charts) and the
+// per-tab body. Style mirrors the existing Topology tabs
+// (no separate component yet; both surfaces use a plain
+// button row + active-tab outline).
+function TabStrip({ tab, onChange, opCount }: {
+  tab: ServiceTab;
+  onChange: (t: ServiceTab) => void;
+  opCount: number;
+}) {
+  const items: { key: ServiceTab; label: string; hint?: string }[] = [
+    { key: 'operations', label: 'Operations', hint: opCount > 0 ? `${opCount}` : undefined },
+    { key: 'details',    label: 'Details' },
+  ];
+  return (
+    <div style={{
+      display: 'flex', gap: 0, marginTop: 16, marginBottom: 12,
+      borderBottom: '1px solid var(--border)',
+    }}>
+      {items.map(it => {
+        const active = tab === it.key;
+        return (
+          <button key={it.key} type="button"
+            onClick={() => onChange(it.key)}
+            style={{
+              all: 'unset', cursor: 'pointer',
+              padding: '8px 18px',
+              fontSize: 13, fontWeight: active ? 700 : 500,
+              color: active ? 'var(--text)' : 'var(--text2)',
+              borderBottom: active ? '2px solid var(--accent2)' : '2px solid transparent',
+              marginBottom: -1,
+            }}>
+            {it.label}
+            {it.hint && (
+              <span style={{
+                marginLeft: 6, fontSize: 11, color: 'var(--text3)',
+                fontFamily: 'ui-monospace, monospace',
+              }}>{it.hint}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function OperationsTable({ service, rows, range, preset, onWiden }: {
+  service: string;
+  rows: OperationSummary[];
+  range: TimeRange;
+  // v0.5.292 — when the table comes back empty (typically
+  // because the user's 15m default window had no traffic),
+  // surface a one-click "widen to 1h" CTA rather than the
+  // bare "no operations" message. preset is read to scope
+  // the suggestion ("widen to 1h" only makes sense on short
+  // windows; on a 7d range, empty really means empty).
+  preset?: string;
+  onWiden?: () => void;
+}) {
   const [sortBy, setSortBy] = useState<OpSortKey>('impact');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -394,10 +465,36 @@ function OperationsTable({ service, rows, range }: { service: string; rows: Oper
   };
 
   if (rows.length === 0) {
+    // v0.5.292 — short-window (≤30 min) default hits "no
+    // traffic" often enough that operators reported the page
+    // as broken. Surface a one-click widen-to-1h instead of
+    // the bare-empty message. Wider windows keep the plain
+    // empty state since "no ops in 24h" is genuinely "no
+    // ops".
+    const isShortWindow = preset
+      && ['5m', '10m', '15m', '30m'].includes(preset);
     return (
       <div style={{ marginTop: 18 }}>
         <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>⊙ Operations</h3>
-        <div className="empty" style={{ padding: 30 }}>No operations seen in this window</div>
+        <div className="empty" style={{ padding: 30 }}>
+          {isShortWindow ? (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                No traffic for <b>{service}</b> in the last <b>{preset}</b>.
+                Idle or low-traffic services often don't produce
+                spans in a short window.
+              </div>
+              {onWiden && (
+                <button type="button" onClick={onWiden}
+                  style={{ fontSize: 12, padding: '6px 14px' }}>
+                  Widen to last 1h
+                </button>
+              )}
+            </>
+          ) : (
+            <>No operations seen in this window</>
+          )}
+        </div>
       </div>
     );
   }

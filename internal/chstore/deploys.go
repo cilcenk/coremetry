@@ -112,8 +112,24 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 	if limit <= 0 {
 		limit = 20
 	}
-	if limit > 100 {
-		limit = 100
+	// v0.5.309 — Operator-reported (test env w/ 3000+ services):
+	// /deploys page hit "Failed to load deploys". Two clamps
+	// fought it: (a) hard limit at 100 capped /deploys' 500-row
+	// request, hiding most rows, and (b) max_execution_time=5
+	// was tuned for the 30m banner case — 30-day spans GROUP BY
+	// at billion-span scale needs more headroom. Now: cap raised
+	// to 2000 (matches handler's hard cap) and timeout scales
+	// with `since`: 5s for ≤30m (banner stays snappy), 30s for
+	// medium windows, 60s for ≥1d.
+	if limit > 2000 {
+		limit = 2000
+	}
+	maxExecSec := 5
+	switch {
+	case since > 24*time.Hour:
+		maxExecSec = 60
+	case since > 1*time.Hour:
+		maxExecSec = 30
 	}
 	cutoff := time.Now().Add(-since)
 	// v0.5.278 — placeholder filter + image-tag fallback (see
@@ -121,10 +137,10 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 	// reported: Java apps emitting Maven's default
 	// "0.0.1-SNAPSHOT" turned every pod restart into a "deploy"
 	// in the banner.
-	sql := `
+	sql := fmt.Sprintf(`
 		SELECT
 		  service_name,
-		  ` + effectiveVersionExpr + ` AS version,
+		  `+effectiveVersionExpr+` AS version,
 		  toUnixTimestamp64Nano(min(time)) AS first_seen,
 		  count() AS span_count
 		FROM spans
@@ -141,7 +157,7 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 		   AND first_seen >= ?
 		ORDER BY first_seen DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 5`
+		SETTINGS max_execution_time = %d`, maxExecSec)
 	rows, err := s.conn.Query(ctx, sql, cutoff, cutoff.UnixNano(), limit)
 	if err != nil {
 		return nil, err

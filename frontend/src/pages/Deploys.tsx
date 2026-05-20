@@ -32,13 +32,18 @@ const PRESETS: { label: string; hours: number }[] = [
 export default function DeploysPage() {
   const [hours, setHours] = useState(24);
   const [rows, setRows] = useState<Deploy[] | null | undefined>(undefined);
+  const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
     setRows(undefined);
+    setErr(null);
     api.allDeploys(hours, 1000)
       .then(d => setRows(d ?? []))
-      .catch(() => setRows(null));
+      .catch((e) => {
+        setRows(null);
+        setErr(e instanceof Error ? e.message : String(e));
+      });
   }, [hours]);
 
   // Client-side substring filter on service / version so an
@@ -102,7 +107,22 @@ export default function DeploysPage() {
           </span>
         </div>
         {rows === undefined && <Spinner />}
-        {rows === null && <Empty icon="✗" title="Failed to load deploys" />}
+        {rows === null && (
+          <Empty icon="✗" title="Failed to load deploys">
+            {err && (
+              <div style={{ marginTop: 8, fontSize: 11, fontFamily: 'ui-monospace, monospace', color: 'var(--text3)' }}>
+                {err}
+              </div>
+            )}
+            {err && /timeout|max_execution_time|elapsed/i.test(err) && (
+              <div style={{ marginTop: 8 }}>
+                CH timeout — try a shorter window (24h instead of 30d) or
+                lower the deploy attribute fan-out by configuring fewer
+                version label paths in chstore.effectiveVersionExpr.
+              </div>
+            )}
+          </Empty>
+        )}
         {rows && rows.length === 0 && (
           <Empty icon="◇" title="No deploys in this window">
             Widen the window, or check whether your services emit a

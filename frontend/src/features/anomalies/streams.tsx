@@ -500,15 +500,25 @@ function LogPatternsSection({ items, onMute }: {
 // back to service-only when tokens are absent so older API
 // responses still produce a usable link.
 function logsLinkForPattern(a: LogPatternAnomaly): string {
+  // v0.5.311 — Operator-reported: service shouldn't pre-select
+  // in the service picker dropdown; merge into the KQL query
+  // instead. Cleaner state for the operator to widen/narrow
+  // without first clearing the picker. Lucene/KQL on the Logs
+  // page already handles service.name:"X" natively.
   const params = new URLSearchParams();
-  if (a.service) params.set('service', a.service);
+  const clauses: string[] = [];
+  if (a.service) {
+    clauses.push(`service.name:"${a.service.replace(/"/g, '\\"')}"`);
+  }
   const toks = a.tokens ?? [];
   if (toks.length > 0) {
     const quoted = toks.map(t => `"${t.replace(/"/g, '\\"')}"`);
-    const q = toks.length === 1
+    clauses.push(toks.length === 1
       ? quoted[0]
-      : `(${quoted.join(' OR ')})`;
-    params.set('q', q);
+      : `(${quoted.join(' OR ')})`);
+  }
+  if (clauses.length > 0) {
+    params.set('q', clauses.join(' AND '));
   }
   return `/logs?${params.toString()}`;
 }

@@ -208,6 +208,11 @@ func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string,
 		writeErr(w, err)
 		return
 	}
+	// v0.5.303 — scrub NaN/Inf floats anywhere in the result
+	// tree before json.Marshal. Defence-in-depth for the
+	// "encoding/json: unsupported value NaN" 500s; complements
+	// the per-Scan safeF guards from v0.5.301.
+	sanitizeFloats(v)
 	body, err := json.Marshal(v)
 	if err != nil {
 		writeErr(w, err)
@@ -265,6 +270,7 @@ func (s *Server) refreshKey(key string, ttl time.Duration, fn func() (any, error
 			log.Printf("[cache] refresh %s: %v", key, err)
 			return nil, err
 		}
+		sanitizeFloats(v) // v0.5.303 — same NaN scrub as the miss path
 		body, err := json.Marshal(v)
 		if err != nil {
 			log.Printf("[cache] refresh marshal %s: %v", key, err)

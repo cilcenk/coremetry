@@ -7796,6 +7796,7 @@ func cors(h http.Handler) http.Handler {
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	sanitizeFloats(v) // v0.5.303 — scrub NaN/Inf before encode
 	json.NewEncoder(w).Encode(v)
 }
 

@@ -152,7 +152,13 @@ export default function DeploysPage() {
                           {fmtNum(d.spanCount)}
                         </td>
                         <td>
-                          <Link to={`/service?name=${encodeURIComponent(g.service)}#deploys`}
+                          {/* v0.5.307 — link lands on the
+                              Details tab (where DeployHistory
+                              lives after the v0.5.292 tabbed
+                              refactor) and scrolls to the
+                              #deploys anchor we tag onto the
+                              DeployHistoryPanel wrapper. */}
+                          <Link to={`/service?name=${encodeURIComponent(g.service)}&tab=details#deploys`}
                                 style={{ fontSize: 11 }}>
                             history →
                           </Link>

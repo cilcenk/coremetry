@@ -5,11 +5,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
+
+// safeF returns the dereferenced float64, treating nil, NaN, and
+// ±Inf as 0. v0.5.301 — Operator-reported: at scale, MV queries
+// can return NaN from quantilesMerge() on empty/edge-case
+// AggregatingMergeTree states, or from divide-by-zero in
+// downstream expressions. encoding/json rejects NaN+Inf per
+// RFC 8259, so the operations bundle's JSON marshal step
+// 500'd silently — frontend saw "operations: null" → "No
+// operations" empty state even though the MV path served rows.
+// Apply this everywhere we Scan float64 pointers out of CH.
+func safeF(p *float64) float64 {
+	if p == nil {
+		return 0
+	}
+	if math.IsNaN(*p) || math.IsInf(*p, 0) {
+		return 0
+	}
+	return *p
+}
 
 // ── Batch inserts ─────────────────────────────────────────────────────────────
 
@@ -378,15 +398,16 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 	var out []ServiceSummary
 	for rows.Next() {
 		var sv ServiceSummary
-		var apdex *float64
-		if err := rows.Scan(&sv.Name, &sv.SpanCount, &sv.ErrorCount, &sv.AvgMs, &sv.P99Ms, &apdex); err != nil {
+		var avgMs, p99Ms, apdex *float64
+		if err := rows.Scan(&sv.Name, &sv.SpanCount, &sv.ErrorCount, &avgMs, &p99Ms, &apdex); err != nil {
 			return nil, err
 		}
+		// v0.5.301 — NaN/Inf scrub before JSON marshal.
+		sv.AvgMs = safeF(avgMs)
+		sv.P99Ms = safeF(p99Ms)
+		sv.Apdex = safeF(apdex)
 		if sv.SpanCount > 0 {
 			sv.ErrorRate = float64(sv.ErrorCount) / float64(sv.SpanCount) * 100
-		}
-		if apdex != nil {
-			sv.Apdex = *apdex
 		}
 		sv.ApdexThresholdMs = apdexT
 		out = append(out, sv)
@@ -470,11 +491,11 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 			&avgMs, &p50, &p95, &p99, &apdex); err != nil {
 			return nil, err
 		}
-		if avgMs != nil { r.AvgMs = *avgMs }
-		if p50 != nil { r.P50Ms = *p50 }
-		if p95 != nil { r.P95Ms = *p95 }
-		if p99 != nil { r.P99Ms = *p99 }
-		if apdex != nil { r.Apdex = *apdex }
+		r.AvgMs = safeF(avgMs)
+		r.P50Ms = safeF(p50)
+		r.P95Ms = safeF(p95)
+		r.P99Ms = safeF(p99)
+		r.Apdex = safeF(apdex)
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
 		}
@@ -636,16 +657,22 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	out := []OperationSummary{}
 	for rows.Next() {
 		var r OperationSummary
-		var apdex *float64 // nullable when count()=0 (shouldn't happen with GROUP BY, but defensive)
+		// v0.5.301 — scan floats into nullable pointers + safeF
+		// so any NaN/Inf out of quantile()/avg() on edge inputs
+		// is sanitised before JSON marshal (RFC 8259 — NaN+Inf
+		// aren't valid JSON; encoding/json hard-errors).
+		var avgMs, p50, p95, p99, apdex *float64
 		if err := rows.Scan(&r.Name, &r.SpanCount, &r.ErrorCount,
-			&r.AvgMs, &r.P50Ms, &r.P95Ms, &r.P99Ms, &apdex); err != nil {
+			&avgMs, &p50, &p95, &p99, &apdex); err != nil {
 			return nil, err
 		}
+		r.AvgMs = safeF(avgMs)
+		r.P50Ms = safeF(p50)
+		r.P95Ms = safeF(p95)
+		r.P99Ms = safeF(p99)
+		r.Apdex = safeF(apdex)
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
-		}
-		if apdex != nil {
-			r.Apdex = *apdex
 		}
 		out = append(out, r)
 	}

@@ -268,15 +268,12 @@ func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time
 		if err := rows.Scan(&sv.Name, &sv.SpanCount, &sv.ErrorCount, &avg, &p99, &apdex); err != nil {
 			return nil, err
 		}
-		if avg != nil {
-			sv.AvgMs = *avg
-		}
-		if p99 != nil {
-			sv.P99Ms = *p99
-		}
-		if apdex != nil {
-			sv.Apdex = *apdex
-		}
+		// v0.5.301 — same NaN-from-quantilesMerge guard as the
+		// operations path; encoding/json rejects NaN+Inf so a
+		// rogue float silently 500s the /services response.
+		sv.AvgMs = safeF(avg)
+		sv.P99Ms = safeF(p99)
+		sv.Apdex = safeF(apdex)
 		if sv.SpanCount > 0 {
 			sv.ErrorRate = float64(sv.ErrorCount) / float64(sv.SpanCount) * 100
 		}

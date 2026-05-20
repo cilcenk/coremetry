@@ -194,12 +194,9 @@ func (s *Store) GetDatabaseDetail(
 	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p99Ms); err != nil {
 		return nil, err
 	}
-	if avgMs != nil {
-		out.AvgMs = *avgMs
-	}
-	if p99Ms != nil {
-		out.P99Ms = *p99Ms
-	}
+	// v0.5.301 — NaN/Inf scrub before JSON marshal.
+	out.AvgMs = safeF(avgMs)
+	out.P99Ms = safeF(p99Ms)
 	if out.SpanCount > 0 {
 		out.ErrorRate = float64(out.ErrorCount) / float64(out.SpanCount) * 100
 	}
@@ -341,12 +338,9 @@ func (s *Store) GetMessagingDetail(
 	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p99Ms); err != nil {
 		return nil, err
 	}
-	if avgMs != nil {
-		out.AvgMs = *avgMs
-	}
-	if p99Ms != nil {
-		out.P99Ms = *p99Ms
-	}
+	// v0.5.301 — NaN/Inf scrub before JSON marshal.
+	out.AvgMs = safeF(avgMs)
+	out.P99Ms = safeF(p99Ms)
 	if out.SpanCount > 0 {
 		out.ErrorRate = float64(out.ErrorCount) / float64(out.SpanCount) * 100
 	}
@@ -508,12 +502,9 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		if err := rows.Scan(&r.System, &r.Instance, &r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
 			return nil, err
 		}
-		if avgMs != nil {
-			r.AvgMs = *avgMs
-		}
-		if p99Ms != nil {
-			r.P99Ms = *p99Ms
-		}
+		// v0.5.301 — NaN/Inf scrub before JSON marshal.
+		r.AvgMs = safeF(avgMs)
+		r.P99Ms = safeF(p99Ms)
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
 		}
@@ -713,12 +704,9 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 			&r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
 			return nil, err
 		}
-		if avgMs != nil {
-			r.AvgMs = *avgMs
-		}
-		if p99Ms != nil {
-			r.P99Ms = *p99Ms
-		}
+		// v0.5.301 — NaN/Inf scrub before JSON marshal.
+		r.AvgMs = safeF(avgMs)
+		r.P99Ms = safeF(p99Ms)
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
 		}

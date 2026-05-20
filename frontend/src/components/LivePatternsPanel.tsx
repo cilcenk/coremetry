@@ -49,7 +49,12 @@ export function LivePatternsPanel({
   }, []);
 
   if (!data || data.patterns.length === 0) return null;
-  if (data.backend !== 'elasticsearch') return null;
+  // v0.5.298 — CH backend now ships its own rare-token scorer
+  // (sample-based foreground vs background frequency ratio,
+  // not as statistically tight as ES significant_text but the
+  // same operator-facing "what's rare-but-rising right now"
+  // signal). Render the panel for both backends when data is
+  // non-empty.
 
   const topScore = data.patterns[0]?.score ?? 1;
 

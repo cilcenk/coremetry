@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, Suspense } from 'react';
+import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTableNav } from '@/lib/useTableNav';
 import { Topbar } from '@/components/Topbar';
@@ -300,6 +300,12 @@ function TracesPageInner() {
   })();
   const histogramFilters = advFilters.length ? JSON.stringify(advFilters) : undefined;
 
+  // v0.5.297 — memoise the resolved range tuple so the CSV
+  // export link below doesn't reinvoke timeRangeToNs (and
+  // therefore Date.now()) on every render. Stable URL =
+  // stable <a href>, no flicker.
+  const exportRangeNs = useMemo(() => timeRangeToNs(range), [range]);
+
   return (
     <>
       <Topbar title="Traces" range={range} onRangeChange={setRange} />
@@ -396,7 +402,7 @@ function TracesPageInner() {
               the picker doesn't leak into the download. */}
           <a className="sec"
             href={`/api/traces/export.csv?${(() => {
-              const { from, to } = timeRangeToNs(range);
+              const { from, to } = exportRangeNs;
               const p = new URLSearchParams();
               p.set('from', String(from));
               p.set('to', String(to));

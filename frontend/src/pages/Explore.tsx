@@ -1040,7 +1040,11 @@ name ~ checkout`}
 
         {/* ── Metric mode · RED panel (Uptrace-style stacked trio) ─────────────── */}
         {resultMode === 'metric' && viz === 'red' && (() => {
-          const { from, to } = timeRangeToNs(range);
+          // v0.5.297 — use the memoised exploreRange (line ~295)
+          // instead of a bare timeRangeToNs(range). Without this
+          // the IIFE re-evaluates now() each render, fresh deps
+          // each pass into RedPanel → infinite refetch loop.
+          const { from, to } = exploreRange;
           return (
             <RedPanel
               filters={mode === 'builder' ? filters : []}
@@ -1206,7 +1210,8 @@ name ~ checkout`}
                 })}
               </div>
               {bubbleMode !== 'off' && (() => {
-                const { from, to } = timeRangeToNs(range);
+                // v0.5.297 — same render-trap fix as RedPanel above.
+                const { from, to } = exploreRange;
                 // Construct (baseline, selection) per mode.
                 // Errors / slow presets: baseline = everything
                 // in the current filter chips; selection adds

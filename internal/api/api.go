@@ -565,6 +565,7 @@ func (s *Server) Start() error {
 	// counts + recent service.version transitions. Cheap
 	// (15s cache); polled from the global AppShell.
 	mux.HandleFunc("GET    /api/recent-changes",          s.getRecentChanges)
+	mux.HandleFunc("GET    /api/deploys",                 s.getAllDeploys)
 
 	// Ingest pipeline (v0.5.263) — admin-managed drop / enrich
 	// rules applied before the sampler. List + upsert + delete.

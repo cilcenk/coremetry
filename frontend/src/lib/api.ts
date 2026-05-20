@@ -469,9 +469,14 @@ export const api = {
   // Recent deploys + impact deltas for a service (v0.5.189).
   // One round-trip; backend computes before/after RED for each
   // deploy via partition-pruned spans queries.
-  deployHistory: (service: string, limit = 5, windowSec = 600) =>
+  // v0.5.308 — lookbackHours threaded through. Backend default
+  // was 24h, but DeployHistoryPanel on /service is the natural
+  // destination from /deploys (which scans up to 30d). 24h
+  // dropped deploys older than yesterday, panel self-hid → the
+  // history-→ link looked broken. Default raised to 30d.
+  deployHistory: (service: string, limit = 5, windowSec = 600, lookbackHours = 24 * 30) =>
     get<import('./types').DeployHistoryRow[]>(
-      `/api/services/${encodeURIComponent(service)}/deploy-history?${qs({ limit, windowSec })}`),
+      `/api/services/${encodeURIComponent(service)}/deploy-history?${qs({ limit, windowSec, lookbackHours })}`),
 
   // Slow-query AI explain (v0.5.171). Body matches the row
   // shape so the backend doesn't have to re-query CH — frontend

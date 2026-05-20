@@ -67,9 +67,28 @@ export function DeployHistoryPanel({ service }: { service: string }) {
   if (rows === undefined) return null;
   if (rows === null) return null;
   if (rows.length === 0) {
-    // Don't shout an empty state — many services legitimately
-    // don't emit service.version. A small hint is enough.
-    return null;
+    // v0.5.308 — Operator-reported: clicking "history →" from
+    // /deploys lands here with no visible panel, which looks
+    // broken. Render a soft hint instead of silent-hiding so
+    // the operator knows the panel WAS rendered + the data
+    // just isn't in the lookback. Same rationale as the
+    // empty-ops CTA on the Operations tab.
+    return (
+      <div style={{
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+        borderRadius: 6, padding: 12, marginBottom: 16,
+        fontSize: 12, color: 'var(--text3)',
+      }}>
+        <div style={{ fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>
+          ↑ Deploy history
+        </div>
+        No deploys observed in the last 30 days. Either this service
+        doesn't emit a recognised version attribute
+        (service.version / container.image.tag /
+        app.kubernetes.io/version label / helm.chart.version), or
+        its last release predates the lookback window.
+      </div>
+    );
   }
 
   return (

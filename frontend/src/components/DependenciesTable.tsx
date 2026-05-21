@@ -32,6 +32,12 @@ export interface DepRow {
   // has — the table renders whichever is non-empty.
   instance?: string;
   destination?: string;
+  // v0.5.315 — per-database split. One DB host can serve many
+  // databases (Oracle SIDs, PostgreSQL / MongoDB / MSSQL DBs).
+  // When present, surface as a chip next to the instance so
+  // operator sees (host, database) as a single addressable
+  // unit instead of collapsing every DB on a host into one row.
+  dbName?: string;
   spanCount: number;
   errorCount: number;
   errorRate: number;
@@ -239,6 +245,29 @@ export function DependenciesTable({
                             title="Open in Explore (spans pre-filtered)">
                         {nameOf(r) || <span style={{ color: 'var(--text3)' }}>(unknown)</span>}
                       </Link>
+                      {/* v0.5.315 — db.name chip when present.
+                          One host serving N databases (Oracle
+                          SID/service, PostgreSQL / MongoDB /
+                          MSSQL DB) → row is keyed on (host,
+                          dbName). Chip surfaces the dbName so
+                          the operator sees the addressable
+                          unit at a glance. Hidden for the
+                          'default' fallback (means the OTel
+                          instrumentation didn't emit db.name). */}
+                      {r.dbName && r.dbName !== 'default' && (
+                        <span title={`db.name = ${r.dbName}`}
+                          style={{
+                            marginLeft: 8, fontSize: 10,
+                            padding: '1px 6px', borderRadius: 3,
+                            background: 'var(--bg3)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text2)',
+                            fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                            verticalAlign: 'middle',
+                          }}>
+                          ⛁ {r.dbName}
+                        </span>
+                      )}
                     </td>
                     <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(r.spanCount)}</td>
                     <td className="mono" style={{ textAlign: 'right' }}>

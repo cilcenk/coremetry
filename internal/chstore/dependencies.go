@@ -18,7 +18,13 @@ import (
 // full list on click-through to the instance detail.
 type DBInstance struct {
 	System     string   `json:"system"`     // db.system: postgresql / redis / oracle / mongo / mysql / cassandra / elasticsearch / …
-	Instance   string   `json:"instance"`   // peer.service when populated, else 'unknown'
+	Instance   string   `json:"instance"`   // peer.service when populated, else 'unknown' (host)
+	// DBName — v0.5.315. Per-database split within the same host.
+	// Oracle SID / service name, PostgreSQL / MongoDB / MSSQL
+	// database name, Redis db index (when distinguishable). Falls
+	// back to 'default' when the OTel instrumentation didn't emit
+	// db.name. Row identity is now (System, Instance, DBName).
+	DBName     string   `json:"dbName,omitempty"`
 	SpanCount  uint64   `json:"spanCount"`
 	ErrorCount uint64   `json:"errorCount"`
 	ErrorRate  float64  `json:"errorRate"`  // 0..100
@@ -457,40 +463,47 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	if to.IsZero() {
 		to = time.Now()
 	}
-	// Read from db_summary_5m (added v0.5.9) instead of raw spans —
-	// turns the 40M-row scan into a thousands-of-rows scan on
-	// pre-aggregated state. The MV writes are triggered on every
-	// span INSERT so the freshness gap is bounded by CH's INSERT
-	// flush latency (~1s in this codebase's config), not the
-	// 5-min bucket length. The most-recent in-flight bucket reads
-	// as a partial — operators viewing the trailing edge see a
-	// slightly understated count for the last <5min, which is
-	// acceptable given the cost-of-load trade.
-	// v0.5.240 — LIMIT bumped 200→5000. Operators with the
-	// "DBA fleet" topology (hundreds of databases across
-	// services) hit the prior cap; rows were silently dropped
-	// past the top-200. Frontend already filter-narrows client
-	// side so a wide return is fine for the wire.
+	// v0.5.315 — Operator-reported (tech-lead brief): one DB
+	// host can serve multiple DBs (Oracle SIDs / service names,
+	// PostgreSQL databases, MongoDB databases, MSSQL databases).
+	// Previous MV path keyed on (db_system, instance=peer_service)
+	// only, collapsing every database on the same host into one
+	// row. The fix: split by `db.name` too.
+	//
+	// Trade-off: db_summary_5m's GROUP BY doesn't carry db_name,
+	// so we read from raw `spans` here. Bounded by db_system != ''
+	// (partitions pruned by the idx_db_system skip-index from
+	// store.go), time bound + LIMIT + max_execution_time. At
+	// billion-spans/day a 1h window of DB calls is typically
+	// ~5-10M rows — well within the 30s ceiling. If this becomes
+	// a hotspot we'll add a db_summary_v2 MV keyed on
+	// (db_system, instance, db_name) and switch back.
+	//
+	// db.name resolution: span attribute (not resource). Falls
+	// back to the legacy "default" sentinel when missing so a
+	// host that emits no db.name still surfaces (rather than
+	// silently disappearing).
 	rows, err := s.conn.Query(ctx, `
 		SELECT db_system,
-		       instance,
-		       countMerge(span_count_state)                            AS span_count,
-		       countMerge(error_count_state)                           AS error_count,
-		       sumMerge(duration_sum_state) / 1e6
-		         / nullIf(countMerge(span_count_state), 0)             AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
-		FROM db_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
-		GROUP BY db_system, instance
+		       coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
+		       coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
+		       count()                                       AS span_count,
+		       countIf(status_code = 'error')                AS error_count,
+		       avg(duration) / 1e6                           AS avg_ms,
+		       quantile(0.99)(duration) / 1e6                AS p99_ms
+		FROM spans
+		WHERE db_system != '' AND time >= ? AND time <= ?
+		GROUP BY db_system, instance, db_name
 		ORDER BY span_count DESC
 		LIMIT 5000
-		SETTINGS max_execution_time = 15`, from, to)
+		SETTINGS max_execution_time = 30`, from, to)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []DBInstance{}
-	type key struct{ system, instance string }
+	// v0.5.315 — key gained db_name dimension.
+	type key struct{ system, instance, dbName string }
 	idxByKey := map[key]int{}
 	for rows.Next() {
 		var r DBInstance
@@ -499,7 +512,7 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		// shouldn't appear given our ORDER BY but the defensive
 		// guard is essentially free.
 		var avgMs, p99Ms *float64
-		if err := rows.Scan(&r.System, &r.Instance, &r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
+		if err := rows.Scan(&r.System, &r.Instance, &r.DBName, &r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
 			return nil, err
 		}
 		// v0.5.301 — NaN/Inf scrub before JSON marshal.
@@ -510,7 +523,7 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		}
 		r.Callers = []string{}
 		out = append(out, r)
-		idxByKey[key{r.System, r.Instance}] = len(out) - 1
+		idxByKey[key{r.System, r.Instance, r.DBName}] = len(out) - 1
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -542,18 +555,42 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		return out, nil // partial result is fine — callers are optional
 	}
 	defer cRows.Close()
+	// v0.5.315 — db_caller_summary_5m MV doesn't yet carry
+	// db_name. Until that migration lands, attribute each (system,
+	// instance) caller list to EVERY row sharing that prefix.
+	// Slightly imprecise (callers of any DB on that host appear
+	// on all DBs on it) but operationally useful and avoids the
+	// full MV rewrite. Per-DB precision lives in the DB detail
+	// drawer which queries raw spans anyway.
+	prefixIdx := map[struct{ system, instance string }][]int{}
+	for k, i := range idxByKey {
+		p := struct{ system, instance string }{k.system, k.instance}
+		prefixIdx[p] = append(prefixIdx[p], i)
+	}
 	for cRows.Next() {
 		var system, instance, svc string
 		var c uint64
 		if err := cRows.Scan(&system, &instance, &svc, &c); err != nil {
 			continue
 		}
-		i, ok := idxByKey[key{system, instance}]
+		idxs, ok := prefixIdx[struct{ system, instance string }{system, instance}]
 		if !ok {
 			continue
 		}
-		if len(out[i].Callers) < 5 && svc != "" {
-			out[i].Callers = append(out[i].Callers, svc)
+		for _, i := range idxs {
+			if len(out[i].Callers) >= 5 || svc == "" {
+				continue
+			}
+			dup := false
+			for _, x := range out[i].Callers {
+				if x == svc {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				out[i].Callers = append(out[i].Callers, svc)
+			}
 		}
 	}
 

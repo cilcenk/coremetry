@@ -57,6 +57,7 @@ export default function DatabasesPage() {
   const toRow = (d: DBInstance) => ({
     system: d.system,
     instance: d.instance,
+    dbName: d.dbName,
     spanCount: d.spanCount,
     errorCount: d.errorCount,
     errorRate: d.errorRate,

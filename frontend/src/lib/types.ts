@@ -157,6 +157,10 @@ export interface RepeatedSpanRow {
 export interface DBInstance {
   system: string;
   instance: string;
+  // v0.5.315 — db.name split. One host can serve many DBs;
+  // row identity is (system, instance, dbName). 'default'
+  // means the OTel SDK didn't emit db.name on this span.
+  dbName?: string;
   spanCount: number;
   errorCount: number;
   errorRate: number;

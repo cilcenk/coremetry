@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import type { FlameNode } from '@/lib/types';
+import type { FlameNode, ProfileFrameKind } from '@/lib/types';
 import { flameToHotspots, sortHotspots, flameCategoryBreakdown, type HotspotSort, type MethodHotspot } from '@/lib/flameHotspots';
-import { KindBadge, BreakdownBar } from './KindBadge';
+import { KindBadge, BreakdownBar, kindLabel } from './KindBadge';
 
 // Method Hotspots — Dynatrace-style "which functions are
 // heaviest, ignoring call site" table. Sits below the flame
@@ -15,6 +15,11 @@ const ROW_CAP = 100;
 export function MethodHotspots({ root }: { root: FlameNode }) {
   const [sortBy, setSortBy] = useState<HotspotSort>('self');
   const [filter, setFilter] = useState('');
+  // Kind filter — operators chasing a lock-contention regression
+  // want to see only Lock rows, not the CPU ones. 'all' is the
+  // default; clicking a kind chip toggles it on; clicking the
+  // active kind clears the filter.
+  const [kindFilter, setKindFilter] = useState<ProfileFrameKind | 'all'>('all');
 
   const allHotspots = useMemo(() => flameToHotspots(root), [root]);
   const breakdown = useMemo(() => flameCategoryBreakdown(root), [root]);
@@ -23,10 +28,11 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
   const visible = useMemo(() => {
     const f = filter.trim().toLowerCase();
     let list = allHotspots;
+    if (kindFilter !== 'all') list = list.filter(h => h.kind === kindFilter);
     if (f) list = list.filter(h => h.name.toLowerCase().includes(f));
     list = sortHotspots(list, sortBy);
     return list.slice(0, ROW_CAP);
-  }, [allHotspots, sortBy, filter]);
+  }, [allHotspots, sortBy, filter, kindFilter]);
 
   if (allHotspots.length === 0) return null;
 
@@ -39,11 +45,12 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
       padding: 12,
     }}>
       <BreakdownBar b={breakdown} />
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>Method hotspots</span>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-          {allHotspots.length} unique methods · top {Math.min(allHotspots.length, ROW_CAP)} shown
+          {visible.length} of {allHotspots.length} shown
         </span>
+        <KindFilterChips cur={kindFilter} onChange={setKindFilter} />
         <input
           type="text"
           value={filter}
@@ -82,6 +89,35 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
         <b>Paths</b> = distinct callers that reached this method
       </div>
     </div>
+  );
+}
+
+function KindFilterChips({ cur, onChange }: {
+  cur: ProfileFrameKind | 'all';
+  onChange: (k: ProfileFrameKind | 'all') => void;
+}) {
+  const kinds: (ProfileFrameKind | 'all')[] = ['all', 'cpu', 'lock', 'io', 'sleep', 'gc'];
+  return (
+    <span style={{ display: 'inline-flex', gap: 4 }}>
+      {kinds.map(k => {
+        const active = k === cur;
+        const label = k === 'all' ? 'All' : kindLabel(k as ProfileFrameKind);
+        return (
+          <button key={k}
+            onClick={() => onChange(active && k !== 'all' ? 'all' : k)}
+            className={active ? '' : 'sec'}
+            style={{
+              fontSize: 10, padding: '2px 8px', borderRadius: 3,
+              border: '1px solid var(--border)',
+              background: active ? 'var(--accent2)' : 'transparent',
+              color: active ? 'white' : 'var(--text2)',
+              cursor: 'pointer', fontWeight: 600,
+            }}>
+            {label}
+          </button>
+        );
+      })}
+    </span>
   );
 }
 

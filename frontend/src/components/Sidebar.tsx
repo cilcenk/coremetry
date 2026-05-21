@@ -92,6 +92,7 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'navGroup.system',
     items: [
       { href: '/admin/stats',       label: 'nav.system',      icon: '◐' },
+      { href: '/admin/clickhouse',  label: 'nav.clickhouse',  icon: '◉', adminOnly: true },
       { href: '/admin/cardinality', label: 'nav.cardinality', icon: '◐', adminOnly: true },
       { href: '/admin/cluster',     label: 'nav.cluster',     icon: '⌘', adminOnly: true },
       { href: '/ai',                label: 'nav.ai',          icon: '✦', adminOnly: true },

@@ -55,6 +55,7 @@ const AdminCardinality  = lazy(() => import('./pages/AdminCardinality'));
 const AdminCatalog      = lazy(() => import('./pages/AdminCatalog'));
 const AdminSql          = lazy(() => import('./pages/AdminSql'));
 const AdminStats        = lazy(() => import('./pages/AdminStats'));
+const AdminClickhouse   = lazy(() => import('./pages/AdminClickhouse'));
 const AdminStatusPage   = lazy(() => import('./pages/AdminStatusPage'));
 const AdminContracts    = lazy(() => import('./pages/AdminContracts'));
 const AdminCluster      = lazy(() => import('./pages/AdminCluster'));
@@ -115,6 +116,7 @@ export default function App() {
             <Route path="/admin/catalog"      element={<AdminCatalog />} />
             <Route path="/admin/sql"          element={<AdminSql />} />
             <Route path="/admin/stats"        element={<AdminStats />} />
+            <Route path="/admin/clickhouse"   element={<AdminClickhouse />} />
             <Route path="/admin/status-page"  element={<AdminStatusPage />} />
             <Route path="/admin/contracts"    element={<AdminContracts />} />
             <Route path="/admin/cluster"      element={<AdminCluster />} />

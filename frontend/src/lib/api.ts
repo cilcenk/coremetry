@@ -1278,6 +1278,16 @@ export const api = {
     }),
   listAvailablePages: () =>
     request<{ pages: AvailablePage[] }>(`/api/admin/pages`),
+  // v0.5.329 — ClickHouse self-stats: slow queries, in-flight
+  // merges, part hotspots, replication lag. Powers /admin/clickhouse.
+  clickhouseHealth: () =>
+    get<{
+      slowQueries: Array<{ query: string; elapsedMs: number; memoryMb: number; readRows: number; resultRows: number; eventTimeNs: number; user: string }> | null;
+      merges:      Array<{ database: string; table: string; elapsedSec: number; progressPct: number; rowsRead: number; mergedSizeBytes: number }> | null;
+      partHotspots: Array<{ database: string; table: string; parts: number; rowsTotal: number; bytesTotal: number }> | null;
+      replicationLag?: Array<{ database: string; table: string; queueSize: number; absoluteDelaySec: number }> | null;
+      generatedAt: number;
+    }>(`/api/admin/clickhouse`),
   // Cluster membership — v0.5.253. Lists every replica that
   // wrote a heartbeat in the last 30s. Single-instance mode
   // returns one member; HA returns N. Cheap (single SCAN +

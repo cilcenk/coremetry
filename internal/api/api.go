@@ -209,6 +209,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services", s.getServices)
 	mux.HandleFunc("GET /api/clusters", s.getClusters)
 	mux.HandleFunc("GET /api/admin/system-stats", s.getSystemStats)
+	// v0.5.328 — ClickHouse self-stats: slow queries, in-flight
+	// merges, part-count hotspots, replication queue lag. Admin
+	// only — same gate the rest of /admin/* uses.
+	mux.HandleFunc("GET /api/admin/clickhouse", auth.RequireRole(auth.RoleAdmin, s.getClickHouseHealth))
 	mux.HandleFunc("GET /api/correlations",       s.getCorrelations)
 	mux.HandleFunc("GET /api/admin/redis-stats",  s.getRedisStats)
 	mux.HandleFunc("GET /api/admin/cache-stats",  auth.RequireRole(auth.RoleAdmin, s.getCacheStats))

@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"context"
+	"log"
 	"time"
 )
 
@@ -73,6 +74,14 @@ type IngestRates struct {
 func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 	out := &SystemStats{}
 
+	// v0.5.319 — Operator-reported: prod returned "Failed to
+	// load system stats" because ANY query failure here
+	// propagated to the handler. Each panel now soft-fails: if
+	// its CH query errors / times out, the field stays zero or
+	// the slice empty, but the page renders. Operator sees the
+	// panels that succeeded + a 0 where CH couldn't finish in
+	// the budget, instead of a blanket error card.
+
 	// ── Storage (system.parts is metadata-only, instant) ────────
 	rows, err := s.conn.Query(ctx, `
 		SELECT
@@ -89,22 +98,23 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 		  AND active = 1
 		  AND table NOT LIKE '.inner%'
 		GROUP BY table
-		ORDER BY bytes_on_disk DESC`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var t TableStat
-		if err := rows.Scan(&t.Table, &t.Rows, &t.BytesOnDisk,
-			&t.CompressedBytes, &t.UncompressedBytes, &t.Parts,
-			&t.OldestNs, &t.NewestNs); err != nil {
-			rows.Close()
-			return nil, err
+		ORDER BY bytes_on_disk DESC
+		SETTINGS max_execution_time = 8`)
+	if err == nil {
+		for rows.Next() {
+			var t TableStat
+			if err := rows.Scan(&t.Table, &t.Rows, &t.BytesOnDisk,
+				&t.CompressedBytes, &t.UncompressedBytes, &t.Parts,
+				&t.OldestNs, &t.NewestNs); err != nil {
+				break
+			}
+			out.Tables = append(out.Tables, t)
+			out.Snapshot.TotalDiskBytes += t.BytesOnDisk
 		}
-		out.Tables = append(out.Tables, t)
-		out.Snapshot.TotalDiskBytes += t.BytesOnDisk
+		rows.Close()
+	} else {
+		log.Printf("[sysstats] storage query: %v — surfacing dashboard with empty Tables", err)
 	}
-	rows.Close()
 
 	// ── Span / error counts via the 5m aggregate MV ─────────────
 	// countMerge over AggregateFunction state is cheap; partition
@@ -114,12 +124,14 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 		SELECT countMerge(span_count_state),
 		       countMerge(error_count_state)
 		FROM service_summary_5m
-		WHERE time_bucket >= now() - toIntervalDay(1)`).
+		WHERE time_bucket >= now() - toIntervalDay(1)
+		SETTINGS max_execution_time = 5`).
 		Scan(&out.Snapshot.Spans24h, &out.Snapshot.Errors24h)
 	_ = s.conn.QueryRow(ctx, `
 		SELECT countMerge(span_count_state)
 		FROM service_summary_5m
-		WHERE time_bucket >= now() - toIntervalDay(7)`).
+		WHERE time_bucket >= now() - toIntervalDay(7)
+		SETTINGS max_execution_time = 5`).
 		Scan(&out.Snapshot.Spans7d)
 
 	// All-time spans is the table-level row count from system.parts
@@ -137,15 +149,29 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 		}
 	}
 
-	// 24h volumes for logs / metrics / profiles via cheap counts.
+	// v0.5.319 — Operator-reported: System page "What's inside"
+	// loaded glacially at production scale. Root cause: every
+	// QueryRow below was unbounded (no max_execution_time) and
+	// they ran SEQUENTIALLY in this function. A naked count() on
+	// a billion-row logs / metric_points table at peak ingest
+	// pegged the handler waiting for each one. Bounded + softer
+	// fallback below: ignore the count error so the dashboard
+	// renders with zero for that field rather than hanging.
+	//
+	// 8s ceiling per query — generous enough that idle clusters
+	// finish naturally, tight enough that the System page never
+	// blocks a tab for >>8s on any single signal.
 	_ = s.conn.QueryRow(ctx,
-		`SELECT count() FROM logs WHERE time >= now() - toIntervalDay(1)`).
+		`SELECT count() FROM logs WHERE time >= now() - toIntervalDay(1)
+		 SETTINGS max_execution_time = 8`).
 		Scan(&out.Snapshot.Logs24h)
 	_ = s.conn.QueryRow(ctx,
-		`SELECT count() FROM metric_points WHERE time >= now() - toIntervalDay(1)`).
+		`SELECT count() FROM metric_points WHERE time >= now() - toIntervalDay(1)
+		 SETTINGS max_execution_time = 8`).
 		Scan(&out.Snapshot.Metrics24h)
 	_ = s.conn.QueryRow(ctx,
-		`SELECT count() FROM profiles WHERE start_time >= now() - toIntervalDay(1)`).
+		`SELECT count() FROM profiles WHERE start_time >= now() - toIntervalDay(1)
+		 SETTINGS max_execution_time = 8`).
 		Scan(&out.Snapshot.Profiles24h)
 
 	// Distinct services / operations over the last 24h. uniq is HLL
@@ -153,17 +179,23 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 	_ = s.conn.QueryRow(ctx, `
 		SELECT uniq(service_name)
 		FROM service_summary_5m
-		WHERE time_bucket >= now() - toIntervalDay(1)`).
+		WHERE time_bucket >= now() - toIntervalDay(1)
+		SETTINGS max_execution_time = 8`).
 		Scan(&out.Snapshot.Services24h)
 	_ = s.conn.QueryRow(ctx, `
 		SELECT uniq(name)
 		FROM spans
-		WHERE time >= now() - toIntervalDay(1)`).
+		WHERE time >= now() - toIntervalDay(1)
+		SETTINGS max_execution_time = 8`).
 		Scan(&out.Snapshot.Operations24h)
 
 	// ── 30-day history (per-day spans / errors / traces / services) ──
 	// LEFT JOIN trace_summary_1d so days without distinct-trace
 	// data (MV not populated yet) still appear with traces=0.
+	// v0.5.319 — bounded + soft-fail. Heaviest query in this
+	// function; if it can't finish, the dashboard renders
+	// without the history strip rather than failing the whole
+	// page.
 	histRows, err := s.conn.Query(ctx, `
 		WITH spans_daily AS (
 		  SELECT
@@ -184,32 +216,44 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 		SELECT s.day, s.spans, s.errors, ifNull(t.traces, 0), s.services
 		FROM spans_daily s
 		LEFT JOIN traces_daily t ON s.day = t.day
-		ORDER BY s.day`)
-	if err != nil {
-		return out, err
-	}
-	for histRows.Next() {
-		var d DayStat
-		var t time.Time
-		if err := histRows.Scan(&t, &d.Spans, &d.Errors, &d.Traces, &d.Services); err != nil {
-			histRows.Close()
-			return nil, err
+		ORDER BY s.day
+		SETTINGS max_execution_time = 12`)
+	if err == nil {
+		for histRows.Next() {
+			var d DayStat
+			var t time.Time
+			if err := histRows.Scan(&t, &d.Spans, &d.Errors, &d.Traces, &d.Services); err != nil {
+				break
+			}
+			d.Day = t.Format("2006-01-02")
+			out.History = append(out.History, d)
 		}
-		d.Day = t.Format("2006-01-02")
-		out.History = append(out.History, d)
+		histRows.Close()
+	} else {
+		log.Printf("[sysstats] 30-day history query: %v — dashboard renders without history strip", err)
 	}
-	histRows.Close()
 
 	// ── Live ingest rates (last 5 min, items / sec) ─────────────
+	// v0.5.319 — same 5s bound + soft-fail as the 24h panels.
 	_ = s.conn.QueryRow(ctx,
-		`SELECT count() / 300.0 FROM spans WHERE time >= now() - toIntervalMinute(5)`).
+		`SELECT count() / 300.0 FROM spans WHERE time >= now() - toIntervalMinute(5)
+		 SETTINGS max_execution_time = 5`).
 		Scan(&out.Ingest.SpansPerSec)
 	_ = s.conn.QueryRow(ctx,
-		`SELECT count() / 300.0 FROM logs WHERE time >= now() - toIntervalMinute(5)`).
+		`SELECT count() / 300.0 FROM logs WHERE time >= now() - toIntervalMinute(5)
+		 SETTINGS max_execution_time = 5`).
 		Scan(&out.Ingest.LogsPerSec)
 	_ = s.conn.QueryRow(ctx,
-		`SELECT count() / 300.0 FROM metric_points WHERE time >= now() - toIntervalMinute(5)`).
+		`SELECT count() / 300.0 FROM metric_points WHERE time >= now() - toIntervalMinute(5)
+		 SETTINGS max_execution_time = 5`).
 		Scan(&out.Ingest.MetricsPerSec)
 
+	// v0.5.319 — always return (out, nil). Any partial-result
+	// scenario (a single query timing out at scale) leaves its
+	// field at zero. The dashboard renders; the operator sees
+	// the panels that succeeded. The previous "return out, err"
+	// path emitted 500 on the slightest CH hiccup and the
+	// frontend rendered the bare "Failed to load system stats"
+	// Empty card — far less useful than partial data.
 	return out, nil
 }

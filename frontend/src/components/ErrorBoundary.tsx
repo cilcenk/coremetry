@@ -31,6 +31,35 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // v0.5.328 — Operator-reported (prod): "failed to fetch
+    // dynamically imported module" landed users on the generic
+    // error screen after a deploy. The tab's index.html still
+    // references the OLD chunk hashes; CI just pushed NEW
+    // chunks. Vite's hashed filenames + immutable cache mean
+    // the old chunk URL 404s.
+    //
+    // Detect that specific signature and reload the page once.
+    // window.location.reload() pulls fresh index.html with the
+    // new chunk filenames. Guard with sessionStorage so a real
+    // bug that mimics the message doesn't trap the user in a
+    // reload loop.
+    const msg = error?.message || '';
+    const isChunkLoadError =
+      /Failed to fetch dynamically imported module/i.test(msg) ||
+      /Loading chunk \d+ failed/i.test(msg) ||
+      /Importing a module script failed/i.test(msg);
+    if (isChunkLoadError) {
+      const FLAG = 'coremetry_chunk_reload_attempt';
+      if (sessionStorage.getItem(FLAG) !== '1') {
+        sessionStorage.setItem(FLAG, '1');
+        // eslint-disable-next-line no-console
+        console.warn('[ErrorBoundary] stale chunk after deploy — reloading');
+        window.location.reload();
+        return;
+      }
+      // Already tried once this session; fall through to the
+      // visible error screen rather than loop.
+    }
     // Console is the floor. A future ship can wire this to
     // POST /api/errors so the SaaS deploy collects breakage
     // signals in production without operators copy-pasting

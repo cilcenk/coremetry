@@ -207,6 +207,8 @@ func main() {
 	if err := sampler.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[sampling] load persisted: %v", err)
 	}
+	// v0.5.324 — cross-pod settings sync (see ldap/copilot/tempo/pipeline below).
+	go sampler.StartConfigRefresh(ctx, store, 30*time.Second)
 	ing.SetSampler(sampler)
 
 	// Ingest-time pipeline (v0.5.263) — operator-defined drop /
@@ -219,6 +221,7 @@ func main() {
 	if err := pipelineEng.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[pipeline] load persisted: %v", err)
 	}
+	go pipelineEng.StartConfigRefresh(ctx, store, 30*time.Second)
 	pipelineEng.LogStats()
 	ing.SetPipeline(pipelineEng)
 	{
@@ -456,6 +459,7 @@ func main() {
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
+	go copilotSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if copilotSvc.Configured() {
 		p, m, b, _ := copilotSvc.Snapshot()
 		if b != "" {
@@ -475,6 +479,7 @@ func main() {
 	if err := ldapSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[ldap] load persisted config: %v", err)
 	}
+	go ldapSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if ldapSvc.Enabled() {
 		c := ldapSvc.Snapshot()
 		log.Printf("[ldap] enterprise auth enabled (host=%s:%d tls=%v startTLS=%v baseDN=%s)",
@@ -491,6 +496,7 @@ func main() {
 	if err := tempoSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[tempo] load persisted config: %v", err)
 	}
+	go tempoSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if tempoSvc.Configured() {
 		t := tempoSvc.Snapshot()
 		log.Printf("[tempo] external backend enabled (baseUrl=%s authType=%s orgId=%s)",

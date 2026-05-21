@@ -262,6 +262,32 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	return nil
 }
 
+// StartConfigRefresh — v0.5.324. Background goroutine that
+// re-reads the persisted LDAP config from the shared store
+// every `interval`. Closes the multi-pod gap where one pod
+// wrote new settings but other pods kept serving stale
+// in-memory cfg until restart. interval ≤ 0 → 30s.
+func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, interval time.Duration) {
+	if s == nil || store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.LoadPersisted(ctx, store); err != nil {
+				log.Printf("[ldap] config refresh: %v", err)
+			}
+		}
+	}
+}
+
 func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, c Config) error {
 	c.Normalize()
 	// Preserve existing bind password when caller submits empty.

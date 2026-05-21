@@ -35,6 +35,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/config"
@@ -212,6 +213,30 @@ func (s *Sampler) LoadPersisted(ctx context.Context, store *chstore.Store) error
 	log.Printf("[sampling] loaded persisted config (default=%.2f, %d service overrides)",
 		cfg.Default, len(cfg.Services))
 	return nil
+}
+
+// StartConfigRefresh — v0.5.324. Background poll keeps the
+// sampler in sync with the shared persisted config across pods.
+// interval ≤ 0 → 30s.
+func (s *Sampler) StartConfigRefresh(ctx context.Context, store *chstore.Store, interval time.Duration) {
+	if s == nil || store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.LoadPersisted(ctx, store); err != nil {
+				log.Printf("[sampling] config refresh: %v", err)
+			}
+		}
+	}
 }
 
 // SavePersisted serialises cfg to system_settings + hot-reloads

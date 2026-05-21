@@ -30,6 +30,7 @@ import (
 	"math/rand/v2"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -144,6 +145,30 @@ func (e *Engine) LoadPersisted(ctx context.Context, st store) error {
 	e.rules = normalise(rules)
 	e.mu.Unlock()
 	return nil
+}
+
+// StartConfigRefresh — v0.5.324. Background poll keeps the
+// pipeline rules in sync with the shared persisted blob across
+// pods. interval ≤ 0 → 30s.
+func (e *Engine) StartConfigRefresh(ctx context.Context, st store, interval time.Duration) {
+	if e == nil || st == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := e.LoadPersisted(ctx, st); err != nil {
+				log.Printf("[pipeline] config refresh: %v", err)
+			}
+		}
+	}
 }
 
 // Rules returns a snapshot copy of the current rule set, sorted

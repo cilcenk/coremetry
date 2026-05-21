@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -110,6 +111,30 @@ func (s *Service) LoadPersisted(ctx context.Context, store settingsStore) error 
 	}
 	s.Configure(cfg)
 	return nil
+}
+
+// StartConfigRefresh — v0.5.324. Background poll that keeps
+// the in-memory Tempo config in sync with the shared persisted
+// blob in a multi-pod cluster. interval ≤ 0 → 30s.
+func (s *Service) StartConfigRefresh(ctx context.Context, store settingsStore, interval time.Duration) {
+	if s == nil || store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.LoadPersisted(ctx, store); err != nil {
+				log.Printf("[tempo] config refresh: %v", err)
+			}
+		}
+	}
 }
 
 // SavePersisted writes the typed config to system_settings. The

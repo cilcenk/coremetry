@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -593,6 +594,30 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	}
 	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL)
 	return nil
+}
+
+// StartConfigRefresh — v0.5.324. Background poll: keeps the
+// in-memory Copilot config in sync with the shared persisted
+// blob across pods. interval ≤ 0 → 30s.
+func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, interval time.Duration) {
+	if s == nil || store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.LoadPersisted(ctx, store); err != nil {
+				log.Printf("[copilot] config refresh: %v", err)
+			}
+		}
+	}
 }
 
 // SavePersisted writes new credentials to system_settings AND updates

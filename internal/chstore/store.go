@@ -1111,15 +1111,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		// The COALESCE for "unknown" mirrors the raw query so the
 		// MV's instance column is comparable to the raw output —
 		// keeps the read path's SQL near-identical.
+		// v0.5.327 — db.name dimension added so one DB host
+		// serving multiple databases (Oracle SIDs, PostgreSQL /
+		// MongoDB / MSSQL databases) doesn't collapse into a
+		// single row. Replaces the raw-spans GROUP BY path
+		// v0.5.315 used as a stopgap. The MV expression
+		// coalesces missing db.name to 'default' so spans
+		// without the attr still surface.
 		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_summary_5m
 		 ENGINE = AggregatingMergeTree
 		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (db_system, instance, time_bucket)
+		 ORDER BY (db_system, instance, db_name, time_bucket)
 		 TTL toDate(time_bucket) + INTERVAL 90 DAY
 		 SETTINGS index_granularity = 8192
 		 AS SELECT
 		   db_system,
-		   coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
+		   coalesce(nullIf(peer_service, ''), 'unknown')                          AS instance,
+		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
 		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
 		   countState()                                  AS span_count_state,
 		   countIfState(status_code = 'error')           AS error_count_state,
@@ -1127,7 +1135,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   quantilesState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
 		 FROM spans
 		 WHERE db_system != ''
-		 GROUP BY db_system, instance, time_bucket`,
+		 GROUP BY db_system, instance, db_name, time_bucket`,
 
 		// db_caller_summary_5m: per-(db_system, peer_service,
 		// service_name, host_name, 5-min) — drives the row-click
@@ -1135,15 +1143,21 @@ func (s *Store) migrate(ctx context.Context) error {
 		// resource.host.name = k8s pod name in containerised
 		// deployments, which is the resolution the drawer's
 		// per-pod breakdown wants.
+		//
+		// v0.5.327 — db.name dim added here too so the per-DB
+		// caller list is precise. Frontend drawer can render
+		// "service X calls postgresql/host-A/billing" vs
+		// "service X calls postgresql/host-A/orders" separately.
 		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_caller_summary_5m
 		 ENGINE = AggregatingMergeTree
 		 PARTITION BY toDate(time_bucket)
-		 ORDER BY (db_system, instance, service_name, host_name, time_bucket)
+		 ORDER BY (db_system, instance, db_name, service_name, host_name, time_bucket)
 		 TTL toDate(time_bucket) + INTERVAL 90 DAY
 		 SETTINGS index_granularity = 8192
 		 AS SELECT
 		   db_system,
-		   coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
+		   coalesce(nullIf(peer_service, ''), 'unknown')                          AS instance,
+		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
 		   service_name,
 		   coalesce(nullIf(host_name, ''), '(unknown)')  AS host_name,
 		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
@@ -1153,7 +1167,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   quantilesState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
 		 FROM spans
 		 WHERE db_system != ''
-		 GROUP BY db_system, instance, service_name, host_name, time_bucket`,
+		 GROUP BY db_system, instance, db_name, service_name, host_name, time_bucket`,
 
 		// messaging_summary_5m: structural parallel for /api/messaging.
 		// Cluster + destination are derived expressions in the source
@@ -1334,6 +1348,42 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("recreate MV with apdex: %w", err)
 		}
 	}
+
+	// v0.5.327 — db_summary_5m + db_caller_summary_5m gained a
+	// db_name dimension so one host serving multiple databases
+	// surfaces as distinct rows. Detect via system.columns: if
+	// the older two-key schema is in place (no db_name column),
+	// drop both MVs and re-create from the updated mvs[3]/mvs[4]
+	// definitions. Past 5-min buckets are dropped but only
+	// recent windows are operator-visible so the cost is hidden
+	// behind the next merge cycle (~5 min).
+	dbMigrations := []struct{ table string; mvIdx int }{
+		{"db_summary_5m", 3},
+		{"db_caller_summary_5m", 4},
+	}
+	for _, mig := range dbMigrations {
+		var hasDBName uint8
+		probe := fmt.Sprintf(`
+			SELECT count() > 0
+			FROM system.columns
+			WHERE database = currentDatabase()
+			  AND table    = '%s'
+			  AND name     = 'db_name'`, mig.table)
+		if err := s.conn.QueryRow(ctx, probe).Scan(&hasDBName); err == nil && hasDBName == 0 {
+			log.Printf("[chstore] upgrading %s MV (adding db_name dim) — past 5-min buckets will be dropped", mig.table)
+			dropTarget := mig.table
+			if s.clusterMode() {
+				dropTarget = mig.table + "_local"
+			}
+			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()); err != nil {
+				return fmt.Errorf("drop old %s for upgrade: %w", mig.table, err)
+			}
+			if err := s.execDDL(ctx, mvs[mig.mvIdx]); err != nil {
+				return fmt.Errorf("recreate %s with db_name: %w", mig.table, err)
+			}
+		}
+	}
+
 	log.Println("[chstore] migrations complete")
 	return nil
 }

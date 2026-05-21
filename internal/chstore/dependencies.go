@@ -463,40 +463,29 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	if to.IsZero() {
 		to = time.Now()
 	}
-	// v0.5.315 — Operator-reported (tech-lead brief): one DB
-	// host can serve multiple DBs (Oracle SIDs / service names,
-	// PostgreSQL databases, MongoDB databases, MSSQL databases).
-	// Previous MV path keyed on (db_system, instance=peer_service)
-	// only, collapsing every database on the same host into one
-	// row. The fix: split by `db.name` too.
-	//
-	// Trade-off: db_summary_5m's GROUP BY doesn't carry db_name,
-	// so we read from raw `spans` here. Bounded by db_system != ''
-	// (partitions pruned by the idx_db_system skip-index from
-	// store.go), time bound + LIMIT + max_execution_time. At
-	// billion-spans/day a 1h window of DB calls is typically
-	// ~5-10M rows — well within the 30s ceiling. If this becomes
-	// a hotspot we'll add a db_summary_v2 MV keyed on
-	// (db_system, instance, db_name) and switch back.
-	//
-	// db.name resolution: span attribute (not resource). Falls
-	// back to the legacy "default" sentinel when missing so a
-	// host that emits no db.name still surfaces (rather than
-	// silently disappearing).
+	// v0.5.327 — back on the MV path. db_summary_5m now carries
+	// the db_name dim (added by the migration in store.go's
+	// runMigrations), so the per-(host, database) split lives in
+	// the pre-aggregate. Drops the cost of the v0.5.315 raw-spans
+	// stopgap from ~5-10M-row GROUP BY to ~thousands of rows of
+	// merged state — typically sub-100ms vs the prior 1-5s on
+	// wider windows.
+	bucketStart := from.Truncate(5 * time.Minute)
 	rows, err := s.conn.Query(ctx, `
 		SELECT db_system,
-		       coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
-		       coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
-		       count()                                       AS span_count,
-		       countIf(status_code = 'error')                AS error_count,
-		       avg(duration) / 1e6                           AS avg_ms,
-		       quantile(0.99)(duration) / 1e6                AS p99_ms
-		FROM spans
-		WHERE db_system != '' AND time >= ? AND time <= ?
+		       instance,
+		       db_name,
+		       countMerge(span_count_state)                                          AS span_count,
+		       countMerge(error_count_state)                                         AS error_count,
+		       sumMerge(duration_sum_state) / 1e6
+		         / nullIf(countMerge(span_count_state), 0)                           AS avg_ms,
+		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM db_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY db_system, instance, db_name
 		ORDER BY span_count DESC
 		LIMIT 5000
-		SETTINGS max_execution_time = 30`, from, to)
+		SETTINGS max_execution_time = 15`, bucketStart, to)
 	if err != nil {
 		return nil, err
 	}
@@ -532,65 +521,50 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		return out, nil
 	}
 
-	// Top callers per (system, instance) — single GROUP BY pass
-	// across the same window. Ordered by per-key span count then
-	// trimmed in Go to top-5 so a 100-caller DB doesn't blow up
-	// the response. Could be done with topK aggregate but the
-	// readability tradeoff isn't worth it at this row count.
-	// MV-backed callers query — db_caller_summary_5m has the
-	// per-(system, instance, service_name) rollup pre-computed.
-	// LIMIT 1000 still applies as the wire-byte cap.
+	// v0.5.327 — caller pass is precise per-db now that the MV
+	// carries db_name. Maps directly to the (system, instance,
+	// db_name) row identity used above; no more prefix-spread
+	// approximation. db_caller_summary_5m's GROUP BY produces
+	// distinct rollups keyed on the same triple plus the calling
+	// service / host.
 	cRows, err := s.conn.Query(ctx, `
 		SELECT db_system,
 		       instance,
+		       db_name,
 		       service_name,
 		       countMerge(span_count_state) AS c
 		FROM db_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
-		GROUP BY db_system, instance, service_name
-		ORDER BY db_system, instance, c DESC
-		LIMIT 1000
-		SETTINGS max_execution_time = 8`, from, to)
+		GROUP BY db_system, instance, db_name, service_name
+		ORDER BY db_system, instance, db_name, c DESC
+		LIMIT 2000
+		SETTINGS max_execution_time = 8`, bucketStart, to)
 	if err != nil {
 		return out, nil // partial result is fine — callers are optional
 	}
 	defer cRows.Close()
-	// v0.5.315 — db_caller_summary_5m MV doesn't yet carry
-	// db_name. Until that migration lands, attribute each (system,
-	// instance) caller list to EVERY row sharing that prefix.
-	// Slightly imprecise (callers of any DB on that host appear
-	// on all DBs on it) but operationally useful and avoids the
-	// full MV rewrite. Per-DB precision lives in the DB detail
-	// drawer which queries raw spans anyway.
-	prefixIdx := map[struct{ system, instance string }][]int{}
-	for k, i := range idxByKey {
-		p := struct{ system, instance string }{k.system, k.instance}
-		prefixIdx[p] = append(prefixIdx[p], i)
-	}
 	for cRows.Next() {
-		var system, instance, svc string
+		var system, instance, dbName, svc string
 		var c uint64
-		if err := cRows.Scan(&system, &instance, &svc, &c); err != nil {
+		if err := cRows.Scan(&system, &instance, &dbName, &svc, &c); err != nil {
 			continue
 		}
-		idxs, ok := prefixIdx[struct{ system, instance string }{system, instance}]
+		i, ok := idxByKey[key{system, instance, dbName}]
 		if !ok {
 			continue
 		}
-		for _, i := range idxs {
-			if len(out[i].Callers) >= 5 || svc == "" {
-				continue
+		if len(out[i].Callers) >= 5 || svc == "" {
+			continue
+		}
+		dup := false
+		for _, x := range out[i].Callers {
+			if x == svc {
+				dup = true
+				break
 			}
-			dup := false
-			for _, x := range out[i].Callers {
-				if x == svc {
-					dup = true
-					break
-				}
-			}
-			if !dup {
-				out[i].Callers = append(out[i].Callers, svc)
-			}
+		}
+		if !dup {
+			out[i].Callers = append(out[i].Callers, svc)
 		}
 	}
 

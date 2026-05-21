@@ -340,6 +340,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)
 	mux.HandleFunc("GET /api/profiles/by-span", s.profilesForSpan)
+	mux.HandleFunc("GET /api/profiles/by-span/hotspots", s.profileHotspotsForSpan)
 	mux.HandleFunc("GET /api/profiles/hotspots", s.profileHotspots)
 	mux.HandleFunc("GET /api/profiles/{id}", s.getProfile)
 	mux.HandleFunc("GET    /api/exceptions",               s.listExceptions)
@@ -3397,6 +3398,63 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 			"latest":       latest.UnixNano(),
 			"hotspots":     hotspots,
 			"breakdown":    breakdown,
+		}, nil
+	})
+}
+
+// profileHotspotsForSpan returns the aggregated method
+// hotspots + leaf-time breakdown across every profile that
+// overlapped a span's window. Lets the trace-detail panel show
+// "where did this span's time actually go" without forcing the
+// operator to open one of the linked profiles. Cached 30s
+// keyed on (service, start, end) — span windows are immutable.
+func (s *Server) profileHotspotsForSpan(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	startNs, _ := strconv.ParseInt(q.Get("start"), 10, 64)
+	endNs, _ := strconv.ParseInt(q.Get("end"), 10, 64)
+	service := q.Get("service")
+	top := parseInt(q.Get("top"), 10)
+	if service == "" || startNs == 0 || endNs == 0 {
+		http.Error(w, "service, start, end query params required", http.StatusBadRequest)
+		return
+	}
+	key := fmt.Sprintf("profile-hotspots-byspan:%s:%d:%d:%d", service, startNs, endNs, top)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		matches, err := s.store.FindProfilesForSpan(r.Context(), service,
+			time.Unix(0, startNs), time.Unix(0, endNs))
+		if err != nil {
+			return nil, err
+		}
+		merged := &chstore.FlameNode{Name: "root"}
+		parsed, failed := 0, 0
+		for _, row := range matches {
+			data, _, gerr := s.store.GetProfileBytes(r.Context(), row.ProfileID)
+			if gerr != nil {
+				failed++
+				continue
+			}
+			flame, perr := profileconv.BuildFlameAuto(data)
+			if perr != nil || flame == nil {
+				failed++
+				continue
+			}
+			profileconv.MergeFlame(merged, flame)
+			parsed++
+		}
+		hotspots := profileconv.FlameToHotspots(merged)
+		sort.Slice(hotspots, func(i, j int) bool {
+			return hotspots[i].Self > hotspots[j].Self
+		})
+		if len(hotspots) > top {
+			hotspots = hotspots[:top]
+		}
+		breakdown := profileconv.FlameCategoryBreakdown(merged)
+		return map[string]any{
+			"profilesUsed":   parsed,
+			"profilesFailed": failed,
+			"totalSamples":   merged.Value,
+			"hotspots":       hotspots,
+			"breakdown":      breakdown,
 		}, nil
 	})
 }

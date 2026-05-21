@@ -1,7 +1,7 @@
 import type {
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
   LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
-  ProfileRow, ProfileDetail, ProfileHotspotsResponse, AggregateRow, SpanMetricSeries,
+  ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries,
   AlertRule, Problem, ServiceEdgeStats, Exception,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -994,6 +994,8 @@ export const api = {
   profile:         (id: string)             => get<ProfileDetail>(`/api/profiles/${id}`),
   profilesForSpan: (service: string, startNs: number, endNs: number) =>
     get<ProfileRow[] | null>(`/api/profiles/by-span?service=${encodeURIComponent(service)}&start=${startNs}&end=${endNs}`),
+  spanHotspots: (service: string, startNs: number, endNs: number, top = 10) =>
+    get<SpanHotspotsResponse>(`/api/profiles/by-span/hotspots?service=${encodeURIComponent(service)}&start=${startNs}&end=${endNs}&top=${top}`),
   profileHotspots: (params: { service: string; type?: string; from: number; to: number; limit?: number; top?: number }) =>
     get<ProfileHotspotsResponse>(`/api/profiles/hotspots?${qs(params)}`),
 

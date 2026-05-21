@@ -1358,6 +1358,17 @@ export interface ProfileHotspotsResponse {
   hotspots: ProfileHotspotRow[];
   breakdown: ProfileCategoryBreakdown;
 }
+
+// Span-window-scoped hotspots — what the trace-detail panel
+// asks for when an operator selects a span. Same row shape,
+// smaller cap (top 10) since it lives in the side panel.
+export interface SpanHotspotsResponse {
+  profilesUsed: number;
+  profilesFailed: number;
+  totalSamples: number;
+  hotspots: ProfileHotspotRow[];
+  breakdown: ProfileCategoryBreakdown;
+}
 export type SortOrder = 'asc' | 'desc';
 
 // One node in the multi-trace path-aggregated structure tree

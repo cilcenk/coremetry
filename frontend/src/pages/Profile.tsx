@@ -28,7 +28,7 @@ function ProfileDetailInner() {
   const id = searchParams.get('id') ?? '';
   const baselineId = searchParams.get('baseline') ?? '';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [data, setData] = useState<ProfileDetail | null | undefined>(undefined);
   const [baseData, setBaseData] = useState<ProfileDetail | null | undefined>(undefined);
   // Picker state — datalist of recent profiles for the same

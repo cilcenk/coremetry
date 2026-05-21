@@ -29,7 +29,7 @@ const NATURAL_DIR: Record<SortKey, SortDir> = {
 
 export default function ServicesPage() {
   const navigate = useNavigate();
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [data, setData] = useState<Service[] | null | undefined>(undefined);
   const [sparklines, setSparklines] = useState<Record<string, SparklineBucket[]>>({});
   // Batch runtime fetch — one query for every service in the

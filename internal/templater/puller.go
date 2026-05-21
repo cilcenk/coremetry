@@ -105,9 +105,20 @@ func (p *Puller) tick(ctx context.Context) {
 		return
 	}
 
+	skipped := 0
 	for _, r := range page.Logs {
 		body := r.Body
 		if body == "" {
+			continue
+		}
+		// Operator preference (v0.5.336): bearer / JWT / api-key
+		// carrying lines pollute the templates view — every
+		// request has a unique token, so they either fragment
+		// into singleton templates or collapse under aggressive
+		// masking. Drop them at the source; the raw log search
+		// still surfaces them.
+		if IsSensitiveLine(body) {
+			skipped++
 			continue
 		}
 		p.drain.Add(body, r.ServiceName, r.Timestamp)
@@ -131,8 +142,8 @@ func (p *Puller) tick(ctx context.Context) {
 		}
 		saved++
 	}
-	log.Printf("[templater] tick: sampled=%d clusters=%d saved=%d",
-		len(page.Logs), len(clusters), saved)
+	log.Printf("[templater] tick: sampled=%d skipped_sensitive=%d clusters=%d saved=%d",
+		len(page.Logs), skipped, len(clusters), saved)
 
 	// Drop in-memory tree so the next tick processes the next
 	// window cold. The persistent ledger (log_templates) carries

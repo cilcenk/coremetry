@@ -59,7 +59,7 @@ function buildKQLFromFilter(f: {
 function LogsInner() {
   const [searchParams] = useSearchParams();
 
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState({
     service: '', search: '', severity: 0, traceId: '', spanId: '',

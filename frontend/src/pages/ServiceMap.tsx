@@ -42,7 +42,7 @@ const DIFF_PRESETS: { key: string; label: string }[] = [
 ];
 
 export default function ServiceMapPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [samples, setSamples] = useState(200);
   const [focus, setFocus] = useState<string>('');
   // Picker input has its own state separate from focus so the

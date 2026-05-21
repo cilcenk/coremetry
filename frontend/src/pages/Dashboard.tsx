@@ -27,7 +27,7 @@ function Inner() {
   const id = sp.get('id') ?? '';
   const startInEdit = sp.get('edit') === '1';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [doc, setDoc] = useState<Dashboard | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Dashboard | null>(null);

@@ -38,6 +38,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/profileconv"
+	"github.com/cilcenk/coremetry/internal/templater"
 	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
@@ -2620,6 +2621,20 @@ func (s *Server) getLogsSignificantPatterns(w http.ResponseWriter, r *http.Reque
 		if hits == nil {
 			hits = []logstore.SignificantPattern{}
 		}
+		// v0.5.336 — drop opaque per-request ids from the live
+		// patterns panel. JWT fragments and long base64 session
+		// ids score statistically high (they appear in many
+		// docs that share a request boundary) but tell the
+		// operator nothing readable. Filter once at the API
+		// layer so both ES + CH backends benefit.
+		filtered := hits[:0]
+		for _, h := range hits {
+			if templater.LooksLikeOpaqueID(h.Token) {
+				continue
+			}
+			filtered = append(filtered, h)
+		}
+		hits = filtered
 		return map[string]any{
 			"backend":   s.logs.Backend(),
 			"window":    curWindow.String(),

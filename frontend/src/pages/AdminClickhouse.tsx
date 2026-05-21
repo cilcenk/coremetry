@@ -37,7 +37,7 @@ type CHHealth = {
 };
 
 export default function AdminClickhousePage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [data, setData] = useState<CHHealth | null | undefined>(undefined);
 
   useEffect(() => {

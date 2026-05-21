@@ -30,7 +30,7 @@ function BacktraceInner() {
   const [searchParams] = useSearchParams();
   const svc = searchParams.get('name') ?? '';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [data, setData] = useState<CallerRow[] | null | undefined>(undefined);
   const [filter, setFilter] = useState('');
   const [sort, setSort] = useState<SortKey>('calls');

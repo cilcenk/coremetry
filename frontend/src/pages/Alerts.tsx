@@ -102,7 +102,7 @@ const TEMPLATES: { id: string; label: string; description: string; draft: Partia
 export default function AlertsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [services, setServices] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [draft, setDraft] = useState<Partial<AlertRule>>(emptyDraft);

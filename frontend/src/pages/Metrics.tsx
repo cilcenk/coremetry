@@ -46,7 +46,7 @@ const SUGGESTED_GROUPBY = [
 ];
 
 export default function MetricsPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   // v0.5.198 — `services` eager cache dropped. FilterBuilder
   // server-fetches service.name values via /api/attribute-values?q=
   // when the operator types in the value field; the ServicePicker

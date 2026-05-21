@@ -25,6 +25,20 @@ type maskRule struct {
 }
 
 var maskRules = []maskRule{
+	// Defense-in-depth for auth payloads. The puller filters
+	// IsSensitiveLine bodies out of templating altogether, but
+	// if a sensitive line slipped through (different framing,
+	// embedded JSON, etc.), strip the secret here so the
+	// template doesn't carry it literally.
+	// JWT — three base64url segments, eyJ-headered.
+	{regexp.MustCompile(`eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`), "<*>"},
+	// Bearer <opaque>
+	{regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._\-+/=]{20,}`), "Bearer <*>"},
+	// Authorization: <opaque>
+	{regexp.MustCompile(`(?i)\bauthorization(\s*[:=]\s*)\S{8,}`), "Authorization$1<*>"},
+	// X-API-Key / api_key / apikey = <opaque>
+	{regexp.MustCompile(`(?i)\b(x-api-key|api[-_ ]?key|apikey)(\s*[:=]\s*)[A-Za-z0-9._\-+/=]{12,}`), "$1$2<*>"},
+
 	// Trace IDs / span IDs — 16 or 32 hex chars (OTel canonical).
 	{regexp.MustCompile(`\b[0-9a-fA-F]{32}\b`), "<*>"},
 	{regexp.MustCompile(`\b[0-9a-fA-F]{16}\b`), "<*>"},

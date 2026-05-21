@@ -20,7 +20,7 @@ function TraceDetailInner() {
   const [searchParams] = useSearchParams();
   const id = searchParams.get('id') ?? '';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [spans, setSpans] = useState<SpanRow[] | null | undefined>(undefined);
   // v0.5.208 — "clickhouse" when the trace lives in Coremetry's
   // store, "tempo" when getTrace fell back to the external Tempo

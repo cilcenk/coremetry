@@ -23,7 +23,7 @@ export default function ProfilingPage() {
   // Range stays local — the topbar picker mutates it post-mount
   // and bookmarks aren't time-stable anyway.
   const [params, setParams] = useSearchParams();
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const service = params.get('service') || '';
   const ptype = params.get('type') || '';
   // `view` toggles between the per-profile list (default) and

@@ -21,7 +21,7 @@ import type {
 //   3. Per-table ClickHouse storage with compression ratio.
 export default function AdminStatsPage() {
   // Topbar wants a TimeRange even though this page doesn't use it.
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const qc = useQueryClient();
 
   // Health probe — its own poll cycle (30s) so a slow systemStats

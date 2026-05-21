@@ -68,7 +68,7 @@ interface QueryResult {
 export default function AdminQueryPage() {
   const { user } = useAuth();
   const [query, setQuery] = useState(SAMPLE_QUERIES[1].text);
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

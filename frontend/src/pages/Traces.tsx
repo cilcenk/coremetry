@@ -61,7 +61,7 @@ function TracesPageInner() {
     // point for /traces. Users with longer windows tend to switch
     // explicitly anyway; defaulting to 1h was paying for a wide CH
     // scan most visitors didn't actually need.
-    () => decodeRange(searchParams.get('range'), { preset: '15m' }));
+    () => decodeRange(searchParams.get('range'), { preset: '30m' }));
   // Aggregated is the default landing tab — the most useful view for
   // an SRE arriving at /traces is "what operations are slow / errored
   // right now", not the raw flat list. The list view stays a click

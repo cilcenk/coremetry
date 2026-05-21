@@ -37,7 +37,7 @@ function ServiceDetailInner() {
   const svc = searchParams.get('name') ?? '';
 
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<TimeRange>({ preset: '15m' });
+  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [info, setInfo] = useState<Service | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
@@ -46,7 +46,7 @@ function ServiceDetailInner() {
   // Memoize the absolute window so JSX-level reads (passed as
   // fromNs/toNs props to child fetchers) don't change identity
   // on every render — without this, a relative range like
-  // { preset: '15m' } evaluates a fresh now() each paint and
+  // { preset: '30m' } evaluates a fresh now() each paint and
   // the children's useEffect([fromNs, toNs, …]) deps thrash
   // into an infinite refetch.
   const rangeNs = useMemo(() => timeRangeToNs(range), [range]);

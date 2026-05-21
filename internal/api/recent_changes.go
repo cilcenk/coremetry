@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 )
@@ -46,33 +45,3 @@ func (s *Server) getRecentChanges(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getAllDeploys (v0.5.289) — cross-service deploy listing for
-// the standalone /deploys page. Same effective-version chain
-// GetRecentDeploys uses (Helm labels, image tags, placeholders
-// filtered), just over a longer window. Cached 60s so a 24h
-// reload doesn't re-scan spans on every refresh.
-//
-// Defaults: 24h window, 500-row cap (covers a busy fleet for a
-// day; operator can widen the window via the picker).
-//
-// Performance posture: GetRecentDeploys uses the (service_name,
-// time) primary key with a partition-pruned WHERE. Over 30 days
-// it's the same shape as the banner query, just a wider time
-// bound — under 2s warm against billion-span partitions.
-func (s *Server) getAllDeploys(w http.ResponseWriter, r *http.Request) {
-	since := parseDuration(r.URL.Query().Get("since"), 24*time.Hour)
-	limit := parseInt(r.URL.Query().Get("limit"), 500)
-	if since > 30*24*time.Hour {
-		since = 30 * 24 * time.Hour
-	}
-	if limit > 2000 {
-		limit = 2000
-	}
-	if limit <= 0 {
-		limit = 500
-	}
-	key := fmt.Sprintf("all-deploys:since=%s:limit=%d", since, limit)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		return s.store.GetRecentDeploys(r.Context(), since, limit)
-	})
-}

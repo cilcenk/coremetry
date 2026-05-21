@@ -1303,12 +1303,6 @@ export const api = {
       openProblems: { critical: number; warning: number; info: number };
       recentDeploys: { service: string; version: string; firstSeenNs: number; spanCount: number }[] | null;
     }>(`/api/recent-changes`),
-  // v0.5.289 — cross-service deploy listing for the standalone
-  // /deploys page. Same shape as recentChanges.recentDeploys but
-  // over an arbitrary window (default 24h, server cap 30 days).
-  allDeploys: (sinceHours: number, limit = 500) =>
-    request<{ service: string; version: string; firstSeenNs: number; spanCount: number }[]>(
-      `/api/deploys?since=${sinceHours}h&limit=${limit}`),
   // Pipeline rules — operator-defined drop / enrich applied
   // BEFORE the sampler at OTLP ingest (v0.5.263).
   listPipelineRules: () =>

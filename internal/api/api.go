@@ -7332,6 +7332,18 @@ func (s *Server) putBranding(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// v0.5.325 — Scale-audit gap: every admin mutation writes an
+	// audit row. Branding edits change customer-visible logos +
+	// link/footer copy, so the compliance trail matters.
+	details, _ := json.Marshal(map[string]any{
+		"appName":      b.AppName,
+		"loginTitle":   b.LoginTitle,
+		"footerText":   b.FooterText,
+		"language":     b.Language,
+		"primaryColor": b.PrimaryColor,
+		"logoBytes":    len(b.LogoDataURI),
+	})
+	s.audit(r, "settings.branding.update", "settings", "branding", string(details))
 	writeJSON(w, b)
 }
 

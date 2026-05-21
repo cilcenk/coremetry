@@ -14,8 +14,13 @@ export function useMonitors() {
   return useQuery<MonitorRow[]>({
     queryKey: monitorsListKey,
     queryFn: async () => (await api.listMonitors()) ?? [],
+    // v0.5.325 — Scale-audit polish: aligned staleTime to
+    // refetchInterval so a quick tab re-mount inside the
+    // 30s poll window doesn't trigger a second duplicate
+    // request (was 25_000 → 5s gap, was a double-fetch on
+    // fast Cmd-K nav between tabs).
     refetchInterval: 30_000,
-    staleTime: 25_000,
+    staleTime: 30_000,
   });
 }
 

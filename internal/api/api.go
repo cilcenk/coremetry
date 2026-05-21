@@ -5441,6 +5441,7 @@ func (s *Server) statusPagePutConfig(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpsertStatusPageConfig(r.Context(), c); err != nil {
 		writeErr(w, err); return
 	}
+	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
 }
 func (s *Server) statusPageListComponents(w http.ResponseWriter, r *http.Request) {
@@ -5455,6 +5456,7 @@ func (s *Server) statusPageCreateComponent(w http.ResponseWriter, r *http.Reques
 	}
 	c.ID = ""
 	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil { writeErr(w, err); return }
+	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
 }
 func (s *Server) statusPageUpdateComponent(w http.ResponseWriter, r *http.Request) {
@@ -5465,12 +5467,14 @@ func (s *Server) statusPageUpdateComponent(w http.ResponseWriter, r *http.Reques
 	}
 	c.ID = id
 	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil { writeErr(w, err); return }
+	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
 }
 func (s *Server) statusPageDeleteComponent(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteStatusComponent(r.Context(), r.PathValue("id")); err != nil {
 		writeErr(w, err); return
 	}
+	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
 func (s *Server) statusPageListSubscribers(w http.ResponseWriter, r *http.Request) {
@@ -5492,6 +5496,7 @@ func (s *Server) statusPagePublishIncident(w http.ResponseWriter, r *http.Reques
 	}
 	p.IncidentID = id
 	if err := s.store.SetIncidentPublished(r.Context(), p); err != nil { writeErr(w, err); return }
+	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, p)
 }
 

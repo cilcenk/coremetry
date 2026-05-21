@@ -1270,6 +1270,10 @@ func (s *Server) putServiceMetadata(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// v0.5.337 — invalidate the catalog cache on every peer so
+	// the Owner-team chip on /services reflects the edit in
+	// <50ms instead of waiting out the 60s soft TTL.
+	s.cacheInvalidate(r.Context(), "services-metadata")
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -38,6 +38,18 @@ type Cache interface {
 	// view. Noop returns a zero-valued struct so callers can render
 	// "Redis not configured" without error handling.
 	Stats(ctx context.Context) (RedisStats, error)
+	// Publish broadcasts msg on a Redis pub/sub channel. Used by
+	// the cross-pod L1 cache invalidation flow (v0.5.337):
+	// a mutating endpoint DELs L2 + publishes the key, every
+	// pod's Subscribe loop receives the key and evicts L1. Noop
+	// returns nil — single-instance pods have no peers to notify.
+	Publish(ctx context.Context, channel string, msg []byte) error
+	// Subscribe returns a channel of incoming pub/sub messages
+	// for the given channel name. The returned chan closes when
+	// ctx is cancelled. Noop returns a chan that never delivers
+	// (and closes on ctx cancellation), so the caller's
+	// invalidation goroutine sits idle without busy-looping.
+	Subscribe(ctx context.Context, channel string) (<-chan []byte, error)
 }
 
 // Lock is a best-effort distributed lock. TryAcquire returns ok=false
@@ -63,6 +75,19 @@ func (noopCache) Set(context.Context, string, []byte, time.Duration) error { ret
 func (noopCache) Del(context.Context, string) error                   { return nil }
 func (noopCache) ScanPrefix(context.Context, string) ([][]byte, error) { return nil, nil }
 func (noopCache) Ping(context.Context) error                          { return nil }
+func (noopCache) Publish(context.Context, string, []byte) error       { return nil }
+func (noopCache) Subscribe(ctx context.Context, _ string) (<-chan []byte, error) {
+	// Idle channel that closes on ctx cancellation. The
+	// invalidation loop sits in a select on this — without the
+	// close on cancel, the goroutine would leak on graceful
+	// shutdown.
+	ch := make(chan []byte)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}
 
 // Noop lock = always-leader. Correct for single-instance deployments
 // because there's no one to contend with.

@@ -103,6 +103,59 @@ func (r *redisCache) Ping(ctx context.Context) error {
 	return r.cli.Ping(ctx).Err()
 }
 
+// Publish wraps go-redis PUBLISH. Returns nil even when no
+// subscribers are listening (Redis itself doesn't fail in that
+// case) — single-pod deployments still publish, the message
+// just goes nowhere.
+func (r *redisCache) Publish(ctx context.Context, channel string, msg []byte) error {
+	return r.cli.Publish(ctx, channel, msg).Err()
+}
+
+// Subscribe returns a channel of payloads. Caller cancels via
+// ctx — the bridging goroutine closes both the subscription
+// and the output channel cleanly. We bridge go-redis's
+// *PubSub into a bare <-chan []byte so the rest of the codebase
+// doesn't carry the dependency.
+//
+// Lossy on slow consumers: we drop messages rather than block
+// the bridge goroutine. Cache invalidation is a hint, not a
+// guarantee — TTL expiry is the backstop.
+func (r *redisCache) Subscribe(ctx context.Context, channel string) (<-chan []byte, error) {
+	sub := r.cli.Subscribe(ctx, channel)
+	// Wait for the subscription to confirm. If the first Receive
+	// fails we close the sub and bubble the error; the caller
+	// then knows pub/sub is unavailable and can decide whether
+	// to fall back.
+	if _, err := sub.Receive(ctx); err != nil {
+		_ = sub.Close()
+		return nil, fmt.Errorf("redis subscribe %s: %w", channel, err)
+	}
+	out := make(chan []byte, 64)
+	go func() {
+		defer close(out)
+		defer sub.Close()
+		ch := sub.Channel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				select {
+				case out <- []byte(msg.Payload):
+				default:
+					// Slow consumer — drop. Invalidation will
+					// catch up next time the key's L1 TTL
+					// expires (≤ 5s window).
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
 // RedisStats is the slice of INFO + DBSIZE the System page renders.
 // Kept small so one trip per Stats() call covers the panel without
 // streaming the full INFO blob (which is hundreds of fields). All

@@ -399,7 +399,12 @@ func main() {
 	// until partitions are merged. The enforcer DROP PARTITION's
 	// directly every 1h for partitions older than the configured
 	// horizon. Instant disk reclaim; idempotent on a clean state.
-	go store.StartRetentionEnforcer(ctx, time.Hour)
+	// v0.5.341 — retention enforcer now Redis-gated. Pre-fix:
+	// all replicas ran DROP PARTITION concurrently; CH
+	// serialised but the duplicate work + log noise + brief
+	// metadata-lock fight added up. Single-instance Noop lock
+	// is always-leader, so dev behaviour is unchanged.
+	go store.StartRetentionEnforcer(ctx, time.Hour, lockImpl)
 
 	// ── Optional OIDC ─────────────────────────────────────────────────────────
 	// Discovery failure is non-fatal: we keep local auth working and surface

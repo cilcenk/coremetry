@@ -85,7 +85,13 @@ func (p *Puller) Start(ctx context.Context) {
 }
 
 func (p *Puller) tick(ctx context.Context) {
-	got, err := p.lock.TryAcquire(ctx, pullerLockKey, 2*p.interval)
+	// Lease TTL covers the worst-case tick duration with a
+	// generous margin — the actual sample+drain runs in seconds,
+	// so 2 minutes is plenty. Pre-v0.5.341 used 2*p.interval
+	// (typically 10 min); a crashed holder kept the lock for that
+	// long even though the work was done in seconds. Shorter
+	// lease = faster failover on a crashed replica.
+	got, err := p.lock.TryAcquire(ctx, pullerLockKey, 2*time.Minute)
 	if err != nil || !got {
 		return
 	}

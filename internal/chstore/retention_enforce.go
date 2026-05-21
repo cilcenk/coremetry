@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cilcenk/coremetry/internal/cache"
 )
 
 // Proactive retention enforcement — v0.5.320. Operator-reported:
@@ -138,17 +140,47 @@ func (s *Store) dropOldPartitions(ctx context.Context, table string, days int) e
 	return nil
 }
 
+// retentionLockKey is the Redis key for the distributed lock
+// that gates retention enforcement. Single key across the
+// cluster — whichever replica wins the SETNX runs DROP
+// PARTITION, the rest skip. Pre-v0.5.341 all replicas ran the
+// enforcement concurrently; CH serialised the DDL but the
+// duplicate work + log noise + brief CH metadata-lock fight
+// added up at scale.
+const retentionLockKey = "coremetry:lock:retention-enforce"
+
 // StartRetentionEnforcer runs EnforceRetention immediately, then
 // every `interval` until ctx cancellation. Default interval is
 // 1 hour when ≤ 0. Goroutine-friendly — caller is expected to
-// invoke as `go s.StartRetentionEnforcer(ctx, 0)`.
-func (s *Store) StartRetentionEnforcer(ctx context.Context, interval time.Duration) {
+// invoke as `go s.StartRetentionEnforcer(ctx, 0, lock)`.
+//
+// Singleton-by-Redis-lock: each tick acquires retentionLockKey
+// with a short 5-minute TTL (the enforcement itself runs in
+// seconds; 5 min is generous headroom for a slow CH metadata
+// op). Lock released after the tick. If a holder crashes
+// mid-tick, the lease expires within 5 min and the next
+// replica picks up the work — no manual recovery needed.
+func (s *Store) StartRetentionEnforcer(ctx context.Context, interval time.Duration, lock cache.Lock) {
 	if interval <= 0 {
 		interval = time.Hour
 	}
-	if err := s.EnforceRetention(ctx); err != nil {
-		log.Printf("[retention] initial sweep: %v", err)
+	const leaseTTL = 5 * time.Minute
+	runOnce := func() {
+		got, err := lock.TryAcquire(ctx, retentionLockKey, leaseTTL)
+		if err != nil {
+			log.Printf("[retention] lock acquire: %v", err)
+			return
+		}
+		if !got {
+			// Peer is running the sweep — skip cleanly.
+			return
+		}
+		defer lock.Release(ctx, retentionLockKey)
+		if err := s.EnforceRetention(ctx); err != nil {
+			log.Printf("[retention] sweep: %v", err)
+		}
 	}
+	runOnce() // immediate first sweep so a fresh deploy reclaims disk within seconds, not an hour
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -156,9 +188,7 @@ func (s *Store) StartRetentionEnforcer(ctx context.Context, interval time.Durati
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := s.EnforceRetention(ctx); err != nil {
-				log.Printf("[retention] periodic sweep: %v", err)
-			}
+			runOnce()
 		}
 	}
 }

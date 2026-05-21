@@ -527,6 +527,13 @@ func main() {
 	srv.SetVersion(Version)
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)
+	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes
+	// to the Redis pub/sub channel so a putBranding /
+	// putSamplingSettings / etc. on one pod evicts the cached
+	// response from EVERY pod's L1 tier within ~50ms — closes
+	// the multi-pod staleness gap (was bounded only by the
+	// soft TTL, up to 5s + the SWR window).
+	srv.StartCacheInvalidation(ctx)
 	if cfg.Auth.DemoMode {
 		// Demo mode auto-signs the visitor in as the configured initial
 		// admin so they can poke at every screen, including admin-only

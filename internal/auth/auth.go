@@ -441,12 +441,30 @@ func newRandID(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// v0.5.316 — Operator-reported: LDAP-enabled deploy logged users
+// out automatically because viewer-role users hit
+// /api/settings/sampling (an admin-only route, called speculatively
+// by the SamplingChip on every Service detail page). RequireRole
+// returned 401 for "session OK, role insufficient", which the
+// frontend treats as session-invalid → auto-logout.
+//
+// Fix: split the semantics. 401 stays for missing/expired session
+// (no cookie, bad signature, etc.). 403 returned when session is
+// valid but the role doesn't satisfy the gate. The frontend's
+// onUnauthorized auto-logout only triggers on 401; 403 falls
+// through to the component's own error handler (typically
+// soft-fail / hide).
+
 // RequireRole gates a handler on a specific role (typically "admin").
 func RequireRole(role string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c := FromContext(r.Context())
-		if c == nil || c.Role != role {
-			writeUnauth(w, "insufficient role")
+		if c == nil {
+			writeUnauth(w, "session required")
+			return
+		}
+		if c.Role != role {
+			writeForbidden(w, "insufficient role")
 			return
 		}
 		h(w, r)
@@ -460,7 +478,7 @@ func RequireAnyRole(roles []string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c := FromContext(r.Context())
 		if c == nil {
-			writeUnauth(w, "insufficient role")
+			writeUnauth(w, "session required")
 			return
 		}
 		for _, role := range roles {
@@ -469,7 +487,7 @@ func RequireAnyRole(roles []string, h http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		writeUnauth(w, "insufficient role")
+		writeForbidden(w, "insufficient role")
 	}
 }
 
@@ -486,5 +504,16 @@ func tokenFromRequest(r *http.Request) string {
 func writeUnauth(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(`{"error":"` + msg + `"}`))
+}
+
+// writeForbidden — v0.5.316. 403 means "session valid, role
+// insufficient". Distinct from 401 (session missing/expired) so
+// the frontend can soft-fail role-gated speculative reads
+// (e.g. SamplingChip on /service for a viewer) instead of
+// treating them as logout signals.
+func writeForbidden(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write([]byte(`{"error":"` + msg + `"}`))
 }

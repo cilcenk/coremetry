@@ -537,7 +537,14 @@ func (s *Server) Start() error {
 	// the URL query string).
 	mux.HandleFunc("POST   /api/channels/zoom/list-channels",
 		auth.RequireRole(auth.RoleAdmin, s.listZoomChannels))
-	mux.HandleFunc("GET    /api/settings/sampling",   auth.RequireRole(auth.RoleAdmin, s.getSamplingSettings))
+	// v0.5.316 — Operator-reported: viewers/editors were
+	// getting auto-logged out because the SamplingChip on
+	// /service called this read-only endpoint speculatively
+	// and the admin-only gate returned 401 → frontend
+	// onUnauthorized → forced logout. GET is now any
+	// authenticated role (read-only chip surfaces for everyone);
+	// PUT stays admin-only.
+	mux.HandleFunc("GET    /api/settings/sampling",   auth.RequireAnyRole([]string{auth.RoleAdmin, auth.RoleEditor, auth.RoleViewer}, s.getSamplingSettings))
 	mux.HandleFunc("PUT    /api/settings/sampling",   auth.RequireRole(auth.RoleAdmin, s.putSamplingSettings))
 
 	// User management (admin only)

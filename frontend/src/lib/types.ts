@@ -1312,6 +1312,31 @@ export interface ProfileDetail {
   meta: ProfileRow;
   flame: FlameNode;
 }
+
+// Service-level hotspot aggregation — N profiles in a window
+// merged into one virtual flame tree, then rolled up by method.
+// The shape mirrors the per-profile hotspots the frontend
+// computes locally (flameHotspots.ts) so the same row component
+// renders both.
+export interface ProfileHotspotRow {
+  name: string;
+  file?: string;
+  line?: number;
+  self: number;
+  total: number;
+  paths: number;
+}
+
+export interface ProfileHotspotsResponse {
+  service: string;
+  profileType: string;
+  profilesUsed: number;
+  profilesFailed: number;
+  totalSamples: number;
+  earliest: number; // unix ns; 0 when no profiles
+  latest: number;
+  hotspots: ProfileHotspotRow[];
+}
 export type SortOrder = 'asc' | 'desc';
 
 // One node in the multi-trace path-aggregated structure tree

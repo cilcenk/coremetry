@@ -340,6 +340,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)
 	mux.HandleFunc("GET /api/profiles/by-span", s.profilesForSpan)
+	mux.HandleFunc("GET /api/profiles/hotspots", s.profileHotspots)
 	mux.HandleFunc("GET /api/profiles/{id}", s.getProfile)
 	mux.HandleFunc("GET    /api/exceptions",               s.listExceptions)
 	// Errors Inbox — stateful exception groups (read = any, write = admin)
@@ -3317,6 +3318,80 @@ func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]interface{}{"meta": meta, "flame": flame})
+}
+
+// profileHotspots aggregates every profile matching the
+// (service, type, window) filter into a single virtual flame
+// tree, then rolls it up by function name. Returns the top
+// rows so the UI never has to download N pprof blobs across a
+// 1-hour window (which can be tens of MB raw). Cached 60s
+// because in-window aggregates only shift when a new profile
+// lands.
+func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	service := q.Get("service")
+	ptype := q.Get("type")
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
+	limit := parseInt(q.Get("limit"), 200) // profile-count cap
+	top := parseInt(q.Get("top"), 100)     // returned-hotspot cap
+	if service == "" {
+		http.Error(w, "service param required", http.StatusBadRequest)
+		return
+	}
+	// Bucket time inputs to the minute so concurrent requests
+	// within the same minute share one CH round-trip.
+	fromKey, toKey := from.Truncate(time.Minute), to.Truncate(time.Minute)
+	key := fmt.Sprintf("profile-hotspots:%s:%s:%d:%d:%d:%d",
+		service, ptype, fromKey.UnixNano(), toKey.UnixNano(), limit, top)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		payloads, err := s.store.ListProfilePayloads(r.Context(), chstore.ProfileFilter{
+			Service:     service,
+			ProfileType: ptype,
+			From:        from,
+			To:          to,
+			Limit:       limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		merged := &chstore.FlameNode{Name: "root"}
+		parsed, failed := 0, 0
+		var earliest, latest time.Time
+		for _, p := range payloads {
+			flame, perr := profileconv.BuildFlameAuto(p.Bytes)
+			if perr != nil || flame == nil {
+				failed++
+				continue
+			}
+			profileconv.MergeFlame(merged, flame)
+			parsed++
+			if earliest.IsZero() || p.StartTime.Before(earliest) {
+				earliest = p.StartTime
+			}
+			if p.StartTime.After(latest) {
+				latest = p.StartTime
+			}
+		}
+		hotspots := profileconv.FlameToHotspots(merged)
+		// Sort by self desc, cap to top.
+		sort.Slice(hotspots, func(i, j int) bool {
+			return hotspots[i].Self > hotspots[j].Self
+		})
+		if len(hotspots) > top {
+			hotspots = hotspots[:top]
+		}
+		return map[string]any{
+			"service":      service,
+			"profileType":  ptype,
+			"profilesUsed": parsed,
+			"profilesFailed": failed,
+			"totalSamples": merged.Value,
+			"earliest":     earliest.UnixNano(),
+			"latest":       latest.UnixNano(),
+			"hotspots":     hotspots,
+		}, nil
+	})
 }
 
 func (s *Server) profilesForSpan(w http.ResponseWriter, r *http.Request) {

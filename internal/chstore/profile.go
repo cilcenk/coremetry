@@ -94,6 +94,66 @@ func (s *Store) GetProfileBytes(ctx context.Context, id string) ([]byte, *Profil
 	return []byte(dataStr), &meta, nil
 }
 
+// ProfilePayload is a profile's raw bytes alongside the metadata
+// needed to attribute hotspots back to a host / window.
+type ProfilePayload struct {
+	ProfileID   string
+	ProfileType string
+	StartTime   time.Time
+	DurationNs  int64
+	HostName    string
+	Bytes       []byte
+}
+
+// ListProfilePayloads returns raw pprof bytes for every profile
+// matching the filter. Used by the service-level hotspot
+// aggregator — one CH round-trip pulls the full window so the
+// API handler can merge in-process. The pprof column is large
+// (per-snapshot kilobytes to ~MB), so the caller MUST pass a
+// sensible Limit; the query also caps execution at 5s to bound
+// blast radius on a wide window.
+func (s *Store) ListProfilePayloads(ctx context.Context, f ProfileFilter) ([]ProfilePayload, error) {
+	var wc whereClause
+	if !f.From.IsZero() {
+		wc.add("start_time >= ?", f.From)
+	}
+	if !f.To.IsZero() {
+		wc.add("start_time <= ?", f.To)
+	}
+	if f.Service != "" {
+		wc.add("service_name = ?", f.Service)
+	}
+	if f.ProfileType != "" {
+		wc.add("profile_type = ?", f.ProfileType)
+	}
+	if f.Limit == 0 {
+		f.Limit = 100
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT profile_id, profile_type, start_time, duration_ns,
+		       host_name, pprof_data
+		FROM profiles `+wc.sql()+`
+		ORDER BY start_time DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 5`, append(wc.args, f.Limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProfilePayload
+	for rows.Next() {
+		var p ProfilePayload
+		var dataStr string
+		if err := rows.Scan(&p.ProfileID, &p.ProfileType, &p.StartTime,
+			&p.DurationNs, &p.HostName, &dataStr); err != nil {
+			return nil, err
+		}
+		p.Bytes = []byte(dataStr)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // FindProfilesForSpan returns profiles related to a span's time window.
 //
 // Two cases:

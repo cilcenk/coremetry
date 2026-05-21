@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -6,7 +6,7 @@ import { IconFlame } from '@/components/icons';
 import { ServicePicker } from '@/components/ServicePicker';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
-import type { ProfileRow, TimeRange } from '@/lib/types';
+import type { ProfileRow, ProfileHotspotsResponse, TimeRange } from '@/lib/types';
 
 const TYPES = [
   { v: '', label: 'All types' },
@@ -25,6 +25,11 @@ export default function ProfilingPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '15m' });
   const service = params.get('service') || '';
   const ptype = params.get('type') || '';
+  // `view` toggles between the per-profile list (default) and
+  // the service-level aggregated hotspot panel. The hotspot
+  // panel needs a service to be selected — backend rejects
+  // requests without one to keep aggregation bounded.
+  const view = (params.get('view') === 'hotspots' ? 'hotspots' : 'list') as 'list' | 'hotspots';
   const setService = (v: string) => setParams(prev => {
     const p = new URLSearchParams(prev);
     if (v) p.set('service', v); else p.delete('service');
@@ -35,8 +40,14 @@ export default function ProfilingPage() {
     if (v) p.set('type', v); else p.delete('type');
     return p;
   }, { replace: true });
+  const setView = (v: 'list' | 'hotspots') => setParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v === 'hotspots') p.set('view', 'hotspots'); else p.delete('view');
+    return p;
+  }, { replace: true });
   const [services, setServices] = useState<string[]>([]);
   const [data, setData] = useState<ProfileRow[] | null | undefined>(undefined);
+  const [hotspots, setHotspots] = useState<ProfileHotspotsResponse | null | undefined>(undefined);
   // Setup recipes accordion — empty/no profiles is the common
   // first-run state, and operators end up grepping the demo source
   // to figure out the wire format. Surfacing copy-paste snippets
@@ -50,25 +61,60 @@ export default function ProfilingPage() {
   }, [range]);
 
   useEffect(() => {
+    if (view !== 'list') return;
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
     api.profiles({ service, type: ptype, from, to, limit: 200 })
       .then(p => setData(p ?? []))
       .catch(() => setData(null));
-  }, [range, service, ptype]);
+  }, [view, range, service, ptype]);
+
+  // Hotspots fetch — service is a hard requirement; skip
+  // entirely without one and let the empty-state nudge the
+  // operator to pick.
+  const hsRange = useMemo(() => timeRangeToNs(range), [range]);
+  useEffect(() => {
+    if (view !== 'hotspots' || !service) {
+      setHotspots(undefined);
+      return;
+    }
+    setHotspots(undefined);
+    api.profileHotspots({
+      service,
+      type: ptype || 'cpu',
+      from: hsRange.from,
+      to: hsRange.to,
+      limit: 200,
+      top: 100,
+    })
+      .then(r => setHotspots(r ?? null))
+      .catch(() => setHotspots(null));
+  }, [view, service, ptype, hsRange]);
 
   return (
     <>
       <Topbar title="Profiling" range={range} onRangeChange={setRange} />
       <div id="content">
         <div className="controls">
+          {/* View tabs — per-profile list (the original page)
+              vs aggregated method hotspots across the time
+              window. Hotspot tab needs a service; the empty
+              state nudges the operator if they switch without
+              picking one. */}
+          <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden',
+                        border: '1px solid var(--border)' }}>
+            <ViewTab cur={view} v="list"     label="Profiles"  onClick={setView} />
+            <ViewTab cur={view} v="hotspots" label="Hotspots"  onClick={setView} />
+          </div>
           <ServicePicker value={service} onChange={setService}
             placeholder="Service…" width={170} />
           <select value={ptype} onChange={e => setPtype(e.target.value)}>
             {TYPES.map(t => <option key={t.v} value={t.v}>{t.label}</option>)}
           </select>
           <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 'auto' }}>
-            Continuous CPU + heap profiles, captured in 5s windows.
+            {view === 'hotspots'
+              ? 'Aggregated method hotspots across the selected window.'
+              : 'Continuous CPU + heap profiles, captured in 5s windows.'}
           </span>
           {/* Pyroscope is the de-facto continuous-profiling tool.
               When the bundled Compose stack runs it's at port 4040;
@@ -88,46 +134,170 @@ export default function ProfilingPage() {
 
         {setupOpen && <SetupRecipes />}
 
-        {data === undefined && <Spinner />}
-        {data && data.length === 0 && (
-          <Empty icon={<IconFlame size={28} />} title="No profiles yet">
-            The demo pushes profiles every 10s to <code>POST /v1/profiles</code>.
-          </Empty>
+        {view === 'list' && (
+          <>
+            {data === undefined && <Spinner />}
+            {data && data.length === 0 && (
+              <Empty icon={<IconFlame size={28} />} title="No profiles yet">
+                The demo pushes profiles every 10s to <code>POST /v1/profiles</code>.
+              </Empty>
+            )}
+            {data && data.length > 0 && (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Service</th>
+                      <th>Type</th>
+                      <th>Window</th>
+                      <th>Samples</th>
+                      <th>Host</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.map(p => (
+                      <tr key={p.profileId} onClick={() => window.location.href = `/profile?id=${p.profileId}`}>
+                        <td className="mono">{tsShort(p.startTime)}</td>
+                        <td>
+                          <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--bg3)', borderRadius: 3, fontFamily: 'monospace' }}>
+                            {p.serviceName}
+                          </span>
+                        </td>
+                        <td><span className="badge b-info">{p.profileType.toUpperCase()}</span></td>
+                        <td className="mono">{p.durationMs > 0 ? `${(p.durationMs/1000).toFixed(1)}s` : '—'}</td>
+                        <td>{fmtNum(p.sampleCount)}</td>
+                        <td className="mono" style={{ color: 'var(--text2)' }}>{p.hostName || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
-        {data && data.length > 0 && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Service</th>
-                  <th>Type</th>
-                  <th>Window</th>
-                  <th>Samples</th>
-                  <th>Host</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map(p => (
-                  <tr key={p.profileId} onClick={() => window.location.href = `/profile?id=${p.profileId}`}>
-                    <td className="mono">{tsShort(p.startTime)}</td>
-                    <td>
-                      <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--bg3)', borderRadius: 3, fontFamily: 'monospace' }}>
-                        {p.serviceName}
-                      </span>
-                    </td>
-                    <td><span className="badge b-info">{p.profileType.toUpperCase()}</span></td>
-                    <td className="mono">{p.durationMs > 0 ? `${(p.durationMs/1000).toFixed(1)}s` : '—'}</td>
-                    <td>{fmtNum(p.sampleCount)}</td>
-                    <td className="mono" style={{ color: 'var(--text2)' }}>{p.hostName || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+
+        {view === 'hotspots' && (
+          <HotspotsPanel service={service} hotspots={hotspots} />
         )}
       </div>
     </>
+  );
+}
+
+function ViewTab({ cur, v, label, onClick }:
+  { cur: 'list' | 'hotspots'; v: 'list' | 'hotspots'; label: string;
+    onClick: (v: 'list' | 'hotspots') => void }) {
+  const active = cur === v;
+  return (
+    <button onClick={() => onClick(v)} className={active ? '' : 'sec'}
+      style={{
+        padding: '5px 14px', fontSize: 12, fontWeight: 600,
+        background: active ? 'var(--accent2)' : 'transparent',
+        color: active ? 'white' : 'var(--text2)',
+        border: 0, cursor: 'pointer', borderRadius: 0,
+      }}>
+      {label}
+    </button>
+  );
+}
+
+// HotspotsPanel — service-level aggregated hotspots. The
+// backend merges every profile in the window into a virtual
+// flame tree, rolls it up by function name, and returns the
+// top 100 — the same row shape MethodHotspots uses, so the
+// table layout is identical to a single profile's view.
+function HotspotsPanel({ service, hotspots }: {
+  service: string;
+  hotspots: ProfileHotspotsResponse | null | undefined;
+}) {
+  if (!service) {
+    return (
+      <Empty icon={<IconFlame size={28} />} title="Pick a service">
+        Aggregated hotspots roll N profiles into one view — pick a service to begin.
+      </Empty>
+    );
+  }
+  if (hotspots === undefined) return <Spinner />;
+  if (hotspots === null) {
+    return (
+      <Empty icon="⚠" title="Failed to load hotspots">
+        The backend rejected the request — try widening the time range.
+      </Empty>
+    );
+  }
+  if (!hotspots.hotspots || hotspots.hotspots.length === 0) {
+    return (
+      <Empty icon={<IconFlame size={28} />} title="No profiles in this window">
+        Widen the time range, or check that the service is pushing profiles.
+      </Empty>
+    );
+  }
+  const totalSamples = hotspots.totalSamples || 1;
+  return (
+    <>
+      <div style={{
+        marginBottom: 10, padding: 10, borderRadius: 6,
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        fontSize: 12, color: 'var(--text2)',
+        display: 'flex', gap: 16, flexWrap: 'wrap',
+      }}>
+        <span><b style={{ color: 'var(--text)' }}>{hotspots.profilesUsed}</b> profiles merged</span>
+        <span><b style={{ color: 'var(--text)' }}>{fmtNum(hotspots.totalSamples)}</b> total samples</span>
+        <span><b style={{ color: 'var(--text)' }}>{hotspots.hotspots.length}</b> unique methods shown</span>
+        {hotspots.profilesFailed > 0 && (
+          <span style={{ color: 'var(--warn)' }}>
+            {hotspots.profilesFailed} unparseable
+          </span>
+        )}
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th style={{ width: 240 }}>Location</th>
+              <th className="num" style={{ width: 160 }}>Self</th>
+              <th className="num" style={{ width: 160 }}>Total</th>
+              <th className="num" style={{ width: 80 }}>Paths</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hotspots.hotspots.map((h, i) => {
+              const selfPct = (h.self / totalSamples) * 100;
+              const totalPct = (h.total / totalSamples) * 100;
+              return (
+                <tr key={i} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
+                  <td className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>{h.name}</td>
+                  <td className="mono" style={{ fontSize: 11, color: 'var(--text2)', wordBreak: 'break-all' }}>
+                    {h.file ? `${h.file}${h.line ? `:${h.line}` : ''}` : '—'}
+                  </td>
+                  <td className="num mono"><HotspotBar pct={selfPct} value={h.self} /></td>
+                  <td className="num mono"><HotspotBar pct={totalPct} value={h.total} /></td>
+                  <td className="num mono">{h.paths.toLocaleString()}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function HotspotBar({ pct, value }: { pct: number; value: number }) {
+  const safe = Math.max(0, Math.min(100, pct));
+  return (
+    <div style={{ position: 'relative', minWidth: 140 }}>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(to right, var(--accent2) 0%, var(--accent2) ' + safe + '%, transparent ' + safe + '%)',
+        opacity: 0.18, borderRadius: 2,
+      }} />
+      <span style={{ position: 'relative', fontSize: 11 }}>
+        {value.toLocaleString()} <span style={{ color: 'var(--text3)' }}>({safe.toFixed(1)}%)</span>
+      </span>
+    </div>
   );
 }
 

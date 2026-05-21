@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { FlameGraph } from '@/components/FlameGraph';
 import { FlameDiff } from '@/components/FlameDiff';
+import { MethodHotspots } from '@/components/MethodHotspots';
 import { CopyButton } from '@/components/CopyButton';
 import { api } from '@/lib/api';
 import { tsLong, fmtNum } from '@/lib/utils';
@@ -211,6 +212,12 @@ function ProfileDetailInner() {
           </>
         )}
         {data && data.flame && !baselineId && <FlameGraph root={data.flame} />}
+
+        {/* Method Hotspots — Dynatrace-style "which functions
+            are heaviest" tabular view aggregated across the
+            whole flame. Hidden in baseline-compare mode (diff
+            view is the comparison surface there). */}
+        {data && data.flame && !baselineId && <MethodHotspots root={data.flame} />}
       </div>
     </>
   );

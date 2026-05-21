@@ -3429,6 +3429,12 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 	to := parseTime(q.Get("to"))
 	limit := parseInt(q.Get("limit"), 200) // profile-count cap
 	top := parseInt(q.Get("top"), 100)     // returned-hotspot cap
+	// v0.5.340 — hard upper bound. Even a generous "limit=500"
+	// in the query string caps at 500; a runaway operator
+	// can't fan out 10000 pprof parses on a single request.
+	if limit > 500 {
+		limit = 500
+	}
 	if service == "" {
 		http.Error(w, "service param required", http.StatusBadRequest)
 		return
@@ -3439,24 +3445,25 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("profile-hotspots:%s:%s:%d:%d:%d:%d",
 		service, ptype, fromKey.UnixNano(), toKey.UnixNano(), limit, top)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		payloads, err := s.store.ListProfilePayloads(r.Context(), chstore.ProfileFilter{
+		merged := &chstore.FlameNode{Name: "root"}
+		parsed, failed := 0, 0
+		var earliest, latest time.Time
+		// v0.5.340 — streaming aggregation. Each pprof is parsed +
+		// merged + discarded inside the callback so RAM peak ≈
+		// one payload instead of N × payload size. At 200 × 1MB
+		// the old slice approach burned ~200MB per request;
+		// streaming holds it to ~1MB peak.
+		err := s.store.IterateProfilePayloads(r.Context(), chstore.ProfileFilter{
 			Service:     service,
 			ProfileType: ptype,
 			From:        from,
 			To:          to,
 			Limit:       limit,
-		})
-		if err != nil {
-			return nil, err
-		}
-		merged := &chstore.FlameNode{Name: "root"}
-		parsed, failed := 0, 0
-		var earliest, latest time.Time
-		for _, p := range payloads {
+		}, func(p chstore.ProfilePayload) error {
 			flame, perr := profileconv.BuildFlameAuto(p.Bytes)
 			if perr != nil || flame == nil {
 				failed++
-				continue
+				return nil
 			}
 			profileconv.MergeFlame(merged, flame)
 			parsed++
@@ -3466,6 +3473,10 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 			if p.StartTime.After(latest) {
 				latest = p.StartTime
 			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 		hotspots := profileconv.FlameToHotspots(merged)
 		// Sort by self desc, cap to top.
@@ -3508,26 +3519,26 @@ func (s *Server) profileHotspotsForSpan(w http.ResponseWriter, r *http.Request) 
 	}
 	key := fmt.Sprintf("profile-hotspots-byspan:%s:%d:%d:%d", service, startNs, endNs, top)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		matches, err := s.store.FindProfilesForSpan(r.Context(), service,
-			time.Unix(0, startNs), time.Unix(0, endNs))
-		if err != nil {
-			return nil, err
-		}
 		merged := &chstore.FlameNode{Name: "root"}
 		parsed, failed := 0, 0
-		for _, row := range matches {
-			data, _, gerr := s.store.GetProfileBytes(r.Context(), row.ProfileID)
-			if gerr != nil {
-				failed++
-				continue
-			}
-			flame, perr := profileconv.BuildFlameAuto(data)
-			if perr != nil || flame == nil {
-				failed++
-				continue
-			}
-			profileconv.MergeFlame(merged, flame)
-			parsed++
+		// v0.5.340 — single CH round-trip + streaming parse.
+		// Replaces the prior N+1 pattern (FindProfilesForSpan +
+		// GetProfileBytes per row) and the per-request RAM
+		// double-buffer.
+		err := s.store.IterateProfilesForSpan(r.Context(), service,
+			time.Unix(0, startNs), time.Unix(0, endNs),
+			func(p chstore.ProfilePayload) error {
+				flame, perr := profileconv.BuildFlameAuto(p.Bytes)
+				if perr != nil || flame == nil {
+					failed++
+					return nil
+				}
+				profileconv.MergeFlame(merged, flame)
+				parsed++
+				return nil
+			})
+		if err != nil {
+			return nil, err
 		}
 		hotspots := profileconv.FlameToHotspots(merged)
 		sort.Slice(hotspots, func(i, j int) bool {

@@ -370,13 +370,15 @@ function ServiceView({ range }: { range: TimeRange }) {
       .then(m => setMetaByService(m ?? {}))
       .catch(() => setMetaByService({}));
   }, []);
-  // v0.5.310 — noise toggle. Default = noise hidden (clean
-  // OTel-native business-flow view; backend drops self-edges,
-  // /health|/metrics infra ops, sub-0.5% volume long tail).
-  // Operators chasing odd patterns can flip to 'show' to get
-  // the legacy unfiltered topology.
-  const noiseShow = params.get('noise') === 'show';
-  const setNoiseShow = (v: boolean) => setURLParam('noise', v ? 'show' : null);
+  // Noise toggle. v0.5.338 — operator preference flipped the
+  // default to ON: full unfiltered topology is the landing
+  // view; ?noise=hide opts into the cleaner business-flow
+  // shape (self-edges, /health|/metrics infra ops, sub-0.5%
+  // long tail dropped at the backend). Old shareable links
+  // with `?noise=show` still resolve correctly because we
+  // only special-case the explicit "hide" value.
+  const noiseShow = params.get('noise') !== 'hide';
+  const setNoiseShow = (v: boolean) => setURLParam('noise', v ? null : 'hide');
   // v0.5.312 — protocol filter. Empty = show all. Selected
   // = show only those. Comma-separated in URL for sharability.
   // Protocols come from edge.protocol: http / rpc / db / kafka /

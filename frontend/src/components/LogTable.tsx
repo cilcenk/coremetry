@@ -66,6 +66,29 @@ function KvRow({ k, v, onAdd, onExclude }: {
   );
 }
 
+// prettyMaybe — v0.5.323. If the body looks like JSON (first
+// non-whitespace char is { or [) try JSON.parse + re-stringify
+// with 2-space indent. Returns the original body on any
+// parse error so non-JSON content (Java stack traces, plain
+// text, broken JSON fragments) stays exactly as it was. Cap at
+// 200 KB so a pathological log payload doesn't pin the main
+// thread on JSON.parse.
+function prettyMaybe(body: string): string {
+  if (!body || body.length > 200_000) return body;
+  const trimmed = body.trimStart();
+  if (trimmed.length === 0) return body;
+  const first = trimmed.charCodeAt(0);
+  // '{' = 123, '[' = 91
+  if (first !== 123 && first !== 91) return body;
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj === null || typeof obj !== 'object') return body;
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return body;
+  }
+}
+
 function truncMid(s: string, max: number): string {
   if (s.length <= max) return s;
   const half = Math.floor((max - 1) / 2);
@@ -284,12 +307,19 @@ function LogRow({
       {expanded && (
         <tr>
           <td colSpan={cols} style={{ background: 'var(--bg0)', padding: '10px 20px' }}>
+            {/* v0.5.323 — if the body looks like JSON (starts
+                with `{` or `[`), pretty-print with 2-space
+                indent. ES-backed installs often emit the whole
+                event as compact JSON on one line; the expanded
+                view becomes unreadable. Falls back to raw body
+                on parse error so stack traces / free-form
+                messages keep their original formatting. */}
             <pre style={{
               fontSize: 12, whiteSpace: 'pre-wrap',
               overflowWrap: 'anywhere', color: 'var(--text)',
               marginBottom: attrs.length ? 8 : 0,
             }}>
-              {l.body}
+              {prettyMaybe(l.body)}
             </pre>
             {attrs.length > 0 && (
               <table className="kv-table"><tbody>

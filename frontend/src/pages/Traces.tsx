@@ -316,7 +316,18 @@ function TracesPageInner() {
             error-rate KPI tiles on the right. Reflects the current
             service + advanced-filter scope but ignores free-text
             search and ms-range filters. */}
-        <TraceVolumeHistogram range={range} dsl={histogramDSL} filters={histogramFilters} />
+        {/* v0.5.322 — drag-select on the histogram narrows the
+            page TimeRange to a custom (from, to). Same pattern
+            as ServiceCharts onZoom in /service detail. */}
+        <TraceVolumeHistogram range={range} dsl={histogramDSL} filters={histogramFilters}
+          onZoom={(fromUnixSec, toUnixSec) => {
+            setRange({
+              preset: 'custom',
+              fromMs: Math.round(fromUnixSec * 1000),
+              toMs:   Math.round(toUnixSec   * 1000),
+            });
+            setPage(0);
+          }} />
 
         {/* View toggle + dedicated Trace ID lookup on the far right */}
         <div className="controls" style={{ marginBottom: 8, alignItems: 'center' }}>

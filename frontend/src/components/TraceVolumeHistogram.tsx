@@ -21,10 +21,16 @@ import { fmtSmart } from '@/lib/chartFmt';
 //
 // Filters argument matches the /traces page's current DSL/filters so
 // the histogram tracks the same predicate as the table below.
-export function TraceVolumeHistogram({ range, dsl, filters }: {
+export function TraceVolumeHistogram({ range, dsl, filters, onZoom }: {
   range: TimeRange;
   dsl?: string;
   filters?: string;
+  // v0.5.322 — drag-to-select hook. Called after the operator
+  // finishes a horizontal drag inside the chart. Args are unix
+  // seconds (matches uPlot's native x-scale unit on this chart).
+  // Parent (Traces page) flips the page TimeRange to a custom
+  // range so the trace list + filters re-fetch for that slice.
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -96,7 +102,15 @@ export function TraceVolumeHistogram({ range, dsl, filters }: {
     const opts: uPlot.Options = {
       width: el.clientWidth || 600,
       height: 110,
-      cursor: { x: true, y: false, focus: { prox: 30 } },
+      // v0.5.322 — horizontal drag-to-select. dist > 4px so a
+      // simple click doesn't accidentally zoom; uplot=false on
+      // x-only drag prevents the chart from auto-zooming
+      // internally (we own the range update via the setSelect
+      // hook below + onZoom callback to the parent).
+      cursor: {
+        x: true, y: false, focus: { prox: 30 },
+        drag: { x: true, y: false, dist: 4, uni: 4, setScale: false },
+      },
       legend: { show: false },
       scales: {
         x: { time: true },
@@ -151,6 +165,25 @@ export function TraceVolumeHistogram({ range, dsl, filters }: {
         },
       ],
       hooks: {
+        // v0.5.322 — drag-select handler. Fires when the user
+        // releases a horizontal drag. Convert pixel select.left
+        // + select.width to x-axis values (unix seconds), then
+        // bubble up via onZoom. Reset the visual select rect so
+        // the chart doesn't keep the selection highlight after
+        // the parent moves the range (next render fetches fresh).
+        setSelect: [
+          (u) => {
+            const sel = u.select;
+            if (!onZoom || !sel || sel.width < 4) return;
+            const fromSec = u.posToVal(sel.left, 'x');
+            const toSec   = u.posToVal(sel.left + sel.width, 'x');
+            if (!Number.isFinite(fromSec) || !Number.isFinite(toSec)) return;
+            if (toSec <= fromSec) return;
+            onZoom(fromSec, toSec);
+            // Wipe the rect so the highlight doesn't persist.
+            u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+          },
+        ],
         // Custom tooltip on cursor move. Cheap — single DOM
         // mutation per move event, no overlay canvas.
         setCursor: [

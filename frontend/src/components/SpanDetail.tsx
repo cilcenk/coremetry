@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { SpanRow, ProfileRow, LogRow } from '@/lib/types';
+import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/types';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
 import { CopilotExplain } from './CopilotExplain';
+import { BreakdownBar, KindBadge } from './KindBadge';
 
 const PANEL_MIN = 300;
 const PANEL_MAX = 1100;
@@ -30,11 +31,20 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
 
   // Trace-to-profile: look up profiles whose window overlaps this span
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+  // Aggregated hotspots over the span's window — same merge as
+  // the Profiling page does for a service, but bounded to the
+  // few profiles whose sample window touched this span. Lets
+  // the operator see "what burned CPU during this span" inline,
+  // without leaving the trace.
+  const [spanHotspots, setSpanHotspots] = useState<SpanHotspotsResponse | null>(null);
   useEffect(() => {
-    if (!span.serviceName || !span.startTime) { setProfiles([]); return; }
+    if (!span.serviceName || !span.startTime) { setProfiles([]); setSpanHotspots(null); return; }
     api.profilesForSpan(span.serviceName, span.startTime, span.endTime)
       .then(p => setProfiles(p ?? []))
       .catch(() => setProfiles([]));
+    api.spanHotspots(span.serviceName, span.startTime, span.endTime, 10)
+      .then(r => setSpanHotspots(r ?? null))
+      .catch(() => setSpanHotspots(null));
   }, [span.spanId, span.serviceName, span.startTime, span.endTime]);
 
   // Trace-to-logs: fetch logs for the whole trace, not just
@@ -229,6 +239,38 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
           )}
         </Section>
 
+        {/* Inline hotspots — only render when the span window
+            had at least one parseable profile. Operators don't
+            need a navigation to see "this span's time burned in
+            method X". Click the row → open the profile that
+            contributed the most samples to it (we don't track
+            attribution per-row at this granularity, so it
+            opens the most recent profile in the window). */}
+        {spanHotspots && spanHotspots.profilesUsed > 0 && spanHotspots.hotspots.length > 0 && (
+          <Section title={`Top methods in span window (${spanHotspots.profilesUsed} profiles merged)`}>
+            <BreakdownBar b={spanHotspots.breakdown} />
+            <table className="ps-kv" style={{ width: '100%', fontSize: 11 }}>
+              <tbody>
+                {spanHotspots.hotspots.map((h, i) => {
+                  const total = spanHotspots.totalSamples || 1;
+                  const pct = (h.self / total) * 100;
+                  return (
+                    <tr key={i}>
+                      <td style={{ fontFamily: 'monospace', wordBreak: 'break-all', paddingRight: 6 }} title={h.name}>
+                        {clipMethod(h.name)}
+                        <KindBadge kind={h.kind} />
+                      </td>
+                      <td className="num mono" style={{ whiteSpace: 'nowrap', color: 'var(--text2)', width: 80 }}>
+                        {pct.toFixed(1)}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Section>
+        )}
+
         {profiles.length > 0 && (
           <Section title={`Profiles in window (${profiles.length})`}>
             {profiles.map(p => (
@@ -310,6 +352,16 @@ function ExceptionView({ type, message, stacktrace, escaped, time }: {
 //   • Plain newline split — defensive against single-line dumps
 function formatStack(s: string): string {
   return s.replace(/\r\n/g, '\n').trimEnd();
+}
+
+// clipMethod shortens a fully-qualified function name for the
+// narrow side-panel. Keeps the trailing token (the method
+// itself) and prefixes "…" so the dropped namespace stays
+// hinted. Full name is still on the row title attribute for
+// hover.
+function clipMethod(name: string, maxChars = 48): string {
+  if (name.length <= maxChars) return name;
+  return '…' + name.slice(name.length - maxChars + 1);
 }
 
 function Row({ k, v, mono, pre, copyable }: {

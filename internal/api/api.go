@@ -438,6 +438,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/alert-rules/{id}/disable",  auth.RequireAnyRole(editorRoles, s.disableAlertRule))
 	mux.HandleFunc("GET    /api/alert-rules/baseline",      auth.RequireAnyRole(editorRoles, s.getAlertBaseline))
 	mux.HandleFunc("GET /api/health", s.getHealth)
+	// Alias for the k8s readinessProbe convention. Same body +
+	// same 503-on-overload behaviour so a `httpGet: { path:
+	// /healthz }` probe pulls overloaded pods out of the
+	// Service endpoints set automatically.
+	mux.HandleFunc("GET /healthz", s.getHealth)
 	mux.HandleFunc("GET /api/version", s.getVersion)
 	// Branding overlay — public GET so the login page can read it
 	// before authentication; PUT is admin-only and capped at 256KB
@@ -7529,16 +7534,66 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	// v0.5.280 — accepted counters added so the Topbar live
 	// activity ticker can derive per-second rates client-side
 	// (delta of cumulative ÷ elapsed).
-	writeJSON(w, map[string]interface{}{
-		"status":           "ok",
-		"spans_queued":     s.ing.Spans.QueueLen(),
-		"logs_queued":      s.ing.Logs.QueueLen(),
-		"metrics_queued":   s.ing.Metrics.QueueLen(),
+	// v0.5.342 — overload signalling. If any ingest queue is
+	// past the overload threshold (≥90% full) or the
+	// drop-counter is climbing, return 503 so an upstream LB
+	// (envoy "outlier_detection", k8s readinessProbe) can take
+	// this pod out of rotation until it drains. The body still
+	// renders for operators inspecting curl output.
+	spansLen, spansCap := s.ing.Spans.QueueLen(), s.ing.Spans.Capacity()
+	logsLen, logsCap := s.ing.Logs.QueueLen(), s.ing.Logs.Capacity()
+	metricsLen, metricsCap := s.ing.Metrics.QueueLen(), s.ing.Metrics.Capacity()
+	overloaded := isOverloaded(spansLen, spansCap) ||
+		isOverloaded(logsLen, logsCap) ||
+		isOverloaded(metricsLen, metricsCap)
+	load := "ok"
+	if overloaded {
+		load = "overloaded"
+	} else if isDegraded(spansLen, spansCap) ||
+		isDegraded(logsLen, logsCap) ||
+		isDegraded(metricsLen, metricsCap) {
+		load = "degraded"
+	}
+	body := map[string]interface{}{
+		"status":           load,
+		"spans_queued":     spansLen,
+		"logs_queued":      logsLen,
+		"metrics_queued":   metricsLen,
+		"spans_capacity":   spansCap,
+		"logs_capacity":    logsCap,
+		"metrics_capacity": metricsCap,
 		"spans_dropped":    s.ing.Spans.Dropped(),
 		"spans_accepted":   s.ing.Spans.Accepted(),
 		"logs_accepted":    s.ing.Logs.Accepted(),
 		"metrics_accepted": s.ing.Metrics.Accepted(),
-	})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if overloaded {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// isOverloaded returns true when the queue is past 90% capacity.
+// At that point the consumer is falling behind the producer and
+// the soft back-pressure (channel buffering) is about to flip
+// into hard drops. Pulling the pod out of LB rotation here gives
+// the queue a chance to drain before the drop counter climbs.
+func isOverloaded(depth, cap int) bool {
+	if cap <= 0 {
+		return false
+	}
+	return depth*10 >= cap*9
+}
+
+// isDegraded is the lighter signal — 70% full. Lets the body
+// surface "degraded" to admin dashboards without taking the
+// pod out of rotation yet.
+func isDegraded(depth, cap int) bool {
+	if cap <= 0 {
+		return false
+	}
+	return depth*10 >= cap*7
 }
 
 // getVersion is the unauthenticated build-tag endpoint the login

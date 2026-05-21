@@ -15,7 +15,7 @@ import { TraceVolumeHistogram } from '@/components/TraceVolumeHistogram';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
 import { api } from '@/lib/api';
-import { tsShort, timeRangeToNs, fmtNum, rowClickHandlers } from '@/lib/utils';
+import { tsDateTime, timeRangeToNs, fmtNum, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import type { TracesResponse, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
 
@@ -544,7 +544,7 @@ function TracesPageInner() {
                         }}
                         {...rowClickHandlers(`/trace?id=${t.traceId}`,
                                              () => navigate(`/trace?id=${t.traceId}`))}>
-                      <td className="mono">{tsShort(t.startTime)}</td>
+                      <td className="mono">{tsDateTime(t.startTime)}</td>
                       <td><SvcBadge name={t.serviceName} /></td>
                       <td title={t.rootName}>{t.rootName || '—'}</td>
                       <td className="mono">{t.durationMs.toFixed(2)}ms</td>

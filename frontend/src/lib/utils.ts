@@ -90,6 +90,24 @@ export function tsShort(ns: number): string {
   return d.toLocaleTimeString('en', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
 
+// v0.5.321 — Operator-reported: Traces page's Time column showed
+// only HH:MM:SS.mmm (tsShort) — at wide windows the operator
+// couldn't tell whether two rows were from the same day. Render
+// the full ISO-ish stamp with date: "2026-05-21 10:23:45.123".
+// Sortable string format, locale-stable, no DateStyle quirks.
+export function tsDateTime(ns: number): string {
+  if (!ns) return '—';
+  const d = new Date(ns / 1e6);
+  const yyyy = d.getFullYear();
+  const mm   = String(d.getMonth() + 1).padStart(2, '0');
+  const dd   = String(d.getDate()).padStart(2, '0');
+  const hh   = String(d.getHours()).padStart(2, '0');
+  const mi   = String(d.getMinutes()).padStart(2, '0');
+  const ss   = String(d.getSeconds()).padStart(2, '0');
+  const ms   = String(d.getMilliseconds()).padStart(3, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${ms}`;
+}
+
 export function tsLong(ns: number): string {
   if (!ns) return '—';
   return new Date(ns / 1e6).toLocaleString('en', { dateStyle: 'short', timeStyle: 'medium' });

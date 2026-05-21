@@ -1308,9 +1308,28 @@ export interface FlameNode {
   children?: FlameNode[];
 }
 
+// Mirrors profileconv.FrameKind on the backend. Used both for
+// per-row badges in the hotspot tables and for the top-level
+// breakdown bar (CPU vs Lock vs IO vs Sleep vs GC). Stays in
+// sync with frontend/src/lib/flameHotspots.ts:classifyFrame
+// and internal/profileconv/profileconv.go:ClassifyFrame.
+export type ProfileFrameKind = 'cpu' | 'lock' | 'io' | 'sleep' | 'gc';
+
+export interface ProfileCategoryBreakdown {
+  cpu: number;
+  lock: number;
+  io: number;
+  sleep: number;
+  gc: number;
+}
+
 export interface ProfileDetail {
   meta: ProfileRow;
   flame: FlameNode;
+  // Added v0.5.333 — leaf-time split by FrameKind, mirroring
+  // Dynatrace's Suspension panel. Optional for forwards-compat
+  // (the field is missing on responses from older backends).
+  breakdown?: ProfileCategoryBreakdown;
 }
 
 // Service-level hotspot aggregation — N profiles in a window
@@ -1325,6 +1344,7 @@ export interface ProfileHotspotRow {
   self: number;
   total: number;
   paths: number;
+  kind: ProfileFrameKind;
 }
 
 export interface ProfileHotspotsResponse {
@@ -1336,6 +1356,7 @@ export interface ProfileHotspotsResponse {
   earliest: number; // unix ns; 0 when no profiles
   latest: number;
   hotspots: ProfileHotspotRow[];
+  breakdown: ProfileCategoryBreakdown;
 }
 export type SortOrder = 'asc' | 'desc';
 

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
+	"time"
 )
 
 // CustomRole is an admin-defined subset of viewer's page access.
@@ -47,6 +49,39 @@ func (s *Service) LoadPersistedCustomRoles(ctx context.Context, store customRole
 	s.customRoles = indexRoles(roles)
 	s.mu.Unlock()
 	return nil
+}
+
+// StartCustomRoleRefresh — v0.5.318. Runs a background goroutine
+// that re-reads the custom-role catalog from the shared chstore
+// every `interval` (default 30s when ≤0). In a multi-pod
+// cluster the previous load-once-at-boot pattern meant a role
+// created on pod A wasn't visible to a session served by pod B
+// until B's process restarted. Polling closes that gap to a
+// bounded staleness window without requiring pub/sub
+// infrastructure.
+//
+// Returns when ctx is cancelled. Errors are logged but never
+// fatal — a transient CH blip leaves the previous catalog in
+// place rather than clearing it.
+func (s *Service) StartCustomRoleRefresh(ctx context.Context, store customRoleStore, interval time.Duration) {
+	if s == nil || store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.LoadPersistedCustomRoles(ctx, store); err != nil {
+				log.Printf("[auth] custom-role refresh: %v", err)
+			}
+		}
+	}
 }
 
 // CustomRoles returns a snapshot copy of the current role catalog

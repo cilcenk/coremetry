@@ -349,6 +349,10 @@ func main() {
 	if err := authSvc.LoadPersistedCustomRoles(ctx, store); err != nil {
 		log.Printf("[auth] load custom roles: %v", err)
 	}
+	// v0.5.318 — multi-pod cluster: a role created on pod A
+	// wasn't visible on pod B until restart. Background poll
+	// closes the gap to ~30s without pub/sub infra.
+	go authSvc.StartCustomRoleRefresh(ctx, store, 30*time.Second)
 	// ── Trusted-header auth (oauth2-proxy / IAP / Cloudflare Access)
 	// When enabled, identity headers from an upstream proxy take
 	// the place of OIDC. Refuses to boot if trusted_proxies is

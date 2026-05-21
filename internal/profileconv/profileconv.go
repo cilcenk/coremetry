@@ -189,17 +189,139 @@ func MergeFlame(dst, src *chstore.FlameNode) {
 	}
 }
 
+// FrameKind classifies a stack frame by what the runtime was
+// doing while sampled there. Dynatrace's "Suspension" panel
+// reads off exactly this distinction — a 10s self-time on a
+// CPU frame is a hot path worth optimising, the same 10s on a
+// LockSupport.park is contention and the operator looks
+// elsewhere. Default for any frame we don't recognise is
+// FrameCPU.
+type FrameKind string
+
+const (
+	FrameCPU   FrameKind = "cpu"
+	FrameLock  FrameKind = "lock"  // park, wait, mutex acquire
+	FrameIO    FrameKind = "io"    // network / disk syscall
+	FrameSleep FrameKind = "sleep" // explicit Thread.sleep / time.Sleep
+	FrameGC    FrameKind = "gc"    // runtime GC overhead
+)
+
+// ClassifyFrame returns the FrameKind for a fully qualified
+// method/function name. Rules are conservative — false positives
+// on the kind badge confuse operators, so we only match well-
+// known framework / runtime call sites. Anything not on the
+// list stays FrameCPU (the safe default).
+func ClassifyFrame(name string) FrameKind {
+	n := strings.ToLower(name)
+	// Lock / wait / park
+	if containsAny(n, []string{
+		"locksupport.park", "object.wait", "unsafe.park",
+		"reentrantlock", "semaphore.acquire", "lock.acquire",
+		"monitor.enter", "lock.lock(",
+		"sync.(*mutex).lock", "sync.(*rwmutex).rlock", "sync.(*rwmutex).lock",
+		"runtime.semacquire", "runtime.notesleep", "runtime.chansend",
+		"runtime.chanrecv", "runtime.park_m",
+		"futex_wait", "pthread_cond_wait", "pthread_mutex_lock",
+	}) || strings.HasPrefix(n, "runtime.gopark") {
+		return FrameLock
+	}
+	// Explicit sleep
+	if containsAny(n, []string{
+		"thread.sleep", "time.sleep", "time_sleep",
+		"runtime.usleep", "sleep(",
+	}) {
+		return FrameSleep
+	}
+	// IO — kept narrow on purpose. "read" / "write" substrings
+	// hit CPU paths like ByteBuffer.write and would over-count.
+	if containsAny(n, []string{
+		"runtime.netpoll", "runtime.netpollblock",
+		"socketread", "socketwrite",
+		"filechannel.read", "filechannel.write",
+		"socket._socket.recv", "socket._socket.send",
+		"sun.nio.ch", "epoll_wait", "kevent",
+	}) {
+		return FrameIO
+	}
+	// GC
+	if containsAny(n, []string{
+		"runtime.gcbgmarkworker", "runtime.gcassist",
+		"g1collectedheap", "gcstart", "gc_main", "youngcollect",
+	}) || strings.HasPrefix(n, "runtime.gc") {
+		return FrameGC
+	}
+	return FrameCPU
+}
+
+func containsAny(s string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(s, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// CategoryBreakdown is the total self-time per FrameKind across
+// the whole flame. Sums equal the flame's root value
+// (each sample lands in exactly one bucket via its leaf frame).
+type CategoryBreakdown struct {
+	CPU   int64 `json:"cpu"`
+	Lock  int64 `json:"lock"`
+	IO    int64 `json:"io"`
+	Sleep int64 `json:"sleep"`
+	GC    int64 `json:"gc"`
+}
+
+func (b CategoryBreakdown) Total() int64 {
+	return b.CPU + b.Lock + b.IO + b.Sleep + b.GC
+}
+
+// FlameCategoryBreakdown attributes each frame's Self to its
+// FrameKind. Walks the whole tree — internal frames with Self=0
+// contribute nothing, so the sum tracks the leaf-time
+// distribution exactly.
+func FlameCategoryBreakdown(root *chstore.FlameNode) CategoryBreakdown {
+	var b CategoryBreakdown
+	walkBreakdown(root, &b)
+	return b
+}
+
+func walkBreakdown(n *chstore.FlameNode, b *CategoryBreakdown) {
+	if n.Self > 0 {
+		switch ClassifyFrame(n.Name) {
+		case FrameLock:
+			b.Lock += n.Self
+		case FrameSleep:
+			b.Sleep += n.Self
+		case FrameIO:
+			b.IO += n.Self
+		case FrameGC:
+			b.GC += n.Self
+		default:
+			b.CPU += n.Self
+		}
+	}
+	for _, c := range n.Children {
+		walkBreakdown(c, b)
+	}
+}
+
 // MethodHotspot is the per-function rollup the API returns to
 // the UI. Self / Total / Paths semantics mirror the frontend
 // helper (flameHotspots.ts) so the table looks identical
 // whether it's fed by a single profile or a merged window.
+// Kind annotates the row (cpu/lock/io/sleep/gc) so the UI can
+// render a coloured badge — operators chasing a regression can
+// scan-skip lock/sleep rows when looking for CPU hot paths.
 type MethodHotspot struct {
-	Name  string `json:"name"`
-	File  string `json:"file,omitempty"`
-	Line  int64  `json:"line,omitempty"`
-	Self  int64  `json:"self"`
-	Total int64  `json:"total"`
-	Paths int    `json:"paths"`
+	Name  string    `json:"name"`
+	File  string    `json:"file,omitempty"`
+	Line  int64     `json:"line,omitempty"`
+	Self  int64     `json:"self"`
+	Total int64     `json:"total"`
+	Paths int       `json:"paths"`
+	Kind  FrameKind `json:"kind"`
 }
 
 // FlameToHotspots walks the tree once, accumulating per-name
@@ -221,7 +343,7 @@ func FlameToHotspots(root *chstore.FlameNode) []MethodHotspot {
 func walkHS(n *chstore.FlameNode, ancestors map[string]bool, acc map[string]*MethodHotspot) {
 	entry, ok := acc[n.Name]
 	if !ok {
-		entry = &MethodHotspot{Name: n.Name, File: n.File, Line: n.Line}
+		entry = &MethodHotspot{Name: n.Name, File: n.File, Line: n.Line, Kind: ClassifyFrame(n.Name)}
 		acc[n.Name] = entry
 	}
 	entry.Self += n.Self

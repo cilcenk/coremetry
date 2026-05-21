@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { IconFlame } from '@/components/icons';
 import { ServicePicker } from '@/components/ServicePicker';
+import { BreakdownBar, KindBadge } from '@/components/KindBadge';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
 import type { ProfileRow, ProfileHotspotsResponse, TimeRange } from '@/lib/types';
@@ -236,6 +237,7 @@ function HotspotsPanel({ service, hotspots }: {
   const totalSamples = hotspots.totalSamples || 1;
   return (
     <>
+      <BreakdownBar b={hotspots.breakdown} />
       <div style={{
         marginBottom: 10, padding: 10, borderRadius: 6,
         background: 'var(--bg1)', border: '1px solid var(--border)',
@@ -268,7 +270,9 @@ function HotspotsPanel({ service, hotspots }: {
               const totalPct = (h.total / totalSamples) * 100;
               return (
                 <tr key={i} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
-                  <td className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>{h.name}</td>
+                  <td className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+                    {h.name}<KindBadge kind={h.kind} />
+                  </td>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text2)', wordBreak: 'break-all' }}>
                     {h.file ? `${h.file}${h.line ? `:${h.line}` : ''}` : '—'}
                   </td>

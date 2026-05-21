@@ -3317,7 +3317,12 @@ func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]interface{}{"meta": meta, "flame": flame})
+	breakdown := profileconv.FlameCategoryBreakdown(flame)
+	writeJSON(w, map[string]interface{}{
+		"meta":      meta,
+		"flame":     flame,
+		"breakdown": breakdown,
+	})
 }
 
 // profileHotspots aggregates every profile matching the
@@ -3381,6 +3386,7 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 		if len(hotspots) > top {
 			hotspots = hotspots[:top]
 		}
+		breakdown := profileconv.FlameCategoryBreakdown(merged)
 		return map[string]any{
 			"service":      service,
 			"profileType":  ptype,
@@ -3390,6 +3396,7 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 			"earliest":     earliest.UnixNano(),
 			"latest":       latest.UnixNano(),
 			"hotspots":     hotspots,
+			"breakdown":    breakdown,
 		}, nil
 	})
 }

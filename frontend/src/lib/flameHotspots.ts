@@ -14,6 +14,64 @@
 
 import type { FlameNode } from './types';
 
+// FrameKind mirrors the backend's profileconv.FrameKind. We
+// classify client-side too so the per-profile MethodHotspots
+// table (computed in the browser from a single flame tree) can
+// render the same coloured badges as the service-level
+// aggregation. Keep the rules in sync with
+// internal/profileconv/profileconv.go ClassifyFrame.
+export type FrameKind = 'cpu' | 'lock' | 'io' | 'sleep' | 'gc';
+
+export function classifyFrame(name: string): FrameKind {
+  const n = name.toLowerCase();
+  const has = (needles: string[]) => needles.some(s => n.includes(s));
+  if (
+    has([
+      'locksupport.park', 'object.wait', 'unsafe.park',
+      'reentrantlock', 'semaphore.acquire', 'lock.acquire',
+      'monitor.enter', 'lock.lock(',
+      'sync.(*mutex).lock', 'sync.(*rwmutex).rlock', 'sync.(*rwmutex).lock',
+      'runtime.semacquire', 'runtime.notesleep', 'runtime.chansend',
+      'runtime.chanrecv', 'runtime.park_m',
+      'futex_wait', 'pthread_cond_wait', 'pthread_mutex_lock',
+    ]) || n.startsWith('runtime.gopark')
+  ) return 'lock';
+  if (has(['thread.sleep', 'time.sleep', 'time_sleep', 'runtime.usleep', 'sleep('])) return 'sleep';
+  if (has([
+    'runtime.netpoll', 'runtime.netpollblock',
+    'socketread', 'socketwrite',
+    'filechannel.read', 'filechannel.write',
+    'socket._socket.recv', 'socket._socket.send',
+    'sun.nio.ch', 'epoll_wait', 'kevent',
+  ])) return 'io';
+  if (has(['runtime.gcbgmarkworker', 'runtime.gcassist', 'g1collectedheap', 'gcstart', 'gc_main', 'youngcollect'])
+      || n.startsWith('runtime.gc')) return 'gc';
+  return 'cpu';
+}
+
+export interface CategoryBreakdown {
+  cpu: number;
+  lock: number;
+  io: number;
+  sleep: number;
+  gc: number;
+}
+
+// flameCategoryBreakdown attributes each frame's Self to its
+// FrameKind. Mirrors backend FlameCategoryBreakdown.
+export function flameCategoryBreakdown(root: FlameNode): CategoryBreakdown {
+  const b: CategoryBreakdown = { cpu: 0, lock: 0, io: 0, sleep: 0, gc: 0 };
+  walkBreakdown(root, b);
+  return b;
+}
+
+function walkBreakdown(n: FlameNode, b: CategoryBreakdown): void {
+  if (n.self && n.self > 0) {
+    b[classifyFrame(n.name)] += n.self;
+  }
+  if (n.children) for (const c of n.children) walkBreakdown(c, b);
+}
+
 export interface MethodHotspot {
   // Display key — function name. Files differ for overloaded
   // names so we surface the most-common file:line as a hint
@@ -30,6 +88,7 @@ export interface MethodHotspot {
   // count = called from many places (probably utility code);
   // low count + high self = candidate optimisation target.
   paths: number;
+  kind: FrameKind;
 }
 
 // flameToHotspots walks the tree once, accumulating per-name
@@ -53,7 +112,7 @@ function walkHotspots(
 ): void {
   let entry = acc.get(n.name);
   if (!entry) {
-    entry = { name: n.name, self: 0, total: 0, file: n.file, line: n.line, paths: 0 };
+    entry = { name: n.name, self: 0, total: 0, file: n.file, line: n.line, paths: 0, kind: classifyFrame(n.name) };
     acc.set(n.name, entry);
   }
   // Self always accumulates (it's leaf-bound, no double count

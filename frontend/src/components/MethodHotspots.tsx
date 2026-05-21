@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { FlameNode } from '@/lib/types';
-import { flameToHotspots, sortHotspots, type HotspotSort, type MethodHotspot } from '@/lib/flameHotspots';
+import { flameToHotspots, sortHotspots, flameCategoryBreakdown, type HotspotSort, type MethodHotspot } from '@/lib/flameHotspots';
+import { KindBadge, BreakdownBar } from './KindBadge';
 
 // Method Hotspots — Dynatrace-style "which functions are
 // heaviest, ignoring call site" table. Sits below the flame
@@ -16,6 +17,7 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
   const [filter, setFilter] = useState('');
 
   const allHotspots = useMemo(() => flameToHotspots(root), [root]);
+  const breakdown = useMemo(() => flameCategoryBreakdown(root), [root]);
   const totalValue = root.value || 1;
 
   const visible = useMemo(() => {
@@ -36,6 +38,7 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
       borderRadius: 8,
       padding: 12,
     }}>
+      <BreakdownBar b={breakdown} />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 700 }}>Method hotspots</span>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
@@ -101,7 +104,7 @@ function HotspotRow({ h, totalValue }: { h: MethodHotspot; totalValue: number })
   return (
     <tr style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
       <td className="mono" style={{ wordBreak: 'break-all', fontSize: 12 }} title={h.name}>
-        {h.name}
+        {h.name}<KindBadge kind={h.kind} />
       </td>
       <td className="mono" style={{ fontSize: 11, color: 'var(--text2)', wordBreak: 'break-all' }}>
         {h.file ? `${h.file}${h.line ? `:${h.line}` : ''}` : '—'}

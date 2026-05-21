@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { FlameGraph } from '@/components/FlameGraph';
 import { FlameDiff } from '@/components/FlameDiff';
 import { MethodHotspots } from '@/components/MethodHotspots';
+import { BreakdownBar } from '@/components/KindBadge';
 import { CopyButton } from '@/components/CopyButton';
 import { api } from '@/lib/api';
 import { tsLong, fmtNum } from '@/lib/utils';
@@ -211,6 +212,14 @@ function ProfileDetailInner() {
             <FlameGraph root={data.flame} />
           </>
         )}
+        {/* Breakdown bar — top-line "where did time go" across
+            kinds (CPU / Lock / IO / Sleep / GC) for the single
+            profile. Renders above the flame so the operator
+            sees the suspension story before scanning frames. */}
+        {data && data.flame && !baselineId && data.breakdown && (
+          <BreakdownBar b={data.breakdown} />
+        )}
+
         {data && data.flame && !baselineId && <FlameGraph root={data.flame} />}
 
         {/* Method Hotspots — Dynatrace-style "which functions

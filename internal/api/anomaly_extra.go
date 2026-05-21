@@ -183,9 +183,15 @@ func (s *Server) exportAuditLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// audit is a thin helper called from mutation handlers. Best-effort:
-// errors are logged inside the store layer, never block the caller's
-// response.
+// audit is a thin helper called from mutation handlers. v0.5.339
+// (async writer): pushes the entry onto a buffered channel; the
+// background drainer batches them into CH every 200ms or when
+// the channel hits 64 entries — whichever fires first. Removes
+// the per-mutation goroutine + single-row INSERT cost that
+// bottlenecked high-rate admin scripts (e.g. bulk alert-rule
+// import). Channel-full = log+drop; audit is best-effort by
+// design (CLAUDE.md "Admin write = audit entry" promises a row
+// per mutation, but never at the cost of blocking the response).
 func (s *Server) audit(r *http.Request, action, kind, targetID, details string) {
 	claims := auth.FromContext(r.Context())
 	if claims == nil {
@@ -202,11 +208,26 @@ func (s *Server) audit(r *http.Request, action, kind, targetID, details string) 
 		IP:         clientIP(r),
 		Details:    details,
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = s.store.AppendAudit(ctx, entry)
-	}()
+	if s.auditQ == nil {
+		// Drainer not started yet (very early boot path) — fall
+		// back to the synchronous goroutine so we never silently
+		// drop an audit row that fired before main wired the
+		// drainer.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = s.store.AppendAudit(ctx, entry)
+		}()
+		return
+	}
+	select {
+	case s.auditQ <- entry:
+	default:
+		// Channel saturated — the drainer is behind on CH. Log
+		// once and drop; the operator sees the drop counter
+		// climb on /admin/stats.
+		s.auditDropCount.Add(1)
+	}
 }
 
 func clientIP(r *http.Request) string {

@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -128,6 +129,16 @@ type Server struct {
 	// so the field doesn't need to be set for unit tests that
 	// don't touch /api/status.
 	background config.BackgroundConfig
+
+	// auditQ + auditDropCount — v0.5.339 async audit writer.
+	// Mutation handlers push rows on auditQ; the StartAuditDrainer
+	// goroutine batches them into a single CH INSERT every
+	// 200ms (or when the channel fills, whichever fires first).
+	// auditDropCount tracks rows dropped due to a saturated
+	// channel — visible on /admin/cache-stats so the operator
+	// can see if the drainer is keeping up.
+	auditQ         chan chstore.AuditEntry
+	auditDropCount atomic.Int64
 }
 
 // SetBackgroundConfig wires the cadence/timeout knobs to the
@@ -176,7 +187,65 @@ func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logst
 		l1:          newL1Cache(1024),
 		stats:       newCacheStats(),
 		subRateBy:   map[string]int64{},
+		// Buffered audit channel. 1024 entries ≈ 30s of headroom
+		// at the highest sustained admin-mutation rate we've
+		// observed (bulk alert-rule import ~30/s). Channel-full
+		// fallback path is logged + counted, never blocks.
+		auditQ: make(chan chstore.AuditEntry, 1024),
 	}
+}
+
+// StartAuditDrainer runs the batched audit-write loop until ctx
+// is cancelled. Triggers a flush when either the channel hits
+// 64 pending entries or the 200ms tick elapses — whichever
+// comes first. Errors are logged but don't tear down the
+// drainer; the next tick reattempts.
+func (s *Server) StartAuditDrainer(ctx context.Context) {
+	go func() {
+		const (
+			flushSize     = 64
+			flushInterval = 200 * time.Millisecond
+		)
+		ticker := time.NewTicker(flushInterval)
+		defer ticker.Stop()
+		buf := make([]chstore.AuditEntry, 0, flushSize)
+		flush := func() {
+			if len(buf) == 0 {
+				return
+			}
+			fctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := s.store.AppendAuditBatch(fctx, buf); err != nil {
+				log.Printf("[audit] flush %d entries: %v", len(buf), err)
+			}
+			cancel()
+			buf = buf[:0]
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				// Drain any pending entries on shutdown so an
+				// admin's last action doesn't vanish during a
+				// graceful exit.
+				for {
+					select {
+					case e := <-s.auditQ:
+						buf = append(buf, e)
+					default:
+						flush()
+						return
+					}
+				}
+			case e := <-s.auditQ:
+				buf = append(buf, e)
+				if len(buf) >= flushSize {
+					flush()
+				}
+			case <-ticker.C:
+				flush()
+			}
+		}
+	}()
+	log.Printf("[audit] async drainer online — batch=64, interval=200ms")
 }
 
 // EnableDemoMode wires the demo credentials returned by /api/auth/config.

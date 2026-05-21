@@ -23,6 +23,38 @@ type AuditEntry struct {
 	Details     string `json:"details"`    // JSON or freeform
 }
 
+// AppendAuditBatch writes N entries in a single CH INSERT. ID
+// + Time defaults are applied per-row. Used by the API
+// server's background drainer (v0.5.339) so a burst of admin
+// actions doesn't fan out into N goroutines + N one-row
+// INSERTs — both wasteful at scale.
+func (s *Store) AppendAuditBatch(ctx context.Context, entries []AuditEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO audit_log")
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.ID == "" {
+			e.ID = newAuditID()
+		}
+		if e.Time == 0 {
+			e.Time = time.Now().UnixNano()
+		}
+		if err := batch.Append(
+			e.ID, time.Unix(0, e.Time),
+			e.ActorID, e.ActorEmail, e.ActorRole,
+			e.Action, e.TargetKind, e.TargetID,
+			e.IP, e.Details,
+		); err != nil {
+			return err
+		}
+	}
+	return batch.Send()
+}
+
 // AppendAudit writes one entry. Best-effort — callers fire
 // without checking the error since auth-success paths shouldn't
 // be blocked by audit-write failure (we log internally).

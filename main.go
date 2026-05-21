@@ -534,6 +534,13 @@ func main() {
 	// the multi-pod staleness gap (was bounded only by the
 	// soft TTL, up to 5s + the SWR window).
 	srv.StartCacheInvalidation(ctx)
+	// Async audit drainer (v0.5.339). Mutation handlers push
+	// rows onto a buffered channel; one background goroutine
+	// batches them into a single CH INSERT every 200ms. Removes
+	// the per-mutation goroutine + single-row insert cost that
+	// bottlenecked high-rate admin scripts (bulk alert-rule
+	// imports, mass acks).
+	srv.StartAuditDrainer(ctx)
 	if cfg.Auth.DemoMode {
 		// Demo mode auto-signs the visitor in as the configured initial
 		// admin so they can poke at every screen, including admin-only

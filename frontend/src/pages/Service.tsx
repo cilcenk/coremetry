@@ -465,8 +465,13 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   // term. /traces' free-text search matches span name out of
   // the box, so an operation like "POST /payment" lands on
   // exactly the traces that touched it.
+  // v0.5.317 — Operator-reported: prior link landed on the
+  // Aggregated tab (default) where filter+search produced no
+  // results, and rootOnly defaulted ON, hiding partial traces.
+  // Now: explicit ?view=list&rootOnly=false so the operator
+  // lands on the list view with every matching trace visible.
   const opHref = (op: string) =>
-    `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}`;
+    `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}&view=list&rootOnly=false`;
 
   const sorted = useMemo(() => {
     const cmp = (a: OperationSummary, b: OperationSummary): number => {

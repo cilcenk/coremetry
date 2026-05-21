@@ -16,6 +16,7 @@ import { ServiceNeighbors } from '@/components/ServiceNeighbors';
 import { ServiceInfra } from '@/components/ServiceInfra';
 import { Sparkline } from '@/components/Sparkline';
 import { SpanBreakdownChart } from '@/components/SpanBreakdownChart';
+import { ServiceProfilingPanel } from '@/components/ServiceProfilingPanel';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
@@ -331,6 +332,13 @@ function ServiceDetailInner() {
                   <SpanBreakdownChart service={svc}
                                       fromNs={rangeNs.from}
                                       toNs={rangeNs.to} />
+                </LazyMount>
+                {/* Profiling tile — Dynatrace-style "Top methods"
+                    card. Self-hides when the service hasn't
+                    pushed profiles, so it's a no-op for
+                    services not yet wired up. */}
+                <LazyMount minHeight={120}>
+                  <ServiceProfilingPanel service={svc} range={range} />
                 </LazyMount>
                 <LazyMount minHeight={300}>
                   <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />

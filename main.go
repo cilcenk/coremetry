@@ -391,6 +391,12 @@ func main() {
 	if err := store.ApplyPersistedRetention(ctx); err != nil {
 		log.Printf("[chstore] apply persisted retention: %v", err)
 	}
+	// v0.5.320 — proactive retention enforcer. CH's merge-based
+	// TTL drop has a 4h timeout default and won't reclaim disk
+	// until partitions are merged. The enforcer DROP PARTITION's
+	// directly every 1h for partitions older than the configured
+	// horizon. Instant disk reclaim; idempotent on a clean state.
+	go store.StartRetentionEnforcer(ctx, time.Hour)
 
 	// ── Optional OIDC ─────────────────────────────────────────────────────────
 	// Discovery failure is non-fatal: we keep local auth working and surface

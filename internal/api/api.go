@@ -274,6 +274,14 @@ func (s *Server) Start() error {
 
 	// Profile ingest (custom — not OTLP, raw pprof bytes)
 	mux.HandleFunc("POST /v1/profiles", s.ingestProfile)
+	// Pyroscope-compatible ingest path (v0.5.347). Lets
+	// existing Grafana Alloy / Pyroscope agents pointed at
+	// http://coremetry:8088/ingest publish CPU + alloc + lock
+	// profiles without a Coremetry-specific exporter. The
+	// handler maps the Pyroscope query-string convention
+	// (?name=app.cpu{tags}&from=...&until=...) onto our
+	// internal Profile shape, then defers to InsertProfile.
+	mux.HandleFunc("POST /ingest", s.pyroscopeIngest)
 
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
@@ -3343,6 +3351,110 @@ func splitNonEmpty(s string, sep rune) []string {
 }
 
 // ── Profiling ─────────────────────────────────────────────────────────────────
+
+// pyroscopeIngest accepts the Pyroscope agent's wire format —
+// query-string driven, pprof body — and writes via the same
+// InsertProfile path as /v1/profiles. v0.5.347.
+//
+// Wire format (compatible with Grafana Alloy / pyroscope OSS
+// agent / pyroscope-rs / Python's pyroscope.io SDK):
+//
+//   POST /ingest?name=<app>.<profileType>{tag=val,...}
+//                &from=<unix-sec>&until=<unix-sec>
+//                &spyName=<spy>&sampleRate=<hz>&format=pprof
+//   Content-Type: binary/octet-stream
+//   Body: pprof bytes (gzipped or plain)
+//
+// `name` carries both service AND profile type — the trailing
+// `.cpu` / `.alloc_objects` / `.lock` etc. fragment maps onto
+// our string profile_type column. Unknown profile types fall
+// through as-is so the operator's tooling sees what they sent.
+//
+// The optional `pyroscope.app.host` / `app.host` tag is read
+// off the {tags} suffix and used as host_name. Everything else
+// drops onto the floor (Pyroscope tags are a labels concept we
+// don't preserve on the Profile row; the pprof body already
+// carries label_set inline if the SDK provided it).
+func (s *Server) pyroscopeIngest(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	name := q.Get("name")
+	// Pyroscope's "app{tags}" string. Split on the first "{"
+	// to peel off the tag block (we discard the tag values for
+	// now — they're a labels concept the Profile schema
+	// doesn't preserve).
+	appPart := name
+	tagPart := ""
+	if i := strings.IndexByte(name, '{'); i >= 0 {
+		appPart = name[:i]
+		// Trim trailing "}" if present.
+		tagPart = strings.TrimSuffix(name[i+1:], "}")
+	}
+	// Trailing ".cpu" / ".lock" / "alloc_objects" etc. is the
+	// profile type. Default to "cpu" when omitted.
+	service := appPart
+	ptype := "cpu"
+	if dot := strings.LastIndexByte(appPart, '.'); dot > 0 {
+		service = appPart[:dot]
+		ptype = appPart[dot+1:]
+	}
+	if service == "" {
+		service = "unknown"
+	}
+	// Optional host from tags — Pyroscope agents emit
+	// `pyroscope.app.host` or just `host` per the SDK
+	// convention. First match wins.
+	host := r.Header.Get("X-Coremetry-Host")
+	if host == "" && tagPart != "" {
+		for _, kv := range strings.Split(tagPart, ",") {
+			eq := strings.IndexByte(kv, '=')
+			if eq <= 0 {
+				continue
+			}
+			k := strings.TrimSpace(kv[:eq])
+			v := strings.Trim(strings.TrimSpace(kv[eq+1:]), `"`)
+			if k == "host" || k == "pyroscope.app.host" || k == "instance" {
+				host = v
+				break
+			}
+		}
+	}
+	// Window: Pyroscope expresses [from, until) in unix
+	// seconds. We carry start_time as nanoseconds.
+	fromSec, _ := strconv.ParseInt(q.Get("from"), 10, 64)
+	untilSec, _ := strconv.ParseInt(q.Get("until"), 10, 64)
+	startNs := fromSec * 1e9
+	if startNs == 0 {
+		startNs = time.Now().UnixNano()
+	}
+	durNs := int64(0)
+	if untilSec > fromSec && fromSec > 0 {
+		durNs = (untilSec - fromSec) * 1e9
+	}
+
+	cnt, _ := profileconv.SampleCount(body)
+	id := newID(16)
+	p := &chstore.Profile{
+		ProfileID:   id,
+		ServiceName: service,
+		HostName:    host,
+		ProfileType: ptype,
+		StartTime:   time.Unix(0, startNs).UTC(),
+		DurationNs:  durNs,
+		PprofData:   body,
+		SampleCount: uint32(cnt),
+	}
+	if err := s.store.InsertProfile(r.Context(), p); err != nil {
+		writeErr(w, err)
+		return
+	}
+	// Pyroscope's agent expects an empty 200 — no JSON body.
+	w.WriteHeader(http.StatusOK)
+}
 
 func (s *Server) ingestProfile(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))

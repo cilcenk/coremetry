@@ -331,6 +331,7 @@ function SetupRecipes() {
     { key: 'python', label: 'Python', body: <PythonRecipe endpoint={endpoint} /> },
     { key: 'java', label: 'Java', body: <JavaRecipe endpoint={endpoint} /> },
     { key: 'node', label: 'Node.js', body: <NodeRecipe endpoint={endpoint} /> },
+    { key: 'pyroscope', label: 'Pyroscope', body: <PyroscopeRecipe endpoint={endpoint} /> },
     { key: 'curl', label: 'curl', body: <CurlRecipe endpoint={endpoint} /> },
   ];
   const [active, setActive] = useState(tabs[0].key);
@@ -563,6 +564,33 @@ function push(data: Buffer, kind: 'cpu' | 'heap', startNs: bigint, durNs: bigint
   req.end(data);
 }`;
   return <CodeBlock code={code} lang="typescript" />;
+}
+
+function PyroscopeRecipe({ endpoint }: { endpoint: string }) {
+  const code = `# Grafana Alloy / Pyroscope OSS agent — point it at
+# \`${endpoint}/ingest\` and Coremetry accepts the standard
+# Pyroscope wire format (?name=app.cpu{tags}&from=&until=
+# + pprof body). No Coremetry-specific exporter required.
+#
+# Alloy config snippet (river syntax):
+pyroscope.write "to_coremetry" {
+  endpoint {
+    url = "${endpoint}"
+  }
+}
+
+# Then any pyroscope.scrape / pyroscope.java component:
+pyroscope.scrape "demo" {
+  forward_to = [pyroscope.write.to_coremetry.receiver]
+  targets    = [{__address__ = "host:6060", service_name = "my-service"}]
+}
+
+# Or with the OSS pyroscope-agent CLI directly:
+pyroscope exec --server-address=${endpoint} \\
+               --application-name=my-service \\
+               --profile-cpu --profile-allocations \\
+               -- ./my-app`;
+  return <CodeBlock code={code} lang="bash" />;
 }
 
 function CurlRecipe({ endpoint }: { endpoint: string }) {

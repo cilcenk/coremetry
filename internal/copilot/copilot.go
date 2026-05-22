@@ -24,6 +24,7 @@ package copilot
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,7 +55,8 @@ type Service struct {
 	// endpoints. Empty → default https://api.openai.com/v1 (real
 	// OpenAI). Examples for self-hosted: http://ollama:11434/v1,
 	// http://lmstudio:1234/v1, http://vllm:8000/v1.
-	baseURL  string
+	baseURL       string
+	tlsSkipVerify bool
 
 	// GitHub session token cache. We exchange ghu_ → session token
 	// once and reuse until ~30s before the server-stated expiry.
@@ -161,12 +163,30 @@ func New(provider, apiKey, model string) *Service {
 	}
 }
 
+// buildClient returns an http.Client for the given TLS preference.
+// When tlsSkipVerify is true the client bypasses certificate chain
+// validation — intended for on-prem endpoints with self-signed or
+// internal-CA certificates. Never set this for public API endpoints.
+func buildClient(tlsSkipVerify bool) *http.Client {
+	if !tlsSkipVerify {
+		return &http.Client{Timeout: 180 * time.Second}
+	}
+	return &http.Client{
+		Timeout: 180 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
+}
+
 // Configure swaps live credentials. Used by PUT /api/settings/ai.
 // Empty apiKey legitimately disables the feature — Configured() flips
 // to false and the UI hides the buttons. baseURL is only consulted
 // by the "openai" provider; ignored for anthropic/github so a stale
 // value persisted from a previous selection doesn't leak.
-func (s *Service) Configure(provider, apiKey, model, baseURL string) {
+// tlsSkipVerify rebuilds the HTTP client with InsecureSkipVerify when
+// true — for on-prem endpoints with self-signed certificates.
+func (s *Service) Configure(provider, apiKey, model, baseURL string, tlsSkipVerify bool) {
 	if provider == "" {
 		provider = ProviderAnthropic
 	}
@@ -177,16 +197,18 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string) {
 		s.ghSessTok, s.ghSessExp = "", time.Time{}
 	}
 	s.provider, s.apiKey, s.model, s.baseURL = provider, apiKey, model, baseURL
+	s.tlsSkipVerify = tlsSkipVerify
+	s.cli = buildClient(tlsSkipVerify)
 }
 
 // Snapshot returns the current configuration. The apiKey is masked
 // (only "set" / "unset" matters to the UI) — full key is never echoed.
 // baseURL is non-secret (operators put it in their Helm values), so
 // we echo it back so the Settings page can show what's wired up.
-func (s *Service) Snapshot() (provider, model, baseURL string, hasKey bool) {
+func (s *Service) Snapshot() (provider, model, baseURL string, hasKey, tlsSkipVerify bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.provider, s.model, s.baseURL, s.apiKey != ""
+	return s.provider, s.model, s.baseURL, s.apiKey != "", s.tlsSkipVerify
 }
 
 // Configured reports whether the service has credentials. The "openai"
@@ -564,10 +586,11 @@ func (s *Service) githubSessionToken(ctx context.Context) (string, error) {
 const settingsKey = "ai_copilot"
 
 type persisted struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"apiKey"`
-	Model    string `json:"model"`
-	BaseURL  string `json:"baseUrl,omitempty"`
+	Provider      string `json:"provider"`
+	APIKey        string `json:"apiKey"`
+	Model         string `json:"model"`
+	BaseURL       string `json:"baseUrl,omitempty"`
+	TLSSkipVerify bool   `json:"tlsSkipVerify,omitempty"`
 }
 
 // SettingsStore is the small slice of *chstore.Store we need —
@@ -592,7 +615,7 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
 	}
-	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL)
+	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL, p.TLSSkipVerify)
 	return nil
 }
 
@@ -622,15 +645,15 @@ func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, i
 
 // SavePersisted writes new credentials to system_settings AND updates
 // the live Service. Called by PUT /api/settings/ai.
-func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string) error {
-	raw, err := json.Marshal(persisted{Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL})
+func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, tlsSkipVerify bool) error {
+	raw, err := json.Marshal(persisted{Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL, TLSSkipVerify: tlsSkipVerify})
 	if err != nil {
 		return err
 	}
 	if err := store.PutSetting(ctx, settingsKey, raw); err != nil {
 		return err
 	}
-	s.Configure(provider, apiKey, model, baseURL)
+	s.Configure(provider, apiKey, model, baseURL, tlsSkipVerify)
 	return nil
 }
 

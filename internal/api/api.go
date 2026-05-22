@@ -6165,12 +6165,13 @@ func (s *Server) copilotConfig(w http.ResponseWriter, r *http.Request) {
 // we echo it so the UI can show "currently pointing at <local
 // endpoint>" without operator memorisation.
 func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
-	provider, model, baseURL, hasKey := s.copilot.Snapshot()
+	provider, model, baseURL, hasKey, tlsSkipVerify := s.copilot.Snapshot()
 	writeJSON(w, map[string]any{
-		"provider": provider,
-		"model":    model,
-		"baseUrl":  baseURL,
-		"hasKey":   hasKey,
+		"provider":      provider,
+		"model":         model,
+		"baseUrl":       baseURL,
+		"hasKey":        hasKey,
+		"tlsSkipVerify": tlsSkipVerify,
 	})
 }
 
@@ -6182,10 +6183,11 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 // "local Ollama, no auth" config.
 func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Provider string `json:"provider"`
-		APIKey   string `json:"apiKey"`
-		Model    string `json:"model"`
-		BaseURL  string `json:"baseUrl"`
+		Provider      string `json:"provider"`
+		APIKey        string `json:"apiKey"`
+		Model         string `json:"model"`
+		BaseURL       string `json:"baseUrl"`
+		TLSSkipVerify bool   `json:"tlsSkipVerify"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest); return
@@ -6196,21 +6198,23 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		in.Provider != copilot.ProviderOpenAI {
 		http.Error(w, "provider must be 'anthropic', 'github' or 'openai'", http.StatusBadRequest); return
 	}
-	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL); err != nil {
+	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.TLSSkipVerify); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
-	provider, model, baseURL, hasKey := s.copilot.Snapshot()
+	provider, model, baseURL, hasKey, tlsSkipVerify := s.copilot.Snapshot()
 	// apiKey itself never enters audit_log; hasKey is the only
 	// secret-adjacent bit and it's already part of the public GET.
 	details, _ := json.Marshal(map[string]any{
-		"provider": provider, "model": model, "baseUrl": baseURL, "hasKey": hasKey,
+		"provider": provider, "model": model, "baseUrl": baseURL,
+		"hasKey": hasKey, "tlsSkipVerify": tlsSkipVerify,
 	})
 	s.audit(r, "settings.ai.update", "settings", "ai", string(details))
 	writeJSON(w, map[string]any{
-		"provider": provider,
-		"model":    model,
-		"baseUrl":  baseURL,
-		"hasKey":   hasKey,
+		"provider":      provider,
+		"model":         model,
+		"baseUrl":       baseURL,
+		"hasKey":        hasKey,
+		"tlsSkipVerify": tlsSkipVerify,
 	})
 }
 

@@ -1580,6 +1580,7 @@ function AITab() {
   const [provider, setProvider] = useState<AIProvider>('anthropic');
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [tlsSkipVerify, setTlsSkipVerify] = useState(false);
   const [hasKey, setHasKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1590,6 +1591,7 @@ function AITab() {
       setProvider(s.provider || 'anthropic');
       setModel(s.model || '');
       setBaseUrl(s.baseUrl || '');
+      setTlsSkipVerify(s.tlsSkipVerify ?? false);
       setHasKey(s.hasKey);
       setLoaded(true);
     }).catch(() => setLoaded(true));
@@ -1599,8 +1601,9 @@ function AITab() {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey, model, baseUrl });
+      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, tlsSkipVerify: provider === 'openai' ? tlsSkipVerify : false });
       setHasKey(next.hasKey);
+      setTlsSkipVerify(next.tlsSkipVerify ?? false);
       setApiKey('');
       setMsg({ kind: 'ok', text: next.hasKey ? 'Saved — Copilot is live.' : 'Saved — Copilot disabled.' });
     } catch (err) {
@@ -1614,7 +1617,7 @@ function AITab() {
     if (!confirm('Remove the saved API key? Copilot buttons will disappear until a new key is set.')) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl });
+      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, tlsSkipVerify: provider === 'openai' ? tlsSkipVerify : false });
       setHasKey(next.hasKey);
       setApiKey('');
       setMsg({ kind: 'ok', text: 'Key cleared — Copilot is dormant.' });
@@ -1723,6 +1726,19 @@ function AITab() {
               LM Studio → <code>http://&lt;host&gt;:1234/v1</code>,
               vLLM → <code>http://&lt;host&gt;:8000/v1</code>.
             </div>
+          </label>
+        )}
+
+        {provider === 'openai' && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, cursor: 'pointer' }}>
+            <input type="checkbox" checked={tlsSkipVerify}
+                   onChange={e => setTlsSkipVerify(e.target.checked)} />
+            <span style={{ fontSize: 13 }}>
+              Skip TLS certificate verification
+              <span style={{ display: 'block', fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                Only for on-prem endpoints with self-signed or internal-CA certificates.
+              </span>
+            </span>
           </label>
         )}
 

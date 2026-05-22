@@ -471,12 +471,14 @@ export interface AISettings {
   model: string;
   baseUrl: string;
   hasKey: boolean;
+  tlsSkipVerify: boolean;
 }
 export interface AISettingsInput {
   provider: AIProvider;
   apiKey: string;
   model?: string;
   baseUrl?: string;
+  tlsSkipVerify?: boolean;
 }
 
 // External Tempo backend (v0.5.208) — fallback for trace-by-id

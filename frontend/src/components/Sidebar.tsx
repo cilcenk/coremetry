@@ -67,6 +67,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/traces',     label: 'nav.traces',    icon: '⋮' },
       { href: '/metrics',    label: 'nav.metrics',   icon: '∿' },
+      { href: '/span-metrics', label: 'nav.spanMetrics', icon: '⌗' },
       { href: '/logs',       label: 'nav.logs',      icon: '≡' },
       { href: '/profiling',  label: 'nav.profiling', icon: '⌬' },
     ],

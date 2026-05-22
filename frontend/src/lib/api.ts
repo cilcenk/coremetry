@@ -2,6 +2,7 @@ import type {
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
   LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries,
+  SpanMetricsServicesResponse,
   AlertRule, Problem, ServiceEdgeStats, Exception,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -987,6 +988,8 @@ export const api = {
 
   metricQuery: (params: MetricQueryParams) =>
     get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs(params)}`),
+  spanmetricsServices: (from: number, to: number) =>
+    get<SpanMetricsServicesResponse>(`/api/spanmetrics/services?from=${from}&to=${to}`),
   metricLabels: (metric: string, key: string, since = '24h') =>
     get<string[] | null>(`/api/metrics/labels?metric=${encodeURIComponent(metric)}&key=${encodeURIComponent(key)}&since=${since}`),
 

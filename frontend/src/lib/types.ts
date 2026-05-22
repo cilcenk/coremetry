@@ -1371,6 +1371,30 @@ export interface SpanHotspotsResponse {
 }
 export type SortOrder = 'asc' | 'desc';
 
+// Span-metrics-derived per-service RED rollup. Source: the
+// spanmetrics processor (or compatible Grafana Alloy /
+// otelcol pipeline) emits a calls counter + duration
+// histogram; the backend aggregates per service_name within
+// the window. Surfaced on /span-metrics so operators with a
+// pre-existing metric pipeline don't need to wait for the
+// span-derived MV.
+export interface SpanMetricServiceRow {
+  service: string;
+  calls: number;
+  errors: number;
+  errorRate: number;
+  avgMs?: number;
+  p99Ms?: number;
+  callsMetric?: string;
+  durationMetric?: string;
+}
+
+export interface SpanMetricsServicesResponse {
+  rows: SpanMetricServiceRow[] | null;
+  callsMetric: string;
+  durationMetric: string;
+}
+
 // One node in the multi-trace path-aggregated structure tree
 // returned by GET /api/services/{name}/structure. Each node
 // represents a unique `(parent_path → service → operation)` triple

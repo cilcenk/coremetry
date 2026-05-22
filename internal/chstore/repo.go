@@ -1140,7 +1140,13 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		wc.add("service_name = ?", f.Service)
 	}
 	if f.Search != "" {
-		wc.add("name LIKE ?", "%"+f.Search+"%")
+		// v0.5.351 — case-insensitive. Operator-reported:
+		// /traces?search=SmsService.Send returned 0 rows because
+		// the SDK emitted the operation as "smsservice.send"
+		// (lowercase). CH `LIKE` is case-sensitive; switching to
+		// positionCaseInsensitive matches what the operator
+		// types regardless of SDK conventions.
+		wc.add("positionCaseInsensitive(name, ?) > 0", f.Search)
 	}
 	if f.TraceID != "" {
 		// Exact match for full 32-char trace ID, prefix match for shorter.
@@ -1297,10 +1303,23 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	}
 
 	// Note: use if() not ternary ? : — ClickHouse treats ? as a param placeholder
+	// v0.5.351 — root_name/root_svc fallback. When the WHERE
+	// filter (service / name search) excludes the real root
+	// span (because it lives in a different service or has a
+	// different name), anyIf(parent_id='') returns empty and
+	// the trace row renders blank. Fall back to ANY span's
+	// name/service so the operator at least sees a label — the
+	// trace detail view still shows the full trace on click.
 	querySQL := `
 		SELECT trace_id,
-		       anyIf(name, (parent_id = '' OR parent_id = '0000000000000000'))             AS root_name,
-		       anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))     AS root_svc,
+		       coalesce(
+		         nullIf(anyIf(name, (parent_id = '' OR parent_id = '0000000000000000')), ''),
+		         any(name)
+		       )                                       AS root_name,
+		       coalesce(
+		         nullIf(anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000')), ''),
+		         any(service_name)
+		       )                                       AS root_svc,
 		       min(time)                               AS trace_start,
 		       (max(toUnixTimestamp64Nano(time) + duration) -
 		        toUnixTimestamp64Nano(min(time))) / 1e6 AS dur_ms,
@@ -1609,7 +1628,13 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		wc.add("service_name = ?", f.Service)
 	}
 	if f.Search != "" {
-		wc.add("name LIKE ?", "%"+f.Search+"%")
+		// v0.5.351 — case-insensitive. Operator-reported:
+		// /traces?search=SmsService.Send returned 0 rows because
+		// the SDK emitted the operation as "smsservice.send"
+		// (lowercase). CH `LIKE` is case-sensitive; switching to
+		// positionCaseInsensitive matches what the operator
+		// types regardless of SDK conventions.
+		wc.add("positionCaseInsensitive(name, ?) > 0", f.Search)
 	}
 	if f.HasError {
 		wc.add("status_code = 'error'")

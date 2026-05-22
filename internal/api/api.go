@@ -3196,28 +3196,26 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		// Stage 4 — quantile estimation from histogram buckets.
-		// v0.5.358: reads raw metric_points (no MV — bucket
-		// arrays only live there) scoped to the top-N service
-		// IN-list so the scan is bounded by the cap, not by
-		// the universe of services. sumForEach is the CH
-		// combinator that does element-wise array sum across
-		// rows — gives us the merged histogram per service in
-		// one round-trip. histQuantile() interpolates within
-		// the bucket for a better-than-step estimate.
+		// v0.5.359: reads from spanmetrics_hist_5m (the MV
+		// added in v0.5.359). anyMerge picks the prevailing
+		// bucket layout per (service, 5min); sumMapMerge
+		// element-wise sums the per-bucket counts via the
+		// (key→value) map state. CH driver returns the merged
+		// map as a tuple of two parallel arrays (keys[],
+		// values[]); we reconstruct the dense counts array
+		// from those.
 		if durationMetric != "" {
-			qArgs := []any{durationMetric, bucketStart, to}
+			qArgs := []any{bucketStart, to}
 			qArgs = append(qArgs, svcArgs...)
 			qRows, qerr := s.store.Conn().Query(r.Context(), `
 				SELECT service_name,
-				       any(bucket_bounds)        AS bounds,
-				       sumForEach(bucket_counts) AS counts
-				FROM metric_points
-				WHERE metric = ?
-				  AND time >= ? AND time <= ?
+				       anyMerge(bounds_state)    AS bounds,
+				       sumMapMerge(counts_state) AS counts_map
+				FROM spanmetrics_hist_5m
+				WHERE time_bucket >= ? AND time_bucket <= ?
 				  AND service_name IN (`+holders+`)
-				  AND length(bucket_counts) > 0
 				GROUP BY service_name
-				SETTINGS max_execution_time = 10`, qArgs...)
+				SETTINGS max_execution_time = 8`, qArgs...)
 			if qerr == nil {
 				defer qRows.Close()
 				type qRow struct{ P50, P99 float64 }
@@ -3225,8 +3223,16 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				for qRows.Next() {
 					var svc string
 					var bounds []float64
-					var counts []uint64
-					if err := qRows.Scan(&svc, &bounds, &counts); err != nil {
+					// sumMap(Array(UInt32), Array(UInt64)) →
+					// Tuple(Array(UInt32), Array(UInt64)). The
+					// clickhouse-go driver surfaces that as a
+					// []any of two parallel typed arrays.
+					var tup []any
+					if err := qRows.Scan(&svc, &bounds, &tup); err != nil {
+						continue
+					}
+					counts := densifyBucketMap(tup)
+					if len(bounds) == 0 || len(counts) == 0 {
 						continue
 					}
 					qMap[svc] = qRow{
@@ -3255,6 +3261,34 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 			"truncated":      len(out) >= top,
 		}, nil
 	})
+}
+
+// densifyBucketMap turns the (keys[], values[]) tuple
+// returned by sumMapMerge back into a dense bucket_counts
+// array indexed 0..maxKey. sumMap drops zero-count buckets,
+// so this fills them back in so the histQuantile walk works
+// against a contiguous index. v0.5.359 — used by the span
+// metrics quantile stage.
+func densifyBucketMap(tup []any) []uint64 {
+	if len(tup) != 2 {
+		return nil
+	}
+	keys, _ := tup[0].([]uint32)
+	vals, _ := tup[1].([]uint64)
+	if len(keys) == 0 || len(keys) != len(vals) {
+		return nil
+	}
+	var maxKey uint32
+	for _, k := range keys {
+		if k > maxKey {
+			maxKey = k
+		}
+	}
+	dense := make([]uint64, maxKey+1)
+	for i, k := range keys {
+		dense[k] = vals[i]
+	}
+	return dense
 }
 
 // histQuantile estimates the q-th quantile from an OTel

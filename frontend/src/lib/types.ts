@@ -1398,6 +1398,11 @@ export interface SpanMetricsServicesResponse {
   rows: SpanMetricServiceRow[] | null;
   callsMetric: string;
   durationMetric: string;
+  // v0.5.355 — top-N cap surfaced so the UI can render a
+  // "showing top N of M services" hint without re-querying
+  // for the full count. truncated = the response hit the cap.
+  top?: number;
+  truncated?: boolean;
 }
 
 // One node in the multi-trace path-aggregated structure tree

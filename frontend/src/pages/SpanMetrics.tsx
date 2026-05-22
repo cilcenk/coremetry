@@ -23,21 +23,44 @@ import type { TimeRange, SpanMetricsServicesResponse, SpanMetricServiceRow } fro
 
 type SortKey = 'service' | 'calls' | 'errors' | 'errorRate' | 'avgMs' | 'maxMs';
 
+// Top-N choices for the cap selector. v0.5.355 — at 10k+
+// services the full window query took 10s+; defaulting to 200
+// lets the page paint sub-second. Operator-overridable.
+const TOP_CHOICES = [50, 100, 200, 500, 1000];
+
 export default function SpanMetricsPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [data, setData] = useState<SpanMetricsServicesResponse | null | undefined>(undefined);
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('calls');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // Local UI prefs, persisted in localStorage so the operator
+  // doesn't have to re-pick on every visit. Top defaults to
+  // 200 (the backend default); sparkline ON by default.
+  const [top, setTop] = useState<number>(() => {
+    const v = parseInt(localStorage.getItem('coremetry.spanmetrics.top') ?? '200', 10);
+    return TOP_CHOICES.includes(v) ? v : 200;
+  });
+  const [showSpark, setShowSpark] = useState<boolean>(() =>
+    (localStorage.getItem('coremetry.spanmetrics.spark') ?? '1') !== '0');
 
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
   useEffect(() => {
     setData(undefined);
-    api.spanmetricsServices(from, to)
+    api.spanmetricsServices(from, to, { top, spark: showSpark })
       .then(d => setData(d ?? null))
       .catch(() => setData(null));
-  }, [from, to]);
+  }, [from, to, top, showSpark]);
+
+  const persistTop = (v: number) => {
+    setTop(v);
+    try { localStorage.setItem('coremetry.spanmetrics.top', String(v)); } catch { /* private mode */ }
+  };
+  const persistShowSpark = (v: boolean) => {
+    setShowSpark(v);
+    try { localStorage.setItem('coremetry.spanmetrics.spark', v ? '1' : '0'); } catch { /* private mode */ }
+  };
 
   const rows: SpanMetricServiceRow[] = data?.rows ?? [];
   const visible = useMemo(() => {
@@ -151,16 +174,35 @@ service:
                    value={shortMetric(data.callsMetric)}
                    sub={data.durationMetric ? shortMetric(data.durationMetric) : 'no duration metric'} />
             </div>
-            <div className="controls" style={{ marginBottom: 12 }}>
+            <div className="controls" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Filter by service…"
-                style={{ width: 280, padding: '5px 10px', fontSize: 12,
+                style={{ width: 240, padding: '5px 10px', fontSize: 12,
                          background: 'var(--bg)', color: 'var(--text)',
                          border: '1px solid var(--border)', borderRadius: 4 }} />
+              <label style={{ fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                Top
+                <select value={top} onChange={e => persistTop(parseInt(e.target.value, 10))}
+                  title="Cap on services returned — keeps the page fast at high cardinality">
+                  {TOP_CHOICES.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                title="Disable the per-row sparkline aggregation for the fastest possible load">
+                <input type="checkbox" checked={showSpark}
+                  onChange={e => persistShowSpark(e.target.checked)} />
+                Sparkline
+              </label>
               <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
                 {search.trim()
                   ? `${visible.length} / ${rows.length} services`
                   : `${rows.length} services`}
+                {data?.truncated && (
+                  <span style={{ marginLeft: 8, color: 'var(--warn)' }}
+                    title="Result hit the top-N cap. Increase Top to see more.">
+                    · capped at top {data.top}
+                  </span>
+                )}
               </span>
             </div>
             <div className="table-wrap">
@@ -174,7 +216,7 @@ service:
                     <th className="num">Rate / s</th>
                     <SortHeader k="avgMs"     label="Avg latency" cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="maxMs"     label="Max"         cur={sortKey} dir={sortDir} onSort={setSort} num />
-                    <th>Calls / time</th>
+                    {showSpark && <th>Calls / time</th>}
                     <th>Explore</th>
                   </tr>
                 </thead>
@@ -204,11 +246,13 @@ service:
                         <td className="num mono" style={{ color: 'var(--text3)' }}>
                           {r.maxMs != null && r.maxMs > 0 ? `${r.maxMs.toFixed(0)} ms` : '—'}
                         </td>
-                        <td>
-                          <Sparkline values={r.sparkline ?? []}
-                            width={100} height={22}
-                            title={`${fmtNum(r.calls)} calls across ${windowSec >= 60 ? `${Math.round(windowSec / 60)} min` : `${windowSec} s`}`} />
-                        </td>
+                        {showSpark && (
+                          <td>
+                            <Sparkline values={r.sparkline ?? []}
+                              width={100} height={22}
+                              title={`${fmtNum(r.calls)} calls across ${windowSec >= 60 ? `${Math.round(windowSec / 60)} min` : `${windowSec} s`}`} />
+                          </td>
+                        )}
                         <td>
                           <Link to={`/metrics?service=${encodeURIComponent(r.service)}&metric=${encodeURIComponent(data.callsMetric)}`}
                                 style={{ fontSize: 11, color: 'var(--accent2)' }}>

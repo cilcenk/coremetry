@@ -988,8 +988,16 @@ export const api = {
 
   metricQuery: (params: MetricQueryParams) =>
     get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs(params)}`),
-  spanmetricsServices: (from: number, to: number) =>
-    get<SpanMetricsServicesResponse>(`/api/spanmetrics/services?from=${from}&to=${to}`),
+  spanmetricsServices: (from: number, to: number, opts?: { top?: number; spark?: boolean }) => {
+    const params = new URLSearchParams();
+    params.set('from', String(from));
+    params.set('to', String(to));
+    if (opts?.top != null) params.set('top', String(opts.top));
+    // ?spark=0 disables the sparkline aggregation server-side
+    // — the cheapest possible load at high service cardinality.
+    if (opts?.spark === false) params.set('spark', '0');
+    return get<SpanMetricsServicesResponse>(`/api/spanmetrics/services?${params.toString()}`);
+  },
   metricLabels: (metric: string, key: string, since = '24h') =>
     get<string[] | null>(`/api/metrics/labels?metric=${encodeURIComponent(metric)}&key=${encodeURIComponent(key)}&since=${since}`),
 

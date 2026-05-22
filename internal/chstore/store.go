@@ -1250,6 +1250,50 @@ func (s *Store) migrate(ctx context.Context) error {
 		   )
 		 GROUP BY service_name, time_bucket`,
 
+		// spanmetrics_hist_5m: per-(service, 5min) pre-aggregation
+		// of the histogram bucket layout. v0.5.359 — the
+		// v0.5.358 quantile stage reads raw metric_points
+		// (sumForEach across the window); at scale that's the
+		// slowest of the four stages. This MV moves the
+		// element-wise bucket sum into the aggregating engine
+		// via sumMapState so the read collapses to a single
+		// sumMapMerge — sub-second even on the full top-N set.
+		//
+		// bounds is anyState: we assume the (service, metric)
+		// tuple uses one consistent bucket layout per emitter
+		// run. If the layout ever changes mid-run the MV's
+		// reduce picks the first one — same trade-off the
+		// histQuantile() consumer already accepts.
+		//
+		// counts uses sumMapState(keys, values) — element-wise
+		// sum keyed by bucket index. Different-length bucket
+		// arrays across data points (rare but possible) sum
+		// cleanly via the map abstraction.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_hist_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   anyState(bucket_bounds)                    AS bounds_state,
+		   sumMapState(
+		     arrayMap(i -> toUInt32(i), range(0, toUInt32(length(bucket_counts)))),
+		     bucket_counts
+		   )                                          AS counts_state
+		 FROM metric_points
+		 WHERE metric IN (
+		     'traces.spanmetrics.duration',
+		     'traces.spanmetrics.duration.seconds.sum',
+		     'traces_spanmetrics_duration',
+		     'spanmetrics.duration',
+		     'duration'
+		   )
+		   AND length(bucket_counts) > 0
+		 GROUP BY service_name, time_bucket`,
+
 		// spanmetrics_duration_5m: per-(service, 5min)
 		// pre-aggregation of the histogram-shaped duration
 		// metric. Stores sum + count + max from the

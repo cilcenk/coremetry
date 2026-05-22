@@ -40,10 +40,26 @@ func safeF(p *float64) float64 {
 // wait_for_async_insert=1 keeps client-side semantics synchronous
 // (the call doesn't return until the server has buffered the rows
 // for durability), so we still detect insert errors properly.
+//
+// v0.5.346 — tuned for high-TPS ingestion:
+//   • async_insert_max_data_size = 10MB  (up from 1MB default)
+//     — bigger coalescence per server-side flush, fewer disk
+//     writes per row at burst peaks.
+//   • async_insert_busy_timeout_ms = 1000  (up from 200ms)
+//     — wait up to 1s collecting concurrent inserts before
+//     flushing. Trade a tiny visibility lag for far fewer
+//     write operations at sustained load.
+//   • async_insert_stale_timeout_ms = 1000
+//     — flush a partial buffer 1s after the last insert so
+//     low-traffic services (test envs, off-hours) don't sit
+//     on rows indefinitely.
 func asyncInsertCtx(ctx context.Context) context.Context {
 	return clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
-		"async_insert":          1,
-		"wait_for_async_insert": 1,
+		"async_insert":                      1,
+		"wait_for_async_insert":             1,
+		"async_insert_max_data_size":        10_485_760,
+		"async_insert_busy_timeout_ms":      1000,
+		"async_insert_stale_timeout_ms":     1000,
 	}))
 }
 

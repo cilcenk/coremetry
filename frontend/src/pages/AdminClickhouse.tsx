@@ -28,11 +28,17 @@ type RepLag = {
   database: string; table: string;
   queueSize: number; absoluteDelaySec: number;
 };
+type AsyncIns = {
+  database: string; table: string;
+  totalBytes: number; entriesCount: number;
+  firstUpdateMsAgo: number;
+};
 type CHHealth = {
   slowQueries: Slow[] | null;
   merges: Merge[] | null;
   partHotspots: PartHot[] | null;
   replicationLag?: RepLag[] | null;
+  asyncInserts?: AsyncIns[] | null;
   generatedAt: number;
 };
 
@@ -186,6 +192,34 @@ export default function AdminClickhousePage() {
                   </div>
                 )}
             </Section>
+
+            {data.asyncInserts && data.asyncInserts.length > 0 && (
+              <Section title="Async insert buffer">
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Database</th><th>Table</th>
+                        <th className="num">Bytes buffered</th>
+                        <th className="num">Entries</th>
+                        <th className="num">Oldest</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.asyncInserts.map((a, i) => (
+                        <tr key={i}>
+                          <td className="mono">{a.database}</td>
+                          <td className="mono">{a.table}</td>
+                          <td className="num mono">{fmtNum(a.totalBytes)}</td>
+                          <td className="num mono">{fmtNum(a.entriesCount)}</td>
+                          <td className="num mono">{a.firstUpdateMsAgo}ms</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
+            )}
 
             {data.replicationLag && data.replicationLag.length > 0 && (
               <Section title="Replication lag (cluster only)">

@@ -18,11 +18,16 @@ import (
 // system.async_inserts) leaves the slot at its zero value rather
 // than 500-ing the whole page.
 type CHHealth struct {
-	SlowQueries []CHSlowQuery `json:"slowQueries"`
-	Merges      []CHMerge     `json:"merges"`
-	PartHotspots []CHPartHotspot `json:"partHotspots"`
-	Replication  []CHReplicationLag `json:"replicationLag,omitempty"`
-	Generated    int64          `json:"generatedAt"` // unix ns of snapshot
+	SlowQueries    []CHSlowQuery    `json:"slowQueries"`
+	Merges         []CHMerge        `json:"merges"`
+	PartHotspots   []CHPartHotspot  `json:"partHotspots"`
+	Replication    []CHReplicationLag `json:"replicationLag,omitempty"`
+	// v0.5.346 — in-flight async_insert batches. Each row =
+	// one currently-buffered INSERT awaiting flush. Lets the
+	// operator see whether the tuned async_insert_busy_timeout
+	// is doing useful coalescence or sitting idle.
+	AsyncInserts   []CHAsyncInsert  `json:"asyncInserts,omitempty"`
+	Generated      int64            `json:"generatedAt"` // unix ns of snapshot
 }
 
 type CHSlowQuery struct {
@@ -57,6 +62,21 @@ type CHReplicationLag struct {
 	Table             string `json:"table"`
 	QueueSize         uint32 `json:"queueSize"`
 	AbsoluteDelay     uint64 `json:"absoluteDelaySec"`
+}
+
+// CHAsyncInsert mirrors one row of system.asynchronous_inserts
+// — a buffered INSERT awaiting the server-side coalescing
+// flush. ageMs > 0 = how long it's been sitting; bytes/rows
+// reflect what's queued so far. The whole list usually has
+// a few rows during steady ingest, climbs visibly under
+// burst (good sign — coalescence working) and falls back as
+// the busy_timeout fires.
+type CHAsyncInsert struct {
+	Database string `json:"database"`
+	Table    string `json:"table"`
+	TotalBytes uint64 `json:"totalBytes"`
+	EntriesCount uint64 `json:"entriesCount"`
+	FirstUpdateMsAgo uint64 `json:"firstUpdateMsAgo"`
 }
 
 // getClickHouseHealth — admin-only. Cached 5s (CH self-stats are
@@ -148,6 +168,35 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				out.PartHotspots = append(out.PartHotspots, p)
+			}
+		}
+
+		// ── Async insert buffer (v0.5.346) ─────────────────────
+		// system.asynchronous_inserts shows currently-buffered
+		// INSERTs awaiting the server-side flush. Tail-empty on
+		// idle pods; non-zero during burst = coalescence
+		// working. Available on CH 22.10+; silently empty on
+		// older builds.
+		if rows, err := s.store.Conn().Query(ctx, `
+			SELECT database, table,
+			       total_bytes, entries.bytes_count[1] AS entries_count,
+			       dateDiff('millisecond', first_update, now64()) AS first_update_ms_ago
+			FROM system.asynchronous_inserts
+			ORDER BY total_bytes DESC
+			LIMIT 20
+			SETTINGS max_execution_time = 3`); err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var a CHAsyncInsert
+				var firstMs int64
+				if err := rows.Scan(&a.Database, &a.Table,
+					&a.TotalBytes, &a.EntriesCount, &firstMs); err != nil {
+					continue
+				}
+				if firstMs > 0 {
+					a.FirstUpdateMsAgo = uint64(firstMs)
+				}
+				out.AsyncInserts = append(out.AsyncInserts, a)
 			}
 		}
 

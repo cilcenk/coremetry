@@ -93,7 +93,21 @@ export function DependenciesTable({
     () => rows.some(r => r.cluster && r.cluster !== '(default)'),
     [rows]);
 
-  const nameOf = (r: DepRow) => r.instance ?? r.destination ?? '';
+  // v0.5.349 — when instance is the legacy 'unknown' sentinel
+  // and a real db.name is available, surface the db.name as
+  // the primary label. The MV migration in store.go rewrites
+  // 'unknown' → server.address / net.peer.name / etc. for
+  // fresh data, but past 5-min buckets keep the literal
+  // 'unknown' until they roll out of the retention window.
+  // This client-side fallback gives operators readable labels
+  // on existing data immediately.
+  const nameOf = (r: DepRow) => {
+    const inst = r.instance ?? r.destination ?? '';
+    if (inst === 'unknown' && r.dbName && r.dbName !== 'default') {
+      return r.dbName;
+    }
+    return inst;
+  };
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -242,9 +256,32 @@ export function DependenciesTable({
                     <td onClick={e => e.stopPropagation()}>
                       <Link to={exploreHref(r)}
                             style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 500 }}
-                            title="Open in Explore (spans pre-filtered)">
-                        {nameOf(r) || <span style={{ color: 'var(--text3)' }}>(unknown)</span>}
+                            title={r.instance === 'unknown'
+                              ? `peer.service was empty on these spans — label sourced from ${r.dbName && r.dbName !== 'default' ? 'db.name' : 'fallback'}`
+                              : 'Open in Explore (spans pre-filtered)'}>
+                        {nameOf(r) || <span style={{ color: 'var(--text3)' }}>(anonymous)</span>}
                       </Link>
+                      {/* v0.5.349 — surface a small chip when the
+                          label is a fallback so the operator
+                          knows the peer.service attribute is
+                          missing on the source spans (actionable:
+                          tell the SDK team to set it). Hidden
+                          for fresh rows that carry a real
+                          instance identifier. */}
+                      {r.instance === 'unknown' && (
+                        <span title="peer.service missing on these spans — backend fell back to db.name / host / service_name"
+                          style={{
+                            marginLeft: 6, fontSize: 9,
+                            padding: '1px 5px', borderRadius: 3,
+                            background: 'var(--bg3)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text3)',
+                            verticalAlign: 'middle',
+                            fontWeight: 700,
+                          }}>
+                          fallback
+                        </span>
+                      )}
                       {/* v0.5.315 — db.name chip when present.
                           One host serving N databases (Oracle
                           SID/service, PostgreSQL / MongoDB /

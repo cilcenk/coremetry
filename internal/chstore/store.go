@@ -1126,7 +1126,24 @@ func (s *Store) migrate(ctx context.Context) error {
 		 SETTINGS index_granularity = 8192
 		 AS SELECT
 		   db_system,
-		   coalesce(nullIf(peer_service, ''), 'unknown')                          AS instance,
+		   -- v0.5.349 — extended fallback chain. peer.service is
+		   -- the canonical OTel attr but many SDK auto-instrumentations
+		   -- (Spring Cloud Sleuth on JDBC, .NET activity source,
+		   -- pg / mysql clients without DI-time service wiring) emit
+		   -- it empty. server.address / net.peer.name / db.host
+		   -- cover the autoinstrumented path; db.name surfaces the
+		   -- database identity when even the host is anonymous;
+		   -- service_name caller is the last resort so a row never
+		   -- collapses to 'unknown' if there's any signal to attribute.
+		   coalesce(
+		     nullIf(peer_service, ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
+		     nullIf(service_name, ''),
+		     'unknown'
+		   )                                                                       AS instance,
 		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
 		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
 		   countState()                                  AS span_count_state,
@@ -1156,7 +1173,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		 SETTINGS index_granularity = 8192
 		 AS SELECT
 		   db_system,
-		   coalesce(nullIf(peer_service, ''), 'unknown')                          AS instance,
+		   -- v0.5.349 — same fallback chain as db_summary_5m so
+		   -- row identities match across the two MVs.
+		   coalesce(
+		     nullIf(peer_service, ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
+		     nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
+		     nullIf(service_name, ''),
+		     'unknown'
+		   )                                                                       AS instance,
 		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
 		   service_name,
 		   coalesce(nullIf(host_name, ''), '(unknown)')  AS host_name,
@@ -1380,6 +1407,41 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 			if err := s.execDDL(ctx, mvs[mig.mvIdx]); err != nil {
 				return fmt.Errorf("recreate %s with db_name: %w", mig.table, err)
+			}
+		}
+	}
+
+	// v0.5.349 — db_summary_5m + db_caller_summary_5m gained an
+	// extended peer-service fallback chain (server.address,
+	// net.peer.name, db.host, db.name, service_name) so rows
+	// no longer collapse to literal "unknown" when peer.service
+	// is empty. Probe via system.tables.create_table_query for
+	// the new fallback markers; drop + recreate when missing.
+	// Past 5-min buckets are dropped (same trade-off as the
+	// v0.5.327 db_name migration).
+	for _, table := range []string{"db_summary_5m", "db_caller_summary_5m"} {
+		mvIdx := 3
+		if table == "db_caller_summary_5m" {
+			mvIdx = 4
+		}
+		var hasNewFallback uint8
+		probe := fmt.Sprintf(`
+			SELECT count() > 0
+			FROM system.tables
+			WHERE database = currentDatabase()
+			  AND name     = '%s'
+			  AND positionUTF8(create_table_query, 'server.address') > 0`, table)
+		if err := s.conn.QueryRow(ctx, probe).Scan(&hasNewFallback); err == nil && hasNewFallback == 0 {
+			log.Printf("[chstore] upgrading %s MV (peer.service fallback chain) — past 5-min buckets will be dropped", table)
+			dropTarget := table
+			if s.clusterMode() {
+				dropTarget = table + "_local"
+			}
+			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()); err != nil {
+				return fmt.Errorf("drop old %s for upgrade: %w", table, err)
+			}
+			if err := s.execDDL(ctx, mvs[mvIdx]); err != nil {
+				return fmt.Errorf("recreate %s with fallback chain: %w", table, err)
 			}
 		}
 	}

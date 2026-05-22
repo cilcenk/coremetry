@@ -407,6 +407,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
+	// v0.5.350 — span-metrics-derived per-service RED. Lets
+	// operators whose collectors emit spanmetrics (traces.
+	// spanmetrics.calls.total / duration) see the metric
+	// stream as a first-class APM surface, side-by-side with
+	// the span-derived RED on /services.
+	mux.HandleFunc("GET /api/spanmetrics/services", s.getSpanMetricsByService)
 	mux.HandleFunc("GET /api/metrics/labels", s.getMetricLabelValues)
 	mux.HandleFunc("GET /api/spans/metric", s.spanMetric)
 	mux.HandleFunc("POST /api/spans/metric-batch", s.spanMetricBatch)
@@ -2925,6 +2931,174 @@ func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 	vals, err := s.store.MetricLabelValues(r.Context(), q.Get("metric"), q.Get("key"), since)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, vals)
+}
+
+// SpanMetricServiceRow is one row of the span-metric-derived
+// service overview — call volume + error fraction in the
+// window, optionally augmented with histogram-derived latency
+// once we wire that. Returned by /api/spanmetrics/services.
+type SpanMetricServiceRow struct {
+	Service    string  `json:"service"`
+	Calls      uint64  `json:"calls"`
+	Errors     uint64  `json:"errors"`
+	ErrorRate  float64 `json:"errorRate"`
+	AvgMs      float64 `json:"avgMs,omitempty"`
+	P99Ms      float64 `json:"p99Ms,omitempty"`
+	// Source metric names this row aggregated — surfaced to
+	// the UI so the operator can confirm which spanmetrics
+	// processor variant their collector is emitting.
+	CallsMetric    string `json:"callsMetric,omitempty"`
+	DurationMetric string `json:"durationMetric,omitempty"`
+}
+
+// getSpanMetricsByService reads the spanmetrics-processor
+// metric stream (calls counter + duration histogram) and
+// produces a per-service rollup that mirrors /api/services'
+// RED table. Lets operators whose collectors emit spanmetrics
+// see them as a first-class APM surface even when the SDK
+// path isn't traced. Cached 30s.
+//
+// Metric naming covered (in priority order — first match wins):
+//   • traces.spanmetrics.calls.total  +  traces.spanmetrics.duration.*
+//   • traces_spanmetrics_calls_total  +  traces_spanmetrics_duration_*
+//   • spanmetrics.calls               +  spanmetrics.duration
+//   • calls                           +  duration
+// Status filter: status.code = 'STATUS_CODE_ERROR' (canonical
+// OTel) — matches the spanmetrics processor's emitted attr.
+func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
+	if from.IsZero() {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	key := fmt.Sprintf("spanmetrics-services:from=%d:to=%d",
+		from.Truncate(time.Minute).UnixNano(),
+		to.Truncate(time.Minute).UnixNano())
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		// Probe the metric catalogue for the call/duration
+		// names actually flowing. One round-trip; tiny because
+		// metric column is LowCardinality.
+		var callsMetric, durationMetric string
+		probeRows, err := s.store.Conn().Query(r.Context(), `
+			SELECT DISTINCT metric
+			FROM metric_points
+			WHERE time >= ? AND time <= ?
+			  AND (
+			    positionUTF8(metric, 'spanmetrics') > 0
+			    OR metric IN ('calls', 'duration')
+			  )
+			LIMIT 50
+			SETTINGS max_execution_time = 5`, from, to)
+		if err == nil {
+			defer probeRows.Close()
+			var names []string
+			for probeRows.Next() {
+				var n string
+				if probeRows.Scan(&n) == nil {
+					names = append(names, n)
+				}
+			}
+			callsMetric, durationMetric = pickSpanMetricNames(names)
+		}
+		if callsMetric == "" {
+			// No span-metric stream detected — empty result is
+			// the correct response (clients render a setup-
+			// instructions empty state).
+			return map[string]any{
+				"rows":           []SpanMetricServiceRow{},
+				"callsMetric":    "",
+				"durationMetric": "",
+			}, nil
+		}
+		// Aggregate calls + errors per service. Sum the value
+		// column for counter-style; spanmetrics processor emits
+		// it as a delta counter so SUM across the window is the
+		// total. Error attribution via status.code attr.
+		rows, err := s.store.Conn().Query(r.Context(), `
+			SELECT service_name,
+			       sum(value)                              AS calls,
+			       sumIf(value,
+			         attr_values[indexOf(attr_keys, 'status.code')] = 'STATUS_CODE_ERROR'
+			       )                                       AS errors
+			FROM metric_points
+			WHERE metric = ?
+			  AND time >= ? AND time <= ?
+			GROUP BY service_name
+			ORDER BY calls DESC
+			LIMIT 5000
+			SETTINGS max_execution_time = 15`,
+			callsMetric, from, to)
+		if err != nil {
+			return nil, fmt.Errorf("spanmetrics rollup: %w", err)
+		}
+		defer rows.Close()
+		var out []SpanMetricServiceRow
+		for rows.Next() {
+			var row SpanMetricServiceRow
+			if err := rows.Scan(&row.Service, &row.Calls, &row.Errors); err != nil {
+				continue
+			}
+			if row.Calls > 0 {
+				row.ErrorRate = float64(row.Errors) / float64(row.Calls) * 100
+			}
+			row.CallsMetric = callsMetric
+			row.DurationMetric = durationMetric
+			out = append(out, row)
+		}
+		return map[string]any{
+			"rows":           out,
+			"callsMetric":    callsMetric,
+			"durationMetric": durationMetric,
+		}, nil
+	})
+}
+
+// pickSpanMetricNames picks the call-counter + duration metric
+// names from a list of candidate metric names. Returns ("", "")
+// when nothing matches. Priority order matches the spanmetrics
+// processor naming conventions across versions.
+func pickSpanMetricNames(names []string) (callsM, durationM string) {
+	preferenceCalls := []string{
+		"traces.spanmetrics.calls.total",
+		"traces_spanmetrics_calls_total",
+		"spanmetrics.calls",
+		"spanmetrics_calls_total",
+		"calls",
+	}
+	preferenceDur := []string{
+		"traces.spanmetrics.duration",
+		"traces.spanmetrics.duration.seconds.sum",
+		"traces_spanmetrics_duration",
+		"spanmetrics.duration",
+		"duration",
+	}
+	for _, want := range preferenceCalls {
+		for _, n := range names {
+			if n == want {
+				callsM = n
+				break
+			}
+		}
+		if callsM != "" {
+			break
+		}
+	}
+	for _, want := range preferenceDur {
+		for _, n := range names {
+			if n == want {
+				durationM = n
+				break
+			}
+		}
+		if durationM != "" {
+			break
+		}
+	}
+	return
 }
 
 // ── Span metrics (Tempo span-metrics generator + Dynatrace MDA) ──────────────

@@ -1466,6 +1466,30 @@ func (s *Store) migrate(ctx context.Context) error {
 		 FROM spans
 		 GROUP BY service_name, time_bucket, trace_id`,
 	}
+	// v0.5.361 — bug-fix: the spanmetrics_hist_5m MV (added in
+	// v0.5.359) references metric_points.bucket_counts. On an
+	// existing install the column doesn't exist yet at this
+	// point — it's added by the ALTER block further down. The
+	// MV creation loop blew up with CH error 47
+	// (UNKNOWN_IDENTIFIER) before reaching the migration. Run
+	// the bucket-column ALTER first so every MV creation that
+	// follows sees the schema it expects.
+	var hasBucketCols uint8
+	if err := s.conn.QueryRow(ctx, `
+		SELECT count() = 2
+		FROM system.columns
+		WHERE database = currentDatabase()
+		  AND table    = 'metric_points'
+		  AND name IN ('bucket_bounds', 'bucket_counts')`).Scan(&hasBucketCols); err == nil && hasBucketCols == 0 {
+		log.Println("[chstore] adding bucket_bounds + bucket_counts columns to metric_points")
+		if err := s.execDDL(ctx,
+			"ALTER TABLE metric_points"+s.onCluster()+
+				" ADD COLUMN IF NOT EXISTS bucket_bounds Array(Float64) DEFAULT [],"+
+				" ADD COLUMN IF NOT EXISTS bucket_counts Array(UInt64) DEFAULT []"); err != nil {
+			return fmt.Errorf("add bucket columns: %w", err)
+		}
+	}
+
 	for _, q := range mvs {
 		if err := s.execDDL(ctx, q); err != nil {
 			return fmt.Errorf("create MV: %w", err)
@@ -1535,28 +1559,6 @@ func (s *Store) migrate(ctx context.Context) error {
 			if err := s.execDDL(ctx, mvs[mig.mvIdx]); err != nil {
 				return fmt.Errorf("recreate %s with db_name: %w", mig.table, err)
 			}
-		}
-	}
-
-	// v0.5.358 — metric_points gained bucket_bounds + bucket_counts
-	// columns so the OTLP histogram bucket layout is preserved at
-	// ingest time. Read-time quantile estimation reads these arrays
-	// directly. ALTER ADD COLUMN with DEFAULT [] is online + cheap;
-	// existing rows keep an empty array which the quantile code
-	// handles as "no histogram data".
-	var hasBucketCols uint8
-	if err := s.conn.QueryRow(ctx, `
-		SELECT count() = 2
-		FROM system.columns
-		WHERE database = currentDatabase()
-		  AND table    = 'metric_points'
-		  AND name IN ('bucket_bounds', 'bucket_counts')`).Scan(&hasBucketCols); err == nil && hasBucketCols == 0 {
-		log.Println("[chstore] adding bucket_bounds + bucket_counts columns to metric_points")
-		if err := s.execDDL(ctx,
-			"ALTER TABLE metric_points"+s.onCluster()+
-				" ADD COLUMN IF NOT EXISTS bucket_bounds Array(Float64) DEFAULT [],"+
-				" ADD COLUMN IF NOT EXISTS bucket_counts Array(UInt64) DEFAULT []"); err != nil {
-			return fmt.Errorf("add bucket columns: %w", err)
 		}
 	}
 

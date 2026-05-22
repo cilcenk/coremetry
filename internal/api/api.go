@@ -1347,7 +1347,10 @@ func (s *Server) putServiceMetadata(w http.ResponseWriter, r *http.Request) {
 	// v0.5.337 — invalidate the catalog cache on every peer so
 	// the Owner-team chip on /services reflects the edit in
 	// <50ms instead of waiting out the 60s soft TTL.
+	// v0.5.344 — also invalidate svc-bundle:* (the service
+	// detail page's combined fetch carries the catalog row).
 	s.cacheInvalidate(r.Context(), "services-metadata")
+	s.cacheInvalidatePrefix(r.Context(), "svc-bundle:")
 	w.WriteHeader(http.StatusNoContent)
 }
 

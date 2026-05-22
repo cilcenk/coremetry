@@ -296,11 +296,21 @@ func (s *Server) putTopologyExclude(w http.ResponseWriter, r *http.Request) {
 	s.audit(r, "settings.topology_exclude.update", "settings", topologyExcludeKey,
 		fmt.Sprintf(`{"count":%d}`, len(cleaned)))
 	// v0.5.337 — exclude affects every cached topology read.
-	// Broadcast prefix invalidation so all pods drop their
-	// "topology-edges:*" and "topology-exclude:*" entries —
+	// v0.5.344 — fixed cache key prefixes (the v0.5.337 set
+	// targeted "topology-edges:" / "topology-exclude:" which
+	// never existed; the real namespaces are below). Broadcast
+	// prefix invalidation so all pods drop matching entries —
 	// next /api/topology call recomputes against the new list.
-	s.cacheInvalidatePrefix(r.Context(), "topology-edges:")
-	s.cacheInvalidatePrefix(r.Context(), "topology-exclude:")
+	for _, prefix := range []string{
+		"topology-service:",       // /api/topology — service-pair edges
+		"topology-op:",            // /api/topology/op-edges — op-level
+		"topology-flow:",          // /api/topology/flows/* — flow drilldown
+		"topology-flows:",         // /api/topology/flows — flow list
+		"topology-edge-instances:",// /api/topology/edge-instances
+		"topology-ops:",           // /api/topology/services/{svc}/ops
+	} {
+		s.cacheInvalidatePrefix(r.Context(), prefix)
+	}
 	writeJSON(w, map[string]any{"services": cleaned})
 }
 

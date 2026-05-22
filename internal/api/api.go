@@ -4480,6 +4480,7 @@ func (s *Server) putLDAPSettings(w http.ResponseWriter, r *http.Request) {
 	if err := s.ldap.SavePersisted(r.Context(), s.store, c); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
+	s.publishConfigReload(r.Context(), "ldap")
 	// Audit row carries non-secret config shape only — bind password
 	// and the directory host's credentials never go into audit_log.
 	details, _ := json.Marshal(map[string]any{
@@ -4858,6 +4859,7 @@ func (s *Server) putSamplingSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.sampler != nil {
+		defer s.publishConfigReload(r.Context(), "sampling")
 		if err := s.sampler.SavePersisted(r.Context(), s.store, cfg); err != nil {
 			writeErr(w, err)
 			return
@@ -6201,6 +6203,7 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
+	s.publishConfigReload(r.Context(), "ai")
 	provider, model, baseURL, hasKey, skipTLS := s.copilot.Snapshot()
 	// apiKey itself never enters audit_log; hasKey is the only
 	// secret-adjacent bit and it's already part of the public GET.

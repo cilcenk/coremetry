@@ -397,6 +397,65 @@ func (s *Server) cacheInvalidatePrefix(ctx context.Context, prefix string) {
 	}
 }
 
+// publishConfigReload broadcasts a "config:<svc>" message on
+// the invalidate channel. The subscriber loop dispatches to
+// the named service's LoadPersisted. Called from settings
+// PUT handlers right after the write commits so peer pods
+// converge on the new config in <50ms instead of waiting out
+// the per-service 30s StartConfigRefresh tick.
+func (s *Server) publishConfigReload(ctx context.Context, svc string) {
+	payload := "config:" + svc
+	if err := s.cache.Publish(ctx, invalidateCacheChannel, []byte(payload)); err != nil {
+		log.Printf("[cache] config-reload publish %s: %v", svc, err)
+	}
+}
+
+// reloadConfigOnSignal dispatches a peer's config:<svc>
+// invalidation message to the matching in-memory service's
+// LoadPersisted call. Each call carries its own short
+// timeout — a CH stall on the read side shouldn't backlog
+// the subscriber goroutine.
+func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	switch svc {
+	case "ai", "copilot":
+		if s.copilot != nil {
+			if err := s.copilot.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload copilot: %v", err)
+			}
+		}
+	case "ldap":
+		if s.ldap != nil {
+			if err := s.ldap.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload ldap: %v", err)
+			}
+		}
+	case "tempo":
+		if s.tempo != nil {
+			if err := s.tempo.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload tempo: %v", err)
+			}
+		}
+	case "sampling":
+		if s.sampler != nil {
+			if err := s.sampler.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload sampling: %v", err)
+			}
+		}
+	case "pipeline":
+		if s.pipeline != nil {
+			if err := s.pipeline.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload pipeline: %v", err)
+			}
+		}
+	default:
+		// Unknown service — silently ignore so a forward-compat
+		// peer publishing a config key the older pod doesn't
+		// recognise doesn't spam the log.
+	}
+}
+
 // StartCacheInvalidation subscribes to the invalidation
 // channel and drains incoming messages into l1.del. Runs once
 // per Server; the subscription lifetime is bound to the
@@ -432,6 +491,17 @@ func (s *Server) StartCacheInvalidation(ctx context.Context) {
 					p := key[7:]
 					s.l1.delPrefix(p)
 					s.stats.record("INVALIDATED-PFX", p)
+					continue
+				}
+				// v0.5.363 — settings PUT on pod A publishes
+				// "config:<svc>" so every peer pod hot-reloads
+				// the matching in-memory service config from
+				// system_settings. Closes the 30s window the
+				// per-service StartConfigRefresh poll left open.
+				if len(key) > 7 && key[:7] == "config:" {
+					svc := key[7:]
+					s.reloadConfigOnSignal(context.Background(), svc)
+					s.stats.record("CONFIG-RELOAD", svc)
 					continue
 				}
 				s.l1.del(key)

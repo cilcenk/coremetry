@@ -85,6 +85,7 @@ func (s *Server) putTempoSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.publishConfigReload(r.Context(), "tempo")
 	snap := s.tempo.Snapshot()
 	// Token + Username + OrgID never enter audit_log. HasToken is
 	// the only secret-adjacent bit and it's already part of the

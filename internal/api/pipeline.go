@@ -36,6 +36,7 @@ func (s *Server) upsertPipelineRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
+	s.publishConfigReload(r.Context(), "pipeline")
 	details, _ := json.Marshal(saved)
 	s.audit(r, "pipeline.upsert", "rule", saved.ID, string(details))
 	writeJSON(w, saved)
@@ -55,6 +56,7 @@ func (s *Server) deletePipelineRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.publishConfigReload(r.Context(), "pipeline")
 	s.audit(r, "pipeline.delete", "rule", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }

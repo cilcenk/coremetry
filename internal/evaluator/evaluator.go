@@ -281,6 +281,19 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	// tick doesn't get checked twice.
 	e.escalateStaleProblems(ctx)
 
+	// v0.5.352 — silent-source sweep. Operator-reported:
+	// problems for services that have stopped emitting stay
+	// open forever because the eval path's measure() returns
+	// no data and the resolve branch never runs. Sweep here:
+	// any open/acknowledged problem whose updated_at is older
+	// than 3× the evaluator interval (no recent refresh →
+	// source went silent) gets auto-resolved with a marker
+	// reason. 3× is the same trade-off the evaluator's
+	// escalation sweep uses: tolerant of a single missed tick
+	// (network glitch, leader transition), strict enough that
+	// a truly decommissioned service closes within ~minutes.
+	e.sweepStaleProblems(ctx)
+
 	// Anomaly auto-promotion — convert strong, sustained
 	// anomaly events into first-class Problems so the
 	// existing alert pipeline picks them up. Threshold-driven
@@ -596,6 +609,71 @@ const (
 // "critical only" for the on-call pager) light up.
 // Acknowledged / resolved problems are skipped — only "open"
 // status enters the sweep.
+// sweepStaleProblems auto-resolves open/acknowledged problems
+// whose source signal has gone silent. Detection: updated_at
+// older than 3× the evaluator interval — the evaluator
+// upserts the row every tick when the metric still produces
+// a value (even at 0, that's a no-error refresh), so a
+// frozen updated_at means the eval path bailed (MinSamples
+// gate, measure() returned no data for a decommissioned
+// service, the source service stopped emitting, etc.).
+//
+// 3× threshold tolerates one missed tick (leader transition,
+// network blip) without false-resolves. Default eval
+// interval = 1 min, so cutoff = ~3 min.
+//
+// v0.5.352 — operator-reported: problem for "svc-1" stayed
+// open from 04.05.2026 17:00 onward even though no traces
+// came in from that service. The eval path's measure()
+// returned no data, so neither the breached nor the
+// !breached branch ran, and the problem was orphaned.
+func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
+	cutoff := time.Now().Add(-3 * e.interval)
+	stale, err := e.store.ListStaleOpenProblems(ctx, cutoff)
+	if err != nil {
+		log.Printf("[evaluator] stale sweep: list: %v", err)
+		return
+	}
+	resolved := 0
+	for i := range stale {
+		p := stale[i]
+		resolvedAt := time.Now().UnixNano()
+		p.Status = "resolved"
+		p.ResolvedAt = &resolvedAt
+		// Mark the resolution reason inline so an operator
+		// auditing /problems sees why this row closed without
+		// a corresponding threshold-crossing event.
+		p.Description = appendStaleSuffix(p.Description)
+		if err := e.store.UpsertProblem(ctx, p); err != nil {
+			log.Printf("[evaluator] stale sweep: resolve %s: %v", p.ID, err)
+			continue
+		}
+		// Clear the cooldown stamp so the next time the source
+		// emits and breaches again, a fresh problem can open.
+		e.breachMu.Lock()
+		delete(e.lastResolved, breachKey{RuleID: p.RuleID, Service: p.Service})
+		e.breachMu.Unlock()
+		resolved++
+		log.Printf("[evaluator] PROBLEM AUTO-RESOLVED (source silent): %s · %s", p.Service, p.Metric)
+	}
+	if resolved > 0 {
+		log.Printf("[evaluator] stale sweep: resolved %d problem(s) with silent sources", resolved)
+	}
+}
+
+// appendStaleSuffix tags the resolution reason onto the
+// problem's description so /problems history makes the
+// silent-source close obvious. Idempotent — if the suffix is
+// already present (the row got resolved-then-reopened-then-
+// silently-closed once before) we don't double-tag.
+func appendStaleSuffix(desc string) string {
+	const suffix = " · auto-resolved: source silent"
+	if strings.Contains(desc, "source silent") {
+		return desc
+	}
+	return desc + suffix
+}
+
 func (e *Evaluator) escalateStaleProblems(ctx context.Context) {
 	problems, err := e.store.ListProblems(ctx, chstore.ProblemFilter{
 		Status: "open",

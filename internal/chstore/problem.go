@@ -759,6 +759,50 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 	return out, rows.Err()
 }
 
+// ListStaleOpenProblems returns open/acknowledged problems
+// whose updated_at is older than `staleCutoff`. v0.5.352 —
+// operator-reported: when a service stops emitting, the
+// evaluator's measure() returns no data, the resolve path
+// is never taken, and the problem stays open forever. This
+// list feeds the periodic stale-sweep that auto-closes them.
+//
+// FINAL on the read so a recently-resolved-but-not-yet-merged
+// row doesn't leak into the sweep.
+func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time) ([]Problem, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT id, rule_id, rule_name, severity, service, metric,
+		       value, threshold, status, description, assignee,
+		       toUnixTimestamp64Nano(started_at),
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+		FROM problems FINAL
+		WHERE status IN ('open', 'acknowledged')
+		  AND updated_at < ?
+		ORDER BY updated_at ASC
+		LIMIT 500
+		SETTINGS max_execution_time = 10`, staleCutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Problem
+	for rows.Next() {
+		var p Problem
+		var resolvedAt *time.Time
+		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
+			return nil, err
+		}
+		if resolvedAt != nil {
+			ns := resolvedAt.UnixNano()
+			p.ResolvedAt = &ns
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // FindOpenProblem returns the latest unresolved problem for
 // (rule, service). "Unresolved" covers both `open` (default
 // pageable state) and `acknowledged` (operator saw it, muted

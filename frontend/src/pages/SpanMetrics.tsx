@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Sparkline } from '@/components/Sparkline';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import type { TimeRange, SpanMetricsServicesResponse, SpanMetricServiceRow } from '@/lib/types';
@@ -20,7 +21,7 @@ import type { TimeRange, SpanMetricsServicesResponse, SpanMetricServiceRow } fro
 // and dotted-vs-underscored variants) so the page renders
 // without any operator-side config.
 
-type SortKey = 'service' | 'calls' | 'errors' | 'errorRate';
+type SortKey = 'service' | 'calls' | 'errors' | 'errorRate' | 'avgMs' | 'maxMs';
 
 export default function SpanMetricsPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
@@ -49,6 +50,8 @@ export default function SpanMetricsPage() {
         case 'calls':     return dir * (a.calls - b.calls);
         case 'errors':    return dir * (a.errors - b.errors);
         case 'errorRate': return dir * (a.errorRate - b.errorRate);
+        case 'avgMs':     return dir * ((a.avgMs ?? 0) - (b.avgMs ?? 0));
+        case 'maxMs':     return dir * ((a.maxMs ?? 0) - (b.maxMs ?? 0));
       }
     });
     return list;
@@ -62,6 +65,16 @@ export default function SpanMetricsPage() {
   const totalErrors = rows.reduce((s, r) => s + r.errors, 0);
   const totalErrorRate = totalCalls > 0 ? (totalErrors / totalCalls) * 100 : 0;
   const totalRate = totalCalls / windowSec;
+  // Cluster-wide avg latency — call-weighted across services
+  // so a 1k-call service with 200ms avg outweighs a 10-call
+  // service with 50ms avg (sums avg×calls / total calls).
+  const weightedAvgMs = (() => {
+    let num = 0, den = 0;
+    for (const r of rows) {
+      if (r.avgMs && r.calls) { num += r.avgMs * r.calls; den += r.calls; }
+    }
+    return den > 0 ? num / den : 0;
+  })();
 
   const setSort = (k: SortKey) => {
     if (k === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -131,6 +144,9 @@ service:
               <KPI label="Errors" value={fmtNum(totalErrors)}
                    sub={`${totalErrorRate.toFixed(2)}%`}
                    cls={totalErrorRate >= 1 ? (totalErrorRate >= 5 ? 'err' : 'warn') : ''} />
+              <KPI label="Avg latency"
+                   value={weightedAvgMs > 0 ? `${weightedAvgMs.toFixed(1)} ms` : '—'}
+                   sub="call-weighted" />
               <KPI label="Source metric"
                    value={shortMetric(data.callsMetric)}
                    sub={data.durationMetric ? shortMetric(data.durationMetric) : 'no duration metric'} />
@@ -156,6 +172,9 @@ service:
                     <SortHeader k="errors"    label="Errors"      cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="errorRate" label="Error rate"  cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <th className="num">Rate / s</th>
+                    <SortHeader k="avgMs"     label="Avg latency" cur={sortKey} dir={sortDir} onSort={setSort} num />
+                    <SortHeader k="maxMs"     label="Max"         cur={sortKey} dir={sortDir} onSort={setSort} num />
+                    <th>Calls / time</th>
                     <th>Explore</th>
                   </tr>
                 </thead>
@@ -179,6 +198,17 @@ service:
                           <span className={`badge ${errCls}`}>{r.errorRate.toFixed(2)}%</span>
                         </td>
                         <td className="num mono">{rateSec.toFixed(1)}</td>
+                        <td className="num mono">
+                          {r.avgMs != null && r.avgMs > 0 ? `${r.avgMs.toFixed(1)} ms` : '—'}
+                        </td>
+                        <td className="num mono" style={{ color: 'var(--text3)' }}>
+                          {r.maxMs != null && r.maxMs > 0 ? `${r.maxMs.toFixed(0)} ms` : '—'}
+                        </td>
+                        <td>
+                          <Sparkline values={r.sparkline ?? []}
+                            width={100} height={22}
+                            title={`${fmtNum(r.calls)} calls across ${windowSec >= 60 ? `${Math.round(windowSec / 60)} min` : `${windowSec} s`}`} />
+                        </td>
                         <td>
                           <Link to={`/metrics?service=${encodeURIComponent(r.service)}&metric=${encodeURIComponent(data.callsMetric)}`}
                                 style={{ fontSize: 11, color: 'var(--accent2)' }}>
@@ -194,8 +224,11 @@ service:
             <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
               Source: metric_points · <code>{data.callsMetric}</code>
               {data.durationMetric ? <> + <code>{data.durationMetric}</code></> : null}
-              {'. '}Latency quantiles from the duration histogram are
-              a follow-up; this page currently surfaces calls + error rate.
+              {'. '}Avg latency is sum/count from the duration histogram;
+              max is the observed upper-bound per service.
+              Bucket-derived p50/p99 quantiles are a follow-up — they
+              require the collector to emit per-bucket counts the OTLP
+              ingest path currently flattens out.
             </div>
           </>
         )}

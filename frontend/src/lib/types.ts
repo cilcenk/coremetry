@@ -1384,7 +1384,12 @@ export interface SpanMetricServiceRow {
   errors: number;
   errorRate: number;
   avgMs?: number;
-  p99Ms?: number;
+  maxMs?: number;
+  // 30-bucket call-rate sparkline across the window. Used by
+  // the Span Metrics table to render an inline mini-chart per
+  // row so the operator sees the shape of traffic without
+  // opening the full /metrics chart.
+  sparkline?: number[];
   callsMetric?: string;
   durationMetric?: string;
 }

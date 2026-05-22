@@ -2943,7 +2943,13 @@ type SpanMetricServiceRow struct {
 	Errors     uint64  `json:"errors"`
 	ErrorRate  float64 `json:"errorRate"`
 	AvgMs      float64 `json:"avgMs,omitempty"`
-	P99Ms      float64 `json:"p99Ms,omitempty"`
+	MaxMs      float64 `json:"maxMs,omitempty"`
+	// Inline call-rate sparkline — 30 buckets evenly spread
+	// across the requested window. Float so a SVG renderer can
+	// scale by max() without integer truncation; counts are
+	// integers in the source data but we already pay the
+	// float math in the aggregation step.
+	Sparkline  []float64 `json:"sparkline,omitempty"`
 	// Source metric names this row aggregated — surfaced to
 	// the UI so the operator can confirm which spanmetrics
 	// processor variant their collector is emitting.
@@ -3014,24 +3020,53 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				"durationMetric": "",
 			}, nil
 		}
-		// Aggregate calls + errors per service. Sum the value
-		// column for counter-style; spanmetrics processor emits
-		// it as a delta counter so SUM across the window is the
-		// total. Error attribution via status.code attr.
+		// Aggregate calls + errors + sparkline per service. The
+		// sparkline is a 30-bucket time histogram of calls; we
+		// emit it via groupArray over the bucket index so a
+		// single CH round-trip carries everything per row.
+		// v0.5.354 — added the bucket dimension; window
+		// duration computed inline as nanoseconds, divided by
+		// 30 for bucket size.
+		const sparkBuckets = 30
+		bucketNs := (to.UnixNano() - from.UnixNano()) / int64(sparkBuckets)
+		if bucketNs <= 0 {
+			bucketNs = 1
+		}
 		rows, err := s.store.Conn().Query(r.Context(), `
+			WITH per_bucket AS (
+			  SELECT service_name,
+			         intDiv(toUnixTimestamp64Nano(time) - ?, ?) AS b,
+			         sum(value)                              AS bv,
+			         sumIf(value,
+			           attr_values[indexOf(attr_keys, 'status.code')] = 'STATUS_CODE_ERROR'
+			         )                                       AS bv_err
+			  FROM metric_points
+			  WHERE metric = ?
+			    AND time >= ? AND time <= ?
+			  GROUP BY service_name, b
+			)
 			SELECT service_name,
-			       sum(value)                              AS calls,
-			       sumIf(value,
-			         attr_values[indexOf(attr_keys, 'status.code')] = 'STATUS_CODE_ERROR'
-			       )                                       AS errors
-			FROM metric_points
-			WHERE metric = ?
-			  AND time >= ? AND time <= ?
-			GROUP BY service_name
+			       calls,
+			       errors,
+			       arrayMap(i ->
+			         toFloat64(coalesce(arrayElement(b_vals, indexOf(b_idx, i)), 0)),
+			         range(0, ?)
+			       )                                        AS sparkline
+			FROM (
+			  SELECT service_name,
+			         groupArray(b)                          AS b_idx,
+			         groupArray(bv)                         AS b_vals,
+			         sum(bv)                                AS calls,
+			         sum(bv_err)                            AS errors
+			  FROM per_bucket
+			  GROUP BY service_name
+			)
 			ORDER BY calls DESC
 			LIMIT 5000
 			SETTINGS max_execution_time = 15`,
-			callsMetric, from, to)
+			from.UnixNano(), bucketNs,
+			callsMetric, from, to,
+			sparkBuckets)
 		if err != nil {
 			return nil, fmt.Errorf("spanmetrics rollup: %w", err)
 		}
@@ -3039,15 +3074,62 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 		var out []SpanMetricServiceRow
 		for rows.Next() {
 			var row SpanMetricServiceRow
-			if err := rows.Scan(&row.Service, &row.Calls, &row.Errors); err != nil {
+			var sparkline []float64
+			if err := rows.Scan(&row.Service, &row.Calls, &row.Errors, &sparkline); err != nil {
 				continue
 			}
 			if row.Calls > 0 {
 				row.ErrorRate = float64(row.Errors) / float64(row.Calls) * 100
 			}
+			row.Sparkline = sparkline
 			row.CallsMetric = callsMetric
 			row.DurationMetric = durationMetric
 			out = append(out, row)
+		}
+		// Duration aggregate per service. Histogram data points
+		// are stored with sum_value (Σ observations) + count
+		// (N observations) + max_value at ingest time
+		// (otlp/convert.go Metric_Histogram). avgMs = sum/count;
+		// maxMs = max(max_value) as an upper-bound hint until
+		// the real p99 can be derived from bucket counts.
+		// Multiplier 1000 converts spanmetrics-default seconds
+		// to ms.
+		if durationMetric != "" {
+			durRows, derr := s.store.Conn().Query(r.Context(), `
+				SELECT service_name,
+				       sum(sum_value) / nullIf(sum(count), 0) AS avg_s,
+				       max(max_value)                         AS max_s
+				FROM metric_points
+				WHERE metric = ?
+				  AND time >= ? AND time <= ?
+				GROUP BY service_name
+				SETTINGS max_execution_time = 10`,
+				durationMetric, from, to)
+			if derr == nil {
+				defer durRows.Close()
+				durMap := make(map[string]struct{ Avg, Max float64 }, len(out))
+				for durRows.Next() {
+					var svc string
+					var avg, mx *float64
+					if err := durRows.Scan(&svc, &avg, &mx); err != nil {
+						continue
+					}
+					a, m := 0.0, 0.0
+					if avg != nil {
+						a = *avg
+					}
+					if mx != nil {
+						m = *mx
+					}
+					durMap[svc] = struct{ Avg, Max float64 }{a, m}
+				}
+				for i := range out {
+					if d, ok := durMap[out[i].Service]; ok {
+						out[i].AvgMs = d.Avg * 1000
+						out[i].MaxMs = d.Max * 1000
+					}
+				}
+			}
 		}
 		return map[string]any{
 			"rows":           out,

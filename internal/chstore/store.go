@@ -1196,6 +1196,82 @@ func (s *Store) migrate(ctx context.Context) error {
 		 WHERE db_system != ''
 		 GROUP BY db_system, instance, db_name, service_name, host_name, time_bucket`,
 
+		// spanmetrics_calls_5m: per-(service, status_code, 5min)
+		// pre-aggregation of the spanmetrics processor's calls
+		// counter. v0.5.357 — the v0.5.355 top-N workaround keeps
+		// the /span-metrics page fast at 10k+ services by hard-
+		// capping the result; this MV is the proper fix —
+		// aggregates at INSERT time so even an "all services"
+		// scan reads pre-aggregated state instead of every
+		// metric_point row in the window.
+		//
+		// Why TWO MVs (calls + duration) instead of one: a
+		// spanmetrics processor's counter emits a single
+		// `value` column; the duration histogram emits
+		// (count, sum_value, max_value). Combining both shapes
+		// in one MV would inflate the row size and force the
+		// read path to filter on metric name regardless. Keeping
+		// them separate lets each MV use the smallest possible
+		// aggregate states.
+		//
+		// Trigger filter (in the WHERE) covers the four naming
+		// conventions pickSpanMetricNames recognises: the
+		// fully-qualified dotted form, the underscored form,
+		// the bare "spanmetrics.*" form, and the bare
+		// "calls" / "duration". metric is LowCardinality so
+		// the predicate evaluates once per distinct name.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_calls_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   sumState(value)                            AS calls_state,
+		   sumIfState(value,
+		     attr_values[indexOf(attr_keys, 'status.code')] = 'STATUS_CODE_ERROR'
+		   )                                          AS errors_state
+		 FROM metric_points
+		 WHERE metric IN (
+		     'traces.spanmetrics.calls.total',
+		     'traces_spanmetrics_calls_total',
+		     'spanmetrics.calls',
+		     'spanmetrics_calls_total',
+		     'calls'
+		   )
+		 GROUP BY service_name, time_bucket`,
+
+		// spanmetrics_duration_5m: per-(service, 5min)
+		// pre-aggregation of the histogram-shaped duration
+		// metric. Stores sum + count + max from the
+		// metric_points columns the OTLP convert path fills
+		// in for histogram data points (otlp/convert.go).
+		// avgMs is derived at read time as sum/count×1000;
+		// maxMs is max×1000.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_duration_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE) AS time_bucket,
+		   sumState(sum_value)  AS sum_state,
+		   sumState(count)      AS count_state,
+		   maxState(max_value)  AS max_state
+		 FROM metric_points
+		 WHERE metric IN (
+		     'traces.spanmetrics.duration',
+		     'traces.spanmetrics.duration.seconds.sum',
+		     'traces_spanmetrics_duration',
+		     'spanmetrics.duration',
+		     'duration'
+		   )
+		 GROUP BY service_name, time_bucket`,
+
 		// messaging_summary_5m: structural parallel for /api/messaging.
 		// Cluster + destination are derived expressions in the source
 		// query because the dimension lives in attr_keys/attr_values

@@ -3036,29 +3036,27 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				"durationMetric": "",
 			}, nil
 		}
-		// Stage 1 — top-N services by call volume. This is the
-		// cheap pass: one GROUP BY service_name, no per-bucket
-		// fan-out, ORDER BY + LIMIT pushes most of the row
-		// reduction into CH. Subsequent stages (sparkline +
-		// duration) filter by this top-N IN-list so their
-		// scans stay bounded regardless of the total service
-		// cardinality. v0.5.355 — operator-reported: prior
-		// version's single-query bucket aggregation over 10k+
-		// services blew past the 15s timeout on the test env.
+		// Stage 1 — top-N services by call volume, read from
+		// spanmetrics_calls_5m. v0.5.357: replaces the raw
+		// metric_points scan with an AggregatingMergeTree MV
+		// pre-aggregated per (service, 5min). At 10k+ services
+		// the MV is ~5min-window-bucketed = sub-second even on
+		// the full set; the top-N cap stays as a sanity bound.
+		// time_bucket is 5-min aligned so we bucket-down the
+		// `from` to include the bucket overlapping the window
+		// (same alignment as service_summary_5m reads).
+		bucketStart := from.Truncate(5 * time.Minute)
 		topRows, err := s.store.Conn().Query(r.Context(), `
 			SELECT service_name,
-			       sum(value)                              AS calls,
-			       sumIf(value,
-			         attr_values[indexOf(attr_keys, 'status.code')] = 'STATUS_CODE_ERROR'
-			       )                                       AS errors
-			FROM metric_points
-			WHERE metric = ?
-			  AND time >= ? AND time <= ?
+			       sumMerge(calls_state)  AS calls,
+			       sumMerge(errors_state) AS errors
+			FROM spanmetrics_calls_5m
+			WHERE time_bucket >= ? AND time_bucket <= ?
 			GROUP BY service_name
 			ORDER BY calls DESC
 			LIMIT ?
 			SETTINGS max_execution_time = 10`,
-			callsMetric, from, to, top)
+			bucketStart, to, top)
 		if err != nil {
 			return nil, fmt.Errorf("spanmetrics top: %w", err)
 		}
@@ -3095,26 +3093,30 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 			svcArgs = append(svcArgs, s)
 		}
 
-		// Stage 2 — sparkline. Only for the top-N services
-		// surfaced above. arrayMap pads missing buckets to 0
-		// so the JSON shape is always exactly sparkBuckets.
+		// Stage 2 — sparkline. v0.5.357: reads pre-aggregated
+		// 5-min buckets from spanmetrics_calls_5m. Since the
+		// MV is already 5-min bucketed we re-bucket at read
+		// time (intDiv on toUnixTimestamp(time_bucket)) into
+		// sparkBuckets bins across the window. For windows
+		// shorter than 30×5min=150min the bin width snaps to
+		// the MV's 5-min granularity (multiple bins map to
+		// one MV bucket — coalesce handles it).
 		if wantSparkline {
 			const sparkBuckets = 30
 			bucketNs := (to.UnixNano() - from.UnixNano()) / int64(sparkBuckets)
 			if bucketNs <= 0 {
 				bucketNs = 1
 			}
-			sparkArgs := []any{from.UnixNano(), bucketNs, callsMetric, from, to}
+			sparkArgs := []any{from.UnixNano(), bucketNs, bucketStart, to}
 			sparkArgs = append(sparkArgs, svcArgs...)
 			sparkArgs = append(sparkArgs, sparkBuckets)
 			sparkRows, serr := s.store.Conn().Query(r.Context(), `
-				WITH per_bucket AS (
+				WITH per_bin AS (
 				  SELECT service_name,
-				         intDiv(toUnixTimestamp64Nano(time) - ?, ?) AS b,
-				         sum(value)                              AS bv
-				  FROM metric_points
-				  WHERE metric = ?
-				    AND time >= ? AND time <= ?
+				         intDiv(toUnixTimestamp(time_bucket) * 1000000000 - ?, ?) AS b,
+				         sumMerge(calls_state)                       AS bv
+				  FROM spanmetrics_calls_5m
+				  WHERE time_bucket >= ? AND time_bucket <= ?
 				    AND service_name IN (`+holders+`)
 				  GROUP BY service_name, b
 				)
@@ -3127,7 +3129,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				  SELECT service_name,
 				         groupArray(b)                          AS b_idx,
 				         groupArray(bv)                         AS b_vals
-				  FROM per_bucket
+				  FROM per_bin
 				  GROUP BY service_name
 				)
 				SETTINGS max_execution_time = 10`, sparkArgs...)
@@ -3149,21 +3151,19 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// Stage 3 — duration aggregate. Same top-N filter
-		// applies. Histogram data points carry count + sum +
-		// max at ingest time (otlp/convert.go); avgMs =
-		// Σsum / Σcount, maxMs = max(max). ×1000 converts
-		// the spanmetrics-default seconds to ms.
+		// Stage 3 — duration aggregate. v0.5.357: reads from
+		// spanmetrics_duration_5m. avgMs = ΣsumMerge / ΣcountMerge,
+		// maxMs = maxMerge. ×1000 converts spanmetrics-default
+		// seconds to ms.
 		if durationMetric != "" {
-			durArgs := []any{durationMetric, from, to}
+			durArgs := []any{bucketStart, to}
 			durArgs = append(durArgs, svcArgs...)
 			durRows, derr := s.store.Conn().Query(r.Context(), `
 				SELECT service_name,
-				       sum(sum_value) / nullIf(sum(count), 0) AS avg_s,
-				       max(max_value)                         AS max_s
-				FROM metric_points
-				WHERE metric = ?
-				  AND time >= ? AND time <= ?
+				       sumMerge(sum_state) / nullIf(sumMerge(count_state), 0) AS avg_s,
+				       maxMerge(max_state)                                    AS max_s
+				FROM spanmetrics_duration_5m
+				WHERE time_bucket >= ? AND time_bucket <= ?
 				  AND service_name IN (`+holders+`)
 				GROUP BY service_name
 				SETTINGS max_execution_time = 8`, durArgs...)

@@ -1111,7 +1111,23 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 
 	var wc whereClause
 	if !f.From.IsZero() {
-		wc.add("time >= ?", f.From)
+		// v0.5.356 — operator-reported: clicking an operation on
+		// Service detail jumped to /traces but returned 0
+		// results despite the op row showing non-zero counts.
+		// Root cause: operation_summary_5m reads
+		// `time_bucket >= winStart.Truncate(5min)` (v0.5.299 fix
+		// so ops with traffic in the bucket-overlap region
+		// surface); this raw-spans path used a strict
+		// `time >= winStart` so a trace whose only matching
+		// span landed in the bucket-overlap region was hidden.
+		// Match the alignment when the window is wide enough
+		// (>5min) that the up-to-5min widening doesn't
+		// dominate the operator's perceived window.
+		fromAligned := f.From
+		if !f.To.IsZero() && f.To.Sub(f.From) > 5*time.Minute {
+			fromAligned = f.From.Truncate(5 * time.Minute)
+		}
+		wc.add("time >= ?", fromAligned)
 	}
 	if !f.To.IsZero() {
 		wc.add("time <= ?", f.To)
@@ -1619,7 +1635,17 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	// Per-trace stats first (subquery), then group across traces.
 	var wc whereClause
 	if !f.From.IsZero() {
-		wc.add("time >= ?", f.From)
+		// v0.5.356 — same bucket alignment as GetTraces above:
+		// keep the aggregate-view's window in sync with the
+		// operations table that surfaces operation-by-operation
+		// counts from the 5-min bucketed MV. Without this,
+		// click-from-operation → aggregate-view also missed the
+		// bucket-overlap traces.
+		fromAligned := f.From
+		if !f.To.IsZero() && f.To.Sub(f.From) > 5*time.Minute {
+			fromAligned = f.From.Truncate(5 * time.Minute)
+		}
+		wc.add("time >= ?", fromAligned)
 	}
 	if !f.To.IsZero() {
 		wc.add("time <= ?", f.To)

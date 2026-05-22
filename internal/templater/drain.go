@@ -42,6 +42,57 @@ type Drain struct {
 
 	mu   sync.Mutex
 	root *node
+
+	// v0.5.345 — pathology-watch counters. OverflowHits counts
+	// every childOrCreate call that had to route through the
+	// "*" wildcard because the parent had MaxChildren distinct
+	// keys; ResetCount tracks how many times we've blown the
+	// tree away due to runaway growth. Both surface via Stats()
+	// so the puller can log per-tick health.
+	overflowHits uint64
+	resetCount   uint64
+}
+
+// DrainStats is the per-instance health snapshot the puller
+// emits at the end of each tick. NodeCount approximates the
+// in-memory tree size; OverflowHits is the cumulative count
+// of childOrCreate calls that fell through to the wildcard
+// child (each one is a hint that the layer's source domain
+// has high cardinality the template tree can't represent
+// well). High values suggest the input stream has more
+// distinct shapes than MaxChildren can hold without
+// over-collapsing.
+type DrainStats struct {
+	NodeCount    int
+	ClusterCount int
+	OverflowHits uint64
+	ResetCount   uint64
+}
+
+// Stats returns the current health snapshot. Cheap — walks
+// the tree once to count nodes + clusters.
+func (d *Drain) Stats() DrainStats {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var nodes, clusters int
+	walkCount(d.root, &nodes, &clusters)
+	return DrainStats{
+		NodeCount:    nodes,
+		ClusterCount: clusters,
+		OverflowHits: d.overflowHits,
+		ResetCount:   d.resetCount,
+	}
+}
+
+func walkCount(n *node, nodes, clusters *int) {
+	if n == nil {
+		return
+	}
+	*nodes++
+	*clusters += len(n.clusters)
+	for _, c := range n.children {
+		walkCount(c, nodes, clusters)
+	}
 }
 
 type node struct {
@@ -94,7 +145,7 @@ func (d *Drain) Add(line, service string, tsNs int64) *Cluster {
 
 	// Layer 1: token count
 	cntKey := tokenCountKey(len(tokens))
-	cur := childOrCreate(d.root, cntKey, d.MaxChildren)
+	cur := d.childOrCreate(d.root, cntKey, d.MaxChildren)
 
 	// Layer 2..Depth-1: token-by-token literal traversal. Last
 	// layer holds the cluster list — depth=4 means 4 internal
@@ -107,7 +158,7 @@ func (d *Drain) Add(line, service string, tsNs int64) *Cluster {
 		if key == "<*>" {
 			key = "*"
 		}
-		cur = childOrCreate(cur, key, d.MaxChildren)
+		cur = d.childOrCreate(cur, key, d.MaxChildren)
 	}
 
 	// At the leaf — find the best similarity match.
@@ -182,6 +233,10 @@ func (d *Drain) Reset() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.root = &node{children: map[string]*node{}}
+	d.resetCount++
+	// Don't zero overflowHits — operator wants cumulative
+	// visibility on tree-cardinality pressure across the
+	// run, not just the current tick.
 }
 
 func walkClusters(n *node, acc *[]*Cluster) {
@@ -196,18 +251,19 @@ func walkClusters(n *node, acc *[]*Cluster) {
 	}
 }
 
-func childOrCreate(parent *node, key string, maxChildren int) *node {
+// childOrCreate walks one tree layer, creating a child when
+// missing. MaxChildren overflow → reroute through the "*"
+// wildcard so a pathological layer doesn't blow up the tree.
+// The Drain pointer is threaded through (rather than a free
+// function) so the overflow event can be counted on the
+// instance.
+func (d *Drain) childOrCreate(parent *node, key string, maxChildren int) *node {
 	if c, ok := parent.children[key]; ok {
 		return c
 	}
-	// MaxChildren overflow — re-route through "*" wildcard
-	// child. This prevents pathological layers (e.g. an HTTP
-	// route segment that's unique per request) from blowing up
-	// the tree. The wildcard child still receives the line and
-	// produces clusters; the cluster-level similarity check
-	// keeps templates correct.
 	if len(parent.children) >= maxChildren {
 		key = "*"
+		d.overflowHits++
 	}
 	if c, ok := parent.children[key]; ok {
 		return c

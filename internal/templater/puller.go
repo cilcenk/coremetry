@@ -148,8 +148,24 @@ func (p *Puller) tick(ctx context.Context) {
 		}
 		saved++
 	}
-	log.Printf("[templater] tick: sampled=%d skipped_sensitive=%d clusters=%d saved=%d",
-		len(page.Logs), skipped, len(clusters), saved)
+	stats := p.drain.Stats()
+	log.Printf("[templater] tick: sampled=%d skipped_sensitive=%d clusters=%d saved=%d nodes=%d overflow_hits=%d reset_count=%d",
+		len(page.Logs), skipped, len(clusters), saved,
+		stats.NodeCount, stats.OverflowHits, stats.ResetCount)
+
+	// v0.5.345 — pathology guard. If the tree grew past
+	// drainNodeBudget within a single tick, log loudly + drop
+	// the tree immediately to clamp memory. Threshold is
+	// generous (10x the typical clusters-per-tick observed in
+	// production); crossing it means the input stream has more
+	// distinct shapes than the (depth, MaxChildren) tree can
+	// represent, and the wildcard fallback is over-collapsing
+	// anyway.
+	const drainNodeBudget = 50_000
+	if stats.NodeCount > drainNodeBudget {
+		log.Printf("[templater] WARNING: drain tree exceeded budget (%d > %d) — forcing reset; consider lowering sample size or raising MaxChildren",
+			stats.NodeCount, drainNodeBudget)
+	}
 
 	// Drop in-memory tree so the next tick processes the next
 	// window cold. The persistent ledger (log_templates) carries

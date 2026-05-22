@@ -764,7 +764,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			attr_keys     Array(LowCardinality(String)),
 			attr_values   Array(String),
 			res_keys      Array(LowCardinality(String)),
-			res_values    Array(String)
+			res_values    Array(String),
+			-- v0.5.358 — explicit histogram bucket bounds + per-bucket
+			-- counts. Required for read-time quantile estimation; the
+			-- OTLP ingest path fills these for Histogram data points
+			-- (otlp/convert.go Metric_Histogram). Default [] keeps
+			-- old data + non-histogram instruments compatible.
+			bucket_bounds Array(Float64) DEFAULT [],
+			bucket_counts Array(UInt64)  DEFAULT []
 		) ENGINE = MergeTree()
 		PARTITION BY toDate(time)
 		ORDER BY (service_name, metric, time)
@@ -1484,6 +1491,28 @@ func (s *Store) migrate(ctx context.Context) error {
 			if err := s.execDDL(ctx, mvs[mig.mvIdx]); err != nil {
 				return fmt.Errorf("recreate %s with db_name: %w", mig.table, err)
 			}
+		}
+	}
+
+	// v0.5.358 — metric_points gained bucket_bounds + bucket_counts
+	// columns so the OTLP histogram bucket layout is preserved at
+	// ingest time. Read-time quantile estimation reads these arrays
+	// directly. ALTER ADD COLUMN with DEFAULT [] is online + cheap;
+	// existing rows keep an empty array which the quantile code
+	// handles as "no histogram data".
+	var hasBucketCols uint8
+	if err := s.conn.QueryRow(ctx, `
+		SELECT count() = 2
+		FROM system.columns
+		WHERE database = currentDatabase()
+		  AND table    = 'metric_points'
+		  AND name IN ('bucket_bounds', 'bucket_counts')`).Scan(&hasBucketCols); err == nil && hasBucketCols == 0 {
+		log.Println("[chstore] adding bucket_bounds + bucket_counts columns to metric_points")
+		if err := s.execDDL(ctx,
+			"ALTER TABLE metric_points"+s.onCluster()+
+				" ADD COLUMN IF NOT EXISTS bucket_bounds Array(Float64) DEFAULT [],"+
+				" ADD COLUMN IF NOT EXISTS bucket_counts Array(UInt64) DEFAULT []"); err != nil {
+			return fmt.Errorf("add bucket columns: %w", err)
 		}
 	}
 

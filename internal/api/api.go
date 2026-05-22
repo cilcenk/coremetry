@@ -2944,6 +2944,8 @@ type SpanMetricServiceRow struct {
 	ErrorRate  float64 `json:"errorRate"`
 	AvgMs      float64 `json:"avgMs,omitempty"`
 	MaxMs      float64 `json:"maxMs,omitempty"`
+	P50Ms      float64 `json:"p50Ms,omitempty"`
+	P99Ms      float64 `json:"p99Ms,omitempty"`
 	// Inline call-rate sparkline — 30 buckets evenly spread
 	// across the requested window. Float so a SVG renderer can
 	// scale by max() without integer truncation; counts are
@@ -3193,6 +3195,54 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				}
 			}
 		}
+		// Stage 4 — quantile estimation from histogram buckets.
+		// v0.5.358: reads raw metric_points (no MV — bucket
+		// arrays only live there) scoped to the top-N service
+		// IN-list so the scan is bounded by the cap, not by
+		// the universe of services. sumForEach is the CH
+		// combinator that does element-wise array sum across
+		// rows — gives us the merged histogram per service in
+		// one round-trip. histQuantile() interpolates within
+		// the bucket for a better-than-step estimate.
+		if durationMetric != "" {
+			qArgs := []any{durationMetric, bucketStart, to}
+			qArgs = append(qArgs, svcArgs...)
+			qRows, qerr := s.store.Conn().Query(r.Context(), `
+				SELECT service_name,
+				       any(bucket_bounds)        AS bounds,
+				       sumForEach(bucket_counts) AS counts
+				FROM metric_points
+				WHERE metric = ?
+				  AND time >= ? AND time <= ?
+				  AND service_name IN (`+holders+`)
+				  AND length(bucket_counts) > 0
+				GROUP BY service_name
+				SETTINGS max_execution_time = 10`, qArgs...)
+			if qerr == nil {
+				defer qRows.Close()
+				type qRow struct{ P50, P99 float64 }
+				qMap := make(map[string]qRow, len(out))
+				for qRows.Next() {
+					var svc string
+					var bounds []float64
+					var counts []uint64
+					if err := qRows.Scan(&svc, &bounds, &counts); err != nil {
+						continue
+					}
+					qMap[svc] = qRow{
+						P50: histQuantile(bounds, counts, 0.50) * 1000,
+						P99: histQuantile(bounds, counts, 0.99) * 1000,
+					}
+				}
+				for i := range out {
+					if q, ok := qMap[out[i].Service]; ok {
+						out[i].P50Ms = q.P50
+						out[i].P99Ms = q.P99
+					}
+				}
+			}
+		}
+
 		// Surface the cap so the frontend can render a hint
 		// when truncation kicked in. truncated=true when the
 		// top-N pass returned exactly `top` rows — there might
@@ -3205,6 +3255,69 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 			"truncated":      len(out) >= top,
 		}, nil
 	})
+}
+
+// histQuantile estimates the q-th quantile from an OTel
+// histogram's bucket layout. v0.5.358 — used by the span
+// metrics page to derive p50/p99 from the bucket bounds +
+// per-bucket counts that the OTLP histogram ingest now
+// preserves.
+//
+// Layout:
+//   • bounds = [b0, b1, ..., bN-1]   — N explicit upper bounds
+//   • counts = [c0, c1, ..., cN]     — N+1 buckets total
+//                                       (counts[i] = count of
+//                                        observations ≤ bounds[i];
+//                                        counts[N] = +Inf bucket)
+//
+// Computation:
+//   1. total = Σ counts
+//   2. target = total × q
+//   3. Walk buckets accumulating counts; find first i where
+//      cumulative ≥ target.
+//   4. Linear-interpolate inside the bucket: lower bound is
+//      bounds[i-1] (or 0 for the first bucket); upper is
+//      bounds[i]; fraction = (target - prev_cumulative) / c.
+//   5. The +Inf bucket (i == N) returns bounds[N-1] as a
+//      conservative best estimate — caller's MaxMs covers the
+//      "actually higher than the last finite bound" case.
+func histQuantile(bounds []float64, counts []uint64, q float64) float64 {
+	if len(counts) == 0 || q <= 0 || q > 1 {
+		return 0
+	}
+	var total uint64
+	for _, c := range counts {
+		total += c
+	}
+	if total == 0 {
+		return 0
+	}
+	target := float64(total) * q
+	var cum uint64
+	for i, c := range counts {
+		cum += c
+		if float64(cum) >= target {
+			// +Inf bucket — no upper bound to interpolate to.
+			if i >= len(bounds) {
+				if len(bounds) > 0 {
+					return bounds[len(bounds)-1]
+				}
+				return 0
+			}
+			prevCum := float64(cum) - float64(c)
+			lower := 0.0
+			if i > 0 {
+				lower = bounds[i-1]
+			}
+			upper := bounds[i]
+			if c == 0 {
+				return upper
+			}
+			frac := (target - prevCum) / float64(c)
+			return lower + frac*(upper-lower)
+		}
+	}
+	return 0
 }
 
 // pickSpanMetricNames picks the call-counter + duration metric

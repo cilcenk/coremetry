@@ -105,16 +105,38 @@ func (s *Store) InsertLogs(ctx context.Context, logs []*Log) error {
 
 func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 	ctx = asyncInsertCtx(ctx)
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO metric_points")
+	// v0.5.358 — explicit column list because the schema gained
+	// bucket_bounds + bucket_counts at the end. Named INSERT
+	// avoids surprises if the column order ever changes again,
+	// and gives a clear error on a stale schema rather than
+	// silently writing into the wrong column.
+	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO metric_points
+		(metric, instrument, description, unit,
+		 service_name, host_name, time, start_time,
+		 value, count, sum_value, min_value, max_value,
+		 attr_keys, attr_values, res_keys, res_values,
+		 bucket_bounds, bucket_counts)`)
 	if err != nil {
 		return fmt.Errorf("prepare metrics: %w", err)
 	}
 	for _, p := range pts {
+		// Histogram-only payloads come through with arrays
+		// populated; everything else uses empty slices so the
+		// CH default-array behaviour kicks in.
+		bounds := p.BucketBounds
+		counts := p.BucketCounts
+		if bounds == nil {
+			bounds = []float64{}
+		}
+		if counts == nil {
+			counts = []uint64{}
+		}
 		if err := batch.Append(
 			p.Metric, p.Instrument, p.Description, p.Unit,
 			p.ServiceName, p.HostName, p.Time, p.StartTime,
 			p.Value, p.Count, p.SumValue, p.MinValue, p.MaxValue,
 			p.AttrKeys, p.AttrValues, p.ResKeys, p.ResValues,
+			bounds, counts,
 		); err != nil {
 			return fmt.Errorf("append metric: %w", err)
 		}

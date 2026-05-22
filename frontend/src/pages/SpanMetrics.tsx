@@ -21,7 +21,7 @@ import type { TimeRange, SpanMetricsServicesResponse, SpanMetricServiceRow } fro
 // and dotted-vs-underscored variants) so the page renders
 // without any operator-side config.
 
-type SortKey = 'service' | 'calls' | 'errors' | 'errorRate' | 'avgMs' | 'maxMs';
+type SortKey = 'service' | 'calls' | 'errors' | 'errorRate' | 'avgMs' | 'p50Ms' | 'p99Ms' | 'maxMs';
 
 // Top-N choices for the cap selector. v0.5.355 — at 10k+
 // services the full window query took 10s+; defaulting to 200
@@ -74,6 +74,8 @@ export default function SpanMetricsPage() {
         case 'errors':    return dir * (a.errors - b.errors);
         case 'errorRate': return dir * (a.errorRate - b.errorRate);
         case 'avgMs':     return dir * ((a.avgMs ?? 0) - (b.avgMs ?? 0));
+        case 'p50Ms':     return dir * ((a.p50Ms ?? 0) - (b.p50Ms ?? 0));
+        case 'p99Ms':     return dir * ((a.p99Ms ?? 0) - (b.p99Ms ?? 0));
         case 'maxMs':     return dir * ((a.maxMs ?? 0) - (b.maxMs ?? 0));
       }
     });
@@ -214,7 +216,9 @@ service:
                     <SortHeader k="errors"    label="Errors"      cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="errorRate" label="Error rate"  cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <th className="num">Rate / s</th>
-                    <SortHeader k="avgMs"     label="Avg latency" cur={sortKey} dir={sortDir} onSort={setSort} num />
+                    <SortHeader k="avgMs"     label="Avg"         cur={sortKey} dir={sortDir} onSort={setSort} num />
+                    <SortHeader k="p50Ms"     label="p50"         cur={sortKey} dir={sortDir} onSort={setSort} num />
+                    <SortHeader k="p99Ms"     label="p99"         cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="maxMs"     label="Max"         cur={sortKey} dir={sortDir} onSort={setSort} num />
                     {showSpark && <th>Calls / time</th>}
                     <th>Explore</th>
@@ -243,6 +247,12 @@ service:
                         <td className="num mono">
                           {r.avgMs != null && r.avgMs > 0 ? `${r.avgMs.toFixed(1)} ms` : '—'}
                         </td>
+                        <td className="num mono">
+                          {r.p50Ms != null && r.p50Ms > 0 ? `${r.p50Ms.toFixed(1)} ms` : '—'}
+                        </td>
+                        <td className="num mono">
+                          {r.p99Ms != null && r.p99Ms > 0 ? `${r.p99Ms.toFixed(0)} ms` : '—'}
+                        </td>
                         <td className="num mono" style={{ color: 'var(--text3)' }}>
                           {r.maxMs != null && r.maxMs > 0 ? `${r.maxMs.toFixed(0)} ms` : '—'}
                         </td>
@@ -268,11 +278,11 @@ service:
             <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
               Source: metric_points · <code>{data.callsMetric}</code>
               {data.durationMetric ? <> + <code>{data.durationMetric}</code></> : null}
-              {'. '}Avg latency is sum/count from the duration histogram;
-              max is the observed upper-bound per service.
-              Bucket-derived p50/p99 quantiles are a follow-up — they
-              require the collector to emit per-bucket counts the OTLP
-              ingest path currently flattens out.
+              {'. '}Avg = Σsum/Σcount; p50/p99 estimated from histogram
+              bucket counts (linear-interpolated within the matched
+              bucket); max is the observed upper bound per service.
+              Quantiles are blank when the source histogram emitted
+              count/sum only without explicit bucket bounds.
             </div>
           </>
         )}

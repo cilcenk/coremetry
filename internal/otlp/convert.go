@@ -193,8 +193,19 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 			}
 			mn := derefF64(dp.Min)
 			mx := derefF64(dp.Max)
-			out = append(out, base("histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
-				avg, dp.Count, sum, mn, mx, dp.Attributes))
+			p := base("histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
+				avg, dp.Count, sum, mn, mx, dp.Attributes)
+			// v0.5.358 — preserve the explicit bucket layout so
+			// the read path can estimate quantiles. dp.BucketCounts
+			// has len(ExplicitBounds)+1 elements (one per bucket,
+			// last is the +Inf bucket). When the producer didn't
+			// emit explicit bounds (rare), both arrays remain
+			// empty and the read path falls back to avg only.
+			if len(dp.ExplicitBounds) > 0 && len(dp.BucketCounts) > 0 {
+				p.BucketBounds = append([]float64(nil), dp.ExplicitBounds...)
+				p.BucketCounts = append([]uint64(nil), dp.BucketCounts...)
+			}
+			out = append(out, p)
 		}
 	case *metricspb.Metric_ExponentialHistogram:
 		for _, dp := range d.ExponentialHistogram.DataPoints {

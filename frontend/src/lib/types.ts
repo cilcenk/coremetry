@@ -1385,6 +1385,14 @@ export interface SpanMetricServiceRow {
   errorRate: number;
   avgMs?: number;
   maxMs?: number;
+  // v0.5.358 — bucket-derived quantile estimates. The OTLP
+  // ingest preserves the explicit bucket bounds + per-bucket
+  // counts so the backend can sumForEach across data points
+  // and interpolate. Empty when the histogram data point
+  // didn't carry bucket arrays (rare; some SDKs send only
+  // count/sum/max).
+  p50Ms?: number;
+  p99Ms?: number;
   // 30-bucket call-rate sparkline across the window. Used by
   // the Span Metrics table to render an inline mini-chart per
   // row so the operator sees the shape of traffic without

@@ -69,6 +69,16 @@ type MetricPoint struct {
 	AttrValues  []string
 	ResKeys     []string
 	ResValues   []string
+	// v0.5.358 — histogram bucket layout. Populated for
+	// Histogram data points by otlp/convert.go; nil/empty for
+	// all other instruments. BucketBounds carries the explicit
+	// upper bounds (length N); BucketCounts carries the
+	// per-bucket counts (length N+1 in canonical OTel,
+	// element[i] = count of observations ≤ BucketBounds[i],
+	// element[N] = +Inf bucket). At read time we sum these
+	// element-wise across data points to compute quantiles.
+	BucketBounds []float64
+	BucketCounts []uint64
 }
 
 // ── API response types ────────────────────────────────────────────────────────

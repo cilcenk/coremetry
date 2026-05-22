@@ -134,3 +134,23 @@ func TestAdaptDDL_AlterTable(t *testing.T) {
 		t.Errorf("ALTER target wrong: %s", got[0])
 	}
 }
+
+// TestAdaptDDL_AlterAddColumn — v0.5.362. Column-list ALTERs must
+// hit BOTH the _local ReplicatedMergeTree (so each shard accepts
+// the new column) and the Distributed wrapper (so INSERT/SELECT
+// against the bare name see the new schema). Pre-fix the wrapper
+// stayed behind and runtime INSERT errored "no such column …".
+func TestAdaptDDL_AlterAddColumn(t *testing.T) {
+	s := &Store{cfg: config.CHConfig{ClusterName: "c"}}
+	got := s.adaptDDL(`ALTER TABLE metric_points ADD COLUMN IF NOT EXISTS bucket_bounds Array(Float64) DEFAULT []`)
+	if len(got) != 2 {
+		t.Fatalf("ADD COLUMN should be 2 stmts (_local + wrapper), got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "ALTER TABLE metric_points_local ON CLUSTER `c`") {
+		t.Errorf("first stmt should target _local, got: %s", got[0])
+	}
+	if !strings.Contains(got[1], "ALTER TABLE metric_points ON CLUSTER `c`") ||
+		strings.Contains(got[1], "metric_points_local") {
+		t.Errorf("second stmt should target bare Distributed name, got: %s", got[1])
+	}
+}

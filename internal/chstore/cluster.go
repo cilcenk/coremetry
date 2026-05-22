@@ -214,6 +214,22 @@ func (s *Store) adaptDDL(sql string) []string {
 			name, on, target, s.cfg.ClusterName, target, s.shardKey())
 		out = append(out, wrapper)
 	}
+
+	// 4. v0.5.362 — for a high-volume ALTER that changes the
+	// column list, the rewritten step 1 above only updates the
+	// `_local` ReplicatedMergeTree. The Distributed wrapper
+	// keeps its own column list and stays behind; INSERT/SELECT
+	// against the bare name then errors with "no such column …".
+	// ClickHouse's Distributed engine accepts ADD COLUMN /
+	// DROP COLUMN / MODIFY COLUMN, so emit the same ALTER
+	// against the un-suffixed name when one of those clauses
+	// is present. Other ALTERs (ADD INDEX, MODIFY TTL,
+	// MATERIALIZE) Distributed legitimately doesn't carry —
+	// skip the wrapper for those.
+	if hv && kind == "altertable" && reAlterColList.MatchString(sql) {
+		bareAlter := reAlterTable.ReplaceAllString(sql, "${1}"+name+on+" ")
+		out = append(out, bareAlter)
+	}
 	return out
 }
 
@@ -272,4 +288,10 @@ var (
 	// Captures the base engine name and the argument list including
 	// surrounding parens (or empty when the engine is parenless).
 	reEngine = regexp.MustCompile(`(?i)ENGINE\s*=\s*(MergeTree|ReplacingMergeTree|AggregatingMergeTree|SummingMergeTree)\s*(\([^)]*\))?`)
+
+	// reAlterColList detects whether an ALTER touches the column
+	// list (ADD/DROP/MODIFY/RENAME COLUMN). The Distributed engine
+	// supports these — index / TTL / MATERIALIZE alterations are
+	// out of scope and stay scoped to the _local table.
+	reAlterColList = regexp.MustCompile(`(?i)\b(?:ADD|DROP|MODIFY|RENAME)\s+COLUMN\b`)
 )

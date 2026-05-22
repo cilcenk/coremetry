@@ -1482,8 +1482,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		  AND table    = 'metric_points'
 		  AND name IN ('bucket_bounds', 'bucket_counts')`).Scan(&hasBucketCols); err == nil && hasBucketCols == 0 {
 		log.Println("[chstore] adding bucket_bounds + bucket_counts columns to metric_points")
+		// v0.5.362 — let execDDL→adaptDDL inject ON CLUSTER. Hand-
+		// concatenating s.onCluster() here doubled the clause on
+		// cluster-mode installs (CH syntax error → ALTER never
+		// applied → "no such column bucket_bounds" at runtime).
 		if err := s.execDDL(ctx,
-			"ALTER TABLE metric_points"+s.onCluster()+
+			"ALTER TABLE metric_points"+
 				" ADD COLUMN IF NOT EXISTS bucket_bounds Array(Float64) DEFAULT [],"+
 				" ADD COLUMN IF NOT EXISTS bucket_counts Array(UInt64) DEFAULT []"); err != nil {
 			return fmt.Errorf("add bucket columns: %w", err)

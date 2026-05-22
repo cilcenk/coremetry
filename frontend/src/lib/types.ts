@@ -471,12 +471,17 @@ export interface AISettings {
   model: string;
   baseUrl: string;
   hasKey: boolean;
+  // v0.5.360 — InsecureSkipVerify on the outbound HTTP client.
+  // Operator-opt-in for self-hosted LLMs behind an enterprise
+  // CA Go's default trust store doesn't know about.
+  skipTls?: boolean;
 }
 export interface AISettingsInput {
   provider: AIProvider;
   apiKey: string;
   model?: string;
   baseUrl?: string;
+  skipTls?: boolean;
 }
 
 // External Tempo backend (v0.5.208) — fallback for trace-by-id

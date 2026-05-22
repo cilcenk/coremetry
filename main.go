@@ -460,13 +460,16 @@ func main() {
 	// BaseURL is provider-specific (only "openai" reads it). Apply
 	// the env-default before LoadPersisted so runtime overrides
 	// from /api/settings/ai still win on top.
-	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL)
+	// v0.5.360: SkipTLS env default is false — operator opts in
+	// per-deployment via Settings → AI Copilot for self-hosted
+	// LLMs behind an enterprise CA.
+	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL, false)
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
 	go copilotSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if copilotSvc.Configured() {
-		p, m, b, _ := copilotSvc.Snapshot()
+		p, m, b, _, _ := copilotSvc.Snapshot()
 		if b != "" {
 			log.Printf("[copilot] AI explain enabled (provider=%s model=%s baseURL=%s)", p, m, b)
 		} else {

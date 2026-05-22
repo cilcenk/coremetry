@@ -1582,6 +1582,7 @@ function AITab() {
   const [baseUrl, setBaseUrl] = useState('');
   const [hasKey, setHasKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [skipTls, setSkipTls] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -1591,6 +1592,7 @@ function AITab() {
       setModel(s.model || '');
       setBaseUrl(s.baseUrl || '');
       setHasKey(s.hasKey);
+      setSkipTls(s.skipTls ?? false);
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);
@@ -1599,8 +1601,9 @@ function AITab() {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey, model, baseUrl });
+      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls });
       setHasKey(next.hasKey);
+      setSkipTls(next.skipTls ?? false);
       setApiKey('');
       setMsg({ kind: 'ok', text: next.hasKey ? 'Saved — Copilot is live.' : 'Saved — Copilot disabled.' });
     } catch (err) {
@@ -1614,8 +1617,9 @@ function AITab() {
     if (!confirm('Remove the saved API key? Copilot buttons will disappear until a new key is set.')) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl });
+      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls });
       setHasKey(next.hasKey);
+      setSkipTls(next.skipTls ?? false);
       setApiKey('');
       setMsg({ kind: 'ok', text: 'Key cleared — Copilot is dormant.' });
     } catch (err) {
@@ -1725,6 +1729,27 @@ function AITab() {
             </div>
           </label>
         )}
+
+        {/* TLS verification toggle (v0.5.360). Matches the same
+            opt-in pattern the Tempo + LDAP integrations expose
+            for self-hosted endpoints fronted by an internal CA
+            Go's default trust store doesn't know about. Off by
+            default — operator flips it deliberately. */}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8,
+                        marginBottom: 12, fontSize: 12, color: 'var(--text2)' }}>
+          <input type="checkbox" checked={skipTls}
+                 onChange={e => setSkipTls(e.target.checked)}
+                 style={{ marginTop: 2 }} />
+          <div>
+            <div>Skip TLS verification</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, lineHeight: 1.5 }}>
+              Disables certificate verification on the outbound HTTPS
+              call to the AI provider. Useful for self-hosted LLMs
+              behind an enterprise CA. Leave off for public endpoints
+              (Anthropic, GitHub Copilot, OpenAI).
+            </div>
+          </div>
+        </label>
 
         <label style={{ display: 'block', marginBottom: 6 }}>
           <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>

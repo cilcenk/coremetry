@@ -24,6 +24,7 @@ package copilot
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +56,13 @@ type Service struct {
 	// OpenAI). Examples for self-hosted: http://ollama:11434/v1,
 	// http://lmstudio:1234/v1, http://vllm:8000/v1.
 	baseURL  string
+	// skipTLS — when true the embedded http.Client uses an
+	// InsecureSkipVerify TLS config. v0.5.360: operator-requested
+	// for the same self-hosted enterprise-CA case the Tempo +
+	// LDAP integrations already handle (Coremetry behind an
+	// internal cert the OS trust store doesn't know about). Off
+	// by default; toggled via the Settings UI.
+	skipTLS bool
 
 	// GitHub session token cache. We exchange ghu_ → session token
 	// once and reuse until ~30s before the server-stated expiry.
@@ -154,10 +162,11 @@ func New(provider, apiKey, model string) *Service {
 		apiKey:   apiKey,
 		model:    model,
 		// Local LLMs (Ollama loading a 70B model, llama.cpp on CPU)
-		// can take 60+ seconds for a first generation. Bump the
-		// client timeout to match — the request itself bounded by
-		// max_tokens still keeps the worst case under 2-3 minutes.
-		cli: &http.Client{Timeout: 180 * time.Second},
+		// can take 60+ seconds for a first generation. The client
+		// timeout (180s) matches the cold-load worst case.
+		// v0.5.360 — transport built via buildCopilotHTTPClient so
+		// the TLS-skip flag has a single creation site.
+		cli: buildCopilotHTTPClient(false),
 	}
 }
 
@@ -166,7 +175,10 @@ func New(provider, apiKey, model string) *Service {
 // to false and the UI hides the buttons. baseURL is only consulted
 // by the "openai" provider; ignored for anthropic/github so a stale
 // value persisted from a previous selection doesn't leak.
-func (s *Service) Configure(provider, apiKey, model, baseURL string) {
+// v0.5.360: skipTLS rebuilds the http.Client transport when it
+// flips; otherwise the existing client is kept (its 180s timeout
+// matches the local-LLM use case).
+func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS bool) {
 	if provider == "" {
 		provider = ProviderAnthropic
 	}
@@ -176,17 +188,38 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string) {
 	if s.provider != provider || s.apiKey != apiKey {
 		s.ghSessTok, s.ghSessExp = "", time.Time{}
 	}
-	s.provider, s.apiKey, s.model, s.baseURL = provider, apiKey, model, baseURL
+	if s.cli == nil || s.skipTLS != skipTLS {
+		s.cli = buildCopilotHTTPClient(skipTLS)
+	}
+	s.provider, s.apiKey, s.model, s.baseURL, s.skipTLS = provider, apiKey, model, baseURL, skipTLS
+}
+
+// buildCopilotHTTPClient — mirrors the Tempo / LDAP pattern. When
+// skipTLS is true the transport runs with InsecureSkipVerify;
+// useful for self-hosted LLMs behind an enterprise-CA that Go's
+// default trust store doesn't know about. 180s timeout matches
+// the local-LLM cold-load worst case (Ollama loading a 70B model).
+func buildCopilotHTTPClient(skipTLS bool) *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if skipTLS {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return &http.Client{
+		Timeout:   180 * time.Second,
+		Transport: tr,
+	}
 }
 
 // Snapshot returns the current configuration. The apiKey is masked
 // (only "set" / "unset" matters to the UI) — full key is never echoed.
 // baseURL is non-secret (operators put it in their Helm values), so
 // we echo it back so the Settings page can show what's wired up.
-func (s *Service) Snapshot() (provider, model, baseURL string, hasKey bool) {
+// v0.5.360 — skipTLS surfaced so the UI checkbox reflects what's
+// actually live.
+func (s *Service) Snapshot() (provider, model, baseURL string, hasKey, skipTLS bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.provider, s.model, s.baseURL, s.apiKey != ""
+	return s.provider, s.model, s.baseURL, s.apiKey != "", s.skipTLS
 }
 
 // Configured reports whether the service has credentials. The "openai"
@@ -568,6 +601,9 @@ type persisted struct {
 	APIKey   string `json:"apiKey"`
 	Model    string `json:"model"`
 	BaseURL  string `json:"baseUrl,omitempty"`
+	// v0.5.360 — omitempty so legacy blobs decode without the
+	// field, leaving skipTLS=false (current default).
+	SkipTLS  bool   `json:"skipTls,omitempty"`
 }
 
 // SettingsStore is the small slice of *chstore.Store we need —
@@ -592,7 +628,7 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
 	}
-	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL)
+	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL, p.SkipTLS)
 	return nil
 }
 
@@ -622,15 +658,16 @@ func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, i
 
 // SavePersisted writes new credentials to system_settings AND updates
 // the live Service. Called by PUT /api/settings/ai.
-func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string) error {
-	raw, err := json.Marshal(persisted{Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL})
+// v0.5.360 — skipTLS plumbed through end-to-end.
+func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS bool) error {
+	raw, err := json.Marshal(persisted{Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL, SkipTLS: skipTLS})
 	if err != nil {
 		return err
 	}
 	if err := store.PutSetting(ctx, settingsKey, raw); err != nil {
 		return err
 	}
-	s.Configure(provider, apiKey, model, baseURL)
+	s.Configure(provider, apiKey, model, baseURL, skipTLS)
 	return nil
 }
 

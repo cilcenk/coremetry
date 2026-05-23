@@ -818,6 +818,50 @@ func (s *Store) migrate(ctx context.Context) error {
 		// level table (every distinct op pair) but still bounded
 		// because ops are LowCardinality in practice (HTTP routes,
 		// gRPC methods). Same aggregator goroutine fills it.
+		// service_callers_5m (v0.5.368) — per-(receiver_service,
+		// caller pod / client IP / UA) RED rollup. Powers the
+		// /service/backtrace "who is hammering me" panel. Same
+		// 5-min bucketing as topology_edges_5m; same
+		// ReplacingMergeTree(version) so re-aggregation across
+		// the topology batch correlator's retries dedups
+		// naturally on the FINAL read.
+		//
+		// Ordering choice rationale at scale:
+		// service first → FINAL reads on the most common path
+		//   (/api/backtrace/{name}) hit a tight index prefix.
+		// caller_service, caller_host, caller_instance follow
+		//   from least-card to medium-card so each subsequent
+		//   key narrows the partition slice further.
+		// client_address last → highest cardinality, sorted at
+		//   the leaf so its variance doesn't bloat upstream
+		//   index granules.
+		`CREATE TABLE IF NOT EXISTS service_callers_5m (
+			time_bucket      DateTime CODEC(DoubleDelta, ZSTD(3)),
+			service          LowCardinality(String),
+			caller_service   LowCardinality(String),
+			caller_host      LowCardinality(String),
+			caller_instance  String,
+			client_address   String,
+			user_agent       String,
+			calls            UInt64,
+			errors           UInt64,
+			sum_duration_ns  UInt64,
+			-- Per-bucket quantiles. The reader takes max()
+			-- across buckets — a conservative (slightly
+			-- pessimistic) merge that's the right semantic for
+			-- a "where is my SLO breached" view.
+			p50_ms           Float64,
+			p95_ms           Float64,
+			p99_ms           Float64,
+			last_seen_ns     UInt64,
+			version          UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toDate(time_bucket)
+		ORDER BY (time_bucket, service, caller_service,
+		         caller_host, caller_instance,
+		         client_address, user_agent)
+		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
+
 		`CREATE TABLE IF NOT EXISTS topology_op_edges_5m (
 			time_bucket     DateTime CODEC(DoubleDelta, ZSTD(3)),
 			parent_service  LowCardinality(String),

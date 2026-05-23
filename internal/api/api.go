@@ -1564,7 +1564,12 @@ func (s *Server) getServiceBacktrace(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("service-backtrace:svc=%s:since=%s:from=%s:to=%s:limit=%d",
 		name, q.Get("since"), q.Get("from"), q.Get("to"), limit)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		rows, err := s.store.ServiceCallers(r.Context(), name, from, to, limit)
+		// v0.5.368 — read from service_callers_5m MV. The
+		// raw-spans ServiceCallers() runs a self-join that's
+		// unviable at billion-span scale; topology aggregator
+		// now pre-aggregates the rollup every 5 min so reads
+		// stay sub-second regardless of fleet size.
+		rows, err := s.store.ReadServiceCallersAgg(r.Context(), name, from, to, limit)
 		if err != nil {
 			return nil, err
 		}

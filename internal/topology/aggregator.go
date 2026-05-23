@@ -116,6 +116,13 @@ func (a *Aggregator) tick(ctx context.Context, bootstrap bool) {
 			log.Printf("[topology-agg] root flows bucket %s: %v", b.Format(time.RFC3339), err)
 			continue
 		}
+		// v0.5.368 — populate service_callers_5m alongside the
+		// other 5-min rollups. Same settle-delay + retry shape
+		// since it's the same JOIN scope.
+		if err := a.store.WriteServiceCallersBucket(ctx, b); err != nil {
+			log.Printf("[topology-agg] service-callers bucket %s: %v", b.Format(time.RFC3339), err)
+			continue
+		}
 	}
 	if bootstrap {
 		log.Printf("[topology-agg] backfilled %d buckets through %s", len(buckets), end.Format(time.RFC3339))

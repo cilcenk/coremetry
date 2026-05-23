@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Distributed-ClickHouse helpers. The application code reads and
@@ -238,13 +239,63 @@ func (s *Store) adaptDDL(sql string) []string {
 // wrapper around conn.Exec. Errors include the (truncated) SQL of
 // the failing fragment so a regex-induced bug isn't a silent
 // production-only failure.
+//
+// v0.5.384 — cluster-mode retry on transient READONLY (CH error
+// 242). After RESET_SCHEMA's DROP DATABASE ON CLUSTER, the
+// follow-up CREATE TABLE can land while ZooKeeper still has
+// half-cleaned znodes from the dropped Replicated*MergeTree
+// engines. CH then reports the new table as "in read only mode"
+// until ZK converges (typically <30s). Without retry, boot
+// crashes. With retry, the migration self-heals.
 func (s *Store) execDDL(ctx context.Context, sql string) error {
 	for _, frag := range s.adaptDDL(sql) {
-		if err := s.conn.Exec(ctx, frag); err != nil {
+		if err := s.execWithReadonlyRetry(ctx, frag); err != nil {
 			return fmt.Errorf("ddl exec: %w\nSQL: %.200s", err, frag)
 		}
 	}
 	return nil
+}
+
+// execWithReadonlyRetry runs one DDL fragment, retrying on the
+// CH "Table is in read only mode" (code 242) signature with
+// exponential backoff. Single-node mode never hits this path —
+// the error only happens on Replicated*MergeTree engines while
+// ZK catches up post-DROP.
+func (s *Store) execWithReadonlyRetry(ctx context.Context, frag string) error {
+	const maxAttempts = 6
+	backoff := 2 * time.Second
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		err := s.conn.Exec(ctx, frag)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isReadonlyTransient(err) {
+			return err
+		}
+		// Honour ctx cancellation between sleeps.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+	return lastErr
+}
+
+// isReadonlyTransient matches the CH READONLY (code 242) error
+// signature. The text is stable across 22.x → 24.x.
+func isReadonlyTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Table is in read only mode") ||
+		strings.Contains(msg, "code: 242")
 }
 
 // isClusterUnsupportedAlter recognises the ClickHouse error

@@ -422,6 +422,12 @@ export const api = {
       window: string;
       baseline: string;
       patterns: Array<{ token: string; docCount: number; bgCount: number; score: number }>;
+      // v0.5.390 — set when the backend bailed at the 15s
+      // handler deadline (ES soft-timeout fired or the network
+      // round-trip didn't return in time). Panel renders a
+      // "still computing" state instead of the red error
+      // banner so the operator knows polling will recover.
+      timedOut?: boolean;
     }>(`/api/logs/patterns?${qs(params)}`),
   // Drain-extracted log templates (v0.5.244). Backed by the
   // templater puller goroutine; first_seen sticky across

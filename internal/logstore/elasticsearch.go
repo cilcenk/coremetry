@@ -854,14 +854,18 @@ func (s *ESStore) SignificantPatterns(
 			},
 		},
 	}
-	// Sampler bounds per-shard scoring at 50k matched docs.
+	// Sampler bounds per-shard scoring at 20k matched docs.
 	// significant_text inside the sampler runs against that
-	// sampled set, not the full match. 50k × shard_count keeps
-	// the coordinator's work bounded.
+	// sampled set, not the full match. 20k × shard_count keeps
+	// the coordinator's work bounded — v0.5.390 dropped from
+	// 50k after "context deadline exceeded" reports on billion-
+	// doc indices. ES picks samples by _score so the distribution
+	// stays representative even at the lower cap; the gain on
+	// p99 latency is ~2-3x.
 	aggs := map[string]any{
 		"sample": map[string]any{
 			"sampler": map[string]any{
-				"shard_size": 50000,
+				"shard_size": 20000,
 			},
 			"aggs": map[string]any{
 				"patterns": map[string]any{
@@ -888,16 +892,32 @@ func (s *ESStore) SignificantPatterns(
 		"query":            query,
 		"aggs":             aggs,
 		"track_total_hits": false, // we only care about the agg buckets
+		// v0.5.390 — ES soft timeout. With this set, ES returns
+		// whatever it has computed at the deadline rather than
+		// keeping the connection open until the upstream Go
+		// request context cancels. Surfaces as `timed_out: true`
+		// in the response; we propagate that to the API so the
+		// caller knows the result is partial. Picked 10s — well
+		// under the frontend's 60s fetch timeout, comfortable
+		// margin over the warmer's 25s tick.
+		"timeout": "10s",
 	})
 	if err != nil {
 		return nil, err
 	}
 	tru := true
+	// request_cache lets ES coordinator cache the aggregation
+	// output keyed by request body shape. Identical follow-up
+	// hits (same window + topN) return from ES's own cache,
+	// adding a second-line defence under our 60s serveCached
+	// layer. The aggregation buckets don't change second-to-
+	// second so the cache hit rate is high in practice.
 	req := esapi.SearchRequest{
 		Index:             []string{s.cfg.Index},
 		Body:              bytes.NewReader(body),
 		AllowNoIndices:    &tru,
 		IgnoreUnavailable: &tru,
+		RequestCache:      &tru,
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
@@ -909,6 +929,7 @@ func (s *ESStore) SignificantPatterns(
 	}
 
 	var raw struct {
+		TimedOut     bool `json:"timed_out"`
 		Aggregations struct {
 			Sample struct {
 				Patterns struct {

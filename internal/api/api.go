@@ -2836,7 +2836,31 @@ func (s *Server) getLogsSignificantPatterns(w http.ResponseWriter, r *http.Reque
 	key := fmt.Sprintf("logs-significant:cur=%s:bg=%s:topN=%d",
 		curWindow, baseline, topN)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		hits, err := s.logs.SignificantPatterns(r.Context(), curStart, baseStart, now, topN)
+		// v0.5.390 — handler-level deadline. The ES backend now
+		// soft-timeouts at 10s on its own (body timeout param),
+		// so this 15s bound is defence in depth — covers the CH
+		// backend (no native timeout knob) and any network
+		// stall on the ES coordinator round-trip. Without it,
+		// a wedged ES would keep the request open until the
+		// frontend's 60s fetch budget cancels it, surfacing as
+		// "context deadline exceeded" from the operator's view.
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		hits, err := s.logs.SignificantPatterns(ctx, curStart, baseStart, now, topN)
+		// Graceful timeout: serve empty patterns + a hint flag
+		// so the panel can render "still computing" rather than
+		// the red error state. The 60s server cache means the
+		// next poll lands on a fresh attempt, not the same
+		// stuck call.
+		if err != nil && (errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded")) {
+			return map[string]any{
+				"backend":   s.logs.Backend(),
+				"window":    curWindow.String(),
+				"baseline":  baseline.String(),
+				"patterns":  []logstore.SignificantPattern{},
+				"timedOut":  true,
+			}, nil
+		}
 		if err != nil {
 			return nil, err
 		}

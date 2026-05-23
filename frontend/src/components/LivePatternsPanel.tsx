@@ -29,6 +29,7 @@ export function LivePatternsPanel({
     window: string;
     baseline: string;
     patterns: Pattern[];
+    timedOut?: boolean;
   } | null | undefined>(undefined);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -48,7 +49,29 @@ export function LivePatternsPanel({
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  if (!data || data.patterns.length === 0) return null;
+  if (!data) return null;
+  // v0.5.390 — render a "still computing" hint when the backend
+  // bailed on the 15s deadline; polling will re-fetch in 30s
+  // and ES's request_cache + sampler.shard_size=20k usually
+  // settles it on the next attempt. Don't hide the panel
+  // outright (the operator would think it was disabled).
+  if (data.patterns.length === 0) {
+    if (data.timedOut) {
+      return (
+        <div style={{
+          background: 'var(--bg1)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: 10, marginBottom: 10,
+          fontSize: 11, color: 'var(--text3)', lineHeight: 1.5,
+        }}>
+          <strong style={{ color: 'var(--text2)' }}>Live patterns</strong>
+          {' '}— ES sampling is still computing this window; the
+          next 30s poll will retry. (significant_text timed out
+          server-side; partial results were empty.)
+        </div>
+      );
+    }
+    return null;
+  }
   // v0.5.298 — CH backend now ships its own rare-token scorer
   // (sample-based foreground vs background frequency ratio,
   // not as statistically tight as ES significant_text but the

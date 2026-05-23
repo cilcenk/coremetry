@@ -95,7 +95,22 @@ func ResetSchema(ctx context.Context, cfg config.CHConfig) error {
 	if name := strings.TrimSpace(cfg.ClusterName); name != "" {
 		onCluster = " ON CLUSTER `" + name + "`"
 	}
-	stmt := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`%s SYNC", cfg.Database, onCluster)
+	// v0.5.382 — operator-reported: 171 GB partition tripped CH's
+	// `max_table_size_to_drop` guard (default 50 GB) on
+	// COREMETRY_CH_RESET_SCHEMA=1 boots after long-running
+	// installs. The guard exists to protect against an
+	// accidental DROP TABLE; on an explicit RESET path we
+	// intentionally want everything gone. Override both
+	// max_table_size_to_drop AND max_partition_size_to_drop
+	// to 0 (CH-speak for "no upper bound") so the DROP
+	// proceeds regardless of accumulated volume.
+	// SYNC waits for the detach so the follow-up CREATE
+	// DATABASE in chstore.New() doesn't race a pending drop.
+	stmt := fmt.Sprintf(
+		"DROP DATABASE IF EXISTS `%s`%s SYNC "+
+			"SETTINGS max_table_size_to_drop = 0, "+
+			"max_partition_size_to_drop = 0",
+		cfg.Database, onCluster)
 	log.Printf("[reset-schema] %s", stmt)
 	if err := conn.Exec(ctx, stmt); err != nil {
 		return fmt.Errorf("drop database: %w", err)

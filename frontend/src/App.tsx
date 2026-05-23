@@ -21,7 +21,6 @@ const Trace             = lazy(() => import('./pages/Trace'));
 const TraceCompare      = lazy(() => import('./pages/TraceCompare'));
 const Logs              = lazy(() => import('./pages/Logs'));
 const Metrics           = lazy(() => import('./pages/Metrics'));
-const SpanMetrics       = lazy(() => import('./pages/SpanMetrics'));
 const Endpoints         = lazy(() => import('./pages/Endpoints'));
 const Explore           = lazy(() => import('./pages/Explore'));
 const Notebook          = lazy(() => import('./pages/Notebook'));
@@ -86,7 +85,6 @@ export default function App() {
             <Route path="/trace/compare"  element={<TraceCompare />} />
             <Route path="/logs"           element={<Logs />} />
             <Route path="/metrics"        element={<Metrics />} />
-            <Route path="/span-metrics"   element={<SpanMetrics />} />
             <Route path="/endpoints"      element={<Endpoints />} />
             <Route path="/explore"        element={<Explore />} />
             <Route path="/notebook"       element={<Notebook />} />

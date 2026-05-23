@@ -5,6 +5,19 @@ import { escapeHTML } from '@/lib/utils';
 import type { SpanMetricSeries } from '@/lib/types';
 import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 
+// fmtXTick — single x-axis label format. Always carries the
+// month-day + clock so multi-day windows don't collapse to
+// "Mar" / "Apr" the way uPlot's default does (operator-reported
+// in v0.5.366). Pads single-digit components so labels line up.
+function fmtXTick(unixSec: number): string {
+  const d = new Date(unixSec * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
 // Multi-series line chart on uPlot. Renders the same hover-
 // crosshair + per-series tooltip experience as the previous
 // Chart.js version, but at 5-10× the speed.
@@ -216,6 +229,14 @@ export function MultiLineChart({
           stroke: text3,
           grid: { stroke: grid, width: 1 },
           ticks: { stroke: grid, width: 1 },
+          // v0.5.366 — operator-reported: picking a multi-day
+          // range made uPlot drop to month-only labels on the
+          // x-axis, hiding the time-of-day signal. Force a
+          // single explicit formatter that always shows both
+          // date and time so the operator never loses the
+          // intra-day shape. Narrow windows still read cleanly
+          // because the same MM-DD HH:MM works at any zoom.
+          values: (_u, splits) => splits.map(s => fmtXTick(s)),
         },
         {
           stroke: text3,

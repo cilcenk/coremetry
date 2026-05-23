@@ -256,6 +256,15 @@ export function ServiceCharts({ service, range, onZoom }: {
           glance instead of traversing horizontally. Each chart
           gets the full row width, more y-axis room, and the
           synced cursor (syncKey) reads top-to-bottom naturally. */}
+      {/* v0.5.364 — legend-click affordance hint. The MultiLineChart
+          legend already isolates a series on plain click and restores
+          on second click; the Ctrl/Cmd modifier additively toggles
+          for subset selection. Surface that as a small caption so
+          the behaviour is discoverable instead of operator-folklore. */}
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
+        Lejantta operasyon tıkla → sadece o seri · tekrar tıkla → tümü ·
+        Ctrl/⌘+tıkla → çoklu seç
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <ChartCard title="RPS by operation">
           <MultiLineChart series={rpsSeries ?? []} unit="rps"

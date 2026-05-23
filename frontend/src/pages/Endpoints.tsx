@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
+import { Sparkline } from '@/components/Sparkline';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
@@ -23,6 +24,13 @@ export default function EndpointsPage() {
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [rows, setRows] = useState<EndpointRow[] | null | undefined>(undefined);
   const [search, setSearch] = useState(() => params.get('search') ?? '');
+  const [clusterOptions, setClusterOptions] = useState<string[]>([]);
+  const cluster = params.get('cluster') ?? '';
+  const setCluster = (v: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('cluster', v); else next.delete('cluster');
+    return next;
+  }, { replace: true });
   const service = params.get('service') ?? '';
   const setService = (v: string) => setParams(prev => {
     const next = new URLSearchParams(prev);
@@ -46,11 +54,20 @@ export default function EndpointsPage() {
       from, to,
       service: service || undefined,
       search: search.trim() || undefined,
+      cluster: cluster || undefined,
       limit: 1000,
     })
       .then(r => setRows(r ?? []))
       .catch(() => setRows(null));
-  }, [from, to, service, search]);
+  }, [from, to, service, search, cluster]);
+
+  // Cluster picker options — mirror Services page so symmetry is
+  // intuitive for operators landing here after filtering there.
+  useEffect(() => {
+    api.clusters(from, to)
+      .then(r => setClusterOptions(r?.clusters ?? []))
+      .catch(() => setClusterOptions([]));
+  }, [from, to]);
 
   const sorted = useMemo(() => {
     const list = rows ?? [];
@@ -91,6 +108,23 @@ export default function EndpointsPage() {
             style={{ width: 280, padding: '5px 10px', fontSize: 12,
                      background: 'var(--bg)', color: 'var(--text)',
                      border: '1px solid var(--border)', borderRadius: 4 }} />
+          {/* Cluster filter — same source as the Services page so
+              an operator who picked a cluster there sees a
+              symmetric set here. Hidden when no cluster signal
+              is present in the window (resource attr keys
+              k8s.cluster.name / openshift.cluster.name / cluster
+              unset across all spans). */}
+          {clusterOptions.length > 0 && (
+            <select value={cluster}
+              onChange={e => setCluster(e.target.value)}
+              style={{ minWidth: 160 }}
+              title={`${clusterOptions.length} cluster${clusterOptions.length === 1 ? '' : 's'} detected`}>
+              <option value="">All clusters ({clusterOptions.length})</option>
+              {clusterOptions.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          )}
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {rows ? `${rows.length} endpoint${rows.length === 1 ? '' : 's'}` : ''}
           </span>
@@ -135,6 +169,7 @@ export default function EndpointsPage() {
                     <SortHeader k="errorRate" label="Error rate" cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="avgMs"     label="Avg"        cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="p99Ms"     label="P99"        cur={sortKey} dir={sortDir} onSort={setSort} num />
+                    <th>Trend</th>
                     <th>Traces</th>
                   </tr>
                 </thead>
@@ -163,6 +198,12 @@ export default function EndpointsPage() {
                         </td>
                         <td className="num mono">{r.avgMs.toFixed(1)} ms</td>
                         <td className="num mono">{r.p99Ms.toFixed(0)} ms</td>
+                        <td>
+                          <Sparkline values={r.sparkline ?? []}
+                            width={100} height={22}
+                            color={r.errorRate >= 5 ? 'var(--err)' : r.errorRate >= 1 ? 'var(--warn)' : undefined}
+                            title={`${r.calls.toLocaleString()} calls`} />
+                        </td>
                         <td>
                           {/* /traces filter on (service, search=path).
                               The search field matches span.name OR

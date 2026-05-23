@@ -988,7 +988,7 @@ export const api = {
 
   metricQuery: (params: MetricQueryParams) =>
     get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs(params)}`),
-  endpoints: (params: { from: number; to: number; service?: string; search?: string; limit?: number }) =>
+  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number }) =>
     get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
   spanmetricsServices: (from: number, to: number, opts?: { top?: number; spark?: boolean }) => {
     const params = new URLSearchParams();

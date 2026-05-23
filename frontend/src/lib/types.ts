@@ -1390,6 +1390,11 @@ export interface EndpointRow {
   errorRate: number;
   avgMs: number;
   p99Ms: number;
+  // v0.5.371 — 30-bucket call-rate sparkline across the
+  // requested window. Same shape as OperationSummary.sparkline
+  // and the spanmetrics sparkline — the operator learns the
+  // mental model once and reads it across surfaces.
+  sparkline?: number[];
 }
 
 // Span-metrics-derived per-service RED rollup. Source: the

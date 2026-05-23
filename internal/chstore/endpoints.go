@@ -22,6 +22,13 @@ type EndpointRow struct {
 	ErrorRate  float64 `json:"errorRate"`
 	AvgMs      float64 `json:"avgMs"`
 	P99Ms      float64 `json:"p99Ms"`
+	// v0.5.370 — call-rate sparkline (30 buckets across the
+	// requested window). Lets the operator eye-scan "is this
+	// endpoint steady / spiking / dying" from the table row
+	// without a chart drill-in. Bucketing happens server-side
+	// so the JSON payload size stays bounded regardless of
+	// window width.
+	Sparkline       []float64         `json:"sparkline,omitempty"`
 	StatusBreakdown map[string]uint64 `json:"statusBreakdown,omitempty"`
 }
 
@@ -43,7 +50,7 @@ type EndpointRow struct {
 // Span filter: kind = 'server' or 'consumer' so we count
 // inbound requests only — outbound client spans land under
 // the callee's row, not the caller's.
-func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, limit int) ([]EndpointRow, error) {
+func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, cluster string, limit int) ([]EndpointRow, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 500
 	}
@@ -74,25 +81,68 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		whereSearch = " AND positionCaseInsensitive(" + pathExpr + ", ?) > 0"
 		args = append(args, search)
 	}
-	args = append(args, limit)
+	// v0.5.372 — cluster filter, same derive expression as the
+	// /services page so an operator who filtered there sees a
+	// symmetric set here. clusterDeriveExpr coalesces six
+	// resource/attr keys (k8s.cluster.name, openshift.cluster.name,
+	// cluster — across res + attr arrays) into a single canonical
+	// string. Empty cluster filter = "all clusters".
+	whereCluster := ""
+	if cluster != "" {
+		whereCluster = " AND " + clusterDeriveExpr + " = ?"
+		args = append(args, cluster)
+	}
+	// v0.5.370 — single-pass aggregation including sparkline.
+	// Inner per-bucket CTE keys on (service, path, b) and
+	// records per-bucket call+error+sum_dur+max_p99 plus a
+	// representative method via anyHeavy. Outer GROUP BY
+	// (service, path) collapses the buckets, sums the counts,
+	// derives error_rate + avg, takes max(p99_per_bucket) as
+	// the conservative window p99 (same merge idiom topology
+	// MVs use), and arrayMap-rebuilds the dense 30-element
+	// sparkline from the sparse (b_idx, b_vals) groupArrays.
+	const sparkBuckets = 30
+	bucketNs := (to.UnixNano() - from.UnixNano()) / int64(sparkBuckets)
+	if bucketNs <= 0 {
+		bucketNs = 1
+	}
+	allArgs := []any{from.UnixNano(), bucketNs}
+	allArgs = append(allArgs, args...)
+	allArgs = append(allArgs, sparkBuckets, limit)
 	q := `
+		WITH per_bucket AS (
+		  SELECT service_name,
+		         ` + pathExpr + `                                AS path,
+		         intDiv(toUnixTimestamp64Nano(time) - ?, ?)      AS b,
+		         count()                                         AS bv,
+		         countIf(status_code = 'error')                  AS bv_err,
+		         sum(duration)                                   AS bv_sum_dur,
+		         quantile(0.99)(duration) / 1e6                  AS bv_p99,
+		         anyHeavy(http_method)                           AS bv_method
+		  FROM spans
+		  WHERE time >= ? AND time <= ?
+		    AND kind IN ('server', 'consumer')
+		    AND ` + pathExpr + ` != ''` + whereSvc + whereSearch + whereCluster + `
+		  GROUP BY service_name, path, b
+		)
 		SELECT service_name,
-		       ` + pathExpr + ` AS path,
-		       anyHeavy(http_method)                            AS method,
-		       count()                                          AS calls,
-		       countIf(status_code = 'error')                   AS errors,
-		       countIf(status_code = 'error') / count() * 100   AS error_rate,
-		       avg(duration) / 1e6                              AS avg_ms,
-		       quantile(0.99)(duration) / 1e6                   AS p99_ms
-		FROM spans
-		WHERE time >= ? AND time <= ?
-		  AND kind IN ('server', 'consumer')
-		  AND ` + pathExpr + ` != ''` + whereSvc + whereSearch + `
+		       path,
+		       anyHeavy(bv_method)                              AS method,
+		       sum(bv)                                          AS calls,
+		       sum(bv_err)                                      AS errors,
+		       sum(bv_err) * 100.0 / nullIf(sum(bv), 0)         AS error_rate,
+		       sum(bv_sum_dur) / nullIf(sum(bv), 0) / 1e6       AS avg_ms,
+		       max(bv_p99)                                      AS p99_ms,
+		       arrayMap(i ->
+		         toFloat64(coalesce(arrayElement(groupArray(bv), indexOf(groupArray(b), i)), 0)),
+		         range(0, ?)
+		       )                                                AS sparkline
+		FROM per_bucket
 		GROUP BY service_name, path
 		ORDER BY calls DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 15`
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.conn.Query(ctx, q, allArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -101,15 +151,18 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	for rows.Next() {
 		var r EndpointRow
 		var avgMs, p99Ms, errRate *float64
+		var sparkline []float64
 		if err := rows.Scan(
 			&r.Service, &r.Path, &r.Method,
 			&r.Calls, &r.Errors, &errRate, &avgMs, &p99Ms,
+			&sparkline,
 		); err != nil {
 			return nil, err
 		}
 		r.ErrorRate = safeF(errRate)
 		r.AvgMs = safeF(avgMs)
 		r.P99Ms = safeF(p99Ms)
+		r.Sparkline = sparkline
 		out = append(out, r)
 	}
 	return out, rows.Err()

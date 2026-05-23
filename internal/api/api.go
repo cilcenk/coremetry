@@ -1647,13 +1647,14 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
 	service := q.Get("service")
 	search := q.Get("search")
+	cluster := q.Get("cluster")
 	limit := parseInt(q.Get("limit"), 500)
 	if limit > 2000 {
 		limit = 2000
 	}
-	key := fmt.Sprintf("endpoints:%s:%s:%s:%d", cacheBucket(from, to), service, search, limit)
+	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d", cacheBucket(from, to), service, search, cluster, limit)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetEndpoints(r.Context(), from, to, service, search, limit)
+		return s.store.GetEndpoints(r.Context(), from, to, service, search, cluster, limit)
 	})
 }
 

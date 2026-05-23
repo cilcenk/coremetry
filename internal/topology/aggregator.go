@@ -20,6 +20,14 @@ const (
 	lockKey       = "topology-aggregator-leader"
 	bucketSize    = 5 * time.Minute
 	settleDelay   = 30 * time.Second // wait this long past bucket end before processing
+	// v0.5.379 — "live" tick rewrites the in-progress current
+	// bucket every minute so the /topology + /backtrace pages
+	// see fresh edge data within ~1 min of ingest instead of
+	// waiting out the 5-min bucket + settle delay. The
+	// ReplacingMergeTree(version) engine dedupes when newer
+	// writes overlap the same (bucket, parent, child) tuple.
+	liveTickInterval = 1 * time.Minute
+	liveLockKey      = "topology-aggregator-live-leader"
 )
 
 // Aggregator wakes up every `interval` (5m by default) and runs
@@ -81,6 +89,70 @@ func (a *Aggregator) Start(ctx context.Context) {
 			}
 		}
 	}()
+	// v0.5.379 — live tick. Re-writes the in-progress (current)
+	// bucket every minute so the topology / backtrace MV reads
+	// surface fresh edge data without waiting 5 min + settle.
+	// The 5-min-aligned tick above remains the source of truth
+	// for closed buckets; ReplacingMergeTree(version) ensures
+	// the most recent write per (bucket, parent, child) wins on
+	// FINAL read.
+	go a.liveLoop(ctx)
+}
+
+// liveLoop writes the IN-PROGRESS bucket (the one [now.Truncate(5m),
+// now.Truncate(5m)+5m] currently being filled by ingest) every
+// liveTickInterval. Different lock from the main tick so a slow
+// closed-bucket job doesn't block the live refresh and vice
+// versa.
+func (a *Aggregator) liveLoop(ctx context.Context) {
+	// Initial wait — let the bootstrap tick finish before we
+	// start writing the live bucket, otherwise the two collide
+	// on the same partition on cold start.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(60 * time.Second):
+	}
+	t := time.NewTicker(liveTickInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			a.liveTick(ctx)
+		}
+	}
+}
+
+func (a *Aggregator) liveTick(ctx context.Context) {
+	got, err := a.lock.TryAcquire(ctx, liveLockKey, 2*liveTickInterval)
+	if err != nil || !got {
+		return
+	}
+	defer a.lock.Release(ctx, liveLockKey)
+
+	// Current in-progress bucket — start aligned to the bucket
+	// size. WriteTopologyBucket selects spans where
+	// time IN [bucketStart, bucketStart + 5m), so writing this
+	// bucket mid-window captures everything ingested so far.
+	bucketStart := time.Now().Truncate(a.interval)
+	if err := a.store.WriteTopologyBucket(ctx, bucketStart); err != nil {
+		log.Printf("[topology-agg] live service bucket %s: %v", bucketStart.Format(time.RFC3339), err)
+		return
+	}
+	if err := a.store.WriteTopologyOpBucket(ctx, bucketStart); err != nil {
+		log.Printf("[topology-agg] live op bucket %s: %v", bucketStart.Format(time.RFC3339), err)
+		return
+	}
+	if err := a.store.WriteServiceCallersBucket(ctx, bucketStart); err != nil {
+		log.Printf("[topology-agg] live service-callers %s: %v", bucketStart.Format(time.RFC3339), err)
+		return
+	}
+	// Skip RootFlows on live ticks — it's a higher-cost JOIN
+	// query and operators are less sensitive to fresh data
+	// there (business-flow visibility lags by a window
+	// naturally). Re-evaluate if operator-reported.
 }
 
 func (a *Aggregator) tick(ctx context.Context, bootstrap bool) {

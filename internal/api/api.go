@@ -478,6 +478,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/admin/audit",            s.listAuditLog)
 	mux.HandleFunc("GET /api/admin/alert-tuning/noisy-rules", s.alertTuningNoisyRules)
 	mux.HandleFunc("GET /api/admin/audit/export",     s.exportAuditLog)
+	// Config export/import — admin-only. GET streams the full
+	// operator-set state as a JSON file; POST replays it back.
+	// Targets fresh installs (clean-install bootstrap) and DR
+	// drills (move config between dev/staging/prod). Excludes
+	// runtime data (spans, problems, audit_log, ...). See
+	// config_iox.go for the table catalogue + merge semantics.
+	mux.HandleFunc("GET  /api/admin/config/export", auth.RequireRole(auth.RoleAdmin, s.exportConfig))
+	mux.HandleFunc("POST /api/admin/config/import", auth.RequireRole(auth.RoleAdmin, s.importConfig))
 	// SQL playground — admin only; readonly=2 + 60s cap on the
 	// CH side, allow-list of SELECT/WITH/SHOW/DESCRIBE/EXPLAIN
 	// on the application side.

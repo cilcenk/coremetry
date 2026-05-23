@@ -15,7 +15,7 @@ import {
   IconMail, IconBell, IconSparkles, IconLock, IconTrash,
 } from '@/components/icons';
 
-type Tab = 'smtp' | 'channels' | 'maintenance' | 'ai' | 'tempo' | 'kibana' | 'ldap' | 'sso' | 'retention' | 'sampling' | 'anomaly' | 'branding' | 'roles' | 'pipeline';
+type Tab = 'smtp' | 'channels' | 'maintenance' | 'ai' | 'tempo' | 'kibana' | 'ldap' | 'sso' | 'retention' | 'sampling' | 'anomaly' | 'branding' | 'roles' | 'pipeline' | 'backup';
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -88,6 +88,10 @@ export default function SettingsPage() {
             <span style={{ fontFamily: 'monospace' }}>⇉</span>
             <span style={{ marginLeft: 6 }}>Pipeline</span>
           </TabBtn>
+          <TabBtn active={tab === 'backup'} onClick={() => setTab('backup')}>
+            <span style={{ fontFamily: 'monospace' }}>⇩</span>
+            <span style={{ marginLeft: 6 }}>Backup / Restore</span>
+          </TabBtn>
         </div>
         {tab === 'smtp' && <SMTPTab />}
         {tab === 'channels' && <ChannelsTab />}
@@ -103,6 +107,7 @@ export default function SettingsPage() {
         {tab === 'branding' && <BrandingTab />}
         {tab === 'roles' && <CustomRolesTab />}
         {tab === 'pipeline' && <PipelineTab />}
+        {tab === 'backup' && <BackupTab />}
       </div>
     </>
   );
@@ -3698,6 +3703,153 @@ function KibanaTab() {
           {busy ? 'Saving…' : 'Save'}
         </Button>
       </form>
+    </div>
+  );
+}
+
+// ── Backup / Restore tab ────────────────────────────────────────────────────
+//
+// Operator-set state lives in a small set of ReplacingMergeTree
+// tables (system_settings, notification_channels, alert_rules,
+// dashboards, saved_views, slos, maintenance_windows, monitors,
+// service_contracts, status_page_*). The backend dumps the whole
+// catalogue to JSON via /api/admin/config/export and replays via
+// /api/admin/config/import.
+//
+// Two use cases drive the UI shape here:
+//   1. **Clean install** — operator runs COREMETRY_CH_RESET_SCHEMA=1,
+//      then comes here and uploads the JSON from before the reset.
+//   2. **Promotion between environments** — export dev/staging
+//      config, import to prod (or vice-versa) to keep alert rules
+//      and dashboards in lock-step.
+//
+// The import has two modes:
+//   - **merge** (default) — insert rows verbatim with their stored
+//     version columns; ReplacingMergeTree picks the newest
+//     (per ORDER BY key). Local edits made AFTER the export win.
+//   - **replace** — bump every row's version to now() so imported
+//     state always wins. Opt-in, since it can shadow local edits.
+function BackupTab() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [mode, setMode] = useState<'merge' | 'replace'>('merge');
+  const [file, setFile] = useState<File | null>(null);
+
+  const onExport = async () => {
+    setMsg(null); setBusy(true);
+    try {
+      await api.exportConfig();
+      setMsg({ kind: 'ok', text: 'Export downloaded.' });
+    } catch (e) {
+      setMsg({ kind: 'err', text: humanize(e) });
+    } finally { setBusy(false); }
+  };
+
+  const onImport = async () => {
+    if (!file) return;
+    setMsg(null); setBusy(true);
+    try {
+      const r = await api.importConfig(file, mode);
+      const tables = Object.entries(r.tables).map(([t, n]) => `${t}=${n}`).join(', ');
+      const skipped = r.skippedUnknown && r.skippedUnknown.length
+        ? ` (skipped unknown: ${r.skippedUnknown.join(', ')})`
+        : '';
+      setMsg({
+        kind: 'ok',
+        text: `Imported ${r.rows} rows · mode=${r.mode} · ${tables}${skipped}`,
+      });
+      setFile(null);
+    } catch (e) {
+      setMsg({ kind: 'err', text: humanize(e) });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="card" style={{ padding: 16, maxWidth: 760 }}>
+      <h3 style={{ margin: '0 0 12px' }}>Backup / Restore</h3>
+      <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, lineHeight: 1.5 }}>
+        Export every operator-set table (settings, channels, alert
+        rules, dashboards, saved views, SLOs, maintenance windows,
+        monitors, status page) to a JSON file. Replay later to
+        recover from a schema reset, promote config between
+        environments, or share dashboards with another install.
+        Excludes runtime data (spans, problems, incidents, audit
+        log) — those are rebuilt from ingest.
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginBottom: 20 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Export</div>
+        <Button variant="primary" disabled={busy} onClick={onExport}>
+          {busy ? 'Working…' : 'Download config (JSON)'}
+        </Button>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+          File contains every row from system_settings, alert_rules,
+          dashboards, saved_views, notification_channels, slos,
+          maintenance_windows, anomaly_silences, monitors,
+          service_metadata, service_contracts, status_page_*.
+          Includes secrets in their stored form (AI keys, SMTP
+          passwords, LDAP bind passwords) — treat the file like a
+          secret.
+        </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Restore</div>
+        <input
+          type="file"
+          accept="application/json,.json"
+          onChange={e => setFile(e.target.files?.[0] ?? null)}
+          disabled={busy}
+          style={{ marginBottom: 12, display: 'block' }}
+        />
+        <label style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
+          <input
+            type="radio"
+            name="iox-mode"
+            checked={mode === 'merge'}
+            onChange={() => setMode('merge')}
+            disabled={busy}
+            style={{ marginRight: 6 }}
+          />
+          <strong>Merge</strong> — preserve local edits made after the export.
+          {' '}Imported rows only win where no newer local edit exists.
+        </label>
+        <label style={{ display: 'block', marginBottom: 16, fontSize: 12 }}>
+          <input
+            type="radio"
+            name="iox-mode"
+            checked={mode === 'replace'}
+            onChange={() => setMode('replace')}
+            disabled={busy}
+            style={{ marginRight: 6 }}
+          />
+          <strong>Replace</strong> — imported rows always win, even
+          over newer local edits. Use this for clean-install
+          restore.
+        </label>
+        <Button
+          variant="primary"
+          disabled={busy || !file}
+          onClick={onImport}
+        >
+          {busy ? 'Working…' : 'Upload + apply'}
+        </Button>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+          Live settings hot-reload after the import — no restart
+          needed. Unknown tables in the file are skipped (forward-
+          compat). Truncate is never performed; import always
+          inserts on top of what's there.
+        </div>
+      </div>
+
+      {msg && (
+        <div style={{
+          marginTop: 16, fontSize: 12,
+          color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)',
+        }}>
+          {msg.text}
+        </div>
+      )}
     </div>
   );
 }

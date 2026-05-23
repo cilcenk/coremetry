@@ -682,6 +682,38 @@ export const api = {
       body: JSON.stringify(s),
     }),
 
+  // Config export / import — admin-only. Export streams a JSON
+  // file (Content-Disposition: attachment). We fetch as blob so
+  // the browser saves it with the server-supplied filename, and
+  // so the auth cookie / 401 redirect flow stays consistent with
+  // every other admin endpoint.
+  exportConfig: async (): Promise<void> => {
+    const r = await fetch(API_BASE + `/api/admin/config/export`, { credentials: 'include' });
+    if (r.status === 401) { onUnauthorized?.(); throw new UnauthorizedError(); }
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const blob = await r.blob();
+    // Server sends a dated filename via Content-Disposition; the
+    // browser fetch API surfaces the header so we honour it.
+    let fname = 'coremetry-config.json';
+    const dispo = r.headers.get('content-disposition') ?? '';
+    const m = /filename="([^"]+)"/.exec(dispo);
+    if (m) fname = m[1];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+  },
+  importConfig: (file: File, mode: 'merge' | 'replace'): Promise<{
+    mode: string; tables: Record<string, number>; rows: number;
+    skippedUnknown?: string[];
+  }> =>
+    request(`/api/admin/config/import?mode=${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: file,
+    }),
+
   // Runtime settings: LDAP / AD enterprise auth
   getLDAPSettings: () => get<LDAPConfig>(`/api/settings/ldap`),
   putLDAPSettings: (c: LDAPConfig) =>

@@ -1211,16 +1211,22 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// addressable; CH treats it as a single trace-level
 	// predicate.
 	if f.Search != "" {
+		// v0.5.372 — broader search target. v0.5.370 hand-listed
+		// url.path / http.target etc.; operators report SDKs that
+		// emit the path under non-canonical keys (http.url, url.full,
+		// custom org-specific attrs). Switch to arrayExists across
+		// the full attr_values array so the search hits any attr
+		// regardless of which key the SDK chose. name + http_route
+		// stay dedicated checks since they're indexed columns
+		// (fast prune even without the array scan).
 		havingParts = append(havingParts,
 			"countIf("+
 				"positionCaseInsensitive(name, ?) > 0 OR "+
 				"positionCaseInsensitive(http_route, ?) > 0 OR "+
 				"positionCaseInsensitive(concat(http_method, ' ', http_route), ?) > 0 OR "+
-				"positionCaseInsensitive(attr_values[indexOf(attr_keys, 'url.path')], ?) > 0 OR "+
-				"positionCaseInsensitive(attr_values[indexOf(attr_keys, 'http.target')], ?) > 0"+
+				"arrayExists(v -> positionCaseInsensitive(v, ?) > 0, attr_values)"+
 				") > 0")
-		// Same arg bound five times — one per OR'd predicate.
-		havingArgs = append(havingArgs, f.Search, f.Search, f.Search, f.Search, f.Search)
+		havingArgs = append(havingArgs, f.Search, f.Search, f.Search, f.Search)
 	}
 	havingSQL := ""
 	if len(havingParts) > 0 {
@@ -1786,17 +1792,14 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		    GROUP BY trace_id
 		    HAVING group_key != ''` + func() string {
 				if f.Search != "" {
-					// v0.5.370 — broaden across name +
-					// http_route + url.path + http.target so
-					// the operator's "POST /login" query hits
-					// regardless of how the SDK split the verb
-					// and path.
+					// v0.5.372 — arrayExists across attr_values
+					// (any key, any value). See GetTraces
+					// commentary for the rationale.
 					return ` AND countIf(` +
 						`positionCaseInsensitive(name, ?) > 0 OR ` +
 						`positionCaseInsensitive(http_route, ?) > 0 OR ` +
 						`positionCaseInsensitive(concat(http_method, ' ', http_route), ?) > 0 OR ` +
-						`positionCaseInsensitive(attr_values[indexOf(attr_keys, 'url.path')], ?) > 0 OR ` +
-						`positionCaseInsensitive(attr_values[indexOf(attr_keys, 'http.target')], ?) > 0` +
+						`arrayExists(v -> positionCaseInsensitive(v, ?) > 0, attr_values)` +
 						`) > 0`
 				}
 				return ""
@@ -1814,13 +1817,11 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	args := []any{windowMin}
 	args = append(args, groupArgs...)
 	args = append(args, wc.args...)
-	// v0.5.369 — search placeholder lives in the inner HAVING
-	// which sits AFTER the WHERE in SQL position; bind args in
-	// the same order. v0.5.370 — five placeholders (one per
-	// OR'd path: name / http_route / verb+route / url.path /
-	// http.target).
+	// v0.5.369-372 — search placeholders in the inner HAVING.
+	// Four bindings: name / http_route / verb+route /
+	// attr_values-arrayExists.
 	if f.Search != "" {
-		args = append(args, f.Search, f.Search, f.Search, f.Search, f.Search)
+		args = append(args, f.Search, f.Search, f.Search, f.Search)
 	}
 	postFilter := ""
 	if f.MinMs > 0 {

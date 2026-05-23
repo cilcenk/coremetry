@@ -17,6 +17,7 @@ import { ServiceInfra } from '@/components/ServiceInfra';
 import { Sparkline } from '@/components/Sparkline';
 import { SpanBreakdownChart } from '@/components/SpanBreakdownChart';
 import { ServiceProfilingPanel } from '@/components/ServiceProfilingPanel';
+import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
@@ -339,6 +340,13 @@ function ServiceDetailInner() {
                     services not yet wired up. */}
                 <LazyMount minHeight={120}>
                   <ServiceProfilingPanel service={svc} range={range} />
+                </LazyMount>
+                {/* Attrs browser (v0.5.381) — "what attrs is my
+                    SDK emitting" answered without opening a
+                    trace. Self-hides when no sample data lands
+                    yet (fresh services). */}
+                <LazyMount minHeight={120}>
+                  <ServiceAttrsPanel service={svc} range={range} />
                 </LazyMount>
                 <LazyMount minHeight={300}>
                   <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />

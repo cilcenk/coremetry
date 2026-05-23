@@ -1377,6 +1377,24 @@ export interface SpanHotspotsResponse {
 export type SortOrder = 'asc' | 'desc';
 
 // EndpointRow — per (service, http.route|url.path) RED rollup
+// Service attrs surface (v0.5.381). One row per (scope, key)
+// combination the operator's SDK emits for a service, with
+// occurrence count + sample values. Mirrors backend
+// chstore.ServiceAttrRow.
+export interface ServiceAttrRow {
+  key: string;
+  scope: 'span' | 'resource';
+  occurrences: number;
+  sampleValues: string[];
+}
+
+export interface ServiceAttrsResponse {
+  service: string;
+  attrs: ServiceAttrRow[] | null;
+  from: number;
+  to: number;
+}
+
 // surfaced on /endpoints. Mirrors the backend chstore.EndpointRow
 // shape. Path falls back through the four OTel HTTP attribute
 // candidates server-side; the row carries the resolved value so

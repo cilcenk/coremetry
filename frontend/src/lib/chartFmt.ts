@@ -134,6 +134,33 @@ export function seriesColor(label: string): string {
   return PALETTE[Math.abs(h) % PALETTE.length];
 }
 
+// fmtXTicks — shared time-axis label formatter for uPlot
+// charts. v0.5.380 fix: take the SPLITS array (full list of
+// tick timestamps uPlot picked) and choose a label format
+// scaled to the window:
+//   • single-day spans → HH:MM only (no calendar redundancy)
+//   • multi-day spans  → MM-DD HH:MM
+// Pre-fix used a fixed MM-DD HH:MM per label, which collided
+// horizontally on narrow charts where uPlot expected shorter
+// labels (operator-reported: "tarihler üst üste").
+export function fmtXTicks(splits: number[]): string[] {
+  if (splits.length === 0) return [];
+  const first = splits[0];
+  const last = splits[splits.length - 1];
+  const sameDay = splits.length > 1
+    ? new Date(first * 1000).toDateString() === new Date(last * 1000).toDateString()
+    : true;
+  return splits.map(s => {
+    const d = new Date(s * 1000);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    if (sameDay) return `${hh}:${mi}`;
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${mm}-${dd} ${hh}:${mi}`;
+  });
+}
+
 // niceTickValues — given a min / max range, pick "round"
 // gridline values an operator's eye can read. uPlot picks
 // reasonable defaults but for ms / % / bytes the auto-picker

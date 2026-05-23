@@ -804,6 +804,58 @@ func (s *Server) warmDependenciesCache() {
 					"offset":   0,
 				}, nil
 			})
+		// v0.5.375 — pre-warm /api/logs/patterns. The
+		// LivePatternsPanel polls every 30s with fixed params
+		// (window=15m, baseline=24h, topN=25). Cold ES
+		// significant_text is the slowest call in the panel
+		// at billion-doc indices (often 1-2s p99); warming
+		// keeps the first /logs visit on a HIT-L1 path. CH
+		// backend's equivalent (sample-based foreground vs
+		// baseline scoring) is also non-trivial — same cache
+		// key serves both, this warmer transparently primes
+		// whichever backend is wired.
+		const (
+			logsCurWindow = 15 * time.Minute
+			logsBaseline  = 24 * time.Hour
+			logsTopN      = 25
+			// 60s matches the live serveCached soft TTL on
+			// the handler. Warmer ticks at 25s so the entry
+			// stays in the fresh window between ticks.
+			logsTTL = 60 * time.Second
+		)
+		nowLogs := time.Now()
+		curStart := nowLogs.Add(-logsCurWindow)
+		baseStart := curStart.Add(-logsBaseline)
+		logsKey := fmt.Sprintf("logs-significant:cur=%s:bg=%s:topN=%d",
+			logsCurWindow, logsBaseline, logsTopN)
+		warm("logs-patterns", logsKey, logsTTL,
+			func(ctx context.Context) (any, error) {
+				hits, err := s.logs.SignificantPatterns(ctx, curStart, baseStart, nowLogs, logsTopN)
+				if err != nil {
+					return nil, err
+				}
+				if hits == nil {
+					hits = []logstore.SignificantPattern{}
+				}
+				// Same opaque-id filter as the live handler;
+				// keep the warmed payload byte-identical so
+				// the next live read can serve directly
+				// without re-marshaling.
+				filtered := hits[:0]
+				for _, h := range hits {
+					if templater.LooksLikeOpaqueID(h.Token) {
+						continue
+					}
+					filtered = append(filtered, h)
+				}
+				hits = filtered
+				return map[string]any{
+					"backend":  s.logs.Backend(),
+					"window":   logsCurWindow.String(),
+					"baseline": logsBaseline.String(),
+					"patterns": hits,
+				}, nil
+			})
 		time.Sleep(tick)
 	}
 }

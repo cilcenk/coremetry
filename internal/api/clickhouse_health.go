@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,18 @@ import (
 // system.async_inserts) leaves the slot at its zero value rather
 // than 500-ing the whole page.
 type CHHealth struct {
+	// v0.5.388 — topology banner. First field on the payload so
+	// the operator's eye lands on the cluster mode + node count
+	// before drilling into the perf panels. Powered by:
+	//   - cfg.ClusterName (operator-set env var) → "configured"
+	//     side
+	//   - system.clusters lookup (CH self-report) → "live" side
+	//   - system.tables engine filter → which tables wear the
+	//     Distributed wrapper vs plain MergeTree
+	// All three are needed because a misconfigured cluster name
+	// looks identical to standalone from the driver — only
+	// system.clusters confirms ZK actually wired the node up.
+	Topology       CHTopology       `json:"topology"`
 	SlowQueries    []CHSlowQuery    `json:"slowQueries"`
 	Merges         []CHMerge        `json:"merges"`
 	PartHotspots   []CHPartHotspot  `json:"partHotspots"`
@@ -28,6 +41,51 @@ type CHHealth struct {
 	// is doing useful coalescence or sitting idle.
 	AsyncInserts   []CHAsyncInsert  `json:"asyncInserts,omitempty"`
 	Generated      int64            `json:"generatedAt"` // unix ns of snapshot
+}
+
+// CHTopology — what cluster does Coremetry think it's talking to,
+// and does the live CH agree.
+type CHTopology struct {
+	// Mode is "cluster" when an ON CLUSTER name is configured AND
+	// system.clusters confirms it exists; "standalone" otherwise.
+	// A misconfigured cluster name (operator set the env var but
+	// the CH server has no matching <remote_servers> block) shows
+	// up as "standalone" with a non-empty ConfiguredCluster — the
+	// banner flags this mismatch.
+	Mode               string         `json:"mode"`
+	ConfiguredCluster  string         `json:"configuredCluster,omitempty"`
+	Database           string         `json:"database"`
+	ConnectedHosts     []string       `json:"connectedHosts,omitempty"`
+	// Nodes — one entry per (shard, replica) registered in
+	// system.clusters for the configured cluster. Empty in
+	// standalone mode.
+	Nodes              []CHClusterNode `json:"nodes,omitempty"`
+	// Table engine breakdown — drives the "distributed table?"
+	// answer. DistributedTables > 0 = the install is running the
+	// full cluster pattern (Distributed wrapper + _local
+	// Replicated tables). LocalReplicated = Replicated*MergeTree
+	// count. Plain = MergeTree / ReplacingMergeTree without
+	// replication. Used to confirm migrations actually built the
+	// cluster pattern they were supposed to.
+	DistributedTables  int            `json:"distributedTables"`
+	LocalReplicated    int            `json:"localReplicated"`
+	PlainMergeTree     int            `json:"plainMergeTree"`
+	// ZK / Keeper presence — system.zookeeper exists only when
+	// CH is configured with a Keeper endpoint. ReplicatedMergeTree
+	// needs this; absence on a cluster mode install is a config
+	// bug that should surface here, not via a CREATE TABLE failure
+	// six hours into ingest.
+	ZooKeeperConnected bool           `json:"zookeeperConnected"`
+}
+
+type CHClusterNode struct {
+	Cluster       string `json:"cluster"`
+	ShardNum      uint32 `json:"shardNum"`
+	ReplicaNum    uint32 `json:"replicaNum"`
+	HostName      string `json:"hostName"`
+	HostAddress   string `json:"hostAddress,omitempty"`
+	Port          uint16 `json:"port"`
+	IsLocal       bool   `json:"isLocal"`
 }
 
 type CHSlowQuery struct {
@@ -86,6 +144,93 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 		out := CHHealth{Generated: time.Now().UnixNano()}
+
+		// ── Topology banner (cluster / standalone) ─────────────
+		// Configured side from the running process, live side
+		// from the CH server's own self-reports.
+		out.Topology.ConfiguredCluster = s.store.ClusterName()
+		out.Topology.Database = s.store.DatabaseName()
+		out.Topology.ConnectedHosts = s.store.ConnectedHosts()
+
+		// system.clusters lookup — confirms the configured cluster
+		// name actually exists on the server. Empty result with
+		// a non-empty ConfiguredCluster = misconfig (env var set,
+		// but remote_servers.xml has no matching block).
+		if name := out.Topology.ConfiguredCluster; name != "" {
+			if rows, err := s.store.Conn().Query(ctx, `
+				SELECT cluster, shard_num, replica_num,
+				       host_name, host_address, port, is_local
+				FROM system.clusters
+				WHERE cluster = ?
+				ORDER BY shard_num, replica_num
+				SETTINGS max_execution_time = 3`, name); err == nil {
+				for rows.Next() {
+					var n CHClusterNode
+					var isLocal uint8
+					if err := rows.Scan(&n.Cluster, &n.ShardNum, &n.ReplicaNum,
+						&n.HostName, &n.HostAddress, &n.Port, &isLocal); err != nil {
+						continue
+					}
+					n.IsLocal = isLocal == 1
+					out.Topology.Nodes = append(out.Topology.Nodes, n)
+				}
+				rows.Close()
+			}
+		}
+
+		// Mode resolution: cluster-confirmed = ON CLUSTER name was
+		// set AND system.clusters returned ≥ 1 node. Otherwise we
+		// treat it as standalone — even if the env var was set —
+		// because that's the operational truth from CH's view.
+		if out.Topology.ConfiguredCluster != "" && len(out.Topology.Nodes) > 0 {
+			out.Topology.Mode = "cluster"
+		} else {
+			out.Topology.Mode = "standalone"
+		}
+
+		// Engine breakdown — count Distributed, Replicated*, and
+		// plain MergeTree tables in the database the running pod
+		// is bound to. Drives the "is Coremetry using Distributed
+		// tables" answer the operator literally asked for.
+		if rows, err := s.store.Conn().Query(ctx, `
+			SELECT engine, count() AS n
+			FROM system.tables
+			WHERE database = currentDatabase()
+			GROUP BY engine
+			SETTINGS max_execution_time = 3`); err == nil {
+			for rows.Next() {
+				var engine string
+				var n uint64
+				if err := rows.Scan(&engine, &n); err != nil {
+					continue
+				}
+				switch {
+				case engine == "Distributed":
+					out.Topology.DistributedTables += int(n)
+				case strings.HasPrefix(engine, "Replicated"):
+					out.Topology.LocalReplicated += int(n)
+				case strings.HasSuffix(engine, "MergeTree"):
+					out.Topology.PlainMergeTree += int(n)
+				}
+			}
+			rows.Close()
+		}
+
+		// ZooKeeper / Keeper probe — non-fatal if absent. A
+		// cluster install missing this is misconfigured; standalone
+		// installs don't need it. Single-row scan of system.zookeeper
+		// root path with depth=0 — cheap.
+		if rows, err := s.store.Conn().Query(ctx, `
+			SELECT count() FROM system.zookeeper WHERE path = '/'
+			SETTINGS max_execution_time = 2`); err == nil {
+			for rows.Next() {
+				var c uint64
+				if err := rows.Scan(&c); err == nil && c > 0 {
+					out.Topology.ZooKeeperConnected = true
+				}
+			}
+			rows.Close()
+		}
 
 		// ── Slow queries (top 20 over the last 1h) ─────────────
 		// Bounded by event_time + LIMIT; partition-pruned via the

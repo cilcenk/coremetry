@@ -161,6 +161,26 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 func (s *Store) Close() error { return s.conn.Close() }
 func (s *Store) Conn() driver.Conn { return s.conn }
 
+// ClusterName returns the configured CH cluster identifier (e.g.
+// the value that lands inside `ON CLUSTER`) when the operator set
+// COREMETRY_CH_CLUSTER, or "" for a single-shard standalone
+// install. Used by /admin/clickhouse to render the topology
+// banner so the operator can confirm at a glance whether the
+// running pod is talking to a cluster vs a single CH node.
+func (s *Store) ClusterName() string { return s.cfg.ClusterName }
+
+// DatabaseName returns the configured CH database name (used in
+// the ON CLUSTER + ON DATABASE clauses). Exposed for the same
+// admin surfaces — the operator needs to see which DB the
+// running build is bound to without ssh'ing into the container.
+func (s *Store) DatabaseName() string { return s.cfg.Database }
+
+// ConnectedHosts returns the configured comma-separated CH host
+// list parsed into individual entries. With cluster mode this is
+// the driver-side fan-out (the connection pool round-robins
+// across them); with standalone it's usually a single host.
+func (s *Store) ConnectedHosts() []string { return s.cfg.Hosts() }
+
 // Ping reports CH liveness. Used by /api/status — wraps the driver's
 // own Ping so we don't expose the driver type to callers.
 func (s *Store) Ping(ctx context.Context) error { return s.conn.Ping(ctx) }

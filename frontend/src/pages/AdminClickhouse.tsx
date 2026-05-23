@@ -33,7 +33,23 @@ type AsyncIns = {
   totalBytes: number; entriesCount: number;
   firstUpdateMsAgo: number;
 };
+type ClusterNode = {
+  cluster: string; shardNum: number; replicaNum: number;
+  hostName: string; hostAddress?: string; port: number; isLocal: boolean;
+};
+type Topology = {
+  mode: 'cluster' | 'standalone';
+  configuredCluster?: string;
+  database: string;
+  connectedHosts?: string[];
+  nodes?: ClusterNode[];
+  distributedTables: number;
+  localReplicated: number;
+  plainMergeTree: number;
+  zookeeperConnected: boolean;
+};
 type CHHealth = {
+  topology: Topology;
   slowQueries: Slow[] | null;
   merges: Merge[] | null;
   partHotspots: PartHot[] | null;
@@ -88,6 +104,8 @@ export default function AdminClickhousePage() {
 
         {data && (
           <>
+            <TopologyPanel topology={data.topology} />
+
             <Section title="Slow queries (>500ms, last 1h)">
               {(!data.slowQueries || data.slowQueries.length === 0)
                 ? <EmptyNote text="No slow queries in the last hour" />
@@ -250,6 +268,140 @@ export default function AdminClickhousePage() {
         )}
       </div>
     </>
+  );
+}
+
+// TopologyPanel — first thing on /admin/clickhouse. Operator
+// answers "are we talking to a cluster?" in under a second. The
+// banner colour reflects the live agreement between the
+// configured cluster name and what system.clusters reports:
+//   • green  — configuredCluster set, nodes detected
+//   • blue   — standalone install (no cluster configured)
+//   • amber  — configuredCluster set but system.clusters is
+//              empty → misconfig (env var on the app side,
+//              <remote_servers> missing on CH side)
+function TopologyPanel({ topology: t }: { topology: Topology }) {
+  const misconfigured = !!t.configuredCluster && (!t.nodes || t.nodes.length === 0);
+  const bannerCls = misconfigured ? 'warn' : (t.mode === 'cluster' ? 'ok' : 'info');
+  const bannerColor =
+    bannerCls === 'ok' ? 'var(--ok)' :
+    bannerCls === 'warn' ? 'var(--warn)' : 'var(--accent2)';
+  const bannerBg =
+    bannerCls === 'ok' ? 'rgba(34, 197, 94, 0.08)' :
+    bannerCls === 'warn' ? 'rgba(250, 204, 21, 0.10)' : 'rgba(96, 165, 250, 0.08)';
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Topology</h3>
+      <div style={{
+        padding: '12px 14px', borderRadius: 6,
+        border: `1px solid ${bannerColor}`, background: bannerBg,
+        marginBottom: 10,
+      }}>
+        <div style={{ fontSize: 13, color: 'var(--text)', marginBottom: 4 }}>
+          {misconfigured && (
+            <>
+              <strong style={{ color: 'var(--warn)' }}>⚠ Cluster misconfigured</strong> —
+              cluster <code className="mono">{t.configuredCluster}</code> is configured
+              but not present in <code>system.clusters</code>. Check the CH server's
+              <code> &lt;remote_servers&gt;</code> block.
+            </>
+          )}
+          {!misconfigured && t.mode === 'cluster' && (
+            <>
+              <strong style={{ color: 'var(--ok)' }}>● Cluster mode</strong> —
+              connected to cluster <code className="mono">{t.configuredCluster}</code>
+              {' '}with <strong>{t.nodes?.length ?? 0}</strong> registered node{(t.nodes?.length ?? 0) === 1 ? '' : 's'}.
+            </>
+          )}
+          {!misconfigured && t.mode === 'standalone' && (
+            <>
+              <strong style={{ color: 'var(--accent2)' }}>● Standalone mode</strong> —
+              no <code>ON CLUSTER</code> name configured; Coremetry is
+              writing to a single ClickHouse server.
+            </>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+          Database: <code className="mono">{t.database}</code>
+          {' · '}
+          Driver hosts: <code className="mono">{(t.connectedHosts ?? []).join(', ') || '—'}</code>
+        </div>
+      </div>
+
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: 10, marginBottom: 10,
+      }}>
+        <MiniStat label="Distributed tables" value={fmtNum(t.distributedTables)}
+                  hint={t.distributedTables > 0 ? 'cluster wrapper in use' : 'no Distributed wrapper'} />
+        <MiniStat label="Replicated local tables" value={fmtNum(t.localReplicated)}
+                  hint={t.localReplicated > 0 ? 'ReplicatedMergeTree' : 'no replicas'} />
+        <MiniStat label="Plain MergeTree tables" value={fmtNum(t.plainMergeTree)} />
+        <MiniStat label="ZooKeeper / Keeper" value={t.zookeeperConnected ? 'connected' : 'not detected'}
+                  cls={t.mode === 'cluster' && !t.zookeeperConnected ? 'warn' : ''}
+                  hint={t.mode === 'cluster' && !t.zookeeperConnected
+                    ? 'cluster requires ZK/Keeper'
+                    : t.mode === 'standalone' ? 'not required' : ''} />
+      </div>
+
+      {t.nodes && t.nodes.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th className="num">Shard</th>
+                <th className="num">Replica</th>
+                <th>Host</th>
+                <th>Address</th>
+                <th className="num">Port</th>
+                <th>Local</th>
+              </tr>
+            </thead>
+            <tbody>
+              {t.nodes.map((n, i) => (
+                <tr key={i}>
+                  <td className="num mono">{n.shardNum}</td>
+                  <td className="num mono">{n.replicaNum}</td>
+                  <td className="mono">{n.hostName}</td>
+                  <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>
+                    {n.hostAddress || '—'}
+                  </td>
+                  <td className="num mono">{n.port}</td>
+                  <td>
+                    {n.isLocal
+                      ? <span style={{ color: 'var(--ok)' }}>● self</span>
+                      : <span style={{ color: 'var(--text3)' }}>—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, hint, cls }: {
+  label: string; value: string; hint?: string; cls?: string;
+}) {
+  return (
+    <div style={{
+      padding: '8px 12px', borderRadius: 6,
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+    }}>
+      <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 16, fontWeight: 600, marginTop: 2,
+        color: cls === 'warn' ? 'var(--warn)' : 'var(--text)',
+      }}>{value}</div>
+      {hint && (
+        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>{hint}</div>
+      )}
+    </div>
   );
 }
 

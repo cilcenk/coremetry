@@ -1116,15 +1116,21 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	case f.Service != "":
 		wc.add("service_name = ?", f.Service)
 	}
-	if f.Search != "" {
-		// v0.5.351 — case-insensitive. Operator-reported:
-		// /traces?search=SmsService.Send returned 0 rows because
-		// the SDK emitted the operation as "smsservice.send"
-		// (lowercase). CH `LIKE` is case-sensitive; switching to
-		// positionCaseInsensitive matches what the operator
-		// types regardless of SDK conventions.
-		wc.add("positionCaseInsensitive(name, ?) > 0", f.Search)
-	}
+	// v0.5.369 — search moved from WHERE to HAVING below.
+	// Operator-reported: /traces?service=order-service
+	// &search=payment-service/Charge returned 0 rows even
+	// though the trace clearly existed. Root cause: the WHERE
+	// required ONE span to satisfy BOTH service AND name~search,
+	// but cross-service searches naturally split — order-service
+	// owns the caller span (name = something like
+	// "POST /charges" or "client-call"), payment-service owns
+	// the callee span (name = "payment-service/Charge"). The
+	// trace exists; no single span satisfies both predicates.
+	// Fix: keep service in WHERE (preserves primary-key
+	// narrowing) but move search to a HAVING countIf so any
+	// span in the trace can satisfy it. Scale-safe because the
+	// service WHERE clause still prunes the scan via the
+	// (service_name, time) primary key.
 	if f.TraceID != "" {
 		// Exact match for full 32-char trace ID, prefix match for shorter.
 		// Bloom filter index on trace_id makes this efficient.
@@ -1173,6 +1179,12 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		}
 		havingParts = append(havingParts, "countIf(service_name = ?) > 0")
 		havingArgs = append(havingArgs, svc)
+	}
+	// v0.5.369 — search at trace-level via HAVING; see WHERE
+	// commentary above for the cross-service rationale.
+	if f.Search != "" {
+		havingParts = append(havingParts, "countIf(positionCaseInsensitive(name, ?) > 0) > 0")
+		havingArgs = append(havingArgs, f.Search)
 	}
 	havingSQL := ""
 	if len(havingParts) > 0 {
@@ -1614,15 +1626,9 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
 	}
-	if f.Search != "" {
-		// v0.5.351 — case-insensitive. Operator-reported:
-		// /traces?search=SmsService.Send returned 0 rows because
-		// the SDK emitted the operation as "smsservice.send"
-		// (lowercase). CH `LIKE` is case-sensitive; switching to
-		// positionCaseInsensitive matches what the operator
-		// types regardless of SDK conventions.
-		wc.add("positionCaseInsensitive(name, ?) > 0", f.Search)
-	}
+	// v0.5.369 — search moved to inner HAVING below (cross-
+	// service trace-level match). See GetTraces commentary for
+	// the root-cause rationale.
 	if f.HasError {
 		wc.add("status_code = 'error'")
 	}
@@ -1742,7 +1748,12 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		           max(if(status_code = 'error', 1, 0)) AS has_error
 		    FROM spans ` + wc.sql() + `
 		    GROUP BY trace_id
-		    HAVING group_key != ''
+		    HAVING group_key != ''` + func() string {
+				if f.Search != "" {
+					return ` AND countIf(positionCaseInsensitive(name, ?) > 0) > 0`
+				}
+				return ""
+			}() + `
 		    ORDER BY trace_start DESC
 		    LIMIT 200000
 		)`
@@ -1756,6 +1767,12 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	args := []any{windowMin}
 	args = append(args, groupArgs...)
 	args = append(args, wc.args...)
+	// v0.5.369 — search placeholder lives in the inner HAVING
+	// which sits AFTER the WHERE in SQL position; bind args in
+	// the same order.
+	if f.Search != "" {
+		args = append(args, f.Search)
+	}
 	postFilter := ""
 	if f.MinMs > 0 {
 		postFilter += " AND avg_ms >= ?"

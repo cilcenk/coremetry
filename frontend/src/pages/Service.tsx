@@ -464,6 +464,10 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
 }) {
   const [sortBy, setSortBy] = useState<OpSortKey>('impact');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // v0.5.374 — client-side filter. At 500+ operations on a
+  // monolith service the scroll-then-eyeball loop fails;
+  // typing narrows live with no server round-trip.
+  const [filter, setFilter] = useState('');
 
   // v0.5.313 — Operator-reported: drill-down used to land on
   // /traces (familiar view with the trace list + aggregate
@@ -493,9 +497,14 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
         case 'apdex':     return (a.apdex ?? 0) - (b.apdex ?? 0);
       }
     };
-    const arr = [...rows].sort(cmp);
+    // v0.5.374 — apply filter before sort. Case-insensitive
+    // substring match on the operation name, same idiom as the
+    // /endpoints page filter.
+    const trimmed = filter.trim().toLowerCase();
+    const source = trimmed ? rows.filter(r => r.name.toLowerCase().includes(trimmed)) : rows;
+    const arr = [...source].sort(cmp);
     return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [rows, sortBy, sortDir]);
+  }, [rows, sortBy, sortDir, filter]);
 
   // Same weighted-aggregate scheme as the services page totals row:
   // sum spans/errs, weight avg/apdex by span count, take max for p99.
@@ -584,8 +593,15 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
       <div style={{ marginBottom: 6, display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <h3 style={{ fontSize: 13, fontWeight: 700 }}>⊙ Operations</h3>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-          {rows.length} distinct span name{rows.length === 1 ? '' : 's'} in {service}
+          {filter.trim()
+            ? `${sorted.length} / ${rows.length} matching`
+            : `${rows.length} distinct span name${rows.length === 1 ? '' : 's'} in ${service}`}
         </span>
+        <input value={filter} onChange={e => setFilter(e.target.value)}
+          placeholder="Filter by name…"
+          style={{ marginLeft: 'auto', width: 240, padding: '4px 10px', fontSize: 12,
+                   background: 'var(--bg)', color: 'var(--text)',
+                   border: '1px solid var(--border)', borderRadius: 4 }} />
       </div>
       {/* Cap the operations table at 540 px tall and let it
           scroll inside that container — at 500+ operations on
@@ -649,7 +665,8 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                               : errCls === 'warn' ? 'var(--warn)'
                               : undefined;
               return (
-                <tr key={op.name}>
+                <tr key={op.name}
+                    style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                   <td>
                     <Link
                       to={opHref(op.name)}

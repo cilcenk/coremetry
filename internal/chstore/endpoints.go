@@ -47,9 +47,18 @@ type EndpointRow struct {
 //  4. attr_values[indexOf(attr_keys, 'http.target')] (older
 //     semconv)
 //
-// Span filter: kind = 'server' or 'consumer' so we count
-// inbound requests only — outbound client spans land under
-// the callee's row, not the caller's.
+// Span filter: kind != 'client' / 'producer' so we count
+// inbound requests only — outbound client / messaging-producer
+// spans land under the callee's row, not the caller's.
+//
+// v0.5.386 — operator-reported: rows looked sparse vs reality.
+// Root cause: previous filter was `kind IN ('server','consumer')`
+// which dropped every span whose SDK left SpanKind unspecified.
+// OTLP's UNSPECIFIED gets mapped to 'internal' on ingest (see
+// internal/otlp/convert.go kindStr default branch), which is the
+// case for a lot of manual instrumentation + older SDKs +
+// frameworks that don't auto-decorate kind. We now keep any
+// span with a real path that isn't an OUTGOING call.
 func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, cluster string, limit int) ([]EndpointRow, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 500
@@ -121,7 +130,7 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		         anyHeavy(http_method)                           AS bv_method
 		  FROM spans
 		  WHERE time >= ? AND time <= ?
-		    AND kind IN ('server', 'consumer')
+		    AND kind NOT IN ('client', 'producer')
 		    AND ` + pathExpr + ` != ''` + whereSvc + whereSearch + whereCluster + `
 		  GROUP BY service_name, path, b
 		)

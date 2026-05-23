@@ -525,19 +525,36 @@ export function MultiLineChart({
 
       const u = plotRef.current;
       const visible = visibleRef.current;
+      // v0.5.364 — Ctrl/Cmd+click is additive: flip THIS series'
+      // visibility without touching the others, so an operator
+      // can hand-pick a subset (e.g. "show only ops A + C of 12").
+      // Plain click stays isolate-on-click for the one-line view
+      // operators reach for most often.
+      const additive = e.ctrlKey || e.metaKey;
+      if (additive) {
+        const next = !visible[dataIdx];
+        visible[dataIdx] = next;
+        u.setSeries(dataIdx + 1, { show: next });
+        return;
+      }
       // Decide: are we currently in "all visible" or "isolated
       // to one"? If the clicked one is the only visible (or
       // the click is on a hidden series), we're in isolation
       // territory and the next click restores everything.
+      // v0.5.364 — iterate the full visible[] (current +
+      // compare). Pre-fix the loop stopped at series.length so
+      // a compare-on isolate left every compare line visible
+      // alongside the isolated current one.
+      const totalCount = visible.length;
       const onlyThisVisible = visible[dataIdx]
         && visible.every((v, i) => i === dataIdx ? true : !v);
       if (onlyThisVisible) {
-        for (let i = 0; i < series.length; i++) {
+        for (let i = 0; i < totalCount; i++) {
           visible[i] = true;
           u.setSeries(i + 1, { show: true });
         }
       } else {
-        for (let i = 0; i < series.length; i++) {
+        for (let i = 0; i < totalCount; i++) {
           const show = i === dataIdx;
           visible[i] = show;
           u.setSeries(i + 1, { show });
@@ -546,7 +563,12 @@ export function MultiLineChart({
     };
     el.addEventListener('click', onClick, true);
     return () => el.removeEventListener('click', onClick, true);
-  }, [series.length]);
+    // v0.5.364 — also depend on compareSeries length so the
+    // closed-over series/totalCount stays accurate when the
+    // operator toggles compare on/off; pre-fix the handler kept
+    // a stale length reference and click did nothing for the
+    // appended compare rows.
+  }, [series.length, compareSeries?.length]);
 
   // Container does NOT pin its height — uPlot creates a canvas
   // of `height` pixels plus a legend table beneath it, and we

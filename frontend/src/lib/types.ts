@@ -1376,6 +1376,22 @@ export interface SpanHotspotsResponse {
 }
 export type SortOrder = 'asc' | 'desc';
 
+// EndpointRow — per (service, http.route|url.path) RED rollup
+// surfaced on /endpoints. Mirrors the backend chstore.EndpointRow
+// shape. Path falls back through the four OTel HTTP attribute
+// candidates server-side; the row carries the resolved value so
+// the UI doesn't repeat the priority logic.
+export interface EndpointRow {
+  service: string;
+  path: string;
+  method?: string;
+  calls: number;
+  errors: number;
+  errorRate: number;
+  avgMs: number;
+  p99Ms: number;
+}
+
 // Span-metrics-derived per-service RED rollup. Source: the
 // spanmetrics processor (or compatible Grafana Alloy /
 // otelcol pipeline) emits a calls counter + duration

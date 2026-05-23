@@ -324,6 +324,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/topology/service/drawio",   s.exportServiceTopologyDrawIO)
 	mux.HandleFunc("GET /api/topology/flow/drawio",      s.exportFlowTopologyDrawIO)
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
+	mux.HandleFunc("GET /api/endpoints",  s.getEndpoints)
 	mux.HandleFunc("GET /api/databases",  s.getDatabases)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
 	// Cross-service slow-query catalog (v0.5.165). One row per
@@ -1629,6 +1630,28 @@ func (s *Server) getServiceNeighbors(w http.ResponseWriter, r *http.Request) {
 // equivalent. Cached 30s on the window so a fleet of operators
 // scanning the page during morning triage doesn't hammer CH with
 // duplicate GROUP BYs.
+// getEndpoints — v0.5.365. Per-endpoint RED rollup driven from
+// the OTel http.route / url.path attributes on server / consumer
+// spans. Operator-asked: a /services-like top-level view, but
+// keyed on the inbound request path instead of the service. Top
+// N by call volume — high-cardinality concrete paths (IDs that
+// slipped past the http.route fallback) still surface but
+// natural drop-off keeps the table scannable.
+func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from, to := parseFromTo(r, time.Hour)
+	service := q.Get("service")
+	search := q.Get("search")
+	limit := parseInt(q.Get("limit"), 500)
+	if limit > 2000 {
+		limit = 2000
+	}
+	key := fmt.Sprintf("endpoints:%s:%s:%s:%d", cacheBucket(from, to), service, search, limit)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.GetEndpoints(r.Context(), from, to, service, search, limit)
+	})
+}
+
 func (s *Server) getDatabases(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
 	key := "databases:" + cacheBucket(from, to)

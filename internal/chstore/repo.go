@@ -1113,24 +1113,42 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			args[i] = s
 		}
 		wc.add("service_name IN ("+strings.Join(holders, ",")+")", args...)
+	case f.Service != "" && f.Search != "":
+		// v0.5.371 — cross-service search-with-service mode.
+		// Pre-fix put `service_name = ?` in WHERE, which
+		// restricted ALL span rows to that one service. The
+		// HAVING countIf(search) then only saw THAT service's
+		// spans — so a trace where service X called a route
+		// owned by service Y (the typical caller→callee shape)
+		// never matched because X's spans don't carry Y's route.
+		//
+		// Subquery semantics: candidate_traces = DISTINCT
+		// trace_ids whose spans include service=X. Outer
+		// query then scans ALL spans of those candidates so
+		// the HAVING countIf(search) can hit any field on any
+		// span across services in the trace.
+		//
+		// Scale: inner subquery uses (service_name, time)
+		// primary key → fast prune. Outer trace_id IN (…)
+		// uses the trace_id bloom index → bounded by the
+		// candidate set. Both halves stay sub-second at
+		// billion-span/day.
+		wc.add(
+			"trace_id IN (SELECT trace_id FROM spans"+
+				" WHERE service_name = ?"+
+				" AND time >= ? AND time <= ?"+
+				")",
+			f.Service, f.From, f.To,
+		)
 	case f.Service != "":
 		wc.add("service_name = ?", f.Service)
 	}
-	// v0.5.369 — search moved from WHERE to HAVING below.
-	// Operator-reported: /traces?service=order-service
-	// &search=payment-service/Charge returned 0 rows even
-	// though the trace clearly existed. Root cause: the WHERE
-	// required ONE span to satisfy BOTH service AND name~search,
-	// but cross-service searches naturally split — order-service
-	// owns the caller span (name = something like
-	// "POST /charges" or "client-call"), payment-service owns
-	// the callee span (name = "payment-service/Charge"). The
-	// trace exists; no single span satisfies both predicates.
-	// Fix: keep service in WHERE (preserves primary-key
-	// narrowing) but move search to a HAVING countIf so any
-	// span in the trace can satisfy it. Scale-safe because the
-	// service WHERE clause still prunes the scan via the
-	// (service_name, time) primary key.
+	// v0.5.369-371 — search moved from WHERE to HAVING below,
+	// and when service is also set the WHERE switches to a
+	// trace_id IN (subquery) shape (see comment above). Both
+	// changes serve the same goal: a trace involving service
+	// X with ANY span matching the search substring should
+	// match — not the prior "one span satisfies both" semantic.
 	if f.TraceID != "" {
 		// Exact match for full 32-char trace ID, prefix match for shorter.
 		// Bloom filter index on trace_id makes this efficient.

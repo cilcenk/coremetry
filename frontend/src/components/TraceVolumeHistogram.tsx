@@ -6,6 +6,18 @@ import type { TimeRange } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
 
+// fmtXTick — same MM-DD HH:MM formatter the MultiLineChart uses.
+// Prevents uPlot's default time formatter from collapsing wide
+// windows to month-only labels (operator-reported v0.5.377).
+function fmtXTick(unixSec: number): string {
+  const d = new Date(unixSec * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
 // TraceVolumeHistogram renders a stacked-bar strip showing total
 // span volume bucketed across the active time range, with the error
 // share painted in red on top of the OK share. The visual ratio of
@@ -125,6 +137,14 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom }: {
           grid: { stroke: 'rgba(125,140,160,0.07)', width: 1 },
           ticks: { stroke: 'rgba(125,140,160,0.07)', width: 1 },
           font: '10px ui-monospace, monospace',
+          // v0.5.377 — operator-reported: wide windows (7d / 30d)
+          // dropped to month-only x-axis labels via uPlot's
+          // default time formatter, which read as "the date
+          // range doesn't match what I selected". Match the
+          // MultiLineChart v0.5.366 fix: force MM-DD HH:MM at
+          // every zoom so the calendar date AND clock stay
+          // visible regardless of window width.
+          values: (_u, splits) => splits.map(s => fmtXTick(s)),
         },
         {
           stroke: '#7d8693',

@@ -435,6 +435,15 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
   content: ''; position: absolute; left: 0; top: 0; bottom: 0;
   width: 2px; background: var(--err); z-index: 2;
 }
+/* v0.5.383 — in-trace span filter. Active filter dims
+   non-matching rows so the tree structure stays visible but
+   the eye is drawn to the matches. Matching rows get a
+   subtle warm-tinted background that doesn't fight the
+   selection / critical-path highlights above. */
+.wf-row.wf-dim { opacity: 0.35; }
+.wf-row.wf-dim:hover { opacity: 0.7; }
+.wf-row.wf-match { background: rgba(240, 173, 78, .12); }
+.wf-row.wf-match.wf-sel { background: rgba(56, 139, 253, .18); }
 
 /* Service-color stripe down the left edge — Tempo's primary signal for
    identifying which service this span belongs to. Always visible, fixed

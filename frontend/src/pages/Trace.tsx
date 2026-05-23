@@ -12,7 +12,7 @@ import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/ic
 import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
-import { fmtNs, tsLong, tsRel } from '@/lib/utils';
+import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
 
 function TraceDetailInner() {
@@ -224,6 +224,36 @@ function TraceDetailInner() {
     })));
   }, [spans]);
   const criticalPathIds = (showCritical && criticalPath) ? criticalPath.ids : undefined;
+
+  // v0.5.383 — span filter within ONE trace. Operator searches
+  // by substring across span name, service, displayed name,
+  // and attribute values. Returns the set of matching span IDs
+  // which TraceWaterfall dims non-matches and highlights matches
+  // by. No tree restructure — keeps parent/child shape intact
+  // so the operator can still read the call hierarchy around
+  // each match.
+  const [spanFilter, setSpanFilter] = useState('');
+  const spanMatchIds = useMemo<Set<string> | undefined>(() => {
+    const q = spanFilter.trim().toLowerCase();
+    if (!q || !spans) return undefined;
+    const hits = new Set<string>();
+    for (const s of spans) {
+      if (s.name.toLowerCase().includes(q)
+        || s.serviceName.toLowerCase().includes(q)
+        || displaySpanName(s).toLowerCase().includes(q)) {
+        hits.add(s.spanId);
+        continue;
+      }
+      const attrs = s.attributes ?? {};
+      for (const v of Object.values(attrs)) {
+        if (String(v).toLowerCase().includes(q)) {
+          hits.add(s.spanId);
+          break;
+        }
+      }
+    }
+    return hits;
+  }, [spans, spanFilter]);
   const totalNs = maxT - minT;
   const hasErr = spans?.some(s => s.statusCode === 'error') ?? false;
 
@@ -328,8 +358,11 @@ function TraceDetailInner() {
             {tab === 'trace' && (
               <div id="td-outer">
                 <div id="td-wf">
+                  <SpanFilterBar spans={spans} value={spanFilter}
+                    onChange={setSpanFilter} />
                   <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
-                                  criticalPathIds={criticalPathIds} />
+                                  criticalPathIds={criticalPathIds}
+                                  matchIds={spanMatchIds} />
                 </div>
                 {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
               </div>
@@ -342,6 +375,50 @@ function TraceDetailInner() {
         )}
       </div>
     </>
+  );
+}
+
+// SpanFilterBar — v0.5.383. In-trace substring search input
+// + match count badge. Operator types → matching spans glow
+// in the waterfall, non-matches dim. Tree structure stays
+// intact so the call hierarchy around each match remains
+// readable.
+function SpanFilterBar({ spans, value, onChange }: {
+  spans: SpanRow[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const matches = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q) return 0;
+    let n = 0;
+    for (const s of spans) {
+      if (s.name.toLowerCase().includes(q)
+        || s.serviceName.toLowerCase().includes(q)
+        || displaySpanName(s).toLowerCase().includes(q)) {
+        n++;
+        continue;
+      }
+      const attrs = s.attributes ?? {};
+      for (const v of Object.values(attrs)) {
+        if (String(v).toLowerCase().includes(q)) { n++; break; }
+      }
+    }
+    return n;
+  }, [spans, value]);
+  return (
+    <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <input value={value} onChange={e => onChange(e.target.value)}
+        placeholder="Filter spans (name, service, attr value)…"
+        style={{ flex: 1, maxWidth: 360, padding: '4px 10px', fontSize: 12,
+                 background: 'var(--bg)', color: 'var(--text)',
+                 border: '1px solid var(--border)', borderRadius: 4 }} />
+      <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+        {value.trim()
+          ? `${matches} / ${spans.length} matching`
+          : `${spans.length} span${spans.length === 1 ? '' : 's'}`}
+      </span>
+    </div>
   );
 }
 

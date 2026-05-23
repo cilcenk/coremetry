@@ -77,7 +77,7 @@ function categoryOf(s: SpanRow): SpanCategory | null {
 
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
-  criticalPathIds,
+  criticalPathIds, matchIds,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -100,6 +100,12 @@ export function TraceWaterfall({
   // spans actually drive the wall-clock latency. Computed once
   // per trace via lib/criticalPath.ts; we just take the result.
   criticalPathIds?: Set<string>;
+  // v0.5.383 — in-trace span filter. Matching span IDs get the
+  // .wf-match class (highlight); non-matches get .wf-dim (low
+  // opacity). Undefined = no filter active, every row renders
+  // normally. Tree structure is unchanged so the operator can
+  // still read the call hierarchy around each match.
+  matchIds?: Set<string>;
 }) {
   // Memoise the parents-of-something set keyed by the spans array
   // identity. When defaultCollapsed is on, that set becomes the
@@ -372,11 +378,18 @@ export function TraceWaterfall({
         const isCol = collapsed.has(s.spanId);
         const sel = s.spanId === selectedId;
         const onCritical = criticalPathIds?.has(s.spanId) ?? false;
+        // v0.5.383 — in-trace filter classes. matchIds undefined →
+        // no filter active, every row is "neutral". matchIds set →
+        // matches glow (.wf-match), non-matches dim (.wf-dim).
+        const filterActive = matchIds !== undefined;
+        const onMatch = filterActive && matchIds!.has(s.spanId);
         const cls = [
           'wf-row',
           s.statusCode === 'error' ? 'wf-err' : '',
           sel ? 'wf-sel' : '',
           onCritical ? 'wf-critical' : '',
+          filterActive && onMatch  ? 'wf-match' : '',
+          filterActive && !onMatch ? 'wf-dim'   : '',
         ].filter(Boolean).join(' ');
 
         // Decide whether the duration label fits inside the bar (Tempo

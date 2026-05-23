@@ -1133,8 +1133,17 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// uses the trace_id bloom index → bounded by the
 		// candidate set. Both halves stay sub-second at
 		// billion-span/day.
+		// v0.5.376 — DISTINCT trace_id keeps the subquery result
+		// small even on a 30-day window where the candidate
+		// service may have tens of millions of spans. Without
+		// DISTINCT, the IN-set carried one entry per span, which
+		// inflated the right side of the IN filter past CH's
+		// default subquery memory cap on wide windows — the
+		// query then truncated silently, producing the
+		// "30d returns the same as 7d" symptom an operator
+		// reported in v0.5.376.
 		wc.add(
-			"trace_id IN (SELECT trace_id FROM spans"+
+			"trace_id IN (SELECT DISTINCT trace_id FROM spans"+
 				" WHERE service_name = ?"+
 				" AND time >= ? AND time <= ?"+
 				")",

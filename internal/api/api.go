@@ -325,6 +325,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/topology/flow/drawio",      s.exportFlowTopologyDrawIO)
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
 	mux.HandleFunc("GET /api/endpoints",  s.getEndpoints)
+	mux.HandleFunc("GET /api/services/{name}/attrs", s.getServiceAttrs)
 	mux.HandleFunc("GET /api/databases",  s.getDatabases)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
 	// Cross-service slow-query catalog (v0.5.165). One row per
@@ -1687,6 +1688,39 @@ func (s *Server) getServiceNeighbors(w http.ResponseWriter, r *http.Request) {
 // equivalent. Cached 30s on the window so a fleet of operators
 // scanning the page during morning triage doesn't hammer CH with
 // duplicate GROUP BYs.
+// getServiceAttrs — v0.5.381. Surfaces the per-key + sample-value
+// distribution of attrs the operator's spans actually emit for a
+// service. Answers "what attrs is my SDK putting on these spans"
+// without forcing the operator to open a single trace and squint.
+// 60s serveCached because the attr-shape rarely changes across
+// a window — pinning the sample bounds (5K spans) keeps the scan
+// fast even at billion-span/day scale.
+func (s *Server) getServiceAttrs(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	from, to := parseFromTo(r, time.Hour)
+	top := parseInt(q.Get("top"), 50)
+	samples := parseInt(q.Get("samples"), 5)
+	key := fmt.Sprintf("service-attrs:svc=%s:from=%s:to=%s:top=%d:s=%d",
+		name, cacheBucket(from, to), cacheBucket(from, to), top, samples)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		rows, err := s.store.GetServiceAttrs(r.Context(), name, from, to, top, samples)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"service": name,
+			"attrs":   rows,
+			"from":    from.UnixNano(),
+			"to":      to.UnixNano(),
+		}, nil
+	})
+}
+
 // getEndpoints — v0.5.365. Per-endpoint RED rollup driven from
 // the OTel http.route / url.path attributes on server / consumer
 // spans. Operator-asked: a /services-like top-level view, but

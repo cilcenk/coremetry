@@ -2,7 +2,7 @@ import type {
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
   LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries,
-  SpanMetricsServicesResponse, EndpointRow,
+  SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
   AlertRule, Problem, ServiceEdgeStats, Exception,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -990,6 +990,12 @@ export const api = {
     get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs(params)}`),
   endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number }) =>
     get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
+  serviceAttrs: (service: string, from: number, to: number, opts?: { top?: number; samples?: number }) =>
+    get<ServiceAttrsResponse>(
+      `/api/services/${encodeURIComponent(service)}/attrs?from=${from}&to=${to}` +
+      (opts?.top ? `&top=${opts.top}` : '') +
+      (opts?.samples ? `&samples=${opts.samples}` : ''),
+    ),
   spanmetricsServices: (from: number, to: number, opts?: { top?: number; spark?: boolean }) => {
     const params = new URLSearchParams();
     params.set('from', String(from));

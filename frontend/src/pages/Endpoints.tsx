@@ -4,11 +4,12 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
+import { MultiLineChart } from '@/components/MultiLineChart';
 import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
-import type { EndpointRow, TimeRange } from '@/lib/types';
+import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
 // RED rollup keyed on http.route (templated) with url.path /
@@ -282,21 +283,32 @@ export default function EndpointsPage() {
 }
 
 // EndpointMetricModal — opens on sparkline click. Renders the
-// three RED sparklines (calls, errors, p99) side-by-side at a
-// readable size, plus the row's RED scalars + a deep link into
-// /traces for the same (service, path) tuple. The data is the
-// same payload the row already carries (no extra fetch) so the
-// modal opens instantly.
+// three RED dimensions (calls, errors, p99) as full uPlot
+// time-axis charts so the operator can read tick marks, hover
+// for exact values, and visually correlate spikes across all
+// three at the same instant via syncKey-linked crosshairs.
+// Deep links into /traces and the service detail page close
+// the metric → trace loop on the (service, path) tuple.
+//
+// v0.5.391 — upgraded from three bare Sparklines to MultiLineChart
+// instances so the metric view answers "what was happening at
+// 14:23" not just "is this endpoint spiky-shaped". Time axis,
+// crosshair sync, and tooltip per series — the same uPlot
+// affordances the Metrics / Explore pages use.
 function EndpointMetricModal({
   row, onClose, range,
 }: { row: EndpointRow | null; onClose: () => void; range: TimeRange }) {
+  // Hooks must run unconditionally — call useMemo before any
+  // early return (React rules-of-hooks).
+  const series = useMemo(() => {
+    if (!row) return { calls: [], errors: [], p99: [] };
+    return bucketsToSeries(row, range);
+  }, [row, range]);
+
   if (!row) return <Modal open={false} onClose={onClose} />;
-  const calls = row.sparkline ?? [];
-  const errs = row.errorsSparkline ?? [];
-  const p99s = row.p99Sparkline ?? [];
-  const peakCalls = calls.length ? Math.max(...calls) : 0;
-  const totalErrs = errs.reduce((s, v) => s + v, 0);
-  const maxP99 = p99s.length ? Math.max(...p99s) : 0;
+  const peakCalls = (row.sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
+  const totalErrs = (row.errorsSparkline ?? []).reduce((s, v) => s + v, 0);
+  const maxP99 = (row.p99Sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
   const errCls = row.errorRate >= 5 ? 'err' : row.errorRate >= 1 ? 'warn' : '';
   return (
     <Modal
@@ -314,34 +326,34 @@ function EndpointMetricModal({
     >
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 14, marginBottom: 14,
+        gap: 12, marginBottom: 14,
       }}>
-        <MetricCard
+        <MetricTile
           label="Calls"
           big={fmtNum(row.calls)}
           sub={`peak ${fmtNum(peakCalls)} / bucket`}
-          values={calls}
+          series={series.calls}
         />
-        <MetricCard
+        <MetricTile
           label="Errors"
           big={fmtNum(row.errors)}
           sub={`${row.errorRate.toFixed(2)}% rate`}
           subCls={errCls}
-          values={errs}
-          color={'var(--err)'}
+          series={series.errors}
         />
-        <MetricCard
+        <MetricTile
           label="P99 latency"
           big={`${row.p99Ms.toFixed(0)} ms`}
           sub={`peak ${maxP99.toFixed(0)} ms · avg ${row.avgMs.toFixed(0)} ms`}
-          values={p99s}
-          color={'var(--accent2)'}
+          series={series.p99}
+          unit="ms"
         />
       </div>
       <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
-        {calls.length} buckets across the selected window. Bars are
-        per-bucket counters (calls, errors) and the bucket-local
-        p99 latency. Total errors in window: <strong>{fmtNum(totalErrs)}</strong>.
+        Hover any chart to read the bucket value; the crosshair
+        syncs across all three so you can correlate calls /
+        errors / p99 at the same instant. Total errors in window:
+        {' '}<strong>{fmtNum(totalErrs)}</strong>.
       </div>
       <div style={{ display: 'flex', gap: 10 }}>
         <Link
@@ -361,11 +373,11 @@ function EndpointMetricModal({
   );
 }
 
-function MetricCard({
-  label, big, sub, subCls, values, color,
+function MetricTile({
+  label, big, sub, subCls, series, unit,
 }: {
   label: string; big: string; sub: string; subCls?: string;
-  values: number[]; color?: string;
+  series: SpanMetricSeries[]; unit?: string;
 }) {
   return (
     <div style={{
@@ -378,9 +390,53 @@ function MetricCard({
         fontSize: 11, marginBottom: 8,
         color: subCls === 'err' ? 'var(--err)' : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
       }}>{sub}</div>
-      <Sparkline values={values} width={200} height={48} color={color} />
+      {series.length > 0 && series[0].points.length > 0 ? (
+        <MultiLineChart
+          series={series}
+          unit={unit}
+          height={140}
+          syncKey="endpoints-detail"
+        />
+      ) : (
+        <div style={{
+          height: 140, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', color: 'var(--text3)', fontSize: 11,
+        }}>no data in window</div>
+      )}
     </div>
   );
+}
+
+// bucketsToSeries converts the row's three 30-bucket sparkline
+// arrays into SpanMetricSeries shape so MultiLineChart can plot
+// them on a time axis. The backend doesn't ship per-bucket
+// timestamps (the payload size is bounded that way) so we
+// reconstruct them client-side from the page's selected range
+// — bucket i sits at the midpoint of its slice of the window.
+// Matches the bucketing the backend's per_bucket CTE uses
+// (intDiv(time - from, bucketNs)).
+function bucketsToSeries(row: EndpointRow, range: TimeRange): {
+  calls: SpanMetricSeries[]; errors: SpanMetricSeries[]; p99: SpanMetricSeries[];
+} {
+  const { from, to } = timeRangeToNs(range);
+  const calls = row.sparkline ?? [];
+  const errs = row.errorsSparkline ?? [];
+  const p99s = row.p99Sparkline ?? [];
+  const n = Math.max(calls.length, errs.length, p99s.length);
+  if (n === 0 || to <= from) {
+    return { calls: [], errors: [], p99: [] };
+  }
+  const bucketNs = (to - from) / n;
+  const timeAtBucket = (i: number) => from + bucketNs * i + bucketNs / 2;
+  const buildPoints = (arr: number[]) => arr.map((v, i) => ({
+    time: timeAtBucket(i),
+    value: v,
+  }));
+  return {
+    calls: calls.length ? [{ groupKey: ['calls'], points: buildPoints(calls) }] : [],
+    errors: errs.length ? [{ groupKey: ['errors'], points: buildPoints(errs) }] : [],
+    p99: p99s.length ? [{ groupKey: ['p99 ms'], points: buildPoints(p99s) }] : [],
+  };
 }
 
 function tracesLink(r: EndpointRow, range: TimeRange): string {

@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
+import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
@@ -45,6 +46,13 @@ export default function EndpointsPage() {
 
   const [sortKey, setSortKey] = useState<SortKey>('calls');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // v0.5.387 — sparkline-click drill-in. Holds the row whose
+  // trend was clicked; modal renders the three RED sparklines
+  // (calls / errors / p99) side-by-side with their summary
+  // stats so the operator confirms "is this endpoint spiky" at
+  // a glance, then drills further via the same "view traces"
+  // link the table row already exposes.
+  const [detail, setDetail] = useState<EndpointRow | null>(null);
 
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
@@ -199,10 +207,20 @@ export default function EndpointsPage() {
                         <td className="num mono">{r.avgMs.toFixed(1)} ms</td>
                         <td className="num mono">{r.p99Ms.toFixed(0)} ms</td>
                         <td>
-                          <Sparkline values={r.sparkline ?? []}
-                            width={100} height={22}
-                            color={r.errorRate >= 5 ? 'var(--err)' : r.errorRate >= 1 ? 'var(--warn)' : undefined}
-                            title={`${r.calls.toLocaleString()} calls`} />
+                          <button
+                            type="button"
+                            onClick={() => setDetail(r)}
+                            title="Click for calls / errors / p99 detail"
+                            style={{
+                              background: 'transparent', border: 0, padding: 0,
+                              cursor: 'pointer', display: 'inline-block',
+                            }}
+                          >
+                            <Sparkline values={r.sparkline ?? []}
+                              width={100} height={22}
+                              color={r.errorRate >= 5 ? 'var(--err)' : r.errorRate >= 1 ? 'var(--warn)' : undefined}
+                              title={`${r.calls.toLocaleString()} calls — click for detail`} />
+                          </button>
                         </td>
                         <td>
                           {/* /traces filter on (service, search=path).
@@ -230,8 +248,111 @@ export default function EndpointsPage() {
             </div>
           </>
         )}
+        <EndpointMetricModal row={detail} onClose={() => setDetail(null)} range={range} />
       </div>
     </>
+  );
+}
+
+// EndpointMetricModal — opens on sparkline click. Renders the
+// three RED sparklines (calls, errors, p99) side-by-side at a
+// readable size, plus the row's RED scalars + a deep link into
+// /traces for the same (service, path) tuple. The data is the
+// same payload the row already carries (no extra fetch) so the
+// modal opens instantly.
+function EndpointMetricModal({
+  row, onClose, range,
+}: { row: EndpointRow | null; onClose: () => void; range: TimeRange }) {
+  if (!row) return <Modal open={false} onClose={onClose} />;
+  const calls = row.sparkline ?? [];
+  const errs = row.errorsSparkline ?? [];
+  const p99s = row.p99Sparkline ?? [];
+  const peakCalls = calls.length ? Math.max(...calls) : 0;
+  const totalErrs = errs.reduce((s, v) => s + v, 0);
+  const maxP99 = p99s.length ? Math.max(...p99s) : 0;
+  const errCls = row.errorRate >= 5 ? 'err' : row.errorRate >= 1 ? 'warn' : '';
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={
+        <span className="mono" style={{ fontSize: 13 }}>
+          {row.method ? row.method + ' ' : ''}{row.path}
+          <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
+            ({row.service})
+          </span>
+        </span>
+      }
+    >
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 14, marginBottom: 14,
+      }}>
+        <MetricCard
+          label="Calls"
+          big={fmtNum(row.calls)}
+          sub={`peak ${fmtNum(peakCalls)} / bucket`}
+          values={calls}
+        />
+        <MetricCard
+          label="Errors"
+          big={fmtNum(row.errors)}
+          sub={`${row.errorRate.toFixed(2)}% rate`}
+          subCls={errCls}
+          values={errs}
+          color={'var(--err)'}
+        />
+        <MetricCard
+          label="P99 latency"
+          big={`${row.p99Ms.toFixed(0)} ms`}
+          sub={`peak ${maxP99.toFixed(0)} ms · avg ${row.avgMs.toFixed(0)} ms`}
+          values={p99s}
+          color={'var(--accent2)'}
+        />
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
+        {calls.length} buckets across the selected window. Bars are
+        per-bucket counters (calls, errors) and the bucket-local
+        p99 latency. Total errors in window: <strong>{fmtNum(totalErrs)}</strong>.
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <Link
+          to={tracesLink(row, range)}
+          style={{ fontSize: 12, color: 'var(--accent2)' }}
+        >
+          View traces →
+        </Link>
+        <Link
+          to={`/services?name=${encodeURIComponent(row.service)}`}
+          style={{ fontSize: 12, color: 'var(--accent2)' }}
+        >
+          Service detail →
+        </Link>
+      </div>
+    </Modal>
+  );
+}
+
+function MetricCard({
+  label, big, sub, subCls, values, color,
+}: {
+  label: string; big: string; sub: string; subCls?: string;
+  values: number[]; color?: string;
+}) {
+  return (
+    <div style={{
+      padding: '10px 12px', border: '1px solid var(--border)',
+      borderRadius: 6, background: 'var(--bg1)',
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 2 }}>{big}</div>
+      <div style={{
+        fontSize: 11, marginBottom: 8,
+        color: subCls === 'err' ? 'var(--err)' : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
+      }}>{sub}</div>
+      <Sparkline values={values} width={200} height={48} color={color} />
+    </div>
   );
 }
 

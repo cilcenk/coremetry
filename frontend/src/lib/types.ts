@@ -1413,6 +1413,13 @@ export interface EndpointRow {
   // and the spanmetrics sparkline — the operator learns the
   // mental model once and reads it across surfaces.
   sparkline?: number[];
+  // v0.5.387 — companion sparklines aligned to the same 30
+  // buckets as `sparkline`. Drives the per-row "✱" drill-in
+  // modal that shows all three RED dimensions side-by-side
+  // without a second round-trip. Each is 0-padded for buckets
+  // that had no spans.
+  errorsSparkline?: number[];
+  p99Sparkline?: number[];
 }
 
 // Span-metrics-derived per-service RED rollup. Source: the

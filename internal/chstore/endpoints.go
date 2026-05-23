@@ -28,7 +28,15 @@ type EndpointRow struct {
 	// without a chart drill-in. Bucketing happens server-side
 	// so the JSON payload size stays bounded regardless of
 	// window width.
-	Sparkline       []float64         `json:"sparkline,omitempty"`
+	Sparkline []float64 `json:"sparkline,omitempty"`
+	// v0.5.387 — errors + p99 sparklines on the same 30-bucket
+	// grid so the row-level drill-in modal can render all three
+	// RED dimensions without a second round-trip. Same payload
+	// shape as Sparkline; one float per bucket. Both fields
+	// share the bucket boundaries of Sparkline so the modal can
+	// drive them off a single time axis.
+	ErrorsSparkline []float64         `json:"errorsSparkline,omitempty"`
+	P99Sparkline    []float64         `json:"p99Sparkline,omitempty"`
 	StatusBreakdown map[string]uint64 `json:"statusBreakdown,omitempty"`
 }
 
@@ -117,7 +125,9 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	}
 	allArgs := []any{from.UnixNano(), bucketNs}
 	allArgs = append(allArgs, args...)
-	allArgs = append(allArgs, sparkBuckets, limit)
+	// Three sparkline arrayMaps, each parameterised by
+	// sparkBuckets → three ? placeholders for range(0, ?).
+	allArgs = append(allArgs, sparkBuckets, sparkBuckets, sparkBuckets, limit)
 	q := `
 		WITH per_bucket AS (
 		  SELECT service_name,
@@ -145,7 +155,15 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		       arrayMap(i ->
 		         toFloat64(coalesce(arrayElement(groupArray(bv), indexOf(groupArray(b), i)), 0)),
 		         range(0, ?)
-		       )                                                AS sparkline
+		       )                                                AS sparkline,
+		       arrayMap(i ->
+		         toFloat64(coalesce(arrayElement(groupArray(bv_err), indexOf(groupArray(b), i)), 0)),
+		         range(0, ?)
+		       )                                                AS errors_sparkline,
+		       arrayMap(i ->
+		         toFloat64(coalesce(arrayElement(groupArray(bv_p99), indexOf(groupArray(b), i)), 0)),
+		         range(0, ?)
+		       )                                                AS p99_sparkline
 		FROM per_bucket
 		GROUP BY service_name, path
 		ORDER BY calls DESC
@@ -160,11 +178,11 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	for rows.Next() {
 		var r EndpointRow
 		var avgMs, p99Ms, errRate *float64
-		var sparkline []float64
+		var sparkline, errorsSparkline, p99Sparkline []float64
 		if err := rows.Scan(
 			&r.Service, &r.Path, &r.Method,
 			&r.Calls, &r.Errors, &errRate, &avgMs, &p99Ms,
-			&sparkline,
+			&sparkline, &errorsSparkline, &p99Sparkline,
 		); err != nil {
 			return nil, err
 		}
@@ -172,6 +190,8 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		r.AvgMs = safeF(avgMs)
 		r.P99Ms = safeF(p99Ms)
 		r.Sparkline = sparkline
+		r.ErrorsSparkline = errorsSparkline
+		r.P99Sparkline = p99Sparkline
 		out = append(out, r)
 	}
 	return out, rows.Err()

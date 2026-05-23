@@ -390,7 +390,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
-			 sum_duration_ns, p99_ms, version)
+			 sum_duration_ns, p99_ms, errors, version)
 		WITH
 			multiIf(
 				c.db_system  != '', 'db',
@@ -418,6 +418,9 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt64(count())     AS calls,
 			toUInt64(sum(c.duration)) AS sum_duration_ns,
 			toFloat64(quantileExact(0.99)(c.duration)) / 1e6 AS p99_ms,
+			-- v0.5.367 — per-edge error count powers /api/service-graph
+			-- ErrorRate reads from the MV (no more raw-spans self-join).
+			toUInt64(countIf(c.status_code = 'error')) AS errors,
 			toUInt64(?)           AS version
 		FROM spans AS c
 		GLOBAL INNER JOIN (
@@ -448,7 +451,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
-			 sum_duration_ns, p99_ms, version)
+			 sum_duration_ns, p99_ms, errors, version)
 		WITH
 			multiIf(
 				db_system  != '', concat('db:',    db_system),
@@ -495,6 +498,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt64(count())    AS calls,
 			toUInt64(sum(duration)) AS sum_duration_ns,
 			toFloat64(quantileExact(0.99)(duration)) / 1e6 AS p99_ms,
+			-- v0.5.367 — infra-edge errors mirror the service-pair pass.
+			toUInt64(countIf(status_code = 'error')) AS errors,
 			toUInt64(?)          AS version
 		FROM spans
 		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')

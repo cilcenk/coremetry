@@ -887,111 +887,47 @@ func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since t
 	} else {
 		startTime = time.Now().Add(-since)
 	}
-
-	// Build the two source CTEs sharing the same time predicate.
-	timeP := "time >= ?"
-	timeArgsBase := []any{startTime}
-	if !endTime.IsZero() {
-		timeP += " AND time <= ?"
-		timeArgsBase = append(timeArgsBase, endTime)
+	if endTime.IsZero() {
+		endTime = time.Now()
 	}
+	// v0.5.367 — read from topology_edges_5m. Pre-fix did a raw
+	// `spans JOIN spans` per request which is unviable at the
+	// 1B+ spans/day target. The MV is updated every 5min by
+	// WriteTopologyBucket; per-edge errors landed in v0.5.367
+	// alongside calls + sum_duration_ns so this read needs no
+	// additional aggregation pass beyond a window roll-up.
+	//
+	// Bucket-align the lower bound (same idiom as the other
+	// *_5m readers) so a 13:03 winStart catches the 13:00
+	// bucket that contains 13:00-13:05 of source spans.
+	bucketStart := startTime.Truncate(5 * time.Minute)
 
 	svcWhere := ""
+	args := []any{bucketStart, endTime}
 	if service != "" {
-		svcWhere = " AND (source = ? OR target = ?)"
+		svcWhere = " AND (parent_service = ? OR child_node = ?)"
+		args = append(args, service, service)
 	}
 
-	// CTE 1: parent→child JOIN. CTE 2: parent.peer_service. Union them,
-	// then re-aggregate so an edge surfaced by both paths counts once.
+	// FINAL on the ReplacingMergeTree so the SAME (time_bucket,
+	// parent_service, child_node, node_kind, protocol) tuple
+	// doesn't double-count across version revisions. The
+	// version field deduplicates within bucket; aggregation
+	// across buckets (sum / sumIf / sum) yields window totals.
 	sql := `
-		WITH joined AS (
-			SELECT parent.service_name AS source,
-			       child.service_name  AS target,
-			       child.status_code   AS status_code,
-			       child.duration      AS duration
-			FROM spans AS child
-			INNER JOIN spans AS parent
-			  ON child.trace_id = parent.trace_id
-			 AND child.parent_id = parent.span_id
-			WHERE child.` + timeP + `
-			  AND parent.service_name != ''
-			  AND child.service_name  != ''
-			  AND parent.service_name != child.service_name
-		),
-		-- Outbound-attribute path: walk the client / producer spans
-		-- of this service and infer the downstream identity from the
-		-- first non-empty among peer.service → rpc.service →
-		-- server.address → http.host → db.system → messaging.system.
-		-- Picks up non-instrumented downstreams (managed DBs, 3rd-
-		-- party APIs, brokers) AND environments where peer.service
-		-- isn't being populated.
-		peered AS (
-			SELECT service_name AS source,
-			       multiIf(
-			         peer_service != '',                                                    peer_service,
-			         attr_values[indexOf(attr_keys, 'rpc.service')] != '',                  attr_values[indexOf(attr_keys, 'rpc.service')],
-			         attr_values[indexOf(attr_keys, 'server.address')] != '',               attr_values[indexOf(attr_keys, 'server.address')],
-			         attr_values[indexOf(attr_keys, 'http.host')] != '',                    attr_values[indexOf(attr_keys, 'http.host')],
-			         attr_values[indexOf(attr_keys, 'net.peer.name')] != '',                attr_values[indexOf(attr_keys, 'net.peer.name')],
-			         db_system != '',                                                       db_system,
-			         msg_system != '',                                                      msg_system,
-			         ''
-			       ) AS target,
-			       status_code,
-			       duration
-			FROM spans
-			WHERE ` + timeP + `
-			  AND service_name != ''
-			  AND kind IN ('client', 'producer')
-			  -- Drop pairs already covered by the JOIN side so we don't
-			  -- double-count when both signals fire.
-			  AND (service_name, multiIf(
-			         peer_service != '',                                                    peer_service,
-			         attr_values[indexOf(attr_keys, 'rpc.service')] != '',                  attr_values[indexOf(attr_keys, 'rpc.service')],
-			         attr_values[indexOf(attr_keys, 'server.address')] != '',               attr_values[indexOf(attr_keys, 'server.address')],
-			         attr_values[indexOf(attr_keys, 'http.host')] != '',                    attr_values[indexOf(attr_keys, 'http.host')],
-			         attr_values[indexOf(attr_keys, 'net.peer.name')] != '',                attr_values[indexOf(attr_keys, 'net.peer.name')],
-			         db_system != '',                                                       db_system,
-			         msg_system != '',                                                      msg_system,
-			         ''
-			       )) NOT IN (
-			    SELECT DISTINCT parent.service_name, child.service_name
-			    FROM spans AS child
-			    INNER JOIN spans AS parent
-			      ON child.trace_id = parent.trace_id
-			     AND child.parent_id = parent.span_id
-			    WHERE child.` + timeP + `
-			      AND parent.service_name != ''
-			      AND child.service_name  != ''
-			  )
-		),
-		edges AS (
-			SELECT source, target, status_code, duration FROM joined
-			UNION ALL
-			-- Drop rows where multiIf fell through to '' (no usable
-			-- downstream signal) and self-loops created when, say,
-			-- a service calls its own service via peer.service.
-			SELECT source, target, status_code, duration
-			FROM peered
-			WHERE target != '' AND target != source
-		)
-		SELECT source, target,
-		       count() AS calls,
-		       countIf(status_code = 'error') / count() * 100 AS error_rate,
-		       avg(duration) / 1e6 AS avg_ms
-		FROM edges
-		WHERE 1=1` + svcWhere + `
-		GROUP BY source, target
-		ORDER BY calls DESC`
+		SELECT parent_service                         AS source,
+		       child_node                             AS target,
+		       sum(calls)                             AS call_count,
+		       sum(errors) * 100.0 / nullIf(sum(calls), 0) AS error_rate,
+		       sum(sum_duration_ns) / nullIf(sum(calls), 0) / 1e6 AS avg_ms
+		FROM topology_edges_5m FINAL
+		WHERE time_bucket >= ? AND time_bucket <= ?` + svcWhere + `
+		  AND parent_service != child_node
+		GROUP BY parent_service, child_node
+		ORDER BY call_count DESC
+		SETTINGS max_execution_time = 10`
 	if topN > 0 {
 		sql += fmt.Sprintf("\n\t\tLIMIT %d", topN)
-	}
-
-	args := append([]any{}, timeArgsBase...) // joined CTE timeP
-	args = append(args, timeArgsBase...)     // peered CTE timeP
-	args = append(args, timeArgsBase...)     // peered NOT IN subquery timeP
-	if service != "" {
-		args = append(args, service, service)
 	}
 
 	rows, err := s.conn.Query(ctx, sql, args...)
@@ -1002,9 +938,12 @@ func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since t
 	out := []ServiceEdge{}
 	for rows.Next() {
 		var e ServiceEdge
-		if err := rows.Scan(&e.Source, &e.Target, &e.CallCount, &e.ErrorRate, &e.AvgMs); err != nil {
+		var errRate, avgMs *float64
+		if err := rows.Scan(&e.Source, &e.Target, &e.CallCount, &errRate, &avgMs); err != nil {
 			return nil, err
 		}
+		e.ErrorRate = safeF(errRate)
+		e.AvgMs = safeF(avgMs)
 		out = append(out, e)
 	}
 	return out, rows.Err()

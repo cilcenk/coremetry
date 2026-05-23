@@ -46,6 +46,11 @@ export default function EndpointsPage() {
 
   const [sortKey, setSortKey] = useState<SortKey>('calls');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // v0.5.389 — limit lifted to 2000 default, with an explicit
+  // "load top 5000" toggle so the operator can pull the long
+  // tail when they need it. Backend caps at 5000; values above
+  // that get clamped server-side.
+  const [limit, setLimit] = useState<number>(2000);
   // v0.5.387 — sparkline-click drill-in. Holds the row whose
   // trend was clicked; modal renders the three RED sparklines
   // (calls / errors / p99) side-by-side with their summary
@@ -63,11 +68,11 @@ export default function EndpointsPage() {
       service: service || undefined,
       search: search.trim() || undefined,
       cluster: cluster || undefined,
-      limit: 1000,
+      limit,
     })
       .then(r => setRows(r ?? []))
       .catch(() => setRows(null));
-  }, [from, to, service, search, cluster]);
+  }, [from, to, service, search, cluster, limit]);
 
   // Cluster picker options — mirror Services page so symmetry is
   // intuitive for operators landing here after filtering there.
@@ -134,8 +139,30 @@ export default function EndpointsPage() {
             </select>
           )}
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
-            {rows ? `${rows.length} endpoint${rows.length === 1 ? '' : 's'}` : ''}
+            {rows && (
+              <>
+                Top {fmtNum(rows.length)} by calls
+                {rows.length >= limit && (
+                  <span style={{ color: 'var(--warn)', marginLeft: 6 }}
+                        title="Result hit the limit — long-tail endpoints may be hidden">
+                    (capped)
+                  </span>
+                )}
+              </>
+            )}
           </span>
+          {/* Limit dropdown — operator pulls the long tail when
+              the table is at-cap and they want to see the lower-
+              traffic endpoints. Capped at 5000 server-side. */}
+          <select value={limit}
+            onChange={e => setLimit(Number(e.target.value))}
+            style={{ fontSize: 12 }}
+            title="Maximum rows returned by the backend">
+            <option value={500}>top 500</option>
+            <option value={1000}>top 1000</option>
+            <option value={2000}>top 2000</option>
+            <option value={5000}>top 5000</option>
+          </select>
         </div>
 
         {rows === undefined && <Spinner />}

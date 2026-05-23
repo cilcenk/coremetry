@@ -1743,8 +1743,12 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	search := q.Get("search")
 	cluster := q.Get("cluster")
 	limit := parseInt(q.Get("limit"), 500)
-	if limit > 2000 {
-		limit = 2000
+	// v0.5.389 — operator-reported: top-N was undercounting the
+	// long tail. Cap raised to 5000 (matches the store's own
+	// clamp); the 30-bucket-sparkline-per-row payload is still
+	// bounded (5000 × 3 × 30 floats ≈ 4MB JSON worst case).
+	if limit > 5000 {
+		limit = 5000
 	}
 	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d", cacheBucket(from, to), service, search, cluster, limit)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {

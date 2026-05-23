@@ -104,6 +104,14 @@ type OperationSummary struct {
 	P99Ms      float64  `json:"p99DurationMs"`
 	Apdex      float64  `json:"apdex"`
 	Sparkline  []uint64 `json:"sparkline,omitempty"`
+	// v0.5.392 — companion error + p99 sparklines aligned to the
+	// same SparklineBuckets grid as Sparkline. Drives the per-row
+	// metric drill-in modal on the service detail page so the
+	// operator reads RED dimensions side-by-side without leaving
+	// the table. Both fields are optional (the raw-spans fallback
+	// path doesn't always compute them); UI tolerates absence.
+	ErrorsSparkline []uint64  `json:"errorsSparkline,omitempty"`
+	P99Sparkline    []float64 `json:"p99Sparkline,omitempty"`
 }
 
 type ServiceSummary struct {

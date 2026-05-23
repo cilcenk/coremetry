@@ -562,7 +562,9 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	bucketRows, err := s.conn.Query(ctx, `
 		SELECT name,
 		       intDiv(toUInt32(time_bucket) - toUInt32(?), ?) AS bidx,
-		       countMerge(span_count_state)                   AS c
+		       countMerge(span_count_state)                   AS c,
+		       countMerge(error_count_state)                  AS e,
+		       arrayElement(quantilesMerge(0.99)(duration_q_state), 1) / 1e6 AS p99
 		FROM operation_summary_5m
 		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
 		GROUP BY name, bidx
@@ -577,8 +579,9 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	for bucketRows.Next() {
 		var name string
 		var bidx int64
-		var c uint64
-		if err := bucketRows.Scan(&name, &bidx, &c); err != nil {
+		var c, e uint64
+		var p99 *float64
+		if err := bucketRows.Scan(&name, &bidx, &c, &e, &p99); err != nil {
 			continue
 		}
 		i, ok := idxByName[name]
@@ -587,9 +590,18 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		}
 		if out[i].Sparkline == nil {
 			out[i].Sparkline = make([]uint64, SparklineBuckets)
+			out[i].ErrorsSparkline = make([]uint64, SparklineBuckets)
+			out[i].P99Sparkline = make([]float64, SparklineBuckets)
 		}
 		if bidx >= 0 && int(bidx) < SparklineBuckets {
 			out[i].Sparkline[bidx] += c
+			out[i].ErrorsSparkline[bidx] += e
+			// Per-bucket p99 — pick the max across coalesced MV
+			// buckets that map to the same sparkline slot, same
+			// idiom as the topology MV merges. Conservative read.
+			if v := safeF(p99); v > out[i].P99Sparkline[bidx] {
+				out[i].P99Sparkline[bidx] = v
+			}
 		}
 	}
 	_ = apdexT // referenced by the raw-spans path; kept here so a future move keeps the constants together.
@@ -763,7 +775,9 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	sparkRows, err := s.conn.Query(ctx, `
 		SELECT name,
 		       intDiv(toUInt32(time) - toUInt32(?), ?) AS bidx,
-		       count()                                 AS c
+		       count()                                 AS c,
+		       countIf(status_code = 'error')          AS e,
+		       quantile(0.99)(duration) / 1e6          AS p99
 		FROM spans `+wc.sql()+`
 		  AND name IN (`+strings.Join(holders, ",")+`)
 		GROUP BY name, bidx
@@ -779,8 +793,9 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	for sparkRows.Next() {
 		var name string
 		var bidx int64
-		var c uint64
-		if err := sparkRows.Scan(&name, &bidx, &c); err != nil {
+		var c, e uint64
+		var p99 *float64
+		if err := sparkRows.Scan(&name, &bidx, &c, &e, &p99); err != nil {
 			continue
 		}
 		i, ok := idxByName[name]
@@ -789,9 +804,15 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		}
 		if out[i].Sparkline == nil {
 			out[i].Sparkline = make([]uint64, SparklineBuckets)
+			out[i].ErrorsSparkline = make([]uint64, SparklineBuckets)
+			out[i].P99Sparkline = make([]float64, SparklineBuckets)
 		}
 		if bidx >= 0 && int(bidx) < SparklineBuckets {
 			out[i].Sparkline[bidx] += c
+			out[i].ErrorsSparkline[bidx] += e
+			if v := safeF(p99); v > out[i].P99Sparkline[bidx] {
+				out[i].P99Sparkline[bidx] = v
+			}
 		}
 	}
 	return out, nil

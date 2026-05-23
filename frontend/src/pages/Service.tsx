@@ -15,6 +15,8 @@ import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
 import { ServiceInfra } from '@/components/ServiceInfra';
 import { Sparkline } from '@/components/Sparkline';
+import { MultiLineChart } from '@/components/MultiLineChart';
+import { Modal } from '@/components/ui';
 import { SpanBreakdownChart } from '@/components/SpanBreakdownChart';
 import { ServiceProfilingPanel } from '@/components/ServiceProfilingPanel';
 import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
@@ -23,7 +25,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
 import { useQueryClient } from '@tanstack/react-query';
 import { keys } from '@/lib/queries/keys';
-import type { Service, Problem, TimeRange, OperationSummary } from '@/lib/types';
+import type { Service, Problem, TimeRange, OperationSummary, SpanMetricSeries } from '@/lib/types';
 
 const SINCE_MAP: Record<string, string> = {
   '5m': '5m', '10m': '10m', '15m': '15m', '30m': '30m',
@@ -476,6 +478,13 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   // monolith service the scroll-then-eyeball loop fails;
   // typing narrows live with no server round-trip.
   const [filter, setFilter] = useState('');
+  // v0.5.392 — per-row metric drill-in. Clicking the sparkline
+  // opens a Modal with three synced uPlot charts (calls, errors,
+  // p99) for the same (service, op) tuple. Same pattern the
+  // endpoints page uses; here it pulls from the row's stored
+  // sparkline + companion errors/p99 sparklines added in the
+  // same release.
+  const [opDetail, setOpDetail] = useState<OperationSummary | null>(null);
 
   // v0.5.313 — Operator-reported: drill-down used to land on
   // /traces (familiar view with the trace list + aggregate
@@ -683,9 +692,19 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                     >{op.name}</Link>
                   </td>
                   <td>
-                    <Sparkline values={op.sparkline ?? []}
-                      color={sparkColor}
-                      title={`${fmtNum(op.spanCount)} calls · click row to drill in`} />
+                    <button
+                      type="button"
+                      onClick={() => setOpDetail(op)}
+                      title={`${fmtNum(op.spanCount)} calls — click for calls / errors / p99 detail`}
+                      style={{
+                        background: 'transparent', border: 0, padding: 0,
+                        cursor: 'pointer', display: 'inline-block',
+                      }}
+                    >
+                      <Sparkline values={op.sparkline ?? []}
+                        color={sparkColor}
+                        title="" />
+                    </button>
                   </td>
                   <td className="mono" style={{ textAlign: 'right' }}>
                     <ImpactBar value={impactOf(op)}
@@ -710,6 +729,131 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
           </tbody>
         </table>
       </div>
+      <OperationMetricModal
+        service={service}
+        op={opDetail}
+        onClose={() => setOpDetail(null)}
+        range={range}
+      />
+    </div>
+  );
+}
+
+// OperationMetricModal — opens on per-op sparkline click. Same
+// three-RED-dimensions pattern as the Endpoints modal: calls,
+// errors, p99 latency, drawn as full uPlot charts with a synced
+// crosshair so the operator correlates spikes across all three
+// at one instant. v0.5.392 — applies the metric drill-in pattern
+// to /service per-operation rows so the operator gets the same
+// reading affordance everywhere they see a sparkline.
+function OperationMetricModal({
+  service, op, onClose, range,
+}: {
+  service: string;
+  op: OperationSummary | null;
+  onClose: () => void;
+  range: TimeRange;
+}) {
+  const series = useMemo(() => {
+    if (!op) return { calls: [] as SpanMetricSeries[], errors: [] as SpanMetricSeries[], p99: [] as SpanMetricSeries[] };
+    const { from, to } = timeRangeToNs(range);
+    const calls = op.sparkline ?? [];
+    const errs = op.errorsSparkline ?? [];
+    const p99s = op.p99Sparkline ?? [];
+    const n = Math.max(calls.length, errs.length, p99s.length);
+    if (n === 0 || to <= from) {
+      return { calls: [], errors: [], p99: [] };
+    }
+    const bucketNs = (to - from) / n;
+    const t = (i: number) => from + bucketNs * i + bucketNs / 2;
+    const pts = (arr: number[]) => arr.map((v, i) => ({ time: t(i), value: v }));
+    return {
+      calls: calls.length ? [{ groupKey: ['calls'], points: pts(calls) }] : [],
+      errors: errs.length ? [{ groupKey: ['errors'], points: pts(errs) }] : [],
+      p99: p99s.length ? [{ groupKey: ['p99 ms'], points: pts(p99s) }] : [],
+    };
+  }, [op, range]);
+
+  if (!op) return <Modal open={false} onClose={onClose} />;
+  const peakCalls = (op.sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
+  const totalErrs = (op.errorsSparkline ?? []).reduce((s, v) => s + v, 0);
+  const maxP99 = (op.p99Sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
+  const errCls = op.errorRate >= 5 ? 'err' : op.errorRate >= 1 ? 'warn' : '';
+  const tracesHref =
+    `/traces?service=${encodeURIComponent(service)}` +
+    `&search=${encodeURIComponent(op.name)}` +
+    `&range=${encodeURIComponent(encodeRange(range))}` +
+    `&view=list&rootOnly=false`;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={
+        <span className="mono" style={{ fontSize: 13 }}>
+          {op.name}
+          <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
+            ({service})
+          </span>
+        </span>
+      }
+    >
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 12, marginBottom: 14,
+      }}>
+        <OpMetricTile label="Calls" big={fmtNum(op.spanCount)}
+          sub={`peak ${fmtNum(peakCalls)} / bucket`}
+          series={series.calls} />
+        <OpMetricTile label="Errors" big={fmtNum(op.errorCount)}
+          sub={`${op.errorRate.toFixed(2)}% rate`}
+          subCls={errCls}
+          series={series.errors} />
+        <OpMetricTile label="P99 latency"
+          big={`${op.p99DurationMs.toFixed(0)} ms`}
+          sub={`peak ${maxP99.toFixed(0)} ms · avg ${op.avgDurationMs.toFixed(0)} ms`}
+          series={series.p99} unit="ms" />
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
+        Hover any chart to read the bucket value; crosshair syncs
+        across all three so you can correlate calls / errors /
+        p99 at the same instant. Total errors in window:
+        {' '}<strong>{fmtNum(totalErrs)}</strong>.
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <Link to={tracesHref} style={{ fontSize: 12, color: 'var(--accent2)' }}>
+          View traces →
+        </Link>
+      </div>
+    </Modal>
+  );
+}
+
+function OpMetricTile({
+  label, big, sub, subCls, series, unit,
+}: {
+  label: string; big: string; sub: string; subCls?: string;
+  series: SpanMetricSeries[]; unit?: string;
+}) {
+  return (
+    <div style={{
+      padding: '10px 12px', border: '1px solid var(--border)',
+      borderRadius: 6, background: 'var(--bg1)',
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 2 }}>{big}</div>
+      <div style={{
+        fontSize: 11, marginBottom: 8,
+        color: subCls === 'err' ? 'var(--err)' : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
+      }}>{sub}</div>
+      {series.length > 0 && series[0].points.length > 0 ? (
+        <MultiLineChart series={series} unit={unit} height={140} syncKey="op-detail" />
+      ) : (
+        <div style={{
+          height: 140, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', color: 'var(--text3)', fontSize: 11,
+        }}>no data in window</div>
+      )}
     </div>
   );
 }

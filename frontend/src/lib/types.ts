@@ -773,6 +773,12 @@ export interface OperationSummary {
   // the table as a small SVG so the operator can spot a slow-burn
   // vs. spike pattern without leaving the page.
   sparkline?: number[];
+  // v0.5.392 — companion error + p99 sparklines on the same
+  // 30-bucket grid. Drives the per-row metric drill-in modal on
+  // the service detail page; both are optional (older backends
+  // / raw-spans path may omit them).
+  errorsSparkline?: number[];
+  p99Sparkline?: number[];
 }
 
 // One 5-minute bucket from the service_summary_5m MV — used to render

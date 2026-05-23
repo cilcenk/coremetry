@@ -1270,16 +1270,31 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// GROUP BY + HAVING wrapper so the count reflects only traces
 		// surviving those checks; without them count(DISTINCT trace_id)
 		// would include rows the row-level query later hides.
+		//
+		// v0.5.378 — auto-HLL on wide windows. count(DISTINCT) /
+		// uniqExact is O(N) in trace_ids and starts to chew real CPU
+		// past ~24h. Switch the implementation to HyperLogLog for
+		// windows >24h so "Show total" returns sub-second on a 30d
+		// query at billion-span scale. Error margin ~1% — visible
+		// as "~12K" vs "exactly 12,547". The 24h cutoff keeps short-
+		// window operator-facing counts exactly precise where the
+		// extra cost is negligible.
+		var settings string
+		if !f.From.IsZero() && !f.To.IsZero() && f.To.Sub(f.From) > 24*time.Hour {
+			settings = "SETTINGS max_execution_time = 30, count_distinct_implementation = 'uniq'"
+		} else {
+			settings = "SETTINGS max_execution_time = 30"
+		}
 		var countSQL string
 		var countArgs []any
 		if havingSQL != "" {
 			countSQL = "SELECT count() FROM (SELECT trace_id FROM spans " + wc.sql() +
-				" GROUP BY trace_id" + havingSQL + ") SETTINGS max_execution_time = 30"
+				" GROUP BY trace_id" + havingSQL + ") " + settings
 			countArgs = append(countArgs, wc.args...)
 			countArgs = append(countArgs, havingArgs...)
 		} else {
 			countSQL = "SELECT count(DISTINCT trace_id) FROM spans " + wc.sql() +
-				" SETTINGS max_execution_time = 30"
+				" " + settings
 			countArgs = wc.args
 		}
 		if err := s.conn.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {

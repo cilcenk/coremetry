@@ -379,6 +379,14 @@ function ServiceView({ range }: { range: TimeRange }) {
   // only special-case the explicit "hide" value.
   const noiseShow = params.get('noise') !== 'hide';
   const setNoiseShow = (v: boolean) => setURLParam('noise', v ? null : 'hide');
+  // v0.5.412 — live traffic flow animation. URL-shareable
+  // (?flow=on); default off so the static topology stays the
+  // unsurprising default. When on, edges get a CSS-driven
+  // stroke-dashoffset animation whose duration is inversely
+  // proportional to log(calls) — busy edges flow visibly faster
+  // than idle ones.
+  const flowOn = params.get('flow') === 'on';
+  const setFlowOn = (v: boolean) => setURLParam('flow', v ? 'on' : null);
   // v0.5.312 — protocol filter. Empty = show all. Selected
   // = show only those. Comma-separated in URL for sharability.
   // Protocols come from edge.protocol: http / rpc / db / kafka /
@@ -562,6 +570,18 @@ function ServiceView({ range }: { range: TimeRange }) {
             onChange={e => setNoiseShow(e.target.checked)} />
           Show noise
         </label>
+        {/* v0.5.412 — live-flow toggle. Off by default; when on,
+            edges visually pulse along the path direction at a
+            speed proportional to call volume. Datadog Live
+            Topology pattern. */}
+        <label style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          fontSize: 12, color: 'var(--text2)',
+        }} title="Animate edges so the dashes flow parent → child. Speed proportional to call volume.">
+          <input type="checkbox" checked={flowOn}
+            onChange={e => setFlowOn(e.target.checked)} />
+          Live flow
+        </label>
         {/* v0.5.312 — protocol filter chips. Empty filter = all
             visible. Click a chip to scope; click again to unscope.
             Saved-view friendly via URL ?proto=http,db. */}
@@ -631,6 +651,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             onIncidentClick={(n) => setIncidentDrawerFor(n.name)}
             metaByService={metaByService}
             anchor={focus || undefined}
+            flowOn={flowOn}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} simplified={!!focus} />
@@ -1486,7 +1507,7 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor, colorFilter }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor, colorFilter, flowOn }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
@@ -1512,7 +1533,15 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   // as OpTopologySVG's colorFilter (v0.5.285) — gives FlowsView
   // a one-click "isolate one downstream chain" affordance.
   colorFilter?: string | null;
+  // v0.5.412 — live-flow toggle. When true, every visible edge's
+  // path gets the .topo-edge-flow class + an inline animation-
+  // duration inversely proportional to log(calls), so busy edges
+  // visibly flow faster than idle ones. Off keeps the prior
+  // static stroke behaviour.
+  flowOn?: boolean;
 }) {
+  // maxCalls is computed below near the layout block; we reuse it
+  // for the live-flow per-edge animation-duration mapping.
   const isNodeInColorFilter = (n: ServiceTopologyNode) =>
     !colorFilter || n.id === colorFilter;
   const isEdgeInColorFilter = (e: ServiceTopologyEdge) =>
@@ -1666,10 +1695,30 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                   fire-and-forget producer→queue→consumer
                   chains from synchronous HTTP/RPC strands.
                   Datadog / Honeycomb use the same convention. */}
+              {/* v0.5.412 — live-flow path. When flowOn the class
+                  + animation-duration override the static
+                  strokeDasharray (CSS rule sets a dash for the
+                  flow animation; .async kicks in for kafka so
+                  the existing async cue stays distinct). */}
               <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                 stroke={strokeOverride} strokeWidth={sw} fill="none"
                 markerEnd={`url(#arrow-${e.protocol})`} opacity={0.7}
-                strokeDasharray={e.protocol === 'kafka' ? '6 4' : undefined}>
+                className={flowOn
+                  ? 'topo-edge-flow' + (e.protocol === 'kafka' ? ' async' : '')
+                  : undefined}
+                style={flowOn ? {
+                  // Duration: 6s for the busiest edge, scaling up
+                  // to 30s for idle ones. log() compresses the
+                  // dynamic range so a 1000x traffic gap still
+                  // reads as "faster", not "blur vs static".
+                  animationDuration: `${
+                    Math.max(0.6, Math.min(30,
+                      30 / (Math.log10((Number(e.calls) || 1) + 1) /
+                            Math.log10((maxCalls || 1) + 1) * 10 + 0.5)
+                    )).toFixed(2)
+                  }s`,
+                } : undefined}
+                strokeDasharray={flowOn ? undefined : (e.protocol === 'kafka' ? '6 4' : undefined)}>
                 <title>{`${e.parentService} → ${e.childNode}\n${proto} · ${fmtNum(e.calls)} calls${errSuffix} · avg ${e.avgMs.toFixed(1)}ms · p99 ${e.p99Ms.toFixed(0)}ms · ${e.distinctLabels} endpoint(s)\n\n${e.topLabels.join('\n')}`}</title>
               </path>
               {showLabel && (

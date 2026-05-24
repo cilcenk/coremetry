@@ -233,6 +233,11 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 			return nil, err
 		}
 		e.NodeKind = "service"
+		// v0.5.407 — templating runs post-Scan so the stored
+		// labels stay raw (no MV migration), only the rendered
+		// edges show templated forms. Dedupe collapses concrete-
+		// id variants that map to the same template.
+		e.TopLabels = dedupTemplatedLabels(e.TopLabels)
 		out = append(out, e)
 	}
 	rows.Close()
@@ -299,6 +304,7 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 			&e.Protocol, &e.NodeKind, &e.TopLabels, &e.DistinctLabels, &e.Calls); err != nil {
 			return nil, err
 		}
+		e.TopLabels = dedupTemplatedLabels(e.TopLabels)
 		out = append(out, e)
 	}
 	return out, infra.Err()
@@ -856,6 +862,7 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 		if e.Calls > 0 {
 			e.ErrorRate = float64(e.Errors) / float64(e.Calls) * 100
 		}
+		e.TopLabels = dedupTemplatedLabels(e.TopLabels)
 		out = append(out, e)
 	}
 	return out, rows.Err()
@@ -931,6 +938,7 @@ func (s *Store) GetServiceTopologyEdges(ctx context.Context, from, to time.Time,
 			return nil, err
 		}
 		e.NodeKind = "service"
+		e.TopLabels = dedupTemplatedLabels(e.TopLabels)
 		out = append(out, e)
 	}
 	rows.Close()

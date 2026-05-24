@@ -81,6 +81,16 @@ type CHTopology struct {
 	// get?" without `SHOW CREATE TABLE` round-trips. Empty in
 	// standalone mode.
 	ShardPolicy map[string]string `json:"shardPolicy,omitempty"`
+	// v0.5.428 — bug-fix: distinguish "system.clusters probe failed"
+	// from "probe succeeded but returned no rows". Without this the
+	// frontend's misconfig banner false-positives when CH is busy
+	// enough to time out the probe (v0.5.424 raised the timeout
+	// from 3s to 8s, but operators still hit it intermittently).
+	// Empty when the probe completed cleanly (regardless of result
+	// count); populated with the error string when it failed. The
+	// frontend treats a populated error as "soft warning, can't
+	// confirm cluster" rather than the hard "misconfig" banner.
+	ClusterProbeError string `json:"clusterProbeError,omitempty"`
 }
 
 type CHClusterNode struct {
@@ -169,13 +179,20 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 		// Nodes result tripped the misconfig path. Bumped to
 		// 8s so transient load can't false-positive the banner.
 		if name := out.Topology.ConfiguredCluster; name != "" {
-			if rows, err := s.store.Conn().Query(ctx, `
+			rows, err := s.store.Conn().Query(ctx, `
 				SELECT cluster, shard_num, replica_num,
 				       host_name, host_address, port, is_local
 				FROM system.clusters
 				WHERE cluster = ?
 				ORDER BY shard_num, replica_num
-				SETTINGS max_execution_time = 8`, name); err == nil {
+				SETTINGS max_execution_time = 8`, name)
+			if err != nil {
+				// v0.5.428 — capture the probe failure so the
+				// frontend can distinguish it from a genuine
+				// misconfig (empty system.clusters). Common cause:
+				// CH busy enough to blow the 8s ceiling.
+				out.Topology.ClusterProbeError = err.Error()
+			} else {
 				for rows.Next() {
 					var n CHClusterNode
 					var isLocal uint8
@@ -185,6 +202,12 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 					}
 					n.IsLocal = isLocal == 1
 					out.Topology.Nodes = append(out.Topology.Nodes, n)
+				}
+				// rows.Err captures errors that surface only during
+				// iteration (network drop mid-stream). Same path as
+				// the query-level error so the banner is honest.
+				if rerr := rows.Err(); rerr != nil && out.Topology.ClusterProbeError == "" {
+					out.Topology.ClusterProbeError = rerr.Error()
 				}
 				rows.Close()
 			}

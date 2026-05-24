@@ -50,6 +50,12 @@ type Topology = {
   // v0.5.419 — resolved per-table shard policy. Operator audits
   // which expression each Distributed wrapper actually got.
   shardPolicy?: Record<string, string>;
+  // v0.5.428 — populated when the system.clusters probe itself
+  // failed (timeout / disconnect). Empty when the probe completed
+  // (whether or not it returned rows). Drives the soft "probe
+  // failed" banner so the hard "misconfigured" banner only fires
+  // on a genuine empty-result.
+  clusterProbeError?: string;
 };
 type CHHealth = {
   topology: Topology;
@@ -284,8 +290,13 @@ export default function AdminClickhousePage() {
 //              empty → misconfig (env var on the app side,
 //              <remote_servers> missing on CH side)
 function TopologyPanel({ topology: t }: { topology: Topology }) {
-  const misconfigured = !!t.configuredCluster && (!t.nodes || t.nodes.length === 0);
-  const bannerCls = misconfigured ? 'warn' : (t.mode === 'cluster' ? 'ok' : 'info');
+  // v0.5.428 — only flag misconfig when the probe actually
+  // returned an empty set. If the probe itself failed
+  // (timeout / disconnect), we can't make a misconfig claim —
+  // render a softer "probe failed" banner instead.
+  const probeFailed = !!t.clusterProbeError;
+  const misconfigured = !!t.configuredCluster && (!t.nodes || t.nodes.length === 0) && !probeFailed;
+  const bannerCls = misconfigured || probeFailed ? 'warn' : (t.mode === 'cluster' ? 'ok' : 'info');
   const bannerColor =
     bannerCls === 'ok' ? 'var(--ok)' :
     bannerCls === 'warn' ? 'var(--warn)' : 'var(--accent2)';
@@ -308,6 +319,14 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
               cluster <code className="mono">{t.configuredCluster}</code> is configured
               but not present in <code>system.clusters</code>. Check the CH server's
               <code> &lt;remote_servers&gt;</code> block.
+            </>
+          )}
+          {probeFailed && (
+            <>
+              <strong style={{ color: 'var(--warn)' }}>⚠ Cluster probe failed</strong> —
+              couldn't confirm cluster <code className="mono">{t.configuredCluster}</code>{' '}
+              via <code>system.clusters</code>: <span className="mono" style={{ fontSize: 11 }}>{t.clusterProbeError}</span>.
+              {' '}Usually transient (CH busy). Retry on next refresh.
             </>
           )}
           {!misconfigured && t.mode === 'cluster' && (

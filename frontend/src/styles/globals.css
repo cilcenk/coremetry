@@ -892,6 +892,29 @@ canvas { max-width: 100%; }
   100% { background-position: -200% 0; }
 }
 
+/* v0.5.412 — Topology live-flow animation. Edges marked with
+   .topo-edge-flow get their stroke-dasharray animated so the
+   dashes appear to flow along the path direction (parent →
+   child). Datadog Live Topology / Honeycomb Service Map use
+   the same idiom — the operator's eye reads "live traffic"
+   from the motion without needing to understand the chart.
+   Per-edge animation-duration set inline via style so busy
+   edges flow faster than idle ones. */
+@keyframes topo-edge-flow {
+  to { stroke-dashoffset: -16; }
+}
+.topo-edge-flow {
+  stroke-dasharray: 4 6;
+  animation-name: topo-edge-flow;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.topo-edge-flow.async {
+  /* Wider gap for messaging edges so the dashed-async cue
+     stays distinct from the flow tempo. */
+  stroke-dasharray: 6 8;
+}
+
 /* Theme toggle (top of sidebar) */
 .theme-toggle {
   background: transparent; border: 1px solid var(--border);

@@ -1759,9 +1759,50 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	if limit > 10000 {
 		limit = 10000
 	}
-	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d", cacheBucket(from, to), service, search, cluster, limit)
+	// v0.5.404 — optional prior-window comparison. When set to
+	// "prior", a second GetEndpoints runs against the immediately-
+	// preceding equal-length window (e.g. last 1h → previous 1h)
+	// and the values are merged onto the current rows by
+	// (service, path) key. Drives the "trend deltas" arrows on
+	// the table. Opt-in (doubles CH cost) so the default page-
+	// load stays a single scan.
+	compare := q.Get("compare") == "prior"
+	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d:cmp=%v", cacheBucket(from, to), service, search, cluster, limit, compare)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetEndpoints(r.Context(), from, to, service, search, cluster, limit)
+		rows, err := s.store.GetEndpoints(r.Context(), from, to, service, search, cluster, limit)
+		if err != nil {
+			return nil, err
+		}
+		if !compare || len(rows) == 0 {
+			return rows, nil
+		}
+		// Prior window: same length, shifted back by exactly the
+		// window width so the comparison stays apples-to-apples.
+		dur := to.Sub(from)
+		priorFrom := from.Add(-dur)
+		priorTo := from
+		priorRows, err := s.store.GetEndpoints(r.Context(), priorFrom, priorTo, service, search, cluster, limit)
+		if err != nil {
+			// Prior failure is non-fatal — return current rows
+			// without trends rather than 500'ing the page.
+			return rows, nil
+		}
+		// Index prior by (service, path) so we don't do an O(N²)
+		// linear scan when merging.
+		type key struct{ svc, path string }
+		idx := make(map[key]*chstore.EndpointRow, len(priorRows))
+		for i := range priorRows {
+			idx[key{priorRows[i].Service, priorRows[i].Path}] = &priorRows[i]
+		}
+		for i := range rows {
+			if p, ok := idx[key{rows[i].Service, rows[i].Path}]; ok {
+				rows[i].PriorCalls = p.Calls
+				rows[i].PriorErrors = p.Errors
+				rows[i].PriorAvgMs = p.AvgMs
+				rows[i].PriorP99Ms = p.P99Ms
+			}
+		}
+		return rows, nil
 	})
 }
 

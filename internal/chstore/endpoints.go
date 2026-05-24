@@ -49,6 +49,15 @@ type EndpointRow struct {
 	Http3xx uint64 `json:"http3xx,omitempty"`
 	Http4xx uint64 `json:"http4xx,omitempty"`
 	Http5xx uint64 `json:"http5xx,omitempty"`
+	// v0.5.404 — prior-window comparison values, populated only
+	// when the caller asked for trend deltas (?compare=prior).
+	// Frontend derives the % delta arrows + colour. Zero when
+	// the (service, path) didn't exist in the prior window — UI
+	// renders these as "NEW" instead of "+∞%".
+	PriorCalls   uint64  `json:"priorCalls,omitempty"`
+	PriorErrors  uint64  `json:"priorErrors,omitempty"`
+	PriorAvgMs   float64 `json:"priorAvgMs,omitempty"`
+	PriorP99Ms   float64 `json:"priorP99Ms,omitempty"`
 }
 
 // GetEndpoints aggregates RED stats per (service_name, derived

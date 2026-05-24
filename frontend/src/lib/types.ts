@@ -1440,6 +1440,15 @@ export interface EndpointRow {
   http3xx?: number;
   http4xx?: number;
   http5xx?: number;
+  // v0.5.404 — prior-window comparison values, populated when
+  // the caller asked for trend deltas (compare=prior). Frontend
+  // derives the % change + colour-coded arrow. Zero when the
+  // (service, path) didn't exist in the prior window — UI
+  // renders "NEW" instead of dividing by zero.
+  priorCalls?: number;
+  priorErrors?: number;
+  priorAvgMs?: number;
+  priorP99Ms?: number;
 }
 
 // Span-metrics-derived per-service RED rollup. Source: the

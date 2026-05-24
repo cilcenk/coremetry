@@ -52,6 +52,10 @@ export default function EndpointsPage() {
   // tail when they need it. Backend caps at 5000; values above
   // that get clamped server-side.
   const [limit, setLimit] = useState<number>(2000);
+  // v0.5.404 — prior-window comparison toggle. Off by default
+  // since it doubles backend CH scan cost; operator opts in
+  // when they want trend arrows next to each metric.
+  const [compare, setCompare] = useState<boolean>(false);
   // v0.5.387 — sparkline-click drill-in. Holds the row whose
   // trend was clicked; modal renders the three RED sparklines
   // (calls / errors / p99) side-by-side with their summary
@@ -70,10 +74,11 @@ export default function EndpointsPage() {
       search: search.trim() || undefined,
       cluster: cluster || undefined,
       limit,
+      compare: compare ? 'prior' : undefined,
     })
       .then(r => setRows(r ?? []))
       .catch(() => setRows(null));
-  }, [from, to, service, search, cluster, limit]);
+  }, [from, to, service, search, cluster, limit, compare]);
 
   // Cluster picker options — mirror Services page so symmetry is
   // intuitive for operators landing here after filtering there.
@@ -165,6 +170,13 @@ export default function EndpointsPage() {
             <option value={5000}>top 5000</option>
             <option value={10000}>All (10000)</option>
           </select>
+          <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+            title="Compare current window against the immediately-preceding equal-length window. Adds a second backend scan; off by default.">
+            <input type="checkbox"
+              checked={compare}
+              onChange={e => setCompare(e.target.checked)} />
+            Compare vs prior
+          </label>
         </div>
 
         {rows === undefined && <Spinner />}
@@ -229,14 +241,26 @@ export default function EndpointsPage() {
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>
                           {r.method || '—'}
                         </td>
-                        <td className="num mono">{fmtNum(r.calls)}</td>
-                        <td className="num mono">{fmtNum(r.errors)}</td>
+                        <td className="num mono">
+                          {fmtNum(r.calls)}
+                          {compare && <TrendDelta cur={r.calls} prior={r.priorCalls} kind="neutral" />}
+                        </td>
+                        <td className="num mono">
+                          {fmtNum(r.errors)}
+                          {compare && <TrendDelta cur={r.errors} prior={r.priorErrors} kind="lowerBetter" />}
+                        </td>
                         <td className="num mono">
                           <span className={`badge ${errCls}`}>{r.errorRate.toFixed(2)}%</span>
                         </td>
                         <td><StatusBreakdown r={r} /></td>
-                        <td className="num mono">{r.avgMs.toFixed(1)} ms</td>
-                        <td className="num mono">{r.p99Ms.toFixed(0)} ms</td>
+                        <td className="num mono">
+                          {r.avgMs.toFixed(1)} ms
+                          {compare && <TrendDelta cur={r.avgMs} prior={r.priorAvgMs} kind="lowerBetter" />}
+                        </td>
+                        <td className="num mono">
+                          {r.p99Ms.toFixed(0)} ms
+                          {compare && <TrendDelta cur={r.p99Ms} prior={r.priorP99Ms} kind="lowerBetter" />}
+                        </td>
                         <td>
                           <button
                             type="button"
@@ -498,6 +522,51 @@ function StatusBreakdown({ r }: { r: EndpointRow }) {
             border: '1px solid rgba(239,68,68,0.30)',
           }}>5xx {compactNum(s5)}</span>
       )}
+    </span>
+  );
+}
+
+// TrendDelta — small arrow + % change next to a metric value.
+// kind='lowerBetter' → red when current > prior (regression),
+//                       green when current < prior (improvement).
+// kind='neutral' → just direction tint, no value judgement
+//                  (used for calls — more traffic isn't inherently
+//                   bad, less isn't inherently good).
+// Threshold: |delta| < 5% renders as a neutral "·" so noise
+// doesn't paint every cell colorful. NEW = prior didn't exist.
+function TrendDelta({ cur, prior, kind }: {
+  cur: number; prior?: number; kind: 'lowerBetter' | 'neutral';
+}) {
+  if (prior === undefined || prior === null) return null;
+  if (prior === 0) {
+    if (cur === 0) return null;
+    return (
+      <span style={{
+        marginLeft: 4, fontSize: 9, padding: '0 4px',
+        borderRadius: 6, background: 'rgba(56,139,253,0.10)',
+        color: 'var(--accent2)',
+      }}>NEW</span>
+    );
+  }
+  const pct = ((cur - prior) / prior) * 100;
+  const abs = Math.abs(pct);
+  if (abs < 5) {
+    return (
+      <span style={{ marginLeft: 4, color: 'var(--text3)', fontSize: 9 }}>·</span>
+    );
+  }
+  const up = pct > 0;
+  const arrow = up ? '▲' : '▼';
+  let color = 'var(--text3)';
+  if (kind === 'lowerBetter') {
+    color = up ? 'var(--err)' : 'var(--ok)';
+  } else if (kind === 'neutral') {
+    color = up ? 'var(--accent2)' : 'var(--text3)';
+  }
+  return (
+    <span style={{ marginLeft: 4, fontSize: 9, color, fontFamily: 'ui-monospace, monospace' }}
+      title={`Prior window: ${prior.toLocaleString(undefined, { maximumFractionDigits: 1 })}`}>
+      {arrow}{abs.toFixed(0)}%
     </span>
   );
 }

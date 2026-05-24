@@ -19,7 +19,24 @@ import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 // filter + sortable columns + drill-throughs into /traces and
 // /service detail.
 
-type SortKey = 'service' | 'path' | 'calls' | 'errors' | 'errorRate' | 'avgMs' | 'p99Ms';
+type SortKey = 'service' | 'path' | 'calls' | 'errors' | 'errorRate' | 'avgMs' | 'p99Ms' | 'impact';
+
+// impactOf — composite "fix me first" score blending traffic,
+// latency and error rate. Matches the /service Operations table's
+// impactOf so the operator's mental model is consistent across
+// surfaces:
+//
+//   impact = calls × p99Ms × (1 + errorRate)
+//
+// p99Ms surfaces the slow endpoints; calls surfaces the heavy
+// ones; (1 + errorRate) doubles the score at 100% error so a
+// fully-broken endpoint beats a slow-but-healthy one even at
+// equal traffic. Used as the default sort affordance via the
+// "Sort by impact" preset button.
+function impactOf(r: EndpointRow): number {
+  const errFactor = 1 + (r.errorRate / 100);
+  return r.calls * r.p99Ms * errFactor;
+}
 
 export default function EndpointsPage() {
   const [params, setParams] = useSearchParams();
@@ -97,6 +114,7 @@ export default function EndpointsPage() {
         case 'path':      return dir * a.path.localeCompare(b.path);
         case 'calls':     return dir * (a.calls - b.calls);
         case 'errors':    return dir * (a.errors - b.errors);
+        case 'impact':    return dir * (impactOf(a) - impactOf(b));
         case 'errorRate': return dir * (a.errorRate - b.errorRate);
         case 'avgMs':     return dir * (a.avgMs - b.avgMs);
         case 'p99Ms':     return dir * (a.p99Ms - b.p99Ms);
@@ -177,6 +195,21 @@ export default function EndpointsPage() {
               onChange={e => setCompare(e.target.checked)} />
             Compare vs prior
           </label>
+          {/* v0.5.405 — fix-me-first preset. Sorts by composite
+              impact (calls × p99 × (1+errorRate)) so high-traffic
+              slow + erroring endpoints float to the top. */}
+          <button type="button"
+            onClick={() => { setSortKey('impact'); setSortDir('desc'); }}
+            title="Sort by composite impact (calls × p99 × (1+errorRate)) — fix-me-first list"
+            style={{
+              padding: '3px 8px', fontSize: 11, borderRadius: 4,
+              background: sortKey === 'impact' ? 'rgba(56,139,253,0.15)' : 'var(--bg2)',
+              border: '1px solid ' + (sortKey === 'impact' ? 'rgba(56,139,253,0.45)' : 'var(--border)'),
+              color: sortKey === 'impact' ? 'var(--accent2)' : 'var(--text2)',
+              cursor: 'pointer',
+            }}>
+            ⚡ Worst by impact
+          </button>
         </div>
 
         {rows === undefined && <Spinner />}

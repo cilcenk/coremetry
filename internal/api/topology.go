@@ -196,6 +196,13 @@ type ServiceTopologyNode struct {
 	HealthReason string `json:"healthReason,omitempty"` // short "2 open criticals" etc.
 	OpenCritical int    `json:"openCritical,omitempty"`
 	OpenWarning  int    `json:"openWarning,omitempty"`
+	// v0.5.409 — known 3rd-party SaaS / cloud annotation for
+	// external nodes. Populated from the edge's ExtDisplay /
+	// ExtKind (set by external_catalogue lookup). UI renders a
+	// human-readable display name + category badge instead of
+	// the raw `ext:api.stripe.com` hostname.
+	ExtDisplay string `json:"extDisplay,omitempty"`
+	ExtKind    string `json:"extKind,omitempty"`
 }
 
 // topologyExcludeKey persists the operator's curated list of
@@ -480,8 +487,15 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		}
 		edges = filtered
 		nodes := map[string]ServiceTopologyNode{}
-		addNode := func(id, kind string) {
-			if _, ok := nodes[id]; ok {
+		addNode := func(id, kind, extDisp, extKind string) {
+			if existing, ok := nodes[id]; ok {
+				// Same node referenced again — promote the
+				// annotation if any incoming edge carries one.
+				if existing.ExtDisplay == "" && extDisp != "" {
+					existing.ExtDisplay = extDisp
+					existing.ExtKind = extKind
+					nodes[id] = existing
+				}
 				return
 			}
 			name := id
@@ -493,11 +507,14 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
+			nodes[id] = ServiceTopologyNode{
+				ID: id, Name: name, Kind: kind,
+				ExtDisplay: extDisp, ExtKind: extKind,
+			}
 		}
 		for _, e := range edges {
-			addNode(e.ParentService, "service")
-			addNode(e.ChildNode, e.NodeKind)
+			addNode(e.ParentService, "service", "", "")
+			addNode(e.ChildNode, e.NodeKind, e.ExtDisplay, e.ExtKind)
 		}
 		nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
 		for _, n := range nodes {
@@ -671,8 +688,13 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 		}
 		edges = filtered
 		nodes := map[string]ServiceTopologyNode{}
-		addNode := func(id, kind string) {
-			if _, ok := nodes[id]; ok {
+		addNode := func(id, kind, extDisp, extKind string) {
+			if existing, ok := nodes[id]; ok {
+				if existing.ExtDisplay == "" && extDisp != "" {
+					existing.ExtDisplay = extDisp
+					existing.ExtKind = extKind
+					nodes[id] = existing
+				}
 				return
 			}
 			name := id
@@ -684,15 +706,18 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			nodes[id] = ServiceTopologyNode{ID: id, Name: name, Kind: kind}
+			nodes[id] = ServiceTopologyNode{
+				ID: id, Name: name, Kind: kind,
+				ExtDisplay: extDisp, ExtKind: extKind,
+			}
 		}
 		// Always include the root service as a node, even if it
 		// has no outgoing edges in this window (single-service
 		// flow case).
-		addNode(rootService, "service")
+		addNode(rootService, "service", "", "")
 		for _, e := range edges {
-			addNode(e.ParentService, "service")
-			addNode(e.ChildNode, e.NodeKind)
+			addNode(e.ParentService, "service", "", "")
+			addNode(e.ChildNode, e.NodeKind, e.ExtDisplay, e.ExtKind)
 		}
 		nodesOut := make([]ServiceTopologyNode, 0, len(nodes))
 		for _, n := range nodes {

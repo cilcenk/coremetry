@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -91,6 +92,15 @@ type ServiceTopologyEdge struct {
 	ErrorRate      float64  `json:"errorRate"` // (errors / calls) * 100
 	AvgMs          float64  `json:"avgMs"`   // window-wide avg ms (sum/calls)
 	P99Ms          float64  `json:"p99Ms"`   // conservative window p99
+	// v0.5.409 — known external SaaS / cloud annotation. When
+	// NodeKind == "external" and the peer host matches the
+	// external_catalogue, these carry the human-friendly display
+	// name + category (payments / messaging / cdn / etc.) so the
+	// frontend can render a colored badge. Empty when the peer
+	// isn't in the catalogue — UI falls back to the raw
+	// `ext:<peer>` label.
+	ExtDisplay     string   `json:"extDisplay,omitempty"`
+	ExtKind        string   `json:"extKind,omitempty"`
 }
 
 // RootFlow describes one business-level entry point: the root
@@ -888,6 +898,18 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 			e.ErrorRate = float64(e.Errors) / float64(e.Calls) * 100
 		}
 		e.TopLabels = dedupTemplatedLabels(e.TopLabels)
+		// v0.5.409 — annotate known 3rd-party external nodes.
+		// External node format from the aggregator is
+		// "ext:<peer_name>"; strip the prefix before looking up
+		// in the catalogue. NodeKind=="external" gate keeps the
+		// classifier from running on service/db/queue rows.
+		if e.NodeKind == "external" && strings.HasPrefix(e.ChildNode, "ext:") {
+			peer := strings.TrimPrefix(e.ChildNode, "ext:")
+			if disp, kind, ok := classifyExternal(peer); ok {
+				e.ExtDisplay = disp
+				e.ExtKind = kind
+			}
+		}
 		out = append(out, e)
 	}
 	return out, rows.Err()

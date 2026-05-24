@@ -50,6 +50,13 @@ export interface ServiceTopologyNode {
   healthReason?: string;
   openCritical?: number;
   openWarning?: number;
+  // v0.5.409 — known 3rd-party SaaS / cloud annotation. Set
+  // by backend external_catalogue lookup for nodes whose peer
+  // host matches a recognised vendor (Stripe, Twilio, AWS,
+  // Sentry, etc.). UI renders display + category badge in
+  // place of the raw hostname.
+  extDisplay?: string;
+  extKind?: string;
 }
 export interface ServiceTopologyEdge {
   parentService: string;
@@ -67,6 +74,12 @@ export interface ServiceTopologyEdge {
   errorRate: number;      // (errors / calls) * 100
   avgMs: number;          // window-wide average latency (ms)
   p99Ms: number;          // conservative window p99 (ms)
+  // v0.5.409 — known 3rd-party annotation. Populated by the
+  // backend external_catalogue lookup when the node represents
+  // a recognised SaaS / cloud endpoint (Stripe, Twilio, AWS,
+  // Sentry, etc.). Frontend renders a small category badge.
+  extDisplay?: string;    // "Stripe", "SendGrid", "AWS", ...
+  extKind?: string;       // "payments" | "messaging" | "email" | "cdn" | "auth" | "cloud" | "observability" | "ai" | ...
 }
 export interface ServiceTopologyResponse {
   nodes: ServiceTopologyNode[];

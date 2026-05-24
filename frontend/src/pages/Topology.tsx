@@ -1760,12 +1760,24 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                       <title>{tip}</title>
                     </rect>
                     <text x={10} y={22} fontSize={13} fontWeight={600} fill="var(--text)">
-                      {truncate(n.name, 24)}
+                      {/* v0.5.409 — external nodes recognised as
+                          known SaaS / cloud vendors show their
+                          display name ("Stripe") instead of the
+                          raw hostname. Unrecognised externals
+                          keep the original truncated name. */}
+                      {n.kind === 'external' && n.extDisplay
+                        ? truncate(n.extDisplay, 24)
+                        : truncate(n.name, 24)}
                     </text>
                     <text x={10} y={40} fontSize={10} fill="var(--text3)">
-                      {n.kind.toUpperCase()}
+                      {n.kind === 'external' && n.extKind
+                        ? n.extKind.toUpperCase()
+                        : n.kind.toUpperCase()}
                       {team && n.kind === 'service' && (
                         <tspan dx={6} fill="var(--text2)">· {truncate(team, 18)}</tspan>
+                      )}
+                      {n.kind === 'external' && n.extDisplay && (
+                        <tspan dx={6} fill="var(--text3)" fontSize={9}>· {truncate(n.name, 22)}</tspan>
                       )}
                     </text>
                   </>

@@ -462,16 +462,41 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 	}
 
 	// Infra pass — service → db/queue/external.
+	// v0.5.408 — DB / queue child_node now includes the host
+	// instance suffix (e.g. `db:postgres@10.0.1.5` or
+	// `db:postgres@orders-rds.aws.amazonaws.com`). Datadog /
+	// Honeycomb / Dynatrace separate instances of the same DB
+	// system because operationally they're different
+	// destinations — different replicas, different availability,
+	// different latency. Host resolved via the same coalesce
+	// chain db_summary_5m already uses (peer_service →
+	// server.address attr → net.peer.name attr). When all are
+	// empty the node falls back to the flat `db:<system>` form.
+	// External peer hosts keep the prior `ext:<service>` shape
+	// since peer_service IS the canonical external name.
 	if err := s.conn.Exec(ctx, `
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
 			 sum_duration_ns, p99_ms, errors, version)
 		WITH
+			coalesce(
+				nullIf(peer_service, ''),
+				nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+				nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+				''
+			) AS infra_host,
 			multiIf(
-				db_system  != '', concat('db:',    db_system),
-				msg_system != '', concat('queue:', msg_system),
-				peer_service != '' AND kind = 'client', concat('ext:', peer_service),
+				db_system  != '' AND infra_host != '',
+					concat('db:',    db_system, '@', infra_host),
+				db_system  != '',
+					concat('db:',    db_system),
+				msg_system != '' AND infra_host != '',
+					concat('queue:', msg_system, '@', infra_host),
+				msg_system != '',
+					concat('queue:', msg_system),
+				peer_service != '' AND kind = 'client',
+					concat('ext:', peer_service),
 				''
 			) AS child,
 			multiIf(

@@ -729,6 +729,25 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: file,
     }),
+  // v0.5.396 — dry-run preview before triggering import. Same
+  // file payload, read-only on the server; returns per-table
+  // {willAdd, willOverwrite, unchanged, onlyInDB} so the
+  // operator can confirm scope before replaying anything.
+  diffConfig: (file: File): Promise<{
+    format: string; version: number;
+    exportedAt: string; coremetryVersion?: string;
+    tables: Record<string, {
+      willAdd: string[];
+      willOverwrite: string[];
+      unchanged: number;
+      onlyInDB: number;
+    }>;
+  }> =>
+    request(`/api/admin/config/diff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: file,
+    }),
 
   // Runtime settings: LDAP / AD enterprise auth
   getLDAPSettings: () => get<LDAPConfig>(`/api/settings/ldap`),

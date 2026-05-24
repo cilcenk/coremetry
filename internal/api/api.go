@@ -492,6 +492,11 @@ func (s *Server) Start() error {
 	// config_iox.go for the table catalogue + merge semantics.
 	mux.HandleFunc("GET  /api/admin/config/export", auth.RequireRole(auth.RoleAdmin, s.exportConfig))
 	mux.HandleFunc("POST /api/admin/config/import", auth.RequireRole(auth.RoleAdmin, s.importConfig))
+	// Diff is read-only — takes the same file payload as import,
+	// returns {willAdd, willOverwrite, unchanged, onlyInDB} per
+	// table. UI surfaces it as a "Preview diff" affordance so the
+	// operator confirms before triggering the actual replay.
+	mux.HandleFunc("POST /api/admin/config/diff",   auth.RequireRole(auth.RoleAdmin, s.diffConfig))
 	// SQL playground — admin only; readonly=2 + 60s cap on the
 	// CH side, allow-list of SELECT/WITH/SHOW/DESCRIBE/EXPLAIN
 	// on the application side.

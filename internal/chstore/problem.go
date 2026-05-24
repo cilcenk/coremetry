@@ -678,6 +678,31 @@ type ProblemFilter struct {
 	Limit        int
 }
 
+// CountProblems returns the row count matching the same filter
+// shape ListProblems uses, without materialising the actual rows.
+// Drives the sidebar badge so the count stays truthful when there
+// are >200 open problems — the badge previously fetched 200 rows
+// and counted the array, capping the displayed value at 200.
+// FINAL on the spans is the same as the list path so the merged
+// dedup result is what counts; using a plain count() would
+// double-count rows mid-merge.
+func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, error) {
+	var wc whereClause
+	if f.Status       != "" { wc.add("status = ?", f.Status) }
+	if f.Service      != "" { wc.add("service = ?", f.Service) }
+	if f.Severity     != "" { wc.add("severity = ?", f.Severity) }
+	if f.RuleIDPrefix != "" { wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix) }
+	row := s.conn.QueryRow(ctx, `
+		SELECT count()
+		FROM problems FINAL `+wc.sql()+`
+		SETTINGS max_execution_time = 5`, wc.args...)
+	var n uint64
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, error) {
 	var wc whereClause
 	if f.Status       != "" { wc.add("status = ?", f.Status) }

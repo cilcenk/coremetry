@@ -33,15 +33,17 @@ export function useProblems(filter: {
   });
 }
 
-// Open-problem count for the sidebar badge — derived from the
-// same query but selected so a render of the badge only happens
-// when the count changes, not when the underlying array
-// reference changes.
+// Open-problem count for the sidebar badge. v0.5.398 — switched
+// from fetching limit=200 rows + counting the array to a
+// dedicated /api/problems/count endpoint. The old approach
+// capped the displayed badge at 200 silently on installs with
+// >200 open problems; the new path returns the true count via
+// a single COUNT(*) on the server.
 export function useOpenProblemCount() {
-  return useQuery<Problem[], Error, number>({
-    queryKey: keys.problems.list({ status: 'open', limit: 200 }),
-    queryFn: async () => (await api.problems({ status: 'open', limit: 200 })) ?? [],
-    select: (rows) => rows.length,
+  return useQuery<{ count: number }, Error, number>({
+    queryKey: ['problems', 'count', { status: 'open' }],
+    queryFn: async () => (await api.problemsCount({ status: 'open' })) ?? { count: 0 },
+    select: (r) => r.count,
     refetchInterval: 30_000,
     staleTime: 25_000,
   });

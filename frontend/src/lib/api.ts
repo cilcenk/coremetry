@@ -1107,6 +1107,12 @@ export const api = {
 
   problems: (params: { status?: string; service?: string; severity?: string; limit?: number }) =>
     get<Problem[] | null>(`/api/problems?${qs(params)}`),
+  // v0.5.398 — sidebar-badge count endpoint. Returns just the
+  // matching row count, no rows. Replaces the prior approach
+  // of fetching limit=200 and counting the array — the badge
+  // capped at 200 silently on installs with >200 open problems.
+  problemsCount: (params: { status?: string; service?: string; severity?: string } = {}) =>
+    get<{ count: number }>(`/api/problems/count?${qs(params)}`),
 
   // ── SLOs ─────────────────────────────────────────────────────────────────
   listSLOs: () => get<SLORow[] | null>('/api/slos'),

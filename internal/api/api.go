@@ -440,6 +440,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/services/{name}/callers",  s.svcCallers)
 	mux.HandleFunc("GET    /api/services/{name}/callees",  s.svcCallees)
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
+	mux.HandleFunc("GET    /api/problems/count",            s.countProblems)
 	mux.HandleFunc("POST   /api/problems/acknowledge",      auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
 	mux.HandleFunc("PATCH  /api/problems/{id}/assignee",    auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
 	// Unified triage inbox (v0.5.211) — merges Problems +
@@ -7812,6 +7813,29 @@ func (s *Server) acceptHeartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Problems & alert rules ───────────────────────────────────────────────────
+
+// countProblems — sidebar-badge-only endpoint. Returns just
+// {count: N} for the matching filter; cheap COUNT(*) query.
+// Sidebar previously fetched up to 200 problems and counted
+// the array, which capped the displayed badge at 200 — bad UX
+// on installs with 200+ open problems. 5s TTL matches the list
+// endpoint's cache so the badge and the list stay coherent.
+func (s *Server) countProblems(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := chstore.ProblemFilter{
+		Status: q.Get("status"), Service: q.Get("service"),
+		Severity: q.Get("severity"),
+	}
+	key := fmt.Sprintf("problems-count:status=%s:svc=%s:sev=%s",
+		f.Status, f.Service, f.Severity)
+	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
+		n, err := s.store.CountProblems(r.Context(), f)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"count": n}, nil
+	})
+}
 
 func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

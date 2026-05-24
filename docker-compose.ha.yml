@@ -1,0 +1,89 @@
+# docker-compose.ha.yml — v0.5.423
+#
+# Overlay for testing 2-replica Coremetry locally. Mirrors the
+# main `coremetry` service shape but with a different name +
+# host port + container_name so both can coexist in the same
+# docker network. Shared backends (ClickHouse, Redis, ES) are
+# inherited from docker-compose.yml; both pods talk to the same
+# CH database — pure stateless HA, no per-pod data.
+#
+# Bring up:
+#   docker compose -f docker-compose.yml -f docker-compose.ha.yml --profile demo up -d
+#
+# Tear down only the 2nd replica:
+#   docker compose -f docker-compose.ha.yml stop coremetry-2
+#   docker compose -f docker-compose.ha.yml rm -f coremetry-2
+#
+# What this exercises:
+#   - Redis-locked leader election (only ONE pod runs background
+#     aggregators / pullers at a time; the other waits)
+#   - publishConfigReload pub/sub (settings change in pod A
+#     propagates to pod B within milliseconds)
+#   - Shared L2 cache (Redis); each pod's L1 misses fall through
+#     to L2 instead of CH
+#   - Stateless session: JWT signed with the same secret on both
+#     pods, so a token issued by pod A is valid on pod B
+#
+# Not exercised (out of scope, would need an LB):
+#   - OTLP gRPC load balancing across replicas — the collector
+#     in the main compose forwards to `coremetry:4317` (single
+#     name). Apps' telemetry still lands on pod 1 only. Real
+#     HA install puts an L4 LB in front of the OTLP receiver.
+
+services:
+  # v0.5.423 — primary coremetry gets a shared network alias so
+  # the OTel collector's `dns:///coremetry-ha:4317` exporter
+  # round-robins across BOTH replicas. Without this, collector
+  # DNS resolves `coremetry` to pod 1 only and pod 2 never sees
+  # ingest spans — a hidden HA gap that test setups typically miss.
+  coremetry:
+    networks:
+      default:
+        aliases:
+          - coremetry-ha
+
+  coremetry-2:
+    image: coremetry:${VERSION:-latest}
+    container_name: coremetry-2
+    ports:
+      - "8089:8088"   # Web UI for the 2nd pod (browse this to
+                      # verify the JWT / settings hot-reload /
+                      # leader-election story end-to-end).
+    # Same alias so gRPC DNS resolver returns BOTH pods'
+    # addresses for `coremetry-ha` and round-robins ingest. To
+    # actually exercise the round-robin, update otel-collector-
+    # config.yaml's coremetry exporter to point at
+    # `dns:///coremetry-ha:4317` instead of `coremetry:4317`.
+    networks:
+      default:
+        aliases:
+          - coremetry-ha
+    environment:
+      # ── identical to the primary coremetry service ────────────
+      COREMETRY_CH_ADDR: "clickhouse:9000"
+      COREMETRY_CH_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      COREMETRY_JWT_SECRET: "${COREMETRY_JWT_SECRET:-}"
+      COREMETRY_INITIAL_ADMIN: "${COREMETRY_INITIAL_ADMIN:-admin@coremetry.local}"
+      COREMETRY_INITIAL_PASSWORD: "${COREMETRY_INITIAL_PASSWORD:-admin}"
+      COREMETRY_DEMO_MODE: "${COREMETRY_DEMO_MODE:-}"
+      COREMETRY_REDIS_URL: "redis://redis:6379/0"
+      COREMETRY_AI_API_KEY: "${COREMETRY_AI_API_KEY:-}"
+      COREMETRY_AI_MODEL: "${COREMETRY_AI_MODEL:-claude-sonnet-4-6}"
+      COREMETRY_LOGS_BACKEND: "elasticsearch"
+      COREMETRY_ES_ADDRESSES: "http://elasticsearch:9200"
+      COREMETRY_ES_INDEX: "logs-otel-default"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+      # Wait for the primary too — gives ClickHouse a chance to
+      # finish migration before pod 2 attempts the same idempotent
+      # CREATE TABLE IF NOT EXISTS dance.
+      coremetry:
+        condition: service_started
+    restart: unless-stopped

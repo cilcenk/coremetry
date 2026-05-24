@@ -711,6 +711,16 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	if f.RuleIDPrefix != "" { wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix) }
 	if f.Limit == 0 { f.Limit = 100 }
 
+	// v0.5.406 — bound the query at 8s. Without this CH could run
+	// the FINAL-merge + ORDER BY started_at scan to completion no
+	// matter how long it took; on installs with a deep problems
+	// table the read regularly tipped past the browser's 60s
+	// fetch timeout, the browser sent an AbortController cancel,
+	// and the upstream context cancel surfaced as repeated
+	// "context deadline cancelled" lines in coremetry logs.
+	// 8s is well under the browser ceiling but plenty for a
+	// healthy install — and bails out clearly with a CH error
+	// instead of stacking up doomed requests.
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
 		       value, threshold, status, description, assignee,
@@ -719,7 +729,8 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
 		FROM problems FINAL `+wc.sql()+`
 		ORDER BY started_at DESC
-		LIMIT ?`, append(wc.args, f.Limit)...)
+		LIMIT ?
+		SETTINGS max_execution_time = 8`, append(wc.args, f.Limit)...)
 	if err != nil { return nil, err }
 	defer rows.Close()
 

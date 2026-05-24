@@ -387,6 +387,12 @@ function ServiceView({ range }: { range: TimeRange }) {
   // than idle ones.
   const flowOn = params.get('flow') === 'on';
   const setFlowOn = (v: boolean) => setURLParam('flow', v ? 'on' : null);
+  // v0.5.415 — critical-path overlay. Highlights the longest
+  // p99-sum chain (root → leaf) in red so the operator sees
+  // the slowest request flow at a glance. Honeycomb BubbleUp
+  // pattern.
+  const critPathOn = params.get('crit') === 'on';
+  const setCritPathOn = (v: boolean) => setURLParam('crit', v ? 'on' : null);
   // v0.5.413 — time-shift slider. Lets the operator view the
   // topology AS OF X minutes ago without changing the underlying
   // time range. Datadog Replay / Honeycomb Now-bar pattern.
@@ -607,6 +613,18 @@ function ServiceView({ range }: { range: TimeRange }) {
             onChange={e => setFlowOn(e.target.checked)} />
           Live flow
         </label>
+        {/* v0.5.415 — critical-path toggle. Highlights the chain
+            of edges with the highest cumulative p99 latency
+            (root → leaf) in bold red overlay. Honeycomb
+            BubbleUp pattern. */}
+        <label style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          fontSize: 12, color: 'var(--text2)',
+        }} title="Trace the longest p99 chain (root → leaf) and highlight it in red. The slowest request flow stands out at a glance.">
+          <input type="checkbox" checked={critPathOn}
+            onChange={e => setCritPathOn(e.target.checked)} />
+          Critical path
+        </label>
         {/* v0.5.413 — time-shift slider. Slides the topology
             query window back in time without changing range
             duration. 0 = live; 60 = topology as of 1 hour ago.
@@ -717,6 +735,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             metaByService={metaByService}
             anchor={focus || undefined}
             flowOn={flowOn}
+            critPathOn={critPathOn}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} simplified={!!focus} />
@@ -1572,7 +1591,7 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor, colorFilter, flowOn }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor, colorFilter, flowOn, critPathOn }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
@@ -1604,9 +1623,71 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   // visibly flow faster than idle ones. Off keeps the prior
   // static stroke behaviour.
   flowOn?: boolean;
+  // v0.5.415 — critical-path toggle. When true, the SVG renders
+  // the chain of edges forming the highest cumulative-p99 path
+  // (root → leaf) in a bold red overlay. Honeycomb BubbleUp.
+  critPathOn?: boolean;
 }) {
   // maxCalls is computed below near the layout block; we reuse it
   // for the live-flow per-edge animation-duration mapping.
+  // v0.5.415 — pre-compute the critical-path edge set. DFS from
+  // root nodes (services that never appear as child_node)
+  // tracking the max-sum-p99 chain. Cap depth + visited-set to
+  // avoid quadratic blowup on cyclic graphs.
+  const critPathEdges = useMemo(() => {
+    if (!critPathOn) return null;
+    // Build adjacency map: parent → list of (childEdge, p99).
+    const adj = new Map<string, ServiceTopologyEdge[]>();
+    const incoming = new Set<string>();
+    for (const e of edges) {
+      const list = adj.get(e.parentService) ?? [];
+      list.push(e);
+      adj.set(e.parentService, list);
+      incoming.add(e.childNode);
+    }
+    // Roots = parent services that aren't anyone's child.
+    const roots: string[] = [];
+    for (const k of adj.keys()) {
+      if (!incoming.has(k)) roots.push(k);
+    }
+    // No clean root (every node has an incoming edge — likely a
+    // cycle). Fall back to all nodes with outgoing edges; the
+    // longest path will be found from one of them.
+    if (roots.length === 0) {
+      for (const k of adj.keys()) roots.push(k);
+    }
+    let bestSum = 0;
+    let bestChain: ServiceTopologyEdge[] = [];
+    const dfs = (node: string, sum: number, chain: ServiceTopologyEdge[], visited: Set<string>) => {
+      if (visited.has(node) || chain.length > 20) return; // depth cap
+      visited.add(node);
+      const out = adj.get(node);
+      if (!out || out.length === 0) {
+        // Leaf — finalise the chain.
+        if (sum > bestSum) {
+          bestSum = sum;
+          bestChain = chain.slice();
+        }
+        visited.delete(node);
+        return;
+      }
+      for (const e of out) {
+        chain.push(e);
+        dfs(e.childNode, sum + e.p99Ms, chain, visited);
+        chain.pop();
+      }
+      visited.delete(node);
+    };
+    for (const r of roots) dfs(r, 0, [], new Set());
+    if (bestChain.length === 0) return null;
+    // Edge identity for membership check (parent|child|protocol).
+    const set = new Set<string>();
+    for (const e of bestChain) {
+      set.add(`${e.parentService}|${e.childNode}|${e.protocol}`);
+    }
+    return set;
+  }, [critPathOn, edges]);
+
   const isNodeInColorFilter = (n: ServiceTopologyNode) =>
     !colorFilter || n.id === colorFilter;
   const isEdgeInColorFilter = (e: ServiceTopologyEdge) =>
@@ -1719,7 +1800,13 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const x1 = src.x + NODE_W, y1 = src.y + NODE_H / 2;
           const x2 = dst.x,          y2 = dst.y + NODE_H / 2;
           const mx = (x1 + x2) / 2;
-          const sw = 1 + (Number(e.calls) / maxCalls) * 3;
+          // v0.5.415 — crit-path edges get a stroke-width boost
+          // (×1.8) so the highlighted chain reads "this is THE
+          // problem" without needing the operator to interpret
+          // colour alone.
+          const swBase = 1 + (Number(e.calls) / maxCalls) * 3;
+          const inCritPathSw = critPathEdges?.has(`${e.parentService}|${e.childNode}|${e.protocol}`) ?? false;
+          const sw = inCritPathSw ? swBase * 1.8 : swBase;
           const color = protoColor(e.protocol);
           const showLabel = e.calls >= callThreshold;
           const proto = e.protocol.toUpperCase();
@@ -1737,9 +1824,14 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           // one. Bucketed: ≥5% errs = red, ≥1% errs = amber, else
           // fall back to the prior latency-based bucketing
           // (<250ms = base, 250-1000ms = amber, >1000ms = red).
+          // v0.5.415 — critical-path overrides all other tints
+          // with a saturated red so the slowest chain dominates
+          // the visual scan when the toggle is on.
+          const inCritPath = critPathEdges?.has(`${e.parentService}|${e.childNode}|${e.protocol}`) ?? false;
           let strokeOverride = color;
           const errRate = e.errorRate ?? 0;
-          if (errRate >= 5) strokeOverride = '#dc2626';
+          if (inCritPath) strokeOverride = '#dc2626';
+          else if (errRate >= 5) strokeOverride = '#dc2626';
           else if (errRate >= 1) strokeOverride = '#d97706';
           else if (e.p99Ms > 1000) strokeOverride = '#dc2626';
           else if (e.p99Ms > 250) strokeOverride = '#d97706';

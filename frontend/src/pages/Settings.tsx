@@ -3729,11 +3729,27 @@ function KibanaTab() {
 //     (per ORDER BY key). Local edits made AFTER the export win.
 //   - **replace** — bump every row's version to now() so imported
 //     state always wins. Opt-in, since it can shadow local edits.
+type DiffResult = {
+  tables: Record<string, {
+    willAdd: string[]; willOverwrite: string[];
+    unchanged: number; onlyInDB: number;
+  }>;
+  exportedAt: string;
+  coremetryVersion?: string;
+};
+
 function BackupTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [mode, setMode] = useState<'merge' | 'replace'>('merge');
   const [file, setFile] = useState<File | null>(null);
+  // v0.5.398 — diff preview before import. Operator picks a file,
+  // clicks "Preview diff" first, sees per-table {willAdd /
+  // willOverwrite / unchanged / onlyInDB} counts so they can
+  // confirm the import scope is what they expected. Clears on
+  // file change so a stale preview never lingers next to a new
+  // file selection.
+  const [diff, setDiff] = useState<DiffResult | null>(null);
 
   const onExport = async () => {
     setMsg(null); setBusy(true);
@@ -3759,9 +3775,29 @@ function BackupTab() {
         text: `Imported ${r.rows} rows · mode=${r.mode} · ${tables}${skipped}`,
       });
       setFile(null);
+      setDiff(null);
     } catch (e) {
       setMsg({ kind: 'err', text: humanize(e) });
     } finally { setBusy(false); }
+  };
+
+  const onPreviewDiff = async () => {
+    if (!file) return;
+    setMsg(null); setBusy(true);
+    try {
+      const r = await api.diffConfig(file);
+      setDiff(r as DiffResult);
+    } catch (e) {
+      setMsg({ kind: 'err', text: humanize(e) });
+    } finally { setBusy(false); }
+  };
+
+  // Reset preview when the operator picks a different file so
+  // the displayed diff never lies about the file in scope.
+  const onFileChange = (f: File | null) => {
+    setFile(f);
+    setDiff(null);
+    setMsg(null);
   };
 
   return (
@@ -3798,7 +3834,7 @@ function BackupTab() {
         <input
           type="file"
           accept="application/json,.json"
-          onChange={e => setFile(e.target.files?.[0] ?? null)}
+          onChange={e => onFileChange(e.target.files?.[0] ?? null)}
           disabled={busy}
           style={{ marginBottom: 12, display: 'block' }}
         />
@@ -3827,19 +3863,86 @@ function BackupTab() {
           over newer local edits. Use this for clean-install
           restore.
         </label>
-        <Button
-          variant="primary"
-          disabled={busy || !file}
-          onClick={onImport}
-        >
-          {busy ? 'Working…' : 'Upload + apply'}
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button
+            disabled={busy || !file}
+            onClick={onPreviewDiff}
+            title="Dry-run: shows what would be added / overwritten / left alone, no writes.">
+            {busy ? 'Working…' : 'Preview diff'}
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy || !file}
+            onClick={onImport}
+          >
+            {busy ? 'Working…' : 'Upload + apply'}
+          </Button>
+        </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
           Live settings hot-reload after the import — no restart
           needed. Unknown tables in the file are skipped (forward-
           compat). Truncate is never performed; import always
           inserts on top of what's there.
         </div>
+
+        {/* v0.5.416 — dry-run diff result panel. Per-table:
+            +willAdd  · ~willOverwrite · =unchanged · DB-only.
+            Operator confirms scope before triggering import. */}
+        {diff && (
+          <div style={{
+            marginTop: 14, padding: '10px 12px',
+            border: '1px solid var(--border)', borderRadius: 6,
+            background: 'var(--bg1)',
+            fontSize: 12,
+          }}>
+            <div style={{
+              fontSize: 10, fontWeight: 700,
+              textTransform: 'uppercase', letterSpacing: 0.4,
+              color: 'var(--text2)', marginBottom: 8,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span>Diff preview</span>
+              <span style={{ color: 'var(--text3)', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+                from {diff.exportedAt || '?'}
+                {diff.coremetryVersion && ` · ${diff.coremetryVersion}`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {Object.entries(diff.tables).length === 0 && (
+                <span style={{ color: 'var(--text3)' }}>No tables in this file matched the catalogue.</span>
+              )}
+              {Object.entries(diff.tables).map(([t, d]) => (
+                <div key={t} style={{
+                  display: 'grid',
+                  gridTemplateColumns: '180px repeat(4, 1fr)',
+                  gap: 8, padding: '3px 0',
+                  fontFamily: 'ui-monospace, monospace', fontSize: 11,
+                  borderBottom: '1px solid var(--bg2)',
+                }}>
+                  <span style={{ color: 'var(--text)', fontWeight: 600 }}>{t}</span>
+                  <span style={{ color: d.willAdd.length > 0 ? 'var(--ok)' : 'var(--text3)' }}
+                    title={d.willAdd.length > 0 ? d.willAdd.slice(0, 20).join('\n') : 'no new rows'}>
+                    +{d.willAdd.length} new
+                  </span>
+                  <span style={{ color: d.willOverwrite.length > 0 ? 'var(--warn, #facc15)' : 'var(--text3)' }}
+                    title={d.willOverwrite.length > 0 ? d.willOverwrite.slice(0, 20).join('\n') : 'no overwrites'}>
+                    ~{d.willOverwrite.length} overwrite
+                  </span>
+                  <span style={{ color: 'var(--text3)' }}>
+                    ={d.unchanged} same
+                  </span>
+                  <span style={{ color: 'var(--text3)' }}
+                    title="Rows present in DB but not in the file. Import never deletes — these stay.">
+                    {d.onlyInDB} DB-only
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8, lineHeight: 1.4 }}>
+              <strong>+new</strong>: rows in file that don't exist locally · <strong>~overwrite</strong>: rows whose version differs (merge mode keeps newer; replace mode forces file) · <strong>=same</strong>: identical · <strong>DB-only</strong>: kept as-is, import never deletes.
+            </div>
+          </div>
+        )}
       </div>
 
       {msg && (

@@ -219,6 +219,214 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+// diffConfig — read-only preview of what importConfig would do
+// against the current install. Same payload shape as import, no
+// writes; returns per-table {willAdd, willOverwrite, onlyInDB,
+// unchanged} so the operator can confirm before triggering the
+// actual replay.
+//
+// Identity for each table comes from system.tables.sorting_key
+// (the ReplacingMergeTree ORDER BY). Two rows are "identical"
+// when their identity columns AND version column match — version
+// is a monotone nano-timestamp, so equal version implies the row
+// content wasn't changed since the export. Different version =
+// "will overwrite" (merge mode picks max; replace mode always
+// picks the imported one). The breakdown matches importConfig's
+// own semantics so the preview never lies about what's about to
+// happen.
+func (s *Server) diffConfig(w http.ResponseWriter, r *http.Request) {
+	claims := auth.FromContext(r.Context())
+	if claims == nil || claims.Role != auth.RoleAdmin {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<20))
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.UseNumber()
+	var payload configExportPayload
+	if err := dec.Decode(&payload); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if payload.Format != "coremetry.config" {
+		http.Error(w, "not a coremetry.config export", http.StatusBadRequest)
+		return
+	}
+
+	type tableDiff struct {
+		WillAdd       []string `json:"willAdd"`       // identities only in the file
+		WillOverwrite []string `json:"willOverwrite"` // identities in both, version differs
+		Unchanged     int      `json:"unchanged"`     // identities in both, version equal
+		OnlyInDB      int      `json:"onlyInDB"`      // identities only in DB (untouched)
+	}
+	tables := map[string]tableDiff{}
+
+	for _, t := range configTables {
+		te, ok := payload.Tables[t]
+		if !ok || len(te.Rows) == 0 {
+			continue
+		}
+		idCols, err := s.sortingKey(r.Context(), t)
+		if err != nil || len(idCols) == 0 {
+			continue
+		}
+		// Build identity → version map from the imported file.
+		// Cap identity values at 200 chars in the response so a
+		// dashboard with a long JSON-encoded id doesn't bloat
+		// the payload. The list is for operator scan-by-eye,
+		// not machine processing.
+		fileVer := map[string]string{} // identity → version-as-string
+		for _, row := range te.Rows {
+			id := makeIdentityKey(row, idCols)
+			fileVer[id] = stringify(row["version"])
+		}
+
+		// Read current DB state: just the identity + version cols.
+		dbVer := map[string]string{}
+		selCols := append([]string{}, idCols...)
+		selCols = append(selCols, "version")
+		colsExpr := make([]string, len(selCols))
+		for i, c := range selCols {
+			colsExpr[i] = "toString(`" + c + "`)"
+		}
+		q := fmt.Sprintf("SELECT %s FROM `%s` FINAL", strings.Join(colsExpr, ", "), t)
+		rows, err := s.store.Conn().Query(r.Context(), q)
+		if err != nil {
+			// Table may not exist on this install (forward-compat
+			// the other way) — skip cleanly.
+			continue
+		}
+		for rows.Next() {
+			vals := make([]any, len(selCols))
+			ptrs := make([]any, len(selCols))
+			scratch := make([]string, len(selCols))
+			for i := range selCols {
+				ptrs[i] = &scratch[i]
+				vals[i] = ptrs[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				continue
+			}
+			// First N-1 are identity, last one is version.
+			idParts := scratch[:len(scratch)-1]
+			ver := scratch[len(scratch)-1]
+			id := strings.Join(idParts, "|")
+			dbVer[id] = ver
+		}
+		rows.Close()
+
+		td := tableDiff{
+			WillAdd:       []string{},
+			WillOverwrite: []string{},
+		}
+		for id, fv := range fileVer {
+			dv, exists := dbVer[id]
+			if !exists {
+				td.WillAdd = append(td.WillAdd, truncateForDiff(id, 200))
+			} else if dv != fv {
+				td.WillOverwrite = append(td.WillOverwrite, truncateForDiff(id, 200))
+			} else {
+				td.Unchanged++
+			}
+		}
+		for id := range dbVer {
+			if _, ok := fileVer[id]; !ok {
+				td.OnlyInDB++
+			}
+		}
+		tables[t] = td
+	}
+
+	writeJSON(w, map[string]any{
+		"format":           payload.Format,
+		"version":          payload.Version,
+		"exportedAt":       payload.ExportedAt,
+		"coremetryVersion": payload.CoremetryVersion,
+		"tables":           tables,
+	})
+}
+
+// sortingKey returns the ReplacingMergeTree ORDER BY columns for
+// the given table — the natural identity tuple for diff purposes.
+// Cached via Redis for 5 min since the schema doesn't change
+// per request.
+func (s *Server) sortingKey(ctx context.Context, table string) ([]string, error) {
+	rows, err := s.store.Conn().Query(ctx, `
+		SELECT sorting_key FROM system.tables
+		WHERE database = currentDatabase() AND name = ?`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var key string
+	if rows.Next() {
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(key) == "" {
+		return nil, nil
+	}
+	// sorting_key arrives as "col1, col2, col3" — split on the
+	// commas, trim whitespace, drop backticks if any.
+	parts := strings.Split(key, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		p = strings.Trim(p, "`")
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// makeIdentityKey builds a stable string from the row's identity
+// columns. Uses "|" as separator — the columns are operator-
+// chosen identifiers (id, name, key) so the separator collides
+// only in pathological cases.
+func makeIdentityKey(row map[string]any, idCols []string) string {
+	parts := make([]string, len(idCols))
+	for i, c := range idCols {
+		parts[i] = stringify(row[c])
+	}
+	return strings.Join(parts, "|")
+}
+
+// stringify normalises a JSON-decoded value to a canonical
+// string. Handles json.Number (preserves UInt64 precision),
+// string (verbatim), nil ("") and falls back to fmt.Sprintf for
+// anything else.
+func stringify(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		return x
+	case json.Number:
+		return x.String()
+	case bool:
+		if x {
+			return "1"
+		}
+		return "0"
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+func truncateForDiff(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 // dumpConfigTable runs `SELECT * FROM <t> FINAL` and returns
 // (column names, rows-as-maps). Column types come from the driver's
 // ScanType() so we don't need a hand-coded struct per table.

@@ -405,14 +405,15 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	if noiseShow {
 		minCallPct = 0
 	}
-	// Cache key includes the rounded window so concurrent requests
-	// over the same minute share one CH round-trip. Exclude list
-	// folded in via FNV digest (v0.5.187) — previously we used
-	// just the length which caused cross-set cache poisoning when
-	// two different 1-element sets collided.
-	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s:noise=%v:mp=%.2f",
+	// v0.5.414 — opt-in prior-window comparison drives the
+	// what-changed banner. Frontend sends ?compare=prior when
+	// the live view is on; backend fetches the same-length
+	// immediately-preceding window and merges values onto the
+	// existing rows.
+	comparePrior := r.URL.Query().Get("compare") == "prior"
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s:noise=%v:mp=%.2f:cmp=%v",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
-		excludeKeyDigest(exclude), noiseShow, minCallPct)
+		excludeKeyDigest(exclude), noiseShow, minCallPct, comparePrior)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
@@ -422,6 +423,30 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, edgeCap)
 		if err != nil {
 			return nil, err
+		}
+		// v0.5.414 — prior-window enrichment. Same query against
+		// the immediately-preceding equal-length window; values
+		// merged onto current rows by (parent, child, protocol).
+		// Prior fetch failure is non-fatal: page renders current
+		// edges without trend data rather than 500'ing.
+		if comparePrior && len(edges) > 0 {
+			dur := to.Sub(from)
+			priorEdges, perr := s.store.ReadServiceTopologyAgg(r.Context(), from.Add(-dur), from, edgeCap)
+			if perr == nil {
+				type k struct{ p, c, pr string }
+				idx := make(map[k]*chstore.ServiceTopologyEdge, len(priorEdges))
+				for i := range priorEdges {
+					idx[k{priorEdges[i].ParentService, priorEdges[i].ChildNode, priorEdges[i].Protocol}] = &priorEdges[i]
+				}
+				for i := range edges {
+					if pe, ok := idx[k{edges[i].ParentService, edges[i].ChildNode, edges[i].Protocol}]; ok {
+						edges[i].PriorCalls = pe.Calls
+						edges[i].PriorErrors = pe.Errors
+						edges[i].PriorAvgMs = pe.AvgMs
+						edges[i].PriorP99Ms = pe.P99Ms
+					}
+				}
+			}
 		}
 		// Drop "external" edges whose peer_service points at a
 		// known instrumented service — those already show as

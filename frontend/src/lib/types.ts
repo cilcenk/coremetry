@@ -79,6 +79,13 @@ export interface ServiceTopologyEdge {
   errorRate: number;      // (errors / calls) * 100
   avgMs: number;          // window-wide average latency (ms)
   p99Ms: number;          // conservative window p99 (ms)
+  // v0.5.414 — prior-window comparison values. Populated when
+  // /api/topology is called with ?compare=prior. Drives the
+  // what-changed banner; UI computes the % delta client-side.
+  priorCalls?: number;
+  priorErrors?: number;
+  priorAvgMs?: number;
+  priorP99Ms?: number;
   // v0.5.409 — known 3rd-party annotation. Populated by the
   // backend external_catalogue lookup when the node represents
   // a recognised SaaS / cloud endpoint (Stripe, Twilio, AWS,

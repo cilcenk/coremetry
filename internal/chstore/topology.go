@@ -111,6 +111,14 @@ type ServiceTopologyEdge struct {
 	// the underlying spans.
 	ParentEnv      string   `json:"parentEnv,omitempty"`
 	ChildEnv       string   `json:"childEnv,omitempty"`
+	// v0.5.414 — prior-window comparison values for the
+	// what-changed banner. Populated only when the API caller
+	// asks for the compare=prior variant. Frontend derives the
+	// delta + surfaces edges whose errorRate or p99 jumped ≥2×.
+	PriorCalls     uint64   `json:"priorCalls,omitempty"`
+	PriorErrors   uint64   `json:"priorErrors,omitempty"`
+	PriorAvgMs    float64  `json:"priorAvgMs,omitempty"`
+	PriorP99Ms    float64  `json:"priorP99Ms,omitempty"`
 }
 
 // RootFlow describes one business-level entry point: the root

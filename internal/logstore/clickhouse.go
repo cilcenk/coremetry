@@ -136,10 +136,11 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		       toStartOfInterval(time, INTERVAL %d SECOND) AS bucket,
 		       count() AS c
 		FROM logs
-		WHERE %s AND (%s) IN (SELECT g FROM top_groups)
+		WHERE %s AND (%s) GLOBAL IN (SELECT g FROM top_groups)
 		GROUP BY g, bucket
 		ORDER BY g, bucket
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 30,
+		         distributed_product_mode = 'global'`,
 		groupExpr, wc,
 		groupExpr, bucketSec, wc, groupExpr)
 	// The IN-subquery references the same args twice (top_groups

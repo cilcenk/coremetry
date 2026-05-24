@@ -209,7 +209,7 @@ func (s *Store) ServiceCallers(
 		  toUnixTimestamp64Nano(max(c.time))               AS last_seen_ns
 		FROM child c
 		INNER JOIN spans p ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
-		WHERE p.trace_id IN (SELECT trace_id FROM child)
+		WHERE p.trace_id GLOBAL IN (SELECT trace_id FROM child)
 		  AND p.time >= ? AND p.time <= ?
 		  AND p.service_name != ?
 		GROUP BY caller_service, caller_host, caller_instance, client_address, user_agent
@@ -217,7 +217,8 @@ func (s *Store) ServiceCallers(
 		LIMIT ?
 		SETTINGS max_execution_time = 30,
 		         join_use_nulls = 0,
-		         optimize_skip_unused_shards = 1`,
+		         optimize_skip_unused_shards = 1,
+		         distributed_product_mode = 'global'`,
 		service, from, to,
 		from, to, service,
 		limit,

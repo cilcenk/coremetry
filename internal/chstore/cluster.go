@@ -60,11 +60,55 @@ func (s *Store) engine(base, name string) string {
 // locality; an operator can override to e.g. `cityHash64(trace_id)`
 // so spans belonging to the same trace co-locate on one shard
 // (faster `GROUP BY trace_id`, slightly less even row-per-shard).
+//
+// Deprecated: callers should use shardKeyFor(tableName) instead so
+// trace-locality expressions don't get applied to tables that
+// lack a `trace_id` column. Kept as a thin wrapper for any non-
+// table-aware caller.
 func (s *Store) shardKey() string {
 	if k := strings.TrimSpace(s.cfg.ShardKey); k != "" {
 		return k
 	}
 	return "rand()"
+}
+
+// tablesWithoutTraceID — high-volume tables whose schema does not
+// include a `trace_id` column. metric_points (metric-keyed) and
+// profiles (pprof-keyed) lack trace_id because their data model
+// is independent of trace context. If the operator configured a
+// shard expression that references trace_id, applying it to these
+// tables errors with CH 47 (UNKNOWN_IDENTIFIER) at the
+// Distributed wrapper CREATE — instead, fall back to rand() so
+// the wrapper still creates (random distribution is the right
+// policy for these tables anyway; trace-locality has no meaning
+// when there's no trace).
+var tablesWithoutTraceID = map[string]bool{
+	"metric_points": true,
+	"profiles":      true,
+}
+
+// shardKeyFor returns the shard expression for a specific table.
+// When the operator's configured ShardKey references trace_id but
+// `name` doesn't carry that column, falls back to rand(). The
+// substring check on "trace_id" is safe because trace_id is a
+// distinctive column name — operator-supplied expressions that
+// genuinely need a different trace-shaped column would name it
+// explicitly.
+//
+// v0.5.418 — operator-reported: CREATE TABLE DDL exec failed with
+// CH 47 missing-column 'trace_id' after setting
+// COREMETRY_CH_SHARD_KEY=cityHash64(trace_id). Root cause was
+// the unconditional application of the expression across every
+// high-volume Distributed wrapper.
+func (s *Store) shardKeyFor(name string) string {
+	expr := strings.TrimSpace(s.cfg.ShardKey)
+	if expr == "" {
+		return "rand()"
+	}
+	if tablesWithoutTraceID[name] && strings.Contains(expr, "trace_id") {
+		return "rand()"
+	}
+	return expr
 }
 
 // LocalTableName returns the `<name>_local` flavour when in
@@ -212,7 +256,7 @@ func (s *Store) adaptDDL(sql string) []string {
 	if hv && (kind == "table" || kind == "mv") {
 		wrapper := fmt.Sprintf(
 			"CREATE TABLE IF NOT EXISTS %s%s AS %s ENGINE = Distributed(`%s`, currentDatabase(), %s, %s)",
-			name, on, target, s.cfg.ClusterName, target, s.shardKey())
+			name, on, target, s.cfg.ClusterName, target, s.shardKeyFor(name))
 		out = append(out, wrapper)
 	}
 

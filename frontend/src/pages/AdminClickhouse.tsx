@@ -47,6 +47,9 @@ type Topology = {
   localReplicated: number;
   plainMergeTree: number;
   zookeeperConnected: boolean;
+  // v0.5.419 — resolved per-table shard policy. Operator audits
+  // which expression each Distributed wrapper actually got.
+  shardPolicy?: Record<string, string>;
 };
 type CHHealth = {
   topology: Topology;
@@ -377,6 +380,51 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* v0.5.419 — resolved per-table shard policy. Operator
+          confirms which expression each Distributed wrapper got
+          without `SHOW CREATE TABLE` round-trips. */}
+      {t.shardPolicy && Object.keys(t.shardPolicy).length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700,
+            textTransform: 'uppercase', letterSpacing: 0.4,
+            color: 'var(--text2)', marginBottom: 6,
+          }}>
+            Shard policy (resolved)
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Table</th>
+                  <th>Shard expression</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(t.shardPolicy)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([table, expr]) => (
+                    <tr key={table}>
+                      <td className="mono">{table}</td>
+                      <td className="mono" style={{
+                        fontSize: 11,
+                        color: expr === 'rand()' ? 'var(--text3)' : 'var(--text)',
+                      }}>{expr}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+            Resolution: <code>COREMETRY_CH_SHARD_KEY</code> env (uniform override) →
+            built-in Datadog-style per-table defaults → <code>rand()</code>.
+            Change requires a one-time <code>COREMETRY_CH_RESET_SCHEMA=1</code> boot
+            since <code>ENGINE = Distributed(…, shard_key)</code> freezes the
+            expression at table creation.
+          </div>
         </div>
       )}
     </div>

@@ -76,6 +76,11 @@ type CHTopology struct {
 	// bug that should surface here, not via a CREATE TABLE failure
 	// six hours into ingest.
 	ZooKeeperConnected bool           `json:"zookeeperConnected"`
+	// v0.5.419 — resolved per-table shard expression map. Lets
+	// the operator audit "which shard key did each table actually
+	// get?" without `SHOW CREATE TABLE` round-trips. Empty in
+	// standalone mode.
+	ShardPolicy map[string]string `json:"shardPolicy,omitempty"`
 }
 
 type CHClusterNode struct {
@@ -186,6 +191,12 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 			out.Topology.Mode = "cluster"
 		} else {
 			out.Topology.Mode = "standalone"
+		}
+
+		// v0.5.419 — resolved shard policy per table. Only
+		// populated in cluster mode (standalone has no shards).
+		if out.Topology.Mode == "cluster" {
+			out.Topology.ShardPolicy = s.store.ShardPolicy()
 		}
 
 		// Engine breakdown — count Distributed, Replicated*, and

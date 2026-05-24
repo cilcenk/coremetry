@@ -87,28 +87,107 @@ var tablesWithoutTraceID = map[string]bool{
 	"profiles":      true,
 }
 
-// shardKeyFor returns the shard expression for a specific table.
-// When the operator's configured ShardKey references trace_id but
-// `name` doesn't carry that column, falls back to rand(). The
-// substring check on "trace_id" is safe because trace_id is a
-// distinctive column name — operator-supplied expressions that
-// genuinely need a different trace-shaped column would name it
-// explicitly.
+// defaultShardPolicy — v0.5.419. Per-table shard expressions matching
+// the Datadog / Honeycomb architectural pattern. Used when the
+// operator hasn't set COREMETRY_CH_SHARD_KEY explicitly (env path
+// remains an override that wins for every table — back-compat).
 //
-// v0.5.418 — operator-reported: CREATE TABLE DDL exec failed with
-// CH 47 missing-column 'trace_id' after setting
-// COREMETRY_CH_SHARD_KEY=cityHash64(trace_id). Root cause was
-// the unconditional application of the expression across every
-// high-volume Distributed wrapper.
+// Rationale per table:
+//   - spans / logs / metric_points / profiles → service_name:
+//     primary reads are service-filtered (/services, /service/X,
+//     /endpoints, /topology). Co-locating by service means each
+//     query hits ONE shard instead of fanning out to N.
+//   - trace_summary_5m / trace_summary_1d → trace_id: trace
+//     lookup table; primary read is `WHERE trace_id=X`. trace_id
+//     locality means the lookup is a single-shard scan.
+//   - service_summary_5m / db_summary_5m / db_caller_summary_5m
+//     → service_name: aggregate per-service rollups, same logic
+//     as the spans table.
+//   - topology_edges_5m / topology_op_edges_5m → parent_service:
+//     the read API filters by parent_service ("services I depend
+//     on"); cluster-local locality preserves that.
+//
+// Tables not in this map fall back to rand() — even distribution,
+// no locality. Safe default for tables where read patterns aren't
+// dominantly filter-by-one-column.
+//
+// At billion-span scale + 1000+ services, the per-table policy
+// compounds: every service-filtered query saves N-1 shard hits;
+// every trace-id lookup saves N-1 shard hits. Network + CPU +
+// coordinator-memory all drop proportionally.
+var defaultShardPolicy = map[string]string{
+	"spans":                "cityHash64(service_name)",
+	"logs":                 "cityHash64(service_name)",
+	"metric_points":        "cityHash64(service_name)",
+	"profiles":             "cityHash64(service_name)",
+	"trace_summary_5m":     "cityHash64(trace_id)",
+	"trace_summary_1d":     "cityHash64(trace_id)",
+	"service_summary_5m":   "cityHash64(service_name)",
+	"topology_edges_5m":    "cityHash64(parent_service)",
+	"topology_op_edges_5m": "cityHash64(parent_service)",
+	"db_summary_5m":        "cityHash64(service_name)",
+	"db_caller_summary_5m": "cityHash64(service_name)",
+}
+
+// shardKeyFor returns the shard expression for a specific table.
+// Resolution order (highest wins):
+//
+//  1. cfg.ShardKey env — when set, applies to ALL tables (legacy
+//     uniform behaviour). Falls back to rand() for tables whose
+//     schema doesn't carry the referenced column (currently the
+//     trace_id-missing check, see tablesWithoutTraceID).
+//
+//  2. defaultShardPolicy[name] — Datadog-style per-table default.
+//     Optimises for the dominant read pattern of each table.
+//
+//  3. rand() — last resort. Even distribution, no locality.
+//
+// v0.5.418 — initial bug-fix: fall back to rand() when the
+// configured trace_id expression hits a table without that
+// column.
+// v0.5.419 — extended to per-table policy. Operator-asked: at
+// billion-span scale + 1000+ services, the architectural
+// optimisation is worth a one-time RESET_SCHEMA.
+// ShardPolicy returns the resolved (table → expression) map for
+// every table that gets a Distributed wrapper in cluster mode.
+// Exposed for /admin/clickhouse so the operator can audit which
+// shard expression each table actually got — saves them from
+// `SHOW CREATE TABLE` round-trips in CH.
+func (s *Store) ShardPolicy() map[string]string {
+	out := map[string]string{}
+	if !s.clusterMode() {
+		return out
+	}
+	// Iterate every high-volume table + every MV variant we know
+	// about so the resolved map matches what the migration loop
+	// would write.
+	for name := range highVolumeTables {
+		out[name] = s.shardKeyFor(name)
+	}
+	for name := range defaultShardPolicy {
+		// defaultShardPolicy covers MVs that aren't in
+		// highVolumeTables (e.g. trace_summary_*); union them in.
+		if _, ok := out[name]; !ok {
+			out[name] = s.shardKeyFor(name)
+		}
+	}
+	return out
+}
+
 func (s *Store) shardKeyFor(name string) string {
-	expr := strings.TrimSpace(s.cfg.ShardKey)
-	if expr == "" {
-		return "rand()"
+	if envExpr := strings.TrimSpace(s.cfg.ShardKey); envExpr != "" {
+		// Env override — applies to all tables, with the
+		// trace_id-missing safety fallback to keep the
+		// migration from erroring out.
+		if tablesWithoutTraceID[name] && strings.Contains(envExpr, "trace_id") {
+			return "rand()"
+		}
+		return envExpr
 	}
-	if tablesWithoutTraceID[name] && strings.Contains(expr, "trace_id") {
-		return "rand()"
+	if expr, ok := defaultShardPolicy[name]; ok {
+		return expr
 	}
-	return expr
+	return "rand()"
 }
 
 // LocalTableName returns the `<name>_local` flavour when in

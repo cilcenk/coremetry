@@ -68,7 +68,7 @@ type EndpointRow struct {
 // frameworks that don't auto-decorate kind. We now keep any
 // span with a real path that isn't an OUTGOING call.
 func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, cluster string, limit int) ([]EndpointRow, error) {
-	if limit <= 0 || limit > 5000 {
+	if limit <= 0 || limit > 10000 {
 		limit = 500
 	}
 	if from.IsZero() {

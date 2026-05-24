@@ -163,6 +163,7 @@ export default function EndpointsPage() {
             <option value={1000}>top 1000</option>
             <option value={2000}>top 2000</option>
             <option value={5000}>top 5000</option>
+            <option value={10000}>All (10000)</option>
           </select>
         </div>
 

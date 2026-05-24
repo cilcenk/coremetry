@@ -1744,11 +1744,14 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	cluster := q.Get("cluster")
 	limit := parseInt(q.Get("limit"), 500)
 	// v0.5.389 — operator-reported: top-N was undercounting the
-	// long tail. Cap raised to 5000 (matches the store's own
-	// clamp); the 30-bucket-sparkline-per-row payload is still
-	// bounded (5000 × 3 × 30 floats ≈ 4MB JSON worst case).
-	if limit > 5000 {
-		limit = 5000
+	// long tail. v0.5.395 — raised to 10000 + frontend exposes
+	// an "All (10000)" option for the long-tail-heavy installs.
+	// Payload is still bounded (10000 × 3 sparkline series × 30
+	// buckets ≈ 7-8MB JSON worst case) but the operator opts
+	// into the larger fetch by picking the explicit option, so
+	// it can't sneak up on a casual page load.
+	if limit > 10000 {
+		limit = 10000
 	}
 	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d", cacheBucket(from, to), service, search, cluster, limit)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {

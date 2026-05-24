@@ -1164,7 +1164,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// "30d returns the same as 7d" symptom an operator
 		// reported in v0.5.376.
 		wc.add(
-			"trace_id IN (SELECT DISTINCT trace_id FROM spans"+
+			"trace_id GLOBAL IN (SELECT DISTINCT trace_id FROM spans"+
 				" WHERE service_name = ?"+
 				" AND time >= ? AND time <= ?"+
 				")",
@@ -1409,7 +1409,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		SETTINGS
 		  max_execution_time = 60,
 		  optimize_read_in_order = 1,
-		  optimize_aggregation_in_order = 1`
+		  optimize_aggregation_in_order = 1,
+		  distributed_product_mode = 'global'`
 
 	// Argument order matches placeholder order in the SQL:
 	//   1. SELECT projections (extra attribute columns)

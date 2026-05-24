@@ -1637,14 +1637,22 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           // still lives on the Operation deep-dive tab.
           const focused = !!anchor;
           const match = isEdgeMatch(e);
-          // Latency-tint: edges with p99 > 1s shift toward red so a
-          // slow strand stands out even before reading the label.
-          // Bucketed: <250ms = base color, 250-1000ms = amber tint,
-          // >1000ms = red tint (alpha-blended via stroke override).
+          // v0.5.393 — error-aware tint dominates the latency tint.
+          // Operator-facing rule: an edge that's BREAKING (≥1%
+          // error rate) is more urgent than a slow-but-healthy
+          // one. Bucketed: ≥5% errs = red, ≥1% errs = amber, else
+          // fall back to the prior latency-based bucketing
+          // (<250ms = base, 250-1000ms = amber, >1000ms = red).
           let strokeOverride = color;
-          if (e.p99Ms > 1000) strokeOverride = '#dc2626';
+          const errRate = e.errorRate ?? 0;
+          if (errRate >= 5) strokeOverride = '#dc2626';
+          else if (errRate >= 1) strokeOverride = '#d97706';
+          else if (e.p99Ms > 1000) strokeOverride = '#dc2626';
           else if (e.p99Ms > 250) strokeOverride = '#d97706';
           const p99 = e.p99Ms > 0 ? ` · p99 ${e.p99Ms.toFixed(0)}ms` : '';
+          const errSuffix = (e.errors ?? 0) > 0
+            ? ` · ${fmtNum(e.errors)} err${errRate >= 0.01 ? ` (${errRate.toFixed(1)}%)` : ''}`
+            : '';
           const inColor = isEdgeInColorFilter(e);
           return (
             <g key={i} style={{
@@ -1655,7 +1663,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
               <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                 stroke={strokeOverride} strokeWidth={sw} fill="none"
                 markerEnd={`url(#arrow-${e.protocol})`} opacity={0.7}>
-                <title>{`${e.parentService} → ${e.childNode}\n${proto} · ${fmtNum(e.calls)} calls · avg ${e.avgMs.toFixed(1)}ms · p99 ${e.p99Ms.toFixed(0)}ms · ${e.distinctLabels} endpoint(s)\n\n${e.topLabels.join('\n')}`}</title>
+                <title>{`${e.parentService} → ${e.childNode}\n${proto} · ${fmtNum(e.calls)} calls${errSuffix} · avg ${e.avgMs.toFixed(1)}ms · p99 ${e.p99Ms.toFixed(0)}ms · ${e.distinctLabels} endpoint(s)\n\n${e.topLabels.join('\n')}`}</title>
               </path>
               {showLabel && (
                 <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4}
@@ -1671,6 +1679,13 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                   fontSize={9} fill="var(--text3)" textAnchor="middle"
                   style={{ pointerEvents: 'none' }}>
                   {fmtNum(e.calls)} calls{p99}
+                </text>
+              )}
+              {showLabel && errRate >= 1 && (
+                <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 20}
+                  fontSize={9} fill={strokeOverride} textAnchor="middle"
+                  style={{ pointerEvents: 'none', fontWeight: 600 }}>
+                  {fmtNum(e.errors)} err ({errRate.toFixed(1)}%)
                 </text>
               )}
             </g>
@@ -2018,6 +2033,21 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
           Close
         </button>
       </div>
+      {/* v0.5.393 — RED tile row. Surfaces the error count + rate
+          plus avg / p99 latency for the edge so the operator
+          doesn't have to hover the SVG path to read the numbers. */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+        gap: 8, marginBottom: 10,
+      }}>
+        <EdgeStat label="Errors"
+          value={fmtNum(edge.errors ?? 0)}
+          sub={edge.calls > 0 ? `${(edge.errorRate ?? 0).toFixed(2)}%` : ''}
+          cls={(edge.errorRate ?? 0) >= 5 ? 'err' : (edge.errorRate ?? 0) >= 1 ? 'warn' : ''} />
+        <EdgeStat label="Avg latency" value={`${edge.avgMs.toFixed(1)} ms`} />
+        <EdgeStat label="P99 latency" value={`${edge.p99Ms.toFixed(0)} ms`}
+          cls={edge.p99Ms > 1000 ? 'err' : edge.p99Ms > 250 ? 'warn' : ''} />
+      </div>
       {!simplified && (
         <>
           <ul style={{ margin: 0, padding: '0 0 0 16px', fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace' }}>
@@ -2094,6 +2124,32 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
 // for triage instead of jumping to /problems and losing the
 // neighbourhood context. Each row links to the full Problem view
 // for deep triage; the drawer itself is intentionally read-only.
+// EdgeStat — compact KPI cell for the EdgeDetailPanel header row.
+// Tiny variant of the KPI pattern used across the app; keeps the
+// drawer dense so the operator can scan errors / latency without
+// scrolling.
+function EdgeStat({ label, value, sub, cls }: {
+  label: string; value: string; sub?: string; cls?: string;
+}) {
+  return (
+    <div style={{
+      padding: '6px 10px', border: '1px solid var(--border)',
+      borderRadius: 4, background: 'var(--bg1)',
+    }}>
+      <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 14, fontWeight: 600, marginTop: 2,
+        color: cls === 'err' ? 'var(--err)' : cls === 'warn' ? 'var(--warn)' : 'var(--text)',
+      }}>{value}</div>
+      {sub && (
+        <div style={{ fontSize: 10, color: 'var(--text3)' }}>{sub}</div>
+      )}
+    </div>
+  );
+}
+
 function IncidentDrawer({ service, onClose }: {
   service: string;
   onClose: () => void;

@@ -15,6 +15,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -2899,7 +2900,17 @@ func (s *Server) getLogsSignificantPatterns(w http.ResponseWriter, r *http.Reque
 		// a wedged ES would keep the request open until the
 		// frontend's 60s fetch budget cancels it, surfacing as
 		// "context deadline exceeded" from the operator's view.
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		// v0.5.424 — env-tunable handler deadline. Default 15s
+		// works for most installs; billion-doc production can
+		// bump to 25-45s. Should be < the frontend's 60s fetch
+		// budget so the browser doesn't time out first.
+		hd := 15 * time.Second
+		if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_PATTERNS_DEADLINE")); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				hd = d
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), hd)
 		defer cancel()
 		hits, err := s.logs.SignificantPatterns(ctx, curStart, baseStart, now, topN)
 		// Graceful timeout: serve empty patterns + a hint flag

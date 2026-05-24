@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +18,36 @@ import (
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 )
+
+// v0.5.424 — operator-tunable defaults for ES significant_text at
+// production scale. Both helpers parse the env var once per
+// query (cheap: simple atoi), so a config change takes effect on
+// next /api/logs/patterns request without a pod restart.
+
+// shardSizeFromEnv returns COREMETRY_LOGS_PATTERNS_SHARD_SIZE
+// (positive int) or the default. Lower = faster + less accurate;
+// billion-doc installs that still time out can drop to e.g. 5000
+// to keep the per-shard scoring window tight.
+func shardSizeFromEnv(def int) int {
+	if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_PATTERNS_SHARD_SIZE")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+// esTimeoutFromEnv returns COREMETRY_LOGS_PATTERNS_ES_TIMEOUT
+// (e.g. "20s") or the default. ES soft-timeout — when reached,
+// ES returns whatever it has computed so far + timed_out:true,
+// instead of letting the connection hang to the caller deadline.
+// Should be ≤ the handler context deadline (default 15s).
+func esTimeoutFromEnv(def string) string {
+	if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_PATTERNS_ES_TIMEOUT")); v != "" {
+		return v
+	}
+	return def
+}
 
 // ESConfig is the operator-supplied connection + field-mapping spec for
 // an external Elasticsearch cluster. Field paths default to OTel-spec
@@ -919,7 +950,11 @@ func (s *ESStore) SignificantPatterns(
 	aggs := map[string]any{
 		"sample": map[string]any{
 			"sampler": map[string]any{
-				"shard_size": 20000,
+				// v0.5.424 — operator-tunable for production scale.
+				// 20k is the common-case default; billion-doc
+				// installs can drop further if even 20k spills
+				// the coordinator. Lower = faster + less accurate.
+				"shard_size": shardSizeFromEnv(20000),
 			},
 			"aggs": map[string]any{
 				"patterns": map[string]any{
@@ -954,7 +989,11 @@ func (s *ESStore) SignificantPatterns(
 		// caller knows the result is partial. Picked 10s — well
 		// under the frontend's 60s fetch timeout, comfortable
 		// margin over the warmer's 25s tick.
-		"timeout": "10s",
+		// v0.5.424 — operator-tunable. Default 10s works for
+		// most installs; billion-doc production can bump to
+		// 20-25s. Caller-side handler deadline is the upper
+		// bound; this should be ≤ that.
+		"timeout": esTimeoutFromEnv("10s"),
 	})
 	if err != nil {
 		return nil, err

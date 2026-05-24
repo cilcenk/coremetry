@@ -161,6 +161,13 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 		// name actually exists on the server. Empty result with
 		// a non-empty ConfiguredCluster = misconfig (env var set,
 		// but remote_servers.xml has no matching block).
+		// v0.5.424 — operator-reported: misconfig banner fired
+		// on a healthy cluster where CREATE TABLE ON CLUSTER
+		// clearly worked. Root cause: 3s timeout was too tight
+		// on a busy production CH; the system.clusters query
+		// silently failed (err != nil branch) and the empty
+		// Nodes result tripped the misconfig path. Bumped to
+		// 8s so transient load can't false-positive the banner.
 		if name := out.Topology.ConfiguredCluster; name != "" {
 			if rows, err := s.store.Conn().Query(ctx, `
 				SELECT cluster, shard_num, replica_num,
@@ -168,7 +175,7 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 				FROM system.clusters
 				WHERE cluster = ?
 				ORDER BY shard_num, replica_num
-				SETTINGS max_execution_time = 3`, name); err == nil {
+				SETTINGS max_execution_time = 8`, name); err == nil {
 				for rows.Next() {
 					var n CHClusterNode
 					var isLocal uint8

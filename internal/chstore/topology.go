@@ -545,9 +545,14 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 					concat('db:',    db_system, '@', infra_host),
 				db_system  != '',
 					concat('db:',    db_system),
-				msg_system != '' AND infra_host != '',
+				-- v0.5.411 — messaging branch now scoped to non-
+				-- consumer spans only. Consumer spans get their
+				-- own queue → consumer pass below so the edge
+				-- direction reads producer → queue → consumer
+				-- instead of both arrows pointing at the queue.
+				msg_system != '' AND kind != 'consumer' AND infra_host != '',
 					concat('queue:', msg_system, '@', infra_host),
-				msg_system != '',
+				msg_system != '' AND kind != 'consumer',
 					concat('queue:', msg_system),
 				peer_service != '' AND kind = 'client',
 					concat('ext:', peer_service),
@@ -608,6 +613,75 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		bucketStart.Unix(), end.Unix(),
 	); err != nil {
 		return fmt.Errorf("topology bucket infra pass: %w", err)
+	}
+
+	// v0.5.411 — Async messaging consumer pass: queue → consumer
+	// service. The producer → queue half is captured by the
+	// infra pass above (kind != 'consumer' branch). This pass
+	// finalises the chain so the graph reads
+	//     producer-service → queue:<system>@<host> → consumer
+	// matching Datadog / Honeycomb / Dynatrace messaging topology
+	// rendering. queue is the parent (source) here; consumer's
+	// service_name is the destination. Protocol stays 'kafka' so
+	// the frontend can render messaging edges dashed (async
+	// semantics) regardless of which half of the chain it sees.
+	if err := s.conn.Exec(ctx, `
+		INSERT INTO topology_edges_5m
+			(time_bucket, parent_service, child_node, node_kind,
+			 protocol, top_labels, distinct_labels, calls,
+			 sum_duration_ns, p99_ms, errors,
+			 parent_env, child_env, version)
+		WITH
+			coalesce(
+				nullIf(peer_service, ''),
+				nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+				nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+				''
+			) AS infra_host,
+			multiIf(
+				msg_system != '' AND infra_host != '',
+					concat('queue:', msg_system, '@', infra_host),
+				msg_system != '',
+					concat('queue:', msg_system),
+				''
+			) AS queue_source,
+			-- Consumer's env (the receiver) — child_env on the
+			-- queue→consumer edge so the operator sees which env
+			-- consumes from a queue when multiple envs share one.
+			coalesce(
+				nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
+				nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
+				nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
+				''
+			) AS c_env
+		SELECT
+			toDateTime(?, 'UTC')                                AS time_bucket,
+			queue_source                                        AS parent_service,
+			service_name                                        AS child_node,
+			'service'                                           AS node_kind,
+			'kafka'                                             AS protocol,
+			topK(5)(name)                                       AS top_labels,
+			toUInt32(uniqExact(name))                           AS distinct_labels,
+			toUInt64(count())                                   AS calls,
+			toUInt64(sum(duration))                             AS sum_duration_ns,
+			toFloat64(quantileExact(0.99)(duration)) / 1e6      AS p99_ms,
+			toUInt64(countIf(status_code = 'error'))            AS errors,
+			''                                                  AS parent_env,
+			any(c_env)                                          AS child_env,
+			toUInt64(?)                                         AS version
+		FROM spans
+		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+		  AND kind = 'consumer'
+		  AND msg_system != ''
+		  AND queue_source != ''
+		GROUP BY parent_service, child_node
+		SETTINGS max_execution_time = 60,
+		         distributed_product_mode = 'global'`,
+		bucketStart.Unix(),
+		uint64(time.Now().UnixNano()),
+		bucketStart.Unix(), end.Unix(),
+	); err != nil {
+		return fmt.Errorf("topology bucket async messaging pass: %w", err)
 	}
 	return nil
 }

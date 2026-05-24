@@ -1660,9 +1660,16 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                  opacity: match && inColor ? 1 : 0.18,
                }}
                onClick={() => onEdgeClick(e)}>
+              {/* v0.5.411 — async messaging edges (Kafka /
+                  RabbitMQ / SQS via msg_system) render dashed
+                  so the operator's eye distinguishes
+                  fire-and-forget producer→queue→consumer
+                  chains from synchronous HTTP/RPC strands.
+                  Datadog / Honeycomb use the same convention. */}
               <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                 stroke={strokeOverride} strokeWidth={sw} fill="none"
-                markerEnd={`url(#arrow-${e.protocol})`} opacity={0.7}>
+                markerEnd={`url(#arrow-${e.protocol})`} opacity={0.7}
+                strokeDasharray={e.protocol === 'kafka' ? '6 4' : undefined}>
                 <title>{`${e.parentService} → ${e.childNode}\n${proto} · ${fmtNum(e.calls)} calls${errSuffix} · avg ${e.avgMs.toFixed(1)}ms · p99 ${e.p99Ms.toFixed(0)}ms · ${e.distinctLabels} endpoint(s)\n\n${e.topLabels.join('\n')}`}</title>
               </path>
               {showLabel && (

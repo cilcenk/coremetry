@@ -510,14 +510,35 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 	var aggs map[string]any
 	if groupField != "" {
+		// v0.5.396 — operator-reported: stacked severity histogram
+		// undercounts the total vs the table below. Two ES-side
+		// causes:
+		//   1. size=20 truncated when severity values varied beyond
+		//      the canonical FATAL/ERROR/WARN/INFO/DEBUG/TRACE set
+		//      (some shippers emit numeric strings, mixed casing).
+		//   2. default shard_size (1.5×size = 30) lost low-frequency
+		//      severities at the shard-level filter on big indices.
+		// Bumped to size=50 + shard_size=500 so the terms agg
+		// captures effectively every distinct severity. We also
+		// now surface sum_other_doc_count as a synthetic "OTHER"
+		// series — anything still beyond the cap (pathological
+		// installs with custom levels) renders as a small grey
+		// band rather than vanishing.
 		aggs = map[string]any{
 			"groups": map[string]any{
 				"terms": map[string]any{
-					"field": groupField,
-					"size":  20,
+					"field":      groupField,
+					"size":       50,
+					"shard_size": 500,
 				},
 				"aggs": map[string]any{"buckets": dateAgg},
 			},
+			// Top-level un-grouped histogram alongside the grouped
+			// one — gives us the true total per bucket so the
+			// caller can synthesise the OTHER band as
+			// (total - sum-of-groups) per bucket. ES returns both
+			// in a single round-trip; bandwidth cost is small.
+			"total_buckets": dateAgg,
 		}
 	} else {
 		aggs = map[string]any{"buckets": dateAgg}
@@ -581,11 +602,44 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 	groups, _ := raw.Aggregations["groups"].(map[string]any)
 	bs, _ := groups["buckets"].([]any)
-	out := make([]LogSeries, 0, len(bs))
+	out := make([]LogSeries, 0, len(bs)+1)
 	for _, b := range bs {
 		bm, _ := b.(map[string]any)
 		name, _ := bm["key"].(string)
 		out = append(out, LogSeries{Name: name, Points: parseBuckets(bm["buckets"])})
+	}
+	// v0.5.396 — synthesise "OTHER" band from
+	// (total - sum-of-named-groups) per bucket. Catches anything
+	// the size=50 terms agg still missed PLUS the
+	// sum_other_doc_count (docs ES partially saw but didn't
+	// surface as their own bucket). Without this, the stacked
+	// chart visibly undercounts vs the total table — which is
+	// what the operator hit.
+	totalPts := parseBuckets(raw.Aggregations["total_buckets"])
+	if len(totalPts) > 0 {
+		// Index each named series by timestamp for fast lookup.
+		byT := make(map[int64]int64, len(totalPts))
+		for _, s := range out {
+			for _, p := range s.Points {
+				byT[p.T] += p.V
+			}
+		}
+		otherPts := make([]LogPoint, 0, len(totalPts))
+		var otherTotal int64
+		for _, p := range totalPts {
+			rem := p.V - byT[p.T]
+			if rem < 0 {
+				rem = 0 // float rounding paranoia (shouldn't happen with int64)
+			}
+			otherPts = append(otherPts, LogPoint{T: p.T, V: rem})
+			otherTotal += rem
+		}
+		// Only emit the OTHER band if it carries non-zero counts —
+		// the legend stays clean on the common case where the
+		// canonical levels cover everything.
+		if otherTotal > 0 {
+			out = append(out, LogSeries{Name: "OTHER", Points: otherPts})
+		}
 	}
 	return out, nil
 }

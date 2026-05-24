@@ -28,6 +28,7 @@ type Evaluator struct {
 	logs     logstore.Store // v0.5.242 — drives the saved-search log alert path
 	interval time.Duration
 	lock     cache.Lock
+	leader   *cache.LeaderHolder // v0.5.429
 	notifier *notify.Notifier
 
 	// breachSince tracks when a (rule, service) tuple first
@@ -62,6 +63,7 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 		store:        store,
 		interval:     interval,
 		lock:         lock,
+		leader:       cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval)),
 		notifier:     notifier,
 		breachSince:  make(map[breachKey]time.Time),
 		lastResolved: make(map[breachKey]time.Time),
@@ -83,6 +85,7 @@ func (e *Evaluator) Start(ctx context.Context) {
 		log.Printf("[evaluator] seed built-in rules: %v", err)
 	}
 
+	e.leader.Start(ctx)
 	t := time.NewTicker(e.interval)
 	defer t.Stop()
 
@@ -98,20 +101,13 @@ func (e *Evaluator) Start(ctx context.Context) {
 	}
 }
 
-// runIfLeader skips the tick when another replica holds the lock. Lease
-// is 2× the tick interval so a crashed leader is recovered quickly while
-// still leaving headroom for slow runs.
+// runIfLeader skips the tick when another replica holds leadership.
+// v0.5.429 — long-lived LeaderHolder; one pod owns the worker for
+// its lifetime + refreshes the lease in the background.
 func (e *Evaluator) runIfLeader(ctx context.Context) {
-	ok, err := e.lock.TryAcquire(ctx, lockKey, 2*e.interval)
-	if err != nil {
-		log.Printf("[evaluator] lock: %v — running anyway", err)
-		e.evaluateAll(ctx)
+	if !e.leader.IsLeader() {
 		return
 	}
-	if !ok {
-		return // another replica is running this tick
-	}
-	defer e.lock.Release(ctx, lockKey)
 	e.evaluateAll(ctx)
 }
 

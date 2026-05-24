@@ -602,20 +602,26 @@ func buildLogStore(cfg *config.Config, ch *chstore.Store) (logstore.Store, error
 // runExceptionRefresher polls recent exception events and keeps the
 // exception_groups inbox in sync. Cheap (one CH GROUP BY per minute) and
 // safe to run while the user is also driving the inbox UI.
+//
+// v0.5.426 — switched from per-tick TryAcquire/Release (alternating
+// execution across pods) to true leader designation via
+// LeaderHolder. Single pod owns leadership for the worker's
+// lifetime + refreshes the lease in the background; ticks just
+// check IsLeader and skip when not leader. Other pods sit idle
+// instead of executing redundant work.
 func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache.Lock) {
 	const lockKey = "coremetry:lock:exception-refresher"
 	const interval = 60 * time.Second
+	leader := cache.NewLeaderHolder(lock, lockKey, 90*time.Second)
+	leader.Start(ctx)
+
 	// First pass scans the last 24h so an existing install backfills.
 	// Subsequent ticks scan a 5-minute trailing window — generous overlap
 	// to catch ingest lag, harmless because UpsertExceptionGroup is idempotent.
 	since := time.Now().Add(-24 * time.Hour)
 	tick := func() {
-		ok, err := lock.TryAcquire(ctx, lockKey, 2*interval)
-		if err == nil && !ok {
+		if !leader.IsLeader() {
 			return
-		}
-		if err == nil {
-			defer lock.Release(ctx, lockKey)
 		}
 		n, err := store.RefreshExceptionGroups(ctx, since)
 		if err != nil {
@@ -628,7 +634,7 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 		since = time.Now().Add(-5 * time.Minute)
 	}
 
-	tick() // immediate backfill on boot
+	tick() // immediate backfill on boot (idempotent — non-leader skips)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {

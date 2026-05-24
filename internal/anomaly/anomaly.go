@@ -44,6 +44,7 @@ type Detector struct {
 	store    *chstore.Store
 	interval time.Duration
 	lock     cache.Lock
+	leader   *cache.LeaderHolder // v0.5.429 — long-lived leader designation
 	notifier *notify.Notifier
 }
 
@@ -53,10 +54,16 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 	if interval == 0 {
 		interval = 2 * time.Minute
 	}
-	return &Detector{store: store, interval: interval, lock: lock, notifier: notifier}
+	return &Detector{
+		store: store, interval: interval,
+		lock:     lock,
+		leader:   cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval)),
+		notifier: notifier,
+	}
 }
 
 func (d *Detector) Start(ctx context.Context) {
+	d.leader.Start(ctx)
 	t := time.NewTicker(d.interval)
 	defer t.Stop()
 	d.runIfLeader(ctx) // run once immediately
@@ -71,16 +78,9 @@ func (d *Detector) Start(ctx context.Context) {
 }
 
 func (d *Detector) runIfLeader(ctx context.Context) {
-	ok, err := d.lock.TryAcquire(ctx, lockKey, 2*d.interval)
-	if err != nil {
-		log.Printf("[anomaly] lock: %v — running anyway", err)
-		d.scan(ctx)
+	if !d.leader.IsLeader() {
 		return
 	}
-	if !ok {
-		return
-	}
-	defer d.lock.Release(ctx, lockKey)
 	d.scan(ctx)
 }
 

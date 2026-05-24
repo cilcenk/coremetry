@@ -292,6 +292,17 @@ else
   return 0
 end`)
 
+// v0.5.426 — refreshScript atomically extends the TTL on a key
+// we still own (token match). Returns 1 on success, 0 if our
+// token is no longer the value (we lost leadership) — the
+// caller's IsLeader flips to false and background work stops
+// on this pod.
+var refreshScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0`)
+
 type redisLock struct {
 	cli *redis.Client
 
@@ -318,6 +329,36 @@ func (r *redisLock) TryAcquire(ctx context.Context, key string, ttl time.Duratio
 	r.tokens[key] = tok
 	r.mu.Unlock()
 	return true, nil
+}
+
+// Refresh — see Lock.Refresh godoc. Only does Redis work when
+// our in-memory token registry says we own the key; otherwise
+// returns false without a round-trip (avoids racing a fresh
+// holder).
+func (r *redisLock) Refresh(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	r.mu.Lock()
+	tok, ok := r.tokens[key]
+	r.mu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	n, err := refreshScript.Run(ctx, r.cli, []string{key}, tok, ttl.Milliseconds()).Result()
+	if err != nil {
+		// Network blip — treat as "couldn't confirm leadership";
+		// caller retries on next heartbeat.
+		return false, err
+	}
+	// PEXPIRE returns 1 when the key+token matched + TTL was set;
+	// 0 when our token is no longer the owner (lease expired,
+	// someone else acquired).
+	if v, ok := n.(int64); ok && v == 1 {
+		return true, nil
+	}
+	// Lost it — drop our registry entry so we don't keep trying.
+	r.mu.Lock()
+	delete(r.tokens, key)
+	r.mu.Unlock()
+	return false, nil
 }
 
 func (r *redisLock) Release(ctx context.Context, key string) error {

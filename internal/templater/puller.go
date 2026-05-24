@@ -31,6 +31,7 @@ type Puller struct {
 	interval time.Duration
 	sample   int // docs per tick
 	lock     cache.Lock
+	leader   *cache.LeaderHolder // v0.5.429
 	drain    *Drain
 }
 
@@ -51,6 +52,7 @@ func New(store *chstore.Store, logs logstore.Store, interval time.Duration, samp
 		interval: interval,
 		sample:   sample,
 		lock:     lock,
+		leader:   cache.NewLeaderHolder(lock, pullerLockKey, cache.LeaderTTL(interval)),
 		drain:    NewDrain(),
 	}
 }
@@ -71,6 +73,7 @@ func (p *Puller) Start(ctx context.Context) {
 		log.Printf("[templater] no logs/store wired, puller disabled")
 		return
 	}
+	p.leader.Start(ctx)
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 	p.tick(ctx) // immediate first run so a fresh deploy sees results within 5min, not 10
@@ -85,17 +88,9 @@ func (p *Puller) Start(ctx context.Context) {
 }
 
 func (p *Puller) tick(ctx context.Context) {
-	// Lease TTL covers the worst-case tick duration with a
-	// generous margin — the actual sample+drain runs in seconds,
-	// so 2 minutes is plenty. Pre-v0.5.341 used 2*p.interval
-	// (typically 10 min); a crashed holder kept the lock for that
-	// long even though the work was done in seconds. Shorter
-	// lease = faster failover on a crashed replica.
-	got, err := p.lock.TryAcquire(ctx, pullerLockKey, 2*time.Minute)
-	if err != nil || !got {
+	if !p.leader.IsLeader() {
 		return
 	}
-	defer p.lock.Release(ctx, pullerLockKey)
 
 	now := time.Now()
 	page, err := p.logs.Search(ctx, logstore.Filter{

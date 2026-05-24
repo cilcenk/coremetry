@@ -59,6 +59,13 @@ type Cache interface {
 type Lock interface {
 	TryAcquire(ctx context.Context, key string, ttl time.Duration) (ok bool, err error)
 	Release(ctx context.Context, key string) error
+	// v0.5.426 — Refresh extends the TTL on a key WE already hold.
+	// Returns false when our token no longer owns the key (i.e.
+	// we lost leadership — lease expired and someone else acquired).
+	// Used by LeaderHolder to keep long-lived leadership without
+	// the release+reacquire race window of the prior per-tick
+	// pattern.
+	Refresh(ctx context.Context, key string, ttl time.Duration) (ok bool, err error)
 }
 
 // ── Noop implementations (single-instance / cache-disabled mode) ────────────
@@ -93,3 +100,4 @@ func (noopCache) Subscribe(ctx context.Context, _ string) (<-chan []byte, error)
 // because there's no one to contend with.
 func (noopLock) TryAcquire(context.Context, string, time.Duration) (bool, error) { return true, nil }
 func (noopLock) Release(context.Context, string) error                          { return nil }
+func (noopLock) Refresh(context.Context, string, time.Duration) (bool, error)    { return true, nil }

@@ -38,10 +38,12 @@ const (
 // HA-safe: a Redis lock elects a single writer per tick. Lock TTL
 // is generous (2× interval) so a slow CH doesn't kill liveness.
 type Aggregator struct {
-	store    *chstore.Store
-	interval time.Duration
-	backfill time.Duration
-	lock     cache.Lock
+	store      *chstore.Store
+	interval   time.Duration
+	backfill   time.Duration
+	lock       cache.Lock
+	leader     *cache.LeaderHolder // v0.5.429 — main (closed-bucket) tick
+	liveLeader *cache.LeaderHolder // v0.5.429 — live (in-progress bucket) tick
 }
 
 func New(store *chstore.Store, interval, backfill time.Duration, lock cache.Lock) *Aggregator {
@@ -54,10 +56,17 @@ func New(store *chstore.Store, interval, backfill time.Duration, lock cache.Lock
 	if lock == nil {
 		_, lock = cache.NewNoop()
 	}
-	return &Aggregator{store: store, interval: interval, backfill: backfill, lock: lock}
+	return &Aggregator{
+		store: store, interval: interval, backfill: backfill,
+		lock:       lock,
+		leader:     cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval)),
+		liveLeader: cache.NewLeaderHolder(lock, liveLockKey, cache.LeaderTTL(liveTickInterval)),
+	}
 }
 
 func (a *Aggregator) Start(ctx context.Context) {
+	a.leader.Start(ctx)
+	a.liveLeader.Start(ctx)
 	go func() {
 		// Stagger initial run so coremetry doesn't pile its first
 		// heavy aggregation query onto a still-warming CH right at
@@ -126,11 +135,9 @@ func (a *Aggregator) liveLoop(ctx context.Context) {
 }
 
 func (a *Aggregator) liveTick(ctx context.Context) {
-	got, err := a.lock.TryAcquire(ctx, liveLockKey, 2*liveTickInterval)
-	if err != nil || !got {
+	if !a.liveLeader.IsLeader() {
 		return
 	}
-	defer a.lock.Release(ctx, liveLockKey)
 
 	// Current in-progress bucket — start aligned to the bucket
 	// size. WriteTopologyBucket selects spans where
@@ -156,11 +163,9 @@ func (a *Aggregator) liveTick(ctx context.Context) {
 }
 
 func (a *Aggregator) tick(ctx context.Context, bootstrap bool) {
-	got, err := a.lock.TryAcquire(ctx, lockKey, 2*a.interval)
-	if err != nil || !got {
+	if !a.leader.IsLeader() {
 		return
 	}
-	defer a.lock.Release(ctx, lockKey)
 
 	// Target the just-completed bucket. e.g. now=14:23 → bucket
 	// 14:15-14:20. Skipping the live bucket avoids partial-data

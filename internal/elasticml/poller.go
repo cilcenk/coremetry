@@ -53,6 +53,7 @@ type Poller struct {
 	interval time.Duration
 	minScore float64
 	lock     cache.Lock
+	leader   *cache.LeaderHolder // v0.5.429
 }
 
 func New(cfg Config, store *chstore.Store, lock cache.Lock) (*Poller, error) {
@@ -79,10 +80,16 @@ func New(cfg Config, store *chstore.Store, lock cache.Lock) (*Poller, error) {
 	if lock == nil {
 		_, lock = cache.NewNoop()
 	}
-	return &Poller{cli: cli, store: store, interval: cfg.Interval, minScore: cfg.MinScore, lock: lock}, nil
+	return &Poller{
+		cli: cli, store: store,
+		interval: cfg.Interval, minScore: cfg.MinScore,
+		lock:   lock,
+		leader: cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(cfg.Interval)),
+	}, nil
 }
 
 func (p *Poller) Start(ctx context.Context) {
+	p.leader.Start(ctx)
 	go func() {
 		// Initial warmup so we don't slam ES while it's also
 		// warming on a cold rolling restart, and so we give the
@@ -108,11 +115,9 @@ func (p *Poller) Start(ctx context.Context) {
 }
 
 func (p *Poller) tick(ctx context.Context) {
-	got, err := p.lock.TryAcquire(ctx, lockKey, 2*p.interval)
-	if err != nil || !got {
+	if !p.leader.IsLeader() {
 		return
 	}
-	defer p.lock.Release(ctx, lockKey)
 
 	jobs, err := p.listJobs(ctx)
 	if err != nil {

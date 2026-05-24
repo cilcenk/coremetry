@@ -33,6 +33,7 @@ type Runner struct {
 	store    *chstore.Store
 	notifier *notify.Notifier
 	lock     cache.Lock
+	leader   *cache.LeaderHolder // v0.5.429
 	cli      *http.Client
 
 	// In-process state-change tracker — last status per monitor we
@@ -47,6 +48,7 @@ func New(store *chstore.Store, notifier *notify.Notifier, lock cache.Lock) *Runn
 		store:    store,
 		notifier: notifier,
 		lock:     lock,
+		leader:   cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(tickInterval)),
 		// Generous timeout — gets overridden per-monitor with the
 		// monitor's TimeoutSec via http.Request context. Matches what
 		// the prod tools (Pingdom, UptimeRobot, etc.) do.
@@ -59,6 +61,7 @@ func New(store *chstore.Store, notifier *notify.Notifier, lock cache.Lock) *Runn
 // acquire the leader lock; if won, fetch all enabled monitors and
 // probe whichever are due.
 func (r *Runner) Start(ctx context.Context) {
+	r.leader.Start(ctx)
 	t := time.NewTicker(tickInterval)
 	defer t.Stop()
 	log.Printf("[monitor] runner started (tick=%s)", tickInterval)
@@ -73,12 +76,8 @@ func (r *Runner) Start(ctx context.Context) {
 }
 
 func (r *Runner) tick(ctx context.Context) {
-	ok, err := r.lock.TryAcquire(ctx, lockKey, 30*time.Second)
-	if err == nil && !ok {
-		return // another replica is running this tick
-	}
-	if err == nil {
-		defer r.lock.Release(ctx, lockKey)
+	if !r.leader.IsLeader() {
+		return
 	}
 	monitors, err := r.store.ListMonitors(ctx)
 	if err != nil {

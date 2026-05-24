@@ -30,6 +30,7 @@ type Recorder struct {
 	interval time.Duration
 	window   time.Duration
 	lock     cache.Lock // for multi-replica deployments
+	leader   *cache.LeaderHolder // v0.5.426 — true leader designation
 }
 
 const recorderLockKey = "coremetry:lock:anomaly-recorder"
@@ -45,7 +46,12 @@ func NewRecorder(store *chstore.Store, logs logstore.Store, interval, window tim
 	if window == 0 {
 		window = 5 * time.Minute
 	}
-	return &Recorder{store: store, logs: logs, interval: interval, window: window, lock: lock}
+	return &Recorder{
+		store: store, logs: logs,
+		interval: interval, window: window,
+		lock:   lock,
+		leader: cache.NewLeaderHolder(lock, recorderLockKey, 3*interval),
+	}
 }
 
 // Start kicks the recorder into a goroutine. Caller cancels via
@@ -53,6 +59,7 @@ func NewRecorder(store *chstore.Store, logs logstore.Store, interval, window tim
 // to elect a single writer per tick — the lock TTL is generous
 // (the interval × 2) so a slow CH doesn't kill liveness.
 func (r *Recorder) Start(ctx context.Context) {
+	r.leader.Start(ctx)
 	go func() {
 		// First tick after a short stagger so the system has
 		// time to ingest some logs / spans before the first
@@ -74,15 +81,13 @@ func (r *Recorder) Start(ctx context.Context) {
 }
 
 func (r *Recorder) tick(ctx context.Context) {
-	// Lease the recorder leadership so multiple replicas don't
-	// fan out the same Upserts. Released on next tick implicitly
-	// via TTL — the lock is best-effort, an extra Upsert is
-	// harmless under ReplacingMergeTree(version).
-	got, err := r.lock.TryAcquire(ctx, recorderLockKey, 2*r.interval)
-	if err != nil || !got {
+	// v0.5.426 — true leader designation via LeaderHolder; only
+	// the leader pod does work, non-leaders skip cleanly.
+	// Multi-replica installs still see Upsert idempotency under
+	// ReplacingMergeTree(version) as a safety net.
+	if !r.leader.IsLeader() {
 		return
 	}
-	defer r.lock.Release(ctx, recorderLockKey)
 
 	now := time.Now()
 

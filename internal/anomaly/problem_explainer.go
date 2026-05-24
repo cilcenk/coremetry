@@ -42,16 +42,19 @@ type ProblemExplainer struct {
 	store    *chstore.Store
 	copilot  *copilot.Service
 	lock     cache.Lock
+	leader   *cache.LeaderHolder // v0.5.429
 	interval time.Duration
 	batch    int
 }
 
 func NewProblemExplainer(store *chstore.Store, cop *copilot.Service, lock cache.Lock) *ProblemExplainer {
+	interval := 30 * time.Second
 	return &ProblemExplainer{
 		store:    store,
 		copilot:  cop,
 		lock:     lock,
-		interval: 30 * time.Second,
+		leader:   cache.NewLeaderHolder(lock, explainerLockKey, cache.LeaderTTL(interval)),
+		interval: interval,
 		batch:    explainerBatch,
 	}
 }
@@ -63,6 +66,7 @@ func (e *ProblemExplainer) Start(ctx context.Context) {
 	if e == nil || e.copilot == nil {
 		return
 	}
+	e.leader.Start(ctx)
 	t := time.NewTicker(e.interval)
 	defer t.Stop()
 	// Initial tick — also serves as a "Copilot config drift catch":
@@ -83,13 +87,8 @@ func (e *ProblemExplainer) tickIfLeader(ctx context.Context) {
 	if !e.copilot.Configured() {
 		return // No API key wired — silently noop.
 	}
-	ok, err := e.lock.TryAcquire(ctx, explainerLockKey, 2*e.interval)
-	if err != nil {
-		log.Printf("[problem-explainer] lock: %v — running anyway", err)
-	} else if !ok {
-		return // Another replica is running this tick.
-	} else {
-		defer e.lock.Release(ctx, explainerLockKey)
+	if !e.leader.IsLeader() {
+		return
 	}
 	e.run(ctx)
 }

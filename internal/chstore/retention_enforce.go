@@ -164,18 +164,16 @@ func (s *Store) StartRetentionEnforcer(ctx context.Context, interval time.Durati
 	if interval <= 0 {
 		interval = time.Hour
 	}
-	const leaseTTL = 5 * time.Minute
+	// v0.5.429 — long-lived LeaderHolder. Hourly tick × old
+	// 3*interval rule would lease for 3h (way too long for
+	// failover); LeaderTTL clamps to 10min cap, refreshes at
+	// ~3min. One pod owns the sweep, others sit idle.
+	leader := cache.NewLeaderHolder(lock, retentionLockKey, cache.LeaderTTL(interval))
+	leader.Start(ctx)
 	runOnce := func() {
-		got, err := lock.TryAcquire(ctx, retentionLockKey, leaseTTL)
-		if err != nil {
-			log.Printf("[retention] lock acquire: %v", err)
+		if !leader.IsLeader() {
 			return
 		}
-		if !got {
-			// Peer is running the sweep — skip cleanly.
-			return
-		}
-		defer lock.Release(ctx, retentionLockKey)
 		if err := s.EnforceRetention(ctx); err != nil {
 			log.Printf("[retention] sweep: %v", err)
 		}

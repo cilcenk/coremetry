@@ -462,13 +462,15 @@ function LogsInner() {
             phrases. Click a chip → narrow search to that token.
             Hidden on CH backend (no native equivalent at
             billion-row scale). */}
-        <LivePatternsPanel onSelect={token => {
-          // Use the shorthand "body" key; the backend's
-          // expandShorthand rewrites it to an OR across all
-          // body-field candidates (message / Body / log.message)
-          // so the filter works regardless of mapping.
-          toggleSearchClause('body', token, false);
-        }} />
+        <LivePatternsPanel
+          onSelect={token => {
+            // Use the shorthand "body" key; the backend's
+            // expandShorthand rewrites it to an OR across all
+            // body-field candidates (message / Body / log.message)
+            // so the filter works regardless of mapping.
+            toggleSearchClause('body', token, false);
+          }}
+          onTracePeek={tid => setPeekTraceId(tid)} />
 
         {/* Drain-extracted templates (v0.5.244) — persistent
             log-shape ledger. Default sort: first_seen desc so

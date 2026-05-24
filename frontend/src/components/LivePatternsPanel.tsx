@@ -20,9 +20,17 @@ import { fmtNum } from '@/lib/utils';
 type Pattern = { token: string; docCount: number; bgCount: number; score: number };
 
 export function LivePatternsPanel({
-  onSelect,
+  onSelect, onTracePeek,
 }: {
   onSelect: (token: string) => void;
+  // v0.5.401 — sample-trace preview. When a pattern chip's "👁"
+  // button is clicked, the panel fetches 3 sample traces
+  // containing the token (via /api/logs/similar more_like_this)
+  // and renders a strip below the chips. Clicking a trace ID
+  // opens the parent's TracePeekDrawer for inline summary.
+  // Optional — when omitted the preview just shows trace IDs
+  // as plain text without the drill-in affordance.
+  onTracePeek?: (traceId: string) => void;
 }) {
   const [data, setData] = useState<{
     backend: string;
@@ -32,6 +40,24 @@ export function LivePatternsPanel({
     timedOut?: boolean;
   } | null | undefined>(undefined);
   const [collapsed, setCollapsed] = useState(false);
+  // Pattern token whose sample-trace preview is currently open.
+  // null = no preview. Single preview at a time keeps the UI
+  // tight; switching tokens swaps the contents.
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  const [previewTraces, setPreviewTraces] = useState<Array<{ traceId: string; count: number }> | null | undefined>(undefined);
+
+  useEffect(() => {
+    if (!previewToken) {
+      setPreviewTraces(undefined);
+      return;
+    }
+    let cancelled = false;
+    setPreviewTraces(undefined);
+    api.logsSimilarTraces(previewToken, 3)
+      .then(r => { if (!cancelled) setPreviewTraces(r?.traces ?? []); })
+      .catch(() => { if (!cancelled) setPreviewTraces(null); });
+    return () => { cancelled = true; };
+  }, [previewToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,21 +130,95 @@ export function LivePatternsPanel({
         </span>
       </button>
       {!collapsed && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {data.patterns.slice(0, 20).map(p => (
-            <PatternChip key={p.token} pat={p} topScore={topScore}
-              onClick={() => onSelect(p.token)} />
-          ))}
-        </div>
+        <>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {data.patterns.slice(0, 20).map(p => (
+              <PatternChip key={p.token} pat={p} topScore={topScore}
+                onClick={() => onSelect(p.token)}
+                onPreview={() => setPreviewToken(p.token === previewToken ? null : p.token)}
+                previewing={p.token === previewToken} />
+            ))}
+          </div>
+          {previewToken && (
+            <div style={{
+              marginTop: 8, padding: '8px 10px',
+              background: 'var(--bg2)', borderRadius: 4,
+              border: '1px dashed var(--border)',
+              fontSize: 11,
+            }}>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                alignItems: 'baseline', marginBottom: 6,
+              }}>
+                <span style={{ color: 'var(--text2)' }}>
+                  Sample traces containing
+                  {' '}<code className="mono" style={{ color: 'var(--text)' }}>{previewToken}</code>
+                </span>
+                <button type="button"
+                  onClick={() => setPreviewToken(null)}
+                  style={{
+                    all: 'unset', cursor: 'pointer',
+                    fontSize: 11, color: 'var(--text3)', padding: '0 4px',
+                  }}>×</button>
+              </div>
+              {previewTraces === undefined && (
+                <span style={{ color: 'var(--text3)' }}>Loading…</span>
+              )}
+              {previewTraces === null && (
+                <span style={{ color: 'var(--err)' }}>
+                  Failed to fetch sample traces. (more_like_this ES-only;
+                  CH-backed installs don't surface this affordance.)
+                </span>
+              )}
+              {previewTraces && previewTraces.length === 0 && (
+                <span style={{ color: 'var(--text3)' }}>
+                  No matching trace_ids surfaced — the token may live in
+                  logs without trace correlation.
+                </span>
+              )}
+              {previewTraces && previewTraces.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {previewTraces.map(t => (
+                    <button key={t.traceId}
+                      type="button"
+                      onClick={() => onTracePeek?.(t.traceId)}
+                      title={t.count > 1
+                        ? `${t.count} log lines in this trace match the pattern`
+                        : 'Open trace summary inline'}
+                      style={{
+                        all: 'unset', cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '3px 8px', borderRadius: 12,
+                        background: 'rgba(56,139,253,0.10)',
+                        border: '1px solid rgba(56,139,253,0.35)',
+                        color: 'var(--accent2)',
+                        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                        fontSize: 10,
+                      }}>
+                      👁 {t.traceId.slice(0, 12)}…
+                      {t.count > 1 && (
+                        <span style={{ color: 'var(--text3)' }}>
+                          ×{t.count}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function PatternChip({ pat, topScore, onClick }: {
+function PatternChip({ pat, topScore, onClick, onPreview, previewing }: {
   pat: Pattern;
   topScore: number;
   onClick: () => void;
+  onPreview: () => void;
+  previewing: boolean;
 }) {
   // Score-based heat. Top scorer ≥ 0.5 = red (clear anomaly),
   // mid range = amber, low = grey. ES scores aren't normalised
@@ -135,30 +235,51 @@ function PatternChip({ pat, topScore, onClick }: {
     : 'NEW';
 
   return (
-    <button type="button" onClick={onClick}
-      title={`Token: ${pat.token}\n${fmtNum(pat.docCount)} hits in current window\n${fmtNum(pat.bgCount)} hits in baseline\nscore: ${pat.score.toFixed(3)}\n\nClick to filter the log stream to this token.`}
-      style={{
-        all: 'unset', cursor: 'pointer',
-        display: 'inline-flex', alignItems: 'center', gap: 6,
-        padding: '3px 8px', borderRadius: 12,
-        background: palette.bg, border: `1px solid ${palette.border}`,
-        color: palette.color, whiteSpace: 'nowrap', fontSize: 11,
-      }}>
-      <span style={{
-        fontSize: 9, fontWeight: 700,
-        padding: '0 4px', borderRadius: 8,
-        background: 'rgba(0,0,0,0.20)',
-      }}>{delta}</span>
-      <span style={{
-        fontWeight: 600,
-        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-      }}>
-        {pat.token}
-      </span>
-      <span style={{ color: 'var(--text3)', fontSize: 10,
-        fontFamily: 'ui-monospace, monospace' }}>
-        {fmtNum(pat.docCount)}
-      </span>
-    </button>
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 0,
+      borderRadius: 12,
+      background: palette.bg, border: `1px solid ${palette.border}`,
+      whiteSpace: 'nowrap',
+      outline: previewing ? '1px solid var(--accent2)' : 'none',
+      outlineOffset: previewing ? 1 : 0,
+    }}>
+      <button type="button" onClick={onClick}
+        title={`Click: filter logs to this token.\n\nToken: ${pat.token}\n${fmtNum(pat.docCount)} hits in current window\n${fmtNum(pat.bgCount)} hits in baseline\nscore: ${pat.score.toFixed(3)}`}
+        style={{
+          all: 'unset', cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '3px 4px 3px 8px',
+          color: palette.color, fontSize: 11,
+        }}>
+        <span style={{
+          fontSize: 9, fontWeight: 700,
+          padding: '0 4px', borderRadius: 8,
+          background: 'rgba(0,0,0,0.20)',
+        }}>{delta}</span>
+        <span style={{
+          fontWeight: 600,
+          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+        }}>
+          {pat.token}
+        </span>
+        <span style={{ color: 'var(--text3)', fontSize: 10,
+          fontFamily: 'ui-monospace, monospace' }}>
+          {fmtNum(pat.docCount)}
+        </span>
+      </button>
+      {/* v0.5.401 — eye button opens the sample-trace preview
+          below the chip strip. Separate target keeps the primary
+          "filter logs" click discoverable + non-destructive. */}
+      <button type="button" onClick={onPreview}
+        title={previewing
+          ? 'Close sample-trace preview'
+          : 'Preview 3 sample traces containing this token'}
+        style={{
+          all: 'unset', cursor: 'pointer',
+          padding: '3px 7px 3px 4px',
+          color: previewing ? 'var(--accent2)' : 'var(--text3)',
+          fontSize: 11,
+        }}>👁</button>
+    </span>
   );
 }

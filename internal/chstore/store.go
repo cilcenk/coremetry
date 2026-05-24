@@ -1645,7 +1645,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		if s.clusterMode() {
 			dropTarget = "service_summary_5m_local"
 		}
-		if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()); err != nil {
+		// v0.5.436 — SYNC waits for ZK metadata cleanup before
+		// returning. Without it the immediate re-CREATE hits
+		// REPLICA_ALREADY_EXISTS (error 253) because the ZK znode
+		// for the dropped Replicated*MergeTree hasn't been
+		// reaped yet. Single-node no-op (no ZK to wait for).
+		if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
 			return fmt.Errorf("drop old MV for upgrade: %w", err)
 		}
 		// Re-run the create (mvs[0] from above) now that the old one is gone.
@@ -1680,7 +1685,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			if s.clusterMode() {
 				dropTarget = mig.table + "_local"
 			}
-			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()); err != nil {
+			// v0.5.436 — SYNC; see apdex upgrade above.
+			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
 				return fmt.Errorf("drop old %s for upgrade: %w", mig.table, err)
 			}
 			if err := s.execDDL(ctx, mvs[mig.mvIdx]); err != nil {
@@ -1702,20 +1708,37 @@ func (s *Store) migrate(ctx context.Context) error {
 		if table == "db_caller_summary_5m" {
 			mvIdx = 4
 		}
+		// v0.5.436 — bug-fix: probe the right object in cluster mode.
+		// Pre-v0.5.435 the bare name was the MV itself, so
+		// create_table_query contained the SELECT body and the
+		// 'server.address' string match worked. After v0.5.435 the
+		// MV joined highVolumeTables and the bare name is now the
+		// Distributed wrapper (whose create_table_query is just
+		// `AS <name>_local ENGINE = Distributed(...)` — no SELECT
+		// body, no 'server.address' marker). Probe was returning
+		// false on every boot → drop-and-recreate fired every
+		// startup → ZK collisions (error 253) AND constant 5-min
+		// bucket loss. Probe the `_local` flavour in cluster mode
+		// so we read the actual MV definition.
+		probeTarget := table
+		if s.clusterMode() {
+			probeTarget = table + "_local"
+		}
 		var hasNewFallback uint8
 		probe := fmt.Sprintf(`
 			SELECT count() > 0
 			FROM system.tables
 			WHERE database = currentDatabase()
 			  AND name     = '%s'
-			  AND positionUTF8(create_table_query, 'server.address') > 0`, table)
+			  AND positionUTF8(create_table_query, 'server.address') > 0`, probeTarget)
 		if err := s.conn.QueryRow(ctx, probe).Scan(&hasNewFallback); err == nil && hasNewFallback == 0 {
 			log.Printf("[chstore] upgrading %s MV (peer.service fallback chain) — past 5-min buckets will be dropped", table)
 			dropTarget := table
 			if s.clusterMode() {
 				dropTarget = table + "_local"
 			}
-			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()); err != nil {
+			// SYNC — see apdex upgrade above.
+			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
 				return fmt.Errorf("drop old %s for upgrade: %w", table, err)
 			}
 			if err := s.execDDL(ctx, mvs[mvIdx]); err != nil {

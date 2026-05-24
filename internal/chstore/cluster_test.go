@@ -39,7 +39,9 @@ func TestAdaptDDL_HighVolumeTable(t *testing.T) {
 	if !strings.Contains(got[0], "ReplicatedMergeTree('/ch/tbl/{shard}/spans', '{replica}')") {
 		t.Errorf("Replicated engine wrong: %s", got[0])
 	}
-	if !strings.Contains(got[1], "ENGINE = Distributed(`ch_cluster`, currentDatabase(), spans_local, rand())") {
+	// v0.5.419 — spans default shard key is cityHash64(service_name)
+	// per defaultShardPolicy (was rand() pre-v0.5.419).
+	if !strings.Contains(got[1], "ENGINE = Distributed(`ch_cluster`, currentDatabase(), spans_local, cityHash64(service_name))") {
 		t.Errorf("Distributed wrapper wrong: %s", got[1])
 	}
 }

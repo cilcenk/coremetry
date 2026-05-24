@@ -334,6 +334,24 @@ var highVolumeTables = map[string]bool{
 	// fans queries out across shards and merges.
 	"service_summary_5m": true,
 	"trace_summary_1d":   true,
+	// v0.5.426 — bug-fix: defaultShardPolicy was extended to these
+	// in v0.5.419 but highVolumeTables wasn't, so adaptDDL never
+	// renamed them to `_local` and the Distributed wrapper was
+	// never emitted. ensureDistributedWrappers then skipped them
+	// (it requires the `_local` flavour to exist before creating
+	// the bare wrapper), leaving the operator with 6/11 wrappers
+	// on a fresh cluster install. db_summary_5m / db_caller_summary_5m
+	// / trace_summary_5m are MVs reading `FROM spans` — the MV
+	// transform in adaptDDL rewrites that to `FROM spans_local`
+	// so each shard's MV aggregates its own slice. topology_edges_5m
+	// / topology_op_edges_5m are regular tables populated by the
+	// batch correlator's INSERTs, which now route through the
+	// Distributed wrapper and shard by parent_service.
+	"trace_summary_5m":     true,
+	"topology_edges_5m":    true,
+	"topology_op_edges_5m": true,
+	"db_summary_5m":        true,
+	"db_caller_summary_5m": true,
 }
 
 // adaptDDL rewrites a DDL statement for the current mode.

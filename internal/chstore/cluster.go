@@ -103,6 +103,20 @@ var tablesWithoutTraceID = map[string]bool{
 	"db_caller_summary_5m": true,
 	"topology_edges_5m":    true,
 	"topology_op_edges_5m": true,
+	// v0.5.435 — MVs/aggregates that join highVolumeTables in
+	// this release. Same projection rule applies: none of them
+	// project trace_id in their SELECT, so the env-override
+	// shard-key path must fall back to rand() for these.
+	// trace_service_index_5m is the only newly-sharded MV that
+	// DOES project trace_id, so it's intentionally absent here.
+	"operation_summary_5m":         true,
+	"spanmetrics_calls_5m":         true,
+	"spanmetrics_hist_5m":          true,
+	"spanmetrics_duration_5m":      true,
+	"messaging_summary_5m":         true,
+	"messaging_caller_summary_5m":  true,
+	"service_callers_5m":           true,
+	"topology_root_flows_5m":       true,
 }
 
 // defaultShardPolicy — v0.5.419. Per-table shard expressions matching
@@ -155,6 +169,28 @@ var defaultShardPolicy = map[string]string{
 	// reads filtered by it land on one shard.
 	"db_summary_5m":        "cityHash64(db_system)",
 	"db_caller_summary_5m": "cityHash64(service_name)",
+	// v0.5.435 — remaining sharded MVs/aggregates. For MVs the
+	// shard key is largely decorative (auto-triggered writes land
+	// local, reads always fan-out via Distributed) but is honest
+	// about the dominant filter — picks the column the read path
+	// or ORDER BY leads with. For service_callers_5m and
+	// topology_root_flows_5m (regular tables INSERTed by the
+	// topology aggregator) the shard key DOES matter — chosen for
+	// locality with the upstream sharded source (spans on
+	// cityHash64(service_name)).
+	"trace_service_index_5m":        "cityHash64(service_name)",
+	"operation_summary_5m":          "cityHash64(service_name)",
+	"spanmetrics_calls_5m":          "cityHash64(service_name)",
+	"spanmetrics_hist_5m":           "cityHash64(service_name)",
+	"spanmetrics_duration_5m":       "cityHash64(service_name)",
+	// messaging_*: destination is the highest-cardinality dim
+	// (msg_system is ~5 values, cluster is ~10). Reads from
+	// /messaging filter by (msg_system, destination) — both
+	// land cleanly under destination-locality.
+	"messaging_summary_5m":          "cityHash64(destination)",
+	"messaging_caller_summary_5m":   "cityHash64(service_name)",
+	"service_callers_5m":            "cityHash64(service)",
+	"topology_root_flows_5m":        "cityHash64(root_service)",
 }
 
 // shardKeyFor returns the shard expression for a specific table.
@@ -463,6 +499,28 @@ var highVolumeTables = map[string]bool{
 	"topology_op_edges_5m": true,
 	"db_summary_5m":        true,
 	"db_caller_summary_5m": true,
+	// v0.5.435 — remaining sharded MVs/aggregates the post-v0.5.426
+	// /scale-audit revealed. Same gap shape: bare-name Replicated
+	// per shard, no Distributed wrapper → cluster reads silently
+	// returned one shard's view. Most critical is
+	// trace_service_index_5m, which is Stage 1 of the MV fast-path
+	// behind /traces — service-filtered listings were missing
+	// every shard's trace_ids except the connected one. The
+	// spanmetrics_* / messaging_* / operation_summary trio drove
+	// the same per-shard incompleteness on /spanmetrics,
+	// /messaging, and /service/X/operations. service_callers_5m
+	// and topology_root_flows_5m are aggregator-INSERTed tables
+	// where the INSERT-via-wrapper distribution + read fan-out
+	// both matter.
+	"trace_service_index_5m":        true,
+	"operation_summary_5m":          true,
+	"spanmetrics_calls_5m":          true,
+	"spanmetrics_hist_5m":           true,
+	"spanmetrics_duration_5m":       true,
+	"messaging_summary_5m":          true,
+	"messaging_caller_summary_5m":   true,
+	"service_callers_5m":            true,
+	"topology_root_flows_5m":        true,
 }
 
 // adaptDDL rewrites a DDL statement for the current mode.

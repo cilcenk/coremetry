@@ -413,6 +413,16 @@ export const api = {
   // mapping leaves. Server caches 60s.
   logsFields: () => get<{ fields: string[]; backend: string }>(
     `/api/logs/fields`),
+  // v0.5.402 — surrounding context (±N logs around a pivot ts).
+  // Datadog Context tab equivalent. Two parallel server-side
+  // searches (before / after); 30-min symmetric window, capped
+  // at n=200 per side.
+  logsContext: (params: { ts: number; service?: string; n?: number }) =>
+    get<{
+      pivotTs: number; service: string;
+      before: import('./types').LogRow[];
+      after:  import('./types').LogRow[];
+    }>(`/api/logs/context?${qs(params)}`),
   // ES significant_text — tokens that just got rare-vs-usual.
   // 60s server cache. CH backend returns empty patterns list;
   // UI hides the panel in that case.

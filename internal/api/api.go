@@ -397,6 +397,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
 	mux.HandleFunc("GET /api/logs/facets",     s.getLogsFacets)
+	// v0.5.402 — surrounding context (±N logs around a pivot ts).
+	// Datadog Context tab equivalent. Two parallel logstore.Search
+	// calls (before / after) so the operator sees what was emitted
+	// either side of the log they're investigating.
+	mux.HandleFunc("GET /api/logs/context",    s.getLogsContext)
 	// v0.5.243 — unsupervised "what tokens are statistically
 	// rare in the current window vs baseline" pass. ES-only
 	// (CH returns empty); 60s cache fronts the expensive agg.
@@ -2968,6 +2973,74 @@ func (s *Server) getLogsSimilarTraces(w http.ResponseWriter, r *http.Request) {
 		traces = []logstore.SimilarTrace{}
 	}
 	writeJSON(w, map[string]any{"traces": traces})
+}
+
+// getLogsContext returns ±N logs around a pivot timestamp, scoped
+// to the same service. Datadog Context tab equivalent — operator
+// clicks a log line, sees what was emitted just before and just
+// after, without leaving /logs to rebuild a time-bounded filter
+// by hand. Two parallel logstore.Search calls; one for the
+// before window (DESC limit n) and one for the after window
+// (ASC limit n). 30-minute symmetric window — wide enough to
+// catch a slow incident, narrow enough that the search stays
+// sub-second on a busy index.
+func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ts, _ := strconv.ParseInt(q.Get("ts"), 10, 64)
+	if ts <= 0 {
+		http.Error(w, "ts (unix ns) required", http.StatusBadRequest)
+		return
+	}
+	service := q.Get("service")
+	n := parseInt(q.Get("n"), 50)
+	if n > 200 {
+		n = 200
+	}
+	if n < 1 {
+		n = 50
+	}
+	pivot := time.Unix(0, ts)
+	// 30 minute symmetric window. Each Search returns the N most-
+	// recent (before) or oldest (after) logs in its half-window —
+	// at ingest pressure both halves rarely hit the cap, but the
+	// hard ceiling keeps the round-trip bounded.
+	beforeF := logstore.Filter{
+		Service: service,
+		From:    pivot.Add(-30 * time.Minute),
+		To:      pivot,
+		Limit:   n,
+	}
+	afterF := logstore.Filter{
+		Service: service,
+		From:    pivot,
+		To:      pivot.Add(30 * time.Minute),
+		Limit:   n,
+	}
+	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:n=%d", ts, service, n)
+	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
+		beforePage, err := s.logs.Search(r.Context(), beforeF)
+		if err != nil {
+			return nil, err
+		}
+		afterPage, err := s.logs.Search(r.Context(), afterF)
+		if err != nil {
+			return nil, err
+		}
+		before := beforePage.Logs
+		after := afterPage.Logs
+		if before == nil {
+			before = []*logstore.LogRecord{}
+		}
+		if after == nil {
+			after = []*logstore.LogRecord{}
+		}
+		return map[string]any{
+			"pivotTs": ts,
+			"service": service,
+			"before":  before,
+			"after":   after,
+		}, nil
+	})
 }
 
 // getLogsTimeseries powers the Logs source on the Data Explorer

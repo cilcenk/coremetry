@@ -140,6 +140,7 @@ export function LogTable({
   onFilterAdd,
   onFilterExclude,
   onTracePeek,
+  onContextOpen,
 }: {
   logs: LogRow[];
   hideTraceColumn?: boolean;
@@ -169,6 +170,11 @@ export function LogTable({
   // Optional so the trace detail Logs tab can omit it (peek-
   // into-same-trace would be a no-op there).
   onTracePeek?: (traceId: string) => void;
+  // v0.5.402 — surrounding-context drill-in. When set, the
+  // expanded row gets a "≡ ±50 context" button; clicking opens
+  // the parent's LogContextModal with the 50 logs immediately
+  // before + after the pivot. Datadog Context tab pattern.
+  onContextOpen?: (pivot: LogRow) => void;
 }) {
   const [localExpanded, setLocalExpanded] = useState<Set<number>>(new Set());
   const expanded = expandedIds ?? localExpanded;
@@ -224,6 +230,7 @@ export function LogTable({
                 onFilterAdd={onFilterAdd}
                 onFilterExclude={onFilterExclude}
                 onTracePeek={onTracePeek}
+                onContextOpen={onContextOpen}
               />
             );
           })}
@@ -235,7 +242,7 @@ export function LogTable({
 
 function LogRow({
   l, idx, cols, hideTraceColumn, selected, expanded, onClick, extraExpanded,
-  onFilterAdd, onFilterExclude, onTracePeek,
+  onFilterAdd, onFilterExclude, onTracePeek, onContextOpen,
 }: {
   l: LogRow;
   idx: number;
@@ -248,6 +255,7 @@ function LogRow({
   onFilterAdd?: (key: string, value: string) => void;
   onFilterExclude?: (key: string, value: string) => void;
   onTracePeek?: (traceId: string) => void;
+  onContextOpen?: (pivot: LogRow) => void;
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
@@ -346,6 +354,20 @@ function LogRow({
             }}>
               {prettyMaybe(l.body)}
             </pre>
+            {onContextOpen && (
+              <div style={{ marginBottom: 8 }}>
+                <button type="button"
+                  onClick={e => { e.stopPropagation(); onContextOpen(l); }}
+                  title="Show 50 logs before and after this one (same service)"
+                  style={{
+                    fontSize: 11, padding: '3px 10px', borderRadius: 4,
+                    background: 'var(--bg2)', border: '1px solid var(--border)',
+                    color: 'var(--accent2)', cursor: 'pointer',
+                  }}>
+                  ≡ View ±50 surrounding context
+                </button>
+              </div>
+            )}
             {attrs.length > 0 && (
               <table className="kv-table"><tbody>
                 {attrs.map(([k, v]) => (

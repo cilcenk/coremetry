@@ -12,6 +12,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { TracePeekDrawer } from '@/components/TracePeekDrawer';
 import { LogFacetsPanel } from '@/components/LogFacetsPanel';
+import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogPatternStrip } from '@/components/LogPatternStrip';
 import { LivePatternsPanel } from '@/components/LivePatternsPanel';
@@ -74,6 +75,11 @@ function LogsInner() {
   // fetches the trace summary + sibling logs and renders inline
   // without disturbing the page's existing filter/search state.
   const [peekTraceId, setPeekTraceId] = useState<string | null>(null);
+  // v0.5.402 — surrounding-context modal state. Clicking "≡ View
+  // ±50 context" on an expanded log row stores the pivot row here;
+  // LogContextModal fetches the before/after halves and renders
+  // the chronological strip.
+  const [contextPivot, setContextPivot] = useState<import('@/lib/types').LogRow | null>(null);
   // Live tail (HyperDX-style): poll every 2s, prepend new rows.
   const [live, setLive] = useState(false);
 
@@ -520,6 +526,7 @@ function LogsInner() {
                 onFilterAdd={addFromRow}
                 onFilterExclude={excludeFromRow}
                 onTracePeek={tid => setPeekTraceId(tid)}
+                onContextOpen={l => setContextPivot(l)}
                 extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
               <Pager page={page} pageSize={100} total={total} onPage={setPage}
                      extras={<>{total.toLocaleString()} total</>} />
@@ -532,6 +539,9 @@ function LogsInner() {
         )}
       </div>
       <TracePeekDrawer traceId={peekTraceId} onClose={() => setPeekTraceId(null)} />
+      <LogContextModal pivot={contextPivot}
+        onClose={() => setContextPivot(null)}
+        onTracePeek={tid => { setContextPivot(null); setPeekTraceId(tid); }} />
       {alertDraft && (
         <SaveAsAlertModal
           query={filter.search}

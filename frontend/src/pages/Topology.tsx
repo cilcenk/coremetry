@@ -387,6 +387,13 @@ function ServiceView({ range }: { range: TimeRange }) {
   // than idle ones.
   const flowOn = params.get('flow') === 'on';
   const setFlowOn = (v: boolean) => setURLParam('flow', v ? 'on' : null);
+  // v0.5.413 — time-shift slider. Lets the operator view the
+  // topology AS OF X minutes ago without changing the underlying
+  // time range. Datadog Replay / Honeycomb Now-bar pattern.
+  // Value is "minutes ago" — 0 = live. Capped at 7d (10080 min)
+  // to match topology_edges_5m retention.
+  const shiftMin = Math.max(0, Math.min(10080, parseInt(params.get('shift') || '0', 10) || 0));
+  const setShiftMin = (v: number) => setURLParam('shift', v > 0 ? String(v) : null);
   // v0.5.312 — protocol filter. Empty = show all. Selected
   // = show only those. Comma-separated in URL for sharability.
   // Protocols come from edge.protocol: http / rpc / db / kafka /
@@ -402,7 +409,17 @@ function ServiceView({ range }: { range: TimeRange }) {
   };
   useEffect(() => {
     setData(undefined);
-    const { from, to } = timeRangeToNs(range);
+    // v0.5.413 — shift window back by `shiftMin` minutes when
+    // the slider is non-zero. We keep the existing range
+    // DURATION (1h stays 1h) but slide the whole window back
+    // so the operator sees the SAME shape of state at a past
+    // point. Same idiom Datadog Replay uses on its service map.
+    let { from, to } = timeRangeToNs(range);
+    if (shiftMin > 0) {
+      const shiftNs = BigInt(shiftMin) * 60_000_000_000n;
+      from = Number(BigInt(from) - shiftNs);
+      to = Number(BigInt(to) - shiftNs);
+    }
     api.serviceTopology({ from, to, noise: noiseShow ? 'show' : undefined })
       // Normalise: nil slices from older backend / empty windows
       // marshal as JSON null, which crashes data.edges.forEach.
@@ -413,7 +430,7 @@ function ServiceView({ range }: { range: TimeRange }) {
         edges: d?.edges ?? [],
       }))
       .catch(() => setData(null));
-  }, [range, noiseShow]);
+  }, [range, noiseShow, shiftMin]);
 
   // Compute the visible subgraph from the raw response based on
   // the two controls. All filtering is client-side because the
@@ -582,6 +599,41 @@ function ServiceView({ range }: { range: TimeRange }) {
             onChange={e => setFlowOn(e.target.checked)} />
           Live flow
         </label>
+        {/* v0.5.413 — time-shift slider. Slides the topology
+            query window back in time without changing range
+            duration. 0 = live; 60 = topology as of 1 hour ago.
+            Capped at 7d (10080 min) to match the MV retention. */}
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          fontSize: 12, color: 'var(--text2)', minWidth: 220,
+        }}>
+          <span title="Shift the topology view back in time. 0 = live; up to 7 days back, snapped to 5-minute buckets.">
+            ⏮
+          </span>
+          <input type="range" min={0} max={1440} step={5}
+            value={Math.min(shiftMin, 1440)}
+            onChange={e => setShiftMin(Number(e.target.value))}
+            style={{ width: 140 }}
+            title={shiftMin === 0
+              ? 'Live (now)'
+              : `As of ${formatShift(shiftMin)} ago`} />
+          <span style={{
+            color: shiftMin > 0 ? 'var(--warn, #facc15)' : 'var(--text3)',
+            minWidth: 70, fontFamily: 'ui-monospace, monospace',
+            fontSize: 11,
+          }}>
+            {shiftMin === 0 ? 'live' : `-${formatShift(shiftMin)}`}
+          </span>
+          {shiftMin > 0 && (
+            <button type="button"
+              onClick={() => setShiftMin(0)}
+              title="Reset to live (now)"
+              style={{
+                all: 'unset', cursor: 'pointer',
+                color: 'var(--accent2)', fontSize: 11, padding: '0 4px',
+              }}>×</button>
+          )}
+        </div>
         {/* v0.5.312 — protocol filter chips. Empty filter = all
             visible. Click a chip to scope; click again to unscope.
             Saved-view friendly via URL ?proto=http,db. */}
@@ -2203,6 +2255,21 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
 // Tiny variant of the KPI pattern used across the app; keeps the
 // drawer dense so the operator can scan errors / latency without
 // scrolling.
+// v0.5.413 — format minutes-ago for the time-shift slider label.
+// Tight output: "15m" / "1h 30m" / "3d 2h" / "7d". Keeps the
+// slider header readable at fixed width.
+function formatShift(min: number): string {
+  if (min < 60) return `${min}m`;
+  if (min < 1440) {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  }
+  const d = Math.floor(min / 1440);
+  const h = Math.floor((min % 1440) / 60);
+  return h === 0 ? `${d}d` : `${d}d ${h}h`;
+}
+
 function EdgeStat({ label, value, sub, cls }: {
   label: string; value: string; sub?: string; cls?: string;
 }) {

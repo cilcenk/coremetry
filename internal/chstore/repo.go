@@ -1163,8 +1163,23 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// query then truncated silently, producing the
 		// "30d returns the same as 7d" symptom an operator
 		// reported in v0.5.376.
+		//
+		// v0.5.427 — bug-fix (recurring): GLOBAL IN. In cluster
+		// mode the inner subquery is FROM Distributed spans and
+		// the outer FROM Distributed spans too — without GLOBAL,
+		// CH defaults to `local` semantics (each shard runs the
+		// subquery against its own local table). A trace whose
+		// service-narrowing match lives on shard A but whose
+		// search-matching span lives on shard B then never
+		// appears, because shard B's local subquery doesn't
+		// contain the trace_id. Same fix v0.5.116 applied to
+		// topology / backtrace; the raw-traces path was missed.
+		// GLOBAL IN forces the subquery to run on the coordinator
+		// and broadcast the result to every shard — single-node
+		// installs see no behaviour change (GLOBAL IN ≡ IN when
+		// the table is not Distributed).
 		wc.add(
-			"trace_id IN (SELECT DISTINCT trace_id FROM spans"+
+			"trace_id GLOBAL IN (SELECT DISTINCT trace_id FROM spans"+
 				" WHERE service_name = ?"+
 				" AND time >= ? AND time <= ?"+
 				")",

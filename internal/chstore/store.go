@@ -170,6 +170,22 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		conn.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// v0.5.421 — boot-time reconciliation. In cluster mode the
+	// migration loop normally creates both the `<name>_local`
+	// table and its Distributed wrapper at `<name>`. If a prior
+	// boot crashed between those two CREATEs (network blip, ZK
+	// lag, mid-migration failure), the wrapper goes missing and
+	// every read against the bare name 500s with UNKNOWN_TABLE.
+	// This pass detects + repairs that drift on every boot —
+	// idempotent, cheap (just system.tables lookups + zero or
+	// more wrapper CREATEs).
+	if err := s.ensureDistributedWrappers(ctx); err != nil {
+		// Non-fatal — log + continue. Without this guard a single
+		// wrapper failure would prevent the pod from coming up
+		// at all, which is worse than a missing wrapper that an
+		// operator can fix manually.
+		log.Printf("[chstore] reconcile distributed wrappers: %v", err)
+	}
 	return s, nil
 }
 

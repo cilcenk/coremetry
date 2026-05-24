@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -148,6 +149,89 @@ var defaultShardPolicy = map[string]string{
 // v0.5.419 — extended to per-table policy. Operator-asked: at
 // billion-span scale + 1000+ services, the architectural
 // optimisation is worth a one-time RESET_SCHEMA.
+// ensureDistributedWrappers — v0.5.421. Boot-time reconciliation
+// for the cluster-mode Distributed wrappers. Scans system.tables
+// and, for every table that has a `<name>_local` flavour but is
+// missing its bare `<name>` wrapper, emits the CREATE TABLE …
+// ENGINE = Distributed(…) statement. Closes the failure mode
+// where a prior mid-migration crash (network blip, ZK lag) left
+// the local in place but the wrapper missing — every read
+// against the bare name would otherwise 500 with UNKNOWN_TABLE
+// until the operator manually rebuilt the wrapper.
+//
+// No-op in standalone mode (no wrappers in the model).
+// Idempotent — uses CREATE TABLE IF NOT EXISTS so a healthy
+// install does zero writes; each candidate table costs a single
+// system.tables lookup.
+func (s *Store) ensureDistributedWrappers(ctx context.Context) error {
+	if !s.clusterMode() {
+		return nil
+	}
+	// Set of tables that should have wrappers: highVolumeTables
+	// (sharded base + MV) PLUS any extra entries in the
+	// defaultShardPolicy map (covers trace_summary_* which is
+	// MV-only and not in highVolumeTables).
+	candidates := make(map[string]bool, len(highVolumeTables)+len(defaultShardPolicy))
+	for n := range highVolumeTables {
+		candidates[n] = true
+	}
+	for n := range defaultShardPolicy {
+		candidates[n] = true
+	}
+
+	// Pull the existing tables in our database in one round-trip
+	// so we don't fire 11+ separate system.tables queries.
+	existing := make(map[string]bool)
+	rows, err := s.conn.Query(ctx, `
+		SELECT name FROM system.tables
+		WHERE database = currentDatabase()`)
+	if err != nil {
+		return fmt.Errorf("list tables: %w", err)
+	}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[n] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	repaired := 0
+	on := s.onCluster()
+	for name := range candidates {
+		localName := name + "_local"
+		// Both halves present → wrapper is healthy, nothing to do.
+		if existing[localName] && existing[name] {
+			continue
+		}
+		// Local table missing too → migration never created the
+		// pair for some reason (table not in this schema's
+		// version, or migration genuinely failed). Skip rather
+		// than emit a Distributed against a non-existent local.
+		if !existing[localName] {
+			continue
+		}
+		// Local present, wrapper missing → repair.
+		stmt := fmt.Sprintf(
+			"CREATE TABLE IF NOT EXISTS %s%s AS %s ENGINE = Distributed(`%s`, currentDatabase(), %s, %s)",
+			name, on, localName, s.cfg.ClusterName, localName, s.shardKeyFor(name))
+		if err := s.conn.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("repair wrapper %s: %w", name, err)
+		}
+		log.Printf("[chstore] reconcile: created missing Distributed wrapper for %s", name)
+		repaired++
+	}
+	if repaired > 0 {
+		log.Printf("[chstore] reconcile: %d wrapper(s) repaired", repaired)
+	}
+	return nil
+}
+
 // ShardPolicy returns the resolved (table → expression) map for
 // every table that gets a Distributed wrapper in cluster mode.
 // Exposed for /admin/clickhouse so the operator can audit which

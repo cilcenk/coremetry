@@ -73,19 +73,36 @@ func (s *Store) shardKey() string {
 	return "rand()"
 }
 
-// tablesWithoutTraceID — high-volume tables whose schema does not
-// include a `trace_id` column. metric_points (metric-keyed) and
-// profiles (pprof-keyed) lack trace_id because their data model
-// is independent of trace context. If the operator configured a
-// shard expression that references trace_id, applying it to these
-// tables errors with CH 47 (UNKNOWN_IDENTIFIER) at the
-// Distributed wrapper CREATE — instead, fall back to rand() so
-// the wrapper still creates (random distribution is the right
-// policy for these tables anyway; trace-locality has no meaning
-// when there's no trace).
+// tablesWithoutTraceID — high-volume tables + MVs whose CH
+// schema does NOT project a `trace_id` column. When the
+// operator configures COREMETRY_CH_SHARD_KEY with a
+// trace_id-referencing expression (e.g. `cityHash64(trace_id)`),
+// applying it uniformly to every Distributed wrapper errors
+// with CH 47 (UNKNOWN_IDENTIFIER) on these — they get rand()
+// instead.
+//
+// v0.5.425 — expanded to cover every MV that doesn't project
+// trace_id. Operator-reported: v0.5.418 only listed the two
+// raw tables (metric_points, profiles), missed every MV. Even
+// with v0.5.422 fixing the defaultShardPolicy entries, the env
+// override path bypassed those defaults and tried to apply
+// `cityHash64(trace_id)` to trace_summary_1d / service_summary_5m
+// / db_*_summary / topology_edges_5m, none of which project
+// trace_id, → migration crash.
+//
+// trace_id IS projected by: spans, logs, trace_summary_5m.
+// Every other high-volume / sharded MV omits it.
 var tablesWithoutTraceID = map[string]bool{
-	"metric_points": true,
-	"profiles":      true,
+	// Raw tables.
+	"metric_points":        true,
+	"profiles":             true,
+	// MVs — none of these project trace_id in their SELECT.
+	"trace_summary_1d":     true,  // only (day, trace_count_state)
+	"service_summary_5m":   true,
+	"db_summary_5m":        true,
+	"db_caller_summary_5m": true,
+	"topology_edges_5m":    true,
+	"topology_op_edges_5m": true,
 }
 
 // defaultShardPolicy — v0.5.419. Per-table shard expressions matching

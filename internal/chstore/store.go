@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -97,7 +98,21 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 			return nil, fmt.Errorf("setup connect after retries: %w", lastErr)
 		}
 	}
-	if err := setup.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", cfg.Database)); err != nil {
+	// v0.5.420 — operator-reported: "Database coremetry does not
+	// exist" during cluster boot. Root cause: CREATE DATABASE was
+	// emitted without ON CLUSTER, so the database appeared only
+	// on the coordinator node Coremetry happened to connect to.
+	// Subsequent CREATE TABLE ON CLUSTER statements then failed
+	// on every OTHER replica with UNKNOWN_DATABASE because they
+	// didn't have the database yet.
+	// Cluster mode prepends ON CLUSTER `<name>` so every replica
+	// creates the database in lock-step before any table DDL.
+	// Standalone mode unchanged.
+	onCluster := ""
+	if name := strings.TrimSpace(cfg.ClusterName); name != "" {
+		onCluster = " ON CLUSTER `" + name + "`"
+	}
+	if err := setup.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`%s", cfg.Database, onCluster)); err != nil {
 		setup.Close()
 		return nil, fmt.Errorf("create database: %w", err)
 	}

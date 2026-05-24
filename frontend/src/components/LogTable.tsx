@@ -139,6 +139,7 @@ export function LogTable({
   extraExpanded,
   onFilterAdd,
   onFilterExclude,
+  onTracePeek,
 }: {
   logs: LogRow[];
   hideTraceColumn?: boolean;
@@ -161,6 +162,13 @@ export function LogTable({
   // filter to mutate (e.g. trace detail Logs tab).
   onFilterAdd?: (key: string, value: string) => void;
   onFilterExclude?: (key: string, value: string) => void;
+  // v0.5.398 — trace-id peek drill-in. When set, the trace_id
+  // cell renders a small "👁" button alongside the existing
+  // "open full trace" link; clicking opens the parent's
+  // TracePeekDrawer (inline trace summary + sibling logs).
+  // Optional so the trace detail Logs tab can omit it (peek-
+  // into-same-trace would be a no-op there).
+  onTracePeek?: (traceId: string) => void;
 }) {
   const [localExpanded, setLocalExpanded] = useState<Set<number>>(new Set());
   const expanded = expandedIds ?? localExpanded;
@@ -215,6 +223,7 @@ export function LogTable({
                 extraExpanded={extraExpanded}
                 onFilterAdd={onFilterAdd}
                 onFilterExclude={onFilterExclude}
+                onTracePeek={onTracePeek}
               />
             );
           })}
@@ -226,7 +235,7 @@ export function LogTable({
 
 function LogRow({
   l, idx, cols, hideTraceColumn, selected, expanded, onClick, extraExpanded,
-  onFilterAdd, onFilterExclude,
+  onFilterAdd, onFilterExclude, onTracePeek,
 }: {
   l: LogRow;
   idx: number;
@@ -238,6 +247,7 @@ function LogRow({
   extraExpanded?: (l: LogRow) => React.ReactNode;
   onFilterAdd?: (key: string, value: string) => void;
   onFilterExclude?: (key: string, value: string) => void;
+  onTracePeek?: (traceId: string) => void;
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
@@ -299,6 +309,21 @@ function LogRow({
                   {l.traceId.slice(0, 8)}…
                 </Link>
                 <CopyButton value={l.traceId} title="Copy trace ID" />
+                {/* v0.5.399 — peek button. Opens an inline drawer
+                    with the trace summary + sibling logs without
+                    leaving /logs. The "open full trace" link
+                    above stays for the operator who wants the
+                    proper waterfall surface. */}
+                {onTracePeek && (
+                  <button type="button"
+                    onClick={e => { e.stopPropagation(); onTracePeek(l.traceId); }}
+                    title="Peek trace inline (summary + sibling logs)"
+                    style={{
+                      all: 'unset', cursor: 'pointer',
+                      marginLeft: 4, padding: '0 4px',
+                      fontSize: 11, color: 'var(--accent2)',
+                    }}>👁</button>
+                )}
               </>
             ) : '—'}
           </td>

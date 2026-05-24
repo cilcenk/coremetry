@@ -10,6 +10,7 @@ import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
+import { TracePeekDrawer } from '@/components/TracePeekDrawer';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogPatternStrip } from '@/components/LogPatternStrip';
 import { LivePatternsPanel } from '@/components/LivePatternsPanel';
@@ -67,6 +68,11 @@ function LogsInner() {
   const [draft, setDraft] = useState(filter);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [services, setServices] = useState<string[]>([]);
+  // v0.5.399 — trace peek drawer state. Clicking the "👁" button
+  // next to a trace_id in the log row sets this; TracePeekDrawer
+  // fetches the trace summary + sibling logs and renders inline
+  // without disturbing the page's existing filter/search state.
+  const [peekTraceId, setPeekTraceId] = useState<string | null>(null);
   // Live tail (HyperDX-style): poll every 2s, prepend new rows.
   const [live, setLive] = useState(false);
 
@@ -509,12 +515,14 @@ function LogsInner() {
               onToggleExpand={toggle}
               onFilterAdd={addFromRow}
               onFilterExclude={excludeFromRow}
+              onTracePeek={tid => setPeekTraceId(tid)}
               extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
             <Pager page={page} pageSize={100} total={total} onPage={setPage}
                    extras={<>{total.toLocaleString()} total</>} />
           </>
         )}
       </div>
+      <TracePeekDrawer traceId={peekTraceId} onClose={() => setPeekTraceId(null)} />
       {alertDraft && (
         <SaveAsAlertModal
           query={filter.search}

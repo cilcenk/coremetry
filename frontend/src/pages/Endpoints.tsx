@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -73,6 +73,35 @@ export default function EndpointsPage() {
   // since it doubles backend CH scan cost; operator opts in
   // when they want trend arrows next to each metric.
   const [compare, setCompare] = useState<boolean>(false);
+  // v0.5.406 — row expansion + per-service dependency cache.
+  // Clicking the "▶" chevron on a row reveals a strip showing
+  // which services this endpoint's service typically calls
+  // downstream. Cached per-service so expanding 3 endpoints of
+  // the same service hits the network once.
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [depsByService, setDepsByService] = useState<Record<string, import('@/lib/types').NeighborStat[]>>({});
+
+  // v0.5.417 — toggle a row's dependency strip + lazy-load the
+  // downstream neighbours for its service. Cache is per-service
+  // so expanding multiple endpoints of the same service hits
+  // /api/services/{svc}/neighbors only once.
+  const onToggleExpand = (rowKey: string, service: string) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      next.has(rowKey) ? next.delete(rowKey) : next.add(rowKey);
+      return next;
+    });
+    // Lazy-fetch dependencies the first time we expand this svc.
+    if (!depsByService[service]) {
+      api.serviceNeighbors(service, '1h', 100, false)
+        .then(r => setDepsByService(prev => ({
+          ...prev, [service]: r?.downstream ?? [],
+        })))
+        .catch(() => setDepsByService(prev => ({
+          ...prev, [service]: [],
+        })));
+    }
+  };
   // v0.5.387 — sparkline-click drill-in. Holds the row whose
   // trend was clicked; modal renders the three RED sparklines
   // (calls / errors / p99) side-by-side with their summary
@@ -243,6 +272,7 @@ export default function EndpointsPage() {
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: 22 }} />
                     <SortHeader k="service"   label="Service"    cur={sortKey} dir={sortDir} onSort={setSort} />
                     <SortHeader k="path"      label="Path"       cur={sortKey} dir={sortDir} onSort={setSort} />
                     <th>Method</th>
@@ -259,9 +289,30 @@ export default function EndpointsPage() {
                 <tbody>
                   {sorted.map((r, i) => {
                     const errCls = r.errorRate >= 5 ? 'b-err' : r.errorRate >= 1 ? 'b-warn' : 'b-ok';
+                    const rowKey = `${r.service}|${r.path}|${i}`;
+                    const isExpanded = expandedRows.has(rowKey);
                     return (
-                      <tr key={`${r.service}|${r.path}|${i}`}
-                          style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
+                      <React.Fragment key={rowKey}>
+                      <tr style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
+                        <td style={{ width: 22, textAlign: 'center' }}>
+                          {/* v0.5.417 — dependency strip expander.
+                              Click ▶ → fetches the service's
+                              downstream neighbours once (cached
+                              per service across rows of same svc)
+                              and renders a strip below the row. */}
+                          <button type="button"
+                            onClick={() => onToggleExpand(rowKey, r.service)}
+                            style={{
+                              all: 'unset', cursor: 'pointer',
+                              fontSize: 10, color: 'var(--text3)',
+                              padding: '0 4px',
+                            }}
+                            title={isExpanded
+                              ? 'Hide downstream dependencies'
+                              : 'Show services / dbs this endpoint\'s service typically calls'}>
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                        </td>
                         <td>
                           <Link to={`/services?name=${encodeURIComponent(r.service)}`}
                                 style={{ fontFamily: 'monospace', fontSize: 12 }}>
@@ -323,6 +374,17 @@ export default function EndpointsPage() {
                           </Link>
                         </td>
                       </tr>
+                      {isExpanded && (
+                        <tr>
+                          <td />
+                          <td colSpan={10} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
+                            <DependencyStrip
+                              service={r.service}
+                              deps={depsByService[r.service]} />
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -556,6 +618,76 @@ function StatusBreakdown({ r }: { r: EndpointRow }) {
           }}>5xx {compactNum(s5)}</span>
       )}
     </span>
+  );
+}
+
+// DependencyStrip — v0.5.417. Shown when an endpoint row is
+// expanded; lists the top 5 downstream services / dbs / queues
+// that the endpoint's SERVICE typically calls during the
+// window. Best-effort approximation: real per-endpoint
+// dependency tracking would require span-level descendant
+// traversal (expensive); the service-level neighbours read
+// from /api/services/{svc}/neighbors is fast (cached at
+// backend) and operationally informative ("this endpoint's
+// service hits postgres + redis + payments-api").
+function DependencyStrip({ service, deps }: {
+  service: string;
+  deps?: import('@/lib/types').NeighborStat[];
+}) {
+  if (deps === undefined) {
+    return (
+      <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+        Loading {service}'s dependencies…
+      </span>
+    );
+  }
+  if (deps.length === 0) {
+    return (
+      <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+        No downstream calls observed for {service} in the last 1h.
+      </span>
+    );
+  }
+  const top = [...deps].sort((a, b) => b.spanCount - a.spanCount).slice(0, 5);
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 6,
+      fontSize: 11,
+    }}>
+      <div style={{
+        fontSize: 10, color: 'var(--text3)',
+        textTransform: 'uppercase', letterSpacing: 0.4,
+      }}>
+        {service} → downstream (last 1h, top 5 by span volume)
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {top.map((d, i) => (
+          <Link key={i}
+            to={`/services?name=${encodeURIComponent(d.service)}`}
+            title={`${fmtNum(d.spanCount)} spans across ${fmtNum(d.traceCount)} traces in the last 1h`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '3px 8px', borderRadius: 12,
+              background: 'var(--bg2)', border: '1px solid var(--border)',
+              color: 'var(--text2)', fontFamily: 'ui-monospace, monospace',
+              fontSize: 10, textDecoration: 'none',
+            }}>
+            <span style={{ fontWeight: 600 }}>{d.service}</span>
+            <span style={{ color: 'var(--text3)' }}>{fmtNum(d.spanCount)} sp</span>
+          </Link>
+        ))}
+        {deps.length > 5 && (
+          <Link to={`/topology?focus=${encodeURIComponent(service)}`}
+            style={{
+              padding: '3px 8px', fontSize: 10,
+              color: 'var(--accent2)', textDecoration: 'none',
+              alignSelf: 'center',
+            }}>
+            +{deps.length - 5} more → topology
+          </Link>
+        )}
+      </div>
+    </div>
   );
 }
 

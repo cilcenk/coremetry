@@ -420,7 +420,15 @@ function ServiceView({ range }: { range: TimeRange }) {
       from = Number(BigInt(from) - shiftNs);
       to = Number(BigInt(to) - shiftNs);
     }
-    api.serviceTopology({ from, to, noise: noiseShow ? 'show' : undefined })
+    // v0.5.414 — compare=prior triggers the what-changed banner.
+    // Only enabled in live mode (shift=0); time-shifted views
+    // would be comparing two arbitrary historical windows which
+    // is rarely what the operator wants.
+    api.serviceTopology({
+      from, to,
+      noise: noiseShow ? 'show' : undefined,
+      compare: shiftMin === 0 ? 'prior' : undefined,
+    })
       // Normalise: nil slices from older backend / empty windows
       // marshal as JSON null, which crashes data.edges.forEach.
       // Belt-and-braces with the server-side fix.
@@ -695,6 +703,11 @@ function ServiceView({ range }: { range: TimeRange }) {
       )}
       {visibleFiltered && visibleFiltered.nodes.length > 0 && (
         <>
+          <WhatChangedBanner
+            edges={visibleFiltered.edges}
+            shiftMin={shiftMin}
+            onPickEdge={setSelectedEdge}
+          />
           <ServiceTopologySVG
             nodes={visibleFiltered.nodes} edges={visibleFiltered.edges} layout={layout}
             onEdgeClick={setSelectedEdge} search={search}
@@ -2255,6 +2268,104 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
 // Tiny variant of the KPI pattern used across the app; keeps the
 // drawer dense so the operator can scan errors / latency without
 // scrolling.
+// WhatChangedBanner — v0.5.414. Datadog Change Tracking pattern.
+// When prior-window data is on the edges (compare=prior was
+// passed), scan for edges whose errorRate or p99Ms jumped ≥2×
+// vs the immediately-preceding window. Top 3 surfaced as
+// clickable banner rows — click takes the operator straight to
+// the EdgeDetailPanel. Hidden when no significant changes.
+function WhatChangedBanner({ edges, shiftMin, onPickEdge }: {
+  edges: ServiceTopologyEdge[];
+  shiftMin: number;
+  onPickEdge: (e: ServiceTopologyEdge) => void;
+}) {
+  // Time-shifted views can't be compared meaningfully (the
+  // "prior" they'd compare to isn't the current "now") — banner
+  // suppressed.
+  if (shiftMin > 0) return null;
+
+  const hits = useMemo(() => {
+    type Hit = {
+      edge: ServiceTopologyEdge;
+      kind: 'errors' | 'p99';
+      curVal: number;
+      priorVal: number;
+      ratio: number;
+    };
+    const out: Hit[] = [];
+    for (const e of edges) {
+      // Need prior data + non-trivial current volume (skip
+      // edges that just blipped — 5 errors → 10 errors is 2×
+      // ratio but operationally irrelevant).
+      const minCalls = 50;
+      if (!e.priorCalls || e.calls < minCalls) continue;
+      // Error-rate jump
+      const priorErrRate = e.priorErrors && e.priorCalls
+        ? (e.priorErrors / e.priorCalls) * 100
+        : 0;
+      if (priorErrRate >= 0.1 && e.errorRate >= priorErrRate * 2) {
+        out.push({
+          edge: e, kind: 'errors',
+          curVal: e.errorRate, priorVal: priorErrRate,
+          ratio: priorErrRate > 0 ? e.errorRate / priorErrRate : 0,
+        });
+        continue;
+      }
+      // P99 jump
+      if (e.priorP99Ms && e.priorP99Ms >= 5 && e.p99Ms >= e.priorP99Ms * 2) {
+        out.push({
+          edge: e, kind: 'p99',
+          curVal: e.p99Ms, priorVal: e.priorP99Ms,
+          ratio: e.p99Ms / e.priorP99Ms,
+        });
+      }
+    }
+    out.sort((a, b) => b.ratio - a.ratio);
+    return out.slice(0, 3);
+  }, [edges]);
+
+  if (hits.length === 0) return null;
+
+  return (
+    <div style={{
+      marginBottom: 12, padding: '8px 12px',
+      borderRadius: 6, border: '1px solid var(--warn, #facc15)',
+      background: 'rgba(250, 204, 21, 0.08)',
+      fontSize: 12, color: 'var(--text)',
+      display: 'flex', flexDirection: 'column', gap: 4,
+    }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: 0.4, color: 'var(--warn, #facc15)',
+      }}>
+        What changed · vs prior {hits.length === 1 ? 'edge' : `${hits.length} edges`} ≥2× worse
+      </div>
+      {hits.map((h, i) => (
+        <button key={i}
+          type="button"
+          onClick={() => onPickEdge(h.edge)}
+          style={{
+            all: 'unset', cursor: 'pointer',
+            display: 'flex', alignItems: 'baseline', gap: 8,
+            padding: '2px 0', fontSize: 11,
+          }}>
+          <span style={{ color: 'var(--err)', fontWeight: 700 }}>
+            {h.ratio >= 10 ? '▲ ≥10×' : `▲ ${h.ratio.toFixed(1)}×`}
+          </span>
+          <span style={{ fontFamily: 'ui-monospace, monospace' }}>
+            {h.edge.parentService} → {h.edge.childNode}
+          </span>
+          <span style={{ color: 'var(--text2)' }}>
+            {h.kind === 'errors'
+              ? `errorRate ${h.priorVal.toFixed(2)}% → ${h.curVal.toFixed(2)}%`
+              : `p99 ${h.priorVal.toFixed(0)}ms → ${h.curVal.toFixed(0)}ms`}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // v0.5.413 — format minutes-ago for the time-shift slider label.
 // Tight output: "15m" / "1h 30m" / "3d 2h" / "7d". Keeps the
 // slider header readable at fixed width.

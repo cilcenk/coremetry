@@ -101,6 +101,16 @@ type ServiceTopologyEdge struct {
 	// `ext:<peer>` label.
 	ExtDisplay     string   `json:"extDisplay,omitempty"`
 	ExtKind        string   `json:"extKind,omitempty"`
+	// v0.5.410 — environment annotation per side. Resolved at
+	// aggregation time from deployment.environment /
+	// service.namespace / k8s.namespace.name resource attrs.
+	// Display-only — same-name service in different envs still
+	// merges in the MV's ReplacingMergeTree dedup (env not in
+	// ORDER BY); a strict per-env split needs a table rebuild
+	// and is deferred. Empty when no env attr was present on
+	// the underlying spans.
+	ParentEnv      string   `json:"parentEnv,omitempty"`
+	ChildEnv       string   `json:"childEnv,omitempty"`
 }
 
 // RootFlow describes one business-level entry point: the root
@@ -415,7 +425,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
-			 sum_duration_ns, p99_ms, errors, version)
+			 sum_duration_ns, p99_ms, errors,
+			 parent_env, child_env, version)
 		WITH
 			multiIf(
 				c.db_system  != '', 'db',
@@ -431,7 +442,17 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				c.db_system   != '', concat(c.db_system, ' ', c.name),
 				c.msg_system  != '', concat(c.msg_system, ' ', c.name),
 				c.name
-			) AS label
+			) AS label,
+			-- v0.5.410 — per-span env derivation. Same coalesce
+			-- chain across child + parent so the operator's
+			-- prod/stage chip reads the same way regardless of
+			-- which side the env came from.
+			coalesce(
+				nullIf(c.res_values[indexOf(c.res_keys, 'deployment.environment')], ''),
+				nullIf(c.res_values[indexOf(c.res_keys, 'service.namespace')], ''),
+				nullIf(c.res_values[indexOf(c.res_keys, 'k8s.namespace.name')], ''),
+				''
+			) AS c_env
 		SELECT
 			toDateTime(?, 'UTC') AS time_bucket,
 			p.service_name        AS parent_service,
@@ -446,10 +467,22 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			-- v0.5.367 — per-edge error count powers /api/service-graph
 			-- ErrorRate reads from the MV (no more raw-spans self-join).
 			toUInt64(countIf(c.status_code = 'error')) AS errors,
+			-- v0.5.410 — env per side. any() picks an arbitrary
+			-- representative within the bucket; cardinality of env
+			-- per (service, 5min) is typically 1 so the pick is
+			-- stable for the operator's eye.
+			any(p.env)            AS parent_env,
+			any(c_env)            AS child_env,
 			toUInt64(?)           AS version
 		FROM spans AS c
 		GLOBAL INNER JOIN (
-			SELECT trace_id, span_id, service_name
+			SELECT trace_id, span_id, service_name,
+			       coalesce(
+			         nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
+			         nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
+			         nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
+			         ''
+			       ) AS env
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		) AS p
@@ -488,7 +521,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
-			 sum_duration_ns, p99_ms, errors, version)
+			 sum_duration_ns, p99_ms, errors,
+			 parent_env, child_env, version)
 		WITH
 			coalesce(
 				nullIf(peer_service, ''),
@@ -496,6 +530,16 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
 				''
 			) AS infra_host,
+			-- v0.5.410 — derive parent_env from resource attrs.
+			-- child_env stays empty for infra targets — db/queue/
+			-- external nodes don't inherit the caller's env (they
+			-- ARE cross-env infra).
+			coalesce(
+				nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
+				nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
+				nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
+				''
+			) AS p_env,
 			multiIf(
 				db_system  != '' AND infra_host != '',
 					concat('db:',    db_system, '@', infra_host),
@@ -550,6 +594,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toFloat64(quantileExact(0.99)(duration)) / 1e6 AS p99_ms,
 			-- v0.5.367 — infra-edge errors mirror the service-pair pass.
 			toUInt64(countIf(status_code = 'error')) AS errors,
+			any(p_env)           AS parent_env,
+			''                   AS child_env,
 			toUInt64(?)          AS version
 		FROM spans
 		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
@@ -858,7 +904,9 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 			total_calls,
 			total_errors,
 			avg_ms,
-			max_p99_ms
+			max_p99_ms,
+			parent_env,
+			child_env
 		FROM (
 			SELECT
 				parent_service,
@@ -871,7 +919,13 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 				if(sum(calls) > 0,
 				   toFloat64(sum(sum_duration_ns)) / sum(calls) / 1e6,
 				   0) AS avg_ms,
-				toFloat64(max(p99_ms)) AS max_p99_ms
+				toFloat64(max(p99_ms)) AS max_p99_ms,
+				-- v0.5.410 — env per side. any() picks an
+				-- arbitrary representative across the merged
+				-- buckets; in practice the env is stable per
+				-- (service, day) so the pick is consistent.
+				any(parent_env) AS parent_env,
+				any(child_env)  AS child_env
 			FROM topology_edges_5m FINAL
 			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
 			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
@@ -891,7 +945,8 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 		var e ServiceTopologyEdge
 		if err := rows.Scan(&e.ParentService, &e.ChildNode, &e.NodeKind,
 			&e.Protocol, &e.TopLabels, &e.DistinctLabels, &e.Calls,
-			&e.Errors, &e.AvgMs, &e.P99Ms); err != nil {
+			&e.Errors, &e.AvgMs, &e.P99Ms,
+			&e.ParentEnv, &e.ChildEnv); err != nil {
 			return nil, err
 		}
 		if e.Calls > 0 {

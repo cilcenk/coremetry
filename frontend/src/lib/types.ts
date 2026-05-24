@@ -57,6 +57,11 @@ export interface ServiceTopologyNode {
   // place of the raw hostname.
   extDisplay?: string;
   extKind?: string;
+  // v0.5.410 — display-only environment annotation
+  // (deployment.environment / service.namespace /
+  // k8s.namespace.name). UI renders as a small chip next to
+  // the service name on multi-env installs.
+  env?: string;
 }
 export interface ServiceTopologyEdge {
   parentService: string;

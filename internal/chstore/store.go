@@ -827,6 +827,16 @@ func (s *Store) migrate(ctx context.Context) error {
 			-- can read from the MV instead of self-joining
 			-- raw spans at every request.
 			errors          UInt64 DEFAULT 0,
+			-- v0.5.410 — display-only environment annotation
+			-- (deployment.environment / service.namespace /
+			-- k8s.namespace.name resolved at aggregation time).
+			-- NOT part of ORDER BY by design — keeping it out of
+			-- the dedup key means existing installs ALTER cleanly;
+			-- multi-env-in-single-CH operators who need strict
+			-- separation can rebuild the table. Default '' so old
+			-- rows stay valid.
+			parent_env      LowCardinality(String) DEFAULT '',
+			child_env       LowCardinality(String) DEFAULT '',
 			version         UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		PARTITION BY toDate(time_bucket)
@@ -1048,6 +1058,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		// (acceptable — old buckets show 0 errors until they age
 		// out via the 14-day TTL).
 		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS errors UInt64 DEFAULT 0`,
+		// v0.5.410 — multi-key service identity (display-only).
+		// Forward-compat add: env columns default '' so rows from
+		// older versions remain valid. ORDER BY untouched — strict
+		// per-env dedup would require a full table rebuild and is
+		// deferred until operator demand justifies the migration.
+		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS parent_env LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS child_env  LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_kind        kind        TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_db_system   db_system   TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_http_status http_status TYPE minmax    GRANULARITY 4`,

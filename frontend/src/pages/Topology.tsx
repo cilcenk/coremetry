@@ -1773,6 +1773,13 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                       {n.kind === 'external' && n.extKind
                         ? n.extKind.toUpperCase()
                         : n.kind.toUpperCase()}
+                      {/* v0.5.410 — env chip ("prod" / "stage" /
+                          "k8s-ns") right after the kind label.
+                          Only renders when the backend resolved
+                          one from resource attrs. */}
+                      {n.env && (
+                        <tspan dx={6} fill="var(--accent2)" fontSize={9}>· {truncate(n.env, 14)}</tspan>
+                      )}
                       {team && n.kind === 'service' && (
                         <tspan dx={6} fill="var(--text2)">· {truncate(team, 18)}</tspan>
                       )}

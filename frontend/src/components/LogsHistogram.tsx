@@ -33,12 +33,19 @@ const SEV_COLORS: Record<string, string> = {
   INFO:   '#3b82f6',
   DEBUG:  '#a3a3a3',
   TRACE:  '#a3a3a3',
+  // v0.5.396 — synthetic band for severities that didn't fit
+  // the top-50 terms agg (custom levels, mixed casing). Subtle
+  // grey so the operator's eye still lands on errors first.
+  OTHER: '#94a3b8',
 };
 // Sort priority — bottom-most band in the stack is the most
 // important (errors anchor the chart so they're always at the
-// baseline of the eye's vertical scan).
+// baseline of the eye's vertical scan). OTHER sinks to the top
+// of the stack (lowest rank) so it doesn't push errors off the
+// baseline.
 const SEV_RANK: Record<string, number> = {
   FATAL: 6, ERROR: 5, WARN: 4, WARNING: 4, INFO: 3, DEBUG: 2, TRACE: 1,
+  OTHER: 0,
 };
 
 function colorFor(name: string): string {

@@ -11,6 +11,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { TracePeekDrawer } from '@/components/TracePeekDrawer';
+import { LogFacetsPanel } from '@/components/LogFacetsPanel';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogPatternStrip } from '@/components/LogPatternStrip';
 import { LivePatternsPanel } from '@/components/LivePatternsPanel';
@@ -509,17 +510,23 @@ function LogsInner() {
           )
         )}
         {data && logs.length > 0 && (
-          <>
-            <LogTable logs={logs} nav={tableNav}
-              expandedIds={expanded}
-              onToggleExpand={toggle}
-              onFilterAdd={addFromRow}
-              onFilterExclude={excludeFromRow}
-              onTracePeek={tid => setPeekTraceId(tid)}
-              extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
-            <Pager page={page} pageSize={100} total={total} onPage={setPage}
-                   extras={<>{total.toLocaleString()} total</>} />
-          </>
+          <div style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <LogTable logs={logs} nav={tableNav}
+                expandedIds={expanded}
+                onToggleExpand={toggle}
+                onFilterAdd={addFromRow}
+                onFilterExclude={excludeFromRow}
+                onTracePeek={tid => setPeekTraceId(tid)}
+                extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
+              <Pager page={page} pageSize={100} total={total} onPage={setPage}
+                     extras={<>{total.toLocaleString()} total</>} />
+            </div>
+            <LogFacetsPanel
+              filter={filter}
+              range={{ from, to }}
+              onPick={(key, value) => addFromRow(key, value)} />
+          </div>
         )}
       </div>
       <TracePeekDrawer traceId={peekTraceId} onClose={() => setPeekTraceId(null)} />

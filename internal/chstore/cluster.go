@@ -206,57 +206,168 @@ func (s *Store) ensureDistributedWrappers(ctx context.Context) error {
 		candidates[n] = true
 	}
 
-	// Pull the existing tables in our database in one round-trip
-	// so we don't fire 11+ separate system.tables queries.
-	existing := make(map[string]bool)
+	// Pull existing tables + engines in one round-trip. Engine is
+	// needed for the v0.5.434 in-place migration path — we only
+	// rename Replicated*/AggregatingMergeTree tables to `_local`,
+	// never a Distributed table (a Distributed at the bare name
+	// with no `_local` behind it is an orphan wrapper and gets
+	// skipped + logged, not rewritten).
+	existing := make(map[string]string) // name → engine
 	rows, err := s.conn.Query(ctx, `
-		SELECT name FROM system.tables
+		SELECT name, engine FROM system.tables
 		WHERE database = currentDatabase()`)
 	if err != nil {
 		return fmt.Errorf("list tables: %w", err)
 	}
 	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
+		var n, engine string
+		if err := rows.Scan(&n, &engine); err != nil {
 			rows.Close()
 			return err
 		}
-		existing[n] = true
+		existing[n] = engine
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
 
-	repaired := 0
+	wrappersCreated := 0
+	wrappersMigrated := 0
 	on := s.onCluster()
 	for name := range candidates {
 		localName := name + "_local"
+		_, bareExists := existing[name]
+		_, localExists := existing[localName]
+
 		// Both halves present → wrapper is healthy, nothing to do.
-		if existing[localName] && existing[name] {
+		if bareExists && localExists {
 			continue
 		}
-		// Local table missing too → migration never created the
-		// pair for some reason (table not in this schema's
-		// version, or migration genuinely failed). Skip rather
-		// than emit a Distributed against a non-existent local.
-		if !existing[localName] {
+		// Neither exists → table not in this schema's version, skip.
+		if !bareExists && !localExists {
 			continue
 		}
-		// Local present, wrapper missing → repair.
-		stmt := fmt.Sprintf(
+
+		// Local present, wrapper missing → original v0.5.421 repair.
+		if localExists && !bareExists {
+			stmt := fmt.Sprintf(
+				"CREATE TABLE IF NOT EXISTS %s%s AS %s ENGINE = Distributed(`%s`, currentDatabase(), %s, %s)",
+				name, on, localName, s.cfg.ClusterName, localName, s.shardKeyFor(name))
+			if err := s.conn.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("repair wrapper %s: %w", name, err)
+			}
+			log.Printf("[chstore] reconcile: created missing Distributed wrapper for %s", name)
+			wrappersCreated++
+			continue
+		}
+
+		// v0.5.434 — bare exists, no _local. Three sub-cases:
+		//
+		//  1. bare is Distributed → orphan wrapper (no backing
+		//     local on this database). Shouldn't happen normally;
+		//     skip + warn so the operator can investigate via
+		//     SHOW CREATE TABLE without us silently mutating it.
+		//
+		//  2. bare is Replicated* / AggregatingMergeTree etc. →
+		//     this is the migration case the operator hits when
+		//     a previously-bare table joins highVolumeTables in
+		//     a new release (e.g. trace_summary_5m, db_summary_5m
+		//     family in v0.5.426). Rename bare → _local and
+		//     create the Distributed wrapper at the now-vacated
+		//     bare name. Data is already shard-local under the
+		//     ZK `{shard}` path macro, so the rename doesn't
+		//     duplicate or move rows — the wrapper just enables
+		//     cluster-wide reads via fan-out.
+		//
+		//  3. anything else (plain MergeTree → standalone install
+		//     that mounted cluster-mode env vars without rerunning
+		//     migrations) → skip; CREATE TABLE on the Distributed
+		//     wrapper would error against the non-Replicated local.
+		engine := existing[name]
+		switch {
+		case engine == "Distributed":
+			log.Printf("[chstore] reconcile: %s exists as Distributed but no %s_local — orphan wrapper, skipping (operator: SHOW CREATE TABLE %s to investigate)",
+				name, name, name)
+			continue
+		case !strings.HasPrefix(engine, "Replicated"):
+			log.Printf("[chstore] reconcile: %s exists with engine=%s (not Replicated*) — skipping migration; this database isn't running cluster-mode schema",
+				name, engine)
+			continue
+		}
+
+		// Rename + wrap. Both run on the cluster so every replica
+		// updates its metadata in lockstep.
+		//
+		// Boot-time race: two pods booting simultaneously both
+		// detect bare-exists / no-_local and both issue RENAME.
+		// The second loses to UNKNOWN_TABLE (CH code 60). Re-poll
+		// system.tables after a rename failure: if a peer beat us
+		// (bare gone, _local now present) treat as success and fall
+		// through to the idempotent CREATE TABLE IF NOT EXISTS
+		// wrap. Otherwise skip + log.
+		renameStmt := fmt.Sprintf("RENAME TABLE %s TO %s%s", name, localName, on)
+		if err := s.conn.Exec(ctx, renameStmt); err != nil {
+			beatByPeer, perr := s.peerRenamedTable(ctx, name, localName)
+			if perr != nil {
+				log.Printf("[chstore] reconcile: rename %s → %s failed (%v) and post-check errored (%v) — skipping", name, localName, err, perr)
+				continue
+			}
+			if !beatByPeer {
+				log.Printf("[chstore] reconcile: rename %s → %s failed: %v", name, localName, err)
+				continue
+			}
+			// Peer did the rename; fall through to wrap-create.
+		}
+		wrapStmt := fmt.Sprintf(
 			"CREATE TABLE IF NOT EXISTS %s%s AS %s ENGINE = Distributed(`%s`, currentDatabase(), %s, %s)",
 			name, on, localName, s.cfg.ClusterName, localName, s.shardKeyFor(name))
-		if err := s.conn.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("repair wrapper %s: %w", name, err)
+		if err := s.conn.Exec(ctx, wrapStmt); err != nil {
+			// Half-migrated: rename succeeded, wrap didn't. Next
+			// boot will see _local without bare and run the
+			// original repair path — self-heals.
+			log.Printf("[chstore] reconcile: wrap %s after rename failed (will retry next boot): %v", name, err)
+			continue
 		}
-		log.Printf("[chstore] reconcile: created missing Distributed wrapper for %s", name)
-		repaired++
+		log.Printf("[chstore] reconcile: migrated %s → %s_local + Distributed wrapper (engine was %s)",
+			name, name, engine)
+		wrappersMigrated++
 	}
-	if repaired > 0 {
-		log.Printf("[chstore] reconcile: %d wrapper(s) repaired", repaired)
+	if wrappersCreated > 0 || wrappersMigrated > 0 {
+		log.Printf("[chstore] reconcile: %d wrapper(s) created, %d table(s) migrated to _local",
+			wrappersCreated, wrappersMigrated)
 	}
 	return nil
+}
+
+// peerRenamedTable — v0.5.434. After a RENAME TABLE failure during
+// boot-time reconciliation, check whether a peer pod beat us to it:
+// the bare name should now be gone AND `<name>_local` should be
+// present. Returns (true, nil) when that's the case so the caller
+// can treat the rename as already-done and proceed to the idempotent
+// wrap-create. Returns (false, nil) when the bare table is still
+// there (the rename failed for some other reason — caller skips).
+func (s *Store) peerRenamedTable(ctx context.Context, bareName, localName string) (bool, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT name FROM system.tables
+		WHERE database = currentDatabase()
+		  AND name IN (?, ?)`, bareName, localName)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return false, err
+		}
+		seen[n] = true
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return !seen[bareName] && seen[localName], nil
 }
 
 // ShardPolicy returns the resolved (table → expression) map for

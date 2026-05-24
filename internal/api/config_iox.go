@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -75,7 +74,12 @@ func (s *Server) exportConfig(w http.ResponseWriter, r *http.Request) {
 		Format:           "coremetry.config",
 		Version:          1,
 		ExportedAt:       time.Now().UTC().Format(time.RFC3339),
-		CoremetryVersion: strings.TrimSpace(os.Getenv("COREMETRY_VERSION")),
+		// v0.5.394 — use the Server's resolved version (ldflag /
+		// /app/VERSION) instead of re-reading the COREMETRY_VERSION
+		// env. Env override path was retired so config export
+		// headers always reflect the actual running binary tag,
+		// not a stale .env value.
+		CoremetryVersion: s.version,
 		Tables:           make(map[string]tableExport, len(configTables)),
 	}
 

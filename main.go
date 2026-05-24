@@ -52,26 +52,25 @@ var webFS embed.FS
 //
 // Resolution order at startup (highest wins):
 //
-//  1. COREMETRY_VERSION env var — runtime override added in
-//     v0.5.170. Useful for operators running a pre-built image
-//     that was built without --build-arg VERSION=…; Helm chart
-//     can stamp the chart's appVersion here without re-building
-//     the image. Always wins so an operator can correct a wrong
-//     stamp from outside.
-//  2. ldflag (-X main.Version=…) — proper build pipeline.
-//  3. /app/VERSION file — Dockerfile RUN line writes this from
+//  1. ldflag (-X main.Version=…) — proper build pipeline. This is
+//     baked into the binary at compile time so it can't go stale
+//     between rebuilds.
+//  2. /app/VERSION file — Dockerfile RUN line writes this from
 //     the ARG so even a forgotten ldflag still surfaces.
-//  4. Default "dev".
+//  3. Default "dev".
+//
+// v0.5.394 — the COREMETRY_VERSION env var override was removed.
+// Operator-reported confusion: a stale env value (in compose .env
+// or k8s manifest) would silently mask the actual running binary's
+// build tag and the login page + /api/version would report the
+// override, not what the image actually is. Removing the override
+// makes the version a single source of truth tied to the image
+// build itself. Helm operators who want to stamp an alternate
+// version can write to /app/VERSION at deploy time via an
+// initContainer; the file path is stable.
 var Version = "dev"
 
 func init() {
-	// Env override wins unconditionally — see resolution order
-	// above. Empty / whitespace value is ignored so an explicitly
-	// blank env var falls through to the next source.
-	if v := strings.TrimSpace(os.Getenv("COREMETRY_VERSION")); v != "" {
-		Version = v
-		return
-	}
 	if Version != "" && Version != "dev" {
 		return
 	}

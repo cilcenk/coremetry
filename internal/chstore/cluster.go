@@ -122,11 +122,21 @@ var defaultShardPolicy = map[string]string{
 	"metric_points":        "cityHash64(service_name)",
 	"profiles":             "cityHash64(service_name)",
 	"trace_summary_5m":     "cityHash64(trace_id)",
-	"trace_summary_1d":     "cityHash64(trace_id)",
+	// v0.5.422 — trace_summary_1d MV columns are only `day` +
+	// `trace_count_state` (HLL state); trace_id isn't projected.
+	// Shard by day so read patterns (per-day uniqMerge) land
+	// locally. Bucketing by day is also low-cardinality so this
+	// is effectively a per-day write distribution.
+	"trace_summary_1d":     "cityHash64(day)",
 	"service_summary_5m":   "cityHash64(service_name)",
 	"topology_edges_5m":    "cityHash64(parent_service)",
 	"topology_op_edges_5m": "cityHash64(parent_service)",
-	"db_summary_5m":        "cityHash64(service_name)",
+	// v0.5.422 — db_summary_5m doesn't project service_name (it
+	// aggregates per db_system / instance / db_name only —
+	// caller-aware variant lives in db_caller_summary_5m). Shard
+	// by db_system; ORDER BY already leads with db_system so
+	// reads filtered by it land on one shard.
+	"db_summary_5m":        "cityHash64(db_system)",
 	"db_caller_summary_5m": "cityHash64(service_name)",
 }
 

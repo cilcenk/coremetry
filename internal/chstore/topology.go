@@ -80,6 +80,15 @@ type ServiceTopologyEdge struct {
 	TopLabels      []string `json:"topLabels"`
 	DistinctLabels uint64   `json:"distinctLabels"`
 	Calls          uint64   `json:"calls"`
+	// v0.5.393 — errors + error-rate per edge so the topology
+	// page can tint hot edges red and surface (errors / calls)
+	// in the tooltip. The errors column landed on
+	// topology_edges_5m in v0.5.367; we now pipe it through to
+	// the read path so the operator reads "is this edge
+	// breaking?" directly off the graph rather than having to
+	// click into the dependent service.
+	Errors         uint64   `json:"errors"`
+	ErrorRate      float64  `json:"errorRate"` // (errors / calls) * 100
 	AvgMs          float64  `json:"avgMs"`   // window-wide avg ms (sum/calls)
 	P99Ms          float64  `json:"p99Ms"`   // conservative window p99
 }
@@ -806,6 +815,7 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 			arraySlice(merged, 1, 5) AS top_labels,
 			toUInt64(length(merged)) AS distinct_labels,
 			total_calls,
+			total_errors,
 			avg_ms,
 			max_p99_ms
 		FROM (
@@ -816,6 +826,7 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 				protocol,
 				arrayDistinct(arrayFlatten(groupArray(top_labels))) AS merged,
 				toUInt64(sum(calls)) AS total_calls,
+				toUInt64(sum(errors)) AS total_errors,
 				if(sum(calls) > 0,
 				   toFloat64(sum(sum_duration_ns)) / sum(calls) / 1e6,
 				   0) AS avg_ms,
@@ -839,8 +850,11 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 		var e ServiceTopologyEdge
 		if err := rows.Scan(&e.ParentService, &e.ChildNode, &e.NodeKind,
 			&e.Protocol, &e.TopLabels, &e.DistinctLabels, &e.Calls,
-			&e.AvgMs, &e.P99Ms); err != nil {
+			&e.Errors, &e.AvgMs, &e.P99Ms); err != nil {
 			return nil, err
+		}
+		if e.Calls > 0 {
+			e.ErrorRate = float64(e.Errors) / float64(e.Calls) * 100
 		}
 		out = append(out, e)
 	}

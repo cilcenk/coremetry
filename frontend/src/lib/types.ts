@@ -59,6 +59,12 @@ export interface ServiceTopologyEdge {
   topLabels: string[];    // up to 5 most-frequent labels
   distinctLabels: number;
   calls: number;
+  // v0.5.393 — errors + error-rate on the edge. Drives the tooltip
+  // overlay (errors count + percentage) and the red-tinted edge
+  // stroke when errorRate ≥ 1%. Backend pipes through from
+  // topology_edges_5m.errors (added in v0.5.367).
+  errors: number;
+  errorRate: number;      // (errors / calls) * 100
   avgMs: number;          // window-wide average latency (ms)
   p99Ms: number;          // conservative window p99 (ms)
 }

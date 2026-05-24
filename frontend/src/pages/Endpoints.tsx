@@ -204,6 +204,7 @@ export default function EndpointsPage() {
                     <SortHeader k="calls"     label="Calls"      cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="errors"    label="Errors"     cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="errorRate" label="Error rate" cur={sortKey} dir={sortDir} onSort={setSort} num />
+                    <th>Status</th>
                     <SortHeader k="avgMs"     label="Avg"        cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <SortHeader k="p99Ms"     label="P99"        cur={sortKey} dir={sortDir} onSort={setSort} num />
                     <th>Trend</th>
@@ -233,6 +234,7 @@ export default function EndpointsPage() {
                         <td className="num mono">
                           <span className={`badge ${errCls}`}>{r.errorRate.toFixed(2)}%</span>
                         </td>
+                        <td><StatusBreakdown r={r} /></td>
                         <td className="num mono">{r.avgMs.toFixed(1)} ms</td>
                         <td className="num mono">{r.p99Ms.toFixed(0)} ms</td>
                         <td>
@@ -445,6 +447,68 @@ function tracesLink(r: EndpointRow, range: TimeRange): string {
     `&search=${encodeURIComponent(r.path)}` +
     `&range=${encodeURIComponent(encodeRange(range))}` +
     `&view=list&rootOnly=false`;
+}
+
+// StatusBreakdown — inline 2xx / 3xx / 4xx / 5xx pills for one
+// endpoint row. Compact (fits in a narrow column) but explicit:
+// the operator reads "is this endpoint throwing 5xx, returning
+// 4xx, or just slow?" without drilling into a trace. Pills
+// hidden when their count is 0 to keep the cell scannable.
+// 3xx only renders when present (rare on most APIs).
+function StatusBreakdown({ r }: { r: EndpointRow }) {
+  const s2 = r.http2xx ?? 0;
+  const s3 = r.http3xx ?? 0;
+  const s4 = r.http4xx ?? 0;
+  const s5 = r.http5xx ?? 0;
+  const total = s2 + s3 + s4 + s5;
+  if (total === 0) {
+    return <span style={{ color: 'var(--text3)', fontSize: 10 }}>—</span>;
+  }
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, fontSize: 10, fontFamily: 'ui-monospace, monospace' }}>
+      {s2 > 0 && (
+        <span title={`${s2.toLocaleString()} 2xx responses`}
+          style={{
+            padding: '1px 5px', borderRadius: 8,
+            background: 'rgba(34,197,94,0.10)', color: 'var(--ok)',
+            border: '1px solid rgba(34,197,94,0.30)',
+          }}>2xx {compactNum(s2)}</span>
+      )}
+      {s3 > 0 && (
+        <span title={`${s3.toLocaleString()} 3xx redirects`}
+          style={{
+            padding: '1px 5px', borderRadius: 8,
+            background: 'rgba(148,163,184,0.10)', color: 'var(--text2)',
+            border: '1px solid rgba(148,163,184,0.30)',
+          }}>3xx {compactNum(s3)}</span>
+      )}
+      {s4 > 0 && (
+        <span title={`${s4.toLocaleString()} 4xx client errors`}
+          style={{
+            padding: '1px 5px', borderRadius: 8,
+            background: 'rgba(250,204,21,0.10)', color: 'var(--warn, #facc15)',
+            border: '1px solid rgba(250,204,21,0.30)',
+          }}>4xx {compactNum(s4)}</span>
+      )}
+      {s5 > 0 && (
+        <span title={`${s5.toLocaleString()} 5xx server errors`}
+          style={{
+            padding: '1px 5px', borderRadius: 8,
+            background: 'rgba(239,68,68,0.10)', color: 'var(--err)',
+            border: '1px solid rgba(239,68,68,0.30)',
+          }}>5xx {compactNum(s5)}</span>
+      )}
+    </span>
+  );
+}
+
+// compactNum — 12345 → "12.3k". Keeps the pill width bounded
+// across two orders of magnitude. fmtNum (locale-formatted) would
+// blow the column out at 5+ digits.
+function compactNum(n: number): string {
+  if (n < 1000) return n.toString();
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0) + 'k';
+  return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0) + 'M';
 }
 
 function KPI({ label, value, sub, cls }: { label: string; value: string; sub?: string; cls?: string }) {

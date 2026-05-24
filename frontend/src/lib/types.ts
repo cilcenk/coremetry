@@ -1432,6 +1432,14 @@ export interface EndpointRow {
   // that had no spans.
   errorsSparkline?: number[];
   p99Sparkline?: number[];
+  // v0.5.403 — HTTP status class counts. Drives the "Status"
+  // column on /endpoints so the operator reads 2xx/4xx/5xx
+  // distribution without drilling into traces. Zero values
+  // when http.status_code attr is missing (non-HTTP endpoints).
+  http2xx?: number;
+  http3xx?: number;
+  http4xx?: number;
+  http5xx?: number;
 }
 
 // Span-metrics-derived per-service RED rollup. Source: the

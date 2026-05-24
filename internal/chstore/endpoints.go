@@ -38,6 +38,17 @@ type EndpointRow struct {
 	ErrorsSparkline []float64         `json:"errorsSparkline,omitempty"`
 	P99Sparkline    []float64         `json:"p99Sparkline,omitempty"`
 	StatusBreakdown map[string]uint64 `json:"statusBreakdown,omitempty"`
+	// v0.5.403 — HTTP status class counts for the (service, path)
+	// over the window. Source: http.status_code attr. Server-side
+	// classification keeps the payload tight (4 ints per row vs
+	// shipping raw codes). Operator reads "is this endpoint
+	// throwing 5xx, returning 4xx, or just slow" without drilling
+	// into a trace. Zero values when the spans don't carry
+	// http.status_code (non-HTTP endpoints, gRPC-only services).
+	Http2xx uint64 `json:"http2xx,omitempty"`
+	Http3xx uint64 `json:"http3xx,omitempty"`
+	Http4xx uint64 `json:"http4xx,omitempty"`
+	Http5xx uint64 `json:"http5xx,omitempty"`
 }
 
 // GetEndpoints aggregates RED stats per (service_name, derived
@@ -128,6 +139,14 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	// Three sparkline arrayMaps, each parameterised by
 	// sparkBuckets → three ? placeholders for range(0, ?).
 	allArgs = append(allArgs, sparkBuckets, sparkBuckets, sparkBuckets, limit)
+	// v0.5.403 — http.status_code class breakdown. Read once into
+	// per-row `sc` so the four countIf clauses don't re-evaluate
+	// the attr_values[indexOf(…)] expression each time (CH does
+	// CSE on identical sub-expressions but the explicit alias is
+	// clearer + safer across CH versions). toUInt16OrZero returns
+	// 0 on non-numeric or missing values; the BETWEEN bounds
+	// naturally exclude 0 so non-HTTP spans don't bias any class.
+	const statusExpr = `toUInt16OrZero(attr_values[indexOf(attr_keys, 'http.status_code')])`
 	q := `
 		WITH per_bucket AS (
 		  SELECT service_name,
@@ -135,6 +154,10 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		         intDiv(toUnixTimestamp64Nano(time) - ?, ?)      AS b,
 		         count()                                         AS bv,
 		         countIf(status_code = 'error')                  AS bv_err,
+		         countIf(` + statusExpr + ` BETWEEN 200 AND 299) AS bv_2xx,
+		         countIf(` + statusExpr + ` BETWEEN 300 AND 399) AS bv_3xx,
+		         countIf(` + statusExpr + ` BETWEEN 400 AND 499) AS bv_4xx,
+		         countIf(` + statusExpr + ` BETWEEN 500 AND 599) AS bv_5xx,
 		         sum(duration)                                   AS bv_sum_dur,
 		         quantile(0.99)(duration) / 1e6                  AS bv_p99,
 		         anyHeavy(http_method)                           AS bv_method
@@ -152,6 +175,10 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		       sum(bv_err) * 100.0 / nullIf(sum(bv), 0)         AS error_rate,
 		       sum(bv_sum_dur) / nullIf(sum(bv), 0) / 1e6       AS avg_ms,
 		       max(bv_p99)                                      AS p99_ms,
+		       sum(bv_2xx)                                      AS http_2xx,
+		       sum(bv_3xx)                                      AS http_3xx,
+		       sum(bv_4xx)                                      AS http_4xx,
+		       sum(bv_5xx)                                      AS http_5xx,
 		       arrayMap(i ->
 		         toFloat64(coalesce(arrayElement(groupArray(bv), indexOf(groupArray(b), i)), 0)),
 		         range(0, ?)
@@ -182,6 +209,7 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		if err := rows.Scan(
 			&r.Service, &r.Path, &r.Method,
 			&r.Calls, &r.Errors, &errRate, &avgMs, &p99Ms,
+			&r.Http2xx, &r.Http3xx, &r.Http4xx, &r.Http5xx,
 			&sparkline, &errorsSparkline, &p99Sparkline,
 		); err != nil {
 			return nil, err

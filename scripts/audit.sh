@@ -18,6 +18,13 @@
 # Add new checks here as the codebase grows new sharp edges;
 # every check should reference the v0.5.X incident or CLAUDE.md
 # section that justifies it.
+#
+# Test-file exclusion (v0.5.450): every Go-source check filters
+# out `*_test.go` files. Regression tests deliberately reference
+# the anti-pattern they guard against ("does the WHERE contain
+# `trace_id IN (SELECT ...`?") so scanning them like production
+# code would self-trigger. The audit asks: does ACTUAL CODE use
+# the bad pattern? Not: does any file mention it?
 
 set -u
 cd "$(dirname "$0")/.."
@@ -163,6 +170,7 @@ echo "CHECK 4 — direct s.copilot.Explain bypassing wrapper"
 # its block comment.
 hits=$(grep -rn 's\.copilot\.Explain(' internal/api 2>/dev/null \
     | grep -v 'ai_observability\.go' \
+    | grep -v _test.go \
     | grep -v '://' \
     | grep -vE ':[0-9]+:\s*//' \
     | filter_ignored || true)
@@ -182,6 +190,7 @@ hr
 echo "CHECK 5 — IN (SELECT ...) without GLOBAL prefix"
 hits=$(grep -rn 'IN (SELECT' internal/chstore internal/api 2>/dev/null \
     | grep -v 'GLOBAL IN (SELECT' \
+    | grep -v _test.go \
     | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do crit "$line"; done <<< "$hits"
@@ -215,7 +224,7 @@ hits=$(awk '
         if (!ok) { print loc ": FROM spans without LIMIT/max_execution_time nearby" }
     }
     { prev5 = prev4; prev4 = prev3; prev3 = prev2; prev2 = prev1; prev1 = $0 }
-' $(find internal -name '*.go' 2>/dev/null) 2>/dev/null \
+' $(find internal -name '*.go' ! -name '*_test.go' 2>/dev/null) 2>/dev/null \
     | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do warn "$line"; done <<< "$hits"

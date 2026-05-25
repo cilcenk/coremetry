@@ -1,9 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts, type Shortcut } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import type { SavedView } from '@/lib/types';
+
+// Normalise a URL query string so two semantically-equal forms
+// compare equal: strip leading `?`, parse → sort by key → re-emit.
+// `?b=2&a=1` and `?a=1&b=2` collapse to the same key. Empty
+// string when there's nothing to compare (no params). v0.5.453.
+function normaliseQS(qs: string): string {
+  const q = qs.replace(/^\?/, '');
+  if (!q) return '';
+  const pairs = q.split('&').filter(Boolean);
+  pairs.sort();
+  return pairs.join('&');
+}
 
 // SavedViewsBar lives at the top of filter-heavy pages (/traces,
 // /logs, /anomalies) and gives the operator a one-click way to
@@ -18,6 +30,7 @@ import type { SavedView } from '@/lib/types';
 //   - You can only delete your own views (admins can delete any).
 export function SavedViewsBar({ page }: { page: string }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -25,13 +38,47 @@ export function SavedViewsBar({ page }: { page: string }) {
   const [showSaver, setShowSaver] = useState(false);
   const [name, setName] = useState('');
   const [shared, setShared] = useState(false);
+  // v0.5.453 — lastAppliedViewId tracks which view the operator
+  // most recently applied (by clicking a chip or pressing 1-9).
+  // Persisted in sessionStorage per page so it survives in-app
+  // navigation but resets on a hard reload. When this is set AND
+  // the current URL has drifted away from the view's queryString,
+  // we surface a "● modified" badge + ↺ revert affordance so the
+  // operator sees "I'm on the Errors-only view but with extra
+  // filters added".
+  const sessionKey = `coremetry-active-view:${page}`;
+  const [lastAppliedViewId, setLastAppliedViewId] = useState<string | null>(() => {
+    try { return sessionStorage.getItem(sessionKey); } catch { return null; }
+  });
 
   useEffect(() => {
     api.savedViews(page).then(v => setViews(v ?? [])).catch(() => setViews([]));
   }, [page]);
 
+  // Recompute "is current URL identical to view V?" on every nav.
+  // Exact match (key set + values equal, order-insensitive) sets
+  // lastAppliedViewId to V. If nothing matches and lastAppliedViewId
+  // was previously set, we KEEP it so the modified-from indicator
+  // still has a target to revert to.
+  const currentQS = useMemo(() => normaliseQS(location.search), [location.search]);
+  useEffect(() => {
+    if (!views) return;
+    const match = views.find(v => normaliseQS(v.queryString) === currentQS);
+    if (match) {
+      setLastAppliedViewId(match.id);
+      try { sessionStorage.setItem(sessionKey, match.id); } catch { /* noop */ }
+    }
+  }, [currentQS, views, sessionKey]);
+
+  const activeViewId = useMemo(() => {
+    if (!views) return null;
+    return views.find(v => normaliseQS(v.queryString) === currentQS)?.id ?? null;
+  }, [views, currentQS]);
+
   const apply = (v: SavedView) => {
     const target = window.location.pathname + (v.queryString ? '?' + v.queryString : '');
+    setLastAppliedViewId(v.id);
+    try { sessionStorage.setItem(sessionKey, v.id); } catch { /* noop */ }
     navigate(target);
   };
 
@@ -96,22 +143,43 @@ export function SavedViewsBar({ page }: { page: string }) {
           (none yet — Save current view to pin a filter combo)
         </span>
       )}
-      {ordered.map((v, i) => (
+      {ordered.map((v, i) => {
+        const isActive = activeViewId === v.id;
+        // "Modified": operator applied THIS view earlier in the
+        // session, then the URL drifted away (extra filters typed,
+        // toggle flipped). Active + modified are mutually
+        // exclusive — exact-match wins.
+        const isModified = !isActive && lastAppliedViewId === v.id;
+        return (
         <span key={v.id} style={{
           display: 'inline-flex', alignItems: 'center', gap: 4,
           padding: '2px 8px', borderRadius: 3,
-          background: v.ownerId === '' ? 'rgba(56,139,253,.10)' : 'var(--bg3)',
-          border: v.ownerId === '' ? '1px solid rgba(56,139,253,.35)' : '1px solid var(--border)',
+          background: isActive
+            ? 'rgba(46,160,67,.16)'  // green-ish when this view is the live one
+            : isModified
+              ? 'rgba(187,128,9,.14)'  // amber when drifted
+              : v.ownerId === '' ? 'rgba(56,139,253,.10)' : 'var(--bg3)',
+          border: isActive
+            ? '1px solid rgba(46,160,67,.55)'
+            : isModified
+              ? '1px solid rgba(187,128,9,.55)'
+              : v.ownerId === '' ? '1px solid rgba(56,139,253,.35)' : '1px solid var(--border)',
         }}>
           <button type="button" onClick={() => apply(v)}
             style={{
               background: 'transparent', border: 'none', cursor: 'pointer',
               color: 'var(--text)', padding: 0, fontSize: 11,
             }}
-            title={v.ownerId === ''
-              ? `Team-shared view${i < 9 ? ` · press ${i + 1}` : ''}`
-              : `Your view${i < 9 ? ` · press ${i + 1}` : ''}`}>
-            {v.ownerId === '' && <span style={{ fontSize: 9, marginRight: 4 }}>★</span>}
+            title={(() => {
+              const base = v.ownerId === '' ? 'Team-shared view' : 'Your view';
+              const shortcut = i < 9 ? ` · press ${i + 1}` : '';
+              if (isActive) return `${base} · current filter${shortcut}`;
+              if (isModified) return `${base} · drifted; click to restore${shortcut}`;
+              return base + shortcut;
+            })()}>
+            {isActive && <span style={{ fontSize: 9, marginRight: 4, color: 'rgb(46,160,67)' }}>✓</span>}
+            {isModified && <span style={{ fontSize: 9, marginRight: 4, color: 'rgb(187,128,9)' }}>●</span>}
+            {!isActive && !isModified && v.ownerId === '' && <span style={{ fontSize: 9, marginRight: 4 }}>★</span>}
             {v.name}
             {i < 9 && (
               <span style={{
@@ -122,6 +190,13 @@ export function SavedViewsBar({ page }: { page: string }) {
               }}>{i + 1}</span>
             )}
           </button>
+          {isModified && (
+            <button type="button" onClick={() => apply(v)} title="Revert to saved filter"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: 'rgb(187,128,9)', padding: 0, lineHeight: 1, fontSize: 12,
+              }}>↺</button>
+          )}
           {(v.ownerId === user?.id || isAdmin) && (
             <button type="button" onClick={() => remove(v)} title="Delete"
               style={{
@@ -130,7 +205,8 @@ export function SavedViewsBar({ page }: { page: string }) {
               }}>×</button>
           )}
         </span>
-      ))}
+        );
+      })}
       <button type="button"
         onClick={() => setShowSaver(s => !s)}
         style={{

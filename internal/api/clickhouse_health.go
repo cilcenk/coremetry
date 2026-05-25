@@ -91,6 +91,14 @@ type CHTopology struct {
 	// frontend treats a populated error as "soft warning, can't
 	// confirm cluster" rather than the hard "misconfig" banner.
 	ClusterProbeError string `json:"clusterProbeError,omitempty"`
+	// v0.5.439 — when the live probe fails but a recent successful
+	// probe is cached, Nodes is filled from the cache and these
+	// two flags surface the staleness so the frontend renders a
+	// small "last refreshed N min ago" pill instead of the warn
+	// banner. ClusterProbeError stays empty in this path — the
+	// banner only fires when there's no cache to fall back on.
+	ClusterNodesStale     bool  `json:"clusterNodesStale,omitempty"`
+	ClusterNodesAgeMs     int64 `json:"clusterNodesAgeMs,omitempty"`
 }
 
 type CHClusterNode struct {
@@ -179,6 +187,8 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 		// Nodes result tripped the misconfig path. Bumped to
 		// 8s so transient load can't false-positive the banner.
 		if name := out.Topology.ConfiguredCluster; name != "" {
+			probeErr := ""
+			var probedNodes []CHClusterNode
 			rows, err := s.store.Conn().Query(ctx, `
 				SELECT cluster, shard_num, replica_num,
 				       host_name, host_address, port, is_local
@@ -187,11 +197,7 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 				ORDER BY shard_num, replica_num
 				SETTINGS max_execution_time = 8`, name)
 			if err != nil {
-				// v0.5.428 — capture the probe failure so the
-				// frontend can distinguish it from a genuine
-				// misconfig (empty system.clusters). Common cause:
-				// CH busy enough to blow the 8s ceiling.
-				out.Topology.ClusterProbeError = err.Error()
+				probeErr = err.Error()
 			} else {
 				for rows.Next() {
 					var n CHClusterNode
@@ -201,15 +207,52 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 					n.IsLocal = isLocal == 1
-					out.Topology.Nodes = append(out.Topology.Nodes, n)
+					probedNodes = append(probedNodes, n)
 				}
-				// rows.Err captures errors that surface only during
-				// iteration (network drop mid-stream). Same path as
-				// the query-level error so the banner is honest.
-				if rerr := rows.Err(); rerr != nil && out.Topology.ClusterProbeError == "" {
-					out.Topology.ClusterProbeError = rerr.Error()
+				if rerr := rows.Err(); rerr != nil {
+					probeErr = rerr.Error()
 				}
 				rows.Close()
+			}
+
+			// v0.5.439 — cache + stale-fallback. On success, refresh
+			// the cache. On failure with a recent cached snapshot,
+			// fill Nodes from cache + flag staleness so the
+			// frontend shows a small "last refreshed N min ago"
+			// pill rather than the warn banner. The cache TTL is
+			// generous (15 min) — cluster topology rarely changes,
+			// and the alternative (warn banner flashing on every
+			// transient timeout) is worse UX than briefly-stale
+			// nodes. Beyond 15 min OR no cache at all → fall back
+			// to the v0.5.428 ClusterProbeError banner.
+			const staleHorizon = 15 * time.Minute
+			switch {
+			case probeErr == "":
+				// Live probe succeeded — use it, refresh cache.
+				out.Topology.Nodes = probedNodes
+				s.clusterNodesMu.Lock()
+				s.lastClusterNodes = append(s.lastClusterNodes[:0], probedNodes...)
+				s.lastClusterAt = time.Now()
+				s.clusterNodesMu.Unlock()
+			default:
+				// Probe failed. Try cache.
+				s.clusterNodesMu.RLock()
+				cached := append([]CHClusterNode(nil), s.lastClusterNodes...)
+				cachedAt := s.lastClusterAt
+				s.clusterNodesMu.RUnlock()
+				if len(cached) > 0 && !cachedAt.IsZero() && time.Since(cachedAt) < staleHorizon {
+					out.Topology.Nodes = cached
+					out.Topology.ClusterNodesStale = true
+					out.Topology.ClusterNodesAgeMs = time.Since(cachedAt).Milliseconds()
+					// Don't set ClusterProbeError — the frontend's
+					// stale pill carries the "couldn't refresh"
+					// signal at a softer volume.
+				} else {
+					// No usable cache → keep current v0.5.428
+					// behaviour: surface the probe error for the
+					// warn banner.
+					out.Topology.ClusterProbeError = probeErr
+				}
 			}
 		}
 

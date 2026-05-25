@@ -140,6 +140,21 @@ type Server struct {
 	// can see if the drainer is keeping up.
 	auditQ         chan chstore.AuditEntry
 	auditDropCount atomic.Int64
+
+	// v0.5.439 — last-good system.clusters snapshot. The
+	// /admin/clickhouse topology probe times out intermittently
+	// on busy CH (context canceled past the 8s ceiling); without
+	// caching, every transient failure flashes the "probe failed"
+	// warning banner even though the topology hasn't actually
+	// changed. The cache lets a stale-but-fresh-enough result
+	// fill in for a failed probe so the operator sees the green
+	// cluster banner with a small "stale: N min" pill instead of
+	// a warning. Hard misconfig (truly empty system.clusters)
+	// still flips to the red banner — only TRANSIENT probe
+	// failures are masked.
+	clusterNodesMu     sync.RWMutex
+	lastClusterNodes   []CHClusterNode
+	lastClusterAt      time.Time
 }
 
 // SetBackgroundConfig wires the cadence/timeout knobs to the

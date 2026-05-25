@@ -56,6 +56,13 @@ type Topology = {
   // failed" banner so the hard "misconfigured" banner only fires
   // on a genuine empty-result.
   clusterProbeError?: string;
+  // v0.5.439 — set when the live probe failed but a recent
+  // cached snapshot filled `nodes` in. Renders an inline "last
+  // refreshed N min ago" pill instead of the warn banner so a
+  // transient timeout doesn't flash a red box at the operator.
+  // Age is the cache-snapshot age in milliseconds.
+  clusterNodesStale?: boolean;
+  clusterNodesAgeMs?: number;
 };
 type CHHealth = {
   topology: Topology;
@@ -294,8 +301,14 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
   // returned an empty set. If the probe itself failed
   // (timeout / disconnect), we can't make a misconfig claim —
   // render a softer "probe failed" banner instead.
+  // v0.5.439 — if the probe failed BUT a cached snapshot filled
+  // `nodes` in (`clusterNodesStale`), drop the warn banner
+  // entirely; the cluster is still healthy, we just couldn't
+  // refresh the topology this tick. A small inline "stale"
+  // pill carries the freshness signal at a softer volume.
   const probeFailed = !!t.clusterProbeError;
-  const misconfigured = !!t.configuredCluster && (!t.nodes || t.nodes.length === 0) && !probeFailed;
+  const cacheStale = !!t.clusterNodesStale;
+  const misconfigured = !!t.configuredCluster && (!t.nodes || t.nodes.length === 0) && !probeFailed && !cacheStale;
   const bannerCls = misconfigured || probeFailed ? 'warn' : (t.mode === 'cluster' ? 'ok' : 'info');
   const bannerColor =
     bannerCls === 'ok' ? 'var(--ok)' :
@@ -329,11 +342,22 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
               {' '}Usually transient (CH busy). Retry on next refresh.
             </>
           )}
-          {!misconfigured && t.mode === 'cluster' && (
+          {!misconfigured && !probeFailed && t.mode === 'cluster' && (
             <>
               <strong style={{ color: 'var(--ok)' }}>● Cluster mode</strong> —
               connected to cluster <code className="mono">{t.configuredCluster}</code>
               {' '}with <strong>{t.nodes?.length ?? 0}</strong> registered node{(t.nodes?.length ?? 0) === 1 ? '' : 's'}.
+              {cacheStale && (
+                <span
+                  title="Live system.clusters probe failed this tick — showing the last successful snapshot."
+                  style={{
+                    marginLeft: 8, padding: '1px 6px', borderRadius: 3,
+                    background: 'rgba(250, 204, 21, 0.18)',
+                    color: 'var(--warn)', fontSize: 11, fontWeight: 600,
+                  }}>
+                  stale: {fmtAge(t.clusterNodesAgeMs ?? 0)}
+                </span>
+              )}
             </>
           )}
           {!misconfigured && t.mode === 'standalone' && (
@@ -517,4 +541,13 @@ function fmtBytes(n: number): string {
   let i = 0; let v = n;
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
   return `${v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
+}
+
+// v0.5.439 — short age string for the stale-cache pill. Drops
+// sub-second precision; rounds to the unit that reads cleanest
+// in a chip.
+function fmtAge(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+  return `${Math.round(ms / 3_600_000)}h ago`;
 }

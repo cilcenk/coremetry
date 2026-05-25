@@ -15,6 +15,9 @@ export function TimeRangePicker({ value, onChange }: {
   const [error, setError] = useState('');
   const ref = useRef<HTMLDivElement>(null);
   const fromInputRef = useRef<HTMLInputElement>(null);
+  // Refs to every preset button so we can auto-focus the active
+  // one on open and walk through them with ArrowUp/ArrowDown.
+  const presetRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -26,16 +29,47 @@ export function TimeRangePicker({ value, onChange }: {
     };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
-    // Auto-focus the "From" input so the operator can immediately
-    // type `now-2h` without clicking. Deferred to next tick because
-    // the input mounts after openPanel() flips `open` true.
-    const t = setTimeout(() => fromInputRef.current?.focus(), 0);
+    // Auto-focus on open. Land on the currently-active preset so
+    // ArrowUp/Down + Enter is the fast path; if the operator is
+    // already on a custom range or no preset matches, fall back
+    // to the "From" input so typing `now-2h` works without
+    // clicking. Deferred to next tick — the panel mounts after
+    // openPanel() flips `open` true.
+    const t = setTimeout(() => {
+      const activeIdx = PRESETS.indexOf(value.preset);
+      const target = activeIdx >= 0
+        ? presetRefs.current[activeIdx]
+        : (presetRefs.current[0] ?? fromInputRef.current);
+      target?.focus();
+    }, 0);
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
       clearTimeout(t);
     };
-  }, [open]);
+  }, [open, value.preset]);
+
+  // Arrow-key navigation between preset buttons. Up/Down step
+  // through the list (wraps at the ends); Home/End jump to the
+  // bounds. Native button Enter/Space still applies the preset
+  // via onClick — no extra wiring needed there.
+  const onPresetKey = (i: number) => (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = (i + 1) % PRESETS.length;
+      presetRefs.current[next]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prev = (i - 1 + PRESETS.length) % PRESETS.length;
+      presetRefs.current[prev]?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      presetRefs.current[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      presetRefs.current[PRESETS.length - 1]?.focus();
+    }
+  };
 
   const openPanel = () => {
     setError('');
@@ -81,10 +115,12 @@ export function TimeRangePicker({ value, onChange }: {
         <div className="trp-panel" role="dialog">
           <div className="trp-presets">
             <div className="trp-section-title">Quick ranges</div>
-            {PRESETS.map(p => (
+            {PRESETS.map((p, i) => (
               <button key={p}
+                ref={el => { presetRefs.current[i] = el; }}
                 className={'trp-preset' + (value.preset === p ? ' active' : '')}
-                onClick={() => applyPreset(p)}>
+                onClick={() => applyPreset(p)}
+                onKeyDown={onPresetKey(i)}>
                 {PRESET_LABELS[p]}
               </button>
             ))}

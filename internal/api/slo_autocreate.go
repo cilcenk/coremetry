@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
@@ -55,11 +54,6 @@ type autoSLOSuggestion struct {
 // dry_run=1 returns suggestions without writing; default writes
 // each non-skipped suggestion and audits one row per operator click.
 func (s *Server) autoCreateSLOs(w http.ResponseWriter, r *http.Request) {
-	claims := auth.FromContext(r.Context())
-	if claims == nil || claims.Role != auth.RoleAdmin {
-		http.Error(w, "admin only", http.StatusForbidden)
-		return
-	}
 	q := r.URL.Query()
 	dryRun := q.Get("dry_run") == "1"
 	limit := parseInt(q.Get("limit"), 30)

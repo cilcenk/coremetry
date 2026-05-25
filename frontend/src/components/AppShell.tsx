@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { ShortcutsHelp } from './ShortcutsHelp';
 import { CommandPalette } from './CommandPalette';
+import { GlobalShortcuts } from './GlobalShortcuts';
 import { useAuth } from './AuthProvider';
 import { useEventStream } from '@/lib/queries';
 import { useShortcuts } from '@/lib/keyboard';
@@ -138,6 +139,11 @@ export function AppShell() {
           modal render; mounting here keeps it available on every
           authenticated page without per-page imports. */}
       <CommandPalette />
+      {/* GlobalShortcuts (v0.5.444) — '/' to focus the page search
+          input and 'g <x>' two-key sequences for fast page nav.
+          Self-contained, renders null. Mounted here so every
+          authenticated page inherits the bindings. */}
+      <GlobalShortcuts />
     </div>
   );
 }

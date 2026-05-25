@@ -30,7 +30,7 @@ func (s *Store) WriteServiceCallersBucket(ctx context.Context, bucketStart time.
 			c.service_name                                              AS service,
 			p.service_name                                              AS caller_service,
 			p.host_name                                                 AS caller_host,
-			ifNull(p.res_values[indexOf(p.res_keys, 'service.instance.id')], '') AS caller_instance,
+			p.caller_instance                                           AS caller_instance,
 			c.attr_values[indexOf(c.attr_keys, 'client.address')]       AS client_address,
 			c.attr_values[indexOf(c.attr_keys, 'user_agent.original')]  AS user_agent,
 			toUInt64(count())                                           AS calls,
@@ -43,9 +43,20 @@ func (s *Store) WriteServiceCallersBucket(ctx context.Context, bucketStart time.
 			toUInt64(?)                                                 AS version
 		FROM spans AS c
 		GLOBAL INNER JOIN (
-			SELECT trace_id, span_id, service_name, host_name, res_keys, res_values
+			-- v0.5.438 — pre-extract caller_instance inside the
+			-- subquery so the res_keys / res_values arrays don't
+			-- ride the GLOBAL broadcast. Pre-fix the right side
+			-- carried two Array(String) columns per row across N
+			-- shards, blowing the FillingRightJoinSide hash build
+			-- past max_memory_usage (operator-reported: 7.48 GiB
+			-- query on 7.45 GiB limit, code 241). Projecting
+			-- caller_instance to a single string column here drops
+			-- the right-side row width by an order of magnitude.
+			SELECT trace_id, span_id, service_name, host_name,
+			       ifNull(res_values[indexOf(res_keys, 'service.instance.id')], '') AS caller_instance
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+			  AND span_id != ''
 		) AS p
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')

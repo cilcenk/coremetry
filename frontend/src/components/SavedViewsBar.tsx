@@ -151,7 +151,10 @@ export function SavedViewsBar({ page }: { page: string }) {
             placeholder="Name…"
             value={name}
             onChange={e => setName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') save(); }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') save();
+              else if (e.key === 'Escape') setShowSaver(false);
+            }}
             style={{ width: 200, fontSize: 11 }} />
           {isAdmin && (
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text2)' }}>

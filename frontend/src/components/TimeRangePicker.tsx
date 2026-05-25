@@ -14,14 +14,27 @@ export function TimeRangePicker({ value, onChange }: {
   const [toInput, setToInput] = useState('');
   const [error, setError] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const fromInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    // Auto-focus the "From" input so the operator can immediately
+    // type `now-2h` without clicking. Deferred to next tick because
+    // the input mounts after openPanel() flips `open` true.
+    const t = setTimeout(() => fromInputRef.current?.focus(), 0);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+      clearTimeout(t);
+    };
   }, [open]);
 
   const openPanel = () => {
@@ -89,7 +102,7 @@ export function TimeRangePicker({ value, onChange }: {
             <label>
               From
               <div style={{ display: 'flex', gap: 4 }}>
-                <input type="text" value={fromInput} spellCheck={false}
+                <input ref={fromInputRef} type="text" value={fromInput} spellCheck={false}
                   onChange={e => { setFromInput(e.target.value); setError(''); }}
                   onKeyDown={e => e.key === 'Enter' && applyCustom()}
                   placeholder="now-1h  or  2026-05-02 12:00"

@@ -160,6 +160,18 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
   const needsValue = NEEDS_VALUE[local.op];
   const isList = local.op === 'IN' || local.op === 'NOT IN';
 
+  // Esc cancels the inline editor — matches Modal.tsx / TimeRangePicker
+  // muscle memory. Registered while the editor is mounted; the parent
+  // controls mounting via `draft && <DraftEditor>` so this listener
+  // only lives during an active edit.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
   // Live value autocomplete. As soon as the operator picks an
   // attribute key, fetch the top-N observed values (server-
   // cached 60s) and merge with anything the parent already

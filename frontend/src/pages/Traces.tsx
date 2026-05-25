@@ -241,6 +241,21 @@ function TracesPageInner() {
     if (overrideService != null) setDraft(next);
     setFilter(next);
   };
+  // v0.5.442 — auto-apply 250ms after the last draft edit. Operator
+  // mental model is "type 'java' and see service=java traces"
+  // (Datadog/Honeycomb shape). Before this, the user had to press
+  // Enter or click Search and novices stopped at "I typed and
+  // nothing happened". 250ms keeps toggles feeling immediate while
+  // still coalescing keystrokes during typing. The Search button
+  // stays as an explicit hemen-fetch affordance.
+  useEffect(() => {
+    if (JSON.stringify(draft) === JSON.stringify(filter)) return;
+    const t = setTimeout(() => apply(), 250);
+    return () => clearTimeout(t);
+    // apply reads draft via closure; including it in deps would
+    // recreate the timer every render and prevent it from firing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, filter]);
   const reset = () => {
     const empty = {
       service: '', search: '', traceId: '', minMs: '', maxMs: '',

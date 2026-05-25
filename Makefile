@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-down
+.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-down audit
 
 # VERSION is auto-derived from `git describe` so local builds
 # show something like "v0.4.48-3-gabcdef" instead of literal
@@ -28,6 +28,19 @@ run: build
 
 dev-ui:
 	cd frontend && npm run dev
+
+# audit — grep-based hard-constraint linter. Catches the
+# regression patterns from CLAUDE.md ("Hard constraints" +
+# "Performance pitfalls") that are cheap to match statically:
+# cache-key length anti-pattern, eager Comboboxes, setInterval
+# without document.hidden, direct s.copilot.Explain bypassing
+# the wrapper, non-GLOBAL IN over Distributed tables, and
+# FROM spans without nearby LIMIT/max_execution_time.
+#
+# Exits 1 on 🔴 critical findings, 0 on 🟡 warnings only.
+# Intended as a pre-tag gate — run before `git tag v0.5.X`.
+audit:
+	@./scripts/audit.sh
 
 # Docker build picks up VERSION from the env block above and
 # tags two images: a precise per-version `coremetry:vX.Y.Z`

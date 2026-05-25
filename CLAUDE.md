@@ -217,12 +217,20 @@ rule.
 1. Edit code.
 2. cd frontend && npx tsc --noEmit  (frontend changes only)
 3. go build ./...                    (backend changes)
-4. git add <touched files>
-5. git commit -m "<heredoc — see format below>"
-6. git tag v0.5.X
-7. git push && git push --tags        ← triggers Release workflow
-8. make docker-up                      (background — one at a time)
+4. make audit                        (hard-constraint lint; v0.5.446)
+5. git add <touched files>
+6. git commit -m "<heredoc — see format below>"
+7. git tag v0.5.X
+8. git push && git push --tags        ← triggers Release workflow
+9. make docker-up                      (background — one at a time)
 ```
+
+`make audit` exits 1 on 🔴 critical findings (cache-key length
+anti-pattern, eager Combobox, direct copilot.Explain, non-GLOBAL
+IN over Distributed). Don't tag until critical is clean. 🟡
+warnings (setInterval without document.hidden, FROM spans
+without nearby LIMIT) print but don't block — review the list,
+ship if known false positive.
 
 ### Commit message — multi-line heredoc
 

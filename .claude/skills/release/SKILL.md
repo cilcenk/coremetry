@@ -55,6 +55,22 @@ changed:
 If either fails, surface the error and stop — don't try to fix it
 silently. The operator decides whether to fix-forward or abort.
 
+### 3a. `make audit` — hard-constraint linter (v0.5.446)
+
+Run `make audit` after the type-check/build gate but before
+staging. It greps for the regression patterns from CLAUDE.md's
+"Hard constraints" and "Performance pitfalls" sections (cache-key
+length anti-pattern, eager Combobox, setInterval without
+document.hidden, direct s.copilot.Explain, non-GLOBAL IN over
+Distributed, FROM spans without nearby LIMIT).
+
+- Exit 1 (🔴 critical findings present): STOP. Surface findings,
+  let the operator decide fix-forward or abort. Don't tag.
+- Exit 0 with warnings (🟡 only): print the warning list, ask
+  the operator if any are unexpected. If all are known false
+  positives (e.g. Profiling.tsx pprof code-sample template),
+  proceed.
+
 ### 4. Stage the changes
 
 Use `git add` with **specific paths** (never `-A` / `.`) to avoid

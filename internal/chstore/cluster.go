@@ -376,6 +376,106 @@ func (s *Store) ensureDistributedWrappers(ctx context.Context) error {
 	return nil
 }
 
+// healBrokenReplicatedTables — v0.5.437. Recovers from the
+// "table-exists-but-no-ZK-replica" state that the v0.5.349
+// fallback-chain probe bug in v0.5.435 left behind on existing
+// cluster installs.
+//
+// Symptom: a Replicated*MergeTree table is present in
+// system.tables but absent from system.replicas — the metadata
+// got created (CREATE TABLE succeeded locally) but the ZK
+// replica znode (`/clickhouse/tables/<path>/replicas/<replica>`)
+// either never registered or was wiped by a racing DROP+CREATE.
+// Subsequent MV-trigger pushes to such a table fail with
+// "Transaction failed (no node)". Under CH defaults an MV-push
+// failure aborts the source INSERT too, so the whole ingest
+// pipeline grinds to a halt — no new rows land in spans_local,
+// every downstream MV stays empty for the recent window.
+//
+// Fix: DROP the broken table SYNC (waits for ZK cleanup), then
+// let the subsequent migrate() pass's CREATE TABLE IF NOT EXISTS
+// rebuild it from scratch with a fresh ZK registration.
+//
+// Safety: scoped to highVolumeTables `_local` names only. Admin
+// data (users, alert_rules, system_settings, dashboards, …)
+// lives in non-_local tables and is never touched by this path
+// even if it somehow lands in broken state. The _local tables
+// are MVs/aggregates that rebuild from upstream sources on next
+// INSERT — same trade-off as the v0.5.349 fallback-chain
+// migration's "past 5-min buckets will be dropped" note.
+//
+// Single-node mode is a no-op (no ZK to inspect, no _local
+// tables in the schema).
+func (s *Store) healBrokenReplicatedTables(ctx context.Context) error {
+	if !s.clusterMode() {
+		return nil
+	}
+	healCandidates := make(map[string]bool, len(highVolumeTables))
+	for n := range highVolumeTables {
+		healCandidates[n+"_local"] = true
+	}
+
+	// system.replicas lists tables where ZK registration completed.
+	// A Replicated*MergeTree in system.tables that's missing from
+	// system.replicas is in the broken state we want to heal.
+	rows, err := s.conn.Query(ctx, `
+		SELECT t.name, t.engine
+		FROM system.tables AS t
+		LEFT JOIN (
+			SELECT table FROM system.replicas
+			WHERE database = currentDatabase()
+		) AS r ON r.table = t.name
+		WHERE t.database = currentDatabase()
+		  AND t.engine LIKE 'Replicated%'
+		  AND r.table = ''
+		SETTINGS join_use_nulls = 0`)
+	if err != nil {
+		return fmt.Errorf("scan for broken replicated tables: %w", err)
+	}
+	type broken struct{ name, engine string }
+	var brokens []broken
+	for rows.Next() {
+		var b broken
+		if err := rows.Scan(&b.name, &b.engine); err != nil {
+			rows.Close()
+			return err
+		}
+		brokens = append(brokens, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(brokens) == 0 {
+		return nil
+	}
+
+	on := s.onCluster()
+	healed := 0
+	skipped := 0
+	for _, b := range brokens {
+		if !healCandidates[b.name] {
+			// Admin-data preservation — log loudly so the operator
+			// knows something's off, but don't auto-drop.
+			log.Printf("[chstore] self-heal: skipping %s (engine=%s, not in HighVolumeTables._local set — admin data preserved; manual recovery required)", b.name, b.engine)
+			skipped++
+			continue
+		}
+		log.Printf("[chstore] self-heal: dropping broken %s (engine=%s, not registered in system.replicas) — migrate will rebuild on next pass", b.name, b.engine)
+		stmt := "DROP TABLE IF EXISTS " + b.name + on + " SYNC"
+		if err := s.conn.Exec(ctx, stmt); err != nil {
+			// Don't fail boot — log + continue so other broken
+			// tables can still be cleared. On next boot the still-
+			// broken table will be re-detected.
+			log.Printf("[chstore] self-heal: drop %s failed: %v", b.name, err)
+			continue
+		}
+		healed++
+	}
+	log.Printf("[chstore] self-heal: %d table(s) healed, %d skipped (admin-data)", healed, skipped)
+	return nil
+}
+
 // peerRenamedTable — v0.5.434. After a RENAME TABLE failure during
 // boot-time reconciliation, check whether a peer pod beat us to it:
 // the bare name should now be gone AND `<name>_local` should be

@@ -166,6 +166,23 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	}
 
 	s := &Store{conn: conn, cfg: cfg, ret: ret}
+	// v0.5.437 — self-heal pass. Detects HighVolumeTables `_local`
+	// MVs/aggregates that exist in system.tables (engine
+	// Replicated*) but are missing from system.replicas — a state
+	// where the table metadata is present but ZK replica
+	// registration didn't complete. Pushes from MV triggers to such
+	// tables fail with "Transaction failed (no node)" ZK errors,
+	// which under default CH semantics abort the source INSERT too
+	// (no new spans/logs/metrics land → /traces, /databases etc.
+	// empty for recent windows). Pre-migrate cleanup; the
+	// follow-on CREATE TABLE IF NOT EXISTS rebuilds cleanly with a
+	// fresh ZK registration. Scoped to HighVolumeTables `_local`
+	// names only so admin-data tables (users / alert_rules /
+	// system_settings) can never get nuked by this path even if
+	// they somehow land in broken state.
+	if err := s.healBrokenReplicatedTables(ctx); err != nil {
+		log.Printf("[chstore] self-heal pass: %v", err)
+	}
 	if err := s.migrate(ctx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("migrate: %w", err)

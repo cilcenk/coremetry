@@ -30,6 +30,7 @@ NC='\033[0m'
 
 CRITICAL=0
 WARNINGS=0
+SUPPRESSED=0
 
 hr() { printf '%s\n' "------------------------------------------------------------"; }
 
@@ -45,6 +46,48 @@ warn() {
     WARNINGS=$((WARNINGS + 1))
 }
 
+# ─── .auditignore — known false-positive suppression ────────
+# Format: one `<file>:<line>` per line. Lines starting with `#`
+# and blank lines ignored. Each entry suppresses any finding
+# whose location matches as a substring (so file:line is the
+# minimum specificity; file:line:check-id works too if you
+# want to scope to a single check).
+#
+# Why a file, not inline annotations? Some FPs live inside
+# template literals rendered to the operator (e.g. code-sample
+# pages) — an inline `// audit-skip` comment would pollute the
+# rendered sample. The file keeps suppression list-visible +
+# under version control, and the operator periodically prunes
+# entries that no longer apply.
+IGNORE_FILE=".auditignore"
+# Subshell-safe counter: filter_ignored runs inside `$(...)` so
+# any variable assignment there is lost to the parent. Track
+# suppression count by appending to a tempfile; read once at the
+# summary stage.
+SUPPRESS_LOG=$(mktemp -t audit_suppress.XXXXXX)
+trap 'rm -f "$SUPPRESS_LOG"' EXIT
+filter_ignored() {
+    if [ ! -f "$IGNORE_FILE" ]; then cat; return; fi
+    local patterns
+    patterns=$(grep -v '^[[:space:]]*#' "$IGNORE_FILE" 2>/dev/null \
+        | awk 'NF { print $1 }' \
+        | grep -v '^[[:space:]]*$' || true)
+    if [ -z "$patterns" ]; then cat; return; fi
+    # grep -F treats patterns as fixed strings (no regex escaping
+    # needed for paths with dots). -v inverts: keep lines NOT
+    # matching any pattern. Substring match on file:line.
+    local input
+    input=$(cat)
+    local kept
+    kept=$(printf '%s\n' "$input" | grep -vF -f <(printf '%s\n' "$patterns") || true)
+    local in_count out_count
+    in_count=$(printf '%s' "$input"  | grep -c . || true)
+    out_count=$(printf '%s' "$kept" | grep -c . || true)
+    local delta=$((in_count - out_count))
+    if [ "$delta" -gt 0 ]; then printf '%d\n' "$delta" >> "$SUPPRESS_LOG"; fi
+    printf '%s' "$kept"
+}
+
 # ─── CHECK 1: cache-key length anti-pattern (v0.5.187) ──────
 # `fmt.Sprintf("...n=%d", len(set))` collapses two distinct
 # sets with same cardinality to the same key. Cross-set
@@ -53,7 +96,8 @@ hr
 echo "CHECK 1 — cache-key length anti-pattern (v0.5.187)"
 hits=$(grep -rn 'fmt\.Sprintf.*len(' internal/api 2>/dev/null \
     | grep -E ':[^:]*key|cache' \
-    | grep -v _test.go || true)
+    | grep -v _test.go \
+    | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do crit "$line"; done <<< "$hits"
 else
@@ -83,7 +127,8 @@ hits=$(awk '
             print loc ": setInterval without document.hidden"
         }
     }
-' $(find frontend/src -name '*.tsx' -o -name '*.ts' 2>/dev/null) 2>/dev/null || true)
+' $(find frontend/src -name '*.tsx' -o -name '*.ts' 2>/dev/null) 2>/dev/null \
+    | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do warn "$line"; done <<< "$hits"
 else
@@ -97,7 +142,7 @@ fi
 # MetricNamePicker (server-side debounced).
 hr
 echo "CHECK 3 — eager Combobox catalogue load"
-hits=$(grep -rn '<Combobox options={api\.' frontend/src 2>/dev/null || true)
+hits=$(grep -rn '<Combobox options={api\.' frontend/src 2>/dev/null | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do crit "$line"; done <<< "$hits"
 else
@@ -119,7 +164,8 @@ echo "CHECK 4 — direct s.copilot.Explain bypassing wrapper"
 hits=$(grep -rn 's\.copilot\.Explain(' internal/api 2>/dev/null \
     | grep -v 'ai_observability\.go' \
     | grep -v '://' \
-    | grep -vE ':[0-9]+:\s*//' || true)
+    | grep -vE ':[0-9]+:\s*//' \
+    | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do crit "$line"; done <<< "$hits"
 else
@@ -135,7 +181,8 @@ fi
 hr
 echo "CHECK 5 — IN (SELECT ...) without GLOBAL prefix"
 hits=$(grep -rn 'IN (SELECT' internal/chstore internal/api 2>/dev/null \
-    | grep -v 'GLOBAL IN (SELECT' || true)
+    | grep -v 'GLOBAL IN (SELECT' \
+    | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do crit "$line"; done <<< "$hits"
 else
@@ -168,7 +215,8 @@ hits=$(awk '
         if (!ok) { print loc ": FROM spans without LIMIT/max_execution_time nearby" }
     }
     { prev5 = prev4; prev4 = prev3; prev3 = prev2; prev2 = prev1; prev1 = $0 }
-' $(find internal -name '*.go' 2>/dev/null) 2>/dev/null || true)
+' $(find internal -name '*.go' 2>/dev/null) 2>/dev/null \
+    | filter_ignored || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do warn "$line"; done <<< "$hits"
 else
@@ -177,6 +225,10 @@ fi
 
 # ─── Summary ────────────────────────────────────────────────
 hr
+SUPPRESSED=$(awk '{ s += $1 } END { print s+0 }' "$SUPPRESS_LOG")
+if [ "$SUPPRESSED" -gt 0 ]; then
+    printf "${DIM}(%d finding(s) suppressed via .auditignore)${NC}\n" "$SUPPRESSED"
+fi
 if [ $CRITICAL -gt 0 ]; then
     printf "${RED}AUDIT FAIL — %d critical, %d warning${NC}\n" "$CRITICAL" "$WARNINGS"
     exit 1

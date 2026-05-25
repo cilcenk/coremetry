@@ -1,0 +1,14 @@
+# .auditignore — known false-positive suppression for scripts/audit.sh
+#
+# Format: one `<file>:<line>` per line. Optional trailing comment
+# after whitespace. Lines starting with `#` and blank lines are
+# ignored. Substring match — file:line is the minimum specificity.
+#
+# Prune periodically: when a flagged line moves (file edits shift
+# line numbers) the suppression silently misses and the FP comes
+# back, forcing re-review. That's the intended audit hygiene.
+#
+# Add a one-line reason per entry so the next operator (or future
+# you) can understand whether the suppression still applies.
+
+frontend/src/pages/Profiling.tsx:539   # pprof recipe template literal, not real browser code

@@ -122,6 +122,15 @@ Every new operator-facing surface must include:
 9. **TypeScript** is law — `cd frontend && npx tsc --noEmit` is
    the gate
 10. **Backend** is law — `go build ./...` is the gate
+11. **Regression test for bug-fixes** (v0.5.447) — every
+    `v0.5.X — bug-fix` release ships with a Go test that would
+    catch the bug if it re-regresses. Pattern: extract the
+    minimal pure function the fix touches; table-driven test
+    in `<package>/<feature>_test.go`; comment header cites the
+    v0.5.X release and explains the original symptom. See
+    [internal/api/cache_key_test.go](internal/api/cache_key_test.go)
+    (v0.5.187 collision) for the canonical example. Pre-tag
+    gate: `go test ./...` must pass.
 
 If it has an AI explain affordance: route through
 `s.copilotExplain(r, ...)` wrapper, NOT `s.copilot.Explain` direct.
@@ -214,15 +223,16 @@ rule.
 ### Release pattern — every functional change
 
 ```
-1. Edit code.
-2. cd frontend && npx tsc --noEmit  (frontend changes only)
-3. go build ./...                    (backend changes)
-4. make audit                        (hard-constraint lint; v0.5.446)
-5. git add <touched files>
-6. git commit -m "<heredoc — see format below>"
-7. git tag v0.5.X
-8. git push && git push --tags        ← triggers Release workflow
-9. make docker-up                      (background — one at a time)
+ 1. Edit code.
+ 2. cd frontend && npx tsc --noEmit  (frontend changes only)
+ 3. go build ./...                    (backend changes)
+ 4. go test ./...                     (bug-fix releases especially)
+ 5. make audit                        (hard-constraint lint; v0.5.446)
+ 6. git add <touched files>
+ 7. git commit -m "<heredoc — see format below>"
+ 8. git tag v0.5.X
+ 9. git push && git push --tags        ← triggers Release workflow
+10. make docker-up                     (background — one at a time)
 ```
 
 `make audit` exits 1 on 🔴 critical findings (cache-key length

@@ -55,6 +55,19 @@ changed:
 If either fails, surface the error and stop — don't try to fix it
 silently. The operator decides whether to fix-forward or abort.
 
+### 3b. `go test ./...` — regression suite gate (v0.5.447)
+
+Run after the build gate. The regression-test discipline
+(CLAUDE.md "When you ship" item 11) ships a test per
+`v0.5.X — bug-fix` release, so the suite grows over time and
+catches recurrence of historical bug classes.
+
+- Exit non-zero: STOP. Surface the failing test name to the
+  operator. Don't tag — a red test on a release branch is the
+  signal the user asked us to install.
+- Skip safely on tags that don't touch Go (`docs/` only,
+  `frontend/` only) — but err on the side of running.
+
 ### 3a. `make audit` — hard-constraint linter (v0.5.446)
 
 Run `make audit` after the type-check/build gate but before

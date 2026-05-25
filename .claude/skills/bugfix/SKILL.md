@@ -110,6 +110,25 @@ Investigate more.
   trace it: `(v0.5.X — operator-reported: …)`.
 - Type-check + build before considering the fix done.
 
+### 4a. Regression test — bug-fix releases ship with one (v0.5.447)
+
+CLAUDE.md "When you ship a new feature" item 11: every
+`v0.5.X — bug-fix` release ships with a Go test that fails on
+re-regression. This catches future copy-paste-induced
+re-occurrences of the SAME class of bug.
+
+- Pattern: extract the minimal pure function the fix touches
+  (often already there). Table-driven test in
+  `<package>/<feature>_test.go`. Comment header cites this
+  release + the original symptom.
+- Canonical example: [internal/api/cache_key_test.go](internal/api/cache_key_test.go)
+  guards the v0.5.187 cache-key collision.
+- If the fix lives behind ClickHouse / network I/O, extract the
+  pure SQL-building helper into a testable function rather than
+  skipping the test entirely.
+- `go test ./...` must pass before tagging. The /release skill
+  runs this as step 3b.
+
 ### 5. Ship via `/release`
 
 Invoke the `release` skill with the bug-fix description. The

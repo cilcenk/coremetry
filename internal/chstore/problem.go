@@ -675,7 +675,14 @@ type ProblemFilter struct {
 	// anomaly-detector entries (rule_id = "anomaly:…") and skip
 	// the rule-driven Problems.
 	RuleIDPrefix string
-	Limit        int
+	// Priority — P1/P2/P3 subset to keep. Empty = no filter.
+	// Applied post-EnrichProblemsWithPriority because priority is
+	// computed at read time (v0.5.210), not a CH column. ListProblems
+	// applies Limit after this filter so an operator who picks P1
+	// gets the most recent P1 rows up to Limit, not the most recent
+	// rows that happen to be P1.
+	Priority []string
+	Limit    int
 }
 
 // CountProblems returns the row count matching the same filter

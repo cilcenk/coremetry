@@ -478,9 +478,14 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // same correlation panel is now embedded inside the
   // triage drawer.)
 
+  // Sort the priority set before handing to the query so the React
+  // Query key hash stays stable regardless of toggle order, and the
+  // backend cache key (sorted+FNV digest) matches.
+  const prioParam = useMemo(() => [...prioSet].sort(), [prioSet]);
   const problemsQ = useProblems({
     status: statusFilter === 'all' ? undefined : statusFilter,
     service: serviceFilter || undefined,
+    priority: prioParam,
     limit: 200,
   });
   const data: Problem[] | null | undefined = problemsQ.isLoading
@@ -494,12 +499,11 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
 
   const sorted = useMemo(() => {
     if (!data) return data;
-    // Apply severity + priority chip filters before sort so
-    // the visible row count under the chips matches what's
-    // rendered.
-    const filtered = data.filter(p =>
-      sevSet.has(p.severity) &&
-      prioSet.has(p.priority ?? 'P3'));
+    // Severity chip filter stays client-side; priority is filtered
+    // server-side via the priority query param so the limit cap
+    // bites the right bucket. Keeping the severity client-side
+    // filter avoids a refetch on every chip toggle for that axis.
+    const filtered = data.filter(p => sevSet.has(p.severity));
     const cmp = (a: Problem, b: Problem): number => {
       switch (sortBy) {
         case 'priority': {
@@ -525,7 +529,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     };
     const arr = [...filtered].sort(cmp);
     return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [data, sortBy, sortDir, sevSet, prioSet]);
+  }, [data, sortBy, sortDir, sevSet]);
 
   // Counts per severity for the chip labels — operator sees
   // "critical (3)" instead of guessing how many would land.

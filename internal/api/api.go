@@ -7984,14 +7984,32 @@ func (s *Server) countProblems(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	// Priority — comma-separated P1/P2/P3 subset. Filtered post-enrich
+	// because priority is computed at read time (v0.5.210), not a CH
+	// column. Empty = no filter, behave as before.
+	var prios []string
+	if raw := strings.TrimSpace(q.Get("priority")); raw != "" {
+		for _, p := range strings.Split(raw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				prios = append(prios, p)
+			}
+		}
+	}
 	f := chstore.ProblemFilter{
 		Status: q.Get("status"), Service: q.Get("service"),
-		Severity: q.Get("severity"), Limit: parseInt(q.Get("limit"), 100),
+		Severity: q.Get("severity"), Priority: prios,
+		Limit: parseInt(q.Get("limit"), 100),
 	}
 	// Sidebar polls this endpoint per user every 30s — at 100 logged-in
 	// users that's 3 RPS just for the badge. 5s TTL collapses the load.
-	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:limit=%d",
-		f.Status, f.Service, f.Severity, f.Limit)
+	// Priority set hashed via excludeKeyDigest (sorted + FNV) so two
+	// distinct subsets cannot collide on the cache key — cf. v0.5.187.
+	prioMap := make(map[string]bool, len(prios))
+	for _, p := range prios {
+		prioMap[p] = true
+	}
+	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:limit=%d",
+		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), f.Limit)
 	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
 		probs, err := s.store.ListProblems(r.Context(), f)
 		if err != nil {
@@ -8028,6 +8046,24 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// so a worsening metric or fresh deploy reranks
 		// instantly without rewriting the problems row.
 		probs = chstore.EnrichProblemsWithPriority(probs)
+		// Priority chip filter — applied AFTER enrich because
+		// Problem.Priority is populated by EnrichProblemsWithPriority,
+		// not stored on the CH row. Default "P3" matches the
+		// frontend's fallback for un-bucketed rows so the chip
+		// behaviour is consistent across read and render.
+		if len(prios) > 0 {
+			keep := make([]chstore.Problem, 0, len(probs))
+			for _, p := range probs {
+				bucket := p.Priority
+				if bucket == "" {
+					bucket = "P3"
+				}
+				if prioMap[bucket] {
+					keep = append(keep, p)
+				}
+			}
+			probs = keep
+		}
 		return probs, nil
 	})
 }

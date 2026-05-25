@@ -16,6 +16,7 @@ import type { Problem } from '@/lib/types';
 export function useProblems(filter: {
   status?: 'open' | 'all' | 'resolved';
   service?: string;
+  priority?: string[];
   limit?: number;
 }) {
   return useQuery<Problem[]>({

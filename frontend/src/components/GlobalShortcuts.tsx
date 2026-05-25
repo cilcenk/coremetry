@@ -23,22 +23,48 @@ const PAGES: { key: string; label: string; to: string }[] = [
   { key: 'g i', label: 'Go to Incidents',  to: '/incidents' },
 ];
 
-// focusPageSearch finds the first visible, enabled text input
-// on the page and focuses+selects it. Works for the common
-// "search/filter is the first field" layout on /traces, /logs,
-// /services, /anomalies etc. without per-page markup. If the
-// first input isn't the right one on some page, the operator
-// can Tab from there.
+// focusPageSearch finds the page's search input and focuses+selects
+// it. Resolution order:
+//   1. The first element with `data-shortcut-search` — explicit
+//      opt-in by the page so `/` lands where the operator expects
+//      (e.g. the Service picker on /traces, not the trace-id
+//      lookup which is the first DOM input).
+//   2. The first visible text input or textarea on the page.
+//      Fallback for pages that haven't been annotated yet.
+// v0.5.454 — the fallback alone landed on the wrong field on
+// /traces (Trace ID lookup is first in DOM, search picker is
+// later) and missed /admin/sql entirely (textarea, not input).
 function focusPageSearch(): void {
-  const inputs = document.querySelectorAll<HTMLInputElement>(
-    'input[type="text"], input[type="search"], input:not([type])'
+  const SELECT_VISIBLE = (el: HTMLElement) =>
+    el.offsetParent !== null &&
+    !(el as HTMLInputElement | HTMLTextAreaElement).disabled &&
+    !(el as HTMLInputElement | HTMLTextAreaElement).readOnly;
+
+  // 1. Explicit opt-in target wins.
+  const opted = document.querySelectorAll<HTMLElement>('[data-shortcut-search]');
+  for (const el of Array.from(opted)) {
+    const target = el.matches('input, textarea')
+      ? el
+      : el.querySelector<HTMLElement>('input, textarea');
+    if (target && SELECT_VISIBLE(target)) {
+      target.focus();
+      if ('select' in target && typeof (target as HTMLInputElement).select === 'function') {
+        (target as HTMLInputElement).select();
+      }
+      return;
+    }
+  }
+
+  // 2. Fallback — first visible text input or textarea.
+  const inputs = document.querySelectorAll<HTMLElement>(
+    'input[type="text"], input[type="search"], input:not([type]), textarea'
   );
   for (const el of Array.from(inputs)) {
-    // offsetParent === null catches `display:none` and detached
-    // nodes; disabled inputs shouldn't grab focus either.
-    if (el.offsetParent !== null && !el.disabled && !el.readOnly) {
+    if (SELECT_VISIBLE(el)) {
       el.focus();
-      el.select();
+      if ('select' in el && typeof (el as HTMLInputElement).select === 'function') {
+        (el as HTMLInputElement).select();
+      }
       return;
     }
   }

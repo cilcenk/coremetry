@@ -318,6 +318,7 @@ export default function SQLPlaygroundPage() {
           </div>
 
           <textarea ref={editorRef}
+            data-shortcut-search
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={onEditorKey}

@@ -396,7 +396,11 @@ function TracesPageInner() {
         </div>
 
         {/* Filters (shared between views) */}
-        <div className="controls">
+        {/* data-shortcut-search marks the Service picker as the
+            `/`-key target on this page (v0.5.454); without it,
+            the global shortcut picks the first DOM input which
+            is the right-pinned Trace ID lookup. */}
+        <div className="controls" data-shortcut-search>
           <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
             placeholder="Service…" width={170}
             onEnter={(v) => apply(v)} />

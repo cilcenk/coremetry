@@ -23,6 +23,24 @@
         }
       })();
     </script>
+    <!--
+      Inline density boot (v0.5.452) — mirrors the theme bootstrap
+      above so the operator never sees a flash of "comfortable"
+      density before React's useEffect hydrates the saved choice.
+      Same FOUC-avoidance pattern; 4 levels per DensityToggle.tsx.
+    -->
+    <script>
+      (function() {
+        try {
+          var d = localStorage.getItem('coremetry-density');
+          var allowed = { spacious:1, comfortable:1, compact:1, dense:1 };
+          if (!allowed[d]) d = 'comfortable';
+          document.documentElement.setAttribute('data-density', d);
+        } catch (e) {
+          document.documentElement.setAttribute('data-density', 'comfortable');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

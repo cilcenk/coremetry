@@ -1047,50 +1047,15 @@ type TraceFilter struct {
 	CountMode string
 }
 
-func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
-	// MV fast-path. Activates when:
-	//   • Window is ≥ 5 minutes (MVs are 5-min bucketed)
-	//   • No per-span filters that require raw access:
-	//       search (LIKE on name), traceId prefix, extra attr
-	//       columns, DSL/Filters, RequireServices.
-	//   • Sort is by time/duration/spans/status (everything
-	//     except service-by-service navigation we can satisfy
-	//     from the summary's aggregate states).
-	//   • CountMode is skip (the MV path returns hasMore but
-	//     doesn't compute exact totals — same trade-off the
-	//     /api/traces UI already accepts).
-	//
-	// Branches by service filter:
-	//   • f.Service != "" → two-stage path: scan
-	//     trace_service_index_5m for matching trace_ids, then
-	//     pull their summaries from trace_summary_5m.
-	//   • f.Service == "" → single-stage path: scan
-	//     trace_summary_5m directly (PK on (time_bucket,
-	//     trace_id) handles the partition prune; GROUP BY
-	//     collapses the bucketed rows into one row per
-	//     trace_id within the window). Drops the open-page
-	//     /traces?last=15m wait from "scan tens of millions
-	//     of raw spans" to sub-second.
-	//
-	// When all conditions hold we bypass the GROUP BY trace_id
-	// over raw spans (~10-100M rows on a 7-day window) and
-	// read pre-aggregated state instead.
-	if !f.From.IsZero() && !f.To.IsZero() &&
-		f.To.Sub(f.From) >= 5*time.Minute &&
-		f.Search == "" && f.TraceID == "" &&
-		len(f.ExtraAttrs) == 0 && len(f.Filters) == 0 &&
-		len(f.RequireServices) == 0 &&
-		(f.CountMode == "skip" || f.CountMode == "") {
-		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
-		if err == nil {
-			return out, total, hasMore, nil
-		}
-		// On error fall through to raw path — log it so a
-		// regression in the MV pipeline doesn't silently leave
-		// us on the slow path forever.
-		log.Printf("[chstore] trace_summary fast path failed, falling back to raw: %v", err)
-	}
-
+// buildGetTracesWhere assembles the WHERE clause for GetTraces from
+// a TraceFilter. Pure function (no Store / no ctx), extracted in
+// v0.5.450 so the regression test for the v0.5.440 fix can assert
+// on the generated SQL without standing up a ClickHouse instance.
+//
+// Order of conditions matches the historical inline build:
+// time bounds → service narrowing → trace ID → error flag →
+// duration → free-form FilterExpr[].
+func buildGetTracesWhere(f TraceFilter) whereClause {
 	var wc whereClause
 	if !f.From.IsZero() {
 		// v0.5.356 — operator-reported: clicking an operation on
@@ -1176,6 +1141,54 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		wc.add("duration <= ?", int64(f.MaxMs*1e6))
 	}
 	ApplyFilters(&wc, f.Filters)
+	return wc
+}
+
+func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
+	// MV fast-path. Activates when:
+	//   • Window is ≥ 5 minutes (MVs are 5-min bucketed)
+	//   • No per-span filters that require raw access:
+	//       search (LIKE on name), traceId prefix, extra attr
+	//       columns, DSL/Filters, RequireServices.
+	//   • Sort is by time/duration/spans/status (everything
+	//     except service-by-service navigation we can satisfy
+	//     from the summary's aggregate states).
+	//   • CountMode is skip (the MV path returns hasMore but
+	//     doesn't compute exact totals — same trade-off the
+	//     /api/traces UI already accepts).
+	//
+	// Branches by service filter:
+	//   • f.Service != "" → two-stage path: scan
+	//     trace_service_index_5m for matching trace_ids, then
+	//     pull their summaries from trace_summary_5m.
+	//   • f.Service == "" → single-stage path: scan
+	//     trace_summary_5m directly (PK on (time_bucket,
+	//     trace_id) handles the partition prune; GROUP BY
+	//     collapses the bucketed rows into one row per
+	//     trace_id within the window). Drops the open-page
+	//     /traces?last=15m wait from "scan tens of millions
+	//     of raw spans" to sub-second.
+	//
+	// When all conditions hold we bypass the GROUP BY trace_id
+	// over raw spans (~10-100M rows on a 7-day window) and
+	// read pre-aggregated state instead.
+	if !f.From.IsZero() && !f.To.IsZero() &&
+		f.To.Sub(f.From) >= 5*time.Minute &&
+		f.Search == "" && f.TraceID == "" &&
+		len(f.ExtraAttrs) == 0 && len(f.Filters) == 0 &&
+		len(f.RequireServices) == 0 &&
+		(f.CountMode == "skip" || f.CountMode == "") {
+		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
+		if err == nil {
+			return out, total, hasMore, nil
+		}
+		// On error fall through to raw path — log it so a
+		// regression in the MV pipeline doesn't silently leave
+		// us on the slow path forever.
+		log.Printf("[chstore] trace_summary fast path failed, falling back to raw: %v", err)
+	}
+
+	wc := buildGetTracesWhere(f)
 	if f.Limit == 0 {
 		f.Limit = 50
 	}

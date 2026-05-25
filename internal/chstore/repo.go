@@ -1134,66 +1134,29 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			args[i] = s
 		}
 		wc.add("service_name IN ("+strings.Join(holders, ",")+")", args...)
-	case f.Service != "" && f.Search != "":
-		// v0.5.371 — cross-service search-with-service mode.
-		// Pre-fix put `service_name = ?` in WHERE, which
-		// restricted ALL span rows to that one service. The
-		// HAVING countIf(search) then only saw THAT service's
-		// spans — so a trace where service X called a route
-		// owned by service Y (the typical caller→callee shape)
-		// never matched because X's spans don't carry Y's route.
-		//
-		// Subquery semantics: candidate_traces = DISTINCT
-		// trace_ids whose spans include service=X. Outer
-		// query then scans ALL spans of those candidates so
-		// the HAVING countIf(search) can hit any field on any
-		// span across services in the trace.
-		//
-		// Scale: inner subquery uses (service_name, time)
-		// primary key → fast prune. Outer trace_id IN (…)
-		// uses the trace_id bloom index → bounded by the
-		// candidate set. Both halves stay sub-second at
-		// billion-span/day.
-		// v0.5.376 — DISTINCT trace_id keeps the subquery result
-		// small even on a 30-day window where the candidate
-		// service may have tens of millions of spans. Without
-		// DISTINCT, the IN-set carried one entry per span, which
-		// inflated the right side of the IN filter past CH's
-		// default subquery memory cap on wide windows — the
-		// query then truncated silently, producing the
-		// "30d returns the same as 7d" symptom an operator
-		// reported in v0.5.376.
-		//
-		// v0.5.427 — bug-fix (recurring): GLOBAL IN. In cluster
-		// mode the inner subquery is FROM Distributed spans and
-		// the outer FROM Distributed spans too — without GLOBAL,
-		// CH defaults to `local` semantics (each shard runs the
-		// subquery against its own local table). A trace whose
-		// service-narrowing match lives on shard A but whose
-		// search-matching span lives on shard B then never
-		// appears, because shard B's local subquery doesn't
-		// contain the trace_id. Same fix v0.5.116 applied to
-		// topology / backtrace; the raw-traces path was missed.
-		// GLOBAL IN forces the subquery to run on the coordinator
-		// and broadcast the result to every shard — single-node
-		// installs see no behaviour change (GLOBAL IN ≡ IN when
-		// the table is not Distributed).
-		wc.add(
-			"trace_id GLOBAL IN (SELECT DISTINCT trace_id FROM spans"+
-				" WHERE service_name = ?"+
-				" AND time >= ? AND time <= ?"+
-				")",
-			f.Service, f.From, f.To,
-		)
 	case f.Service != "":
+		// v0.5.440 — narrow service-scope restored. v0.5.371
+		// previously widened this to a `trace_id IN (subquery)`
+		// shape so a trace where service X called a route owned
+		// by service Y would still match when the operator
+		// searched for "POST /payment" (X's span name was the
+		// verb only, Y's name had the route). That worked but
+		// pulled in every trace where ANY other service called
+		// X — operator-reported (v0.5.440): "I filtered by
+		// service=X and the list shows traces of services that
+		// CALLED X; Tempo's semantic is just X's traces."
+		//
+		// v0.5.372 in the meantime broadened the search HAVING
+		// to include `arrayExists` over `attr_values`, which
+		// catches the route in url.path / http.target / similar
+		// attrs that X's client span carries. So the v0.5.371
+		// cross-service widening is no longer needed to satisfy
+		// the "X called Y's route" case — X's own attrs supply
+		// the match. Going back to plain WHERE service_name=X
+		// fixes the operator's complaint without regressing
+		// v0.5.371's use case.
 		wc.add("service_name = ?", f.Service)
 	}
-	// v0.5.369-371 — search moved from WHERE to HAVING below,
-	// and when service is also set the WHERE switches to a
-	// trace_id IN (subquery) shape (see comment above). Both
-	// changes serve the same goal: a trace involving service
-	// X with ANY span matching the search substring should
-	// match — not the prior "one span satisfies both" semantic.
 	if f.TraceID != "" {
 		// Exact match for full 32-char trace ID, prefix match for shorter.
 		// Bloom filter index on trace_id makes this efficient.
@@ -1243,8 +1206,9 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		havingParts = append(havingParts, "countIf(service_name = ?) > 0")
 		havingArgs = append(havingArgs, svc)
 	}
-	// v0.5.369 — search at trace-level via HAVING; see WHERE
-	// commentary above for the cross-service rationale.
+	// v0.5.369 — search at trace-level via HAVING so a trace
+	// matches as long as ANY of its spans hits the substring,
+	// not "one span satisfies WHERE + search together".
 	// v0.5.370 — broaden the search target. Operator-reported:
 	// /traces?service=frontend&search=POST /login returned 1
 	// trace out of 22K matching spans because the SDK

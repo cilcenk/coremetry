@@ -54,7 +54,7 @@ export interface Threshold {
 
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
-  compareSeries, compareOffsetNs, compareLabel,
+  compareSeries, compareOffsetNs, compareLabel, logScale,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -90,6 +90,11 @@ export function MultiLineChart({
   compareSeries?: SpanMetricSeries[];
   compareOffsetNs?: number;
   compareLabel?: string; // tooltip suffix e.g. "24h ago"
+  // logScale — v0.5.484. SREs flip to log when the metric
+  // spans orders of magnitude (HTTP status counts, queue
+  // depths, percentile latencies that move from 5ms to 5s).
+  // Linear by default; toggleable from the parent.
+  logScale?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -158,7 +163,15 @@ export function MultiLineChart({
       // Tells uPlot the x values are unix seconds → "HH:MM"
       // tick format instead of raw integers. Single most
       // important option for time-series charts.
-      scales: { x: { time: true } },
+      // v0.5.484 — log scale on y when caller opts in. distr:3
+      // is uPlot's log10; the chart redraws against the same
+      // data with log ticks. Zero/negative values land on the
+      // axis floor — fine for the count/latency metrics SREs
+      // toggle log for (always non-negative).
+      scales: {
+        x: { time: true },
+        y: logScale ? { distr: 3, log: 10 } : {},
+      },
       series: [
         {},
         ...allSeries.map((s, idx) => {
@@ -510,7 +523,7 @@ export function MultiLineChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel]);
+  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel, logScale]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling

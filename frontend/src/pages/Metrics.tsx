@@ -7,6 +7,7 @@ import { MetricNamePicker } from '@/components/MetricNamePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { EventMarkers } from '@/components/EventMarkers';
+import { DrillButton } from '@/components/DrillButton';
 import { ShareButton } from '@/components/ShareButton';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
@@ -67,6 +68,13 @@ export default function MetricsPage() {
   const [step, setStep] = useState(0);
   const [filters, setFilters] = useState<FilterExpr[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);
+  // v0.5.484 — SRE incident-debug toolkit:
+  // compare = overlay the same series shifted back N hours.
+  // logScale = uPlot distr:3 for orders-of-magnitude metrics.
+  type CompareMode = 'off' | '1h' | '24h' | '7d' | 'prev';
+  const [compare, setCompare] = useState<CompareMode>('off');
+  const [logScale, setLogScale] = useState(false);
+  const [compareSeries, setCompareSeries] = useState<SpanMetricSeries[] | null>(null);
   const [groupDraft, setGroupDraft] = useState('');
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
 
@@ -108,6 +116,40 @@ export default function MetricsPage() {
     }).then(r => setSeries(r ?? [])).catch(() => setSeries(null));
   }, [metric, service, agg, filters, groupBy, step, from, to]);
 
+  // v0.5.484 — compare-period fetch. Off → null. 1h/24h/7d use
+  // fixed offsets; 'prev' uses the matched window (to - from)
+  // so a 30min window compares to 30min before that.
+  const compareOffsetNs = useMemo(() => {
+    switch (compare) {
+      case '1h':  return 60 * 60 * 1_000_000_000;
+      case '24h': return 24 * 60 * 60 * 1_000_000_000;
+      case '7d':  return 7 * 24 * 60 * 60 * 1_000_000_000;
+      case 'prev': return to - from;
+      default: return 0;
+    }
+  }, [compare, from, to]);
+
+  useEffect(() => {
+    if (!metric || compare === 'off' || compareOffsetNs <= 0) {
+      setCompareSeries(null);
+      return;
+    }
+    let cancelled = false;
+    api.metricQuery({
+      name: metric,
+      service: service || undefined,
+      agg,
+      filters: filters.length ? JSON.stringify(filters) : undefined,
+      groupBy: groupBy.join(',') || undefined,
+      from: from - compareOffsetNs,
+      to: to - compareOffsetNs,
+      step: step || undefined,
+    })
+      .then(r => { if (!cancelled) setCompareSeries(r ?? []); })
+      .catch(() => { if (!cancelled) setCompareSeries(null); });
+    return () => { cancelled = true; };
+  }, [metric, service, agg, filters, groupBy, step, from, to, compare, compareOffsetNs]);
+
   // Display meta only when the picker handed us metadata for
   // the currently-typed metric — typing an arbitrary name
   // before picking shows no meta, which is the right signal.
@@ -135,6 +177,57 @@ export default function MetricsPage() {
       count: vs.length,
     };
   }), [series]);
+
+  // v0.5.484 — window-wide aggregate for the stat tiles. Across
+  // ALL series + ALL points in the visible window. delta is the
+  // last value vs the compare-period equivalent (when compare
+  // is on) — gives SREs "is this drifting?" at a glance.
+  const stats = useMemo(() => {
+    const all: number[] = [];
+    const lasts: number[] = [];
+    for (const s of series ?? []) {
+      const vs = s.points.map(p => p.value).filter(v => v != null && !isNaN(v));
+      all.push(...vs);
+      if (vs.length > 0) lasts.push(vs[vs.length - 1]);
+    }
+    if (all.length === 0) return null;
+    const sorted = all.slice().sort((a, b) => a - b);
+    const pct = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+    const current = lasts.length > 0
+      ? lasts.reduce((a, b) => a + b, 0) / lasts.length
+      : sorted[sorted.length - 1];
+    // Compare-window equivalent for delta calculation.
+    let compareCurrent: number | null = null;
+    if (compareSeries) {
+      const cLast: number[] = [];
+      for (const s of compareSeries) {
+        const vs = s.points.map(p => p.value).filter(v => v != null && !isNaN(v));
+        if (vs.length > 0) cLast.push(vs[vs.length - 1]);
+      }
+      if (cLast.length > 0) {
+        compareCurrent = cLast.reduce((a, b) => a + b, 0) / cLast.length;
+      }
+    }
+    return {
+      current,
+      min: sorted[0],
+      max: sorted[sorted.length - 1],
+      avg: sorted.reduce((a, b) => a + b, 0) / sorted.length,
+      p50: pct(0.50),
+      p99: pct(0.99),
+      compareCurrent,
+    };
+  }, [series, compareSeries]);
+
+  // Range encoded as a `custom:fromMs-toMs` string so the
+  // DrillButton's TimeRange propagation lands on /traces with
+  // the SAME window the operator is looking at. The chart's
+  // resolved bounds, not the picker's preset, drive this.
+  const customRange: TimeRange = useMemo(() => ({
+    preset: 'custom',
+    fromMs: Math.floor(from / 1_000_000),
+    toMs:   Math.floor(to / 1_000_000),
+  }), [from, to]);
 
   return (
     <>
@@ -221,20 +314,71 @@ export default function MetricsPage() {
               background: 'var(--bg1)', border: '1px solid var(--border)',
               borderRadius: 8, padding: 14,
             }}>
-              <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>
-                <b style={{ color: 'var(--accent2)' }}>{agg}</b> of{' '}
-                <b style={{ color: 'var(--accent2)' }}>{metric}</b>
-                {service && <> · service <b>{service}</b></>}
-                {groupBy.length > 0 && <> · split by <b>{groupBy.join(' / ')}</b></>}
-                {' · '}{series.length} series
+              {/* v0.5.484 — header strip: title + SRE toolbar
+                  (compare, log scale, drill-to-traces). Stat
+                  tiles below carry the at-a-glance numbers. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 11, color: 'var(--text2)', flex: 1, minWidth: 200 }}>
+                  <b style={{ color: 'var(--accent2)' }}>{agg}</b> of{' '}
+                  <b style={{ color: 'var(--accent2)' }}>{metric}</b>
+                  {service && <> · service <b>{service}</b></>}
+                  {groupBy.length > 0 && <> · split by <b>{groupBy.join(' / ')}</b></>}
+                  {' · '}{series.length} series
+                </div>
+                <label style={{ fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  Compare:
+                  <select value={compare} onChange={e => setCompare(e.target.value as CompareMode)}
+                    style={{ fontSize: 11, padding: '2px 6px' }}
+                    title="Overlay the same series shifted back by N hours so an anomaly stands out against its own baseline">
+                    <option value="off">off</option>
+                    <option value="1h">1h ago</option>
+                    <option value="24h">24h ago</option>
+                    <option value="7d">7d ago</option>
+                    <option value="prev">prev window</option>
+                  </select>
+                </label>
+                <label style={{ fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+                  title="Log10 y-axis — flip when the metric spans orders of magnitude">
+                  <input type="checkbox" checked={logScale}
+                    onChange={e => setLogScale(e.target.checked)} />
+                  log y
+                </label>
+                <DrillButton to="/traces"
+                  params={{ service: service || undefined }}
+                  range={customRange}
+                  title="View traces in this window"
+                  label="⋮ Traces" />
               </div>
+
+              {/* Stat tiles (v0.5.484) — SRE at-a-glance. */}
+              {stats && (
+                <div style={{
+                  display: 'flex', gap: 14, marginBottom: 10, flexWrap: 'wrap',
+                  padding: '6px 0', borderTop: '1px solid var(--border)',
+                  borderBottom: '1px solid var(--border)',
+                }}>
+                  <StatTile label="current" value={fmtMetric(stats.current, unit)}
+                    delta={stats.compareCurrent != null ? deltaPct(stats.current, stats.compareCurrent) : null}
+                    compareLabel={compareLabelFor(compare)} />
+                  <StatTile label="min"  value={fmtMetric(stats.min,  unit)} />
+                  <StatTile label="max"  value={fmtMetric(stats.max,  unit)} />
+                  <StatTile label="avg"  value={fmtMetric(stats.avg,  unit)} />
+                  <StatTile label="p50"  value={fmtMetric(stats.p50,  unit)} />
+                  <StatTile label="p99"  value={fmtMetric(stats.p99,  unit)} />
+                </div>
+              )}
+
               {/* v0.5.481 — operator event markers (deploy /
                   config / incident / maintenance) overlaid on
                   the metric chart. Service-scoped when the
                   operator narrowed by service; otherwise shows
                   all events in the window. */}
               <div style={{ position: 'relative' }}>
-                <MultiLineChart series={series} unit={unit} />
+                <MultiLineChart series={series} unit={unit}
+                  compareSeries={compareSeries ?? undefined}
+                  compareOffsetNs={compareOffsetNs > 0 ? compareOffsetNs : undefined}
+                  compareLabel={compareLabelFor(compare) ?? undefined}
+                  logScale={logScale} />
                 <EventMarkers fromNs={from} toNs={to} service={service || undefined} />
               </div>
             </div>
@@ -271,5 +415,69 @@ export default function MetricsPage() {
         )}
       </div>
     </>
+  );
+}
+
+// ─── v0.5.484 SRE toolkit helpers ───────────────────────────
+
+function fmtMetric(v: number, unit: string): string {
+  if (!isFinite(v)) return '—';
+  // Compact human-readable formatting. For "ms" / "s" / "%"
+  // keep one decimal; for counter-style metrics (no unit or
+  // "1") fmtNum's k/M/B collapse reads better.
+  if (unit === 'ms' || unit === 's' || unit === '%') {
+    return v.toFixed(v >= 100 ? 0 : 1) + (unit ? ' ' + unit : '');
+  }
+  return fmtNum(v) + (unit && unit !== '1' ? ' ' + unit : '');
+}
+
+function deltaPct(current: number, prev: number): number {
+  if (!isFinite(prev) || prev === 0) return 0;
+  return ((current - prev) / Math.abs(prev)) * 100;
+}
+
+function compareLabelFor(c: 'off' | '1h' | '24h' | '7d' | 'prev'): string | null {
+  switch (c) {
+    case '1h':  return '1h ago';
+    case '24h': return '24h ago';
+    case '7d':  return '7d ago';
+    case 'prev': return 'prev window';
+    default: return null;
+  }
+}
+
+function StatTile({ label, value, delta, compareLabel }: {
+  label: string;
+  value: string;
+  delta?: number | null;
+  compareLabel?: string | null;
+}) {
+  const hasDelta = delta != null && isFinite(delta);
+  // ±5% threshold for visually neutral; beyond that the colour
+  // signals whether the metric is climbing or falling. Operator
+  // can read direction without parsing the number.
+  const sign = hasDelta && Math.abs(delta!) >= 5
+    ? (delta! > 0 ? 'up' : 'down')
+    : 'flat';
+  const deltaColour =
+    sign === 'flat' ? 'var(--text3)'
+    : sign === 'up'  ? 'rgb(220,38,38)'
+    : 'rgb(46,160,67)';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 80 }}>
+      <span style={{
+        fontSize: 10, color: 'var(--text3)',
+        textTransform: 'uppercase', letterSpacing: 0.4,
+      }}>{label}</span>
+      <span style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, fontFamily: 'ui-monospace, monospace' }}>
+        {value}
+      </span>
+      {hasDelta && compareLabel && (
+        <span style={{ fontSize: 10, color: deltaColour, fontFamily: 'ui-monospace, monospace' }}
+          title={`current vs ${compareLabel}`}>
+          {sign === 'flat' ? '~' : sign === 'up' ? '↑' : '↓'} {Math.abs(delta!).toFixed(1)}% vs {compareLabel}
+        </span>
+      )}
+    </div>
   );
 }

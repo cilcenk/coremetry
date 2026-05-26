@@ -60,30 +60,6 @@ type Page struct {
 	Logs  []*LogRecord `json:"logs"`
 }
 
-// FacetField identifies a known facet dimension. Names map to a
-// per-backend column / field path that already gets read by Search
-// (so backends don't have to invent new fields for facets).
-type FacetField string
-
-const (
-	FacetService   FacetField = "service"
-	FacetSeverity  FacetField = "severity"
-	FacetNamespace  FacetField = "namespace"
-	FacetDeployment FacetField = "deployment"
-	FacetPod        FacetField = "pod"
-	FacetContainer FacetField = "container"
-	FacetCluster   FacetField = "cluster"
-)
-
-// FacetBucket is one (value, count) pair from a facet aggregation.
-type FacetBucket struct {
-	Value string `json:"value"`
-	Count int64  `json:"count"`
-}
-
-// FacetResult maps each requested facet to its top-N buckets.
-type FacetResult map[FacetField][]FacetBucket
-
 // PatternSpec is the cross-backend description of a "find log
 // lines that look like this" probe. Both backends consume it:
 //
@@ -173,13 +149,6 @@ type Store interface {
 	// attribute path the backend knows). Empty groupBy → a single
 	// "_total" series.
 	Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error)
-
-	// Facets returns top-N (value, count) pairs per requested
-	// facet, all scoped to the same Filter as Search. Powers the
-	// /logs sidebar that lets operators narrow by click instead of
-	// typing. Returns an empty bucket list for fields the backend
-	// can't resolve (e.g. missing column).
-	Facets(ctx context.Context, f Filter, fields []FacetField, topN int) (FacetResult, error)
 
 	// Backend returns a short identifier shown in /api/health so an operator
 	// can tell at a glance which log source is wired in.

@@ -42,6 +42,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/profileconv"
 	"github.com/cilcenk/coremetry/internal/templater"
 	"github.com/cilcenk/coremetry/internal/sampling"
+	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
 )
@@ -94,6 +95,15 @@ type Server struct {
 	// SetPipeline is called from main(); admin handlers nil-check
 	// and return 503.
 	pipeline    *pipeline.Engine
+
+	// mcp — Model Context Protocol server (v0.6.4). Exposes
+	// Coremetry's tools / resources / prompts to external LLM
+	// clients (Claude Desktop, Anthropic API tool-calling,
+	// internal copilots). nil-safe: routes are only registered
+	// when SetMCP is called from main(). HTTP+SSE transport on
+	// /api/mcp/sse + /api/mcp/messages; auth via the existing
+	// JWT middleware so role-based access carries into MCP.
+	mcp         *mcp.Server
 
 	// Demo deployments only — when true, /api/auth/config returns
 	// initial admin credentials so the login page can pre-fill them.
@@ -187,6 +197,13 @@ func (s *Server) SetTempo(t *tempo.Service) {
 // don't need to nil-check before calling Members.
 func (s *Server) SetCluster(c *cluster.Service) {
 	s.cluster = c
+}
+
+// SetMCP wires the Model Context Protocol server (v0.6.4). Called
+// once from main() after the api.Server is constructed. nil is
+// valid — leaves the /api/mcp/* routes unregistered.
+func (s *Server) SetMCP(m *mcp.Server) {
+	s.mcp = m
 }
 
 type rateSample struct {
@@ -318,6 +335,14 @@ func (s *Server) Start() error {
 	// session validity on connection establishment.
 	if s.bus != nil {
 		mux.Handle("GET /api/events", sse.Handler(s.bus))
+	}
+	// v0.6.4 — Model Context Protocol endpoints. SSE channel for
+	// the server→client stream (responses + notifications); POST
+	// channel for the client→server JSON-RPC requests. Both gated
+	// by the same auth middleware as the rest of /api/*.
+	if s.mcp != nil {
+		mux.HandleFunc("GET /api/mcp/sse",       s.mcp.HandleSSE)
+		mux.HandleFunc("POST /api/mcp/messages", s.mcp.HandleMessage)
 	}
 	mux.HandleFunc("GET /api/services/{name}/bundle",    s.getServiceBundle)
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)

@@ -772,8 +772,17 @@ func (s *Server) warmDependenciesCache() {
 	// Delay first refresh so we don't compete with boot-time DDL
 	// migrations for CH bandwidth on a cold start.
 	time.Sleep(5 * time.Second)
-	warm := func(label, key string, useTTL time.Duration, fn func(ctx context.Context) (any, error)) {
-		ctx, cancel := context.WithTimeout(context.Background(), queryBudg)
+	warm := func(label, key string, useTTL time.Duration, fn func(ctx context.Context) (any, error), perCallBudget ...time.Duration) {
+		// v0.5.461 — per-call budget override. Default queryBudg
+		// (20s) covers every warmer except ES significant_text
+		// on billion-doc indices; that one gets its own deadline
+		// via the same COREMETRY_LOGS_PATTERNS_DEADLINE env the
+		// handler reads (passed through from the call site).
+		budget := queryBudg
+		if len(perCallBudget) > 0 && perCallBudget[0] > 0 {
+			budget = perCallBudget[0]
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), budget)
 		defer cancel()
 		// Skip the upstream call when the cache already holds a
 		// fresh envelope (within the soft TTL). Stale-but-
@@ -786,6 +795,16 @@ func (s *Server) warmDependenciesCache() {
 		}
 		v, err := fn(ctx)
 		if err != nil {
+			// v0.5.461 — quiet on context deadline. The live
+			// handler is graceful (returns timedOut:true + caches
+			// it for 60s) so the operator's panel still renders;
+			// a warmer that can't fit in budget shouldn't spam
+			// logs every tick. Other errors (backend outage,
+			// schema mismatch) stay loud — they're actionable.
+			if errors.Is(err, context.DeadlineExceeded) ||
+				strings.Contains(err.Error(), "context deadline exceeded") {
+				return
+			}
 			log.Printf("[warm] %s: %v", label, err)
 			return
 		}
@@ -795,6 +814,16 @@ func (s *Server) warmDependenciesCache() {
 			return
 		}
 		s.storeCached(ctx, key, body, useTTL)
+	}
+	// Logs-patterns warmer budget. Same env override as the
+	// handler, slightly higher default (25s vs 15s) so a single
+	// cold-tick still has room before the live read inherits a
+	// cold cache.
+	logsPatternsBudget := 25 * time.Second
+	if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_PATTERNS_DEADLINE")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			logsPatternsBudget = d
+		}
 	}
 	for {
 		to := time.Now()
@@ -894,7 +923,7 @@ func (s *Server) warmDependenciesCache() {
 					"baseline": logsBaseline.String(),
 					"patterns": hits,
 				}, nil
-			})
+			}, logsPatternsBudget)
 		time.Sleep(tick)
 	}
 }

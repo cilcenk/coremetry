@@ -29,6 +29,7 @@ const SlowQueries       = lazy(() => import('./pages/SlowQueries'));
 const Messaging         = lazy(() => import('./pages/Messaging'));
 const Dashboards        = lazy(() => import('./pages/Dashboards'));
 const Dashboard         = lazy(() => import('./pages/Dashboard'));
+const Events            = lazy(() => import('./pages/Events'));
 const Incidents         = lazy(() => import('./pages/Incidents'));
 const Incident          = lazy(() => import('./pages/Incident'));
 // Problems page: assignable exception inbox at top, alert-rule
@@ -103,6 +104,7 @@ export default function App() {
             <Route path="/alerts"         element={<Alerts />} />
             <Route path="/slos"           element={<Slos />} />
             <Route path="/monitors"       element={<Monitors />} />
+            <Route path="/events"         element={<Events />} />
             <Route path="/profiling"      element={<Profiling />} />
             <Route path="/ai"             element={<AIObservability />} />
             <Route path="/profile"        element={<Profile />} />

@@ -86,6 +86,12 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/alerts',   label: 'nav.alerts',   icon: '◊' },
       { href: '/monitors', label: 'nav.monitors', icon: '◉' },
       { href: '/slos',     label: 'nav.slos',     icon: '◉' },
+      // v0.6.15 — operator events (deploy / config / incident
+      // markers). Editors create them via Cmd-K + manage from
+      // this list. Lives in the alerts group because operationally
+      // events are the timeline twin of alerts — both annotate
+      // when something happened.
+      { href: '/events',   label: 'nav.events',   icon: '◆' },
     ],
   },
   {

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
+import { EventMarkers } from './EventMarkers';
 import { api } from '@/lib/api';
 import type { TimeRange } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
@@ -38,9 +39,14 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom }: {
   const [stats, setStats] = useState<{ total: number; errors: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // v0.5.478 — lifted out of useEffect so the EventMarkers
+  // overlay (rendered next to the uPlot container) can use
+  // the same resolved bounds. Memoised on range identity to
+  // avoid retriggering the data fetch on render churn.
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+
   useEffect(() => {
     let cancelled = false;
-    const { from, to } = timeRangeToNs(range);
     // Aim for ~40 buckets across the visible window. The /api/spans/metric
     // endpoint expects step in seconds.
     const windowSec = Math.max(60, Math.round((to - from) / 1e9));
@@ -285,6 +291,11 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom }: {
           <div style={{ color: 'var(--err)', fontSize: 11, padding: 8 }}>{error}</div>
         )}
         <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }} />
+        {/* v0.5.478 — operator event markers (deploy / config /
+            incident / maintenance) overlaid as vertical lines at
+            their respective timestamps. Self-fetches; hides
+            cleanly when there are no events in the window. */}
+        <EventMarkers fromNs={from} toNs={to} />
         {/* Custom tooltip — uPlot's setCursor hook positions and
             populates this; opacity 0 until the cursor enters the
             chart area. */}

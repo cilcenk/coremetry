@@ -29,6 +29,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/monitor"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
@@ -603,6 +604,15 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, sampler, bus)
 	srv.SetCluster(clusterSvc)
+	// v0.6.4 — Model Context Protocol server. Wired on api/all
+	// modes only — worker / ingest pods don't take operator
+	// traffic so they have no MCP listeners. External LLMs
+	// (Claude Desktop, internal copilots) talk to the api fleet
+	// the same way browsers do.
+	if mode.api {
+		mcpSvc := mcp.New("coremetry", Version)
+		srv.SetMCP(mcpSvc)
+	}
 	srv.SetPipeline(pipelineEng)
 	srv.SetVersion(Version)
 	srv.SetBackgroundConfig(cfg.Background)

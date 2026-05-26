@@ -70,6 +70,40 @@ var webFS embed.FS
 // initContainer; the file path is stable.
 var Version = "dev"
 
+// v0.5.488 — runMode gates which subsystems boot. Single binary,
+// four roles: "all" (default; current monolithic behaviour),
+// "ingest" (OTLP receivers + CH writers; no background jobs, no
+// admin UI), "api" (HTTP API + SSE; no OTLP, no background
+// jobs), "worker" (evaluator + anomaly + topology + notifier; no
+// OTLP, no UI, must be replicaCount=1 since these jobs are
+// leader-elected via Redis lock but a worker pool of 1 saves the
+// lock-contention overhead). Helm chart picks monolithic
+// (one Deployment, mode=all) vs distributed (three Deployments
+// with mode=ingest/api/worker) via values.yaml.
+//
+// Older deployments are unchanged: COREMETRY_MODE unset → "all".
+type runMode struct {
+	ingest, api, worker bool
+	name                string
+}
+
+func parseRunMode() runMode {
+	m := strings.ToLower(strings.TrimSpace(os.Getenv("COREMETRY_MODE")))
+	switch m {
+	case "", "all":
+		return runMode{ingest: true, api: true, worker: true, name: "all"}
+	case "ingest":
+		return runMode{ingest: true, name: "ingest"}
+	case "api":
+		return runMode{api: true, name: "api"}
+	case "worker":
+		return runMode{worker: true, name: "worker"}
+	default:
+		log.Fatalf("invalid COREMETRY_MODE=%q (must be one of: all, ingest, api, worker)", m)
+		return runMode{}
+	}
+}
+
 func init() {
 	if Version != "" && Version != "dev" {
 		return
@@ -124,6 +158,10 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	mode := parseRunMode()
+	log.Printf("[mode] running as role=%s (ingest=%v api=%v worker=%v)",
+		mode.name, mode.ingest, mode.api, mode.worker)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -172,6 +210,13 @@ func main() {
 	}
 
 	// ── Batch consumers ───────────────────────────────────────────────────────
+	// v0.5.488 — only ingest-role pods Start() the OTLP receivers and
+	// the associated batch consumers. Consumer objects are still
+	// constructed on api/worker pods (with zero-config) so that
+	// api.NewServer can take a non-nil Ingester and the stats
+	// endpoints (/admin/stats, /api/health queue depths) don't need
+	// to nil-check every accessor — they just read 0 on a pod that
+	// didn't start the receivers.
 	opts := consumer.Options{
 		BatchSize:     cfg.Ingestion.BatchSize,
 		BufferSize:    cfg.Ingestion.BufferSize,
@@ -181,10 +226,11 @@ func main() {
 	spanConsumer   := consumer.New("spans",   opts, store.InsertSpans)
 	logConsumer    := consumer.New("logs",    opts, store.InsertLogs)
 	metricConsumer := consumer.New("metrics", opts, store.InsertMetrics)
-
-	spanConsumer.Start(ctx)
-	logConsumer.Start(ctx)
-	metricConsumer.Start(ctx)
+	if mode.ingest {
+		spanConsumer.Start(ctx)
+		logConsumer.Start(ctx)
+		metricConsumer.Start(ctx)
+	}
 
 	// ── OTLP ingester ─────────────────────────────────────────────────────────
 	ing := otlp.NewIngester(spanConsumer, logConsumer, metricConsumer)
@@ -197,46 +243,63 @@ func main() {
 	// 90% while preserving every error + root span. The Sampler is
 	// hot-swappable via Reload — admin UI / API can adjust live
 	// without a process restart.
+	// v0.5.488 — sampler + pipeline + gRPC live on ingest pods only.
+	// api/worker pods don't see incoming spans so head sampling +
+	// drop/enrich rules don't apply to them. The sampler IS still
+	// referenced by api.NewServer (for /api/settings/sampling
+	// reads) — so we still construct it on api/all, just don't
+	// attach it to a non-existent ingester.
 	sampler := sampling.New(cfg.Sampling)
-	// Tail sampling needs a downstream sink: kept-after-buffering
-	// spans flow back through the same span consumer the head path
-	// uses. Attach BEFORE LoadPersisted so a persisted tail-enabled
-	// config spins up a working tail (not a flush-less no-op tail).
-	sampler.AttachFlush(func(sp *chstore.Span) bool { return spanConsumer.Add(sp) })
-	if err := sampler.LoadPersisted(ctx, store); err != nil {
-		log.Printf("[sampling] load persisted: %v", err)
-	}
-	// v0.5.324 — cross-pod settings sync (see ldap/copilot/tempo/pipeline below).
-	go sampler.StartConfigRefresh(ctx, store, 30*time.Second)
-	ing.SetSampler(sampler)
-
-	// Ingest-time pipeline (v0.5.263) — operator-defined drop /
-	// enrich rules evaluated BEFORE the sampler. Loads its rule
-	// set from system_settings at boot; admin PUTs through
-	// /api/admin/pipeline-rules re-persist + immediately apply.
-	// Load failure is non-fatal (empty rule set → engine is a
-	// no-op).
 	pipelineEng := pipeline.New()
-	if err := pipelineEng.LoadPersisted(ctx, store); err != nil {
-		log.Printf("[pipeline] load persisted: %v", err)
-	}
-	go pipelineEng.StartConfigRefresh(ctx, store, 30*time.Second)
-	pipelineEng.LogStats()
-	ing.SetPipeline(pipelineEng)
-	{
-		s := sampler.Snapshot()
-		log.Printf("[sampling] default=%.2f overrides=%d keepErrors=%v keepRoots=%v",
-			s.Default, len(s.Services),
-			s.AlwaysKeepErrors != nil && *s.AlwaysKeepErrors,
-			s.AlwaysKeepRoots != nil && *s.AlwaysKeepRoots)
-	}
-
-	// ── gRPC server ───────────────────────────────────────────────────────────
-	go func() {
-		if err := otlp.StartGRPC(cfg.Listen.GRPC, ing); err != nil {
-			log.Printf("[grpc] %v", err)
+	if mode.ingest {
+		// Tail sampling needs a downstream sink: kept-after-buffering
+		// spans flow back through the same span consumer the head path
+		// uses. Attach BEFORE LoadPersisted so a persisted tail-enabled
+		// config spins up a working tail (not a flush-less no-op tail).
+		sampler.AttachFlush(func(sp *chstore.Span) bool { return spanConsumer.Add(sp) })
+		if err := sampler.LoadPersisted(ctx, store); err != nil {
+			log.Printf("[sampling] load persisted: %v", err)
 		}
-	}()
+		// v0.5.324 — cross-pod settings sync (see ldap/copilot/tempo/pipeline below).
+		go sampler.StartConfigRefresh(ctx, store, 30*time.Second)
+		ing.SetSampler(sampler)
+
+		// Ingest-time pipeline (v0.5.263) — operator-defined drop /
+		// enrich rules evaluated BEFORE the sampler. Loads its rule
+		// set from system_settings at boot; admin PUTs through
+		// /api/admin/pipeline-rules re-persist + immediately apply.
+		// Load failure is non-fatal (empty rule set → engine is a
+		// no-op).
+		if err := pipelineEng.LoadPersisted(ctx, store); err != nil {
+			log.Printf("[pipeline] load persisted: %v", err)
+		}
+		go pipelineEng.StartConfigRefresh(ctx, store, 30*time.Second)
+		pipelineEng.LogStats()
+		ing.SetPipeline(pipelineEng)
+		{
+			s := sampler.Snapshot()
+			log.Printf("[sampling] default=%.2f overrides=%d keepErrors=%v keepRoots=%v",
+				s.Default, len(s.Services),
+				s.AlwaysKeepErrors != nil && *s.AlwaysKeepErrors,
+				s.AlwaysKeepRoots != nil && *s.AlwaysKeepRoots)
+		}
+
+		// ── gRPC server ───────────────────────────────────────────────
+		go func() {
+			if err := otlp.StartGRPC(cfg.Listen.GRPC, ing); err != nil {
+				log.Printf("[grpc] %v", err)
+			}
+		}()
+	} else {
+		// api/worker: load sampler config snapshot so /api/settings/
+		// sampling reads return the current cluster-wide state.
+		// LoadPersisted is read-only against system_settings — safe
+		// from anywhere.
+		if err := sampler.LoadPersisted(ctx, store); err != nil {
+			log.Printf("[sampling] load persisted (read-only): %v", err)
+		}
+		go sampler.StartConfigRefresh(ctx, store, 30*time.Second)
+	}
 
 	// ── Cache + distributed lock (optional) ───────────────────────────────────
 	// When redis.url is empty we get a Noop pair: zero caching + an
@@ -274,70 +337,63 @@ func main() {
 	bus := sse.NewBroker()
 	notifier.SetEventBus(bus)
 
-	// ── Alert evaluator (background — opens & resolves problems) ─────────────
+	// v0.5.488 — background workers (evaluator/anomaly/correlator/
+	// monitor/topology/elastic-ml/exception-refresher) only run on
+	// worker-role pods. Each is already lock-gated via Redis so
+	// running them on every pod in a monolithic deploy was wasted
+	// work; in distributed deploy they live exclusively in the
+	// dedicated worker Deployment (replicaCount=1, no leader
+	// contention).
+	//
+	// evalr is hoisted out of the guard so SetLogs below can attach
+	// the resolved log store regardless of mode. Non-worker modes
+	// construct it but never Start() — keeps the wiring symmetric.
 	evalr := evaluator.New(store, time.Minute, lockImpl, notifier)
-	go evalr.Start(ctx)
+	if mode.worker {
+		// ── Alert evaluator (background — opens & resolves problems) ─────
+		go evalr.Start(ctx)
 
-	// ── Topology correlator (incident auto-clustering) ─────────────────────
-	// Builds a 1-hop service adjacency map every 5 min from the
-	// service-map sample. The store consults it during
-	// AttachProblemToIncident so a payment-service timeout and an
-	// upstream api-gateway saturation alert end up under one
-	// incident the oncall drives end-to-end, instead of two.
-	corr := correlator.New(store)
-	go corr.Start(ctx)
-	store.SetNeighborProvider(corr)
+		// ── Topology correlator (incident auto-clustering) ──────────────
+		corr := correlator.New(store)
+		go corr.Start(ctx)
+		store.SetNeighborProvider(corr)
 
-	// ── Anomaly detector (Watchdog-style baseline check) ─────────────────────
-	// Cadence is config-driven (cfg.Background.AnomalyInterval) so
-	// operators can dial it down on big CH clusters or crank it up
-	// on demo deployments without recompiling.
-	go anomaly.New(store, cfg.Background.AnomalyInterval, lockImpl, notifier).Start(ctx)
+		// ── Anomaly detector (Watchdog-style baseline check) ────────────
+		go anomaly.New(store, cfg.Background.AnomalyInterval, lockImpl, notifier).Start(ctx)
 
-	// Anomaly recorder lives further down — needs logsStore so
-	// the log-pattern detector path can target whichever backend
-	// is wired (CH or ES). See below the buildLogStore() call.
+		// ── Synthetic monitor runner (HTTP probes + heartbeat absence) ──
+		go monitor.New(store, notifier, lockImpl).Start(ctx)
 
-	// ── Synthetic monitor runner (HTTP probes + heartbeat absence) ───────────
-	// Lock-gated so HA replicas don't double-probe; emits state-change
-	// problems through the same notifier path as alert-rule firings.
-	go monitor.New(store, notifier, lockImpl).Start(ctx)
+		// ── Exception inbox refresher ───────────────────────────────────
+		go runExceptionRefresher(ctx, store, lockImpl)
 
-	// ── Exception inbox refresher ────────────────────────────────────────────
-	// Scans recent exception events every minute and upserts each distinct
-	// (type, message, service) into exception_groups. Leader-gated so
-	// multiple replicas don't redo the same scan.
-	go runExceptionRefresher(ctx, store, lockImpl)
+		// ── Topology aggregator ─────────────────────────────────────────
+		topology.New(store, 5*time.Minute, 1*time.Hour, lockImpl).Start(ctx)
 
-	// ── Topology aggregator ──────────────────────────────────────────────────
-	// Pre-aggregates service-level topology edges into
-	// topology_edges_5m every 5 minutes. The /topology view reads
-	// from there instead of the spans self-join — at billions of
-	// spans/day scale the live path is unworkable. Bootstrap
-	// backfills the last 1h so the view is populated immediately.
-	topology.New(store, 5*time.Minute, 1*time.Hour, lockImpl).Start(ctx)
-
-	// ── Elastic ML anomaly poller (v0.5.120) ─────────────────────────────────
-	// Read-only against Elastic — pulls open anomaly-detection
-	// jobs' high-score records and upserts them into anomaly_events
-	// so they show up on /anomalies alongside the native detectors.
-	// Gated on logs.elasticsearch.ml_enabled to keep installs that
-	// haven't opted in untouched.
-	if cfg.Logs.Elasticsearch.MLEnabled && len(cfg.Logs.Elasticsearch.Addresses) > 0 {
-		mlp, err := elasticml.New(elasticml.Config{
-			Addresses:          cfg.Logs.Elasticsearch.Addresses,
-			Username:           cfg.Logs.Elasticsearch.Username,
-			Password:           cfg.Logs.Elasticsearch.Password,
-			APIKey:             cfg.Logs.Elasticsearch.APIKey,
-			InsecureSkipVerify: cfg.Logs.Elasticsearch.InsecureSkipVerify,
-			MinScore:           cfg.Logs.Elasticsearch.MLMinScore,
-		}, store, lockImpl)
-		if err != nil {
-			log.Printf("[elastic-ml] disabled: %v", err)
-		} else {
-			mlp.Start(ctx)
-			log.Printf("[elastic-ml] polling enabled (min_score=%v)", cfg.Logs.Elasticsearch.MLMinScore)
+		// ── Elastic ML anomaly poller (v0.5.120) ────────────────────────
+		if cfg.Logs.Elasticsearch.MLEnabled && len(cfg.Logs.Elasticsearch.Addresses) > 0 {
+			mlp, err := elasticml.New(elasticml.Config{
+				Addresses:          cfg.Logs.Elasticsearch.Addresses,
+				Username:           cfg.Logs.Elasticsearch.Username,
+				Password:           cfg.Logs.Elasticsearch.Password,
+				APIKey:             cfg.Logs.Elasticsearch.APIKey,
+				InsecureSkipVerify: cfg.Logs.Elasticsearch.InsecureSkipVerify,
+				MinScore:           cfg.Logs.Elasticsearch.MLMinScore,
+			}, store, lockImpl)
+			if err != nil {
+				log.Printf("[elastic-ml] disabled: %v", err)
+			} else {
+				mlp.Start(ctx)
+				log.Printf("[elastic-ml] polling enabled (min_score=%v)", cfg.Logs.Elasticsearch.MLMinScore)
+			}
 		}
+	} else {
+		// api/ingest still need the neighbor provider for store reads
+		// (e.g. AttachProblemToIncident lookup during writes). Build
+		// it but don't Start() the background refresher — reads use
+		// the snapshot the worker pod is keeping warm in CH.
+		corr := correlator.New(store)
+		store.SetNeighborProvider(corr)
 	}
 
 	// ── Auth (JWT issuer + initial admin seed) ────────────────────────────────
@@ -403,7 +459,12 @@ func main() {
 	// serialised but the duplicate work + log noise + brief
 	// metadata-lock fight added up. Single-instance Noop lock
 	// is always-leader, so dev behaviour is unchanged.
-	go store.StartRetentionEnforcer(ctx, time.Hour, lockImpl)
+	// v0.5.488 — worker-only: this is housekeeping DROP PARTITION,
+	// not on any hot path. Living in the worker Deployment is a
+	// natural fit.
+	if mode.worker {
+		go store.StartRetentionEnforcer(ctx, time.Hour, lockImpl)
+	}
 
 	// ── Optional OIDC ─────────────────────────────────────────────────────────
 	// Discovery failure is non-fatal: we keep local auth working and surface
@@ -434,22 +495,23 @@ func main() {
 	// log alerts (rules with LogQuery != "") can count matches.
 	evalr.SetLogs(logsStore)
 
-	// ── Anomaly recorder (v0.5.241 — needs logsStore) ────────────────────────
-	// Persists log-pattern + trace-op detections into anomaly_events.
-	// log-pattern detector runs through the logstore abstraction so
-	// it works against whichever backend is wired (CH or ES); ES
-	// path uses _msearch so all curated patterns ship in one HTTP
-	// round-trip even at billion-log scale.
-	anomaly.NewRecorder(store, logsStore, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(ctx)
+	// v0.5.488 — anomaly recorder + Drain templater are worker-role
+	// background jobs. They write into anomaly_events / log_templates
+	// which api pods read from. Splitting the write side off the
+	// read fleet means an api-pod hot-reload doesn't blink the
+	// detector clock.
+	if mode.worker {
+		// ── Anomaly recorder (v0.5.241 — needs logsStore) ───────────────
+		// Persists log-pattern + trace-op detections into anomaly_events.
+		// log-pattern detector runs through the logstore abstraction so
+		// it works against whichever backend is wired (CH or ES); ES
+		// path uses _msearch so all curated patterns ship in one HTTP
+		// round-trip even at billion-log scale.
+		anomaly.NewRecorder(store, logsStore, cfg.Background.AnomalyRecordInterval, cfg.Background.AnomalyRecordBackfill, lockImpl).Start(ctx)
 
-	// ── Drain-3 log template puller (v0.5.244) ────────────────────────────────
-	// Periodic sample-based extractor. Every 5min samples 1000
-	// recent logs from whichever backend is wired (CH or ES),
-	// runs them through the Drain-3 templater, upserts the
-	// resulting clusters into log_templates so the operator can
-	// see "what shapes are firing" + "what's new since X".
-	// Lock-gated for HA.
-	go templater.New(store, logsStore, 5*time.Minute, 1000, lockImpl).Start(ctx)
+		// ── Drain-3 log template puller (v0.5.244) ───────────────────────
+		go templater.New(store, logsStore, 5*time.Minute, 1000, lockImpl).Start(ctx)
+	}
 
 	// ── AI Copilot (optional) ────────────────────────────────────────────────
 	// Always created — env vars are the boot-time default, DB overrides
@@ -517,7 +579,10 @@ func main() {
 	// having to click "✨ Explain" themselves. HA-gated like every
 	// other worker so multi-pod runs don't duplicate-call the LLM.
 	// Configured()=false (no API key) silently noops the worker.
-	go anomaly.NewProblemExplainer(store, copilotSvc, lockImpl).Start(ctx)
+	// v0.5.488 — worker-only.
+	if mode.worker {
+		go anomaly.NewProblemExplainer(store, copilotSvc, lockImpl).Start(ctx)
+	}
 
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
 	// Cluster membership service (v0.5.253) — per-pod heartbeat
@@ -556,6 +621,12 @@ func main() {
 		srv.EnableDemoMode(cfg.Auth.InitialAdmin, cfg.Auth.InitialPassword)
 		log.Printf("[auth] DEMO MODE — login page auto-signs in as %s (admin). DO NOT use in production.", cfg.Auth.InitialAdmin)
 	}
+	// v0.5.488 — every mode runs the HTTP server. api/all serves the
+	// full surface (API + UI + SSE). ingest/worker serve only
+	// /api/health + /api/version so Kubernetes readiness probes
+	// have something to hit; api.NewServer handles the role guard
+	// internally based on the mode label below (passed via env so
+	// the api package stays mode-unaware).
 	go func() {
 		if err := srv.Start(); err != nil {
 			log.Fatalf("[http] %v", err)
@@ -563,16 +634,24 @@ func main() {
 	}()
 
 	log.Println("┌──────────────────────────────────────────────┐")
-	log.Println("│         Coremetry APM       — ready           │")
-	log.Printf( "│  OTLP/gRPC ingest:    localhost%s         │", cfg.Listen.GRPC)
-	log.Printf( "│  Web UI + REST API:   http://localhost%s   │", cfg.Listen.HTTP)
+	log.Printf( "│         Coremetry APM    — ready (%s)        │", mode.name)
+	if mode.ingest {
+		log.Printf("│  OTLP/gRPC ingest:    localhost%s         │", cfg.Listen.GRPC)
+	}
+	if mode.api {
+		log.Printf("│  Web UI + REST API:   http://localhost%s   │", cfg.Listen.HTTP)
+	} else {
+		log.Printf("│  Health-only HTTP:    http://localhost%s   │", cfg.Listen.HTTP)
+	}
 	log.Println("└──────────────────────────────────────────────┘")
 
 	<-ctx.Done()
 	log.Println("Shutting down gracefully...")
-	spanConsumer.Stop()
-	logConsumer.Stop()
-	metricConsumer.Stop()
+	if mode.ingest {
+		spanConsumer.Stop()
+		logConsumer.Stop()
+		metricConsumer.Stop()
+	}
 	log.Println("Bye.")
 }
 

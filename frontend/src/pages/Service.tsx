@@ -620,13 +620,15 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                    background: 'var(--bg)', color: 'var(--text)',
                    border: '1px solid var(--border)', borderRadius: 4 }} />
       </div>
-      {/* Cap the operations table at 540 px tall and let it
-          scroll inside that container — at 500+ operations on
-          one service the previous full-height render put the
-          KPIs above and the rest of the page sections below
-          way out of reach. Sticky thead keeps the column
-          labels visible while scrolling. */}
-      <div className="table-wrap" style={{ maxHeight: 540, overflowY: 'auto' }}>
+      {/* v0.5.462 — operator-reported: the previous maxHeight:540
+          inner-scroll wrapper made even a 50-op service feel
+          claustrophobic. Virtualization via content-visibility:auto
+          on each row (set below) handles the 500+ op perf case
+          per CLAUDE.md's "tables > 100 rows" guidance, so the
+          inner scroll isn't earning its keep. Sticky thead now
+          sticks to the page viewport, which is the natural
+          behaviour operators expect from a long table. */}
+      <div className="table-wrap">
         <table>
           <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg1)' }}>
             <tr>

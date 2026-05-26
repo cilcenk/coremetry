@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
 import { MultiLineChart } from '@/components/MultiLineChart';
+import { EventMarkers } from '@/components/EventMarkers';
 import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
@@ -450,11 +451,20 @@ function EndpointMetricModal({
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
         gap: 12, marginBottom: 14,
       }}>
+        {/* v0.6.16 — EventMarkers overlay on each chart. Per-tile
+            absolute overlay reads the same time window the tile's
+            MultiLineChart uses; vertical lines anchor incidents
+            and deploys to the curve so the operator can spot
+            "p99 spike after the 14:23 deploy" without leaving
+            the modal. service is row.service — these charts are
+            always endpoint-scoped to one service. */}
         <MetricTile
           label="Calls"
           big={fmtNum(row.calls)}
           sub={`peak ${fmtNum(peakCalls)} / bucket`}
           series={series.calls}
+          service={row.service}
+          range={range}
         />
         <MetricTile
           label="Errors"
@@ -462,6 +472,8 @@ function EndpointMetricModal({
           sub={`${row.errorRate.toFixed(2)}% rate`}
           subCls={errCls}
           series={series.errors}
+          service={row.service}
+          range={range}
         />
         <MetricTile
           label="P99 latency"
@@ -469,6 +481,8 @@ function EndpointMetricModal({
           sub={`peak ${maxP99.toFixed(0)} ms · avg ${row.avgMs.toFixed(0)} ms`}
           series={series.p99}
           unit="ms"
+          service={row.service}
+          range={range}
         />
       </div>
       <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
@@ -496,11 +510,22 @@ function EndpointMetricModal({
 }
 
 function MetricTile({
-  label, big, sub, subCls, series, unit,
+  label, big, sub, subCls, series, unit, service, range,
 }: {
   label: string; big: string; sub: string; subCls?: string;
   series: SpanMetricSeries[]; unit?: string;
+  // v0.6.16 — pass service + range so the tile can overlay
+  // EventMarkers on its chart. Optional so the component stays
+  // usable on pages that don't have an event story yet.
+  service?: string; range?: TimeRange;
 }) {
+  // Compute window bounds once; the EventMarkers component
+  // already memoises internally, but pre-computing here keeps
+  // the prop signature stable across re-renders.
+  const bounds = useMemo(() => {
+    if (!range) return null;
+    return timeRangeToNs(range);
+  }, [range]);
   return (
     <div style={{
       padding: '10px 12px', border: '1px solid var(--border)',
@@ -513,12 +538,21 @@ function MetricTile({
         color: subCls === 'err' ? 'var(--err)' : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
       }}>{sub}</div>
       {series.length > 0 && series[0].points.length > 0 ? (
-        <MultiLineChart
-          series={series}
-          unit={unit}
-          height={140}
-          syncKey="endpoints-detail"
-        />
+        <div style={{ position: 'relative' }}>
+          <MultiLineChart
+            series={series}
+            unit={unit}
+            height={140}
+            syncKey="endpoints-detail"
+          />
+          {bounds && (
+            <EventMarkers
+              fromNs={bounds.from}
+              toNs={bounds.to}
+              service={service || undefined}
+            />
+          )}
+        </div>
       ) : (
         <div style={{
           height: 140, display: 'flex', alignItems: 'center',

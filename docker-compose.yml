@@ -333,6 +333,11 @@ services:
       - otel-collector
       - coremetry
     restart: unless-stopped
+    # v0.6.3 — opt-in. Operator routes their own telemetry via
+    # external collector (Antigravity / k8s agents); the bundled
+    # demo apps are dev convenience only. `docker compose
+    # --profile demo up` (or --profile java) brings them.
+    profiles: ["demo", "java"]
 
   # ── JBoss demo (WildFly + JFR + OTel javaagent) ─────────────────────────────
   # Jakarta EE 10 WAR deployed on WildFly. Same auto-instrumentation
@@ -423,6 +428,8 @@ services:
     depends_on:
       - otel-collector
     restart: unless-stopped
+    # v0.6.3 — opt-in via profile (see java-demo above).
+    profiles: ["demo", "go"]
 
 volumes:
   clickhouse-data:

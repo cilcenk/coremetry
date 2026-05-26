@@ -336,6 +336,14 @@ func main() {
 	// poll.
 	bus := sse.NewBroker()
 	notifier.SetEventBus(bus)
+	// v0.6.3 — cross-pod SSE bridge. Without this, a worker pod's
+	// problem.open event would only reach browsers connected to
+	// that same pod (which is never — workers don't take traffic).
+	// Passing cacheImpl works for Noop (publishes go to /dev/null,
+	// no harm) AND for the Redis-backed cache (real PUBLISH +
+	// SUBSCRIBE across the fleet).
+	bus.SetBridge(cacheImpl)
+	bus.StartBridge(ctx)
 
 	// v0.5.488 — background workers (evaluator/anomaly/correlator/
 	// monitor/topology/elastic-ml/exception-refresher) only run on

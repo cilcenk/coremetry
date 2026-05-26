@@ -212,7 +212,86 @@ function StatFields({ cfg, onChange }: {
             onChange={e => onChange({ ...cfg, decimals: parseInt(e.target.value || '0') })} />
         </Field>
       </div>
+      {/* v0.5.486 — threshold colouring controls. */}
+      <Field label="Threshold colour mode">
+        <select value={cfg.colorMode ?? 'none'}
+          onChange={e => onChange({ ...cfg, colorMode: e.target.value as 'none' | 'value' | 'background' })}>
+          <option value="none">None (delta direction only)</option>
+          <option value="value">Tint the number</option>
+          <option value="background">Tint the panel background</option>
+        </select>
+      </Field>
+      {(cfg.colorMode === 'value' || cfg.colorMode === 'background') && (
+        <Field label="Threshold bands">
+          <ThresholdEditor
+            thresholds={cfg.thresholds ?? []}
+            onChange={t => onChange({ ...cfg, thresholds: t })} />
+        </Field>
+      )}
     </>
+  );
+}
+
+// v0.5.486 — small inline editor for the threshold steps. Three
+// fixed colour bands (green / amber / red) cover the Grafana
+// shape; operators tweak the value floors and Coremetry picks
+// the highest band ≤ current value at render time.
+function ThresholdEditor({ thresholds, onChange }: {
+  thresholds: { value: number; color: 'green' | 'amber' | 'red' }[];
+  onChange: (t: { value: number; color: 'green' | 'amber' | 'red' }[]) => void;
+}) {
+  const sorted = [...thresholds].sort((a, b) => a.value - b.value);
+  const setRow = (i: number, value: number) => {
+    const next = sorted.slice();
+    next[i] = { ...next[i], value };
+    onChange(next);
+  };
+  const removeRow = (i: number) => {
+    const next = sorted.slice();
+    next.splice(i, 1);
+    onChange(next);
+  };
+  const addRow = (color: 'green' | 'amber' | 'red') => {
+    const last = sorted[sorted.length - 1];
+    const value = last ? last.value + 10 : 0;
+    onChange([...sorted, { value, color }]);
+  };
+  const PALETTE: Record<'green' | 'amber' | 'red', string> = {
+    green: 'rgb(46,160,67)', amber: 'rgb(217,119,6)', red: 'rgb(220,38,38)',
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {sorted.length === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+          No thresholds set — add at least one to colour the panel.
+          Convention: green &lt; amber &lt; red.
+        </div>
+      )}
+      {sorted.map((t, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+          <span style={{
+            width: 14, height: 14, borderRadius: 3,
+            background: PALETTE[t.color], flexShrink: 0,
+          }} />
+          <span style={{ color: 'var(--text2)', minWidth: 50 }}>{t.color}</span>
+          <span style={{ color: 'var(--text3)' }}>≥</span>
+          <input type="number" value={t.value}
+            onChange={e => setRow(i, parseFloat(e.target.value || '0'))}
+            style={{ width: 100, fontSize: 12 }} />
+          <button type="button" className="sec"
+            onClick={() => removeRow(i)}
+            style={{ padding: '2px 8px', fontSize: 11 }}>×</button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        <button type="button" className="sec" onClick={() => addRow('green')}
+          style={{ padding: '3px 10px', fontSize: 11 }}>+ green</button>
+        <button type="button" className="sec" onClick={() => addRow('amber')}
+          style={{ padding: '3px 10px', fontSize: 11 }}>+ amber</button>
+        <button type="button" className="sec" onClick={() => addRow('red')}
+          style={{ padding: '3px 10px', fontSize: 11 }}>+ red</button>
+      </div>
+    </div>
   );
 }
 

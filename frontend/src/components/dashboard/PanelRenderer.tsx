@@ -264,13 +264,30 @@ function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
     : null;
   const tone = deltaTone(agg, delta);
 
+  // v0.5.486 — threshold band lookup. Picks the highest
+  // threshold whose `value` is ≤ the current value. Bands are
+  // operator-defined per panel via PanelEditor.
+  const band = pickThresholdBand(value, cfg.thresholds);
+  const colorMode = cfg.colorMode ?? 'none';
+  const thresholdHex = band ? THRESHOLD_COLOURS[band.color] : null;
+  const valueColour = colorMode === 'value' && thresholdHex
+    ? thresholdHex
+    : 'var(--accent2)';
+  const bgTint = colorMode === 'background' && thresholdHex
+    ? hexToRgba(thresholdHex, 0.12)
+    : 'transparent';
+
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
       height: 220, gap: 6,
+      background: bgTint,
+      borderRadius: 6,
+      transition: 'background 120ms ease',
     }}>
-      <div style={{ fontSize: 42, fontWeight: 600, color: 'var(--accent2)', lineHeight: 1.05 }}>
+      <div style={{ fontSize: 42, fontWeight: 600, color: valueColour, lineHeight: 1.05,
+        transition: 'color 120ms ease' }}>
         {display}
       </div>
       {/* Delta chip — colour-coded by direction-vs-better.
@@ -324,6 +341,41 @@ function deltaTone(agg: string, delta: number | null): Tone {
   const lowerIsBetter = /^(p\d+|avg|max|min|error_rate|errors)$/.test(agg);
   if (!lowerIsBetter) return 'neutral';
   return delta > 0 ? 'bad' : 'good';
+}
+
+// v0.5.486 — threshold band lookup for the Stat panel. Picks
+// the highest threshold whose `value` is ≤ the current value.
+// Configuration shape: [{value: 0, color: 'green'}, {value: 80,
+// color: 'amber'}, {value: 95, color: 'red'}].
+//   value=72 → green
+//   value=92 → amber
+//   value=99 → red
+// Returns null when no thresholds are configured OR the value
+// is below the lowest band's floor.
+function pickThresholdBand(
+  value: number | null,
+  thresholds?: { value: number; color: 'green' | 'amber' | 'red' }[],
+): { value: number; color: 'green' | 'amber' | 'red' } | null {
+  if (value === null || !thresholds || thresholds.length === 0) return null;
+  const sorted = [...thresholds].sort((a, b) => a.value - b.value);
+  let pick = null as null | { value: number; color: 'green' | 'amber' | 'red' };
+  for (const t of sorted) {
+    if (value >= t.value) pick = t;
+  }
+  return pick;
+}
+
+const THRESHOLD_COLOURS: Record<'green' | 'amber' | 'red', string> = {
+  green: 'rgb(46,160,67)',
+  amber: 'rgb(217,119,6)',
+  red:   'rgb(220,38,38)',
+};
+
+function hexToRgba(rgb: string, alpha: number): string {
+  // Accepts our `rgb(r,g,b)` tokens; pulls digits, formats rgba.
+  const m = rgb.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (!m) return rgb;
+  return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
 }
 
 function mean(arr: number[]): number {

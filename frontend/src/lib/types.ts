@@ -1281,6 +1281,20 @@ export interface StatPanelConfig {
   span?: SpanMetricPanelConfig;
   unit?: string;            // ms | % | rps | (free text)
   decimals?: number;
+  // v0.5.486 — Grafana-style threshold colouring.
+  //
+  //   thresholds = [
+  //     { value: 0,   color: 'green' },
+  //     { value: 80,  color: 'amber' },
+  //     { value: 95,  color: 'red'   },
+  //   ]
+  //
+  // current value 92 → amber band (the highest threshold ≤ value
+  // wins). When `colorMode` is 'value', the big number text picks
+  // up the threshold colour; 'background' tints the whole panel
+  // body; 'none' keeps the legacy delta-direction colour only.
+  thresholds?: { value: number; color: 'green' | 'amber' | 'red' }[];
+  colorMode?: 'none' | 'value' | 'background';
 }
 export interface MarkdownPanelConfig {
   text: string;

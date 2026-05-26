@@ -31,18 +31,25 @@ interface EQLPanelProps {
   toMs?: number;
 }
 
+// Seed queries — kept intentionally minimal because field names
+// (severity_text vs level vs log.level, message vs body) vary
+// across operator deployments. v0.5.470 swapped harder-coded
+// ECS shape (event.action / level) for fields Coremetry's own
+// schema documents in elasticsearch.go's pickString fallback
+// chain. If the operator's index uses different names, swap
+// after pasting an example into the editor.
 const EXAMPLE_QUERIES = [
   {
-    label: 'Deploy then error within 5m',
-    q: `sequence by service.name with maxspan=5m
-  [any where event.action == "deploy"]
-  [any where level == "error"]`,
+    label: 'Two errors within 1m (same service)',
+    q: `sequence by service.name with maxspan=1m
+  [any where severity_text == "error"]
+  [any where severity_text == "error"]`,
   },
   {
-    label: 'Login then error within 1m (same trace)',
-    q: `sequence by trace.id with maxspan=1m
-  [any where message like "login*"]
-  [any where level == "error"]`,
+    label: 'Warning then error within 5m (same trace)',
+    q: `sequence by trace.id with maxspan=5m
+  [any where severity_text == "warning"]
+  [any where severity_text == "error"]`,
   },
 ];
 
@@ -100,7 +107,7 @@ export function EQLPanel({ fromMs, toMs }: EQLPanelProps) {
       </button>
       {open && (
         <div style={{ padding: '0 12px 12px 12px' }}>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ color: 'var(--text3)', fontSize: 11 }}>Examples:</span>
             {EXAMPLE_QUERIES.map(e => (
               <button key={e.label} type="button"
@@ -113,6 +120,9 @@ export function EQLPanel({ fromMs, toMs }: EQLPanelProps) {
                 {e.label}
               </button>
             ))}
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+              Field names depend on your index mapping — swap <code>severity_text</code> / <code>service.name</code> / <code>trace.id</code> if your shippers use different keys.
+            </span>
           </div>
           <textarea
             value={query}

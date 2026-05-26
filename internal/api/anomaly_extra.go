@@ -15,6 +15,69 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
+// ── Anomaly autocomplete (Cmd-K palette) ──────────────────────────
+
+// listActiveAnomalies — autocomplete-shaped read for the v0.5.459
+// Cmd-K "silence anomaly" action. Returns the most recent (last
+// 24h) AnomalyEvents matching a typed substring on service or
+// pattern. Reuses ListAnomalyEvents (200-row cap) and filters
+// in-memory because the underlying CH query is already bounded;
+// adding a separate WHERE-with-LIKE would just complicate the
+// path with a marginal saving at this scale.
+//
+// Payload is slim: each row gives the palette enough to render
+// (label) and the silence-create handler enough to act
+// (id/fingerprint, kind, service, pattern). Editor-gated to
+// match createAnomalySilence's permission shape.
+func (s *Server) listActiveAnomalies(w http.ResponseWriter, r *http.Request) {
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	limit := parseInt(r.URL.Query().Get("limit"), 20)
+	if limit > 50 {
+		limit = 50
+	}
+	// Short cache — the palette polls only when the operator
+	// types, so the working-set is small. 5s catches the burst
+	// of keystrokes without serving stale "active" status to a
+	// long-running session.
+	key := fmt.Sprintf("anomalies-active:%s:%d", q, limit)
+	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
+		evts, err := s.store.ListAnomalyEvents(r.Context(),
+			chstore.ListAnomalyEventsFilter{Limit: 200})
+		if err != nil {
+			return nil, err
+		}
+		type slim struct {
+			ID      string `json:"id"`
+			Kind    string `json:"kind"`
+			Pattern string `json:"pattern"`
+			Service string `json:"service"`
+			Status  string `json:"status"`
+			Label   string `json:"label"`
+		}
+		out := []slim{}
+		for _, e := range evts {
+			if q != "" {
+				hay := strings.ToLower(e.Service + " " + e.Pattern)
+				if !strings.Contains(hay, q) {
+					continue
+				}
+			}
+			out = append(out, slim{
+				ID:      e.ID,
+				Kind:    e.Kind,
+				Pattern: e.Pattern,
+				Service: e.Service,
+				Status:  e.Status,
+				Label:   e.Service + " · " + e.Pattern,
+			})
+			if len(out) >= limit {
+				break
+			}
+		}
+		return out, nil
+	})
+}
+
 // ── Anomaly silences ─────────────────────────────────────────────
 
 func (s *Server) listAnomalySilences(w http.ResponseWriter, r *http.Request) {

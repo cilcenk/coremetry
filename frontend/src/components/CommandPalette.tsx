@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useShortcuts } from '@/lib/keyboard';
 import { useAuth } from '@/components/AuthProvider';
-import { filterActions, type Action } from '@/lib/actions';
+import {
+  filterActions, DEFAULT_DURATIONS,
+  type Action, type ParamValues, type SuggestItem,
+} from '@/lib/actions';
 import { toast } from '@/lib/toast';
 
 // CommandPalette — global Cmd-K / Ctrl-K spotlight (v0.5.162).
@@ -84,8 +87,15 @@ export function CommandPalette() {
   // tracks which param we're on; paramValues accumulates answers.
   const [activeAction, setActiveAction] = useState<Action | null>(null);
   const [paramIdx, setParamIdx] = useState(0);
-  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const [paramValues, setParamValues] = useState<ParamValues>({});
   const [running, setRunning] = useState(false);
+  // id-suggest sub-state (v0.5.459). Per-step typed query, the
+  // current debounced result list, and which row is highlighted
+  // for keyboard pick. Cleared between params + on reset.
+  const [suggestQuery, setSuggestQuery] = useState('');
+  const [suggestResults, setSuggestResults] = useState<SuggestItem[]>([]);
+  const [suggestSelected, setSuggestSelected] = useState(0);
+  const [suggestLoading, setSuggestLoading] = useState(false);
 
   // Global hotkey via the existing shortcut registry — Cmd-K on
   // Mac, Ctrl-K elsewhere. Registering through useShortcuts means
@@ -103,7 +113,37 @@ export function CommandPalette() {
     setParamIdx(0);
     setParamValues({});
     setRunning(false);
+    setSuggestQuery('');
+    setSuggestResults([]);
+    setSuggestSelected(0);
+    setSuggestLoading(false);
   };
+
+  // Debounced id-suggest fetch. When the current param is an
+  // id-suggest, every keystroke on suggestQuery triggers a 200ms
+  // debounced call to its suggest(q) function. Cancellation flag
+  // protects against late responses racing a newer query.
+  useEffect(() => {
+    if (!activeAction) return;
+    const cur = activeAction.params[paramIdx];
+    if (!cur || cur.kind !== 'id-suggest' || !cur.suggest) return;
+    const q = suggestQuery;
+    let cancelled = false;
+    setSuggestLoading(true);
+    const t = window.setTimeout(async () => {
+      try {
+        const rows = await cur.suggest!(q);
+        if (cancelled) return;
+        setSuggestResults(rows);
+        setSuggestSelected(0);
+      } catch {
+        if (!cancelled) setSuggestResults([]);
+      } finally {
+        if (!cancelled) setSuggestLoading(false);
+      }
+    }, 200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [activeAction, paramIdx, suggestQuery]);
 
   useShortcuts([{
     keys: 'mod+k',
@@ -215,15 +255,37 @@ export function CommandPalette() {
     if (selected >= results.length) setSelected(0);
   }, [results.length, selected]);
 
-  // Execute the active action with current paramValues. Toast the
-  // result, close the palette. Errors come back as Error.message
-  // (api client formats as `HTTP NNN: <body>`) which is operator-
-  // readable.
-  const runActiveAction = async () => {
+  // advanceParam — store the picked value, then either move to
+  // the next param or fire run(). Shared by Enter (text input,
+  // id-suggest pick) and chip clicks (duration).
+  const advanceParam = (paramName: string, value: string | SuggestItem | number) => {
+    if (!activeAction) return;
+    const next = { ...paramValues, [paramName]: value };
+    setParamValues(next);
+    if (paramIdx + 1 < activeAction.params.length) {
+      setParamIdx(paramIdx + 1);
+      // Clear suggest sub-state for the next param.
+      setSuggestQuery('');
+      setSuggestResults([]);
+      setSuggestSelected(0);
+      // Re-focus the input (which becomes the next param's input
+      // after re-render).
+      setTimeout(() => inputRef.current?.focus(), 0);
+    } else {
+      // Last param — fire run with the final paramValues. We
+      // pass `next` directly because the setParamValues from
+      // above hasn't flushed by the time we'd read state.
+      void runActionWithValues(next);
+    }
+  };
+
+  // runActionWithValues — same as runActiveAction but reads the
+  // values param explicitly so we don't depend on a state flush.
+  const runActionWithValues = async (values: ParamValues) => {
     if (!activeAction || running) return;
     setRunning(true);
     try {
-      const msg = await activeAction.run(paramValues);
+      const msg = await activeAction.run(values);
       toast.success(msg);
       setOpen(false);
       resetState();
@@ -231,25 +293,47 @@ export function CommandPalette() {
       const m = e instanceof Error ? e.message : String(e);
       toast.error(`${activeAction.label} failed: ${m}`);
       setRunning(false);
-      // Stay in param mode so the operator can correct + retry.
     }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (activeAction) {
-      // Param-prompt mode handles its own Enter; arrow keys
-      // don't navigate a result list that isn't shown.
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const cur = activeAction.params[paramIdx];
-        const val = (paramValues[cur.name] ?? '').trim();
-        if (cur.required && !val) return;
-        if (paramIdx + 1 < activeAction.params.length) {
-          setParamIdx(paramIdx + 1);
-        } else {
-          void runActiveAction();
+      const cur = activeAction.params[paramIdx];
+      if (!cur) return;
+      // ArrowUp/Down navigates the suggest dropdown when id-suggest.
+      if (cur.kind === 'id-suggest') {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setSuggestSelected(s => Math.min(suggestResults.length - 1, s + 1));
+          return;
         }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setSuggestSelected(s => Math.max(0, s - 1));
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const picked = suggestResults[suggestSelected];
+          if (!picked) return;
+          advanceParam(cur.name, picked);
+          return;
+        }
+        return;
       }
+      // Text: Enter advances if the value passes the required
+      // check. Empty + required → ignored.
+      if (cur.kind === 'text' && e.key === 'Enter') {
+        e.preventDefault();
+        const raw = paramValues[cur.name];
+        const val = typeof raw === 'string' ? raw.trim() : '';
+        if (cur.required && !val) return;
+        advanceParam(cur.name, val);
+        return;
+      }
+      // Duration: chips are click-driven; Enter has no semantics
+      // (operator should click a chip). Esc bubbles to the global
+      // close handler.
       return;
     }
     if (e.key === 'ArrowDown') {
@@ -327,9 +411,86 @@ export function CommandPalette() {
             </div>
             {(() => {
               const cur = activeAction.params[paramIdx];
+              if (cur.kind === 'duration') {
+                const opts = cur.durations ?? DEFAULT_DURATIONS;
+                return (
+                  <div style={{
+                    padding: '14px 16px', display: 'flex', gap: 8,
+                    alignItems: 'center', flexWrap: 'wrap',
+                  }}>
+                    <span style={{ fontSize: 12, color: 'var(--text2)', marginRight: 6 }}>
+                      {cur.label}:
+                    </span>
+                    {opts.map(o => (
+                      <button key={o.label} type="button"
+                        onClick={() => advanceParam(cur.name, o.seconds)}
+                        disabled={running}
+                        style={{
+                          padding: '5px 12px', borderRadius: 4, fontSize: 12,
+                          background: 'var(--bg2)',
+                          border: '1px solid var(--border)',
+                          color: 'var(--text)', cursor: 'pointer',
+                        }}>
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                );
+              }
+              if (cur.kind === 'id-suggest') {
+                return (
+                  <>
+                    <input ref={inputRef}
+                      value={suggestQuery}
+                      onChange={e => setSuggestQuery(e.target.value)}
+                      placeholder={cur.placeholder || cur.label}
+                      disabled={running}
+                      style={{
+                        border: 'none', outline: 'none',
+                        background: 'transparent', color: 'var(--text)',
+                        padding: '14px 16px', fontSize: 14,
+                      }} />
+                    <div style={{
+                      maxHeight: 240, overflowY: 'auto',
+                      borderTop: '1px solid var(--border)',
+                    }}>
+                      {suggestLoading && suggestResults.length === 0 && (
+                        <div style={{ padding: 12, fontSize: 11, color: 'var(--text3)' }}>
+                          Searching…
+                        </div>
+                      )}
+                      {!suggestLoading && suggestResults.length === 0 && (
+                        <div style={{ padding: 12, fontSize: 11, color: 'var(--text3)' }}>
+                          No matches. Type to search.
+                        </div>
+                      )}
+                      {suggestResults.map((r, i) => (
+                        <div key={r.id}
+                          onMouseEnter={() => setSuggestSelected(i)}
+                          onClick={() => advanceParam(cur.name, r)}
+                          style={{
+                            padding: '8px 16px', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            background: i === suggestSelected ? 'var(--bg2)' : 'transparent',
+                            borderLeft: i === suggestSelected
+                              ? '2px solid var(--accent2)' : '2px solid transparent',
+                          }}>
+                          <span style={{ fontSize: 13, flex: 1 }}>{r.label}</span>
+                          {r.hint && (
+                            <span style={{ fontSize: 11, color: 'var(--text3)' }}>{r.hint}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              }
+              // 'text'
+              const v = paramValues[cur.name];
+              const text = typeof v === 'string' ? v : '';
               return (
                 <input ref={inputRef}
-                  value={paramValues[cur.name] ?? ''}
+                  value={text}
                   onChange={e => setParamValues({ ...paramValues, [cur.name]: e.target.value })}
                   placeholder={cur.placeholder || cur.label}
                   disabled={running}
@@ -347,11 +508,18 @@ export function CommandPalette() {
               display: 'flex', justifyContent: 'space-between',
             }}>
               <span>
-                {running
-                  ? 'Running…'
-                  : paramIdx + 1 < activeAction.params.length
-                    ? '↵ next'
-                    : '↵ run · Esc cancel'}
+                {(() => {
+                  if (running) return 'Running…';
+                  const cur = activeAction.params[paramIdx];
+                  const isLast = paramIdx + 1 >= activeAction.params.length;
+                  if (cur.kind === 'duration') {
+                    return isLast ? 'Click a duration · Esc cancel' : 'Click a duration to continue';
+                  }
+                  if (cur.kind === 'id-suggest') {
+                    return isLast ? '↑↓ ↵ pick · Esc cancel' : '↑↓ ↵ pick to continue';
+                  }
+                  return isLast ? '↵ run · Esc cancel' : '↵ next';
+                })()}
               </span>
               <button type="button"
                 onClick={() => { resetState(); }}

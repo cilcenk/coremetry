@@ -490,6 +490,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/anomalies/trace-ops",    s.getTraceOpAnomalies)
 	mux.HandleFunc("GET /api/anomalies/metric",       s.getMetricAnomalies)
 	mux.HandleFunc("GET /api/anomalies/events",       s.getAnomalyEvents)
+	// Cmd-K palette autocomplete for the "silence anomaly" action
+	// (v0.5.459). Editor-gated since the only useful next step is
+	// creating a silence, and that's editor-gated too.
+	mux.HandleFunc("GET /api/anomalies/active",       auth.RequireAnyRole(editorRoles, s.listActiveAnomalies))
 	// Anomaly silencing — anyone signed in can mute (admin / editor / viewer).
 	mux.HandleFunc("GET    /api/anomalies/silences",    s.listAnomalySilences)
 	mux.HandleFunc("POST   /api/anomalies/silences",    s.createAnomalySilence)

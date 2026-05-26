@@ -360,6 +360,20 @@ export const api = {
   anomalyEvents:       (since = '24h', limit = 200) =>
     get<import('./types').AnomalyEvent[]>(`/api/anomalies/events?since=${since}&limit=${limit}`),
 
+  // Active anomalies autocomplete — backs the Cmd-K silence
+  // action's first param. Returns slim shape: id (fingerprint),
+  // kind, pattern, service, status, and a display label. Editor-
+  // gated server-side. v0.5.459.
+  activeAnomalies: (q: string, limit = 20) =>
+    get<Array<{
+      id: string;
+      kind: string;
+      pattern: string;
+      service: string;
+      status: string;
+      label: string;
+    }>>(`/api/anomalies/active?q=${encodeURIComponent(q)}&limit=${limit}`),
+
   // Anomaly silences (mute / snooze).
   anomalySilences:     () =>
     get<import('./types').AnomalySilence[]>(`/api/anomalies/silences`),

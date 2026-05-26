@@ -30,6 +30,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
+	"github.com/cilcenk/coremetry/internal/mcptools"
 	"github.com/cilcenk/coremetry/internal/monitor"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
@@ -611,6 +612,15 @@ func main() {
 	// the same way browsers do.
 	if mode.api {
 		mcpSvc := mcp.New("coremetry", Version)
+		// v0.6.5 — register the telemetry tools so external LLMs
+		// (and our own Copilot) can list_services / search_logs /
+		// get_trace / query_metric / list_problems / list_anomalies
+		// / get_service_health via tools/call.
+		mcptools.Register(mcpSvc, mcptools.Deps{
+			Store:    store,
+			LogStore: logsStore,
+		})
+		log.Printf("[mcp] server ready (%d tools registered)", mcpSvc.ToolCount())
 		srv.SetMCP(mcpSvc)
 	}
 	srv.SetPipeline(pipelineEng)

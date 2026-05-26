@@ -172,6 +172,42 @@ type CapPromptsBag struct {
 	ListChanged bool `json:"listChanged,omitempty"`
 }
 
+// Tool is an MCP tool definition. Tools are the LLM's
+// callable surface — discoverable via tools/list, invoked via
+// tools/call. The input schema is a JSON Schema object the
+// client uses to validate args before invocation (and to render
+// a form UI in Claude Desktop / similar inspectors).
+//
+// The handler receives the raw params JSON as a RawMessage —
+// concrete tool implementations decode into their own typed
+// args struct. Return value is anything json.Marshal-able; the
+// server wraps it in the tools/call response envelope.
+//
+// Schema example (mirrors JSON Schema draft-2020-12 enough for
+// every MCP client):
+//
+//   InputSchema: map[string]any{
+//       "type": "object",
+//       "properties": map[string]any{
+//           "service": map[string]any{"type": "string"},
+//           "range_ns": map[string]any{"type": "integer", "minimum": 0},
+//       },
+//       "required": []string{"service"},
+//   }
+type Tool struct {
+	Name        string
+	Description string
+	InputSchema map[string]any
+	Handler     ToolHandler
+}
+
+// ToolHandler runs one tools/call invocation. Returns a value
+// the server marshals into the response, OR an error which is
+// converted into a JSON-RPC error with code ErrInternal. The
+// raw args are passed through so the handler picks its own
+// decode (tagged struct, manual map dispatch, etc.).
+type ToolHandler func(ctx context.Context, args json.RawMessage) (any, error)
+
 // Server is the MCP server. One instance per Coremetry process;
 // holds the live session map + the registries that v0.6.5+ will
 // populate.
@@ -188,6 +224,13 @@ type Server struct {
 
 	mu       sync.RWMutex
 	sessions map[string]*session
+
+	// tools is the global registry consulted by tools/list and
+	// tools/call. Tools are registered once at boot (from main()
+	// after the api.Server + chstore + logstore are wired) and
+	// are not mutated thereafter — so we serve tools/list under
+	// a read lock and don't bother emitting list_changed.
+	tools map[string]Tool
 }
 
 // session is the per-client connection state. The outbound
@@ -211,7 +254,34 @@ func New(name, version string) *Server {
 	return &Server{
 		info:     ServerInfo{Name: name, Version: version},
 		sessions: map[string]*session{},
+		tools:    map[string]Tool{},
 	}
+}
+
+// RegisterTool adds a tool to the registry. Caller MUST do this
+// before serving requests — there's no list_changed notification
+// yet (tools/list returns a static snapshot). Last writer wins
+// on a duplicate name; we log because that's almost certainly a
+// bug.
+func (s *Server) RegisterTool(t Tool) {
+	if t.Name == "" {
+		log.Printf("[mcp] RegisterTool: empty name; skipped")
+		return
+	}
+	s.mu.Lock()
+	if _, exists := s.tools[t.Name]; exists {
+		log.Printf("[mcp] RegisterTool: %q already registered, overwriting", t.Name)
+	}
+	s.tools[t.Name] = t
+	s.mu.Unlock()
+}
+
+// ToolCount reports how many tools are registered. Useful in
+// boot logs so the operator can confirm the registry wired up.
+func (s *Server) ToolCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.tools)
 }
 
 // newSession allocates a session and registers it. Caller is
@@ -375,7 +445,10 @@ func (s *Server) dispatch(ctx context.Context, sess *session, req *Request) *Res
 		return s.handleInitialize(sess, req)
 	case "ping":
 		return s.handlePing(req)
-	// v0.6.5+: tools/list, tools/call
+	case "tools/list":
+		return s.handleToolsList(req)
+	case "tools/call":
+		return s.handleToolsCall(ctx, req)
 	// v0.6.6+: resources/list, resources/read
 	// v0.6.7+: prompts/list, prompts/get
 	default:
@@ -434,6 +507,113 @@ func (s *Server) handleInitialize(sess *session, req *Request) *Response {
 // clients use it to verify the session is alive end-to-end.
 func (s *Server) handlePing(req *Request) *Response {
 	return successResp(req.ID, struct{}{})
+}
+
+// toolListEntry is the wire shape for one entry in the
+// tools/list response — name + description + the JSON Schema
+// for inputs. Clients render this in their tool-picker UI.
+type toolListEntry struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"inputSchema"`
+}
+
+// handleToolsList returns the registry snapshot. Sorted only
+// implicitly by Go's map iteration order — MCP clients sort
+// their own UI. If a deterministic order is needed later (some
+// inspectors do alpha-sort, some preserve server order), it's
+// a one-line addition.
+func (s *Server) handleToolsList(req *Request) *Response {
+	s.mu.RLock()
+	tools := make([]toolListEntry, 0, len(s.tools))
+	for _, t := range s.tools {
+		schema := t.InputSchema
+		if schema == nil {
+			// Spec requires inputSchema; tools that take no args
+			// still emit `{"type":"object"}` so the client's
+			// validator doesn't choke. Cheap default.
+			schema = map[string]any{"type": "object"}
+		}
+		tools = append(tools, toolListEntry{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: schema,
+		})
+	}
+	s.mu.RUnlock()
+	return successResp(req.ID, map[string]any{"tools": tools})
+}
+
+// toolsCallParams is the input shape for tools/call. Arguments
+// is left as RawMessage so the handler closure picks its own
+// decode strategy.
+type toolsCallParams struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// toolCallContent is one item in the response's content array.
+// MCP supports text + image + resource references; we ship text
+// only — every Coremetry tool returns JSON which the LLM is
+// perfectly capable of parsing from a text payload. Image /
+// resource shapes can layer on later without a wire break.
+type toolCallContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// toolCallResult is the tools/call response envelope. IsError
+// signals the LLM that the call failed at the application layer
+// (vs a transport error, which would surface as a JSON-RPC
+// error). Per MCP convention, isError=true tools still produce
+// content (the error message) so the LLM has something to
+// reason about.
+type toolCallResult struct {
+	Content []toolCallContent `json:"content"`
+	IsError bool              `json:"isError,omitempty"`
+}
+
+// handleToolsCall dispatches to the registered handler. Decode
+// failures + handler errors both come back as isError=true
+// content rather than JSON-RPC errors, so the LLM sees a
+// machine-readable message instead of an opaque -32603. Reserve
+// JSON-RPC errors for "tool not found" / "params malformed at
+// the protocol level".
+func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+	var p toolsCallParams
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return errorResp(req.ID, ErrInvalidParams, "tools/call params: "+err.Error())
+	}
+	if p.Name == "" {
+		return errorResp(req.ID, ErrInvalidParams, "tools/call: name is required")
+	}
+	s.mu.RLock()
+	tool, ok := s.tools[p.Name]
+	s.mu.RUnlock()
+	if !ok {
+		return errorResp(req.ID, ErrMethodNotFound, fmt.Sprintf("tool not found: %s", p.Name))
+	}
+
+	out, err := tool.Handler(ctx, p.Arguments)
+	if err != nil {
+		return successResp(req.ID, toolCallResult{
+			Content: []toolCallContent{{Type: "text", Text: err.Error()}},
+			IsError: true,
+		})
+	}
+	// Marshal the handler's output as the text content. JSON form
+	// is what every LLM tool-use loop expects to feed back into
+	// the next turn; we deliberately don't try to "render" it.
+	body, err := json.Marshal(out)
+	if err != nil {
+		return successResp(req.ID, toolCallResult{
+			Content: []toolCallContent{{Type: "text", Text: "marshal error: " + err.Error()}},
+			IsError: true,
+		})
+	}
+	return successResp(req.ID, toolCallResult{
+		Content: []toolCallContent{{Type: "text", Text: string(body)}},
+	})
 }
 
 // successResp wraps the result into the JSON-RPC envelope.

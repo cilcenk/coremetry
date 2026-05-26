@@ -534,6 +534,12 @@ func (s *Server) Start() error {
 	// v0.5.466 — ES index inventory: name, docs, size, health,
 	// ILM phase/policy. Admin-only (read of cluster metadata).
 	mux.HandleFunc("GET  /api/admin/elastic/indices", auth.RequireRole(auth.RoleAdmin, s.adminElasticIndices))
+	// v0.5.467 — Kibana saved-search interop. Export streams an
+	// .ndjson the operator can import into Kibana Discover;
+	// import accepts the same format and turns each saved search
+	// into a Coremetry /logs saved_view. Admin-gated.
+	mux.HandleFunc("GET  /api/admin/elastic/saved-search-export", auth.RequireRole(auth.RoleAdmin, s.exportSavedViewsToKibana))
+	mux.HandleFunc("POST /api/admin/elastic/saved-search-import", auth.RequireRole(auth.RoleAdmin, s.importSavedViewsFromKibana))
 	// Saved views — per-user CRUD (server scopes by session).
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)

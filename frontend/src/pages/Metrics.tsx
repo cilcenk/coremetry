@@ -6,6 +6,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { MetricNamePicker } from '@/components/MetricNamePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
+import { EventMarkers } from '@/components/EventMarkers';
 import { ShareButton } from '@/components/ShareButton';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
@@ -89,10 +90,14 @@ export default function MetricsPage() {
     api.metricLabels(metric, 'resource.service.instance.id').then(v => setInstanceValues(v ?? [])).catch(() => {});
   }, [metric]);
 
+  // v0.5.481 — lifted out of useEffect so EventMarkers can use
+  // the same resolved bounds without a second timeRangeToNs
+  // call (which is a stable-references trap because of now()).
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+
   useEffect(() => {
     if (!metric) { setSeries(null); return; }
     setSeries(undefined);
-    const { from, to } = timeRangeToNs(range);
     api.metricQuery({
       name: metric,
       service: service || undefined,
@@ -101,7 +106,7 @@ export default function MetricsPage() {
       groupBy: groupBy.join(',') || undefined,
       from, to, step: step || undefined,
     }).then(r => setSeries(r ?? [])).catch(() => setSeries(null));
-  }, [metric, service, agg, filters, groupBy, step, range]);
+  }, [metric, service, agg, filters, groupBy, step, from, to]);
 
   // Display meta only when the picker handed us metadata for
   // the currently-typed metric — typing an arbitrary name
@@ -223,7 +228,15 @@ export default function MetricsPage() {
                 {groupBy.length > 0 && <> · split by <b>{groupBy.join(' / ')}</b></>}
                 {' · '}{series.length} series
               </div>
-              <MultiLineChart series={series} unit={unit} />
+              {/* v0.5.481 — operator event markers (deploy /
+                  config / incident / maintenance) overlaid on
+                  the metric chart. Service-scoped when the
+                  operator narrowed by service; otherwise shows
+                  all events in the window. */}
+              <div style={{ position: 'relative' }}>
+                <MultiLineChart series={series} unit={unit} />
+                <EventMarkers fromNs={from} toNs={to} service={service || undefined} />
+              </div>
             </div>
 
             {groupBy.length > 0 && summary.length > 1 && (

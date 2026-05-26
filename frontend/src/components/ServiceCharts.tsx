@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
+import { EventMarkers } from './EventMarkers';
 import { Spinner } from './Spinner';
 import { CopilotExplain } from './CopilotExplain';
 import { IconSparkles } from './icons';
@@ -266,37 +267,54 @@ export function ServiceCharts({ service, range, onZoom }: {
         Ctrl/⌘+tıkla → çoklu seç
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* v0.5.480 — Each RED panel gets an EventMarkers
+            overlay scoped to (service, [from, to]). The wrapper
+            is position:relative so EventMarkers' inset:0 spans
+            exactly the chart card; the markers sit above
+            uPlot's canvas without disturbing tooltip / zoom
+            interactions (pointerEvents:none on the container,
+            auto on the marker line so the title-tooltip still
+            works on hover). */}
         <ChartCard title="RPS by operation">
-          <MultiLineChart series={rpsSeries ?? []} unit="rps"
-                          height={180}
-                          deploys={deployMarkers}
-                          syncKey={syncKey}
-                          compareSeries={rpsPrev ?? undefined}
-                          compareOffsetNs={compareOffsetNs}
-                          compareLabel={compareLabel}
-                          onZoom={onZoom} />
+          <div style={{ position: 'relative' }}>
+            <MultiLineChart series={rpsSeries ?? []} unit="rps"
+                            height={180}
+                            deploys={deployMarkers}
+                            syncKey={syncKey}
+                            compareSeries={rpsPrev ?? undefined}
+                            compareOffsetNs={compareOffsetNs}
+                            compareLabel={compareLabel}
+                            onZoom={onZoom} />
+            <EventMarkers fromNs={from} toNs={to} service={service} />
+          </div>
         </ChartCard>
         <ChartCard title="Error rate by operation">
-          <MultiLineChart series={errSeries ?? []} unit="%"
-                          height={180}
-                          deploys={deployMarkers}
-                          thresholds={errorThresholds}
-                          syncKey={syncKey}
-                          compareSeries={errPrev ?? undefined}
-                          compareOffsetNs={compareOffsetNs}
-                          compareLabel={compareLabel}
-                          onZoom={onZoom} />
+          <div style={{ position: 'relative' }}>
+            <MultiLineChart series={errSeries ?? []} unit="%"
+                            height={180}
+                            deploys={deployMarkers}
+                            thresholds={errorThresholds}
+                            syncKey={syncKey}
+                            compareSeries={errPrev ?? undefined}
+                            compareOffsetNs={compareOffsetNs}
+                            compareLabel={compareLabel}
+                            onZoom={onZoom} />
+            <EventMarkers fromNs={from} toNs={to} service={service} />
+          </div>
         </ChartCard>
         <ChartCard title="P99 latency by operation">
-          <MultiLineChart series={p99Series ?? []} unit="ms"
-                          height={180}
-                          deploys={deployMarkers}
-                          thresholds={latencyThresholds}
-                          syncKey={syncKey}
-                          compareSeries={p99Prev ?? undefined}
-                          compareOffsetNs={compareOffsetNs}
-                          compareLabel={compareLabel}
-                          onZoom={onZoom} />
+          <div style={{ position: 'relative' }}>
+            <MultiLineChart series={p99Series ?? []} unit="ms"
+                            height={180}
+                            deploys={deployMarkers}
+                            thresholds={latencyThresholds}
+                            syncKey={syncKey}
+                            compareSeries={p99Prev ?? undefined}
+                            compareOffsetNs={compareOffsetNs}
+                            compareLabel={compareLabel}
+                            onZoom={onZoom} />
+            <EventMarkers fromNs={from} toNs={to} service={service} />
+          </div>
         </ChartCard>
       </div>
     </div>

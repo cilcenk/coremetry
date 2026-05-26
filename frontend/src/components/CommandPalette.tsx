@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useShortcuts } from '@/lib/keyboard';
+import { useAuth } from '@/components/AuthProvider';
+import { filterActions, type Action } from '@/lib/actions';
+import { toast } from '@/lib/toast';
 
 // CommandPalette — global Cmd-K / Ctrl-K spotlight (v0.5.162).
 // Mounted once at AppShell level; listens for the hotkey and pops
@@ -18,10 +21,14 @@ import { useShortcuts } from '@/lib/keyboard';
 // catalog size (~30 pages + N services).
 
 type Result = {
-  kind: 'page' | 'service' | 'trace';
+  kind: 'page' | 'service' | 'trace' | 'action';
   label: string;
   hint?: string;
-  to: string;
+  // navigate target — set for page/service/trace; absent for actions
+  // (selecting an action enters param-prompt mode, doesn't navigate).
+  to?: string;
+  // action payload — set when kind === 'action'.
+  action?: Action;
   score?: number;
 };
 
@@ -65,11 +72,20 @@ const TRACE_ID_RE = /^[a-f0-9]{16,32}$/i;
 
 export function CommandPalette() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [services, setServices] = useState<Result[]>([]);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Param-prompt sub-mode (v0.5.457). When activeAction is set,
+  // the palette stops showing the search results and starts
+  // collecting per-param input for the chosen action. paramIdx
+  // tracks which param we're on; paramValues accumulates answers.
+  const [activeAction, setActiveAction] = useState<Action | null>(null);
+  const [paramIdx, setParamIdx] = useState(0);
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const [running, setRunning] = useState(false);
 
   // Global hotkey via the existing shortcut registry — Cmd-K on
   // Mac, Ctrl-K elsewhere. Registering through useShortcuts means
@@ -78,6 +94,17 @@ export function CommandPalette() {
   // so an operator typing in a filter field can still pop the
   // palette without blurring first — Cmd-K is universally
   // expected to override.
+  // Reset all transient state on every open so re-opening doesn't
+  // resume mid-action from a previous session.
+  const resetState = () => {
+    setQuery('');
+    setSelected(0);
+    setActiveAction(null);
+    setParamIdx(0);
+    setParamValues({});
+    setRunning(false);
+  };
+
   useShortcuts([{
     keys: 'mod+k',
     label: 'Open command palette',
@@ -85,8 +112,7 @@ export function CommandPalette() {
     evenInInputs: true,
     handler: () => {
       setOpen(true);
-      setQuery('');
-      setSelected(0);
+      resetState();
     },
   }], []);
 
@@ -157,6 +183,20 @@ export function CommandPalette() {
         .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
         .slice(0, 50);
     }
+    // Action launcher results (v0.5.457). Verb-driven matches like
+    // "ack" → Acknowledge problem float ABOVE navigation results
+    // because the operator's intent when typing a verb is action,
+    // not page nav. filterActions handles role-gating + ranking.
+    const actionMatches = filterActions(user?.role, q).map<Result>(a => ({
+      kind: 'action',
+      label: a.label,
+      hint: a.hint,
+      action: a,
+      score: 800,
+    }));
+    if (actionMatches.length > 0) {
+      scored = [...actionMatches, ...scored];
+    }
     // Trace-id shortcut — looks like 16-32 hex chars → offer a
     // direct jump. Trace IDs are commonly pasted from logs and
     // emails into this kind of search box.
@@ -167,7 +207,7 @@ export function CommandPalette() {
       ];
     }
     return scored;
-  }, [query, services]);
+  }, [query, services, user?.role]);
 
   // Reset cursor when results shrink/grow — otherwise the cursor
   // can point past the last row and Enter does nothing.
@@ -175,7 +215,43 @@ export function CommandPalette() {
     if (selected >= results.length) setSelected(0);
   }, [results.length, selected]);
 
+  // Execute the active action with current paramValues. Toast the
+  // result, close the palette. Errors come back as Error.message
+  // (api client formats as `HTTP NNN: <body>`) which is operator-
+  // readable.
+  const runActiveAction = async () => {
+    if (!activeAction || running) return;
+    setRunning(true);
+    try {
+      const msg = await activeAction.run(paramValues);
+      toast.success(msg);
+      setOpen(false);
+      resetState();
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      toast.error(`${activeAction.label} failed: ${m}`);
+      setRunning(false);
+      // Stay in param mode so the operator can correct + retry.
+    }
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (activeAction) {
+      // Param-prompt mode handles its own Enter; arrow keys
+      // don't navigate a result list that isn't shown.
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const cur = activeAction.params[paramIdx];
+        const val = (paramValues[cur.name] ?? '').trim();
+        if (cur.required && !val) return;
+        if (paramIdx + 1 < activeAction.params.length) {
+          setParamIdx(paramIdx + 1);
+        } else {
+          void runActiveAction();
+        }
+      }
+      return;
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelected(s => Math.min(results.length - 1, s + 1));
@@ -185,7 +261,20 @@ export function CommandPalette() {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       const r = results[selected];
-      if (r) {
+      if (!r) return;
+      if (r.kind === 'action' && r.action) {
+        setActiveAction(r.action);
+        setParamIdx(0);
+        setParamValues({});
+        // Defer focus to the param input — the existing inputRef
+        // points at the query input; once activeAction flips, we
+        // re-render and the same input becomes the param input,
+        // so re-focusing keeps the cursor where the operator
+        // expects.
+        setTimeout(() => inputRef.current?.focus(), 0);
+        return;
+      }
+      if (r.to) {
         navigate(r.to);
         setOpen(false);
       }
@@ -211,10 +300,76 @@ export function CommandPalette() {
           border: '1px solid var(--border)', borderRadius: 10,
           boxShadow: '0 12px 48px rgba(0,0,0,0.5)',
         }}>
+        {activeAction ? (
+          // Param-prompt sub-mode (v0.5.457). Header shows the
+          // action label + step pip (N/M params). Single input is
+          // the current param; Enter advances or runs.
+          <>
+            <div style={{
+              padding: '14px 16px',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: 'var(--bg2)',
+            }}>
+              <span style={{
+                fontSize: 10, padding: '2px 6px', borderRadius: 3,
+                background: 'rgba(56,139,253,.18)', color: 'rgb(56,139,253)',
+                fontFamily: 'ui-monospace, monospace', fontWeight: 600,
+              }}>action</span>
+              <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
+                {activeAction.label}
+              </span>
+              {activeAction.params.length > 1 && (
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  {paramIdx + 1} / {activeAction.params.length}
+                </span>
+              )}
+            </div>
+            {(() => {
+              const cur = activeAction.params[paramIdx];
+              return (
+                <input ref={inputRef}
+                  value={paramValues[cur.name] ?? ''}
+                  onChange={e => setParamValues({ ...paramValues, [cur.name]: e.target.value })}
+                  placeholder={cur.placeholder || cur.label}
+                  disabled={running}
+                  style={{
+                    border: 'none', outline: 'none',
+                    background: 'transparent', color: 'var(--text)',
+                    padding: '14px 16px', fontSize: 14,
+                  }} />
+              );
+            })()}
+            <div style={{
+              padding: '10px 16px',
+              fontSize: 11, color: 'var(--text3)',
+              borderTop: '1px solid var(--border)',
+              display: 'flex', justifyContent: 'space-between',
+            }}>
+              <span>
+                {running
+                  ? 'Running…'
+                  : paramIdx + 1 < activeAction.params.length
+                    ? '↵ next'
+                    : '↵ run · Esc cancel'}
+              </span>
+              <button type="button"
+                onClick={() => { resetState(); }}
+                disabled={running}
+                style={{
+                  background: 'transparent', border: 'none',
+                  color: 'var(--text3)', cursor: 'pointer', fontSize: 11,
+                }}>
+                ← back to search
+              </button>
+            </div>
+          </>
+        ) : (
+        <>
         <input ref={inputRef}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search services, pages, or paste a trace id…"
+          placeholder="Search services, pages, run an action, or paste a trace id…"
           style={{
             border: 'none', outline: 'none',
             background: 'transparent', color: 'var(--text)',
@@ -228,9 +383,18 @@ export function CommandPalette() {
             </div>
           )}
           {results.map((r, i) => (
-            <div key={`${r.kind}:${r.to}`}
+            <div key={`${r.kind}:${r.to ?? r.action?.id ?? i}`}
               onMouseEnter={() => setSelected(i)}
-              onClick={() => { navigate(r.to); setOpen(false); }}
+              onClick={() => {
+                if (r.kind === 'action' && r.action) {
+                  setActiveAction(r.action);
+                  setParamIdx(0);
+                  setParamValues({});
+                  setTimeout(() => inputRef.current?.focus(), 0);
+                  return;
+                }
+                if (r.to) { navigate(r.to); setOpen(false); }
+              }}
               style={{
                 padding: '8px 16px',
                 cursor: 'pointer',
@@ -242,11 +406,16 @@ export function CommandPalette() {
               }}>
               <span style={{
                 fontSize: 10, padding: '2px 6px', borderRadius: 3,
-                background: 'var(--bg3)', color: 'var(--text2)',
+                background: r.kind === 'action' ? 'rgba(56,139,253,.18)' : 'var(--bg3)',
+                color: r.kind === 'action' ? 'rgb(56,139,253)' : 'var(--text2)',
                 fontFamily: 'ui-monospace, monospace',
                 minWidth: 56, textAlign: 'center',
+                fontWeight: r.kind === 'action' ? 600 : 400,
               }}>
-                {r.kind === 'trace' ? 'trace' : r.kind === 'service' ? 'service' : 'page'}
+                {r.kind === 'trace' ? 'trace'
+                 : r.kind === 'service' ? 'service'
+                 : r.kind === 'action' ? 'action'
+                 : 'page'}
               </span>
               <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>
                 {r.label}
@@ -267,6 +436,8 @@ export function CommandPalette() {
           <span>esc close</span>
           <span style={{ marginLeft: 'auto' }}>{results.length} result{results.length === 1 ? '' : 's'}</span>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

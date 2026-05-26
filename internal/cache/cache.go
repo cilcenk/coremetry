@@ -50,6 +50,18 @@ type Cache interface {
 	// (and closes on ctx cancellation), so the caller's
 	// invalidation goroutine sits idle without busy-looping.
 	Subscribe(ctx context.Context, channel string) (<-chan []byte, error)
+	// DelPrefix evicts every key whose name starts with prefix
+	// (v0.6.11 — bug-fix). Used by the L2 invalidation path
+	// when an operator mutation affects many keys at once
+	// (e.g. "topology-edges:*" — one mute change invalidates
+	// every time-window-keyed topology view). Pre-v0.6.11 the
+	// L2 invalidator did a SCAN and discarded the keys, so L2
+	// was never actually drained — operator-reported staleness
+	// after exclude/mute changes was the symptom. Noop returns
+	// nil (single-instance pods have no L2). Redis impl uses
+	// cursor-paginated SCAN + batched UNLINK so a runaway
+	// prefix doesn't pin the client.
+	DelPrefix(ctx context.Context, prefix string) error
 }
 
 // Lock is a best-effort distributed lock. TryAcquire returns ok=false
@@ -81,6 +93,7 @@ func (noopCache) Get(context.Context, string) ([]byte, bool, error)   { return n
 func (noopCache) Set(context.Context, string, []byte, time.Duration) error { return nil }
 func (noopCache) Del(context.Context, string) error                   { return nil }
 func (noopCache) ScanPrefix(context.Context, string) ([][]byte, error) { return nil, nil }
+func (noopCache) DelPrefix(context.Context, string) error              { return nil }
 func (noopCache) Ping(context.Context) error                          { return nil }
 func (noopCache) Publish(context.Context, string, []byte) error       { return nil }
 func (noopCache) Subscribe(ctx context.Context, _ string) (<-chan []byte, error) {

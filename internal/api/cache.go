@@ -376,17 +376,20 @@ func (s *Server) cacheInvalidate(ctx context.Context, key string) {
 // delPrefix rather than del. Exact-key payloads stay
 // unprefixed for compatibility.
 func (s *Server) cacheInvalidatePrefix(ctx context.Context, prefix string) {
-	// L2 — SCAN + DEL each match. Cap at 256 deletes per call
-	// so a runaway prefix doesn't pin the Redis client; keys
-	// past the cap age out via their TTL.
-	if keys, err := s.cache.ScanPrefix(ctx, prefix); err == nil {
-		// ScanPrefix returns values not keys; for delete we
-		// need keys. Use a dedicated DelPrefix? For now we
-		// just SCAN here directly via the cache abstraction's
-		// existing ScanPrefix and accept that the local
-		// invalidator may run before L2 fully drains — the L2
-		// entries past the cap age out within their TTL.
-		_ = keys // not used in this path; placeholder
+	// L2 — SCAN + UNLINK every match. v0.6.11 bug-fix: pre-v0.6.11
+	// this path called ScanPrefix and discarded the returned
+	// values without ever deleting anything (the comment honestly
+	// admitted it: "ScanPrefix returns values not keys"). L2 was
+	// never drained — operator-reported staleness after exclude /
+	// mute changes was the symptom. Now we go through the
+	// dedicated DelPrefix which UNLINKs the matched keys.
+	//
+	// Best-effort: an error here logs and continues so the L1
+	// eviction + cross-pod broadcast still happen. The peer pods'
+	// invalidator loop also runs DelPrefix on its own L2 path so
+	// every replica converges.
+	if err := s.cache.DelPrefix(ctx, prefix); err != nil {
+		log.Printf("[cache] invalidate L2 del prefix %s: %v", prefix, err)
 	}
 	// Local L1.
 	s.l1.delPrefix(prefix)

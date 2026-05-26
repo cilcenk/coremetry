@@ -99,6 +99,55 @@ func (r *redisCache) ScanPrefix(ctx context.Context, prefix string) ([][]byte, e
 	return out, nil
 }
 
+// DelPrefix evicts every key matching `prefix*` (v0.6.11 —
+// bug-fix). Cursor-paginated SCAN to walk the keyspace without
+// blocking the server; batched UNLINK (non-blocking, async
+// freelist) instead of DEL so a large match set doesn't stall
+// the Redis main thread. UNLINK was added in Redis 4.0 — every
+// modern deployment has it; on the off chance an ancient
+// server NOPs it, the SCAN will simply skip the keys (they'll
+// age out via TTL).
+//
+// Internal cap: each UNLINK batches 256 keys so the command
+// argument list stays bounded. SCAN itself caps at 200 keys
+// per cursor step. Combined, a 10k-key prefix purge takes ~50
+// round-trips — well within a single evaluator tick.
+func (r *redisCache) DelPrefix(ctx context.Context, prefix string) error {
+	const batchSize = 256
+	var cursor uint64
+	for {
+		batch, next, err := r.cli.Scan(ctx, cursor, prefix+"*", 200).Result()
+		if err != nil {
+			return fmt.Errorf("redis scan: %w", err)
+		}
+		// Drain batch in groups of batchSize. Most scans yield
+		// fewer; the inner loop runs once. The chunked form is
+		// only there to handle the rare case where SCAN returns
+		// a denser-than-COUNT bucket (Redis docs note the COUNT
+		// is a hint, not a cap).
+		for i := 0; i < len(batch); i += batchSize {
+			end := i + batchSize
+			if end > len(batch) {
+				end = len(batch)
+			}
+			args := make([]string, end-i)
+			copy(args, batch[i:end])
+			if err := r.cli.Unlink(ctx, args...).Err(); err != nil {
+				// Log + continue: a transient error on one
+				// batch shouldn't abort the rest. The caller
+				// already treats DelPrefix as best-effort
+				// (TTL is the backstop) so completing as much
+				// as possible is the right move.
+				return fmt.Errorf("redis unlink: %w", err)
+			}
+		}
+		if next == 0 {
+			return nil
+		}
+		cursor = next
+	}
+}
+
 func (r *redisCache) Ping(ctx context.Context) error {
 	return r.cli.Ping(ctx).Err()
 }

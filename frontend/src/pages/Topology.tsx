@@ -529,7 +529,9 @@ function ServiceView({ range }: { range: TimeRange }) {
     [visibleFiltered, data, focus, focusDir]
   );
 
-  if (data === undefined) return <Spinner />;
+  if (data === undefined) return (
+    <Spinner label="Loading service topology edges…" hint="Reads topology_edges_5m MV; ~200-500ms at billion-span scale." />
+  );
   if (data === null) return <Empty icon="✗" title="Failed to load topology" />;
   if (data.nodes.length === 0) {
     return <Empty icon="◇" title="No interactions in this window">Pick a wider time range or wait for traces to flow.</Empty>;
@@ -982,7 +984,9 @@ function FlowsView({ range }: { range: TimeRange }) {
       .catch(() => setPickedData(null));
   }, [picked, range]);
 
-  if (flows === undefined) return <Spinner />;
+  if (flows === undefined) return (
+    <Spinner label="Loading root-trace flows…" hint="topology_root_flows_5m MV; aggregates ranked by call volume." />
+  );
   if (flows === null) return <Empty icon="✗" title="Failed to load flows" />;
   if (flows.length === 0) {
     return <Empty icon="◇" title="No root flows in this window">

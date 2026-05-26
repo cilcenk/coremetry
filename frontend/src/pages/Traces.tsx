@@ -622,7 +622,9 @@ function TracesPageInner() {
         )}
 
         {/* Aggregate view */}
-        {view === 'aggregate' && agg === undefined && <Spinner />}
+        {view === 'aggregate' && agg === undefined && (
+          <Spinner label="Aggregating traces by trace_id…" hint="Reads the trace_summary MV when the window is ≥5min, raw spans otherwise." />
+        )}
         {view === 'aggregate' && agg && agg.length === 0 && <Empty icon="∑" title="No groups in this window" />}
         {view === 'aggregate' && agg && agg.length > 0 && (
           <>

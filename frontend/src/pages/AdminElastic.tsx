@@ -144,7 +144,9 @@ export default function AdminElasticPage() {
           </div>
         )}
 
-        {!err && data === undefined && <Spinner />}
+        {!err && data === undefined && (
+          <Spinner label="Fetching index inventory + ILM lifecycle…" hint="_cat/indices + _ilm/explain, ~1-3s depending on cluster size." />
+        )}
 
         {!err && data && data.backend !== 'elasticsearch' && (
           <Empty icon="≡" title={`Logs backend is "${data.backend || 'unknown'}", not Elasticsearch`}>

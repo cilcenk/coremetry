@@ -1,4 +1,28 @@
-export function Spinner() { return <div className="spinner" />; }
+// Spinner (v0.5.472 — optional `label`). Generic inline spinner;
+// pass `label` to add a short status line ("Crunching 4.2M spans
+// for /services aggregate…") so the operator sees what's being
+// computed and doesn't suspect a hang. Plain bare-spinner usage
+// is unchanged — the label only renders when supplied.
+//
+// `hint` is an optional second line in a fainter colour for
+// secondary detail ("~3s at this scale"). Use sparingly — most
+// loading states don't need it.
+export function Spinner({ label, hint }: { label?: string; hint?: string } = {}) {
+  if (!label && !hint) return <div className="spinner" />;
+  return (
+    <div role="status" aria-busy="true" aria-label={label ?? 'Loading'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 10,
+        padding: '6px 0', color: 'var(--text2)', fontSize: 12,
+      }}>
+      <div className="spinner" />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {label && <span>{label}</span>}
+        {hint && <span style={{ fontSize: 11, color: 'var(--text3)' }}>{hint}</span>}
+      </div>
+    </div>
+  );
+}
 
 // PageLoader — v0.5.262. Full-page centered loader used as the
 // Suspense fallback for lazy routes AND as the auth-loading

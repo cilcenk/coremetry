@@ -249,6 +249,56 @@ type ResourceTemplate struct {
 // supports them via a `blob` field on the content envelope.
 type ResourceReader func(ctx context.Context, uri string) (text string, err error)
 
+// Prompt is a server-curated LLM prompt template. prompts/list
+// surfaces them so the client can show "/coremetry-explain-
+// trace [trace_id]" in its slash-command menu; prompts/get with
+// args runs the Renderer to produce the final messages the
+// client feeds to its model.
+//
+// Coremetry's prompts close over chstore/logstore so calling
+// "explain_trace" actually fetches the trace data and embeds it
+// into the user message — the LLM doesn't have to make a
+// follow-up tool call before reasoning. This is the same
+// pattern as the in-app "✨ Explain" button, just exposed via
+// MCP for external clients.
+type Prompt struct {
+	Name        string
+	Description string
+	Arguments   []PromptArgument
+	Renderer    PromptRenderer
+}
+
+// PromptArgument describes one input slot for prompts/get. Type
+// is always implicitly string in the MCP spec; the description
+// is what gets shown to the user when their client renders the
+// argument form.
+type PromptArgument struct {
+	Name        string
+	Description string
+	Required    bool
+}
+
+// PromptMessage is one role+content pair the Renderer emits.
+// MCP prompts can return system + user + assistant messages;
+// the client typically replays them as the conversation seed.
+type PromptMessage struct {
+	Role    string          `json:"role"`
+	Content PromptContent   `json:"content"`
+}
+
+// PromptContent is the body of a message. Type is currently
+// always "text" for Coremetry's prompts — image / resource
+// content can layer on later.
+type PromptContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// PromptRenderer takes the prompts/get arguments and returns the
+// resolved message set. Errors bubble up as JSON-RPC errors.
+// Receives the raw arg map so the renderer picks its own decode.
+type PromptRenderer func(ctx context.Context, args map[string]string) ([]PromptMessage, error)
+
 // Server is the MCP server. One instance per Coremetry process;
 // holds the live session map + the registries that v0.6.5+ will
 // populate.
@@ -281,6 +331,11 @@ type Server struct {
 	// instantiate with concrete values (e.g. a trace_id).
 	resources         map[string]Resource         // key = URI
 	resourceTemplates []ResourceTemplate
+
+	// prompts is the curated prompt registry served by
+	// prompts/list and prompts/get. Same lifecycle as tools /
+	// resources — boot-time populated, immutable.
+	prompts map[string]Prompt
 }
 
 // session is the per-client connection state. The outbound
@@ -306,7 +361,35 @@ func New(name, version string) *Server {
 		sessions:  map[string]*session{},
 		tools:     map[string]Tool{},
 		resources: map[string]Resource{},
+		prompts:   map[string]Prompt{},
 	}
+}
+
+// RegisterPrompt adds a prompt to the registry. Name uniqueness
+// enforced — duplicate registration logs and overwrites.
+func (s *Server) RegisterPrompt(p Prompt) {
+	if p.Name == "" {
+		log.Printf("[mcp] RegisterPrompt: empty name; skipped")
+		return
+	}
+	if p.Renderer == nil {
+		log.Printf("[mcp] RegisterPrompt %q: nil Renderer; skipped", p.Name)
+		return
+	}
+	s.mu.Lock()
+	if _, exists := s.prompts[p.Name]; exists {
+		log.Printf("[mcp] RegisterPrompt: %q already registered, overwriting", p.Name)
+	}
+	s.prompts[p.Name] = p
+	s.mu.Unlock()
+}
+
+// PromptCount reports how many prompts are registered. Useful in
+// boot logs so the operator can confirm the registry wired up.
+func (s *Server) PromptCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.prompts)
 }
 
 // RegisterResource adds a concrete (fixed-URI) resource. URI
@@ -553,7 +636,10 @@ func (s *Server) dispatch(ctx context.Context, sess *session, req *Request) *Res
 		return s.handleResourcesRead(ctx, req)
 	case "resources/templates/list":
 		return s.handleResourceTemplatesList(req)
-	// v0.6.7+: prompts/list, prompts/get
+	case "prompts/list":
+		return s.handlePromptsList(req)
+	case "prompts/get":
+		return s.handlePromptsGet(ctx, req)
 	default:
 		return errorResp(req.ID, ErrMethodNotFound,
 			fmt.Sprintf("method not found: %s", req.Method))
@@ -909,4 +995,81 @@ func startsWith(s, prefix string) bool {
 }
 func endsWith(s, suffix string) bool {
 	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
+}
+
+// ── prompts/list, prompts/get ──────────────────────────────────
+
+type promptListEntry struct {
+	Name        string                  `json:"name"`
+	Description string                  `json:"description,omitempty"`
+	Arguments   []promptArgumentEntry   `json:"arguments,omitempty"`
+}
+
+type promptArgumentEntry struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+func (s *Server) handlePromptsList(req *Request) *Response {
+	s.mu.RLock()
+	out := make([]promptListEntry, 0, len(s.prompts))
+	for _, p := range s.prompts {
+		args := make([]promptArgumentEntry, 0, len(p.Arguments))
+		for _, a := range p.Arguments {
+			args = append(args, promptArgumentEntry{
+				Name:        a.Name,
+				Description: a.Description,
+				Required:    a.Required,
+			})
+		}
+		out = append(out, promptListEntry{
+			Name:        p.Name,
+			Description: p.Description,
+			Arguments:   args,
+		})
+	}
+	s.mu.RUnlock()
+	return successResp(req.ID, map[string]any{"prompts": out})
+}
+
+type promptsGetParams struct {
+	Name      string            `json:"name"`
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+// handlePromptsGet runs the registered renderer with the
+// client-supplied args. Required args are checked at the
+// protocol layer so the renderer can trust they're present.
+func (s *Server) handlePromptsGet(ctx context.Context, req *Request) *Response {
+	var p promptsGetParams
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return errorResp(req.ID, ErrInvalidParams, "prompts/get params: "+err.Error())
+	}
+	if p.Name == "" {
+		return errorResp(req.ID, ErrInvalidParams, "prompts/get: name is required")
+	}
+	s.mu.RLock()
+	prompt, ok := s.prompts[p.Name]
+	s.mu.RUnlock()
+	if !ok {
+		return errorResp(req.ID, ErrMethodNotFound, fmt.Sprintf("prompt not found: %s", p.Name))
+	}
+	if p.Arguments == nil {
+		p.Arguments = map[string]string{}
+	}
+	for _, a := range prompt.Arguments {
+		if a.Required && p.Arguments[a.Name] == "" {
+			return errorResp(req.ID, ErrInvalidParams,
+				fmt.Sprintf("prompts/get %q: missing required arg %q", p.Name, a.Name))
+		}
+	}
+	msgs, err := prompt.Renderer(ctx, p.Arguments)
+	if err != nil {
+		return errorResp(req.ID, ErrInternal, "render prompt: "+err.Error())
+	}
+	return successResp(req.ID, map[string]any{
+		"description": prompt.Description,
+		"messages":    msgs,
+	})
 }

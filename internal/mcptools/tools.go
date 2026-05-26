@@ -78,6 +78,11 @@ func Register(srv *mcp.Server, d Deps) {
 	// can show "open problems" as a single pin instead of
 	// re-issuing the tool call every time.
 	registerResources(srv, d)
+	// v0.6.7 — prompts: curated system+user message pairs that
+	// surface Coremetry's in-app ✨ Explain templates over MCP.
+	// Client invokes prompts/get with an id, server fetches the
+	// data and returns a complete prompt the LLM can run.
+	registerPrompts(srv, d)
 }
 
 // registerResources installs concrete + templated resources.

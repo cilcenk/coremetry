@@ -187,6 +187,151 @@ func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// EQLSearch runs ES Event Query Language sequence detection.
+// Powers operator queries like "login then error within 5m" or
+// "deploy then anomaly within 10m" that the plain /logs search
+// can't express. v0.5.468.
+//
+// The ES side: POST <index>/_eql/search with the EQL string,
+// an optional filter (time bounds), and size. Response is the
+// EQL search result shape — we map it to []EQLSequence so the
+// frontend sees one row per matched sequence with its ordered
+// event list.
+//
+// Field names — Coremetry's logs schema uses different paths
+// across operators; for the body/service/severity extraction
+// we pick the most common keys (ECS conformant) and fall back
+// to flat aliases. timestamp is normalised to unix-ns.
+func (s *ESStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, error) {
+	if strings.TrimSpace(q.Query) == "" {
+		return nil, fmt.Errorf("EQL query required")
+	}
+	size := q.Size
+	if size <= 0 || size > 100 {
+		size = 10
+	}
+	body := map[string]any{
+		"query": q.Query,
+		"size":  size,
+	}
+	// Optional time-range filter. ES EQL accepts a `filter` field
+	// applied before the sequence-matching pass.
+	if !q.From.IsZero() || !q.To.IsZero() {
+		rng := map[string]any{}
+		if !q.From.IsZero() {
+			rng["gte"] = q.From.UnixMilli()
+		}
+		if !q.To.IsZero() {
+			rng["lte"] = q.To.UnixMilli()
+		}
+		body["filter"] = map[string]any{
+			"range": map[string]any{
+				"@timestamp": rng,
+			},
+		}
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req := esapi.EqlSearchRequest{
+		Index: s.cfg.Index,
+		Body:  bytes.NewReader(raw),
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, fmt.Errorf("eql search: %s", res.String())
+	}
+	var decoded struct {
+		Hits struct {
+			Sequences []struct {
+				JoinKeys []any `json:"join_keys"`
+				Events   []struct {
+					Source map[string]any `json:"_source"`
+				} `json:"events"`
+			} `json:"sequences"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
+		return nil, err
+	}
+	out := make([]EQLSequence, 0, len(decoded.Hits.Sequences))
+	for _, sq := range decoded.Hits.Sequences {
+		keys := make([]string, 0, len(sq.JoinKeys))
+		for _, k := range sq.JoinKeys {
+			keys = append(keys, fmt.Sprint(k))
+		}
+		evs := make([]EQLEvent, 0, len(sq.Events))
+		for _, e := range sq.Events {
+			evs = append(evs, EQLEvent{
+				Timestamp: timestampNs(e.Source),
+				Body:      pickString(e.Source, "message", "body", "log.message"),
+				Service:   pickString(e.Source, "service.name", "service", "kubernetes.labels.app"),
+				Severity:  pickString(e.Source, "level", "log.level", "severity_text", "severity"),
+			})
+		}
+		out = append(out, EQLSequence{JoinKeys: keys, Events: evs})
+	}
+	return out, nil
+}
+
+// pickString walks fallback paths and returns the first non-
+// empty string value. Each path is dot-separated; intermediate
+// nodes can be either nested objects (ECS) or flat keys (Drop).
+func pickString(src map[string]any, paths ...string) string {
+	for _, p := range paths {
+		if v := dotGet(src, p); v != nil {
+			if s, ok := v.(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func dotGet(src map[string]any, path string) any {
+	parts := strings.Split(path, ".")
+	cur := any(src)
+	for _, k := range parts {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur, ok = m[k]
+		if !ok {
+			return nil
+		}
+	}
+	return cur
+}
+
+// timestampNs picks the event's timestamp out of common ECS /
+// flat shapes and normalises to unix-ns.
+func timestampNs(src map[string]any) int64 {
+	for _, p := range []string{"@timestamp", "timestamp", "time"} {
+		v := dotGet(src, p)
+		if v == nil {
+			continue
+		}
+		switch t := v.(type) {
+		case string:
+			if ms, err := time.Parse(time.RFC3339Nano, t); err == nil {
+				return ms.UnixNano()
+			}
+		case float64:
+			// ES often serialises millis as float64.
+			return int64(t) * 1_000_000
+		case int64:
+			return t * 1_000_000
+		}
+	}
+	return 0
+}
+
 // Indices surfaces per-index health + ILM lifecycle for the
 // configured index pattern (v0.5.466). One round-trip to
 // _cat/indices for size/health/doc-count, one to _ilm/explain

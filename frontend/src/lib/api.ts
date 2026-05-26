@@ -456,6 +456,19 @@ export const api = {
     request<{ imported: number; skipped: number; errors?: string[] }>(
       `/api/admin/elastic/saved-search-import`,
       { method: 'POST', headers: { 'Content-Type': 'application/x-ndjson' }, body: ndjson }),
+  // ES Event Query Language sequence detection. v0.5.468.
+  runLogsEQL: (body: { query: string; fromMs?: number; toMs?: number; size?: number }) =>
+    request<{
+      sequences: Array<{
+        joinKeys: string[];
+        events: Array<{ timestamp: number; body: string; service: string; severity: string }>;
+      }>;
+      error?: string;
+      backend?: string;
+    }>(`/api/logs/eql`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   // v0.5.402 — surrounding context (±N logs around a pivot ts).
   // Datadog Context tab equivalent. Two parallel server-side
   // searches (before / after); 30-min symmetric window, capped

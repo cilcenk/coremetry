@@ -45,6 +45,29 @@ type PSortKey = 'priority' | 'severity' | 'service' | 'metric' | 'value' | 'rule
 const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
 // P1 ranks above P2 ranks above P3 (lower number = more urgent).
 const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
+
+// v0.5.469 — modern tinted-chip palette for severity + priority
+// filter chips. Active chips render as `rgba(c,c,c,0.16)` bg +
+// `rgb(c,c,c)` fg + `rgba(c,c,c,0.55)` border instead of the
+// old white-on-saturated-fill — Linear / Vercel / shadcn shape.
+// Foreground hues are slightly darker than --err / --warn /
+// --accent2 so they read legibly on the tinted background in
+// light theme; dark theme inherits the same hue but the bg
+// alpha provides enough contrast either way.
+interface ChipPalette { fg: string; bg: string; border: string; }
+const SEV_PALETTE: Record<'critical' | 'warning' | 'info', ChipPalette> = {
+  critical: { fg: 'rgb(220,38,38)',  bg: 'rgba(220,38,38,0.16)', border: 'rgba(220,38,38,0.55)' },
+  warning:  { fg: 'rgb(217,119,6)',  bg: 'rgba(234,179,8,0.20)', border: 'rgba(217,119,6,0.55)' },
+  info:     { fg: 'rgb(56,139,253)', bg: 'rgba(56,139,253,0.14)', border: 'rgba(56,139,253,0.45)' },
+};
+const PRIO_PALETTE: Record<'P1' | 'P2' | 'P3', ChipPalette> = {
+  P1: { fg: 'rgb(220,38,38)',   bg: 'rgba(220,38,38,0.16)',   border: 'rgba(220,38,38,0.55)' },
+  P2: { fg: 'rgb(217,119,6)',   bg: 'rgba(234,179,8,0.20)',   border: 'rgba(217,119,6,0.55)' },
+  // P3 used --text3 (gray) when "on" — visually disconnected
+  // from the warm scale. Use a cool slate that reads as "lower
+  // priority" without being invisible like text3.
+  P3: { fg: 'rgb(100,116,139)', bg: 'rgba(100,116,139,0.14)', border: 'rgba(100,116,139,0.45)' },
+};
 const P_NATURAL_DIR: Record<PSortKey, SortDir> = {
   priority: 'desc', severity: 'desc', service: 'asc', metric: 'asc',
   value: 'desc', rule: 'asc', started: 'desc', status: 'asc',
@@ -580,24 +603,29 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             chip back on. At least one chip stays on at all
             times (toggleSev guard) — empty table looks
             broken. */}
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 5 }}>
           {(['critical', 'warning', 'info'] as const).map(s => {
             const on = sevSet.has(s);
-            const colour = s === 'critical' ? 'var(--err)'
-                         : s === 'warning'  ? 'var(--warn)'
-                         : 'var(--accent2)';
+            // v0.5.469 — modern tinted-chip palette. Active chips
+            // use rgba bg + full-colour foreground (Linear/Vercel
+            // pattern) instead of the old white-on-colour fill.
+            // Foreground colours are slightly darker than the
+            // backend's var(--err)/--warn/--accent2 so they read
+            // legibly on the tinted background in light theme.
+            const pal = SEV_PALETTE[s];
             return (
               <button key={s} onClick={() => toggleSev(s)}
                 title={on ? `Hide ${s}` : `Show ${s} only — click again to add`}
                 style={{
                   all: 'unset', cursor: 'pointer',
-                  fontSize: 11, padding: '2px 8px', borderRadius: 12,
+                  fontSize: 11, padding: '3px 10px', borderRadius: 12,
                   fontFamily: 'ui-monospace, monospace',
-                  border: `1px solid ${on ? colour : 'var(--border)'}`,
-                  background: on ? colour : 'transparent',
-                  color: on ? 'var(--bg)' : 'var(--text3)',
-                  fontWeight: on ? 600 : 400,
+                  border: `1px solid ${on ? pal.border : 'var(--border)'}`,
+                  background: on ? pal.bg : 'transparent',
+                  color: on ? pal.fg : 'var(--text3)',
+                  fontWeight: on ? 700 : 500,
                   textTransform: 'uppercase', letterSpacing: 0.4,
+                  transition: 'background 80ms ease, color 80ms ease, border-color 80ms ease',
                 }}>
                 {s} ({sevCounts[s] ?? 0})
               </button>
@@ -607,25 +635,24 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
         {/* Priority chip filter (v0.5.210) — defaults to P1+P2
             so the operator's first paint is signal, not noise.
             Click P3 to widen. Counts reflect the unfiltered set. */}
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 5 }}>
           {(['P1', 'P2', 'P3'] as const).map(pp => {
             const on = prioSet.has(pp);
             const count = data?.filter(d => (d.priority ?? 'P3') === pp).length ?? 0;
-            const colour = pp === 'P1' ? 'var(--err)'
-                        : pp === 'P2' ? 'var(--warn, #facc15)'
-                        : 'var(--text3)';
+            const pal = PRIO_PALETTE[pp];
             return (
               <button key={pp} onClick={() => togglePrio(pp)}
                 title={on ? `Hide ${pp}` : `Show ${pp}`}
                 style={{
                   all: 'unset', cursor: 'pointer',
-                  fontSize: 11, padding: '2px 8px', borderRadius: 12,
+                  fontSize: 11, padding: '3px 10px', borderRadius: 12,
                   fontFamily: 'ui-monospace, monospace',
-                  border: `1px solid ${on ? colour : 'var(--border)'}`,
-                  background: on ? colour : 'transparent',
-                  color: on ? 'var(--bg)' : 'var(--text3)',
-                  fontWeight: on ? 700 : 400,
+                  border: `1px solid ${on ? pal.border : 'var(--border)'}`,
+                  background: on ? pal.bg : 'transparent',
+                  color: on ? pal.fg : 'var(--text3)',
+                  fontWeight: on ? 700 : 500,
                   letterSpacing: 0.4,
+                  transition: 'background 80ms ease, color 80ms ease, border-color 80ms ease',
                 }}>
                 {pp} ({count})
               </button>

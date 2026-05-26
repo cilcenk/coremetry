@@ -221,6 +221,12 @@ services:
     ports:
       - "3200:3200"   # query API + UI
     restart: unless-stopped
+    # v0.6.1 — opt-in via profile. Coremetry's Tempo fallback is
+    # configured in Settings → Tempo (env-default empty); the
+    # container is dev-convenience for operators piloting the
+    # fallback story. Bring it up with `docker compose --profile
+    # tempo up` when you want to point Coremetry at a local Tempo.
+    profiles: ["tempo", "demo"]
 
   # OpenTelemetry Collector — apps send here, collector forwards to coremetry.
   # Standard OTLP ports (4317/4318) are exposed on the host as 14317/14318
@@ -277,6 +283,11 @@ services:
     ports:
       - "4040:4040"
     restart: unless-stopped
+    # v0.6.1 — opt-in via profile. Continuous profiling is a
+    # parallel-track story; not every dev needs the 1.4GB image
+    # spinning up alongside the core stack. Bring it up with
+    # `docker compose --profile pyroscope up` when you want it.
+    profiles: ["pyroscope", "demo"]
 
   # ── Java demo: zero-code OTel auto-instrumentation ──────────────────────────
   # Spring Boot app, no OTel imports in source. The javaagent injects all

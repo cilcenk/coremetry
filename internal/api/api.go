@@ -470,6 +470,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/services/{name}/callees",  s.svcCallees)
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
 	mux.HandleFunc("GET    /api/problems/count",            s.countProblems)
+	mux.HandleFunc("GET    /api/problems/buckets",          s.listProblemBuckets)
 	mux.HandleFunc("POST   /api/problems/acknowledge",      auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
 	mux.HandleFunc("PATCH  /api/problems/{id}/assignee",    auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
 	// Unified triage inbox (v0.5.211) — merges Problems +
@@ -8102,6 +8103,51 @@ func (s *Server) countProblems(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		return map[string]any{"count": n}, nil
+	})
+}
+
+// listProblemBuckets — chip-label backing endpoint. Returns the
+// per-severity and per-priority breakdown for a given status/service
+// scope, IGNORING the severity and priority chip selections so the
+// operator can see "P3 (12)" before clicking the P3 chip back on
+// (v0.5.479 — restores the chip-count UX that v0.5.448 broke when
+// priority filtering moved server-side). Limit is generous (2000)
+// because the problems table is state-shaped and stays small even
+// at scale; an install with 2000+ open problems has bigger issues
+// than a UI count.
+func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := chstore.ProblemFilter{
+		Status: q.Get("status"), Service: q.Get("service"),
+		Limit: 2000,
+	}
+	key := fmt.Sprintf("problems-buckets:status=%s:svc=%s", f.Status, f.Service)
+	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
+		probs, err := s.store.ListProblems(r.Context(), f)
+		if err != nil {
+			return nil, err
+		}
+		// Priority depends on RecentDeploy (fresh-deploy bump), so
+		// the deploys enrich must run before the priority enrich.
+		// Runbooks/clusters enrichment skipped — buckets don't need
+		// either, and skipping the CH round-trips keeps this cheap.
+		probs = s.store.EnrichProblemsWithDeploys(r.Context(), probs, 30*time.Minute)
+		probs = chstore.EnrichProblemsWithPriority(probs)
+		sev := map[string]int{"critical": 0, "warning": 0, "info": 0}
+		prio := map[string]int{"P1": 0, "P2": 0, "P3": 0}
+		for _, p := range probs {
+			sev[p.Severity]++
+			bucket := p.Priority
+			if bucket == "" {
+				bucket = "P3"
+			}
+			prio[bucket]++
+		}
+		return map[string]any{
+			"severity": sev,
+			"priority": prio,
+			"total":    len(probs),
+		}, nil
 	})
 }
 

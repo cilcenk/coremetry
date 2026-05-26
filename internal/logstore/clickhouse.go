@@ -491,6 +491,16 @@ func chBuildTokenLiteral(tokens []string) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
+// Indices — CH stub (v0.5.466). Single physical table on the
+// CH backend; per-shard / part-level surface is on the existing
+// /admin/clickhouse page. Returning nil makes /admin/elastic
+// render its "logs backend isn't Elasticsearch" empty state
+// without touching CH-specific plumbing.
+func (s *CHStore) Indices(ctx context.Context) ([]IndexInfo, error) {
+	_ = ctx
+	return nil, nil
+}
+
 // FieldValues — CH stub (v0.5.464). The KQL search box's
 // field-aware autocomplete is Kibana-flavoured and primarily
 // useful on ES installs; CH operators tend to filter via the

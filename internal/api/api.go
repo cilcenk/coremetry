@@ -531,6 +531,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/admin/sql/query",       auth.RequireRole(auth.RoleAdmin, s.execSQL))
 	mux.HandleFunc("GET  /api/admin/sql/schema",      auth.RequireRole(auth.RoleAdmin, s.sqlSchema))
 	mux.HandleFunc("POST /api/admin/sql/elastic",     auth.RequireRole(auth.RoleAdmin, s.execElasticSQL))
+	// v0.5.466 — ES index inventory: name, docs, size, health,
+	// ILM phase/policy. Admin-only (read of cluster metadata).
+	mux.HandleFunc("GET  /api/admin/elastic/indices", auth.RequireRole(auth.RoleAdmin, s.adminElasticIndices))
 	// Saved views — per-user CRUD (server scopes by session).
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)
@@ -2868,6 +2871,31 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 // Cached briefly (30s) — values change slowly and the operator
 // will type new prefixes in rapid succession (each is a fresh
 // cache key).
+// adminElasticIndices returns per-index doc count, size, health,
+// and ILM lifecycle (policy + phase) for the configured logs
+// backend's index pattern. Powers /admin/elastic. CH backend
+// returns nil — the frontend renders a "logs backend isn't
+// Elasticsearch" empty state instead of crashing. v0.5.466.
+//
+// Admin-only — exposes cluster metadata that's broadly fine to
+// share but not interesting to a viewer. 30s cache: indices
+// don't churn often.
+func (s *Server) adminElasticIndices(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "admin-elastic-indices", 30*time.Second, func() (any, error) {
+		idx, err := s.logs.Indices(r.Context())
+		if err != nil {
+			return nil, err
+		}
+		if idx == nil {
+			idx = []logstore.IndexInfo{}
+		}
+		return map[string]any{
+			"backend": s.logs.Backend(),
+			"indices": idx,
+		}, nil
+	})
+}
+
 func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	field := strings.TrimSpace(q.Get("field"))

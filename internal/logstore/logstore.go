@@ -60,6 +60,18 @@ type Page struct {
 	Logs  []*LogRecord `json:"logs"`
 }
 
+// IndexInfo describes one log-backend index (ES) or shard table
+// (CH). Returned by Store.Indices for /admin/elastic to surface
+// per-index health + ILM lifecycle state. v0.5.466.
+type IndexInfo struct {
+	Name      string `json:"name"`
+	DocCount  int64  `json:"docCount"`
+	SizeBytes int64  `json:"sizeBytes"`
+	Health    string `json:"health"`    // green | yellow | red | "" if unknown
+	IlmPolicy string `json:"ilmPolicy"` // policy name attached, empty if none
+	IlmPhase  string `json:"ilmPhase"`  // hot | warm | cold | frozen | delete | ""
+}
+
 // PatternSpec is the cross-backend description of a "find log
 // lines that look like this" probe. Both backends consume it:
 //
@@ -149,6 +161,14 @@ type Store interface {
 	// attribute path the backend knows). Empty groupBy → a single
 	// "_total" series.
 	Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error)
+
+	// Indices lists the log indices the backend currently has,
+	// with health + size + ILM lifecycle info per index. Powers
+	// /admin/elastic so the operator sees at a glance which
+	// indices are hot/warm/cold/frozen, what their ILM policy
+	// says, and if any have gone red. CH backend returns nil
+	// (no per-index concept). v0.5.466.
+	Indices(ctx context.Context) ([]IndexInfo, error)
 
 	// FieldValues returns top values of a single indexed field
 	// matching a typed prefix. Backs the /logs search box's

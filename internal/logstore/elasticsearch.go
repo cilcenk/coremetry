@@ -187,6 +187,101 @@ func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// Indices surfaces per-index health + ILM lifecycle for the
+// configured index pattern (v0.5.466). One round-trip to
+// _cat/indices for size/health/doc-count, one to _ilm/explain
+// for policy + phase. Both calls are scoped to the configured
+// index pattern (e.g. "logs-*") so multi-tenant clusters don't
+// dump every index back. ILM explain may legitimately error
+// (cluster has no ILM module, or operator hasn't attached
+// policies) — we degrade to "" phase rather than failing.
+func (s *ESStore) Indices(ctx context.Context) ([]IndexInfo, error) {
+	type catRow struct {
+		Index     string `json:"index"`
+		DocsCount string `json:"docs.count"`
+		StoreSize string `json:"store.size"`
+		Health    string `json:"health"`
+	}
+	catReq := esapi.CatIndicesRequest{
+		Index:  []string{s.cfg.Index},
+		Format: "json",
+		H:      []string{"index", "docs.count", "store.size", "health"},
+		Bytes:  "b",
+	}
+	res, err := catReq.Do(ctx, s.cli)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, fmt.Errorf("cat indices: %s", res.String())
+	}
+	var rows []catRow
+	if err := json.NewDecoder(res.Body).Decode(&rows); err != nil {
+		return nil, err
+	}
+	// Initial pass — populate from _cat/indices.
+	infos := make([]IndexInfo, 0, len(rows))
+	byName := map[string]*IndexInfo{}
+	for _, r := range rows {
+		docs, _ := strconv.ParseInt(r.DocsCount, 10, 64)
+		size, _ := strconv.ParseInt(r.StoreSize, 10, 64)
+		infos = append(infos, IndexInfo{
+			Name:      r.Index,
+			DocCount:  docs,
+			SizeBytes: size,
+			Health:    r.Health,
+		})
+		byName[r.Index] = &infos[len(infos)-1]
+	}
+	// Best-effort ILM enrich. Don't fail the whole call if ILM
+	// is disabled / unavailable; operator still sees doc count
+	// + health, which is the headline info.
+	if err := s.enrichILM(ctx, byName); err != nil {
+		log.Printf("[es] indices ILM enrich (non-fatal): %v", err)
+	}
+	return infos, nil
+}
+
+// enrichILM fills IlmPolicy + IlmPhase by calling _ilm/explain
+// for the configured index pattern. Mutates the map in place;
+// returns the first non-recoverable error (404 / 400 from missing
+// ILM module gets swallowed by the caller).
+func (s *ESStore) enrichILM(ctx context.Context, byName map[string]*IndexInfo) error {
+	req := esapi.ILMExplainLifecycleRequest{
+		Index: s.cfg.Index,
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		// 404 = no ILM policies attached; not an error from the
+		// operator's perspective.
+		if res.StatusCode == 404 {
+			return nil
+		}
+		return fmt.Errorf("ilm explain: %s", res.String())
+	}
+	var body struct {
+		Indices map[string]struct {
+			Policy string `json:"policy"`
+			Phase  string `json:"phase"`
+		} `json:"indices"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return err
+	}
+	for name, info := range body.Indices {
+		if entry, ok := byName[name]; ok {
+			entry.IlmPolicy = info.Policy
+			entry.IlmPhase = info.Phase
+		}
+	}
+	return nil
+}
+
 // FieldValues uses ES _terms_enum (since 7.14) to prefix-match
 // indexed term values for a single field. Sub-ms latency on
 // keyword fields, even on billion-doc indices. v0.5.464.

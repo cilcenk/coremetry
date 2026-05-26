@@ -433,6 +433,22 @@ export const api = {
   logsFieldValues: (field: string, q: string, limit = 20) =>
     get<{ values: string[] }>(
       `/api/logs/field-values?field=${encodeURIComponent(field)}&q=${encodeURIComponent(q)}&limit=${limit}`),
+  // ES index inventory for /admin/elastic — per-index name, doc
+  // count, size, health, ILM phase/policy. CH backend returns
+  // empty indices list (page shows "not Elasticsearch" state).
+  // v0.5.466.
+  adminElasticIndices: () =>
+    get<{
+      backend: string;
+      indices: Array<{
+        name: string;
+        docCount: number;
+        sizeBytes: number;
+        health: string;
+        ilmPolicy: string;
+        ilmPhase: string;
+      }>;
+    }>(`/api/admin/elastic/indices`),
   // v0.5.402 — surrounding context (±N logs around a pivot ts).
   // Datadog Context tab equivalent. Two parallel server-side
   // searches (before / after); 30-min symmetric window, capped

@@ -280,10 +280,132 @@ export default function AdminClickhousePage() {
                 </div>
               </Section>
             )}
+
+            {/* v0.6.8 — AI query optimizer. Operator pastes raw CH
+                SQL; Copilot rewrites it against Coremetry's MV
+                catalogue + hard-constraint checklist. Returns a
+                cleaned-up query the operator reviews + copies into
+                their CH client. Not a query runner — we don't
+                want a half-helpful UI that makes it tempting to
+                hand un-reviewed AI output a CH session. */}
+            <CHQueryOptimizer />
           </>
         )}
       </div>
     </>
+  );
+}
+
+function CHQueryOptimizer() {
+  const [query, setQuery] = useState('');
+  const [result, setResult] = useState<{
+    optimized: string; explanation: string;
+    warning?: string; raw?: string;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const run = async () => {
+    const q = query.trim();
+    if (!q) return;
+    setBusy(true); setErr(null); setResult(null);
+    try {
+      const r = await api.optimizeCHQuery(q);
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section style={{
+      marginTop: 24, padding: 16, background: 'var(--bg1)',
+      border: '1px solid var(--border)', borderRadius: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 14 }}>AI query optimizer</h3>
+        <span style={{
+          fontSize: 10, padding: '2px 6px', borderRadius: 4,
+          background: 'var(--accent2-bg)', color: 'var(--accent2)',
+        }}>v0.6.8</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>
+          MV bypass · LIMIT · max_execution_time · time-bounded WHERE
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px' }}>
+        Paste a ClickHouse query. AI rewrites it against Coremetry's MV catalogue
+        (<code>service_summary_5m</code>, <code>topology_edges_5m</code>, …) and the
+        hard-constraint checklist. Review before running — output is a suggestion, not auto-applied.
+      </p>
+      <textarea
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="SELECT service_name, count() FROM spans WHERE time >= now() - INTERVAL 1 HOUR GROUP BY service_name"
+        rows={6}
+        spellCheck={false}
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          fontFamily: 'ui-monospace, monospace', fontSize: 12,
+          padding: 10, background: 'var(--bg)', color: 'var(--text)',
+          border: '1px solid var(--border)', borderRadius: 6,
+        }}
+      />
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+        <button onClick={run} disabled={busy || !query.trim()}>
+          {busy ? 'Optimizing…' : 'Optimize'}
+        </button>
+        {err && <span style={{ color: 'var(--err)', fontSize: 12 }}>{err}</span>}
+      </div>
+      {result && (
+        <div style={{ marginTop: 14 }}>
+          {result.warning && (
+            <div style={{
+              fontSize: 12, color: 'var(--warn)', marginBottom: 8,
+              padding: '6px 10px', background: 'var(--warn-bg)',
+              borderRadius: 4,
+            }}>{result.warning}</div>
+          )}
+          {result.optimized && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>
+                Optimized SQL
+              </div>
+              <pre style={{
+                fontFamily: 'ui-monospace, monospace', fontSize: 12,
+                padding: 10, background: 'var(--bg)', color: 'var(--text)',
+                border: '1px solid var(--border)', borderRadius: 6,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>{result.optimized}</pre>
+            </>
+          )}
+          {result.explanation && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 10, marginBottom: 4 }}>
+                Explanation
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text)', margin: 0, lineHeight: 1.5 }}>
+                {result.explanation}
+              </p>
+            </>
+          )}
+          {!result.optimized && result.raw && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 10, marginBottom: 4 }}>
+                Raw model output
+              </div>
+              <pre style={{
+                fontFamily: 'ui-monospace, monospace', fontSize: 12,
+                padding: 10, background: 'var(--bg)', color: 'var(--text3)',
+                border: '1px solid var(--border)', borderRadius: 6,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>{result.raw}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

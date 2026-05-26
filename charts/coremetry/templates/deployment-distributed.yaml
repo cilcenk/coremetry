@@ -1,0 +1,198 @@
+{{/*
+  v0.6.2 — distributed topology: three Deployments running the same
+  image with different COREMETRY_MODE values. Banks running at scale
+  use this to scale receivers (ingest) independently from the read
+  fleet (api) while keeping background workloads (worker) singleton.
+
+  Selector labels include a per-role `app.kubernetes.io/component`
+  suffix (coremetry-ingest / coremetry-api / coremetry-worker) so a
+  later mode switch (distributed → monolithic) doesn't accidentally
+  adopt orphaned distributed-mode pods.
+
+  Pod spec is intentionally inlined per-role rather than factored
+  into a named template. Helm named templates obscure indentation
+  and make `helm template | less` harder to scan when debugging a
+  deploy; the small amount of duplication here is the readability
+  price. Diffs between roles read as obvious local additions.
+*/}}
+{{- if eq (default "monolithic" .Values.deployment.mode) "distributed" -}}
+{{- $fullname := include "coremetry.fullname" . -}}
+{{- $roles := list
+  (dict "name" "ingest" "mode" "ingest" "replicas" .Values.deployment.roles.ingest.replicas "resources" .Values.deployment.roles.ingest.resources)
+  (dict "name" "api"    "mode" "api"    "replicas" .Values.deployment.roles.api.replicas    "resources" .Values.deployment.roles.api.resources)
+  (dict "name" "worker" "mode" "worker" "replicas" .Values.deployment.roles.worker.replicas "resources" .Values.deployment.roles.worker.resources)
+-}}
+{{- range $role := $roles }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-{{ $role.name }}
+  labels:
+    {{- include "coremetry.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: coremetry-{{ $role.name }}
+spec:
+  # Worker stays at 1 because every job underneath it
+  # (evaluator/anomaly/topology/Drain/etc.) is leader-elected via
+  # Redis lock — running multiple workers wastes the lock arbitration
+  # without parallelising the work. Ingest + api scale freely.
+  replicas: {{ $role.replicas }}
+  selector:
+    matchLabels:
+      {{- include "coremetry.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: coremetry-{{ $role.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "coremetry.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: coremetry-{{ $role.name }}
+        {{- with $.Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        {{- if not $.Values.secrets.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}
+        {{- end }}
+        {{- with $.Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "coremetry.serviceAccountName" $ }}
+      {{- include "coremetry.imagePullSecrets" (dict "imageRoot" $.Values.image "global" $.Values.global) | nindent 6 }}
+      initContainers:
+        - name: wait-for-clickhouse
+          image: {{ include "coremetry.image" (dict "imageRoot" $.Values.image "global" $.Values.global "defaultTag" $.Chart.AppVersion) | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- with $.Values.securityContext }}
+          securityContext: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              addr="{{ include "coremetry.clickhouseAddr" $ }}"
+              host="${addr%:*}"
+              port="${addr##*:}"
+              echo "[init] waiting for clickhouse at $host:$port (up to 120s)"
+              for i in $(seq 1 60); do
+                if nc -z -w 2 "$host" "$port" 2>/dev/null; then
+                  echo "[init] clickhouse is reachable, proceeding"
+                  exit 0
+                fi
+                echo "[init] clickhouse not yet listening (poll $i/60), retrying in 2s"
+                sleep 2
+              done
+              echo "[init] gave up after 120s — clickhouse at $host:$port never became reachable" >&2
+              exit 1
+      {{- with $.Values.podSecurityContext }}
+      securityContext: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: coremetry
+          image: {{ include "coremetry.image" (dict "imageRoot" $.Values.image "global" $.Values.global "defaultTag" $.Chart.AppVersion) | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- with $.Values.securityContext }}
+          securityContext: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8088
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+          env:
+            - name: COREMETRY_MODE
+              value: {{ $role.mode | quote }}
+            - name: COREMETRY_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" $ }}
+                  key: jwt-secret
+                  optional: true
+            - name: COREMETRY_CH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" $ }}
+                  key: clickhouse-password
+                  optional: true
+            - name: COREMETRY_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" $ }}
+                  key: initial-admin-password
+                  optional: true
+            {{- if $.Values.config.auth.oidc.enabled }}
+            - name: COREMETRY_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" $ }}
+                  key: oidc-client-secret
+            {{- end }}
+            {{- $redisURL := include "coremetry.redisURL" $ }}
+            {{- if $redisURL }}
+            - name: COREMETRY_REDIS_URL
+              value: {{ $redisURL | quote }}
+            {{- end }}
+            {{- if eq (default "clickhouse" $.Values.logs.backend) "elasticsearch" }}
+            - name: COREMETRY_LOGS_BACKEND
+              value: "elasticsearch"
+            - name: COREMETRY_ES_ADDRESSES
+              value: {{ join "," $.Values.logs.elasticsearch.addresses | quote }}
+            - name: COREMETRY_ES_INDEX
+              value: {{ $.Values.logs.elasticsearch.index | quote }}
+            {{- if $.Values.logs.elasticsearch.username }}
+            - name: COREMETRY_ES_USERNAME
+              value: {{ $.Values.logs.elasticsearch.username | quote }}
+            {{- end }}
+            {{- if $.Values.logs.elasticsearch.insecureSkipVerify }}
+            - name: COREMETRY_ES_INSECURE
+              value: "true"
+            {{- end }}
+            - name: COREMETRY_ES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" $ }}
+                  key: es-password
+                  optional: true
+            - name: COREMETRY_ES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coremetry.secretName" $ }}
+                  key: es-api-key
+                  optional: true
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 15
+            failureThreshold: 4
+          {{- if $role.resources }}
+          resources: {{- toYaml $role.resources | nindent 12 }}
+          {{- else }}
+          resources: {{- toYaml $.Values.resources | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-config
+        - name: tmp
+          emptyDir: {}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.affinity }}
+      affinity: {{ toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end -}}

@@ -1,14 +1,26 @@
 {{- if .Values.autoscaling.enabled -}}
+{{/*
+  v0.6.2 — in distributed mode the HPA targets the api Deployment
+  (operator-facing read fleet). Worker is never autoscaled
+  (replicas=1 is a hard constraint — leader-elected jobs). Ingest
+  can be autoscaled but typically the operator sizes it explicitly
+  based on observed OTLP grpc QPS; if needed, add a second HPA
+  manually targeting <fullname>-ingest with custom external metrics.
+*/}}
+{{- $target := include "coremetry.fullname" . -}}
+{{- if eq (default "monolithic" .Values.deployment.mode) "distributed" -}}
+{{- $target = printf "%s-api" (include "coremetry.fullname" .) -}}
+{{- end -}}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "coremetry.fullname" . }}
+  name: {{ $target }}
   labels: {{- include "coremetry.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "coremetry.fullname" . }}
+    name: {{ $target }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:

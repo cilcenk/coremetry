@@ -34,6 +34,43 @@ image:
 
 replicaCount: 1         # safe to scale up — Redis lock arbitrates background workers
 
+# v0.6.2 — deployment topology.
+#
+#  monolithic  — one Deployment, mode=all (or unset; same thing).
+#                replicaCount above applies. Suitable for SME /
+#                POC / single-node installs. This is the default
+#                and matches every Coremetry release up to v0.5.x.
+#
+#  distributed — three Deployments running the same image in
+#                three roles via COREMETRY_MODE: ingest (OTLP
+#                receivers + CH writers), api (HTTP + UI + SSE),
+#                worker (evaluator + anomaly + topology agg +
+#                Drain + problem AI explainer). Worker MUST
+#                stay at 1 replica — its jobs are leader-elected
+#                via Redis lock and a single replica avoids the
+#                lock-contention overhead entirely.
+#
+# Both topologies use the same image, same Service for ClickHouse
+# + Redis access. Switching is a one-line values change + rolling
+# upgrade.
+deployment:
+  mode: monolithic      # monolithic | distributed
+  # Per-role config — only consulted in mode=distributed.
+  roles:
+    ingest:
+      replicas: 2       # scale up for OTLP fan-in load
+      # When empty, falls back to chart-wide .Values.resources.
+      # Override per role for asymmetric prod budgets (ingest is
+      # CPU/network-heavy, api is memory-heavy for serving the
+      # browser, worker is bursty CH-heavy).
+      resources: {}
+    api:
+      replicas: 2       # scale up for read HA + RPS
+      resources: {}
+    worker:
+      replicas: 1       # DO NOT change — leader-elected workloads
+      resources: {}
+
 # Pod-level options
 podAnnotations: {}
 podLabels: {}

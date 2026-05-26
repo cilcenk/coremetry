@@ -1,7 +1,31 @@
+{{/*
+  v0.6.2 — Service shape depends on deployment.mode.
+
+  monolithic — one Service `<fullname>` fronts the single Deployment,
+               same as v0.5.X. Both http (UI/API) + otlp-grpc on it.
+
+  distributed — three Services match each role's Deployment:
+               <fullname>          — alias for the api role (kept so
+                                     ingress / route / clients point
+                                     at the stable name)
+               <fullname>-ingest   — OTLP grpc + http health
+               <fullname>-api      — http (UI/API/SSE)
+               <fullname>-worker   — http health only (no traffic
+                                     routed here; this exists so
+                                     `kubectl get svc` reflects the
+                                     full topology)
+
+  The stable `<fullname>` Service is critical: ingress/route templates
+  reference it by name. In distributed mode it must select api pods,
+  so the otel-collector forwarding to it and the operator hitting
+  the UI both still resolve correctly.
+*/}}
+{{- $mode := default "monolithic" .Values.deployment.mode -}}
+{{- $fullname := include "coremetry.fullname" . -}}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "coremetry.fullname" . }}
+  name: {{ $fullname }}
   labels:
     {{- include "coremetry.labels" . | nindent 4 }}
     app.kubernetes.io/component: coremetry
@@ -10,18 +34,87 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
-  # Component-scoped selector — without this the Service routed to ALL
-  # pods sharing the chart-wide name+instance labels (CH, Redis, OTel
-  # Collector), which silently dropped traces and broke the UI.
   selector:
     {{- include "coremetry.selectorLabels" . | nindent 4 }}
+    {{- if eq $mode "distributed" }}
+    # In distributed mode the stable name aliases the api role —
+    # ingress + external clients reach UI/API through it.
+    app.kubernetes.io/component: coremetry-api
+    {{- else }}
     app.kubernetes.io/component: coremetry
+    {{- end }}
   ports:
     - name: http
       port: {{ .Values.service.httpPort }}
       targetPort: http
       protocol: TCP
+    {{- if eq $mode "monolithic" }}
     - name: otlp-grpc
       port: {{ .Values.service.grpcPort }}
       targetPort: otlp-grpc
       protocol: TCP
+    {{- end }}
+{{- if eq $mode "distributed" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-ingest
+  labels:
+    {{- include "coremetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coremetry-ingest
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "coremetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: coremetry-ingest
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.service.grpcPort }}
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-api
+  labels:
+    {{- include "coremetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coremetry-api
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "coremetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: coremetry-api
+  ports:
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-worker
+  labels:
+    {{- include "coremetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coremetry-worker
+spec:
+  # Worker Service exists for /api/health probe + observability;
+  # no caller routes traffic here. Stays ClusterIP-internal even
+  # if the parent service.type is LoadBalancer — workers never
+  # take external traffic.
+  type: ClusterIP
+  selector:
+    {{- include "coremetry.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: coremetry-worker
+  ports:
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

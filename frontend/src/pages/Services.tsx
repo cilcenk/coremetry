@@ -638,8 +638,8 @@ function SparkCell({
       <span>{value}</span>
       <span
         onClick={e => { e.stopPropagation(); onClick(); }}
-        title={title}
-        style={{ display: 'inline-block' }}
+        title={`${title} — click to open in the metric explorer`}
+        style={{ display: 'inline-block', cursor: 'pointer' }}
       >
         <Sparkline values={spark} color={color} title={title} />
       </span>

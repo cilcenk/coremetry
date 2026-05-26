@@ -632,9 +632,20 @@ export default function ServicesPage() {
 }
 
 // SparkCell renders the existing numeric value next to a small inline
-// sparkline. The sparkline area swallows the row click so the user
-// drills into Explore with the right aggregation pre-selected, instead
-// of navigating to /service.
+// sparkline. The sparkline area drills to /service when clicked.
+//
+// v0.6.14 — pass onClick directly to <Sparkline> so the SVG element
+// handles the click itself. Pre-v0.6.14 the wrapper <span> caught
+// the click while Sparkline's SVG (with no onClick prop) styled
+// itself `cursor: default`, sitting on top of the span and hiding
+// the pointer cursor — operators reported "sparkline tıklanmıyor"
+// (sparkline doesn't even appear clickable). The Sparkline
+// component (v0.5.485) already supports onClick + cursor:pointer
+// when set; using its native affordance is the fix.
+//
+// We still stop propagation on the wrapping span so a click on the
+// thin gap between the value text and the SVG doesn't double-fire
+// (row-level handler + sparkline handler).
 function SparkCell({
   value, spark, color, title, onClick,
 }: {
@@ -647,13 +658,12 @@ function SparkCell({
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
       <span>{value}</span>
-      <span
-        onClick={e => { e.stopPropagation(); onClick(); }}
-        title={`${title} — click to open in the metric explorer`}
-        style={{ display: 'inline-block', cursor: 'pointer' }}
-      >
-        <Sparkline values={spark} color={color} title={title} />
-      </span>
+      <Sparkline
+        values={spark}
+        color={color}
+        title={`${title} — click to open the service detail`}
+        onClick={onClick}
+      />
     </span>
   );
 }

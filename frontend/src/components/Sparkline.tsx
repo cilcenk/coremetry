@@ -137,7 +137,11 @@ export function Sparkline({
       aria-label={liveTitle}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
-      onClick={onClick}
+      // v0.6.14 — stop propagation so a wrapping row's onClick
+      // doesn't double-fire alongside the sparkline drill. The
+      // operator clicked the sparkline; that intent overrides
+      // any ambient row navigation behind it.
+      onClick={onClick ? (e) => { e.stopPropagation(); onClick(); } : undefined}
     >
       <title>{liveTitle}</title>
       <path d={areaPath} fill={stroke} fillOpacity={crossed ? 0.20 : 0.15} stroke="none" />

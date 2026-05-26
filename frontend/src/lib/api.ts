@@ -444,12 +444,6 @@ export const api = {
   // restarts so the "what's new since X" sort is meaningful.
   logsTemplates: (params: { sort?: 'first_seen' | 'last_seen' | 'count'; since?: string; limit?: number } = {}) =>
     get<import('./types').LogTemplate[]>(`/api/logs/templates?${qs(params)}`),
-  // Faceted sidebar buckets (v0.5.226). Same filter shape as
-  // /api/logs; returns top-N (value, count) per dimension so the
-  // UI can render click-to-add filter chips à la Kibana Discover.
-  logsFacets: (params: LogsParams & { topN?: number }) =>
-    get<Record<string, Array<{ value: string; count: number }>> | null>(
-      `/api/logs/facets?${qs(params)}`),
   // Similar-traces lookup (v0.5.141). more_like_this on the
   // configured body field + trace.id terms aggregation. ES-only;
   // CH backend returns 400.

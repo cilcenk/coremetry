@@ -11,7 +11,6 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { TracePeekDrawer } from '@/components/TracePeekDrawer';
-import { LogFacetsPanel } from '@/components/LogFacetsPanel';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogPatternStrip } from '@/components/LogPatternStrip';
@@ -518,24 +517,18 @@ function LogsInner() {
           )
         )}
         {data && logs.length > 0 && (
-          <div style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <LogTable logs={logs} nav={tableNav}
-                expandedIds={expanded}
-                onToggleExpand={toggle}
-                onFilterAdd={addFromRow}
-                onFilterExclude={excludeFromRow}
-                onTracePeek={tid => setPeekTraceId(tid)}
-                onContextOpen={l => setContextPivot(l)}
-                extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
-              <Pager page={page} pageSize={100} total={total} onPage={setPage}
-                     extras={<>{total.toLocaleString()} total</>} />
-            </div>
-            <LogFacetsPanel
-              filter={filter}
-              range={{ from, to }}
-              onPick={(key, value) => addFromRow(key, value)} />
-          </div>
+          <>
+            <LogTable logs={logs} nav={tableNav}
+              expandedIds={expanded}
+              onToggleExpand={toggle}
+              onFilterAdd={addFromRow}
+              onFilterExclude={excludeFromRow}
+              onTracePeek={tid => setPeekTraceId(tid)}
+              onContextOpen={l => setContextPivot(l)}
+              extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
+            <Pager page={page} pageSize={100} total={total} onPage={setPage}
+                   extras={<>{total.toLocaleString()} total</>} />
+          </>
         )}
       </div>
       <TracePeekDrawer traceId={peekTraceId} onClose={() => setPeekTraceId(null)} />

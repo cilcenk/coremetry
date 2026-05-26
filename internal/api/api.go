@@ -412,7 +412,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
-	mux.HandleFunc("GET /api/logs/facets",     s.getLogsFacets)
 	// v0.5.402 — surrounding context (±N logs around a pivot ts).
 	// Datadog Context tab equivalent. Two parallel logstore.Search
 	// calls (before / after) so the operator sees what was emitted
@@ -2819,57 +2818,6 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 			fields = []string{}
 		}
 		return map[string]any{"fields": fields, "backend": s.logs.Backend()}, nil
-	})
-}
-
-// getLogsFacets returns top-N (value, count) buckets per facet
-// dimension (service / severity / pod / cluster), scoped to the
-// same filter as /api/logs. Powers the v0.5.226 Kibana-style
-// sidebar that lets operators narrow by click instead of typing.
-// Cached 15s — narrow enough that a fresh filter shows current
-// counts without burning aggs on every keystroke.
-func (s *Server) getLogsFacets(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	sev, _ := strconv.Atoi(q.Get("severity"))
-	f := logstore.Filter{
-		Service:     q.Get("service"),
-		Search:      q.Get("search"),
-		From:        parseTime(q.Get("from")),
-		To:          parseTime(q.Get("to")),
-		SeverityMin: uint8(sev),
-		TraceID:     q.Get("traceId"),
-		SpanID:      q.Get("spanId"),
-	}
-	topN := parseInt(q.Get("topN"), 10)
-	// Default to the four facets the UI knows. Could be made
-	// caller-driven if a future surface wants more.
-	wantFields := []logstore.FacetField{
-		logstore.FacetService,
-		logstore.FacetSeverity,
-		logstore.FacetNamespace,
-		logstore.FacetDeployment,
-		logstore.FacetPod,
-		logstore.FacetContainer,
-		logstore.FacetCluster,
-	}
-	key := fmt.Sprintf("logs-facets:%s:%s:%s:%d:%d:%s:%d",
-		f.Service, f.Search, f.TraceID, f.SeverityMin,
-		f.From.Unix()/60, f.To.Format("2006010215"), topN)
-	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
-		res, err := s.logs.Facets(r.Context(), f, wantFields, topN)
-		if err != nil {
-			return nil, err
-		}
-		// Normalise to a stable JSON shape — UI doesn't care
-		// about the FacetField string type details.
-		out := map[string][]logstore.FacetBucket{}
-		for k, v := range res {
-			if v == nil {
-				v = []logstore.FacetBucket{}
-			}
-			out[string(k)] = v
-		}
-		return out, nil
 	})
 }
 

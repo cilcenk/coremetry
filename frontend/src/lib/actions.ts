@@ -14,19 +14,58 @@
 
 import { api } from './api';
 
+// SuggestItem — one row returned by a suggest() lookup. The
+// palette renders `label` (with optional `hint`); the action's
+// run() reads `id` and any auxiliary fields via `payload`.
+export interface SuggestItem {
+  id: string;
+  label: string;
+  hint?: string;
+  payload?: Record<string, string>;
+}
+
+// DurationOption — one chip for the 'duration' param kind. Value
+// is the duration in seconds (silence backend's body.durationSec).
+export interface DurationOption {
+  label: string;
+  seconds: number;
+}
+
+export const DEFAULT_DURATIONS: DurationOption[] = [
+  { label: '15m', seconds: 15 * 60 },
+  { label: '1h',  seconds: 60 * 60 },
+  { label: '2h',  seconds: 2 * 60 * 60 },
+  { label: '6h',  seconds: 6 * 60 * 60 },
+  { label: '24h', seconds: 24 * 60 * 60 },
+];
+
 export type ActionParam = {
   name: string;
   label: string;
-  // 'text': single-line free-form input. Sufficient for v1 across
-  // all five planned actions (ids and view names). Future: 'id-suggest'
-  // with autocomplete against /api/problems etc., 'duration' with
-  // chip row (15m / 1h / 2h / 24h).
-  kind: 'text';
+  // 'text'        — single-line free-form input.
+  // 'id-suggest'  — autocomplete dropdown; operator picks from
+  //                 dynamic results returned by suggest(q).
+  // 'duration'    — chip row; operator picks a preset second-count.
+  kind: 'text' | 'id-suggest' | 'duration';
   required: boolean;
   placeholder?: string;
+  // id-suggest only — fetches matching options as the operator types.
+  suggest?: (q: string) => Promise<SuggestItem[]>;
+  // duration only — overrides DEFAULT_DURATIONS for actions that
+  // want a different set of chips.
+  durations?: DurationOption[];
 };
 
 export type Role = 'admin' | 'editor' | 'viewer';
+
+// ParamValue — what each kind contributes to the action's
+// params bag:
+//   'text'       → string
+//   'id-suggest' → SuggestItem (id + label + payload)
+//   'duration'   → number (seconds)
+// Action.run() type-narrows based on the param kinds it declared.
+export type ParamValue = string | SuggestItem | number;
+export type ParamValues = Record<string, ParamValue>;
 
 export type Action = {
   id: string;
@@ -42,8 +81,12 @@ export type Action = {
   params: ActionParam[];
   // Returns a user-readable success message; throws an Error
   // (with a message) on failure. The caller wraps in toast.
-  run: (params: Record<string, string>) => Promise<string>;
+  run: (params: ParamValues) => Promise<string>;
 };
+
+// Helper to narrow text-kind param values; each text param is
+// guaranteed string by the palette UI, so the cast is safe.
+const txt = (v: ParamValue): string => typeof v === 'string' ? v : '';
 
 export const ACTIONS: Action[] = [
   {
@@ -59,8 +102,8 @@ export const ACTIONS: Action[] = [
       required: true,
       placeholder: 'problem-1234',
     }],
-    run: async ({ problemId }) => {
-      const id = problemId.trim();
+    run: async (params) => {
+      const id = txt(params.problemId).trim();
       if (!id) throw new Error('Problem ID required');
       const res = await api.acknowledgeProblems([id]);
       const n = res.acknowledged;
@@ -80,8 +123,8 @@ export const ACTIONS: Action[] = [
       required: true,
       placeholder: 'rule-uuid',
     }],
-    run: async ({ ruleId }) => {
-      const id = ruleId.trim();
+    run: async (params) => {
+      const id = txt(params.ruleId).trim();
       if (!id) throw new Error('Rule ID required');
       await api.disableAlertRule(id);
       return `Disabled rule ${id}`;
@@ -100,8 +143,8 @@ export const ACTIONS: Action[] = [
       required: true,
       placeholder: 'rule-uuid',
     }],
-    run: async ({ ruleId }) => {
-      const id = ruleId.trim();
+    run: async (params) => {
+      const id = txt(params.ruleId).trim();
       if (!id) throw new Error('Rule ID required');
       await api.enableAlertRule(id);
       return `Enabled rule ${id}`;
@@ -120,8 +163,8 @@ export const ACTIONS: Action[] = [
       required: true,
       placeholder: 'e.g. Payments errors',
     }],
-    run: async ({ name }) => {
-      const trimmed = name.trim();
+    run: async (params) => {
+      const trimmed = txt(params.name).trim();
       if (!trimmed) throw new Error('Name required');
       // Derive page + queryString from the current URL so the
       // operator gets "save THIS slice" without needing extra
@@ -130,6 +173,61 @@ export const ACTIONS: Action[] = [
       const queryString = window.location.search.replace(/^\?/, '');
       await api.createSavedView({ name: trimmed, page, queryString });
       return `Saved view "${trimmed}" on /${page}`;
+    },
+  },
+  {
+    id: 'silence-anomaly',
+    label: 'Silence anomaly',
+    hint: 'Mute a (kind, pattern, service) anomaly tuple for a duration',
+    keywords: ['silence', 'mute anomaly', 'snooze anomaly'],
+    allowedRoles: ['admin', 'editor'],
+    params: [
+      {
+        name: 'anomaly',
+        label: 'Anomaly',
+        kind: 'id-suggest',
+        required: true,
+        placeholder: 'Type a service or pattern…',
+        suggest: async (q: string) => {
+          const rows = await api.activeAnomalies(q);
+          // Each row carries the silence-create body's required
+          // fields under `payload`. The palette stashes the whole
+          // SuggestItem; run() reads them back.
+          return (rows ?? []).map(r => ({
+            id: r.id,
+            label: r.label,
+            hint: r.status === 'active' ? '● active' : '○ cleared',
+            payload: {
+              kind: r.kind,
+              pattern: r.pattern,
+              service: r.service,
+            },
+          }));
+        },
+      },
+      {
+        name: 'duration',
+        label: 'Duration',
+        kind: 'duration',
+        required: true,
+      },
+    ],
+    run: async (params) => {
+      const picked = params.anomaly as SuggestItem | undefined;
+      const seconds = typeof params.duration === 'number' ? params.duration : 0;
+      if (!picked) throw new Error('Anomaly required');
+      if (seconds <= 0) throw new Error('Duration required');
+      const p = picked.payload ?? {};
+      await api.createAnomalySilence({
+        fingerprint: picked.id,
+        kind: p.kind ?? '',
+        pattern: p.pattern ?? '',
+        service: p.service ?? '',
+        durationSec: seconds,
+      });
+      const niceDur = (DEFAULT_DURATIONS.find(d => d.seconds === seconds)?.label
+                    ?? `${Math.round(seconds / 60)}m`);
+      return `Silenced "${picked.label}" for ${niceDur}`;
     },
   },
 ];

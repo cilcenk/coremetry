@@ -232,6 +232,30 @@ else
     printf "${GRN}✓ clean${NC}\n"
 fi
 
+# ─── CHECK 7: duplicate route registration (v0.5.483) ───────
+# Go's net/http ServeMux panics at boot when two handlers
+# register the same "METHOD /path" pattern. Caught the hard
+# way during v0.5.476 → v0.5.482: `mux.HandleFunc("GET /api/
+# events", ...)` collided with the existing SSE stream's
+# `mux.Handle("GET /api/events", ...)`. make audit's regex
+# spotter would have caught it pre-tag.
+#
+# Pattern: extract `<METHOD> <PATH>` from both mux.Handle and
+# mux.HandleFunc strings, normalise whitespace, sort + uniq -d.
+hr
+echo "CHECK 7 — duplicate net/http route registration"
+hits=$(grep -hE 'mux\.Handle(Func)?\("[A-Z]+[[:space:]]+/' internal/api/*.go 2>/dev/null \
+    | grep -oE '"[A-Z]+[[:space:]]+[^"]*"' \
+    | sed -E 's/"//g; s/[[:space:]]+/ /g' \
+    | sort \
+    | uniq -d \
+    | filter_ignored || true)
+if [ -n "$hits" ]; then
+    while IFS= read -r line; do crit "duplicate route: $line"; done <<< "$hits"
+else
+    printf "${GRN}✓ clean${NC}\n"
+fi
+
 # ─── Summary ────────────────────────────────────────────────
 hr
 SUPPRESSED=$(awk '{ s += $1 } END { print s+0 }' "$SUPPRESS_LOG")

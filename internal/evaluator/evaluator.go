@@ -907,11 +907,35 @@ func (e *Evaluator) defaultAssignee(ctx context.Context, service string) string 
 	return md.SRETeam
 }
 
+// useSummaryMV decides whether a measure() / measureCount() call
+// for the given alert window can ride the 5-minute MV instead of
+// scanning raw spans. v0.6.12 — every basic RED metric the
+// evaluator measures (count, error_rate, error_count, request_rate,
+// avg/p50/p95/p99 latency) has an aggregating-state counterpart in
+// service_summary_5m, so windows >= 5min are served from the MV at
+// constant cost. Sub-5min windows fall back to raw spans (with
+// bounds) because the MV's 5-min granularity can't reconstruct
+// them faithfully — single eval tick over a smaller window is fine
+// to spans-scan since the WHERE is already (service_name, time)
+// indexed-bound.
+func useSummaryMV(window time.Duration) bool {
+	return window >= 5*time.Minute
+}
+
 func (e *Evaluator) measureCount(ctx context.Context, service string, window time.Duration) (uint64, error) {
 	cutoff := time.Now().Add(-window)
 	var n uint64
+	if useSummaryMV(window) {
+		err := e.store.Conn().QueryRow(ctx, `
+			SELECT countMerge(span_count_state) FROM service_summary_5m
+			WHERE service_name = ? AND time_bucket >= ?
+			SETTINGS max_execution_time = 10`,
+			service, cutoff).Scan(&n)
+		return n, err
+	}
 	err := e.store.Conn().QueryRow(ctx, `
-		SELECT count() FROM spans WHERE service_name = ? AND time >= ?`,
+		SELECT count() FROM spans WHERE service_name = ? AND time >= ?
+		SETTINGS max_execution_time = 10`,
 		service, cutoff).Scan(&n)
 	return n, err
 }
@@ -919,45 +943,103 @@ func (e *Evaluator) measureCount(ctx context.Context, service string, window tim
 func (e *Evaluator) measure(ctx context.Context, service, metric string, window time.Duration) (float64, error) {
 	cutoff := time.Now().Add(-window)
 	conn := e.store.Conn()
+	mv := useSummaryMV(window)
 
 	switch metric {
 	case "error_rate":
 		var v float64
-		err := conn.QueryRow(ctx, `
-			SELECT countIf(status_code='error') / nullIf(count(),0) * 100
-			FROM spans WHERE service_name = ? AND time >= ?`,
-			service, cutoff).Scan(&v)
+		var sql string
+		if mv {
+			sql = `SELECT toFloat64(countMerge(error_count_state)) /
+			              nullIf(toFloat64(countMerge(span_count_state)),0) * 100
+			       FROM service_summary_5m
+			       WHERE service_name=? AND time_bucket>=?
+			       SETTINGS max_execution_time = 10`
+		} else {
+			sql = `SELECT countIf(status_code='error') / nullIf(count(),0) * 100
+			       FROM spans WHERE service_name=? AND time>=?
+			       SETTINGS max_execution_time = 10`
+		}
+		err := conn.QueryRow(ctx, sql, service, cutoff).Scan(&v)
 		if err != nil {
 			return 0, err
 		}
 		return v, nil
 	case "error_count":
 		var n uint64
-		err := conn.QueryRow(ctx, `
-			SELECT countIf(status_code='error')
-			FROM spans WHERE service_name = ? AND time >= ?`,
-			service, cutoff).Scan(&n)
+		var sql string
+		if mv {
+			sql = `SELECT countMerge(error_count_state) FROM service_summary_5m
+			       WHERE service_name=? AND time_bucket>=?
+			       SETTINGS max_execution_time = 10`
+		} else {
+			sql = `SELECT countIf(status_code='error') FROM spans
+			       WHERE service_name=? AND time>=?
+			       SETTINGS max_execution_time = 10`
+		}
+		err := conn.QueryRow(ctx, sql, service, cutoff).Scan(&n)
 		if err != nil {
 			return 0, err
 		}
 		return float64(n), nil
 	case "request_rate":
 		var n uint64
-		err := conn.QueryRow(ctx, `
-			SELECT count() FROM spans WHERE service_name = ? AND time >= ?`,
-			service, cutoff).Scan(&n)
+		var sql string
+		if mv {
+			sql = `SELECT countMerge(span_count_state) FROM service_summary_5m
+			       WHERE service_name=? AND time_bucket>=?
+			       SETTINGS max_execution_time = 10`
+		} else {
+			sql = `SELECT count() FROM spans WHERE service_name=? AND time>=?
+			       SETTINGS max_execution_time = 10`
+		}
+		err := conn.QueryRow(ctx, sql, service, cutoff).Scan(&n)
 		if err != nil {
 			return 0, err
 		}
 		return float64(n) / window.Seconds(), nil
 	case "p50_ms", "p95_ms", "p99_ms", "avg_ms":
 		var sql string
-		switch metric {
-		case "avg_ms":
-			sql = `SELECT avg(duration) / 1e6 FROM spans WHERE service_name=? AND time>=?`
-		default:
-			q := metric[1 : len(metric)-3] // "50" / "95" / "99"
-			sql = fmt.Sprintf(`SELECT quantile(0.%s)(duration) / 1e6 FROM spans WHERE service_name=? AND time>=?`, q)
+		if mv {
+			// quantilesMerge returns the full tuple; arrayElement
+			// picks the requested index. Indices match the MV's
+			// quantilesState(0.5, 0.95, 0.99) ordering: 1=p50,
+			// 2=p95, 3=p99. duration_q_state is the merge target.
+			switch metric {
+			case "avg_ms":
+				sql = `SELECT toFloat64(sumMerge(duration_sum_state)) /
+				              nullIf(toFloat64(countMerge(span_count_state)),0) / 1e6
+				       FROM service_summary_5m
+				       WHERE service_name=? AND time_bucket>=?
+				       SETTINGS max_execution_time = 10`
+			case "p50_ms":
+				sql = `SELECT arrayElement(quantilesMerge(0.5,0.95,0.99)(duration_q_state), 1) / 1e6
+				       FROM service_summary_5m
+				       WHERE service_name=? AND time_bucket>=?
+				       SETTINGS max_execution_time = 10`
+			case "p95_ms":
+				sql = `SELECT arrayElement(quantilesMerge(0.5,0.95,0.99)(duration_q_state), 2) / 1e6
+				       FROM service_summary_5m
+				       WHERE service_name=? AND time_bucket>=?
+				       SETTINGS max_execution_time = 10`
+			case "p99_ms":
+				sql = `SELECT arrayElement(quantilesMerge(0.5,0.95,0.99)(duration_q_state), 3) / 1e6
+				       FROM service_summary_5m
+				       WHERE service_name=? AND time_bucket>=?
+				       SETTINGS max_execution_time = 10`
+			}
+		} else {
+			switch metric {
+			case "avg_ms":
+				sql = `SELECT avg(duration) / 1e6 FROM spans
+				       WHERE service_name=? AND time>=?
+				       SETTINGS max_execution_time = 10`
+			default:
+				q := metric[1 : len(metric)-3] // "50" / "95" / "99"
+				sql = fmt.Sprintf(`SELECT quantile(0.%s)(duration) / 1e6
+				                   FROM spans WHERE service_name=? AND time>=?
+				                   SETTINGS max_execution_time = 10`, q)
+			}
 		}
 		var v float64
 		err := conn.QueryRow(ctx, sql, service, cutoff).Scan(&v)
@@ -978,22 +1060,29 @@ func (e *Evaluator) measure(ctx context.Context, service, metric string, window 
 	// — narrowing WHERE by 5xx — would produce 100% trivially.
 	if where, numerator, ok := transportFilter(metric); ok {
 		op := transportOp(metric)
+		// v0.6.12 — every transport-scoped query stays on raw
+		// spans because service_summary_5m has no breakdown by
+		// http_method / db_system / rpc_system / kind. The
+		// indexed (service_name, time) prefix still drives the
+		// scan, but we now cap wall-clock at 10s so a CH lock
+		// fight can't pin the evaluator tick.
+		const settings = ` SETTINGS max_execution_time = 10`
 		var sql string
 		switch op {
 		case "error_rate":
 			sql = `SELECT countIf(` + numerator + `) * 100.0 / nullIf(count(),0)
-				FROM spans WHERE service_name=? AND time>=? AND ` + where
+				FROM spans WHERE service_name=? AND time>=? AND ` + where + settings
 		case "p50_ms", "p95_ms", "p99_ms", "avg_ms":
 			if op == "avg_ms" {
 				sql = `SELECT avg(duration) / 1e6
-					FROM spans WHERE service_name=? AND time>=? AND ` + where
+					FROM spans WHERE service_name=? AND time>=? AND ` + where + settings
 			} else {
 				q := op[1 : len(op)-3]
 				sql = fmt.Sprintf(`SELECT quantile(0.%s)(duration) / 1e6
-					FROM spans WHERE service_name=? AND time>=? AND `, q) + where
+					FROM spans WHERE service_name=? AND time>=? AND `, q) + where + settings
 			}
 		case "count":
-			sql = `SELECT count() FROM spans WHERE service_name=? AND time>=? AND ` + where
+			sql = `SELECT count() FROM spans WHERE service_name=? AND time>=? AND ` + where + settings
 		default:
 			return 0, fmt.Errorf("unknown transport op %q in %q", op, metric)
 		}

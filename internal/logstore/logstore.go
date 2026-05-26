@@ -150,6 +150,17 @@ type Store interface {
 	// "_total" series.
 	Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error)
 
+	// FieldValues returns top values of a single indexed field
+	// matching a typed prefix. Backs the /logs search box's
+	// field-aware autocomplete (v0.5.464): operator types
+	// "service.name:" → dropdown shows suggested service names
+	// from the data itself. Empty prefix returns the most common
+	// values. ES backend uses _terms_enum for sub-ms prefix
+	// lookups; CH backend returns [] for now (CH-native
+	// DISTINCT-with-LIKE is straightforward but the KQL search
+	// box is Kibana-flavoured already, less urgent on CH).
+	FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error)
+
 	// Backend returns a short identifier shown in /api/health so an operator
 	// can tell at a glance which log source is wired in.
 	Backend() string

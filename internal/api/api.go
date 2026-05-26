@@ -412,6 +412,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
+	// v0.5.464 — field-aware autocomplete on the /logs search
+	// box. ES _terms_enum on keyword subfields for sub-ms prefix
+	// lookups; CH backend returns [] (handler degrades silently).
+	mux.HandleFunc("GET /api/logs/field-values", s.getLogsFieldValues)
 	// v0.5.402 — surrounding context (±N logs around a pivot ts).
 	// Datadog Context tab equivalent. Two parallel logstore.Search
 	// calls (before / after) so the operator sees what was emitted
@@ -2851,6 +2855,44 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 			fields = []string{}
 		}
 		return map[string]any{"fields": fields, "backend": s.logs.Backend()}, nil
+	})
+}
+
+// getLogsFieldValues returns top values of a single keyword
+// field matching a typed prefix (v0.5.464). Powers the /logs
+// search box autocomplete that fires when the operator types
+// "service.name:" — the dropdown then shows real service names
+// from the indexed data. Sub-ms latency via ES _terms_enum on
+// keyword subfields; CH backend returns an empty list.
+//
+// Cached briefly (30s) — values change slowly and the operator
+// will type new prefixes in rapid succession (each is a fresh
+// cache key).
+func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	field := strings.TrimSpace(q.Get("field"))
+	prefix := q.Get("q")
+	limit := parseInt(q.Get("limit"), 20)
+	if field == "" {
+		writeJSON(w, map[string]any{"values": []string{}})
+		return
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	key := fmt.Sprintf("logs-field-values:%s:%s:%d", field, prefix, limit)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		vals, err := s.logs.FieldValues(r.Context(), field, prefix, limit)
+		if err != nil {
+			// Don't 500 on bad field names — the autocomplete UI
+			// already tolerates an empty list, and a typed
+			// "lkjasdf:" shouldn't surface as a red banner.
+			return map[string]any{"values": []string{}}, nil
+		}
+		if vals == nil {
+			vals = []string{}
+		}
+		return map[string]any{"values": vals}, nil
 	})
 }
 

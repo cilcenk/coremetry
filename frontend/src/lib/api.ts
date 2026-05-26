@@ -427,6 +427,12 @@ export const api = {
   // mapping leaves. Server caches 60s.
   logsFields: () => get<{ fields: string[]; backend: string }>(
     `/api/logs/fields`),
+  // Top values of one keyword field prefix-matched against `q`.
+  // Backs the /logs search box autocomplete (v0.5.464). Returns
+  // an empty list on CH backend or invalid field — caller tolerates.
+  logsFieldValues: (field: string, q: string, limit = 20) =>
+    get<{ values: string[] }>(
+      `/api/logs/field-values?field=${encodeURIComponent(field)}&q=${encodeURIComponent(q)}&limit=${limit}`),
   // v0.5.402 — surrounding context (±N logs around a pivot ts).
   // Datadog Context tab equivalent. Two parallel server-side
   // searches (before / after); 30-min symmetric window, capped

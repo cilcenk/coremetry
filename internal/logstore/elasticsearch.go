@@ -187,6 +187,66 @@ func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// FieldValues uses ES _terms_enum (since 7.14) to prefix-match
+// indexed term values for a single field. Sub-ms latency on
+// keyword fields, even on billion-doc indices. v0.5.464.
+//
+// Tries `field.keyword` first if the operator gave a plain name
+// (most ES mappings expose a .keyword subfield alongside text
+// types — _terms_enum only works on keyword/constant_keyword).
+// Falls back to the bare field on failure. Case-insensitive
+// matching is supported by _terms_enum natively (unlike
+// query_string per v0.5.231).
+func (s *ESStore) FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error) {
+	if field == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	try := func(f string) ([]string, error) {
+		body := map[string]any{
+			"field":            f,
+			"string":           prefix,
+			"size":             limit,
+			"case_insensitive": true,
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		req := esapi.TermsEnumRequest{
+			Index: []string{s.cfg.Index},
+			Body:  bytes.NewReader(raw),
+		}
+		res, err := req.Do(ctx, s.cli)
+		if err != nil {
+			return nil, err
+		}
+		defer res.Body.Close()
+		if res.IsError() {
+			return nil, fmt.Errorf("terms_enum %s: %s", f, res.String())
+		}
+		var decoded struct {
+			Terms []string `json:"terms"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
+			return nil, err
+		}
+		return decoded.Terms, nil
+	}
+	// Try .keyword subfield first when caller passed a bare name
+	// (no dot suffix). If the mapping doesn't have one, fall back
+	// to the bare field — for ECS-shaped indices, dotted paths
+	// like `service.name` are already the keyword field.
+	if !strings.HasSuffix(field, ".keyword") {
+		if terms, err := try(field + ".keyword"); err == nil && len(terms) > 0 {
+			return terms, nil
+		}
+	}
+	return try(field)
+}
+
 // walkProperties recurses into ES mapping properties to flatten
 // nested types (object / nested) into dot paths. Skips internal
 // fields starting with "_". Only emits leaf paths whose type

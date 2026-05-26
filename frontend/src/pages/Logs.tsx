@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
+import { KqlSearchInput } from '@/components/KqlSearchInput';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -312,19 +313,19 @@ function LogsInner() {
         <div className="controls">
           <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
             placeholder="Service…" width={170} onEnter={apply} />
-          <input
-            placeholder='Search… (KQL: level:error AND service.name:"checkout")'
+          <KqlSearchInput
             value={draft.search}
-            onChange={e => setDraft({ ...draft, search: e.target.value })}
-            onKeyDown={e => e.key === 'Enter' && apply()}
+            onChange={v => setDraft({ ...draft, search: v })}
+            onSubmit={apply}
+            placeholder='Search… (KQL: level:error AND service.name:"checkout")'
             title={'Free-text on body OR KQL/Lucene syntax (Elasticsearch backend).\n\n' +
               'Examples:\n' +
               '  level:error\n' +
               '  service.name:"checkout-svc" AND NOT message:health\n' +
               '  trace.id:c9ea*\n' +
               '  message:"connection refused" AND k8s.namespace:prod\n\n' +
-              'Plain words match the body. Use double quotes for exact phrases.'}
-            style={{ width: 380 }} />
+              'Plain words match the body. Use double quotes for exact phrases.\n\n' +
+              'Field-aware autocomplete (v0.5.464): type `field:` and pick from the dropdown.'} />
           {fields.length > 0 && (
             <button type="button" className="sec"
               onClick={() => setShowFieldsHint(v => !v)}

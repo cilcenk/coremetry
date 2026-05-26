@@ -491,3 +491,20 @@ func chBuildTokenLiteral(tokens []string) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
+// FieldValues — CH stub (v0.5.464). The KQL search box's
+// field-aware autocomplete is Kibana-flavoured and primarily
+// useful on ES installs; CH operators tend to filter via the
+// explicit FilterBuilder UI instead. Returning empty makes the
+// autocomplete simply not surface on CH backends, which
+// degrades gracefully without spurious "no matches" rows.
+// A CH-native implementation (SELECT DISTINCT field WHERE
+// field LIKE prefix% LIMIT) can land as a follow-up if
+// operators report wanting it.
+func (s *CHStore) FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error) {
+	_ = ctx
+	_ = field
+	_ = prefix
+	_ = limit
+	return nil, nil
+}
+

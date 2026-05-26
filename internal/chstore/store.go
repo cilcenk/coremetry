@@ -1057,6 +1057,33 @@ func (s *Store) migrate(ctx context.Context) error {
 			version        UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
+
+		// v0.5.476 — operator events. Manual time markers
+		// ("deploy v1.2.3", "feature flag X rollout", "incident
+		// #5 started") that surface as vertical lines on every
+		// time-series chart in Coremetry. Datadog Events /
+		// Honeycomb Markers / Grafana Annotations are the
+		// reference primitives — operators have built mental
+		// models around having these everywhere, and the gap
+		// shows up most during incident retros ("what was
+		// happening 4 min before the spike?").
+		//
+		// ORDER BY (time, id) so /api/events?from=X&to=Y prunes
+		// down to the window via the primary index instead of
+		// scanning all events. Service is LowCardinality since
+		// most events scope to one service (or empty = global).
+		`CREATE TABLE IF NOT EXISTS events (
+			id          String,
+			kind        LowCardinality(String),  -- deploy | config | incident | maintenance | custom
+			label       String,                   -- short operator-typed title
+			time        DateTime64(9),            -- when the event happened (operator-supplied)
+			service     LowCardinality(String) DEFAULT '',
+			link        String DEFAULT '',        -- optional URL (PR, ticket, runbook)
+			owner       String,                   -- creator email
+			created_at  DateTime64(9) DEFAULT now64(9),
+			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY (time, id)`,
 		// v0.5.209 — triage assignee. Populated from service
 		// metadata's owner_team when the problem opens, then
 		// overridable by an operator claim via PATCH

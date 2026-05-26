@@ -545,6 +545,13 @@ func (s *Server) Start() error {
 	// into a Coremetry /logs saved_view. Admin-gated.
 	mux.HandleFunc("GET  /api/admin/elastic/saved-search-export", auth.RequireRole(auth.RoleAdmin, s.exportSavedViewsToKibana))
 	mux.HandleFunc("POST /api/admin/elastic/saved-search-import", auth.RequireRole(auth.RoleAdmin, s.importSavedViewsFromKibana))
+	// v0.5.476 — operator events ("deploy v1.2.3", "config
+	// change", "incident start"). Vertical markers on every
+	// time-series chart. List is open to any signed-in role;
+	// create + delete are editor+ since they mutate.
+	mux.HandleFunc("GET    /api/events",      s.listEvents)
+	mux.HandleFunc("POST   /api/events",      auth.RequireAnyRole(editorRoles, s.createEvent))
+	mux.HandleFunc("DELETE /api/events/{id}", auth.RequireAnyRole(editorRoles, s.deleteEvent))
 	// Saved views — per-user CRUD (server scopes by session).
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)

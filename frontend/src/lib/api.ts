@@ -456,6 +456,21 @@ export const api = {
     request<{ imported: number; skipped: number; errors?: string[] }>(
       `/api/admin/elastic/saved-search-import`,
       { method: 'POST', headers: { 'Content-Type': 'application/x-ndjson' }, body: ndjson }),
+  // Operator events (v0.5.476) — list + create + delete the
+  // vertical markers operators drop on every time-series chart.
+  listEvents: (params: { from?: number; to?: number; service?: string; kind?: string; limit?: number } = {}) =>
+    get<Array<{
+      id: string; kind: string; label: string;
+      time: number; service: string; link: string;
+      owner: string; createdAt: number;
+    }> | null>(`/api/events?${qs(params)}`),
+  createEvent: (body: { kind?: string; label: string; time?: number; service?: string; link?: string }) =>
+    request<{ id: string }>(`/api/events`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteEvent: (id: string) =>
+    request<void>(`/api/events/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // ES Event Query Language sequence detection. v0.5.468.
   runLogsEQL: (body: { query: string; fromMs?: number; toMs?: number; size?: number }) =>
     request<{

@@ -176,6 +176,30 @@ export const ACTIONS: Action[] = [
     },
   },
   {
+    id: 'mark-event',
+    label: 'Mark event',
+    hint: 'Drop a vertical marker on every time-series chart (deploy, config change, incident, …)',
+    keywords: ['mark', 'event', 'deploy', 'annotate'],
+    allowedRoles: ['admin', 'editor'],
+    params: [{
+      name: 'label',
+      label: 'Label',
+      kind: 'text',
+      required: true,
+      placeholder: 'e.g. payments v1.2.3 deployed',
+    }],
+    run: async (params) => {
+      const label = txt(params.label).trim();
+      if (!label) throw new Error('Label required');
+      // v0.5.476 — single-param flow for now; service / kind /
+      // link can be expressed by typing them into label as
+      // human-readable text. A richer multi-param flow can come
+      // later once operators tell us what they actually need.
+      await api.createEvent({ label, kind: 'custom' });
+      return `Marked "${label}"`;
+    },
+  },
+  {
     id: 'silence-anomaly',
     label: 'Silence anomaly',
     hint: 'Mute a (kind, pattern, service) anomaly tuple for a duration',

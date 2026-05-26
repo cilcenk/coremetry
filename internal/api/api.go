@@ -324,6 +324,12 @@ func (s *Server) Start() error {
 	// merges, part-count hotspots, replication queue lag. Admin
 	// only — same gate the rest of /admin/* uses.
 	mux.HandleFunc("GET /api/admin/clickhouse", auth.RequireRole(auth.RoleAdmin, s.getClickHouseHealth))
+	// v0.6.8 — admin-only CH query AI optimizer. Operator pastes
+	// raw SQL; server runs it through the Copilot with the
+	// SystemPromptCHQueryOptimize template that knows the MV
+	// catalogue + the hard-constraint checklist. Returns
+	// {optimized, explanation}.
+	mux.HandleFunc("POST /api/admin/clickhouse/optimize-query", auth.RequireRole(auth.RoleAdmin, s.copilotOptimizeCHQuery))
 	mux.HandleFunc("GET /api/correlations",       s.getCorrelations)
 	mux.HandleFunc("GET /api/admin/redis-stats",  s.getRedisStats)
 	mux.HandleFunc("GET /api/admin/cache-stats",  auth.RequireRole(auth.RoleAdmin, s.getCacheStats))

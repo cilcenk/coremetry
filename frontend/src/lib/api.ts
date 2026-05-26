@@ -1495,6 +1495,22 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt }),
     }),
+
+  // v0.6.8 — admin-only CH query AI optimizer. Operator pastes
+  // raw CH SQL; server rewrites it to comply with Coremetry's
+  // hard-constraint checklist (MV bypass, LIMIT, settings,
+  // time-bounded WHERE) and returns {optimized, explanation}.
+  optimizeCHQuery: (query: string) =>
+    request<{
+      optimized: string;
+      explanation: string;
+      warning?: string;
+      raw?: string;
+    }>(`/api/admin/clickhouse/optimize-query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    }),
 };
 
 export interface PipelineRule {

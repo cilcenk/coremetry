@@ -550,9 +550,12 @@ func (s *Server) Start() error {
 	// change", "incident start"). Vertical markers on every
 	// time-series chart. List is open to any signed-in role;
 	// create + delete are editor+ since they mutate.
-	mux.HandleFunc("GET    /api/events",      s.listEvents)
-	mux.HandleFunc("POST   /api/events",      auth.RequireAnyRole(editorRoles, s.createEvent))
-	mux.HandleFunc("DELETE /api/events/{id}", auth.RequireAnyRole(editorRoles, s.deleteEvent))
+	// v0.5.482 — moved off /api/events (was colliding with the
+	// existing SSE stream at line 320). /api/operator-events is
+	// explicit anyway.
+	mux.HandleFunc("GET    /api/operator-events",      s.listEvents)
+	mux.HandleFunc("POST   /api/operator-events",      auth.RequireAnyRole(editorRoles, s.createEvent))
+	mux.HandleFunc("DELETE /api/operator-events/{id}", auth.RequireAnyRole(editorRoles, s.deleteEvent))
 	// Saved views — per-user CRUD (server scopes by session).
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)

@@ -92,8 +92,10 @@ func IsSensitiveLine(body string) bool {
 //   - UUID (8-4-4-4-12 hex with dashes; case-insensitive)
 //   - Hex strings ≥16 chars (trace IDs are 32-hex, span IDs
 //     16-hex, MD5 32-hex, SHA-1 40-hex, SHA-256 64-hex)
-//   - Numeric strings ≥10 digits (request IDs, epoch
-//     timestamps, monotonic counters)
+//   - All-digit strings ≥4 digits (sequence IDs, request
+//     counters, port numbers, epoch timestamps). 3-digit cutoff
+//     preserved so HTTP status codes (200, 404, 500) still
+//     surface as meaningful patterns.
 //   - Long base64url ≥24 chars with no English-letter run ≥5
 //   - High-digit-ratio tokens (≥60% digits AND length ≥ 10)
 //     — catches mixed alphanumeric IDs like "a1b2c3d4e5f6"
@@ -106,6 +108,14 @@ func IsSensitiveLine(body string) bool {
 // strings; the broader ID shapes leaked through.
 func LooksLikeOpaqueID(tok string) bool {
 	n := len(tok)
+	// v0.5.465 — short-numeric check runs BEFORE the n < 10
+	// early return. The other rules (JWT, UUID, hex digests,
+	// base64) all need ≥10 chars to make sense, but 4-9 digit
+	// all-numeric tokens are sequence IDs / request counters
+	// that the operator wants filtered too.
+	if n >= 4 && isAllDigits(tok) {
+		return true
+	}
 	if n < 10 {
 		return false
 	}
@@ -126,11 +136,9 @@ func LooksLikeOpaqueID(tok string) bool {
 	if n >= 16 && isHexish(tok) {
 		return true
 	}
-	// All-digit string ≥10 chars (request IDs, ms-epoch
-	// timestamps, monotonic counters).
-	if n >= 10 && isAllDigits(tok) {
-		return true
-	}
+	// (All-digit check above the n < 10 short-circuit handles
+	// every length ≥ 4; this branch is now unreachable but
+	// kept commented for legibility of the rule list.)
 	// High-digit-ratio mixed tokens — random alphanumeric IDs
 	// like "a1b2c3d4e5f6789" or "tx_88273482ab12". A real word
 	// rarely has >50% digits; an ID often does.

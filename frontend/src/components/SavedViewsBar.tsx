@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts, type Shortcut } from '@/lib/keyboard';
 import { api } from '@/lib/api';
+import { toast } from '@/lib/toast';
 import type { SavedView } from '@/lib/types';
 
 // Normalise a URL query string so two semantically-equal forms
@@ -117,17 +118,29 @@ export function SavedViewsBar({ page }: { page: string }) {
     if (!trimmed) return;
     // Strip leading '?' so the server stores a stable search string.
     const qs = window.location.search.replace(/^\?/, '');
-    await api.createSavedView({ name: trimmed, page, queryString: qs, shared });
-    setName('');
-    setShared(false);
-    setShowSaver(false);
-    api.savedViews(page).then(v => setViews(v ?? []));
+    try {
+      await api.createSavedView({ name: trimmed, page, queryString: qs, shared });
+      setName('');
+      setShared(false);
+      setShowSaver(false);
+      api.savedViews(page).then(v => setViews(v ?? []));
+      toast.success(`Saved view "${trimmed}"`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Failed to save view: ${msg}`);
+    }
   };
 
   const remove = async (v: SavedView) => {
     if (!confirm(`Delete saved view "${v.name}"?`)) return;
-    await api.deleteSavedView(v.id);
-    api.savedViews(page).then(v => setViews(v ?? []));
+    try {
+      await api.deleteSavedView(v.id);
+      api.savedViews(page).then(v => setViews(v ?? []));
+      toast.success(`Deleted view "${v.name}"`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Failed to delete view: ${msg}`);
+    }
   };
 
   if (views === undefined) return null;

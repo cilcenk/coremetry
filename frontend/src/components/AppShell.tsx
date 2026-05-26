@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar';
 import { ShortcutsHelp } from './ShortcutsHelp';
 import { CommandPalette } from './CommandPalette';
 import { GlobalShortcuts } from './GlobalShortcuts';
+import { Toaster } from './Toaster';
 import { useAuth } from './AuthProvider';
 import { useEventStream } from '@/lib/queries';
 import { useShortcuts } from '@/lib/keyboard';
@@ -144,6 +145,10 @@ export function AppShell() {
           Self-contained, renders null. Mounted here so every
           authenticated page inherits the bindings. */}
       <GlobalShortcuts />
+      {/* Toaster (v0.5.455) — singleton notification surface.
+          toast.success/error/info from anywhere in the app lands
+          here. Renders null when empty so no overhead. */}
+      <Toaster />
     </div>
   );
 }

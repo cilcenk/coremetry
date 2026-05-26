@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Combobox } from '@/components/Combobox';
@@ -11,6 +12,7 @@ import { DrillButton } from '@/components/DrillButton';
 import { ShareButton } from '@/components/ShareButton';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { decodeRange } from '@/lib/urlState';
 import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
 import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange } from '@/lib/types';
 
@@ -49,7 +51,20 @@ const SUGGESTED_GROUPBY = [
 ];
 
 export default function MetricsPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  // v0.6.10 — bug-fix: Services sparkline click and similar
+  // drill-ins navigate here with `?service=X&metric=Y&range=Z`.
+  // Pre-v0.6.10 these params were ignored and the page opened
+  // empty. Now we seed the initial state from them so the
+  // drill lands on a populated chart immediately.
+  //
+  // setSearchParams is intentionally NOT wired back from every
+  // state change — keeping the URL writes scoped to deep-link
+  // entry only avoids a thrash of replaceState() calls every
+  // time the operator twiddles agg/step/groupBy. Use ShareButton
+  // for the explicit "copy this state" affordance.
+  const [searchParams] = useSearchParams();
+  const [range, setRange] = useState<TimeRange>(() =>
+    decodeRange(searchParams.get('range'), { preset: '30m' }));
   // v0.5.198 — `services` eager cache dropped. FilterBuilder
   // server-fetches service.name values via /api/attribute-values?q=
   // when the operator types in the value field; the ServicePicker
@@ -67,9 +82,9 @@ export default function MetricsPage() {
   // means the operator typed the metric directly (no MetricInfo
   // arrived) or cleared the template chip.
   const [appliedTemplate, setAppliedTemplate] = useState<MetricTemplate | null>(null);
-  const [service, setService] = useState('');
-  const [metric, setMetric] = useState('');
-  const [agg, setAgg] = useState('avg');
+  const [service, setService] = useState(() => searchParams.get('service') || '');
+  const [metric, setMetric] = useState(() => searchParams.get('metric') || '');
+  const [agg, setAgg] = useState(() => searchParams.get('agg') || 'avg');
   const [step, setStep] = useState(0);
   const [filters, setFilters] = useState<FilterExpr[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);

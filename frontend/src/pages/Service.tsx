@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
+import { DrillButton } from '@/components/DrillButton';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceStructure } from '@/components/ServiceStructure';
 import { ServiceCharts } from '@/components/ServiceCharts';
@@ -180,28 +181,31 @@ function ServiceDetailInner() {
               <TopologyMuteChip service={svc} />
             </>
           )}
-          <Link to={`/service/backtrace?name=${encodeURIComponent(svc)}`} style={{
-            marginLeft: 'auto', fontSize: 12, padding: '5px 12px',
-            background: 'var(--bg3)', border: '1px solid var(--border)',
-            borderRadius: 6, color: 'var(--accent2)', textDecoration: 'none',
-          }} title="Inbound callers — service / pod / IP backtrace">↩ Backtrace</Link>
-          <Link to={`/traces?service=${encodeURIComponent(svc)}`} style={{
-            fontSize: 12, padding: '5px 12px',
-            background: 'var(--bg3)', border: '1px solid var(--border)',
-            borderRadius: 6, color: 'var(--accent2)', textDecoration: 'none',
-          }}>⋮ View traces</Link>
-          {/* Profiling deep-link (v0.5.161). Opens /profiling
-              pre-filtered to this service so the operator goes
-              from "latency looks weird" → flamegraph in one
-              hop. Always shown — if profiling isn't wired up
-              yet, the page surfaces a setup-recipes CTA. */}
-          <Link to={`/profiling?service=${encodeURIComponent(svc)}`} style={{
-            fontSize: 12, padding: '5px 12px',
-            background: 'var(--bg3)', border: '1px solid var(--border)',
-            borderRadius: 6, color: 'var(--accent2)', textDecoration: 'none',
-          }} title="Continuous profiling — CPU + heap flamegraphs for this service">
-            🔥 Profiles
-          </Link>
+          {/* Drill chips (v0.5.463) — DrillButton standardises the
+              "view in X" cross-page navigation pattern; service +
+              range propagate so the destination starts where the
+              operator left off. Backtrace, traces, logs, problems,
+              anomalies, profiles. */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <DrillButton to="/service/backtrace" params={{ name: svc }}
+              title="Inbound callers — service / pod / IP backtrace"
+              label="↩ Backtrace" />
+            <DrillButton to="/traces" params={{ service: svc }} range={range}
+              title="Raw traces filtered to this service"
+              label="⋮ Traces" />
+            <DrillButton to="/logs" params={{ service: svc }} range={range}
+              title="Logs filtered to this service"
+              label="≡ Logs" />
+            <DrillButton to="/problems" params={{ service: svc }}
+              title="Open problems for this service"
+              label="⚠ Problems" />
+            <DrillButton to="/anomalies" params={{ service: svc }}
+              title="Anomaly events for this service"
+              label="∿ Anomalies" />
+            <DrillButton to="/profiling" params={{ service: svc }} range={range}
+              title="Continuous profiling — CPU + heap flamegraphs for this service"
+              label="🔥 Profiles" />
+          </div>
           {/* Logs deep-link (v0.5.225). Same one-hop jump as
               Profiles — opens /logs filtered to this service so
               an operator who spots an error spike on the RED

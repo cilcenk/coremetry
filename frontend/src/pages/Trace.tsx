@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
+import { DrillButton } from '@/components/DrillButton';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { computeCriticalPath } from '@/lib/criticalPath';
@@ -308,6 +309,13 @@ function TraceDetailInner() {
                       }}>
                   ↔ Compare trace
                 </Link>
+                {/* Drill to logs scoped to this trace (v0.5.463).
+                    Operators jump trace→logs constantly during
+                    incident investigation; carrying the trace_id
+                    saves the manual paste step. */}
+                <DrillButton to="/logs" params={{ traceId: id }}
+                  title="Logs correlated to this trace_id"
+                  label="≡ Logs" />
                 <SharePopover traceId={id} />
                 <button className="sec"
                   onClick={() => exportTraceJSON(id, spans)}

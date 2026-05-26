@@ -658,14 +658,15 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                       shows the service-wide call rate at a glance,
                       using the same window + bucket boundaries as
                       every row beneath it.
-                      v0.6.10 — clicking drills to /metrics
-                      pre-filtered to this service, same as the
-                      Services-page row sparkline does. */}
-                  <Link to={`/metrics?service=${encodeURIComponent(service)}`}
-                        title="Open this service's metrics in the explorer"
-                        style={{ display: 'inline-block', cursor: 'pointer' }}>
-                    <Sparkline values={aggSparkline} title={`total calls/bucket × ${rows.length} ops`} />
-                  </Link>
+                      v0.6.13 — earlier (v0.6.10) wrapped this in a
+                      /metrics link, but /metrics needs a *metric
+                      name* to render and there's no natural pick
+                      from a spans-aggregate sparkline, so the
+                      drill landed on a blank page (operator-
+                      reported). Reverted to a plain Sparkline —
+                      this page is already the service detail, so
+                      a self-link wouldn't help anyway. */}
+                  <Sparkline values={aggSparkline} title={`total calls/bucket × ${rows.length} ops`} />
                 </td>
                 <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>
                   {fmtImpact(rows.reduce((n, r) => n + impactOf(r), 0))}

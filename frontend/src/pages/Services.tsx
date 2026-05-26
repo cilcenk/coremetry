@@ -335,16 +335,27 @@ export default function ServicesPage() {
   // Was /explore (DSL playground) which has wider scope; metric
   // explorer is the right destination for "I clicked the avg-
   // response sparkline, take me to the chart with toolbar".
-  // We carry service + range; operator picks the metric on the
-  // landing page (MetricNamePicker autocompletes from their
-  // index). The legacy goToExplore is kept around so other
-  // call sites that genuinely want the DSL playground still
-  // have a path.
-  const goToMetricExplorer = (svc: string) => {
-    const parts: string[] = [];
-    if (svc) parts.push(`service=${encodeURIComponent(svc)}`);
-    parts.push(`range=${encodeURIComponent(encodeRange(range))}`);
-    navigate(`/metrics?${parts.join('&')}`);
+  // v0.6.13 — operator-reported: clicking a service-row sparkline
+  // landed on /metrics with the service preselected (v0.6.10 fix)
+  // but no graph rendered, because /metrics needs a *metric name*
+  // (an OTel metric_points key) before it queries — and Services
+  // sparklines aren't tied to a specific OTel metric name; they're
+  // aggregates over `spans`. So the drill destination is wrong:
+  // /metrics is for OTel-metric exploration, not service-detail
+  // RED charts. The latter live on /service?name=X which has the
+  // full ServiceCharts panel auto-loading on mount.
+  //
+  // Service rows: drill to the per-service detail.
+  // Aggregate row (no service): drill to /metrics where the
+  // operator can pick a metric to explore globally.
+  const goToServiceDetail = (svc: string) => {
+    if (!svc) {
+      const qs = `range=${encodeURIComponent(encodeRange(range))}`;
+      navigate(`/metrics?${qs}`);
+      return;
+    }
+    const qs = `name=${encodeURIComponent(svc)}&range=${encodeURIComponent(encodeRange(range))}`;
+    navigate(`/service?${qs}`);
   };
   const goToExplore = (svc: string, agg: SpanAgg) => {
     const filters = svc
@@ -474,7 +485,7 @@ export default function ServicesPage() {
                                    spark={aggBuckets.map(b => b.spans)}
                                    color="var(--accent2)"
                                    title="Total spans/5m across visible services"
-                                   onClick={() => goToMetricExplorer('')} />
+                                   onClick={() => goToServiceDetail('')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <SparkCell value={
@@ -485,21 +496,21 @@ export default function ServicesPage() {
                         spark={aggBuckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
                         color="var(--err)"
                         title="Aggregate error rate (weighted by spans)"
-                        onClick={() => goToMetricExplorer('')} />
+                        onClick={() => goToServiceDetail('')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <SparkCell value={`${agg.avgMs.toFixed(1)}ms`}
                                    spark={aggBuckets.map(b => b.avgMs)}
                                    color="var(--accent)"
                                    title="Aggregate avg latency (weighted by spans)"
-                                   onClick={() => goToMetricExplorer('')} />
+                                   onClick={() => goToServiceDetail('')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <SparkCell value={`${agg.p99Ms.toFixed(1)}ms`}
                                    spark={aggBuckets.map(b => b.p99Ms)}
                                    color="var(--warn)"
                                    title="Worst-service P99 in each bucket"
-                                   onClick={() => goToMetricExplorer('')} />
+                                   onClick={() => goToServiceDetail('')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <ApdexBadge value={agg.apdex} />
@@ -574,7 +585,7 @@ export default function ServicesPage() {
                                      spark={buckets.map(b => b.spans)}
                                      color="var(--accent2)"
                                      title={`Spans/5m for ${s.name}`}
-                                     onClick={() => goToMetricExplorer(s.name)} />
+                                     onClick={() => goToServiceDetail(s.name)} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <SparkCell value={
@@ -585,21 +596,21 @@ export default function ServicesPage() {
                           spark={buckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
                           color="var(--err)"
                           title={`Error rate (%) for ${s.name}`}
-                          onClick={() => goToMetricExplorer(s.name)} />
+                          onClick={() => goToServiceDetail(s.name)} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <SparkCell value={`${s.avgDurationMs.toFixed(1)}ms`}
                                      spark={buckets.map(b => b.avgMs)}
                                      color="var(--accent)"
                                      title={`Avg latency (ms) for ${s.name}`}
-                                     onClick={() => goToMetricExplorer(s.name)} />
+                                     onClick={() => goToServiceDetail(s.name)} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <SparkCell value={`${s.p99DurationMs.toFixed(1)}ms`}
                                      spark={buckets.map(b => b.p99Ms)}
                                      color="var(--warn)"
                                      title={`P99 latency (ms) for ${s.name}`}
-                                     onClick={() => goToMetricExplorer(s.name)} />
+                                     onClick={() => goToServiceDetail(s.name)} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <ApdexBadge value={s.apdex} />

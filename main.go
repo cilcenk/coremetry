@@ -620,7 +620,9 @@ func main() {
 			Store:    store,
 			LogStore: logsStore,
 		})
-		log.Printf("[mcp] server ready (%d tools registered)", mcpSvc.ToolCount())
+		staticRes, tplRes := mcpSvc.ResourceCount()
+		log.Printf("[mcp] server ready (%d tools, %d resources, %d templates)",
+			mcpSvc.ToolCount(), staticRes, tplRes)
 		srv.SetMCP(mcpSvc)
 	}
 	srv.SetPipeline(pipelineEng)

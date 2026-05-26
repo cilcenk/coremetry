@@ -60,9 +60,10 @@ type Deps struct {
 	LogStore logstore.Store
 }
 
-// Register installs every v0.6.5 tool on the given MCP server.
-// Idempotent — calling twice overwrites with the latest closure,
-// but that's a logic-error pattern the mcp package logs about.
+// Register installs every v0.6.5/v0.6.6 tool and resource on
+// the given MCP server. Idempotent — calling twice overwrites
+// with the latest closures, but that's a logic-error pattern
+// the mcp package logs about.
 func Register(srv *mcp.Server, d Deps) {
 	srv.RegisterTool(listServicesTool(d))
 	srv.RegisterTool(getServiceHealthTool(d))
@@ -71,6 +72,127 @@ func Register(srv *mcp.Server, d Deps) {
 	srv.RegisterTool(searchLogsTool(d))
 	srv.RegisterTool(getTraceTool(d))
 	srv.RegisterTool(queryMetricTool(d))
+	// v0.6.6 — resources: pinned references the LLM can attach
+	// to its context or browse. Same data tools surface, but
+	// addressable by stable URI so an inspector / Claude Desktop
+	// can show "open problems" as a single pin instead of
+	// re-issuing the tool call every time.
+	registerResources(srv, d)
+}
+
+// registerResources installs concrete + templated resources.
+// Concrete URIs are pinned summaries; templates expose per-id
+// fetches (one trace, one service, one problem). Reader closures
+// share the same Deps the tools do — no new dependency wires.
+func registerResources(srv *mcp.Server, d Deps) {
+	// ── Static resources ───────────────────────────────────
+	srv.RegisterResource(mcp.Resource{
+		URI:         "coremetry://services",
+		Name:        "Services",
+		Description: "All Coremetry services with current RED metrics over the last 30 minutes. Refreshes on each read.",
+		MimeType:    "application/json",
+		Reader: func(ctx context.Context, _ string) (string, error) {
+			from, to := rangeWindow(1800)
+			rows, err := d.Store.GetServicesFiltered(ctx, 0, from, to, "", "rps", "desc", 200, 0)
+			if err != nil {
+				return "", err
+			}
+			return marshalJSON(map[string]any{"services": rows, "window_s": 1800})
+		},
+	})
+	srv.RegisterResource(mcp.Resource{
+		URI:         "coremetry://problems/open",
+		Name:        "Open problems",
+		Description: "Currently-open Coremetry Problems (alerts that have fired and not been resolved). Sorted by priority then recency.",
+		MimeType:    "application/json",
+		Reader: func(ctx context.Context, _ string) (string, error) {
+			rows, err := d.Store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Limit: 100})
+			if err != nil {
+				return "", err
+			}
+			return marshalJSON(map[string]any{"problems": rows, "count": len(rows)})
+		},
+	})
+	srv.RegisterResource(mcp.Resource{
+		URI:         "coremetry://anomalies/recent",
+		Name:        "Recent anomalies",
+		Description: "Anomaly events from the last hour — log patterns + trace operations + ML detectors that exceeded their baseline.",
+		MimeType:    "application/json",
+		Reader: func(ctx context.Context, _ string) (string, error) {
+			from, _ := rangeWindow(3600)
+			rows, err := d.Store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
+				SinceNs: from.UnixNano(),
+				Limit:   100,
+			})
+			if err != nil {
+				return "", err
+			}
+			return marshalJSON(map[string]any{"anomalies": rows, "count": len(rows)})
+		},
+	})
+
+	// ── Templated resources ─────────────────────────────────
+	// Service detail by name.
+	const serviceTpl = "coremetry://service/{name}"
+	srv.RegisterResourceTemplate(mcp.ResourceTemplate{
+		URITemplate: serviceTpl,
+		Name:        "Service detail",
+		Description: "RED summary + open-problem count for one service over the last 30 minutes.",
+		MimeType:    "application/json",
+		Reader: func(ctx context.Context, uri string) (string, error) {
+			name := mcp.ExtractURITemplateValue(serviceTpl, uri)
+			if name == "" {
+				return "", fmt.Errorf("missing service name in URI %q", uri)
+			}
+			from, to := rangeWindow(1800)
+			rows, err := d.Store.GetServicesFiltered(ctx, 0, from, to, name, "rps", "desc", 1, 0)
+			if err != nil {
+				return "", err
+			}
+			if len(rows) == 0 {
+				return marshalJSON(map[string]any{"found": false, "service": name})
+			}
+			probs, _ := d.Store.CountProblems(ctx, chstore.ProblemFilter{Status: "open", Service: name})
+			return marshalJSON(map[string]any{
+				"found":         true,
+				"summary":       rows[0],
+				"open_problems": probs,
+			})
+		},
+	})
+
+	// Trace detail by trace_id.
+	const traceTpl = "coremetry://trace/{trace_id}"
+	srv.RegisterResourceTemplate(mcp.ResourceTemplate{
+		URITemplate: traceTpl,
+		Name:        "Trace detail",
+		Description: "All spans for one trace ID — full waterfall.",
+		MimeType:    "application/json",
+		Reader: func(ctx context.Context, uri string) (string, error) {
+			tid := mcp.ExtractURITemplateValue(traceTpl, uri)
+			if tid == "" {
+				return "", fmt.Errorf("missing trace_id in URI %q", uri)
+			}
+			spans, err := d.Store.GetTrace(ctx, tid)
+			if err != nil {
+				return "", err
+			}
+			return marshalJSON(map[string]any{
+				"trace_id":   tid,
+				"spans":      spans,
+				"span_count": len(spans),
+			})
+		},
+	})
+}
+
+// marshalJSON keeps the resource Reader closures one-liner-ish.
+func marshalJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // rangeWindow turns a range_s argument (seconds back from now)

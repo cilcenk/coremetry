@@ -208,6 +208,47 @@ type Tool struct {
 // decode (tagged struct, manual map dispatch, etc.).
 type ToolHandler func(ctx context.Context, args json.RawMessage) (any, error)
 
+// Resource is a named read-only data reference. Where tools are
+// "invoke an action with args", resources are "fetch the
+// current state of <URI>". Browsers in Claude Desktop list
+// resources as pinned references the user can click to attach;
+// LLMs read them via resources/read.
+//
+// URI scheme is opaque to the protocol — we use coremetry://
+// for everything Coremetry exposes (services, problems, etc.).
+// MimeType hints how the client renders the read response;
+// "application/json" is standard for our payloads.
+type Resource struct {
+	URI         string
+	Name        string
+	Description string
+	MimeType    string
+	// Reader returns the content for this URI. ctx is the live
+	// request context; the URI is passed through unchanged so
+	// the same Reader can serve a template family.
+	Reader ResourceReader
+}
+
+// ResourceTemplate is a URI pattern with {placeholder} segments.
+// LLMs match against the pattern to discover that
+// "coremetry://service/{name}" can be parameterised. The Reader
+// receives the concrete URI; its handler parses out the
+// placeholder values.
+type ResourceTemplate struct {
+	URITemplate string
+	Name        string
+	Description string
+	MimeType    string
+	Reader      ResourceReader
+}
+
+// ResourceReader is the function signature both concrete and
+// templated resources share. uri is the full URI being read.
+// Returns either a text payload or an error; binary blobs can
+// layer on later if needed (image/png, audio, etc.) — the spec
+// supports them via a `blob` field on the content envelope.
+type ResourceReader func(ctx context.Context, uri string) (text string, err error)
+
 // Server is the MCP server. One instance per Coremetry process;
 // holds the live session map + the registries that v0.6.5+ will
 // populate.
@@ -231,6 +272,15 @@ type Server struct {
 	// are not mutated thereafter — so we serve tools/list under
 	// a read lock and don't bother emitting list_changed.
 	tools map[string]Tool
+
+	// resources + resourceTemplates back the resources/list,
+	// resources/read, and resources/templates/list methods.
+	// Same lifecycle as tools — populated once at boot,
+	// immutable thereafter. Static resources have fixed URIs;
+	// templated resources expose URI patterns the LLM can
+	// instantiate with concrete values (e.g. a trace_id).
+	resources         map[string]Resource         // key = URI
+	resourceTemplates []ResourceTemplate
 }
 
 // session is the per-client connection state. The outbound
@@ -252,10 +302,58 @@ type session struct {
 // Claude Desktop's debug UI) display them.
 func New(name, version string) *Server {
 	return &Server{
-		info:     ServerInfo{Name: name, Version: version},
-		sessions: map[string]*session{},
-		tools:    map[string]Tool{},
+		info:      ServerInfo{Name: name, Version: version},
+		sessions:  map[string]*session{},
+		tools:     map[string]Tool{},
+		resources: map[string]Resource{},
 	}
+}
+
+// RegisterResource adds a concrete (fixed-URI) resource. URI
+// uniqueness enforced — duplicate registration logs a warning
+// and overwrites.
+func (s *Server) RegisterResource(r Resource) {
+	if r.URI == "" {
+		log.Printf("[mcp] RegisterResource: empty URI; skipped")
+		return
+	}
+	if r.Reader == nil {
+		log.Printf("[mcp] RegisterResource %q: nil Reader; skipped", r.URI)
+		return
+	}
+	s.mu.Lock()
+	if _, exists := s.resources[r.URI]; exists {
+		log.Printf("[mcp] RegisterResource: %q already registered, overwriting", r.URI)
+	}
+	s.resources[r.URI] = r
+	s.mu.Unlock()
+}
+
+// RegisterResourceTemplate adds a URI-pattern resource. The
+// pattern uses {placeholder} segments per RFC 6570 level 1 — we
+// match prefix + suffix around each placeholder without pulling
+// in a full URI Template engine. Good enough for the patterns
+// Coremetry exposes (single placeholder near the end).
+func (s *Server) RegisterResourceTemplate(rt ResourceTemplate) {
+	if rt.URITemplate == "" {
+		log.Printf("[mcp] RegisterResourceTemplate: empty URITemplate; skipped")
+		return
+	}
+	if rt.Reader == nil {
+		log.Printf("[mcp] RegisterResourceTemplate %q: nil Reader; skipped", rt.URITemplate)
+		return
+	}
+	s.mu.Lock()
+	s.resourceTemplates = append(s.resourceTemplates, rt)
+	s.mu.Unlock()
+}
+
+// ResourceCount reports the static + template totals so boot
+// logs can confirm registration. Returns (static, templates).
+func (s *Server) ResourceCount() (int, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.resources), len(s.resourceTemplates)
 }
 
 // RegisterTool adds a tool to the registry. Caller MUST do this
@@ -449,7 +547,12 @@ func (s *Server) dispatch(ctx context.Context, sess *session, req *Request) *Res
 		return s.handleToolsList(req)
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)
-	// v0.6.6+: resources/list, resources/read
+	case "resources/list":
+		return s.handleResourcesList(req)
+	case "resources/read":
+		return s.handleResourcesRead(ctx, req)
+	case "resources/templates/list":
+		return s.handleResourceTemplatesList(req)
 	// v0.6.7+: prompts/list, prompts/get
 	default:
 		return errorResp(req.ID, ErrMethodNotFound,
@@ -632,4 +735,178 @@ func errorResp(id json.RawMessage, code int, message string) *Response {
 		ID:      id,
 		Error:   &Error{Code: code, Message: message},
 	}
+}
+
+// ── resources/list, resources/read, resources/templates/list ───
+
+// resourceListEntry mirrors the wire shape MCP clients expect
+// from resources/list — URI + descriptive metadata. No content;
+// the client calls resources/read for that.
+type resourceListEntry struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+type resourceTemplateListEntry struct {
+	URITemplate string `json:"uriTemplate"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
+func (s *Server) handleResourcesList(req *Request) *Response {
+	s.mu.RLock()
+	out := make([]resourceListEntry, 0, len(s.resources))
+	for _, r := range s.resources {
+		out = append(out, resourceListEntry{
+			URI:         r.URI,
+			Name:        r.Name,
+			Description: r.Description,
+			MimeType:    r.MimeType,
+		})
+	}
+	s.mu.RUnlock()
+	return successResp(req.ID, map[string]any{"resources": out})
+}
+
+func (s *Server) handleResourceTemplatesList(req *Request) *Response {
+	s.mu.RLock()
+	out := make([]resourceTemplateListEntry, 0, len(s.resourceTemplates))
+	for _, rt := range s.resourceTemplates {
+		out = append(out, resourceTemplateListEntry{
+			URITemplate: rt.URITemplate,
+			Name:        rt.Name,
+			Description: rt.Description,
+			MimeType:    rt.MimeType,
+		})
+	}
+	s.mu.RUnlock()
+	return successResp(req.ID, map[string]any{"resourceTemplates": out})
+}
+
+type resourcesReadParams struct {
+	URI string `json:"uri"`
+}
+
+type resourceContent struct {
+	URI      string `json:"uri"`
+	MimeType string `json:"mimeType,omitempty"`
+	Text     string `json:"text,omitempty"`
+}
+
+// handleResourcesRead resolves a URI against the static registry
+// first, then falls through to templates by pattern match. URI
+// that matches neither yields a JSON-RPC ErrMethodNotFound — MCP
+// has no dedicated "resource not found" code so reusing
+// method-not-found is the convention several reference clients
+// rely on.
+func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Response {
+	var p resourcesReadParams
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return errorResp(req.ID, ErrInvalidParams, "resources/read params: "+err.Error())
+	}
+	if p.URI == "" {
+		return errorResp(req.ID, ErrInvalidParams, "resources/read: uri is required")
+	}
+
+	s.mu.RLock()
+	if r, ok := s.resources[p.URI]; ok {
+		reader := r.Reader
+		mime := r.MimeType
+		s.mu.RUnlock()
+		text, err := reader(ctx, p.URI)
+		if err != nil {
+			return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
+		}
+		return successResp(req.ID, map[string]any{
+			"contents": []resourceContent{{URI: p.URI, MimeType: mime, Text: text}},
+		})
+	}
+	// Templates by prefix+suffix match. On the order of 10 templates
+	// expected, not 10000, so the O(n) scan is fine.
+	tmpls := append([]ResourceTemplate(nil), s.resourceTemplates...)
+	s.mu.RUnlock()
+	for _, rt := range tmpls {
+		if uriMatches(rt.URITemplate, p.URI) {
+			text, err := rt.Reader(ctx, p.URI)
+			if err != nil {
+				return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
+			}
+			return successResp(req.ID, map[string]any{
+				"contents": []resourceContent{{URI: p.URI, MimeType: rt.MimeType, Text: text}},
+			})
+		}
+	}
+	return errorResp(req.ID, ErrMethodNotFound, fmt.Sprintf("resource not found: %s", p.URI))
+}
+
+// uriMatches is the tiny URI-Template matcher. Only handles the
+// "literal {placeholder} literal" pattern (RFC 6570 level 1) —
+// good enough for "coremetry://trace/{trace_id}" style URIs we
+// expose. A second placeholder silently fails to match, which is
+// the safe direction (a bad pattern matches nothing rather than
+// matching everything).
+func uriMatches(template, concrete string) bool {
+	openIdx := indexByte(template, '{')
+	if openIdx < 0 {
+		return template == concrete
+	}
+	closeIdx := indexByte(template, '}')
+	if closeIdx < openIdx {
+		return false
+	}
+	prefix := template[:openIdx]
+	suffix := template[closeIdx+1:]
+	if indexByte(suffix, '{') >= 0 {
+		return false
+	}
+	if !startsWith(concrete, prefix) {
+		return false
+	}
+	if !endsWith(concrete, suffix) {
+		return false
+	}
+	mid := concrete[len(prefix) : len(concrete)-len(suffix)]
+	return mid != ""
+}
+
+// ExtractURITemplateValue pulls the placeholder value out of a
+// concrete URI matched against its template. Exported so concrete
+// Reader implementations don't have to re-implement the slicing.
+// Returns "" if the template has no placeholder or the URI
+// doesn't match.
+func ExtractURITemplateValue(template, concrete string) string {
+	openIdx := indexByte(template, '{')
+	if openIdx < 0 {
+		return ""
+	}
+	closeIdx := indexByte(template, '}')
+	if closeIdx < openIdx {
+		return ""
+	}
+	prefix := template[:openIdx]
+	suffix := template[closeIdx+1:]
+	if !startsWith(concrete, prefix) || !endsWith(concrete, suffix) {
+		return ""
+	}
+	return concrete[len(prefix) : len(concrete)-len(suffix)]
+}
+
+// Tiny byte helpers kept inline — pulling strings just for these
+// felt like the kind of thing /scale-audit would call out.
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+func startsWith(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+func endsWith(s, suffix string) bool {
+	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }

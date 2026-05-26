@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
+import { Spinner } from './Spinner';
 import { fmtNum, tsLong, tsRel } from '@/lib/utils';
 import type { LogTemplate } from '@/lib/types';
 
@@ -24,9 +25,15 @@ export function LogTemplatesPanel({
 }) {
   const [data, setData] = useState<LogTemplate[] | null | undefined>(undefined);
   const [sort, setSort] = useState<Sort>('first_seen');
-  const [collapsed, setCollapsed] = useState(false);
+  // v0.5.474 — operator-reported: this panel was open by default,
+  // pushing the log rows below the fold on first paint. Default
+  // closed; operator clicks the header to expand. Polling is
+  // also gated on !collapsed so the 30s tick doesn't burn API
+  // calls while the panel is hidden.
+  const [collapsed, setCollapsed] = useState(true);
 
   useEffect(() => {
+    if (collapsed) return;
     let cancelled = false;
     const fetchOnce = () => {
       api.logsTemplates({ sort, since: '24h', limit: 50 })
@@ -39,7 +46,7 @@ export function LogTemplatesPanel({
     // the tab is hidden (mobile battery + idle API traffic).
     const id = setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [sort]);
+  }, [sort, collapsed]);
 
   const newCount = useMemo(() => {
     if (!data) return 0;
@@ -47,7 +54,11 @@ export function LogTemplatesPanel({
     return data.filter(t => t.firstSeen > hour).length;
   }, [data]);
 
-  if (!data || data.length === 0) return null;
+  // v0.5.474 — render the header even when data hasn't loaded
+  // (collapsed by default → polling gated on expand → data
+  // would never load before first expand otherwise). Rows only
+  // render when expanded AND data resolves to a non-empty list.
+  const hasData = data && data.length > 0;
 
   return (
     <div style={{
@@ -69,8 +80,10 @@ export function LogTemplatesPanel({
             Templates
           </span>
           <span style={{ color: 'var(--text3)', fontSize: 11 }}>
-            Drain-extracted shapes · {data.length} active
-            {newCount > 0 && (
+            {hasData
+              ? <>Drain-extracted shapes · {data!.length} active</>
+              : <>Drain-extracted shapes · click to load</>}
+            {hasData && newCount > 0 && (
               <span style={{ color: 'var(--err)', marginLeft: 8, fontWeight: 600 }}>
                 · {newCount} new in last hour
               </span>
@@ -89,9 +102,17 @@ export function LogTemplatesPanel({
       </div>
       {!collapsed && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {data.slice(0, 30).map(t => (
+          {data === undefined && (
+            <Spinner label="Loading log templates…" hint="Drain-extracted shapes; ~200ms at scale." />
+          )}
+          {hasData && data!.slice(0, 30).map(t => (
             <TemplateRow key={t.id} t={t} onClick={() => onSelectTemplate(distinctiveTokens(t.template))} />
           ))}
+          {data !== undefined && !hasData && (
+            <div style={{ color: 'var(--text3)', fontSize: 11, padding: '4px 0' }}>
+              No templates extracted in the last 24h.
+            </div>
+          )}
         </div>
       )}
     </div>

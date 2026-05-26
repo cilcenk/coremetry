@@ -11,6 +11,7 @@ import { DrillButton } from '@/components/DrillButton';
 import { ShareButton } from '@/components/ShareButton';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
 import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange } from '@/lib/types';
 
 const AGG_OPTIONS = [
@@ -62,6 +63,10 @@ export default function MetricsPage() {
   // metricNames[] list eager-loaded on mount, which at 10k+
   // metrics dominated the page's TTFI.
   const [currentMeta, setCurrentMeta] = useState<MetricInfo | null>(null);
+  // v0.5.487 — template auto-applied to the current metric. null
+  // means the operator typed the metric directly (no MetricInfo
+  // arrived) or cleared the template chip.
+  const [appliedTemplate, setAppliedTemplate] = useState<MetricTemplate | null>(null);
   const [service, setService] = useState('');
   const [metric, setMetric] = useState('');
   const [agg, setAgg] = useState('avg');
@@ -89,7 +94,25 @@ export default function MetricsPage() {
   useEffect(() => {
     setMetric('');
     setCurrentMeta(null);
+    setAppliedTemplate(null);
   }, [service]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // v0.5.487 — apply the OTel semconv template to a freshly-
+  // picked metric. Only stomps defaults: agg jumps to the
+  // template's choice unconditionally (the operator picked the
+  // metric, they want it set up right), groupBy only fills when
+  // empty so we don't clobber an in-flight slice operation.
+  const onPickMetric = (info: MetricInfo) => {
+    setCurrentMeta(info);
+    const tpl = classifyMetric(info);
+    setAppliedTemplate(tpl);
+    if (tpl) {
+      setAgg(tpl.agg);
+      if (tpl.groupBy && tpl.groupBy.length > 0 && groupBy.length === 0) {
+        setGroupBy(tpl.groupBy);
+      }
+    }
+  };
 
   // Pull dimension values for the current metric (host / instance) for combobox
   useEffect(() => {
@@ -248,8 +271,22 @@ export default function MetricsPage() {
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>Metric:</span>
           <MetricNamePicker service={service} value={metric}
             onChange={setMetric}
-            onPick={setCurrentMeta}
+            onPick={onPickMetric}
             placeholder="select metric…" width={280} />
+          {appliedTemplate && appliedTemplate.id !== `OTel ${currentMeta?.type || 'metric'}` && (
+            <span
+              className="fb-chip"
+              title={appliedTemplate.description + (appliedTemplate.threshold
+                ? `\nThreshold: ${appliedTemplate.threshold.cmp} ${appliedTemplate.threshold.value} (${appliedTemplate.threshold.reason})`
+                : '')}
+              style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)' }}
+            >
+              Template: <b>{appliedTemplate.id}</b>
+              <button className="fb-chip-x" type="button"
+                onClick={() => setAppliedTemplate(null)}
+                aria-label="Clear template">✕</button>
+            </span>
+          )}
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>Agg:</span>
           <select value={agg} onChange={e => setAgg(e.target.value)}>
             {AGG_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}

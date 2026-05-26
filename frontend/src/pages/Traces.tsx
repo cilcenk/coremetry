@@ -519,7 +519,15 @@ function TracesPageInner() {
 
         {/* List view */}
         {view === 'list' && data === undefined && <TableSkeleton rows={10} cols={7} />}
-        {view === 'list' && data && traces.length === 0 && <Empty icon="⋮" title="No traces found" />}
+        {view === 'list' && data && traces.length === 0 && (
+          <Empty icon="⋮" title="No traces found">
+            <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+              Try widening the time range, dropping the service or search filter,
+              or unticking "Root traces". If even an unfiltered query is empty,
+              check ingest health at <a href="/status" style={{ color: 'var(--accent2)' }}>/status</a>.
+            </div>
+          </Empty>
+        )}
         {view === 'list' && data && traces.length > 0 && (
           <>
             <div className="table-wrap">
@@ -625,7 +633,15 @@ function TracesPageInner() {
         {view === 'aggregate' && agg === undefined && (
           <Spinner label="Aggregating traces by trace_id…" hint="Reads the trace_summary MV when the window is ≥5min, raw spans otherwise." />
         )}
-        {view === 'aggregate' && agg && agg.length === 0 && <Empty icon="∑" title="No groups in this window" />}
+        {view === 'aggregate' && agg && agg.length === 0 && (
+          <Empty icon="∑" title="No groups in this window">
+            <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+              The aggregate view needs at least one trace to group. Switch to
+              the Traces tab to confirm there are matching rows, or widen the
+              time range.
+            </div>
+          </Empty>
+        )}
         {view === 'aggregate' && agg && agg.length > 0 && (
           <>
             <div className="table-wrap">

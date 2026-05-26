@@ -556,7 +556,14 @@ function LogsInner() {
               {filter.spanId && <>You also filtered by span — try <a href="#" onClick={e => { e.preventDefault(); const next = { ...filter, spanId: '' }; setFilter(next); setDraft(d => ({ ...d, spanId: '' })); }}>removing the span filter</a> to see all logs for the trace.</>}
             </Empty>
           ) : (
-            <Empty icon="≡" title="No logs found" />
+            <Empty icon="≡" title="No logs found">
+              <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+                Widen the time range, drop the service/cluster filter, or
+                relax the severity floor. If unfiltered queries are also
+                empty, the logs backend (<code>COREMETRY_LOGS_BACKEND</code>)
+                may be misconfigured — check <a href="/status" style={{ color: 'var(--accent2)' }}>/status</a>.
+              </div>
+            </Empty>
           )
         )}
         {data && logs.length > 0 && (

@@ -788,7 +788,15 @@ export default function AlertsPage() {
             ))}
           </div>
         )}
-        {rules && rules.length === 0 && <Empty icon="🔔" title="No alert rules" />}
+        {rules && rules.length === 0 && (
+          <Empty icon="🔔" title="No alert rules">
+            <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+              Alert rules turn anomaly detectors and threshold checks into
+              named, routable problems. Click <b>+ New rule</b> to build one,
+              or import from your existing config via the SQL playground.
+            </div>
+          </Empty>
+        )}
         {rules && rules.length > 0 && (
           <div className="table-wrap">
             <table>

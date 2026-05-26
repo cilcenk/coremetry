@@ -449,6 +449,13 @@ export const api = {
         ilmPhase: string;
       }>;
     }>(`/api/admin/elastic/indices`),
+  // Kibana saved-search interop URLs — used as download / upload
+  // anchors in /admin/elastic. v0.5.467.
+  kibanaExportURL: () => `/api/admin/elastic/saved-search-export`,
+  kibanaImportPost: (ndjson: string) =>
+    request<{ imported: number; skipped: number; errors?: string[] }>(
+      `/api/admin/elastic/saved-search-import`,
+      { method: 'POST', headers: { 'Content-Type': 'application/x-ndjson' }, body: ndjson }),
   // v0.5.402 — surrounding context (±N logs around a pivot ts).
   // Datadog Context tab equivalent. Two parallel server-side
   // searches (before / after); 30-min symmetric window, capped

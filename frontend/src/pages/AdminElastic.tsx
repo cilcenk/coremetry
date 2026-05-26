@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
+import { toast } from '@/lib/toast';
 import { fmtNum, fmtBytes } from '@/lib/utils';
 
 // AdminElastic (v0.5.466) — operator-facing inventory of the
@@ -77,10 +78,65 @@ export default function AdminElasticPage() {
     </th>
   );
 
+  const fileRef = useRef<HTMLInputElement>(null);
+  const onImport = async (file: File) => {
+    try {
+      const text = await file.text();
+      const res = await api.kibanaImportPost(text);
+      const summary = `imported ${res.imported}, skipped ${res.skipped}`;
+      if (res.errors && res.errors.length > 0) {
+        toast.info(`Kibana sync: ${summary} (${res.errors.length} warning${res.errors.length === 1 ? '' : 's'})`);
+      } else {
+        toast.success(`Kibana sync: ${summary}`);
+      }
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      toast.error('Kibana import failed: ' + m);
+    }
+  };
+
   return (
     <>
       <Topbar title="Admin · Elasticsearch indices" />
       <div id="content">
+        {/* Kibana saved-search interop (v0.5.467) — operator can
+            push Coremetry /logs saved_views into Kibana Discover
+            as native saved searches, or pull Kibana saved
+            searches back as Coremetry views. Mapping is
+            faithful but lossy (columns / sort drop; title +
+            KQL query round-trip). */}
+        <div style={{
+          display: 'flex', gap: 10, alignItems: 'center',
+          marginBottom: 16, padding: '8px 12px',
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 4, fontSize: 12,
+        }}>
+          <span style={{ color: 'var(--text2)', marginRight: 4 }}>Kibana saved-search sync:</span>
+          <a className="sec"
+            href={api.kibanaExportURL()}
+            download
+            style={{ padding: '4px 12px', textDecoration: 'none', fontSize: 12 }}
+            title="Download your /logs saved views as Kibana .ndjson — import in Kibana → Saved Objects.">
+            ↓ Export to .ndjson
+          </a>
+          <button type="button" className="sec"
+            onClick={() => fileRef.current?.click()}
+            style={{ padding: '4px 12px', fontSize: 12 }}
+            title="Upload a Kibana saved-search .ndjson — each `type:search` doc becomes a Coremetry /logs saved view.">
+            ↑ Import from .ndjson
+          </button>
+          <input ref={fileRef} type="file" accept=".ndjson,application/x-ndjson,.json,application/json"
+            style={{ display: 'none' }}
+            onChange={e => {
+              const f = e.target.files?.[0];
+              if (f) void onImport(f);
+              e.target.value = '';
+            }} />
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text3)' }}>
+            Lossy round-trip: title + KQL query only.
+          </span>
+        </div>
+
         {err && (
           <div className="empty" style={{ padding: 24, color: 'var(--err)' }}>
             <div style={{ marginBottom: 6, fontWeight: 600 }}>Failed to fetch index inventory</div>

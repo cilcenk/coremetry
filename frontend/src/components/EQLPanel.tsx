@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { tsLong } from '@/lib/utils';
@@ -31,32 +31,83 @@ interface EQLPanelProps {
   toMs?: number;
 }
 
-// Seed queries — kept intentionally minimal because field names
-// (severity_text vs level vs log.level, message vs body) vary
-// across operator deployments. v0.5.470 swapped harder-coded
-// ECS shape (event.action / level) for fields Coremetry's own
-// schema documents in elasticsearch.go's pickString fallback
-// chain. If the operator's index uses different names, swap
-// after pasting an example into the editor.
-const EXAMPLE_QUERIES = [
-  {
-    label: 'Two errors within 1m (same service)',
-    q: `sequence by service.name with maxspan=1m
-  [any where severity_text == "error"]
-  [any where severity_text == "error"]`,
-  },
-  {
-    label: 'Warning then error within 5m (same trace)',
-    q: `sequence by trace.id with maxspan=5m
-  [any where severity_text == "warning"]
-  [any where severity_text == "error"]`,
-  },
+// v0.5.475 — field-aware seed examples. Hardcoded field names
+// (level / severity_text / log.level) consistently 400'd against
+// indices that shipped under different OTel SDK conventions.
+// We now pull /api/logs/fields on open and pick the first match
+// from a priority chain, then template the example strings.
+// Falls back to "level" only when none of the candidates exist
+// in the operator's mapping (rare; produces a 400 the operator
+// can still adapt by hand).
+
+const SEVERITY_CANDIDATES = [
+  'severity_text', 'severity', 'log.level', 'level',
+  'severity_text.keyword', 'log.level.keyword', 'level.keyword',
 ];
+const SERVICE_CANDIDATES = [
+  'service.name', 'service.name.keyword', 'service', 'kubernetes.labels.app',
+];
+const TRACE_CANDIDATES = [
+  'trace.id', 'trace.id.keyword', 'traceId',
+];
+
+function pickField(fields: string[], candidates: string[], fallback: string): string {
+  const set = new Set(fields);
+  for (const c of candidates) {
+    if (set.has(c)) return c;
+  }
+  return fallback;
+}
+
+function seedExamples(fields: string[]) {
+  const sev = pickField(fields, SEVERITY_CANDIDATES, 'level');
+  const svc = pickField(fields, SERVICE_CANDIDATES,  'service.name');
+  const tid = pickField(fields, TRACE_CANDIDATES,    'trace.id');
+  return [
+    {
+      label: `Two errors within 1m (same ${svc})`,
+      q: `sequence by ${svc} with maxspan=1m
+  [any where ${sev} == "error"]
+  [any where ${sev} == "error"]`,
+    },
+    {
+      label: `Warning then error within 5m (same ${tid})`,
+      q: `sequence by ${tid} with maxspan=5m
+  [any where ${sev} == "warning"]
+  [any where ${sev} == "error"]`,
+    },
+  ];
+}
 
 export function EQLPanel({ fromMs, toMs }: EQLPanelProps) {
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState(EXAMPLE_QUERIES[0].q);
+  // v0.5.475 — examples are derived from the operator's actual
+  // mapping. Empty list → fallback hardcodes (still likely to
+  // 400 on indices without standard names, but the operator can
+  // swap from there).
+  const [examples, setExamples] = useState(() => seedExamples([]));
+  const [query, setQuery] = useState(examples[0].q);
   const [size, setSize] = useState(10);
+
+  // Fetch fields on first expand. Reuses the cached
+  // /api/logs/fields endpoint (60s server cache); cheap.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.logsFields()
+      .then(d => {
+        if (cancelled) return;
+        const fresh = seedExamples(d.fields ?? []);
+        setExamples(fresh);
+        // Only swap the editor content if the operator hasn't
+        // started editing — preserve their typing.
+        setQuery(prev => prev === examples[0].q ? fresh[0].q : prev);
+      })
+      .catch(() => { /* leave fallback seeds */ });
+    return () => { cancelled = true; };
+    // examples intentionally omitted — we only re-seed on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<EQLSequence[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -109,7 +160,7 @@ export function EQLPanel({ fromMs, toMs }: EQLPanelProps) {
         <div style={{ padding: '0 12px 12px 12px' }}>
           <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ color: 'var(--text3)', fontSize: 11 }}>Examples:</span>
-            {EXAMPLE_QUERIES.map(e => (
+            {examples.map(e => (
               <button key={e.label} type="button"
                 onClick={() => setQuery(e.q)}
                 style={{

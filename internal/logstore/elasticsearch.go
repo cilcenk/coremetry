@@ -1466,6 +1466,24 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 			"term": map[string]any{s.fields.Service: f.Service},
 		})
 	}
+	// v0.5.471 — cluster filter. Match any of the three known
+	// resource-attribute paths (ECS k8s, OpenShift, bare).
+	// OTel emitters drop cluster name into resource attributes
+	// at SDK init, so per-record this is stable. Wrap in
+	// bool.should so missing-field indices don't fail the
+	// whole query.
+	if f.Cluster != "" {
+		must = append(must, map[string]any{
+			"bool": map[string]any{
+				"should": []any{
+					map[string]any{"term": map[string]any{"resource_attributes.k8s.cluster.name":       f.Cluster}},
+					map[string]any{"term": map[string]any{"resource_attributes.openshift.cluster.name": f.Cluster}},
+					map[string]any{"term": map[string]any{"resource_attributes.cluster":                f.Cluster}},
+				},
+				"minimum_should_match": 1,
+			},
+		})
+	}
 	if f.Search != "" {
 		// Free-text search box → Lucene query_string. Plain words still
 		// work as a body match (default_field), but the user can also

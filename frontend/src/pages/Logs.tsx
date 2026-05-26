@@ -66,11 +66,22 @@ function LogsInner() {
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState({
-    service: '', search: '', severity: 0, traceId: '', spanId: '',
+    service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '',
   });
   const [draft, setDraft] = useState(filter);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [services, setServices] = useState<string[]>([]);
+  // v0.5.471 — cluster list for the inline selector. /api/clusters
+  // returns the distinct k8s/openshift cluster names seen in the
+  // last 24h; small list, fetched once on mount.
+  const [clusters, setClusters] = useState<string[]>([]);
+  useEffect(() => {
+    const toNs = Date.now() * 1_000_000;
+    const fromNs = toNs - 24 * 3600 * 1_000_000_000;
+    api.clusters(fromNs, toNs)
+      .then(r => setClusters(r?.clusters ?? []))
+      .catch(() => setClusters([]));
+  }, []);
   // v0.5.399 — trace peek drawer state. Clicking the "👁" button
   // next to a trace_id in the log row sets this; TracePeekDrawer
   // fetches the trace summary + sibling logs and renders inline
@@ -96,6 +107,7 @@ function LogsInner() {
   useEffect(() => {
     const next = {
       service:  searchParams.get('service') ?? '',
+      cluster:  searchParams.get('cluster') ?? '',
       search:   searchParams.get('q') ?? searchParams.get('search') ?? '',
       severity: 0,
       traceId:  searchParams.get('traceId') ?? '',
@@ -132,6 +144,7 @@ function LogsInner() {
   const staticQ = useLogs({
     limit: 100, offset: page * 100, from, to,
     service: filter.service || undefined,
+    cluster: filter.cluster || undefined,
     search: filter.search || undefined,
     severity: filter.severity > 0 ? filter.severity : undefined,
     traceId: filter.traceId || undefined,
@@ -145,13 +158,14 @@ function LogsInner() {
   // Disabled when live=false; the static query (above) takes
   // over in that case.
   const liveQ = useQuery({
-    queryKey: ['logs', 'live', filter.service, filter.search, filter.severity],
+    queryKey: ['logs', 'live', filter.service, filter.cluster, filter.search, filter.severity],
     queryFn: () => {
       const now = Date.now() * 1_000_000;
       const fromNs = Math.floor((Date.now() - 5 * 60_000) * 1_000_000);
       return api.logs({
         limit: 200, from: fromNs, to: now,
         service: filter.service || undefined,
+        cluster: filter.cluster || undefined,
         search: filter.search || undefined,
         severity: filter.severity > 0 ? filter.severity : undefined,
       });
@@ -227,7 +241,7 @@ function LogsInner() {
 
   const apply = () => { setPage(0); setFilter(draft); };
   const reset = () => {
-    const empty = { service: '', search: '', severity: 0, traceId: '', spanId: '' };
+    const empty = { service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '' };
     setDraft(empty); setFilter(empty); setPage(0);
   };
 
@@ -319,6 +333,20 @@ function LogsInner() {
         <div className="controls">
           <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
             placeholder="Service…" width={170} onEnter={apply} />
+          {/* v0.5.471 — cluster selector. Populated from
+              /api/clusters (existing endpoint); typically 1-5
+              entries per install so a plain <select> is the
+              right shape — no server-debounced picker needed.
+              Empty option = all clusters. */}
+          {clusters.length > 0 && (
+            <select value={draft.cluster}
+              onChange={e => { setDraft(d => ({ ...d, cluster: e.target.value })); }}
+              title="Filter logs to a single k8s/openshift cluster"
+              style={{ width: 160 }}>
+              <option value="">All clusters</option>
+              {clusters.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
           <KqlSearchInput
             value={draft.search}
             onChange={v => setDraft({ ...draft, search: v })}

@@ -86,6 +86,19 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 	args := []any{from, to}
 	wc := "time >= ? AND time <= ?"
+	if f.Cluster != "" {
+		// v0.5.471 — coalesce the three resource-attribute paths
+		// the chstore.spans table also uses (clusterDeriveExpr).
+		// logs reuses the same key conventions emitted by OTel
+		// SDKs at init time.
+		wc += ` AND coalesce(
+			nullIf(resource_attributes['k8s.cluster.name'], ''),
+			nullIf(resource_attributes['openshift.cluster.name'], ''),
+			nullIf(resource_attributes['cluster'], ''),
+			''
+		) = ?`
+		args = append(args, f.Cluster)
+	}
 	if f.Service != "" {
 		wc += " AND service_name = ?"
 		args = append(args, f.Service)

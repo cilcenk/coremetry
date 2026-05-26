@@ -1648,6 +1648,7 @@ export interface TracesParams {
 
 export interface LogsParams {
   service?: string;
+  cluster?: string;  // v0.5.471 — k8s/openshift cluster name
   search?: string;
   severity?: number;
   traceId?: string;

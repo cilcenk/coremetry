@@ -22,6 +22,7 @@ import (
 // (with a log line).
 type Filter struct {
 	Service     string
+	Cluster     string    // v0.5.471 — k8s/openshift cluster name; empty = any
 	Search      string
 	From, To    time.Time
 	SeverityMin uint8     // OTel severity number ≥ this; 0 = no filter

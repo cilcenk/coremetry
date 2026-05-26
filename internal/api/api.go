@@ -2826,6 +2826,7 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 	sev, _ := strconv.Atoi(q.Get("severity"))
 	f := logstore.Filter{
 		Service:     q.Get("service"),
+		Cluster:     q.Get("cluster"),
 		Search:      q.Get("search"),
 		From:        parseTime(q.Get("from")),
 		To:          parseTime(q.Get("to")),

@@ -16,7 +16,7 @@ five years.
 
 | Constraint | Why | Enforced where |
 |---|---|---|
-| **Single-binary release** | One `docker run`. No sidecar mesh. | `main.go`, `Dockerfile` |
+| **Single-binary release** | One image, one tag, one release pipeline. `COREMETRY_MODE=all\|ingest\|api\|worker` (v0.6.0) lets that single binary act in different roles for scale-out, but it's still one binary. | `main.go`, `Dockerfile` |
 | **Picker = server-side search** | 10k+ ops can't ride a `<Combobox options={…}>`. | `ServicePicker` / `OperationPicker` / `MetricNamePicker` |
 | **Table > 100 rows** | Virtualize, paginate server-side, OR `content-visibility:auto`. | `globals.css`, every list page |
 | **Cache key hashes ALL inputs** | Length-only digests cross-poison (v0.5.187 incident). Use sorted + FNV. | `internal/api/cache.go` |
@@ -413,3 +413,52 @@ component will narrow.
 - **v0.5.246-247** — Topology op view + service view share the
   same NODE / COL / ROW constants + orphan handling so the
   operator's eye doesn't recalibrate when switching tabs.
+- **v0.6.0** — `COREMETRY_MODE` env var lets the single
+  binary run in four roles: `all` (default, monolithic POC),
+  `ingest` (OTLP receivers + CH writers), `api` (HTTP API +
+  SSE + Copilot), `worker` (evaluator + anomaly + topology
+  agg + notifier; replicas=1 — leader-elected). Preserves the
+  single-binary pitch (one image, one tag) while letting
+  banks run 5×ingest + 2×api + 1×worker at billion-spans
+  scale.
+- **v0.6.2** — Helm chart `deployment.mode: monolithic |
+  distributed` toggle. Monolithic = unchanged behaviour from
+  v0.5.x (one Deployment, replicaCount applies). Distributed
+  = three Deployments + four Services (`<release>` alias →
+  api, plus `-ingest`/`-api`/`-worker`). HPA targets api in
+  distributed mode; worker locked at 1 replica.
+- **v0.6.3** — SSE Redis pub/sub bridge. Worker-pod-fired
+  events (problem.open, anomaly.fire) ride a `coremetry-
+  events` Redis channel so every api pod's local SSE
+  subscribers receive them. PodID-stamped envelopes prevent
+  loops; 200ms publish deadline so a wedged Redis doesn't
+  stall the evaluator. Single-pod / Noop-cache installs are
+  unchanged (no Redis activity).
+- **v0.6.4-v0.6.7** — Model Context Protocol server. JSON-RPC
+  2.0 over HTTP+SSE per spec 2024-11-05. Exposes tools (7
+  telemetry surfaces in `internal/mcptools/`), resources
+  (URI-addressed snapshots + templated per-id reads), and
+  prompts (curated system+user message pairs that surface the
+  in-app ✨ Explain workflows). Auth via existing JWT
+  middleware — viewer/editor/admin roles carry into MCP. Runs
+  on api+all modes only (worker/ingest pods don't take
+  operator traffic).
+- **v0.6.8** — AI-driven CH query optimizer on
+  `/admin/clickhouse`. Operator pastes SQL, Copilot rewrites
+  it against the MV catalogue + six-rule checklist (MV bypass
+  / LIMIT / max_execution_time / time-bounded WHERE / GLOBAL
+  IN / quantileTDigest defaults). Suggestion only — no auto-
+  run; operator copies the optimized SQL to their CH client.
+  Routes through `s.copilotExplain` so every call writes an
+  ai_calls row for /ai attribution.
+
+  # Coremetry Development Rules
+
+## Backend (Go)
+- Veri yazma işlemlerinde ClickHouse Async Insert (`async_insert=1`) mekanizmasını bozma.
+- Her yeni eklenen API endpoint'i için mutlaka `internal/api/api.go` içine tip güvenli rota ekle.
+- Arka plan işçilerinde lider kilidini (Leader Lock) korumak için mutlaka Redis mutex yapısını kullan.
+
+## Frontend (TypeScript/React)
+- Grafik çizimleri için kesinlikle Chart.js veya ağır kütüphaneler ekleme, sadece `uPlot` kullan.
+- State güncellemelerini gerçek zamanlı SSE (Server-Sent Events) veriyolu ile senkronize et.

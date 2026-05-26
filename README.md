@@ -233,6 +233,73 @@ A flat manifest set lives in `examples/openshift/` for
 clusters that don't run Helm. Restricted-v2 SCC compatible
 (no `runAsUser` pin), TLS-edge `Route` for the Web UI.
 
+### Deployment topology — monolithic vs distributed (v0.6+)
+
+The same Coremetry image runs in two shapes, picked via a
+single values key. Switch at any time with a rolling upgrade:
+
+```yaml
+# values.yaml
+deployment:
+  mode: monolithic     # default — one Deployment, COREMETRY_MODE unset
+  # OR
+  mode: distributed    # three Deployments: ingest + api + worker
+  roles:
+    ingest: { replicas: 5 }   # scale up for OTLP fan-in load
+    api:    { replicas: 2 }   # scale up for read HA / RPS
+    worker: { replicas: 1 }   # MUST be 1 — leader-elected jobs
+```
+
+| Topology | When to use |
+|---|---|
+| `monolithic` (default) | POC, SME installs, dev clusters. One pod, one container, every subsystem in-process. Matches every Coremetry release up to v0.5.x — no migration cost for existing users. |
+| `distributed` | Production at billion-spans/day scale. Three Deployments running the same image with `COREMETRY_MODE=ingest|api|worker`. Ingest scales horizontally for OTLP load; api scales for read HA; worker stays singleton (alert evaluator, anomaly detector, topology aggregator are leader-elected via Redis lock and a single replica avoids the lock-contention overhead). |
+
+Distributed mode requires Redis (the lock + SSE pub/sub
+bridge for cross-pod event fan-out). Without it, worker-fired
+`problem.opened` events wouldn't reach the api pods' SSE
+streams; v0.6.3 wires that bridge so browsers connected to any
+api pod see every event regardless of where it fired.
+
+Same binary contract from v0.5.x: one image, one release
+pipeline, one tag. Container runtime picks its role from a
+single env var; the chart wires it from `deployment.mode`.
+
+### Model Context Protocol (MCP) — external LLM access (v0.6.4+)
+
+Coremetry exposes its telemetry as an [MCP](https://modelcontextprotocol.io)
+server so Claude Desktop, the Anthropic API tool-calling flow,
+and internal copilots can investigate incidents via a uniform
+JSON-RPC protocol instead of bespoke REST integrations.
+
+Three capability surfaces are advertised:
+
+- **Tools** (v0.6.5) — invokable functions: `list_services`,
+  `get_service_health`, `list_problems`, `list_anomalies`,
+  `search_logs`, `get_trace`, `query_metric`. Each has a JSON
+  Schema for args and reads from the same MV path the UI uses.
+- **Resources** (v0.6.6) — URI-addressed read-only references:
+  `coremetry://services`, `coremetry://problems/open`, and
+  templated URIs like `coremetry://trace/{trace_id}` or
+  `coremetry://service/{name}`.
+- **Prompts** (v0.6.7) — curated system+user message templates
+  that surface the in-app ✨ Explain workflows over MCP:
+  `explain_trace`, `explain_problem`, `suggest_runbook`,
+  `explain_service_health`, `explain_exception`. The renderer
+  fetches the data + combines with the canonical system prompt
+  so the LLM gets a complete conversation seed.
+
+Transport: HTTP+SSE per MCP spec 2024-11-05. GET
+`/api/mcp/sse` opens the stream, POST `/api/mcp/messages?
+sessionId=…` carries JSON-RPC requests. Auth via the existing
+JWT/cookie middleware — viewer/editor/admin roles carry into
+MCP just like REST.
+
+Multi-pod note: MCP sessions are pod-local. In distributed
+deployments, add session affinity at the ingress (sticky
+cookie keyed on `Mcp-Session-Id` or the original sessionId
+query param) so reconnects land on the same pod.
+
 ---
 
 ## OpenTelemetry agents

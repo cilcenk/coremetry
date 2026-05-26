@@ -416,6 +416,11 @@ func (s *Server) Start() error {
 	// box. ES _terms_enum on keyword subfields for sub-ms prefix
 	// lookups; CH backend returns [] (handler degrades silently).
 	mux.HandleFunc("GET /api/logs/field-values", s.getLogsFieldValues)
+	// v0.5.468 — EQL sequence detection. POST body carries the
+	// EQL expression + time window + size cap. CH backend
+	// returns an explicit "unsupported" error; the frontend
+	// hides the panel when the logs backend reports non-ES.
+	mux.HandleFunc("POST /api/logs/eql", auth.RequireAnyRole(editorRoles, s.runLogsEQL))
 	// v0.5.402 — surrounding context (±N logs around a pivot ts).
 	// Datadog Context tab equivalent. Two parallel logstore.Search
 	// calls (before / after) so the operator sees what was emitted
@@ -2877,6 +2882,59 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 // Cached briefly (30s) — values change slowly and the operator
 // will type new prefixes in rapid succession (each is a fresh
 // cache key).
+// runLogsEQL executes an Elastic Event Query Language sequence
+// search against the configured ES logs backend. Editor-gated —
+// EQL can return arbitrary field shapes from the index and we
+// want admin/editor accountability via audit. CH backend
+// surfaces the "not supported" error from CHStore.EQLSearch;
+// the frontend hides the panel on non-ES backends. v0.5.468.
+//
+// Not cached — EQL queries are operator-driven ad-hoc; caching
+// per-keystroke iterations would just churn Redis without
+// helping anyone.
+func (s *Server) runLogsEQL(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Query string `json:"query"`
+		From  int64  `json:"fromMs"`
+		To    int64  `json:"toMs"`
+		Size  int    `json:"size"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+	q := logstore.EQLQuery{
+		Query: body.Query,
+		Size:  body.Size,
+	}
+	if body.From > 0 {
+		q.From = time.UnixMilli(body.From)
+	}
+	if body.To > 0 {
+		q.To = time.UnixMilli(body.To)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	seqs, err := s.logs.EQLSearch(ctx, q)
+	if err != nil {
+		writeJSON(w, map[string]any{
+			"sequences": []logstore.EQLSequence{},
+			"error":     err.Error(),
+		})
+		return
+	}
+	if seqs == nil {
+		seqs = []logstore.EQLSequence{}
+	}
+	s.audit(r, "logs.eql_run", "logs", "",
+		fmt.Sprintf(`{"len":%d,"size":%d}`, len(body.Query), body.Size))
+	writeJSON(w, map[string]any{
+		"sequences": seqs,
+		"backend":   s.logs.Backend(),
+	})
+}
+
 // adminElasticIndices returns per-index doc count, size, health,
 // and ILM lifecycle (policy + phase) for the configured logs
 // backend's index pattern. Powers /admin/elastic. CH backend

@@ -491,6 +491,16 @@ func chBuildTokenLiteral(tokens []string) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
+// EQLSearch — CH stub (v0.5.468). EQL is ES-native; CH has no
+// equivalent sequence-matching aggregate. Returning a typed
+// error lets the handler surface "not supported on this
+// backend" cleanly and lets the frontend hide the EQL panel.
+func (s *CHStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, error) {
+	_ = ctx
+	_ = q
+	return nil, fmt.Errorf("EQL is Elasticsearch-only (ClickHouse backend has no equivalent)")
+}
+
 // Indices — CH stub (v0.5.466). Single physical table on the
 // CH backend; per-shard / part-level surface is on the existing
 // /admin/clickhouse page. Returning nil makes /admin/elastic

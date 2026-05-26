@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { KqlSearchInput } from '@/components/KqlSearchInput';
+import { EQLPanel } from '@/components/EQLPanel';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -179,6 +180,11 @@ function LogsInner() {
   // backend returns an empty list (its shape is fixed and
   // already documented in the placeholder).
   const [fields, setFields] = useState<string[]>([]);
+  // v0.5.468 — EQL backend gate. We hide the EQL panel on CH
+  // because ES is the only backend that implements sequence
+  // detection. `logsFields` already returns the backend name;
+  // reuse it instead of an extra /api/health call.
+  const [logsBackend, setLogsBackend] = useState<string>('');
   const [showFieldsHint, setShowFieldsHint] = useState(false);
   // Save-as-alert modal state (v0.5.242). null = closed; an
   // object = open with this draft.
@@ -202,8 +208,8 @@ function LogsInner() {
   }, []);
   useEffect(() => {
     api.logsFields()
-      .then(d => setFields(d.fields ?? []))
-      .catch(() => setFields([]));
+      .then(d => { setFields(d.fields ?? []); setLogsBackend(d.backend ?? ''); })
+      .catch(() => { setFields([]); setLogsBackend(''); });
   }, []);
   // Insert "field:" into the search box at cursor / end. Auto-
   // focuses so the operator can type the value immediately.
@@ -408,6 +414,14 @@ function LogsInner() {
             );
           })()}
         </div>
+
+        {/* EQL Sequence Detection (v0.5.468) — only on ES
+            backend, collapsed by default so it doesn't crowd
+            the page for operators who don't reach for it. */}
+        {logsBackend === 'elasticsearch' && (
+          <EQLPanel fromMs={from ? Math.floor(from / 1_000_000) : undefined}
+                    toMs={to ? Math.floor(to / 1_000_000) : undefined} />
+        )}
 
         {/* Field-mapping chips (v0.5.137). Toggled via the ƒ
             Fields button next to the search input. Discovered

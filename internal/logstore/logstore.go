@@ -60,6 +60,31 @@ type Page struct {
 	Logs  []*LogRecord `json:"logs"`
 }
 
+// EQLQuery — parameters for an Event Query Language sequence
+// detection (v0.5.468). ES-native; CH backend rejects.
+type EQLQuery struct {
+	Query string    // EQL expression: `sequence … [event …] [event …]`
+	From  time.Time // window start (zero = no lower bound)
+	To    time.Time // window end (zero = now)
+	Size  int       // max sequences to return; 0 = backend default (~10)
+}
+
+// EQLEvent — one event row inside a matched sequence. Carries
+// only the columns Coremetry's /logs renderer needs.
+type EQLEvent struct {
+	Timestamp int64  `json:"timestamp"` // unix ns
+	Body      string `json:"body"`
+	Service   string `json:"service"`
+	Severity  string `json:"severity"`
+}
+
+// EQLSequence — one matched sequence. JoinKeys lifts the `by`
+// columns the operator's EQL expression grouped on.
+type EQLSequence struct {
+	JoinKeys []string   `json:"joinKeys"`
+	Events   []EQLEvent `json:"events"`
+}
+
 // IndexInfo describes one log-backend index (ES) or shard table
 // (CH). Returned by Store.Indices for /admin/elastic to surface
 // per-index health + ILM lifecycle state. v0.5.466.
@@ -161,6 +186,17 @@ type Store interface {
 	// attribute path the backend knows). Empty groupBy → a single
 	// "_total" series.
 	Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error)
+
+	// EQLSearch runs an Elastic Event Query Language sequence
+	// detection against the log index — "event A then event B
+	// within N minutes" expressions Coremetry can't otherwise
+	// express via plain search. Returns the matched sequences,
+	// each with its ordered event list. v0.5.468.
+	//
+	// CH backend returns an "unsupported" error — EQL is ES-
+	// specific and the CH frontend hides the panel when the
+	// backend reports non-ES.
+	EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, error)
 
 	// Indices lists the log indices the backend currently has,
 	// with health + size + ILM lifecycle info per index. Powers

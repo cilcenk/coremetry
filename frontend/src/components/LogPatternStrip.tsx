@@ -167,18 +167,27 @@ function PatternChip({ anomaly, onClick, onPickService }: {
   );
 }
 
-// searchTermFor — extract a substring of the pattern name that's
-// likely to match the source line. Curated names are usually
-// either a stack trace marker ("panic:") or a Linux/JVM keyword
-// ("OOMKilled", "Deadlock"). For multi-word names we take the
-// first word so a search like "Connection refused" doesn't fold
-// the AND-glue into the body match.
+// searchTermFor — pattern name → /logs search box value.
+// v0.5.477 — operator-reported (verbatim): clicking "JDBC pool
+// exhausted" landed in the filter as just "JDBC". The previous
+// first-word-only logic was meant to avoid the operator's typed
+// AND being misparsed by query_string, but at the cost of
+// losing the rest of the phrase that's often the most
+// distinguishing piece ("pool exhausted" disambiguates from
+// "JDBC connect", "JDBC closed", etc.).
+//
+// Multi-word patterns now emit as a double-quoted phrase so
+// query_string treats them as a phrase match on the body
+// field. CH's multiSearchAnyCaseInsensitive treats the quoted
+// form as a single substring needle — same intent. Single-word
+// patterns pass through with surrounding punctuation stripped
+// (the v0.5.239 behaviour we want to keep for "panic:" /
+// "OOMKilled" / "Deadlock").
 function searchTermFor(a: LogPatternAnomaly): string {
   const name = a.pattern.trim();
-  // Pick the first whitespace-delimited token, strip common
-  // punctuation. Stays a substring of the source line so
-  // multiSearchAnyCaseInsensitive on CH or query_string body
-  // match on ES both hit.
-  const tok = name.split(/\s+/)[0] || name;
-  return tok.replace(/[():]/g, '').trim();
+  if (!name) return '';
+  if (/\s/.test(name)) {
+    return `"${name.replace(/"/g, '\\"')}"`;
+  }
+  return name.replace(/[():]/g, '').trim();
 }

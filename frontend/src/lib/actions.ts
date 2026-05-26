@@ -67,6 +67,71 @@ export const ACTIONS: Action[] = [
       return `Acknowledged ${id} (${n} problem${n === 1 ? '' : 's'})`;
     },
   },
+  {
+    id: 'disable-rule',
+    label: 'Disable alert rule',
+    hint: 'Stop an alert rule from firing without deleting it',
+    keywords: ['disable', 'mute rule', 'pause rule'],
+    allowedRoles: ['admin', 'editor'],
+    params: [{
+      name: 'ruleId',
+      label: 'Rule ID',
+      kind: 'text',
+      required: true,
+      placeholder: 'rule-uuid',
+    }],
+    run: async ({ ruleId }) => {
+      const id = ruleId.trim();
+      if (!id) throw new Error('Rule ID required');
+      await api.disableAlertRule(id);
+      return `Disabled rule ${id}`;
+    },
+  },
+  {
+    id: 'enable-rule',
+    label: 'Enable alert rule',
+    hint: 'Re-enable a previously disabled rule',
+    keywords: ['enable', 'unmute rule', 'resume rule'],
+    allowedRoles: ['admin', 'editor'],
+    params: [{
+      name: 'ruleId',
+      label: 'Rule ID',
+      kind: 'text',
+      required: true,
+      placeholder: 'rule-uuid',
+    }],
+    run: async ({ ruleId }) => {
+      const id = ruleId.trim();
+      if (!id) throw new Error('Rule ID required');
+      await api.enableAlertRule(id);
+      return `Enabled rule ${id}`;
+    },
+  },
+  {
+    id: 'save-view',
+    label: 'Save current view',
+    hint: 'Stash the current filter combo as a named saved view',
+    keywords: ['save', 'pin', 'bookmark'],
+    allowedRoles: ['admin', 'editor', 'viewer'],
+    params: [{
+      name: 'name',
+      label: 'View name',
+      kind: 'text',
+      required: true,
+      placeholder: 'e.g. Payments errors',
+    }],
+    run: async ({ name }) => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error('Name required');
+      // Derive page + queryString from the current URL so the
+      // operator gets "save THIS slice" without needing extra
+      // params. saved_views table is per-(page,owner).
+      const page = window.location.pathname.replace(/^\//, '') || 'home';
+      const queryString = window.location.search.replace(/^\?/, '');
+      await api.createSavedView({ name: trimmed, page, queryString });
+      return `Saved view "${trimmed}" on /${page}`;
+    },
+  },
 ];
 
 // filterActions ranks the registry against the typed query, gated

@@ -34,6 +34,18 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
+  {{- /* v0.6.21 — sticky-session affinity for MCP + SSE.
+        Applied on the stable Service (and the per-role Services
+        below) so MCP sessions stay on the pod they initialised
+        on. Only emits the affinity block when it's set to
+        something other than "None" — keeps the manifest clean
+        on installs that opt out. */ -}}
+  {{- if and .Values.service.sessionAffinity (ne .Values.service.sessionAffinity "None") }}
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: {{ .Values.service.sessionAffinityTimeoutSeconds | default 10800 }}
+  {{- end }}
   selector:
     {{- include "coremetry.selectorLabels" . | nindent 4 }}
     {{- if eq $mode "distributed" }}
@@ -87,6 +99,15 @@ metadata:
     app.kubernetes.io/component: coremetry-api
 spec:
   type: {{ .Values.service.type }}
+  # v0.6.21 — sticky affinity carries through to the per-role
+  # api Service too, so an MCP client talking to <release>-api
+  # directly (bypassing the stable name) still pins to one pod.
+  {{- if and .Values.service.sessionAffinity (ne .Values.service.sessionAffinity "None") }}
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: {{ .Values.service.sessionAffinityTimeoutSeconds | default 10800 }}
+  {{- end }}
   selector:
     {{- include "coremetry.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: coremetry-api

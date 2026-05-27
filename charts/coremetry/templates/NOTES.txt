@@ -68,3 +68,41 @@ Coremetry has been installed.
   rotates on every restart and invalidates all sessions. Set
   secrets.jwtSecret to a long random string for production.
 {{- end }}
+
+{{- if and (gt (int .Values.replicaCount) 1) (eq .Values.service.sessionAffinity "None") }}
+
+⚠ MCP + SSE session affinity is disabled but you're running multiple
+  replicas. MCP sessions and SSE streams hold pod-local state — a
+  reconnect that lands on a different pod will lose the session. Two
+  fixes available:
+    1. Set service.sessionAffinity=ClientIP (default) for k8s-native
+       per-source-IP stickiness (fine for direct in-cluster clients).
+    2. Front the Service with an ingress that injects a sticky cookie
+       — example for nginx-ingress:
+         metadata.annotations:
+           nginx.ingress.kubernetes.io/affinity: "cookie"
+           nginx.ingress.kubernetes.io/session-cookie-name: "coremetry-route"
+           nginx.ingress.kubernetes.io/session-cookie-max-age: "10800"
+       Use option 2 when clients are external (NAT collapses ClientIP).
+{{- end }}
+
+{{- if eq (default "monolithic" .Values.deployment.mode) "distributed" }}
+
+ℹ Distributed deployment mode is active. Three Deployments are running:
+    {{ include "coremetry.fullname" . }}-ingest   ({{ .Values.deployment.roles.ingest.replicas }} replicas)
+    {{ include "coremetry.fullname" . }}-api      ({{ .Values.deployment.roles.api.replicas }} replicas)
+    {{ include "coremetry.fullname" . }}-worker   ({{ .Values.deployment.roles.worker.replicas }} replica — DO NOT scale)
+
+  External clients reach the UI / REST / MCP through the stable
+  {{ include "coremetry.fullname" . }} Service (aliases the api role).
+
+  MCP session affinity:
+    {{- if and .Values.service.sessionAffinity (ne .Values.service.sessionAffinity "None") }}
+    enabled via service.sessionAffinity={{ .Values.service.sessionAffinity }}
+    timeout {{ .Values.service.sessionAffinityTimeoutSeconds }}s.
+    {{- else }}
+    DISABLED. MCP clients will lose their session on any reconnect
+    that lands on a different api pod. Set service.sessionAffinity
+    (recommended: ClientIP) or front-load with a cookie-based ingress.
+    {{- end }}
+{{- end }}

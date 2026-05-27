@@ -113,6 +113,22 @@ service:
   httpPort: 8088        # Web UI + REST API + direct OTLP/HTTP fallback
   grpcPort: 4317        # OTLP/gRPC ingest (apps + collector forward here)
   annotations: {}
+  # v0.6.21 — session affinity for MCP server sessions + SSE
+  # streams. Pre-v0.6.21 the Service load-balanced every request
+  # round-robin, which broke MCP (sessions are pod-local in-
+  # memory state) and could split SSE streams across pods on
+  # reconnect — the cross-pod Redis bridge re-fans events but a
+  # mid-flight EventSource that re-routed lost the bridge
+  # delivery of any events fired in the gap. Setting ClientIP
+  # affinity pins a client (source IP + dest port tuple) to one
+  # backend pod for sessionAffinityTimeoutSeconds, giving MCP +
+  # SSE stable per-client routing without an ingress-layer
+  # cookie. Set to "None" if you front-load-balance externally
+  # (an ingress / cloud LB with sticky cookies is preferred at
+  # scale because it survives client NAT — see chart NOTES.txt
+  # for an nginx example).
+  sessionAffinity: ClientIP   # ClientIP | None
+  sessionAffinityTimeoutSeconds: 10800  # 3h — covers a long oncall
 
 ingress:
   enabled: false

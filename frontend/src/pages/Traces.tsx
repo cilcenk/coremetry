@@ -335,6 +335,7 @@ function TracesPageInner() {
             page TimeRange to a custom (from, to). Same pattern
             as ServiceCharts onZoom in /service detail. */}
         <TraceVolumeHistogram range={range} dsl={histogramDSL} filters={histogramFilters}
+          searchActive={Boolean(filter.search && filter.search.trim())}
           onZoom={(fromUnixSec, toUnixSec) => {
             setRange({
               preset: 'custom',

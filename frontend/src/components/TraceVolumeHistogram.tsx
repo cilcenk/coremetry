@@ -22,7 +22,7 @@ import { fmtSmart, fmtXTicks } from '@/lib/chartFmt';
 //
 // Filters argument matches the /traces page's current DSL/filters so
 // the histogram tracks the same predicate as the table below.
-export function TraceVolumeHistogram({ range, dsl, filters, onZoom }: {
+export function TraceVolumeHistogram({ range, dsl, filters, onZoom, searchActive }: {
   range: TimeRange;
   dsl?: string;
   filters?: string;
@@ -32,6 +32,16 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom }: {
   // Parent (Traces page) flips the page TimeRange to a custom
   // range so the trace list + filters re-fetch for that slice.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // v0.6.31 — operator-reported: histogram shows total spans for
+  // the active service+filter scope but DOES NOT apply the
+  // search field (free-text trace filter). On a small window
+  // with active search, operator saw "17 spans" in volume vs
+  // "3 traces" in table → assumed a bug. The chart still
+  // intentionally shows the broader scope (search is a trace-
+  // level HAVING, which doesn't translate to a per-span
+  // histogram), but we now surface a chip explaining the gap so
+  // the disparity reads as "by design" not "broken".
+  searchActive?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -269,6 +279,23 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom }: {
         }}>
           Span volume
         </span>
+        {/* v0.6.31 — search-disparity hint. Histogram counts
+            spans matching the service + advanced-filter scope;
+            search is a trace-level HAVING below the table so
+            the chart total can exceed the table's row count.
+            Without this chip operators reported the gap as a
+            bug. */}
+        {searchActive && (
+          <span
+            title="The search field narrows the TRACE list only — the histogram still shows total spans for the service + filter scope above. That's why the chart number can be larger than the table row count."
+            style={{
+              fontSize: 10, padding: '2px 8px', borderRadius: 10,
+              border: '1px solid var(--border)',
+              color: 'var(--text3)', cursor: 'help',
+            }}>
+            ⓘ search applies to table only
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         {stats && (
           <>

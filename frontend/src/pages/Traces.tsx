@@ -521,13 +521,11 @@ function TracesPageInner() {
         {/* List view */}
         {view === 'list' && data === undefined && <TableSkeleton rows={10} cols={7} />}
         {view === 'list' && data && traces.length === 0 && (
-          <Empty icon="⋮" title="No traces found">
-            <div style={{ marginTop: 6, color: 'var(--text2)' }}>
-              Try widening the time range, dropping the service or search filter,
-              or unticking "Root traces". If even an unfiltered query is empty,
-              check ingest health at <a href="/status" style={{ color: 'var(--accent2)' }}>/status</a>.
-            </div>
-          </Empty>
+          <TracesEmpty
+            service={filter.service}
+            search={filter.search}
+            range={range}
+            onSwitchView={() => setView('aggregate')} />
         )}
         {view === 'list' && data && traces.length > 0 && (
           <>
@@ -774,5 +772,78 @@ export default function TracesPage() {
     <Suspense fallback={<Spinner />}>
       <TracesPageInner />
     </Suspense>
+  );
+}
+
+// v0.6.33 — smarter empty state on /traces. The naive "No traces
+// found, try widening" message hid a more useful signal: when
+// the service HAS spans in the MV (service_summary_5m) for this
+// window, but the search-narrowed raw-spans scan came back zero,
+// the operator is hitting either (a) data aged out of raw spans
+// past the 30-day TTL while the 90-day MV still holds the rollup,
+// or (b) a search that happens not to match any actual span.
+//
+// In case (a) the right move is to switch to Aggregate view —
+// trace_summary_5m still has the data. In case (b) the
+// suggestion to widen / drop search still stands.
+//
+// We tell them apart with one extra MV check via servicesPage,
+// then surface the right hint. Same Empty component shape so
+// the existing CSS doesn't change.
+function TracesEmpty({ service, search, range, onSwitchView }: {
+  service: string;
+  search: string;
+  range: TimeRange;
+  onSwitchView: () => void;
+}) {
+  const [mvSpans, setMvSpans] = useState<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (!service) { setMvSpans(null); return; }
+    let cancelled = false;
+    const r = timeRangeToNs(range);
+    api.servicesPage(r, { name: service, limit: 1 })
+      .then(d => {
+        if (cancelled) return;
+        const hit = (d?.services ?? []).find(s => s.name === service);
+        setMvSpans(hit ? hit.spanCount : 0);
+      })
+      .catch(() => { if (!cancelled) setMvSpans(null); });
+    return () => { cancelled = true; };
+  }, [service, range]);
+  const aged = service && search && (mvSpans ?? 0) > 0;
+  return (
+    <Empty icon="⋮" title="No traces found">
+      <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+        {aged ? (
+          <>
+            <b style={{ color: 'var(--warn)' }}>{mvSpans!.toLocaleString()}</b> spans
+            recorded for <code>{service}</code> in this window via the 5-min MV,
+            but no raw spans match the search.
+            {' '}This usually means the underlying span data has aged out past the
+            raw-spans TTL (default 30d) while the MV (90d retention) still
+            holds the rollup. The Aggregate view can show the historical
+            shape; full-text search needs raw spans which are gone.{' '}
+            <button
+              type="button"
+              onClick={onSwitchView}
+              style={{
+                marginLeft: 4, padding: '2px 10px',
+                background: 'var(--accent2-bg, rgba(56,139,253,0.10))',
+                border: '1px solid var(--accent2)',
+                color: 'var(--accent2)', borderRadius: 4,
+                cursor: 'pointer', fontSize: 12,
+              }}>
+              Switch to Aggregate view →
+            </button>
+          </>
+        ) : (
+          <>
+            Try widening the time range, dropping the service or search filter,
+            or unticking "Root traces". If even an unfiltered query is empty,
+            check ingest health at <a href="/status" style={{ color: 'var(--accent2)' }}>/status</a>.
+          </>
+        )}
+      </div>
+    </Empty>
   );
 }

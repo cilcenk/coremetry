@@ -281,6 +281,7 @@ guidance would miss.
 | `/helm-chart-coremetry` | BEFORE any change under `charts/coremetry/`. OpenShift restricted-v2 SCC, global.imageRegistry air-gap rewrite, deployment.mode monolithic/distributed (v0.6.2), MCP/SSE session affinity (v0.6.21), Route vs Ingress, version-bump rules. (v0.6.25) |
 | `/otel-conventions` | BEFORE any change that reads or writes OTel-shaped data. W3C tracecontext-only propagator policy, semconv → column mapping, critical-5 resource attrs, head + tail sampling decision points, EDOT vs raw SDK acceptance, gen_ai.* readiness, OTel-spec deviations documented. (v0.6.25) |
 | `/mcp-tools` | BEFORE adding a tool / resource / prompt to the MCP server in `internal/mcptools/`. range_s convention, clampLimit caps, description-as-contract style, args↔JSON-Schema mirror, auth + audit gating, tools-vs-resources-vs-prompts triage. (v0.6.40) |
+| `/frontend-dashboard-panel` | BEFORE adding a new panel type (heatmap/table/etc) to the dashboard system. 7-edit checklist across types.ts PanelType union, PanelEditor default/form, PanelRenderer dispatch, applyVarsTo<X>, bundle fetch, range override, persistence backward-compat. (v0.6.41) |
 
 ---
 

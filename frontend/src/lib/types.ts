@@ -1247,7 +1247,7 @@ export interface SLORow extends SLO {
 
 // ── Dashboards ───────────────────────────────────────────────────────────────
 
-export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'markdown' | 'row';
+export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row';
 export type PanelWidth = 1 | 2 | 3 | 4;  // 1=quarter … 4=full (12-col grid)
 
 // Each panel type has a different config shape. Kept as a tagged union so
@@ -1296,6 +1296,30 @@ export interface StatPanelConfig {
   thresholds?: { value: number; color: 'green' | 'amber' | 'red' }[];
   colorMode?: 'none' | 'value' | 'background';
 }
+// v0.6.19 — Gauge panel. Grafana-parity semicircle dial with
+// threshold zones painted along the arc. Best for "% of SLO
+// budget consumed", "CPU utilisation", "queue depth vs cap" —
+// any bounded number where the operator wants the at-a-glance
+// "where am I in the safe / warning / breached bands".
+//
+// Same data-fetch as StatPanel (source = 'metric' | 'spanmetric'
+// + the matching config); the only differences are: min/max
+// bounds for the arc, an optional threshold list that paints
+// coloured zones along the arc, and the visualisation itself.
+export interface GaugePanelConfig {
+  source: 'metric' | 'spanmetric';
+  metric?: MetricPanelConfig;
+  span?: SpanMetricPanelConfig;
+  unit?: string;
+  decimals?: number;
+  min?: number;             // arc start value (default 0)
+  max?: number;             // arc end value (default 100)
+  // Same shape as StatPanelConfig.thresholds (v0.5.486); the
+  // gauge paints each band as an arc segment so the operator
+  // sees the green/amber/red zones directly.
+  thresholds?: { value: number; color: 'green' | 'amber' | 'red' }[];
+}
+
 export interface MarkdownPanelConfig {
   text: string;
 }
@@ -1310,7 +1334,7 @@ export interface Panel {
   type: PanelType;
   title: string;
   width: PanelWidth;
-  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | MarkdownPanelConfig | RowPanelConfig;
+  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig;
 }
 
 // DashboardVariable — Grafana-style variable. Referenced as ${name} in

@@ -1,13 +1,18 @@
 import { MetricNamePicker } from '../MetricNamePicker';
 import type {
   Panel, PanelType, PanelWidth,
-  MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, MarkdownPanelConfig,
+  MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
 } from '@/lib/types';
 
 const TYPE_LABELS: Record<PanelType, string> = {
   metric:     'Metric (line)',
   spanmetric: 'Span aggregation (line)',
   stat:       'Stat (single value)',
+  // v0.6.19 — semicircle dial. Best for bounded metrics where
+  // the operator wants the at-a-glance "where am I in the safe
+  // / warning / breached bands". Same data source pattern as
+  // Stat — point either at a metric_points key or a span agg.
+  gauge:      'Gauge (semicircle dial)',
   markdown:   'Markdown / notes',
   row:        'Row (collapsible group)',
 };
@@ -83,6 +88,9 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
         )}
         {panel.type === 'stat' && (
           <StatFields cfg={panel.config as StatPanelConfig} onChange={updateConfig} />
+        )}
+        {panel.type === 'gauge' && (
+          <GaugeFields cfg={panel.config as GaugePanelConfig} onChange={updateConfig} />
         )}
         {panel.type === 'markdown' && (
           <Field label="Markdown text">
@@ -232,6 +240,58 @@ function StatFields({ cfg, onChange }: {
   );
 }
 
+// v0.6.19 — Gauge panel editor. Shares the source/span/metric
+// fields with Stat (they read the same data); adds min/max
+// bounds + a required threshold list. Always renders the
+// threshold editor (no colorMode toggle — the gauge IS its
+// threshold visualisation).
+function GaugeFields({ cfg, onChange }: {
+  cfg: GaugePanelConfig; onChange: (c: GaugePanelConfig) => void;
+}) {
+  return (
+    <>
+      <Field label="Source">
+        <select value={cfg.source ?? 'spanmetric'}
+          onChange={e => onChange({ ...cfg, source: e.target.value as 'metric' | 'spanmetric' })}>
+          <option value="spanmetric">Span aggregation</option>
+          <option value="metric">Metric query</option>
+        </select>
+      </Field>
+      {cfg.source === 'spanmetric' && (
+        <SpanMetricFields cfg={cfg.span ?? { agg: 'count' }}
+          onChange={c => onChange({ ...cfg, span: c })} />
+      )}
+      {cfg.source === 'metric' && (
+        <MetricFields cfg={cfg.metric ?? { metricName: '' }}
+          onChange={c => onChange({ ...cfg, metric: c })} />
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        <Field label="Min">
+          <input type="number" value={cfg.min ?? 0}
+            onChange={e => onChange({ ...cfg, min: parseFloat(e.target.value || '0') })} />
+        </Field>
+        <Field label="Max">
+          <input type="number" value={cfg.max ?? 100}
+            onChange={e => onChange({ ...cfg, max: parseFloat(e.target.value || '0') })} />
+        </Field>
+        <Field label="Unit suffix">
+          <input value={cfg.unit ?? ''} placeholder="% / ms / rps"
+            onChange={e => onChange({ ...cfg, unit: e.target.value })} />
+        </Field>
+        <Field label="Decimals">
+          <input type="number" min={0} max={6} value={cfg.decimals ?? 1}
+            onChange={e => onChange({ ...cfg, decimals: parseInt(e.target.value || '0') })} />
+        </Field>
+      </div>
+      <Field label="Threshold zones">
+        <ThresholdEditor
+          thresholds={cfg.thresholds ?? []}
+          onChange={t => onChange({ ...cfg, thresholds: t })} />
+      </Field>
+    </>
+  );
+}
+
 // v0.5.486 — small inline editor for the threshold steps. Three
 // fixed colour bands (green / amber / red) cover the Grafana
 // shape; operators tweak the value floors and Coremetry picks
@@ -309,6 +369,21 @@ export function defaultConfig(t: PanelType): Panel['config'] {
     case 'metric':     return { metricName: '', agg: 'avg' };
     case 'spanmetric': return { agg: 'count' };
     case 'stat':       return { source: 'spanmetric', span: { agg: 'count' }, decimals: 0 };
+    // v0.6.19 — gauge defaults to span-source 'error_rate' from
+    // 0–100% with a sensible 80% amber / 95% red band. Operator
+    // tweaks via PanelEditor.
+    case 'gauge':      return {
+      source: 'spanmetric',
+      span: { agg: 'error_rate' },
+      unit: '%',
+      decimals: 1,
+      min: 0,
+      max: 100,
+      thresholds: [
+        { value: 80, color: 'amber' },
+        { value: 95, color: 'red' },
+      ],
+    };
     case 'markdown':   return { text: '## Notes\n\nDescribe what this dashboard shows.' };
     // Row panels carry no config of their own — title is on the panel
     // itself, default-collapsed is opt-in.

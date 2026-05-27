@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type {
-  Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, MarkdownPanelConfig,
+  Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
   SpanMetricSeries, TimeRange,
 } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
@@ -58,6 +58,8 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverrid
       return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={range} syncKey={syncKey} onZoom={onZoom} dataOverride={dataOverride} />;
     case 'stat':
       return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={range} />;
+    case 'gauge':
+      return <GaugePanel cfg={applyVarsToGauge(panel.config as GaugePanelConfig, vars)} range={range} />;
     case 'markdown':
       return <MarkdownPanel cfg={panel.config as MarkdownPanelConfig} />;
     case 'row':
@@ -100,6 +102,18 @@ export function applyVarsToSpan(cfg: SpanMetricPanelConfig, vars?: Record<string
 }
 
 function applyVarsToStat(cfg: StatPanelConfig, vars?: Record<string, string>): StatPanelConfig {
+  if (!vars) return cfg;
+  if (cfg.source === 'metric') {
+    return { ...cfg, metric: cfg.metric ? applyVarsToMetric(cfg.metric, vars) : cfg.metric };
+  }
+  return { ...cfg, span: cfg.span ? applyVarsToSpan(cfg.span, vars) : cfg.span };
+}
+
+// v0.6.19 — same logic as applyVarsToStat; gauge shares the
+// metric/span source pattern. Separate function so future
+// gauge-only fields (min/max/thresholds) can pick up variable
+// substitution without contaminating the Stat code path.
+function applyVarsToGauge(cfg: GaugePanelConfig, vars?: Record<string, string>): GaugePanelConfig {
   if (!vars) return cfg;
   if (cfg.source === 'metric') {
     return { ...cfg, metric: cfg.metric ? applyVarsToMetric(cfg.metric, vars) : cfg.metric };
@@ -314,6 +328,182 @@ function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
       )}
     </div>
   );
+}
+
+// ── Gauge panel (v0.6.19) ───────────────────────────────────────
+// Semicircle dial — Grafana-style. Coloured threshold zones run
+// along the arc; a single tick + a centred big number show the
+// current value. Best for bounded metrics where the operator
+// wants "where am I in the safe / warning / breached bands" at
+// a glance (CPU %, SLO budget %, queue cap %).
+//
+// Same data fetch as StatPanel — picks the last point of the
+// recent half-window. No prior-period overlay (the gauge's
+// visual job is "current state", not "trend"; the Stat panel
+// covers the trend story).
+function GaugePanel({ cfg, range }: { cfg: GaugePanelConfig; range: TimeRange }) {
+  const [value, setValue] = useState<number | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setValue(undefined); setError(null);
+    const { from, to } = timeRangeToNs(range);
+    const promise = cfg.source === 'spanmetric'
+      ? api.spanMetric({
+          agg: cfg.span?.agg ?? 'count', field: cfg.span?.field,
+          groupBy: cfg.span?.groupBy, filters: cfg.span?.filters, dsl: cfg.span?.dsl,
+          from, to, step: cfg.span?.step,
+        })
+      : api.metricQuery({
+          name: cfg.metric?.metricName ?? '', service: cfg.metric?.service,
+          agg: cfg.metric?.agg, groupBy: cfg.metric?.groupBy,
+          from, to, step: cfg.metric?.step,
+        });
+    promise
+      .then(s => {
+        const flat = (s ?? []).flatMap(x => x.points);
+        flat.sort((a, b) => a.time - b.time);
+        setValue(flat.length > 0 ? flat[flat.length - 1].value : null);
+      })
+      .catch(e => setError(e.message));
+  }, [JSON.stringify(cfg), range]);
+
+  if (error) return <PanelError msg={error} />;
+  if (value === undefined) return <PanelLoading />;
+
+  const min = cfg.min ?? 0;
+  const max = cfg.max ?? 100;
+  const safeVal = value ?? min;
+  // Clamp to [min, max] for the arc geometry — out-of-range
+  // values still display the raw number, but the needle sits
+  // at the bounds.
+  const clamped = Math.max(min, Math.min(max, safeVal));
+  // SVG geometry: 200×120 viewBox, centre at (100, 100), radius
+  // 80, semicircle from 180° (left) sweeping to 360° (right) —
+  // i.e. the top half.
+  const cx = 100, cy = 100, radius = 80;
+  const trackW = 18;
+  const valueAngle = valueToAngle(clamped, min, max);
+  // Threshold band painter: each contiguous (start, end) range
+  // gets an arc segment painted in its colour. Falls back to a
+  // neutral track when no thresholds are set.
+  const segs = computeGaugeSegments(cfg.thresholds, min, max);
+  const band = pickThresholdBand(safeVal, cfg.thresholds);
+  const valueColour = band ? THRESHOLD_COLOURS[band.color] : 'var(--accent2)';
+  const display = formatStatValue(value, cfg.unit, cfg.decimals);
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      height: 220, gap: 4,
+    }}>
+      <svg width={220} height={130} viewBox="0 0 200 120">
+        {/* Background track — paints the full arc in a soft
+            neutral so empty space past the threshold zones
+            still reads as a gauge, not a partial band. */}
+        <path d={arcPath(cx, cy, radius, 180, 360)}
+              fill="none"
+              stroke="var(--bg2)"
+              strokeWidth={trackW}
+              strokeLinecap="butt" />
+        {/* Threshold band segments — coloured zones. */}
+        {segs.map((s, i) => (
+          <path key={i}
+                d={arcPath(cx, cy, radius,
+                  valueToAngle(s.from, min, max),
+                  valueToAngle(s.to, min, max))}
+                fill="none"
+                stroke={THRESHOLD_COLOURS[s.color]}
+                strokeOpacity={0.6}
+                strokeWidth={trackW}
+                strokeLinecap="butt" />
+        ))}
+        {/* Current-value tick — narrow rectangle at the needle
+            angle, anchored at the inner edge of the track. */}
+        <line {...tickAt(cx, cy, radius, trackW, valueAngle)}
+              stroke={valueColour}
+              strokeWidth={3}
+              strokeLinecap="round" />
+        {/* Min / max axis labels under the arc ends. */}
+        <text x={cx - radius} y={cy + 14} textAnchor="middle"
+              fontSize={10} fill="var(--text3)">{fmtBound(min)}</text>
+        <text x={cx + radius} y={cy + 14} textAnchor="middle"
+              fontSize={10} fill="var(--text3)">{fmtBound(max)}</text>
+      </svg>
+      <div style={{
+        fontSize: 28, fontWeight: 600, color: valueColour,
+        marginTop: -22, lineHeight: 1,
+      }}>
+        {display}
+      </div>
+    </div>
+  );
+}
+
+// valueToAngle — map [min, max] to the gauge's 180°→360° sweep.
+// SVG angle convention: 0° = right, 90° = down. The semicircle
+// occupies the top half so we use 180° (left) → 270° (top) →
+// 360° (right).
+function valueToAngle(v: number, min: number, max: number): number {
+  if (max <= min) return 180;
+  const t = (v - min) / (max - min);
+  return 180 + t * 180;
+}
+
+// arcPath — SVG path string for an arc from startAngle to endAngle
+// at the given radius, centred at (cx, cy). Angles in degrees,
+// SVG convention.
+function arcPath(cx: number, cy: number, r: number, startAngle: number, endAngle: number): string {
+  if (Math.abs(endAngle - startAngle) < 0.01) return '';
+  const start = polarToCart(cx, cy, r, startAngle);
+  const end   = polarToCart(cx, cy, r, endAngle);
+  const large = Math.abs(endAngle - startAngle) > 180 ? 1 : 0;
+  return `M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`;
+}
+
+function polarToCart(cx: number, cy: number, r: number, angleDeg: number): { x: number; y: number } {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+// tickAt — line2 endpoints for a needle at the given angle,
+// drawn from the inner edge of the track to the outer edge so
+// the tick visually intersects the band it represents.
+function tickAt(cx: number, cy: number, r: number, trackW: number, angle: number) {
+  const inner = polarToCart(cx, cy, r - trackW / 2, angle);
+  const outer = polarToCart(cx, cy, r + trackW / 2, angle);
+  return { x1: inner.x, y1: inner.y, x2: outer.x, y2: outer.y };
+}
+
+// computeGaugeSegments — for the threshold list, return a series
+// of arc segments {from, to, color}. Each band starts at its
+// `value` and runs to the next band's value (or max). The
+// implicit "below the lowest threshold" zone keeps the neutral
+// track colour (no segment).
+type GaugeSeg = { from: number; to: number; color: 'green' | 'amber' | 'red' };
+function computeGaugeSegments(
+  thresholds: { value: number; color: 'green' | 'amber' | 'red' }[] | undefined,
+  min: number,
+  max: number,
+): GaugeSeg[] {
+  if (!thresholds || thresholds.length === 0) return [];
+  // Sort + clamp into the [min, max] window.
+  const sorted = [...thresholds]
+    .map(t => ({ ...t, value: Math.max(min, Math.min(max, t.value)) }))
+    .sort((a, b) => a.value - b.value);
+  const segs: GaugeSeg[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const start = sorted[i].value;
+    const end = i + 1 < sorted.length ? sorted[i + 1].value : max;
+    if (end > start) segs.push({ from: start, to: end, color: sorted[i].color });
+  }
+  return segs;
+}
+
+function fmtBound(v: number): string {
+  if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + 'k';
+  return String(v);
 }
 
 // formatStatValue — uses fmtSmart when we have a unit and the

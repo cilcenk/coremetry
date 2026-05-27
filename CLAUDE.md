@@ -278,6 +278,8 @@ guidance would miss.
 | `/kuyruk` | "What's next" — shows prioritised pending items, ends with "Hangisi?" |
 | `/scale-audit` | Quarterly perf regression sweep across 7 axes |
 | `/clickhouse-schema` | BEFORE any change to a CH table, query, or MV. Captures engine-choice, MV bypass invariant, ORDER BY rules, async_insert tuning, migration checklist, anti-patterns. (v0.6.23) |
+| `/helm-chart-coremetry` | BEFORE any change under `charts/coremetry/`. OpenShift restricted-v2 SCC, global.imageRegistry air-gap rewrite, deployment.mode monolithic/distributed (v0.6.2), MCP/SSE session affinity (v0.6.21), Route vs Ingress, version-bump rules. (v0.6.25) |
+| `/otel-conventions` | BEFORE any change that reads or writes OTel-shaped data. W3C tracecontext-only propagator policy, semconv → column mapping, critical-5 resource attrs, head + tail sampling decision points, EDOT vs raw SDK acceptance, gen_ai.* readiness, OTel-spec deviations documented. (v0.6.25) |
 
 ---
 

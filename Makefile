@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-down audit
+.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-up-demo docker-down audit
 
 # VERSION is auto-derived from `git describe` so local builds
 # show something like "v0.4.48-3-gabcdef" instead of literal
@@ -54,7 +54,15 @@ audit:
 # browser SDK would silently read "dev" again any time
 # someone runs compose directly.
 docker-up: .env-version
-	docker compose --profile demo up -d --build
+	# v0.6.26 — dropped `--profile demo` from the default up
+	# target. Operator-reported: java-demo / jboss-demo / go-demo
+	# kept coming back on every rebuild even though docker-
+	# compose.yml profile-gated them in v0.6.3 — make was
+	# bypassing the gate. Default up now brings ONLY the core
+	# stack (coremetry + clickhouse + redis + otel-collector +
+	# elasticsearch). To run the demo apps explicitly use
+	# `make docker-up-demo` below.
+	docker compose up -d --build
 	@# Belt-and-braces: docker-compose's build.tags handling
 	@# isn't 100% reliable across versions. Re-tag the freshly
 	@# built image as `coremetry:latest` so a plain `docker
@@ -82,8 +90,18 @@ docker-up: .env-version
 	@echo "$(VERSION)" > VERSION.txt
 	@echo "[make] wrote VERSION=$(VERSION) to .env + VERSION.txt"
 
+# Bring up the demo apps (java-demo + jboss-demo + go-demo).
+# Separate target so a routine `make docker-up` doesn't pull in
+# the demo containers; operators who want them run this once.
+.PHONY: docker-up-demo
+docker-up-demo: .env-version
+	docker compose --profile demo up -d --build
+
 docker-down:
-	docker compose --profile demo down
+	# Bring down everything — including any opt-in demo profile
+	# containers that an operator may have started via
+	# `make docker-up-demo`.
+	docker compose --profile demo --profile tempo --profile pyroscope --profile grafana down
 
 clean:
 	rm -rf coremetry demo frontend/out frontend/.next frontend/node_modules

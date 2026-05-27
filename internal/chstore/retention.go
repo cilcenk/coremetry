@@ -166,11 +166,19 @@ func (s *Store) ApplyPersistedRetention(ctx context.Context) error {
 // past TTL and got dropped on the next merge cycle. The pre-existing
 // "Nd" case worked because adding DAYS to a date stays meaningful.
 //
+// v0.6.37 — the first cut of v0.6.36 used `<col> + INTERVAL N HOUR`
+// for the hour case, but `time` is `DateTime64(9)` and CH rejects
+// non-DateTime/Date results in a TTL expression with error 450
+// ("TTL expression result column should have DateTime or Date type").
+// Wrap in `toDateTime(...)` to drop the nanosecond precision so the
+// result is plain DateTime — still a rolling N-hour window from the
+// row time, just at second granularity (irrelevant for retention).
+//
 // The fix splits the expression by unit:
-//   - "Nd"  → `toDate(<col>) + INTERVAL N DAY` (partition-aligned;
+//   - "Nd"  → `toDate(<col>) + INTERVAL N DAY`        (partition-aligned;
 //             lets CH DROP whole day partitions cheaply)
-//   - "Nh"  → `<col> + INTERVAL N HOUR`        (row-level TTL on the
-//             raw DateTime64 column; correct rolling window)
+//   - "Nh"  → `toDateTime(<col>) + INTERVAL N HOUR`   (row-level TTL,
+//             DateTime-typed result; correct rolling window)
 //
 // Hour-granularity TTLs can't ride the partition-drop fast path
 // because spans are PARTITION BY toDate(time) — a 1-hour TTL crosses
@@ -187,7 +195,7 @@ func buildRetentionTTL(s, col string) (string, error) {
 	}
 	n, _ := strconv.Atoi(m[1])
 	if m[2] == "h" {
-		return fmt.Sprintf("%s + INTERVAL %d HOUR", col, n), nil
+		return fmt.Sprintf("toDateTime(%s) + INTERVAL %d HOUR", col, n), nil
 	}
 	return fmt.Sprintf("toDate(%s) + INTERVAL %d DAY", col, n), nil
 }

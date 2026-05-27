@@ -34,9 +34,14 @@ func TestBuildRetentionTTL(t *testing.T) {
 		// The original bug: hour-granularity must NOT be wrapped in
 		// toDate() — that pins the TTL to a clock time on the same day
 		// instead of a rolling N-hour window from the row's timestamp.
-		{"spans 1 hour", "1h", "time", "time + INTERVAL 1 HOUR"},
-		{"spans 48 hours", "48h", "time", "time + INTERVAL 48 HOUR"},
-		{"profiles 6 hours", "6h", "start_time", "start_time + INTERVAL 6 HOUR"},
+		//
+		// v0.6.37 — also must wrap in toDateTime() because `time` is
+		// DateTime64(9) and CH error 450 rejects nanosecond-precision
+		// TTL expressions ("result column should have DateTime or
+		// Date type").
+		{"spans 1 hour", "1h", "time", "toDateTime(time) + INTERVAL 1 HOUR"},
+		{"spans 48 hours", "48h", "time", "toDateTime(time) + INTERVAL 48 HOUR"},
+		{"profiles 6 hours", "6h", "start_time", "toDateTime(start_time) + INTERVAL 6 HOUR"},
 
 		// Case-insensitivity + whitespace trim — these were supported
 		// by the old parseRetention and the contract still holds.

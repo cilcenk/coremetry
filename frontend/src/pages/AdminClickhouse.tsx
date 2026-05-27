@@ -64,6 +64,18 @@ type Topology = {
   clusterNodesStale?: boolean;
   clusterNodesAgeMs?: number;
 };
+// v0.6.22 — in-flight mutations panel. Healthy queue is empty;
+// growing queue → time to swap the offending ALTER UPDATE/
+// DELETE pattern for a tombstone or ReplacingMergeTree shape.
+type Mutation = {
+  database: string;
+  table: string;
+  command: string;
+  parts: number;
+  elapsedMs: number;
+  latestFail?: string;
+};
+
 type CHHealth = {
   topology: Topology;
   slowQueries: Slow[] | null;
@@ -71,6 +83,7 @@ type CHHealth = {
   partHotspots: PartHot[] | null;
   replicationLag?: RepLag[] | null;
   asyncInserts?: AsyncIns[] | null;
+  mutations?: Mutation[] | null;
   generatedAt: number;
 };
 
@@ -113,6 +126,10 @@ export default function AdminClickhousePage() {
           <KPI label="Replication lag rows"
                value={fmtNum(data?.replicationLag?.length ?? 0)}
                sub="cluster only" />
+          <KPI label="Pending mutations"
+               value={fmtNum(data?.mutations?.length ?? 0)}
+               sub="ALTER … DELETE/UPDATE"
+               cls={(data?.mutations?.length ?? 0) > 0 ? 'warn' : ''} />
         </div>
 
         {data === undefined && <Spinner />}
@@ -247,6 +264,51 @@ export default function AdminClickhousePage() {
                           <td className="num mono">{fmtNum(a.totalBytes)}</td>
                           <td className="num mono">{fmtNum(a.entriesCount)}</td>
                           <td className="num mono">{a.firstUpdateMsAgo}ms</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
+            )}
+
+            {/* v0.6.22 — pending mutations panel. Empty on a
+                healthy install; rows here mean an ALTER … DELETE/
+                UPDATE is being rewritten by CH. Slow / sustained
+                non-zero is the early-warning shape for the
+                operator: time to swap the mutation pattern. */}
+            {data.mutations && data.mutations.length > 0 && (
+              <Section title={`Pending mutations (${data.mutations.length})`}>
+                <p style={{ fontSize: 11, color: 'var(--text2)', margin: '0 0 8px' }}>
+                  In-flight ALTER … DELETE / UPDATE rewriting parts. Healthy queue is empty;
+                  a sustained non-zero row count usually means the table needs a tombstone or
+                  ReplacingMergeTree pattern instead of in-place mutation.
+                </p>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Table</th>
+                        <th className="num">Parts left</th>
+                        <th className="num">Elapsed</th>
+                        <th>Command</th>
+                        <th>Latest failure</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.mutations.map((m, i) => (
+                        <tr key={i}>
+                          <td className="mono">{m.database}.{m.table}</td>
+                          <td className="num mono">{fmtNum(m.parts)}</td>
+                          <td className="num mono">{fmtAge(m.elapsedMs)}</td>
+                          <td className="mono" style={{
+                            fontSize: 11, maxWidth: 360,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }} title={m.command}>{m.command}</td>
+                          <td className="mono" style={{
+                            fontSize: 11, color: m.latestFail ? 'var(--err)' : 'var(--text3)',
+                            maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }} title={m.latestFail}>{m.latestFail || '—'}</td>
                         </tr>
                       ))}
                     </tbody>

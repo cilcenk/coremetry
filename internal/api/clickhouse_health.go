@@ -40,6 +40,13 @@ type CHHealth struct {
 	// operator see whether the tuned async_insert_busy_timeout
 	// is doing useful coalescence or sitting idle.
 	AsyncInserts   []CHAsyncInsert  `json:"asyncInserts,omitempty"`
+	// v0.6.22 — in-flight ALTER TABLE … DELETE / UPDATE
+	// mutations. Healthy queue is empty; growing queue is an
+	// operator-visible signal that a state-table mutation
+	// pattern needs rethinking (tombstone, ReplacingMergeTree,
+	// etc.). Top 20 most-recent unfinished, sorted by parts-
+	// remaining desc so the worst offender lands on top.
+	Mutations      []CHMutation     `json:"mutations,omitempty"`
 	Generated      int64            `json:"generatedAt"` // unix ns of snapshot
 }
 
@@ -158,6 +165,26 @@ type CHAsyncInsert struct {
 	TotalBytes uint64 `json:"totalBytes"`
 	EntriesCount uint64 `json:"entriesCount"`
 	FirstUpdateMsAgo uint64 `json:"firstUpdateMsAgo"`
+}
+
+// CHMutation — v0.6.22. One row per in-flight or recently-stuck
+// ALTER TABLE … DELETE / UPDATE mutation. ALTER mutations rewrite
+// matching parts in the background; healthy systems clear them
+// within seconds. A growing queue is the operator-visible
+// signature that a state table is being mutated faster than CH
+// can rebuild parts — at which point the right fix is a tombstone
+// or ReplacingMergeTree pattern, not "wait longer".
+//
+// Powered by system.mutations. Filter is_done = 0 so only the
+// queue depth shows up; finished mutations age out of the table
+// after ~7 days and don't matter for live ops.
+type CHMutation struct {
+	Database  string `json:"database"`
+	Table     string `json:"table"`
+	Command   string `json:"command"`     // trimmed; full text would be unbounded
+	Parts     uint64 `json:"parts"`        // parts left to mutate
+	ElapsedMs int64  `json:"elapsedMs"`    // since the mutation was submitted
+	LatestFail string `json:"latestFail,omitempty"`
 }
 
 // getClickHouseHealth — admin-only. Cached 5s (CH self-stats are
@@ -426,6 +453,36 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 					a.FirstUpdateMsAgo = uint64(firstMs)
 				}
 				out.AsyncInserts = append(out.AsyncInserts, a)
+			}
+		}
+
+		// ── In-flight mutations (v0.6.22) ─────────────────────
+		// system.mutations rows where is_done = 0. Each row =
+		// one ALTER … DELETE / UPDATE still rewriting parts.
+		// Healthy = 0 rows. Steady non-zero = mutation pattern
+		// faster than merges can keep up — recommend a switch
+		// to ReplacingMergeTree(version) or a tombstone column.
+		// command text is truncated to 200 chars so a giant
+		// IN(…) literal doesn't blow the panel layout.
+		if rows, err := s.store.Conn().Query(ctx, `
+			SELECT database, table,
+			       substring(command, 1, 200) AS command,
+			       parts_to_do                AS parts,
+			       dateDiff('millisecond', create_time, now64()) AS elapsed_ms,
+			       latest_fail_reason
+			FROM system.mutations
+			WHERE is_done = 0
+			ORDER BY parts DESC
+			LIMIT 20
+			SETTINGS max_execution_time = 3`); err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var m CHMutation
+				if err := rows.Scan(&m.Database, &m.Table,
+					&m.Command, &m.Parts, &m.ElapsedMs, &m.LatestFail); err != nil {
+					continue
+				}
+				out.Mutations = append(out.Mutations, m)
 			}
 		}
 

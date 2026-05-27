@@ -88,6 +88,12 @@ export default function MetricsPage() {
   const [step, setStep] = useState(0);
   const [filters, setFilters] = useState<FilterExpr[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);
+  // v0.6.18 — SLO / alert threshold overlay. Operator types a
+  // value; chart draws a dashed horizontal line + a faint band
+  // above. Auto-populated when a known OTel-template metric is
+  // picked (e.g. http.server.request.duration → 1000ms). null =
+  // no overlay.
+  const [threshold, setThreshold] = useState<number | null>(null);
   // v0.5.484 — SRE incident-debug toolkit:
   // compare = overlay the same series shifted back N hours.
   // logScale = uPlot distr:3 for orders-of-magnitude metrics.
@@ -110,6 +116,7 @@ export default function MetricsPage() {
     setMetric('');
     setCurrentMeta(null);
     setAppliedTemplate(null);
+    setThreshold(null);
   }, [service]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // v0.5.487 — apply the OTel semconv template to a freshly-
@@ -125,6 +132,14 @@ export default function MetricsPage() {
       setAgg(tpl.agg);
       if (tpl.groupBy && tpl.groupBy.length > 0 && groupBy.length === 0) {
         setGroupBy(tpl.groupBy);
+      }
+      // v0.6.18 — auto-populate the threshold overlay from the
+      // template's suggestion (e.g. HTTP server latency → 1000ms).
+      // Operator can clear or override via the input below the
+      // chart. Only sets when the operator hasn't already typed
+      // their own value.
+      if (tpl.threshold && threshold === null) {
+        setThreshold(tpl.threshold.value);
       }
     }
   };
@@ -424,14 +439,68 @@ export default function MetricsPage() {
                   config / incident / maintenance) overlaid on
                   the metric chart. Service-scoped when the
                   operator narrowed by service; otherwise shows
-                  all events in the window. */}
+                  all events in the window.
+                  v0.6.18 — optional SLO/alert threshold line,
+                  auto-populated from the OTel metric template
+                  when one matches (e.g. http.server.request.
+                  duration → 1000ms). Operator clears/edits via
+                  the row beneath the chart. */}
               <div style={{ position: 'relative' }}>
                 <MultiLineChart series={series} unit={unit}
                   compareSeries={compareSeries ?? undefined}
                   compareOffsetNs={compareOffsetNs > 0 ? compareOffsetNs : undefined}
                   compareLabel={compareLabelFor(compare) ?? undefined}
-                  logScale={logScale} />
+                  logScale={logScale}
+                  thresholds={threshold !== null ? [{
+                    value: threshold,
+                    label: appliedTemplate?.threshold
+                      ? `${appliedTemplate.id} threshold`
+                      : 'threshold',
+                    severity: 'warn',
+                  }] : undefined} />
                 <EventMarkers fromNs={from} toNs={to} service={service || undefined} />
+              </div>
+
+              {/* v0.6.18 — SLO/alert threshold control. Lives
+                  beneath the chart so it doesn't clutter the
+                  main controls bar above. The auto-populated
+                  value (from the metric template) appears in
+                  the input; the operator can override or clear.
+                  Cleared state hides the line entirely. */}
+              <div style={{
+                display: 'flex', gap: 8, alignItems: 'center',
+                marginTop: 8, fontSize: 12, color: 'var(--text2)',
+              }}>
+                <span>Threshold:</span>
+                <input
+                  type="number"
+                  value={threshold ?? ''}
+                  onChange={e => {
+                    const v = e.target.value.trim();
+                    setThreshold(v === '' ? null : parseFloat(v));
+                  }}
+                  placeholder="(none)"
+                  style={{
+                    width: 110, padding: '2px 8px',
+                    fontFamily: 'ui-monospace, monospace',
+                    fontSize: 12,
+                  }}
+                  title="Draw a horizontal SLO/alert line on the chart. Auto-populated from the OTel metric template when applicable."
+                />
+                {unit && <span style={{ color: 'var(--text3)' }}>{unit}</span>}
+                {appliedTemplate?.threshold && (
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    · template suggests {appliedTemplate.threshold.cmp} {appliedTemplate.threshold.value}
+                    ({appliedTemplate.threshold.reason})
+                  </span>
+                )}
+                {threshold !== null && (
+                  <button className="sec" type="button"
+                    onClick={() => setThreshold(null)}
+                    style={{ fontSize: 11, padding: '2px 8px' }}>
+                    Clear
+                  </button>
+                )}
               </div>
             </div>
 

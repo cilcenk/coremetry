@@ -28,7 +28,11 @@ function TraceDetailInner() {
   // backend (Coremetry sampled it out). Drives the small banner
   // above the waterfall so the operator doesn't mistake "trace
   // resolved" for "Coremetry has full retention".
-  const [source, setSource] = useState<'clickhouse' | 'tempo' | undefined>(undefined);
+  const [source, setSource] = useState<'clickhouse' | 'tempo' | 'mv_only' | undefined>(undefined);
+  // v0.6.34 — aged-out stub: present only when source === 'mv_only'.
+  // Carries the aggregate stats trace_summary_5m still holds for
+  // traces whose raw spans have aged past the 30-day TTL.
+  const [stub, setStub] = useState<NonNullable<import('@/lib/types').TraceDetailResponse['stub']> | undefined>(undefined);
   // selectedId + tab are URL-bound so a Share-button copy round-
   // trips: "open trace X with the rpc-call span focused on the Logs
   // tab" comes back identical when pasted in another browser.
@@ -56,10 +60,12 @@ function TraceDetailInner() {
     // exactly the one they'd clicked from /logs to get here.
     setLogs(undefined);
     setSource(undefined);
+    setStub(undefined);
     api.trace(id)
       .then(d => {
         setSpans(d.spans ?? []);
         setSource(d.source);
+        setStub(d.stub);
       })
       .catch(() => setSpans(null));
   }, [id]);
@@ -329,7 +335,47 @@ function TraceDetailInner() {
         </div>
 
         {spans === undefined && <Spinner />}
-        {spans && spans.length === 0 && <Empty icon="⋮" title="Trace not found" />}
+        {spans && spans.length === 0 && source === 'mv_only' && stub && (
+          // v0.6.34 — aged-out stub. trace_summary_5m still has
+          // the aggregates but raw spans dropped past the 30-day
+          // TTL. Render what we know so the operator gets context
+          // instead of a blank "Trace not found".
+          <div style={{
+            padding: 16, border: '1px solid var(--border)',
+            borderLeft: '3px solid var(--warn, #facc15)',
+            borderRadius: 6, background: 'var(--bg2)',
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
+              Trace aged out of raw spans
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--text2)', margin: '4px 0 12px', lineHeight: 1.5 }}>
+              The 5-minute aggregate MV still holds this trace's summary
+              (90-day retention), but the per-span detail data has been
+              evicted by the raw spans TTL (default 30 days). Span
+              waterfall isn't available for this trace anymore. To keep
+              long-tail trace detail, configure Tempo backend in
+              Settings → Tempo, or extend the raw-spans retention in
+              <code> config.yaml</code>.
+            </p>
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: 8, marginTop: 8,
+            }}>
+              <KPI label="Root service" value={stub.rootService || '—'} />
+              <KPI label="Root operation" value={stub.rootName || '—'} />
+              <KPI label="Span count" value={stub.spanCount.toLocaleString()} />
+              <KPI label="Errors" value={stub.errorCount.toLocaleString()}
+                   tone={stub.errorCount > 0 ? 'err' : undefined} />
+              <KPI label="Duration"
+                   value={stub.durationMs.toFixed(stub.durationMs < 10 ? 2 : 0) + ' ms'} />
+              <KPI label="Started"
+                   value={new Date(stub.startTimeNs / 1e6).toLocaleString()} />
+            </div>
+          </div>
+        )}
+        {spans && spans.length === 0 && source !== 'mv_only' && (
+          <Empty icon="⋮" title="Trace not found" />
+        )}
         {spans && spans.length > 0 && (
           <>
             {source === 'tempo' && (
@@ -848,4 +894,31 @@ function exportTraceJSON(traceId: string, spans: unknown[]) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// v0.6.34 — small inline KPI tile for the aged-out stub panel.
+// Kept here rather than reusing /admin/clickhouse's KPI because
+// that one carries the page's specific styling assumptions and
+// would tangle the import graph.
+function KPI({ label, value, tone }: {
+  label: string;
+  value: string;
+  tone?: 'err';
+}) {
+  return (
+    <div style={{
+      padding: '8px 10px', borderRadius: 4,
+      background: 'var(--bg)', border: '1px solid var(--border)',
+    }}>
+      <div style={{
+        fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase',
+        letterSpacing: 0.4, marginBottom: 2,
+      }}>{label}</div>
+      <div style={{
+        fontSize: 13, fontWeight: 600,
+        color: tone === 'err' ? 'var(--err)' : 'var(--text)',
+        fontFamily: 'ui-monospace, monospace',
+      }}>{value}</div>
+    </div>
+  );
 }

@@ -901,9 +901,21 @@ export interface TraceDetailResponse {
   // v0.5.208 — "clickhouse" when the trace was resolved from
   // Coremetry's own store, "tempo" when it came from the
   // external Tempo backend fallback (Coremetry sampled it out).
-  // Drives the small "from Tempo" banner above the waterfall so
-  // the operator doesn't conclude Coremetry retains everything.
-  source?: 'clickhouse' | 'tempo';
+  // v0.6.34 — "mv_only" when raw spans aged out past the 30-day
+  // TTL but trace_summary_5m still holds the aggregate stats
+  // (90-day retention). The frontend renders an honest "trace
+  // aged out, only aggregates remain" pane instead of a blank
+  // waterfall in that case. `stub` carries the aggregate stats.
+  source?: 'clickhouse' | 'tempo' | 'mv_only';
+  stub?: {
+    rootService: string;
+    rootName: string;
+    startTimeNs: number;
+    endTimeNs: number;
+    spanCount: number;
+    errorCount: number;
+    durationMs: number;
+  };
 }
 
 export interface LogRow {

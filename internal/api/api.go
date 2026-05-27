@@ -2772,6 +2772,23 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 				return map[string]any{"traceId": id, "spans": tspans, "source": "tempo"}, nil
 			}
 		}
+		// v0.6.34 — operator-reported: /traces aggregate view
+		// showed traces, clicking them opened an empty detail.
+		// Root cause: trace_summary_5m MV has 90-day TTL while
+		// raw `spans` has 30-day. Past day-30 the aggregate row
+		// survives but the detail data is gone — and we returned
+		// an opaque empty array. Check if the MV still holds the
+		// trace and surface an honest "aged out of raw spans"
+		// hint with the aggregate stats so the operator gets
+		// SOMETHING useful instead of a blank pane.
+		if stub, ok := s.store.GetTraceAggregateStub(r.Context(), id); ok {
+			return map[string]any{
+				"traceId":  id,
+				"spans":    []any{},
+				"source":   "mv_only",
+				"stub":     stub,
+			}, nil
+		}
 		return map[string]any{"traceId": id, "spans": spans, "source": "clickhouse"}, nil
 	})
 }

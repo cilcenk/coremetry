@@ -728,6 +728,20 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 	// Subsequent ticks scan a 5-minute trailing window — generous overlap
 	// to catch ingest lag, harmless because UpsertExceptionGroup is idempotent.
 	since := time.Now().Add(-24 * time.Hour)
+	// v0.6.24 — operator-reported: the /problems "Resolved" tab
+	// stayed empty forever on installs where nobody clicked Resolve.
+	// Auto-resolve any open/acknowledged group whose last occurrence
+	// is older than this threshold. 14 days matches Honeycomb's
+	// default; Sentry uses 30d which is too lenient for the rate
+	// banks file exceptions at. UpsertExceptionGroup's existing
+	// regression detector flips a group back to `regressed` if the
+	// same exception fires again later — so this is reversible.
+	const staleHorizon = 14 * 24 * time.Hour
+	// Sweep cadence is generous — the cutoff moves a minute at a
+	// time; running this every 6 ticks (6 min) is plenty. Use a
+	// modulo on a tick counter rather than a second ticker so the
+	// HA leader-holder still gates both paths.
+	tickCount := 0
 	tick := func() {
 		if !leader.IsLeader() {
 			return
@@ -741,6 +755,21 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 			log.Printf("[errors-inbox] refreshed %d groups", n)
 		}
 		since = time.Now().Add(-5 * time.Minute)
+
+		// Stale-sweep every 6th tick (≈ every 6 min). Hourly
+		// would be fine too; 6-min keeps the operator-visible
+		// lag tighter for installs that fix a bug today and
+		// want the group cleared from the inbox by tomorrow.
+		tickCount++
+		if tickCount%6 == 0 {
+			swept, err := store.AutoResolveStaleExceptionGroups(ctx, staleHorizon)
+			if err != nil {
+				log.Printf("[errors-inbox] stale auto-resolve: %v", err)
+			} else if swept > 0 {
+				log.Printf("[errors-inbox] auto-resolved %d stale group(s) (>%v idle)",
+					swept, staleHorizon)
+			}
+		}
 	}
 
 	tick() // immediate backfill on boot (idempotent — non-leader skips)

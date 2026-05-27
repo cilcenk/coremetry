@@ -412,6 +412,98 @@ func (s *Store) AssignExceptionGroup(ctx context.Context, fingerprint, userID st
 	return s.writeExceptionGroup(ctx, *g)
 }
 
+// shouldAutoResolveStale is the pure-function decision behind
+// AutoResolveStaleExceptionGroups. Extracted for the v0.6.24
+// regression test — touches no I/O, only the (state, last_seen,
+// staleAfter, now) tuple. Re-regressing this would re-open the
+// "Resolved tab stays empty forever" bug.
+func shouldAutoResolveStale(state string, lastSeenNs int64, staleAfter time.Duration, now time.Time) bool {
+	if staleAfter <= 0 {
+		return false
+	}
+	switch state {
+	case ExStateNew, ExStateAcknowledged, ExStateRegressed:
+		// proceed
+	default:
+		return false
+	}
+	lastSeen := time.Unix(0, lastSeenNs)
+	return now.Sub(lastSeen) >= staleAfter
+}
+
+// AutoResolveStaleExceptionGroups transitions any open/acknowledged
+// group whose last occurrence is older than staleAfter into the
+// `resolved` state. Operator-reported (v0.6.24): without this, the
+// /problems "Resolved" tab stays empty forever on installs where
+// operators forget to click Resolve manually. Sentry / Honeycomb /
+// Datadog all default to this behaviour.
+//
+// Sets resolved_at to the row's existing last_seen so the audit
+// trail reflects "last touched at" rather than "swept at" — keeps
+// the timeline honest. UpsertExceptionGroup's regression detector
+// will flip the row back to `regressed` if the exception starts
+// firing again later.
+//
+// Returns the number of rows transitioned. Lock-gated at the caller
+// (main.runExceptionRefresher) so multi-replica installs don't
+// double-sweep.
+func (s *Store) AutoResolveStaleExceptionGroups(ctx context.Context, staleAfter time.Duration) (int, error) {
+	if staleAfter <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().Add(-staleAfter)
+	// Read the candidates via FINAL so we work against the
+	// currently-effective state per fingerprint (not a stale
+	// pre-merge row). Bound the scan with a LIMIT — at typical
+	// volumes there are a handful of stale groups per sweep, never
+	// thousands; the LIMIT is a safety belt against an install
+	// that's been ignored for a year.
+	rows, err := s.conn.Query(ctx, `
+		SELECT fingerprint, ex_type, ex_message, service, state, assignee,
+		       toUnixTimestamp64Nano(first_seen),
+		       toUnixTimestamp64Nano(last_seen),
+		       resolved_at, occurrences, notes
+		FROM exception_groups FINAL
+		WHERE state IN ('new','acknowledged','regressed')
+		  AND last_seen < ?
+		LIMIT 1000
+		SETTINGS max_execution_time = 10`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("scan stale exception groups: %w", err)
+	}
+	var stale []ExceptionGroup
+	for rows.Next() {
+		var g ExceptionGroup
+		var resolvedAt *time.Time
+		if err := rows.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service,
+			&g.State, &g.Assignee, &g.FirstSeen, &g.LastSeen, &resolvedAt,
+			&g.Occurrences, &g.Notes); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if resolvedAt != nil {
+			ns := resolvedAt.UnixNano()
+			g.ResolvedAt = &ns
+		}
+		stale = append(stale, g)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for i := range stale {
+		// resolved_at = the group's own last_seen, not now() —
+		// honest audit trail.
+		ts := stale[i].LastSeen
+		stale[i].State = ExStateResolved
+		stale[i].ResolvedAt = &ts
+		if err := s.writeExceptionGroup(ctx, stale[i]); err != nil {
+			return 0, fmt.Errorf("upsert resolved group %s: %w", stale[i].Fingerprint, err)
+		}
+	}
+	return len(stale), nil
+}
+
 // ExceptionSample is one observed occurrence of a group — used to fill
 // the "show me 10 recent examples of this exception" inline expansion.
 type ExceptionSample struct {

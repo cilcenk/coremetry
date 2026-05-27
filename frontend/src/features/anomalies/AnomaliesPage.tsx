@@ -248,7 +248,23 @@ export default function ProblemsPage() {
           <Empty icon="✓" title={tab === 'open'
             ? 'Inbox is clear — no untriaged exceptions'
             : `No groups in "${tab}"`}>
-            Click a row to inspect recent occurrences. Use Ack / Resolve / Ignore to manage state.
+            {/* v0.6.24 — explain why each tab might legitimately
+                be empty so operators don't think the page broke. */}
+            {tab === 'resolved' && (
+              <>Groups land here when you click <b>Resolve</b> on a row in the Inbox,
+              or automatically after 14 days without a new occurrence.</>
+            )}
+            {tab === 'ignored' && (
+              <>Groups land here when you click <b>Ignore</b> on a row. Ignored groups
+              stay silent even if they fire again.</>
+            )}
+            {tab === 'acknowledged' && (
+              <>Groups land here when you <b>Ack</b> a row — you've seen it but haven't
+              fixed it yet. Click <b>Resolve</b> to move out of ack.</>
+            )}
+            {tab !== 'resolved' && tab !== 'ignored' && tab !== 'acknowledged' && (
+              <>Click a row to inspect recent occurrences. Use Ack / Resolve / Ignore to manage state.</>
+            )}
           </Empty>
         )}
         {data && filtered.length > 0 && (

@@ -319,6 +319,19 @@ them.
   ```js
   setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
   ```
+- **Unit-mixing in SQL/time templates (`toDate(time) + INTERVAL %s`
+  with `%s` ∈ {"30 DAY", "1 HOUR"})** — `toDate(time) + INTERVAL 1
+  HOUR` = midnight + 1h = 01:00 of the SAME day, not "1 hour from
+  the row's time". v0.6.36: retention.spans = "1h" via admin UI
+  silently TTL'd every span after 01:00 — operator saw inconsistent
+  /traces counts because merges ran intermittently. Rule: ANY
+  template that accepts a value+unit (Nh/Nd, ms/s, MB/GB) MUST
+  have a table-driven test exercising **every** unit at ship time.
+  For sub-day TTLs use `<col> + INTERVAL N HOUR` (row-level); for
+  day TTLs use `toDate(<col>) + INTERVAL N DAY` (partition-aligned).
+  Never let `toDate()` wrap a sub-day calculation. See
+  [internal/chstore/retention_test.go](internal/chstore/retention_test.go)
+  for the canonical example.
 
 ---
 

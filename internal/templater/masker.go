@@ -65,6 +65,25 @@ var maskRules = []maskRule{
 	{regexp.MustCompile(`\[[\w\s=,;:.&-]+\]`), "[<*>]"},
 	// Java thread names "[http-nio-8080-exec-7]" already covered
 	// by the bracket rule above.
+	// v0.6.28 — operator-reported: per-user / per-account IDs
+	// like `usr_54347`, `acc_1523`, `txn_88273482` were each
+	// becoming their own Drain template because the bare-number
+	// rule below uses \b boundaries, and `_` is a word char (so
+	// `\b\d+\b` never matches digits immediately after an
+	// underscore). Result: thousands of single-instance
+	// templates polluting the Templates panel.
+	//
+	// Catches the `<letters>[_<letters>...]_<digits3+>` convention
+	// used by nearly every business-system ID scheme: user IDs
+	// (usr_54347), account IDs (acc_1523), transaction IDs
+	// (txn_88273482), order IDs, and compound forms
+	// (customer_session_98421, order_id_12345). The prefix part
+	// allows underscores so multi-segment names match the whole
+	// token. 3-digit minimum keeps real abbreviations like
+	// `mp3_player`, `aws_s3`, `cust_67` (2-digit too-short)
+	// untouched — operator-tunable if low-digit IDs become a
+	// pain point.
+	{regexp.MustCompile(`\b[A-Za-z][A-Za-z_]{0,30}_\d{3,}\b`), "<*>"},
 	// Bare numbers — last so it doesn't gobble pieces of the
 	// above regexes. \b boundaries prevent matching "ORA-12345"
 	// fragments (the dash is non-word so the digits boundary).

@@ -264,6 +264,21 @@ builds steal docker layer cache + serialize via BuildKit anyway).
   traps, permission gating). Quarterly cadence OR after a
   multi-week feature sprint.
 
+### Skills directory (`.claude/skills/`)
+
+Project-local Claude Code skills pinned in the repo. Each
+captures Coremetry-specific judgement that generic Claude
+guidance would miss.
+
+| Skill | Use when |
+|---|---|
+| `/release` | Cut a release — next v0.6.X tag, commit, push, rebuild |
+| `/bugfix` | Operator-reported bug — investigate, fix as v0.6.X+1, ship immediately |
+| `/spec` | Idea → implementation plan before edit phase. Use for any change spanning 3+ files |
+| `/kuyruk` | "What's next" — shows prioritised pending items, ends with "Hangisi?" |
+| `/scale-audit` | Quarterly perf regression sweep across 7 axes |
+| `/clickhouse-schema` | BEFORE any change to a CH table, query, or MV. Captures engine-choice, MV bypass invariant, ORDER BY rules, async_insert tuning, migration checklist, anti-patterns. (v0.6.23) |
+
 ---
 
 ## Performance pitfalls — historical incidents

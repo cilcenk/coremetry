@@ -82,6 +82,17 @@ services:
       COREMETRY_LOGS_BACKEND: "elasticsearch"
       COREMETRY_ES_ADDRESSES: "http://elasticsearch:9200"
       COREMETRY_ES_INDEX: "logs-otel-default"
+      # v0.6.42 — Coremetry self-observability. Boots an OTel SDK
+      # (traces + metrics) emitting under service.name =
+      # "coremetry-<mode>" so the binary itself shows up on
+      # /services next to the demos. otel-collector receives them
+      # and lands the data in this same CH, so the operator can
+      # /trace a UI click → API request → CH query end-to-end.
+      # Unset → SDK off (opt-in). Frontend lib/otel.ts already
+      # propagates traceparent into /api/* requests, so once the
+      # backend is on, the chain joins automatically.
+      COREMETRY_SELF_OBS_OTLP_ENDPOINT: "${COREMETRY_SELF_OBS_OTLP_ENDPOINT:-otel-collector:4317}"
+      COREMETRY_SELF_OBS_SAMPLE_RATE:   "${COREMETRY_SELF_OBS_SAMPLE_RATE:-0.1}"
       # Authentication — the bundled local ES has security disabled so
       # nothing is needed here. Test / prod clusters typically require
       # one of:

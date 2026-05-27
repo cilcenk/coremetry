@@ -45,6 +45,8 @@ import (
 	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type Server struct {
@@ -816,7 +818,26 @@ func (s *Server) Start() error {
 	go s.warmDependenciesCache()
 
 	log.Printf("[api] HTTP listening on %s", s.addr)
-	return http.ListenAndServe(s.addr, cors(s.auth.Middleware(mux)))
+	// v0.6.42 — self-observability. otelhttp wraps the outer-most
+	// handler so every inbound request gets a server span tagged
+	// with route + status + duration. Frontend's `traceparent`
+	// header (lib/otel.ts) is extracted by otelhttp's
+	// W3C propagator, so a UI click → server-span chain joins on
+	// /trace/{id}. Goes OUTSIDE cors + auth middleware so the span
+	// captures the entire request lifecycle (including 401s).
+	handler := otelhttp.NewHandler(cors(s.auth.Middleware(mux)),
+		"coremetry-api",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			// "GET /api/services" — far more useful than the default
+			// "/api/services" alone. Stays cardinality-bounded
+			// because we don't echo path params (those are :id'd
+			// out by the otelhttp middleware's RoutePattern hook
+			// when one is set; we don't set one — the std mux
+			// gives us literal paths back).
+			return r.Method + " " + r.URL.Path
+		}),
+	)
+	return http.ListenAndServe(s.addr, handler)
 }
 
 // warmDependenciesCache primes the hottest read endpoints on

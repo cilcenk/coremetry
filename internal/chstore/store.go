@@ -165,7 +165,11 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 
-	s := &Store{conn: conn, cfg: cfg, ret: ret}
+	// v0.6.42 — wrap conn so every Query/Exec/QueryRow/PrepareBatch
+	// becomes a child span under the inbound request span (when
+	// selfobs is enabled). Noop tracer when disabled — essentially
+	// zero overhead. See internal/chstore/traced_conn.go.
+	s := &Store{conn: newTracedConn(conn), cfg: cfg, ret: ret}
 	// v0.5.437 — self-heal pass. Detects HighVolumeTables `_local`
 	// MVs/aggregates that exist in system.tables (engine
 	// Replicated*) but are missing from system.replicas — a state

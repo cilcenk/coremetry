@@ -35,6 +35,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/sampling"
+	"github.com/cilcenk/coremetry/internal/selfobs"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/tempo"
@@ -166,6 +167,25 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// v0.6.42 — self-observability. Boots an OTel SDK (traces +
+	// metrics) when COREMETRY_SELF_OBS_OTLP_ENDPOINT is set,
+	// emitting under service.name = "coremetry-<mode>". Frontend
+	// traceparent propagation works once the api role has
+	// otelhttp.NewHandler wrapping the mux (see api.NewServer
+	// below). Skip on ingest mode to avoid self-loop: spans about
+	// receiving spans would re-enter the ingester and amplify.
+	selfobsMode := mode.name
+	if mode.ingest && !mode.api && !mode.worker {
+		// pure-ingest pod: leave the SDK off entirely.
+		_ = os.Setenv("COREMETRY_SELF_OBS_OTLP_ENDPOINT", "")
+	}
+	selfobsShutdown := selfobs.Init(ctx, selfobsMode, Version)
+	defer func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		_ = selfobsShutdown(sctx)
+	}()
 
 	// Reset-schema runs BEFORE chstore.New() — that constructor
 	// opens a connection to the target database and re-runs every

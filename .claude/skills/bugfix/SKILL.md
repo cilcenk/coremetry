@@ -22,6 +22,41 @@ that triggered the skill.
 
 ## Steps
 
+### 0. Re-read past-mistake ledger (MANDATORY — every invocation)
+
+**Operator directive (v0.6.37): I keep repeating the same class of
+mistake unless I re-read the lesson list at the start of each
+bugfix.** This step is non-skippable.
+
+Before any investigation, open and read in full:
+
+1. `/Users/cenk/.claude/projects/-Users-cenk-Documents-gotrace/memory/MEMORY.md`
+   — the index of feedback memories.
+2. Every `feedback-*.md` file referenced in that index. The
+   feedback memories encode patterns of past failure I am known to
+   repeat: bug-repro discipline, unit-mixing in templates,
+   audit/verify context, terse-response preference, etc.
+3. The "Performance pitfalls — historical incidents" section of
+   the repo `CLAUDE.md` — these are the codebase-specific
+   re-occurrence patterns (cache key digests, render-time
+   recomputation, document.hidden, ES query_string flags,
+   significant_text background, TTL unit-mixing, etc.).
+
+Then, for THIS specific bug report, identify the 1-3 lessons that
+most plausibly apply. Write them down in one or two lines BEFORE
+opening any source file. Example:
+
+> Re-read ledger. Most-relevant lessons for this report:
+> - [[feedback-bug-repro-discipline]] — reproduce against CH
+>   ground truth first; data window shifts.
+> - [[feedback-unit-mixing-needs-both-branches]] — if the bug
+>   touches a value+unit template, exercise EVERY unit at ship
+>   time, not just the obvious one.
+
+This step costs ~30 seconds and prevents the v0.6.36→v0.6.37
+class of regression where the second iteration ships the same
+sub-genus of mistake the first iteration just made.
+
 ### 1. Park current work (if any)
 
 If a feature commit is in progress (uncommitted working tree, or
@@ -128,6 +163,35 @@ re-occurrences of the SAME class of bug.
   skipping the test entirely.
 - `go test ./...` must pass before tagging. The /release skill
   runs this as step 3b.
+
+### 4b. Runtime verification gate — MANDATORY (v0.6.37)
+
+**A unit test that asserts the rendered SQL / config / template
+string is NOT enough.** v0.6.36 shipped a TTL fix with a passing
+string-match test; the produced SQL was rejected by CH at boot
+because of a type mismatch the string-match couldn't see. Same-day
+v0.6.37 had to fix it again.
+
+Before tagging a bug-fix release, **run the artifact the user
+will actually run**:
+
+- SQL / DDL changes → execute the produced statement against the
+  live CH (`docker exec coremetry-clickhouse clickhouse-client -q
+  "<your statement>"`) and confirm exit code 0 + the table now
+  shows the expected shape.
+- API changes → curl the endpoint with the cookie jar
+  (`/tmp/cm.cookies`, login via
+  `admin@coremetry.local`/`admin`) and assert the response shape.
+- Frontend changes → not optional; load the page in the running
+  app. (For pure-CSS edits, take a screenshot.)
+- Config / boot-order changes → `make docker-up` + tail
+  `docker logs coremetry 2>&1` for the first 10s after boot,
+  watching for error lines that mention the changed code path.
+
+If running the artifact is impossible (no live env, no test
+fixture), say so explicitly in the release message — don't sneak
+through with "tests pass, shipping". The class of bug the unit
+test couldn't see is exactly the class that catches us twice.
 
 ### 5. Ship via `/release`
 

@@ -1653,6 +1653,28 @@ export interface SavedView {
 // "active" while still firing in the last 10 min, "cleared"
 // otherwise. Lets the operator answer "did this fire today, even
 // if it has stopped".
+// v0.6.29 — Service dependency impact ("blast radius"). When an
+// open Problem fires on service X, this surfaces the callers
+// that depend on X — so the operator sees "this is local" vs
+// "this is cascading up the call graph" at a glance.
+export interface BlastRadiusCaller {
+  service: string;
+  calls: number;
+  errors: number;
+  rps: number;
+  errorRate: number;
+  hasOpenProblem: boolean;
+}
+export interface BlastRadius {
+  service: string;
+  windowSec: number;
+  totalCallers: number;
+  cascadingCallers: number;
+  totalRps: number;
+  totalErrorsPerSec: number;
+  callers: BlastRadiusCaller[];
+}
+
 export interface AnomalyEvent {
   id: string;
   // v0.6.27 added `log_template_new` — Drain-discovered log shape

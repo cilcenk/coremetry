@@ -851,6 +851,15 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             ✦ AI insight
                           </span>
                         )}
+                        {/* v0.6.29 — blast radius chip for open
+                            problems. Lazy-fetches when the row
+                            renders; only shows when callers > 0
+                            so the chip is silent on a service
+                            with no upstream callers. Cascade
+                            count surfaces in amber. */}
+                        {p.status === 'open' && p.service && (
+                          <BlastRadiusChip service={p.service} />
+                        )}
                         {isAnomaly && (
                           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
                             {p.description}
@@ -1437,5 +1446,54 @@ function fmtAge(sec: number): string {
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.round(s / 60)}m`;
   return `${Math.round(s / 3600)}h`;
+}
+
+// v0.6.29 — inline blast-radius chip for the /problems row.
+// Lazy-fetches the per-service summary so a 100-row inbox
+// doesn't fan out 100 parallel requests on first paint —
+// individual chips load as their row renders. Hidden when the
+// service has no upstream callers (silent on standalone
+// services) so the row layout stays clean.
+//
+// Cascade callers (services with their own open problem)
+// shift the chip to amber + the count surfaces in the tooltip
+// so the operator sees "this isn't isolated — 3 downstream
+// services are already firing too" without expanding the row.
+function BlastRadiusChip({ service }: { service: string }) {
+  const [data, setData] = useState<import('@/lib/types').BlastRadius | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.serviceBlastRadius(service)
+      .then(d => { if (!cancelled) setData(d); })
+      .catch(() => { /* silent — chip just doesn't render */ });
+    return () => { cancelled = true; };
+  }, [service]);
+  if (!data || data.totalCallers === 0) return null;
+  const cascading = data.cascadingCallers > 0;
+  const tooltipLines = [
+    `Blast radius: ${data.totalCallers} caller service${data.totalCallers === 1 ? '' : 's'}, ${data.totalRps.toFixed(1)} rps`,
+    cascading && `${data.cascadingCallers} caller${data.cascadingCallers === 1 ? '' : 's'} ALSO have an open problem (cascading failure)`,
+    '',
+    'Top callers:',
+    ...data.callers.slice(0, 5).map(c =>
+      `  ${c.hasOpenProblem ? '⚠ ' : '  '}${c.service} — ${c.rps.toFixed(1)} rps${c.errorRate > 1 ? ` · ${c.errorRate.toFixed(1)}% err` : ''}`,
+    ),
+  ].filter(Boolean).join('\n');
+  return (
+    <span
+      title={tooltipLines}
+      onClick={e => e.stopPropagation()}
+      style={{
+        marginLeft: 8, fontSize: 11,
+        padding: '2px 8px', borderRadius: 12,
+        background: cascading ? 'rgba(250,204,21,0.10)' : 'rgba(56,139,253,0.08)',
+        border: `1px solid ${cascading ? 'rgba(250,204,21,0.40)' : 'rgba(56,139,253,0.30)'}`,
+        color: cascading ? 'var(--warn, #facc15)' : 'var(--accent2)',
+        whiteSpace: 'nowrap', cursor: 'help',
+      }}>
+      ↘ {data.totalCallers} svc{data.totalCallers === 1 ? '' : 's'} · {data.totalRps.toFixed(0)} rps
+      {cascading && <> · ⚠ {data.cascadingCallers}</>}
+    </span>
+  );
 }
 

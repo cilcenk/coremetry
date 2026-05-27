@@ -354,6 +354,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)
 	mux.HandleFunc("GET /api/services/{name}/clusters",  s.getServiceClusterBreakdown)
 	mux.HandleFunc("GET /api/services/{name}/neighbors", s.getServiceNeighbors)
+	// v0.6.29 — Service dependency impact scorer ("blast
+	// radius"). Open Problem on service X → which OTHER
+	// services are seeing broken calls because they invoke X?
+	// Surfaced as a chip on the /problems row + tooltip with
+	// top N cascading callers.
+	mux.HandleFunc("GET /api/services/{name}/blast-radius", s.getServiceBlastRadius)
 	mux.HandleFunc("GET /api/topology",                  s.getTopology)
 	mux.HandleFunc("GET /api/topology/ops",              s.getTopologyOps)
 	mux.HandleFunc("GET /api/topology/service",          s.getServiceTopology)
@@ -1775,6 +1781,33 @@ func (s *Server) getServiceBacktrace(w http.ResponseWriter, r *http.Request) {
 // is otherwise the most expensive thing on the service detail page.
 // Cache key folds in service / since / samples so a range or
 // sample-count change still misses.
+// getServiceBlastRadius (v0.6.29) — caller-side impact summary
+// for an inspected service. Reads service_callers_5m FINAL,
+// rolls up per (caller_service) instead of per (caller_service,
+// host, instance) so the chip-level UX shows the cleanest
+// "↘ N svcs · M rps". Cascade flag joined in from the problems
+// table so callers WITH their own open problem float to the
+// top of the list.
+//
+// Cached 60s — the window is rate-of-the-fleet measurement
+// where second-level freshness adds no operator value; tab-
+// switching between problems repeatedly should hit the cache.
+func (s *Server) getServiceBlastRadius(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+	since := parseDuration(r.URL.Query().Get("since"), time.Hour)
+	if since > 24*time.Hour {
+		since = 24 * time.Hour
+	}
+	key := fmt.Sprintf("service-blast-radius:svc=%s:since=%s", name, since)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		return s.store.GetServiceBlastRadius(r.Context(), name, since)
+	})
+}
+
 func (s *Server) getServiceNeighbors(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {

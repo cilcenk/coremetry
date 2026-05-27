@@ -162,6 +162,13 @@ export const api = {
       totalSpans: number;
     }>(`/api/services/${encodeURIComponent(svc)}/neighbors?since=${since}&samples=${samples}${refresh ? '&refresh=1' : ''}`),
 
+  // v0.6.29 — Blast radius for an open Problem. Returns upstream
+  // callers + their RPS + cascade-flag (caller has own open
+  // problem). Sorted cascading-first, then by calls desc.
+  serviceBlastRadius: (svc: string, since = '1h') =>
+    get<import('./types').BlastRadius>(
+      `/api/services/${encodeURIComponent(svc)}/blast-radius?since=${since}`),
+
   // Curated runtime / process timeseries (cpu / memory / rps /
   // runtime) for the inspected service's pods. Powers the infra
   // correlation panel on /service?name=…. 30s server-side cache.

@@ -260,6 +260,15 @@ type AggregateRow struct {
 	GroupKey   string  `json:"groupKey"`
 	GroupExtra string  `json:"groupExtra,omitempty"` // e.g. service name when grouping by operation
 	TraceCount uint64  `json:"traceCount"`
+	// WithRawAvailable — count of TraceCount trace_ids that still
+	// have raw spans in the window. trace_summary_5m holds 90 days
+	// while raw spans hold 30 (or whatever retention.spans is set
+	// to), so older aggregate rows may not be drillable. The UI
+	// renders a chip when this is lower than TraceCount so the
+	// operator knows clicking won't always reach detail. The raw-
+	// spans aggregate path (non-fast-path) sets this == TraceCount
+	// since every counted trace by definition has raw data. v0.6.39.
+	WithRawAvailable uint64 `json:"withRawAvailable"`
 	// PerMin is traces per minute over the requested window —
 	// Uptrace-style perMin(count()) so the operator can compare
 	// throughput across windows of different lengths.

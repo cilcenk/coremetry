@@ -1898,6 +1898,11 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		); err != nil {
 			return nil, err
 		}
+		// v0.6.39 — this path reads from raw `spans`, so every
+		// counted trace has raw data by construction. Pinning
+		// WithRawAvailable == TraceCount lets the UI render a
+		// uniform shape across both code paths.
+		a.WithRawAvailable = a.TraceCount
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -1978,9 +1983,20 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 		having += " AND has_error = 1"
 	}
 
+	// v0.6.39 — `in_raw` per-trace flag fed into the outer
+	// countIf gives the operator-visible "X traces aggregated · Y
+	// still drillable" disparity. Uses GLOBAL IN against the raw
+	// `spans` table on the SAME time window so the membership set
+	// stays bounded by current ingest. Without GLOBAL IN this would
+	// fan a subquery to every replica on a Distributed install;
+	// GLOBAL marshals the set once on the coordinator and reuses
+	// it across shards (CLAUDE.md cluster invariant). On single-
+	// node CH the GLOBAL keyword is a no-op so it's safe in both
+	// deployment modes.
 	sql := `
 		SELECT group_key, group_extra,
 		       count() AS trace_count,
+		       countIf(in_raw = 1) AS with_raw_available,
 		       count() / ? AS per_min,
 		       countIf(has_error = 1) AS error_count,
 		       countIf(has_error = 1) / count() * 100 AS error_rate,
@@ -1998,7 +2014,11 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 		           minMerge(trace_start_state) AS trace_start,
 		           (maxMerge(trace_end_state) -
 		            toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6 AS dur_ms,
-		           toUInt8(countMerge(error_count_state) > 0) AS has_error
+		           toUInt8(countMerge(error_count_state) > 0) AS has_error,
+		           toUInt8(trace_id GLOBAL IN (
+		               SELECT DISTINCT trace_id FROM spans
+		               WHERE time >= ? AND time <= ?
+		           )) AS in_raw
 		    FROM trace_summary_5m
 		    ` + innerWhere + `
 		    GROUP BY trace_id
@@ -2030,11 +2050,13 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 
 	// Argument order:
 	//   1. windowMin (outer per_min divisor)
-	//   2. innerArgs: time_bucket from, time_bucket to
-	//   3. f.Service (only when set — matches the HAVING line)
-	//   4. postArgs (MinMs / MaxMs)
-	//   5. f.Limit
+	//   2. in_raw subquery: spans.time from, spans.time to (same window)
+	//   3. innerArgs: time_bucket from, time_bucket to
+	//   4. f.Service (only when set — matches the HAVING line)
+	//   5. postArgs (MinMs / MaxMs)
+	//   6. f.Limit
 	args := []any{windowMin}
+	args = append(args, f.From, f.To) // in_raw subquery bounds
 	args = append(args, innerArgs...)
 	if f.Service != "" {
 		args = append(args, f.Service)
@@ -2051,7 +2073,7 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	for rows.Next() {
 		var a AggregateRow
 		if err := rows.Scan(
-			&a.GroupKey, &a.GroupExtra, &a.TraceCount, &a.PerMin,
+			&a.GroupKey, &a.GroupExtra, &a.TraceCount, &a.WithRawAvailable, &a.PerMin,
 			&a.ErrorCount, &a.ErrorRate,
 			&a.AvgMs, &a.P50Ms, &a.P95Ms, &a.P99Ms, &a.MaxMs, &a.LastSeen,
 		); err != nil {

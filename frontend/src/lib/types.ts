@@ -1218,6 +1218,13 @@ export interface AggregateRow {
   groupKey: string;
   groupExtra?: string;
   traceCount: number;
+  // v0.6.39 — count of TraceCount trace_ids that still have raw
+  // spans in the window. Lower than `traceCount` when some traces
+  // have aged out of raw `spans` (30d TTL) but still live in
+  // trace_summary_5m (90d). The aggregate row shows a chip to
+  // make the disparity visible — clicking will drill to those
+  // that ARE drillable, the rest only have aggregate stats.
+  withRawAvailable: number;
   perMin: number; // traces per minute (Uptrace-style perMin(count()))
   errorCount: number;
   errorRate: number;

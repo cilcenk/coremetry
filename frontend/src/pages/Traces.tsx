@@ -660,6 +660,16 @@ function TracesPageInner() {
                 <tbody>
                   {agg.map(a => {
                     const errCls = a.errorRate > 5 ? 'b-err' : a.errorRate > 0 ? 'b-warn' : 'b-ok';
+                    // v0.6.39 — when aggregate MV (90d) holds
+                    // traces that have aged out of raw spans
+                    // (default 30d), surface the disparity with a
+                    // chip so the operator knows clicking will
+                    // reach fewer rows than the count suggests.
+                    // missingRaw > 0 means: "of these, only
+                    // <withRawAvailable> still have span detail".
+                    const totalForRow = a.traceCount;
+                    const drillable = a.withRawAvailable ?? a.traceCount;
+                    const missingRaw = totalForRow - drillable;
                     // Click row → drill into List view. For
                     // operation/service rows we narrow by the
                     // matching field; for the other dimensions we
@@ -683,7 +693,16 @@ function TracesPageInner() {
                       <tr key={`${a.groupKey}|${a.groupExtra}`} onClick={onClick}>
                         <td><b>{a.groupKey || '—'}</b></td>
                         {groupBy !== 'service' && <td><SvcBadge name={a.groupExtra ?? ''} /></td>}
-                        <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(a.traceCount)}</td>
+                        <td className="mono" style={{ textAlign: 'right' }}>
+                          {fmtNum(a.traceCount)}
+                          {missingRaw > 0 && (
+                            <span
+                              className="badge b-warn"
+                              style={{ marginLeft: 6, fontSize: 10 }}
+                              title={`${fmtNum(drillable)} of ${fmtNum(totalForRow)} traces still have raw span data — older traces aged out of the raw retention window. Click to drill into the drillable subset.`}
+                            >{fmtNum(drillable)} drillable</span>
+                          )}
+                        </td>
                         <td className="mono" style={{ textAlign: 'right' }} title="Traces per minute">
                           {fmtPerMin(a.perMin)}
                         </td>

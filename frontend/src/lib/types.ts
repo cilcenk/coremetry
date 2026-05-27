@@ -1655,7 +1655,9 @@ export interface SavedView {
 // if it has stopped".
 export interface AnomalyEvent {
   id: string;
-  kind: 'log_pattern' | 'trace_op' | 'elastic_ml';
+  // v0.6.27 added `log_template_new` — Drain-discovered log shape
+  // appearing for the first time in the lookback window.
+  kind: 'log_pattern' | 'trace_op' | 'elastic_ml' | 'log_template_new';
   pattern: string;
   service: string;
   startedAt: number;     // unix ns — first observation

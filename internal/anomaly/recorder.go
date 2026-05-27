@@ -113,6 +113,37 @@ func (r *Recorder) tick(ctx context.Context) {
 		}
 	}
 
+	// ── New-template anomalies (v0.6.27) ────────────────────
+	// Drain templater publishes shapes it's never seen before;
+	// surface them as anomalies so operators get a feed of
+	// "what new log line shape just appeared" — complements the
+	// curated-regex detector (log_pattern) which only catches
+	// known failure shapes. Window is 2× the recorder window
+	// to absorb any drift between templater + recorder cadences.
+	newTemplateHits, err := DetectNewLogTemplates(ctx, r.store, 2*r.window)
+	if err != nil {
+		log.Printf("[anomaly-recorder] new log templates: %v", err)
+	}
+	for _, a := range newTemplateHits {
+		ev := chstore.AnomalyEvent{
+			// Fingerprint on the stable template ID (Drain hash),
+			// NOT the rendered pattern text — the same template
+			// keeps the same row across recorder ticks.
+			ID:           chstore.FingerprintAnomaly("log_template_new", a.TemplateID, a.Service),
+			Kind:         "log_template_new",
+			Pattern:      a.Template,
+			Service:      a.Service,
+			StartedAt:    a.FirstSeenNs,
+			LastSeen:     a.LastSeenNs,
+			CurrentRatio: 0, // "first appearance" — no ratio over baseline
+			CurrentCount: a.TotalCount,
+			Sample:       a.Sample,
+		}
+		if err := r.store.UpsertAnomalyEvent(ctx, ev); err != nil {
+			log.Printf("[anomaly-recorder] upsert new log template %s: %v", a.TemplateID, err)
+		}
+	}
+
 	// ── Trace-op anomalies ────────────────────────────────────
 	traceHits, err := DetectTraceOpAnomalies(ctx, r.store, r.window)
 	if err != nil {

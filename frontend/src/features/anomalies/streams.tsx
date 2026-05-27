@@ -407,6 +407,7 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
                 <td style={{ fontSize: 11, color: 'var(--text2)' }}>
                   {e.kind === 'log_pattern' ? 'log'
                     : e.kind === 'elastic_ml' ? 'Elastic ML'
+                    : e.kind === 'log_template_new' ? 'new log shape'
                     : 'trace op'}
                 </td>
                 <td className="num mono">{e.peakRatio.toFixed(1)}</td>

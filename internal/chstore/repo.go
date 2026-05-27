@@ -1964,21 +1964,36 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	// Inner: one row per trace inside the bucket window. The
 	// MV's PK on (time_bucket, trace_id) lets CH partition-prune
 	// + read in order — sub-second even on 7d on a busy cluster.
-	// Service filter goes to the inner so we cut the trace set
-	// before the outer group-by.
+	//
+	// v0.6.43 — operator-reported: /traces?service=X aggregate
+	// returned NO rows for any X that's not a root-emitting
+	// service (most callees: payment-service, fraud-service,
+	// account-ledger-service, ...). Root cause: the previous code
+	// added `HAVING argMaxIfMerge(root_service_state) = ?` after
+	// GROUP BY trace_id — this only matches traces where X IS the
+	// root span's service. For services that are only called
+	// (never root the trace), the HAVING removed every row even
+	// though those traces had real X-emitted spans we should
+	// aggregate.
+	//
+	// Fix mirrors getTracesFromMV's two-stage path: narrow the
+	// trace_id set via trace_service_index_5m (a per-(service,
+	// trace) MV that records every trace each service touched,
+	// rooted or not), then GROUP BY on trace_summary_5m. The
+	// resulting aggregate row groups by the *actual* root
+	// operation, so "service=fraud-service" surfaces "POST
+	// /checkout (frontend)" as the root that pulled fraud-service
+	// in — exactly the call-pattern view the operator needs.
 	innerWhere := "WHERE time_bucket >= ? AND time_bucket <= ?"
 	innerArgs := []any{f.From, f.To}
 	if f.Service != "" {
-		// trace_summary_5m doesn't have service_name, so we
-		// match on the argMaxIfMerge HAVING — slightly later
-		// but at MV cardinality it's still cheap.
+		innerWhere += ` AND trace_id IN (
+		    SELECT DISTINCT trace_id FROM trace_service_index_5m
+		    WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+		)`
+		innerArgs = append(innerArgs, f.Service, f.From, f.To)
 	}
 	having := "HAVING group_key != ''"
-	if f.Service != "" {
-		having += " AND root_svc = ?"
-		// Service arg appended after the outer LIMIT-arg list
-		// below.
-	}
 	if f.HasError {
 		having += " AND has_error = 1"
 	}
@@ -2052,15 +2067,14 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	//   1. windowMin (outer per_min divisor)
 	//   2. in_raw subquery: spans.time from, spans.time to (same window)
 	//   3. innerArgs: time_bucket from, time_bucket to
-	//   4. f.Service (only when set — matches the HAVING line)
-	//   5. postArgs (MinMs / MaxMs)
-	//   6. f.Limit
+	//      (+ when service set: service_name, time_bucket_from,
+	//        time_bucket_to for the trace_service_index_5m
+	//        narrowing — already in innerArgs)
+	//   4. postArgs (MinMs / MaxMs)
+	//   5. f.Limit
 	args := []any{windowMin}
 	args = append(args, f.From, f.To) // in_raw subquery bounds
 	args = append(args, innerArgs...)
-	if f.Service != "" {
-		args = append(args, f.Service)
-	}
 	args = append(args, postArgs...)
 	args = append(args, f.Limit)
 

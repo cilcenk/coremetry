@@ -71,26 +71,25 @@ func (s *Store) GetRetention(ctx context.Context) (RetentionSpec, error) {
 // `time` for metric_points.
 func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string) error {
 	type tbl struct {
-		key       string
-		val       string
-		table     string
-		ttlExpr   string // ClickHouse TTL expression — substitution placeholder is `%s` for the interval
+		key   string
+		val   string
+		table string
+		col   string // timestamp column the TTL is computed against
 	}
 	plans := []tbl{
-		{"retention.spans",    sp.Spans,    "spans",         "toDate(time) + INTERVAL %s"},
-		{"retention.logs",     sp.Logs,     "logs",          "toDate(time) + INTERVAL %s"},
-		{"retention.metrics",  sp.Metrics,  "metric_points", "toDate(time) + INTERVAL %s"},
-		{"retention.profiles", sp.Profiles, "profiles",      "toDate(start_time) + INTERVAL %s"},
+		{"retention.spans", sp.Spans, "spans", "time"},
+		{"retention.logs", sp.Logs, "logs", "time"},
+		{"retention.metrics", sp.Metrics, "metric_points", "time"},
+		{"retention.profiles", sp.Profiles, "profiles", "start_time"},
 	}
 	for _, p := range plans {
 		if p.val == "" {
 			continue
 		}
-		interval, err := parseRetention(p.val)
+		ttl, err := buildRetentionTTL(p.val, p.col)
 		if err != nil {
 			return fmt.Errorf("bad retention for %s: %w", p.key, err)
 		}
-		ttl := fmt.Sprintf(p.ttlExpr, interval)
 		// Apply to the live table. ALTER MODIFY TTL is online —
 		// doesn't lock the table — but CH defaults to
 		// materialize_ttl_after_modify=1 which synchronously
@@ -155,21 +154,40 @@ func (s *Store) ApplyPersistedRetention(ctx context.Context) error {
 	return s.SetRetention(ctx, sp, "system:boot")
 }
 
-// parseRetention turns "48h" / "30d" into a ClickHouse INTERVAL
-// expression like "48 HOUR" / "30 DAY". Rejects anything else so we
-// don't ALTER the table to garbage.
+// buildRetentionTTL turns a "<n>h" / "<n>d" retention shorthand plus
+// the table's timestamp column into a correct ClickHouse TTL right-
+// hand-side.
+//
+// v0.6.36 — operator-reported: spans/logs/metrics/profiles silently
+// drained because retention.spans = "1h" had been persisted via the
+// admin UI, and the previous template `toDate(time) + INTERVAL %s`
+// expanded to `toDate(time) + INTERVAL 1 HOUR` — i.e. midnight + 1h
+// = 01:00 of the SAME day. Every row inserted after 01:00 was already
+// past TTL and got dropped on the next merge cycle. The pre-existing
+// "Nd" case worked because adding DAYS to a date stays meaningful.
+//
+// The fix splits the expression by unit:
+//   - "Nd"  → `toDate(<col>) + INTERVAL N DAY` (partition-aligned;
+//             lets CH DROP whole day partitions cheaply)
+//   - "Nh"  → `<col> + INTERVAL N HOUR`        (row-level TTL on the
+//             raw DateTime64 column; correct rolling window)
+//
+// Hour-granularity TTLs can't ride the partition-drop fast path
+// because spans are PARTITION BY toDate(time) — a 1-hour TTL crosses
+// at most one partition boundary per day and needs row-level cleanup
+// anyway. Day-granularity stays on the partition boundary so
+// banking-scale tables keep their O(1) cleanup.
 var retentionRe = regexp.MustCompile(`^([1-9][0-9]*)([hd])$`)
 
-func parseRetention(s string) (string, error) {
+func buildRetentionTTL(s, col string) (string, error) {
 	s = strings.TrimSpace(strings.ToLower(s))
 	m := retentionRe.FindStringSubmatch(s)
 	if m == nil {
 		return "", fmt.Errorf("expected <n>h or <n>d, got %q", s)
 	}
 	n, _ := strconv.Atoi(m[1])
-	unit := "DAY"
 	if m[2] == "h" {
-		unit = "HOUR"
+		return fmt.Sprintf("%s + INTERVAL %d HOUR", col, n), nil
 	}
-	return fmt.Sprintf("%d %s", n, unit), nil
+	return fmt.Sprintf("toDate(%s) + INTERVAL %d DAY", col, n), nil
 }

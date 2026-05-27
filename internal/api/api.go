@@ -703,6 +703,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/slos/{id}",       s.getSLO)
 	mux.HandleFunc("GET    /api/slos/{id}/status", s.sloStatus)
 	mux.HandleFunc("GET    /api/slos/{id}/burn-series", s.sloBurnSeries)
+	// v0.6.30 — SLO burn-down forecast. Projects when the error
+	// budget will be exhausted at the current short-window burn
+	// rate. /slos list page surfaces "breaches in <24h" chip.
+	mux.HandleFunc("GET    /api/slos/{id}/forecast", s.sloForecast)
 	mux.HandleFunc("POST   /api/slos",            auth.RequireAnyRole(editorRoles, s.createSLO))
 	mux.HandleFunc("DELETE /api/slos/{id}",       auth.RequireAnyRole(editorRoles, s.deleteSLO))
 
@@ -8662,6 +8666,33 @@ func (s *Server) sloStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.store.ComputeSLOStatus(r.Context(), *o)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, st)
+}
+
+// sloForecast (v0.6.30) — burn-down projection. Cached 60s on
+// (id, burnWindow) so /slos polling doesn't fan out per-row
+// CH reads on every tab refresh. ComputeSLOForecast itself runs
+// TWO short queries (status + short-window burn rate) — the
+// cache wrapper collapses them across consecutive operator
+// page-loads in a session.
+func (s *Server) sloForecast(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	burnWindow := parseDuration(r.URL.Query().Get("window"), time.Hour)
+	// Cap the burn window so a hallucinated ?window=720h doesn't
+	// blow the budget on a backfill-shaped query.
+	if burnWindow > 24*time.Hour {
+		burnWindow = 24 * time.Hour
+	}
+	key := fmt.Sprintf("slo-forecast:%s:%s", id, burnWindow)
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		o, err := s.store.GetSLO(r.Context(), id)
+		if err != nil {
+			return nil, err
+		}
+		if o == nil {
+			return nil, fmt.Errorf("slo not found")
+		}
+		return s.store.ComputeSLOForecast(r.Context(), *o, burnWindow)
+	})
 }
 
 // sloBurnSeries serves the per-day burn-rate timeseries that

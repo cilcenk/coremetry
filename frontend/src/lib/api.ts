@@ -1226,6 +1226,16 @@ export const api = {
       series: Array<{ time: number; total: number; good: number; burnRate: number }>;
       days: number;
     }>(`/api/slos/${id}/burn-series?days=${days}`),
+  // v0.6.30 — burn-down forecast. window default 1h.
+  sloForecast: (id: string, window = '1h') =>
+    get<{
+      burnRate: number;
+      burnWindowSec: number;
+      budgetRemaining: number;
+      hoursToExhaust: number;
+      willBreachWithin24h: boolean;
+      safeBurn: boolean;
+    }>(`/api/slos/${id}/forecast?window=${window}`),
   createSLO: (o: Omit<SLO, 'id' | 'createdAt'>) =>
     request<SLO>('/api/slos', {
       method: 'POST',

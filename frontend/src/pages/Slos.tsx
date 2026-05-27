@@ -70,6 +70,7 @@ export default function SLOsPage() {
                   <th>SLI ({items[0].windowDays}d)</th>
                   <th>Budget left</th>
                   <th>Burn rate</th>
+                  <th>Forecast</th>
                   <th>7d trend</th>
                   <th>Status</th>
                   {isAdmin && <th></th>}
@@ -97,6 +98,9 @@ export default function SLOsPage() {
                     </td>
                     <td className="mono">
                       {o.status ? <BurnBadge rate={o.status.burnRate} /> : '—'}
+                    </td>
+                    <td>
+                      <ForecastChip sloId={o.id} />
                     </td>
                     <td>
                       <BurnSparkline sloId={o.id} />
@@ -265,6 +269,52 @@ function BurnBadge({ rate }: { rate: number }) {
   if (!isFinite(rate)) return <span style={{ color: 'var(--text3)' }}>—</span>;
   const cls = rate > 2 ? 'b-err' : rate > 1 ? 'b-warn' : 'b-ok';
   return <span className={`badge ${cls}`}>{rate.toFixed(2)}×</span>;
+}
+
+// v0.6.30 — forecast chip. Reads /api/slos/{id}/forecast lazily
+// per row (server-cached 60s collapses parallel requests across
+// rows). Three visual states:
+//   • Safe — burn rate ≤ 1, budget grows back. Quiet "OK" pill.
+//   • Soft warn — burn rate > 1 but exhaust > 24h away. Amber.
+//   • Hard alert — exhaust ≤ 24h OR budget already 0. Red.
+// Tooltip carries the projected hours so the operator can pick
+// "12h" out of the amber chip's "soon" qualitative read.
+function ForecastChip({ sloId }: { sloId: string }) {
+  const [data, setData] = useState<{
+    burnRate: number; hoursToExhaust: number;
+    willBreachWithin24h: boolean; safeBurn: boolean;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.sloForecast(sloId).then(d => { if (!cancelled) setData(d); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sloId]);
+  if (!data) return <span style={{ color: 'var(--text3)' }}>…</span>;
+  if (data.safeBurn) {
+    return (
+      <span className="badge b-ok"
+        title={`Current burn rate ${data.burnRate.toFixed(2)}× — at or below replenishment, budget is stable`}>
+        OK
+      </span>
+    );
+  }
+  const cls = data.willBreachWithin24h ? 'b-err' : 'b-warn';
+  const label = fmtHoursToExhaust(data.hoursToExhaust);
+  return (
+    <span className={`badge ${cls}`}
+      title={`At burn rate ${data.burnRate.toFixed(2)}×, the error budget will be exhausted in ~${data.hoursToExhaust.toFixed(1)}h`}>
+      ⌛ {label}
+    </span>
+  );
+}
+
+function fmtHoursToExhaust(h: number): string {
+  if (h <= 0) return 'breached';
+  if (h < 1) return '<1h';
+  if (h < 24) return `${Math.round(h)}h`;
+  const days = h / 24;
+  if (days < 7) return `${days.toFixed(1)}d`;
+  return `${Math.round(days)}d`;
 }
 
 function NewSLOModal({ services, onClose, onCreated }: {

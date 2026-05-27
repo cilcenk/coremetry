@@ -236,6 +236,79 @@ func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]Bu
 	return out, rows.Err()
 }
 
+// SLOForecast — v0.6.30. Given an SLO + its current short-window
+// burn rate + the remaining error budget, projects when the
+// budget will be fully consumed at the current pace. Operator-
+// facing answer to "is this going to breach before the weekend?"
+//
+// At BurnRate ≤ 1 the budget grows back faster than it's
+// consumed; HoursToExhaust = +Inf (we represent it as 0 with
+// SafeBurn=true so the UI can render an "OK" pill).
+//
+// At BurnRate > 1 the math is:
+//
+//   hoursToExhaust = budgetRemaining × (windowDays × 24) / burnRate
+//
+// rounded down. When that value ≤ 24h, WillBreachWithin24h is
+// flagged so the /slos page can promote the row to the operator's
+// attention without an actual alert wired up yet.
+type SLOForecast struct {
+	BurnRate            float64 `json:"burnRate"`             // short-window burn rate
+	BurnWindowSec       int     `json:"burnWindowSec"`        // window the rate was measured over
+	BudgetRemaining     float64 `json:"budgetRemaining"`      // 0..1 — copied from status
+	HoursToExhaust      float64 `json:"hoursToExhaust"`       // projected; 0 when SafeBurn
+	WillBreachWithin24h bool    `json:"willBreachWithin24h"`  // operator-attention flag
+	SafeBurn            bool    `json:"safeBurn"`             // burnRate ≤ 1, no forecast needed
+}
+
+// projectBurnHours is the pure-math half of ComputeSLOForecast,
+// extracted for testability. budgetRemaining is 0..1,
+// windowHours is the SLO's full window in hours (e.g. 30 days =
+// 720), rate is the current short-window burn rate. Returns
+// hours-to-exhaust + the SafeBurn flag + the 24h-breach flag.
+func projectBurnHours(budgetRemaining, windowHours, rate float64) (hours float64, safe bool, within24h bool) {
+	if rate <= 1.0 {
+		return 0, true, false
+	}
+	if budgetRemaining <= 0 {
+		return 0, false, true
+	}
+	hours = budgetRemaining * windowHours / rate
+	if hours <= 24.0 {
+		within24h = true
+	}
+	return hours, false, within24h
+}
+
+// ComputeSLOForecast runs ComputeSLOStatus + ComputeSLOBurnRate
+// (over `burnWindow`) and combines them into a forecast. Two
+// CH reads — both bounded by service+time WHEREs so total cost
+// is tiny.
+func (s *Store) ComputeSLOForecast(ctx context.Context, o SLO, burnWindow time.Duration) (*SLOForecast, error) {
+	if burnWindow <= 0 {
+		burnWindow = time.Hour
+	}
+	status, err := s.ComputeSLOStatus(ctx, o)
+	if err != nil {
+		return nil, fmt.Errorf("slo status: %w", err)
+	}
+	rate, _, err := s.ComputeSLOBurnRate(ctx, o, burnWindow)
+	if err != nil {
+		return nil, fmt.Errorf("slo burn rate: %w", err)
+	}
+	out := &SLOForecast{
+		BurnRate:        rate,
+		BurnWindowSec:   int(burnWindow.Seconds()),
+		BudgetRemaining: status.BudgetRemaining,
+	}
+	hours, safe, within24h := projectBurnHours(
+		status.BudgetRemaining, float64(o.WindowDays)*24.0, rate)
+	out.HoursToExhaust = hours
+	out.SafeBurn = safe
+	out.WillBreachWithin24h = within24h
+	return out, nil
+}
+
 // ComputeSLOBurnRate calculates the burn rate over a SHORT
 // look-back window — used by the 2-window burn-rate alarm
 // pattern (Google SRE Workbook). The status method above runs

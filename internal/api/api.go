@@ -3977,6 +3977,7 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 		From:        parseTime(q.Get("from")),
 		To:          parseTime(q.Get("to")),
 		StepSeconds: step,
+		Search:      q.Get("search"), // v0.6.32 — push search down to histogram
 	}
 	series, err := s.store.QuerySpanMetric(r.Context(), f)
 	if err != nil {

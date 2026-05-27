@@ -17,6 +17,16 @@ type SpanMetricFilter struct {
 	GroupBy     []string     // 0..N attribute names; same syntax as FilterExpr.Key
 	From, To    time.Time
 	StepSeconds int          // bucket size; if 0, auto-pick from time range
+	// v0.6.32 — free-text search predicate. Same shape as
+	// GetTraces' search HAVING (positionCaseInsensitive across
+	// name / http_route / http_method+route concat / attr
+	// values). Operator-reported: /traces span-volume histogram
+	// counted 929 spans for a service while the trace list with
+	// `search=SELECT * FROM FND_USER` showed only 3 traces — the
+	// histogram wasn't honouring the search filter. Pushing it
+	// down at the WHERE level makes the histogram's total
+	// agree with the spans the search actually selects.
+	Search string
 }
 
 // SpanMetricSeries is one line on the chart — typically one per groupKey.
@@ -42,11 +52,18 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 	// installs where the raw GROUP BY would otherwise burn
 	// 5-10s of CH time. Fall through on MV error so a
 	// regression here doesn't blank the page.
-	if rows, ok := s.tryServiceMVFastPath(ctx, f); ok {
-		return rows, nil
-	}
-	if rows, ok := s.tryOperationMVFastPath(ctx, f); ok {
-		return rows, nil
+	// v0.6.32 — search predicate bypasses the MV fast-paths.
+	// service_summary_5m / operation_summary_5m don't store
+	// attr_values or http_route, so a search clause can't be
+	// honoured against them. Same gate shape GetTraces uses
+	// (repo.go line ~1177).
+	if f.Search == "" {
+		if rows, ok := s.tryServiceMVFastPath(ctx, f); ok {
+			return rows, nil
+		}
+		if rows, ok := s.tryOperationMVFastPath(ctx, f); ok {
+			return rows, nil
+		}
 	}
 
 	// ── Build WHERE ───────────────────────────────────────────────────────────
@@ -58,6 +75,20 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		wc.add("time <= ?", f.To)
 	}
 	ApplyFilters(&wc, f.Filters)
+	// v0.6.32 — free-text search at WHERE level. Same predicate
+	// shape as GetTraces' HAVING clause (name / http_route /
+	// http_method+route concat / attr_values), just applied
+	// per-span instead of per-trace so the histogram total
+	// matches the search-narrowed set the table is showing.
+	if f.Search != "" {
+		wc.add(
+			"(positionCaseInsensitive(name, ?) > 0 OR "+
+				"positionCaseInsensitive(http_route, ?) > 0 OR "+
+				"positionCaseInsensitive(concat(http_method, ' ', http_route), ?) > 0 OR "+
+				"arrayExists(v -> positionCaseInsensitive(v, ?) > 0, attr_values))",
+			f.Search, f.Search, f.Search, f.Search,
+		)
+	}
 
 	// ── Bucket size ───────────────────────────────────────────────────────────
 	step := f.StepSeconds

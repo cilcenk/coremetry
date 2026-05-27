@@ -1627,6 +1627,11 @@ export interface SpanMetricParams {
   from?: number;
   to?: number;
   step?: number;        // bucket size in seconds (auto if omitted)
+  // v0.6.32 — free-text search predicate. Same shape as the
+  // /traces page's search field; pushed down to span-level
+  // WHERE so a histogram's total matches the table's
+  // search-narrowed list.
+  search?: string;
 }
 
 // Aggregation grouping dimensions accepted by /api/traces/aggregate.

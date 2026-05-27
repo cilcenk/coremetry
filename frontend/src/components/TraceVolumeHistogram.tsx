@@ -22,26 +22,22 @@ import { fmtSmart, fmtXTicks } from '@/lib/chartFmt';
 //
 // Filters argument matches the /traces page's current DSL/filters so
 // the histogram tracks the same predicate as the table below.
-export function TraceVolumeHistogram({ range, dsl, filters, onZoom, searchActive }: {
+export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
   range: TimeRange;
   dsl?: string;
   filters?: string;
+  // v0.6.32 — search applied at WHERE level on the span-metric
+  // backend so the histogram total matches the search-narrowed
+  // table. Replaces the v0.6.31 "searchActive" chip-only
+  // workaround; the chart now actually reflects the search
+  // selection.
+  search?: string;
   // v0.5.322 — drag-to-select hook. Called after the operator
   // finishes a horizontal drag inside the chart. Args are unix
   // seconds (matches uPlot's native x-scale unit on this chart).
   // Parent (Traces page) flips the page TimeRange to a custom
   // range so the trace list + filters re-fetch for that slice.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
-  // v0.6.31 — operator-reported: histogram shows total spans for
-  // the active service+filter scope but DOES NOT apply the
-  // search field (free-text trace filter). On a small window
-  // with active search, operator saw "17 spans" in volume vs
-  // "3 traces" in table → assumed a bug. The chart still
-  // intentionally shows the broader scope (search is a trace-
-  // level HAVING, which doesn't translate to a per-span
-  // histogram), but we now surface a chip explaining the gap so
-  // the disparity reads as "by design" not "broken".
-  searchActive?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -67,8 +63,8 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom, searchActive
 
     setError(null);
     Promise.all([
-      api.spanMetric({ agg: 'count',  dsl, filters, from, to, step }),
-      api.spanMetric({ agg: 'errors', dsl, filters, from, to, step }),
+      api.spanMetric({ agg: 'count',  dsl, filters, search, from, to, step }),
+      api.spanMetric({ agg: 'errors', dsl, filters, search, from, to, step }),
     ]).then(([total, errs]) => {
       if (cancelled) return;
       const totalPoints = total?.[0]?.points ?? [];
@@ -95,7 +91,7 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom, searchActive
     });
 
     return () => { cancelled = true; };
-  }, [range, dsl, filters]);
+  }, [range, dsl, filters, search]);
 
   function drawChart() {
     const el = containerRef.current;
@@ -279,23 +275,6 @@ export function TraceVolumeHistogram({ range, dsl, filters, onZoom, searchActive
         }}>
           Span volume
         </span>
-        {/* v0.6.31 — search-disparity hint. Histogram counts
-            spans matching the service + advanced-filter scope;
-            search is a trace-level HAVING below the table so
-            the chart total can exceed the table's row count.
-            Without this chip operators reported the gap as a
-            bug. */}
-        {searchActive && (
-          <span
-            title="The search field narrows the TRACE list only — the histogram still shows total spans for the service + filter scope above. That's why the chart number can be larger than the table row count."
-            style={{
-              fontSize: 10, padding: '2px 8px', borderRadius: 10,
-              border: '1px solid var(--border)',
-              color: 'var(--text3)', cursor: 'help',
-            }}>
-            ⓘ search applies to table only
-          </span>
-        )}
         <span style={{ flex: 1 }} />
         {stats && (
           <>

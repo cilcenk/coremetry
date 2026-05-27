@@ -51,15 +51,25 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverrid
   // prior-period delta) or no data at all.
   dataOverride?: PanelDataOverride;
 }) {
+  // v0.6.20 — per-panel time range override. When the panel has
+  // its own rangeOverride set, it takes precedence over the
+  // dashboard's Topbar range. A panel with a 60-day baseline can
+  // sit beside a 15-min incident chart on the same dashboard.
+  // dataOverride only applies when the panel is using the
+  // dashboard's window (otherwise the bundled fetch was for the
+  // wrong range); panels with their own override fall back to
+  // their independent fetch.
+  const effectiveRange = panel.rangeOverride ?? range;
+  const effectiveDataOverride = panel.rangeOverride ? undefined : dataOverride;
   switch (panel.type) {
     case 'metric':
-      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={range} syncKey={syncKey} onZoom={onZoom} dataOverride={dataOverride} />;
+      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} dataOverride={effectiveDataOverride} />;
     case 'spanmetric':
-      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={range} syncKey={syncKey} onZoom={onZoom} dataOverride={dataOverride} />;
+      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} dataOverride={effectiveDataOverride} />;
     case 'stat':
-      return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={range} />;
+      return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={effectiveRange} />;
     case 'gauge':
-      return <GaugePanel cfg={applyVarsToGauge(panel.config as GaugePanelConfig, vars)} range={range} />;
+      return <GaugePanel cfg={applyVarsToGauge(panel.config as GaugePanelConfig, vars)} range={effectiveRange} />;
     case 'markdown':
       return <MarkdownPanel cfg={panel.config as MarkdownPanelConfig} />;
     case 'row':

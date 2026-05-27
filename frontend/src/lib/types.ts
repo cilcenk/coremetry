@@ -1334,6 +1334,13 @@ export interface Panel {
   type: PanelType;
   title: string;
   width: PanelWidth;
+  // v0.6.20 — optional per-panel time-range override
+  // (Grafana-parity). When set, this panel's data fetch ignores
+  // the dashboard-level Topbar range and uses this preset
+  // instead. Useful for "60-day baseline" tiles sitting next to
+  // a "last 15min" incident chart on the same dashboard.
+  // undefined / missing → fall back to the dashboard's range.
+  rangeOverride?: TimeRange;
   config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig;
 }
 

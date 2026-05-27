@@ -80,6 +80,32 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
           </Field>
         </div>
 
+        {/* v0.6.20 — optional time-range override. "Default" =
+            inherit from the dashboard's Topbar range. Any other
+            preset locks this panel to its own window — Grafana-
+            parity for "60-day baseline tile next to a 15min
+            incident chart". Custom-range overrides are out of
+            scope here; the seven canonical presets cover every
+            real use case we've seen. */}
+        <Field label="Time range override">
+          <select
+            value={panel.rangeOverride?.preset ?? ''}
+            onChange={e => {
+              const v = e.target.value;
+              if (v === '') update('rangeOverride', undefined);
+              else update('rangeOverride', { preset: v });
+            }}>
+            <option value="">Default (inherit dashboard range)</option>
+            <option value="5m">Last 5 min</option>
+            <option value="15m">Last 15 min</option>
+            <option value="1h">Last 1 hour</option>
+            <option value="6h">Last 6 hours</option>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </Field>
+
         {panel.type === 'metric' && (
           <MetricFields cfg={panel.config as MetricPanelConfig} onChange={updateConfig} />
         )}

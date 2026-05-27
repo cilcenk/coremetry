@@ -500,6 +500,25 @@ function DashboardGrid({
                           }}>⋮⋮</span>
                       )}
                       <span style={{ fontWeight: 600, color: 'var(--text)' }}>{p.title}</span>
+                      {/* v0.6.20 — range-override indicator. When
+                          a panel locks its own window, surface
+                          the preset next to the title so the
+                          operator doesn't wonder why the chart
+                          doesn't move with the Topbar picker.
+                          Empty when default (inherit dashboard
+                          range) — the page-level Topbar already
+                          shows that window. */}
+                      {p.rangeOverride?.preset && (
+                        <span
+                          title="This panel uses a fixed time range — overrides the dashboard Topbar"
+                          style={{
+                            marginLeft: 8, fontSize: 10, padding: '1px 6px',
+                            borderRadius: 3, border: '1px solid var(--accent2)',
+                            color: 'var(--accent2)', fontFamily: 'ui-monospace, monospace',
+                          }}>
+                          ↻ {p.rangeOverride.preset}
+                        </span>
+                      )}
                       {editing && (
                         <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
                           <button className="sec" onClick={() => onEditPanel(p.id)}

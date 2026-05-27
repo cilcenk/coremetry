@@ -71,15 +71,24 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
       const errorPoints = errs?.[0]?.points ?? [];
       const errMap = new Map(errorPoints.map(p => [p.time, p.value]));
       const ts: number[] = [];
-      const okData:  number[] = [];
-      const errData: number[] = [];
+      // v0.6.35 — inverse-overlay layout. Operator-reported: the
+      // prior stacked-paths approach (ok bar from 0..ok, err bar
+      // from ok..ok+err via cross-series baseline lookup) read
+      // as "overlapping bars" on service+operation-filtered
+      // queries. Switching to "draw total bar in gray, then
+      // paint error bar from 0..err on top in red" produces the
+      // SAME visual stack but as a single visible bar per bucket
+      // (red bottom = errors, gray top = ok). No cross-series
+      // state — robust to whatever uPlot quirk caused the prior
+      // visual artifact.
+      const okData:  number[] = []; // here = TOTAL spans; drawn in gray, full bar
+      const errData: number[] = []; // errors; drawn in red, from 0, OVER the bottom of gray
       let totalAll = 0, errAll = 0;
       for (const p of totalPoints) {
         const e = errMap.get(p.time) ?? 0;
-        const ok = Math.max(0, p.value - e);
         ts.push(p.time / 1e9); // ns → unix seconds
-        okData.push(ok);
-        errData.push(e);
+        okData.push(p.value);                  // full bar height = total spans
+        errData.push(Math.min(e, p.value));    // clamp — err can't exceed total
         totalAll += p.value;
         errAll   += e;
       }
@@ -109,7 +118,11 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
     // The y-axis range still needs the stacked total so high
     // error bars don't get clipped — passed below via the y-scale
     // range callback.
-    const stackedMax = Math.max(...ok.map((v, i) => v + err[i]), 0);
+    // v0.6.35 — y-max is just the total since err is now an
+    // OVERLAY from 0 (drawn on top of the gray total bar),
+    // not a stack ABOVE the ok series. ok array carries
+    // total counts in the new layout.
+    const stackedMax = Math.max(...ok, 0);
 
     const opts: uPlot.Options = {
       width: el.clientWidth || 600,
@@ -173,14 +186,18 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
           paths: barsPath(0),
           points: { show: false },
         },
-        // Error bar — drawn from ok[i] up to ok[i]+err[i].
-        // Baseline is the OK series's data array, looked up
-        // by index 1 in u.data inside the path builder.
+        // v0.6.35 — error bar drawn from 0 to err[i] as a
+        // SEPARATE overlay on top of the total bar. Painted
+        // last so it covers the bottom portion of the gray
+        // total. Net visual: red bottom = errors, gray top =
+        // remaining ok share — same stacked appearance as the
+        // prior cross-series-baseline approach, but with no
+        // cross-series state to go wrong.
         {
           label: 'errors',
           stroke: '#e84e4e',
           fill: '#e84e4e',
-          paths: barsPath(1),
+          paths: barsPath(0),
           points: { show: false },
         },
       ],

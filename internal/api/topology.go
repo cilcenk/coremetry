@@ -176,6 +176,15 @@ type ServiceTopologyResponse struct {
 	From      int64                         `json:"from"`
 	To        int64                         `json:"to"`
 	Truncated bool                          `json:"truncated"`
+	// v0.6.48 — server-side scoping for thousand-service fabrics.
+	// TotalServices is the distinct service count BEFORE the top-N /
+	// focus bound was applied, so the UI can show "showing N of M
+	// services — search or focus to refine". Scoped is true when the
+	// returned graph is a bounded subset (top-N by call volume, or a
+	// focus neighbourhood) rather than the full fabric.
+	TotalServices int    `json:"totalServices"`
+	Scoped        bool   `json:"scoped"`
+	ScopeReason   string `json:"scopeReason,omitempty"` // "top-50 by call volume" | "focus: <svc> +2 hops"
 }
 
 // ServiceTopologyNode is one node in the service-level graph.
@@ -411,9 +420,37 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	// immediately-preceding window and merges values onto the
 	// existing rows.
 	comparePrior := r.URL.Query().Get("compare") == "prior"
-	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s:noise=%v:mp=%.2f:cmp=%v",
+	// v0.6.48 — server-side scoping. At thousand-service scale the
+	// old "ship all 5k edges, let the client rank + lay out" path
+	// froze the browser, drew an unreadable hairball, and surfaced
+	// whichever services happened to win the client-side top-N. Now
+	// the SERVER bounds the graph:
+	//   • focus=<svc>  → return that service + `hops` of neighbours
+	//                    (the operator's "what does X talk to" view).
+	//   • else         → top-N services by call volume + the edges
+	//                    among them. N from ?top (default 60).
+	// Either way the payload is bounded so the client renders a small
+	// connected set instead of processing the whole fabric. The
+	// client's own focus/top controls still refine within the
+	// returned set, but the heavy bound is now server-side.
+	topN := parseInt(r.URL.Query().Get("top"), 60)
+	if topN < 10 {
+		topN = 10
+	}
+	if topN > 300 {
+		topN = 300
+	}
+	focusSvc := strings.TrimSpace(r.URL.Query().Get("focus"))
+	focusHops := parseInt(r.URL.Query().Get("hops"), 1)
+	if focusHops < 1 {
+		focusHops = 1
+	}
+	if focusHops > 4 {
+		focusHops = 4
+	}
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
-		excludeKeyDigest(exclude), noiseShow, minCallPct, comparePrior)
+		excludeKeyDigest(exclude), noiseShow, minCallPct, comparePrior, topN, focusSvc, focusHops)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
@@ -518,6 +555,25 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, e)
 		}
 		edges = filtered
+
+		// v0.6.48 — server-side scope bound. Count distinct
+		// services across the noise-filtered edge set FIRST so the
+		// "showing N of M" banner reflects the real fabric size,
+		// then narrow to a bounded subgraph the browser can render
+		// without freezing.
+		totalServices := countDistinctServices(edges)
+		scoped := false
+		scopeReason := ""
+		if focusSvc != "" {
+			edges = focusNeighborhood(edges, focusSvc, focusHops)
+			scoped = true
+			scopeReason = fmt.Sprintf("focus: %s +%d hop%s", focusSvc, focusHops, plural(focusHops))
+		} else if totalServices > topN {
+			edges = topNServiceEdges(edges, topN)
+			scoped = true
+			scopeReason = fmt.Sprintf("top-%d by call volume", topN)
+		}
+
 		nodes := map[string]ServiceTopologyNode{}
 		addNode := func(id, kind, extDisp, extKind, env string) {
 			if existing, ok := nodes[id]; ok {
@@ -596,13 +652,134 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			edges = []chstore.ServiceTopologyEdge{}
 		}
 		return ServiceTopologyResponse{
-			Nodes:     nodesOut,
-			Edges:     edges,
-			From:      from.UnixNano(),
-			To:        to.UnixNano(),
-			Truncated: len(edges) >= edgeCap,
+			Nodes:         nodesOut,
+			Edges:         edges,
+			From:          from.UnixNano(),
+			To:            to.UnixNano(),
+			Truncated:     len(edges) >= edgeCap,
+			TotalServices: totalServices,
+			Scoped:        scoped,
+			ScopeReason:   scopeReason,
 		}, nil
 	})
+}
+
+// countDistinctServices counts the unique service-kind endpoints in
+// an edge set — the parent is always a service; the child is a
+// service only when NodeKind == "service" (db / queue / external
+// children don't count toward the fabric size the banner reports).
+func countDistinctServices(edges []chstore.ServiceTopologyEdge) int {
+	seen := map[string]struct{}{}
+	for _, e := range edges {
+		seen[e.ParentService] = struct{}{}
+		if e.NodeKind == "service" {
+			seen[e.ChildNode] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+// topNServiceEdges keeps the N highest-call-volume SERVICES and
+// returns only the edges whose endpoints are both in that set. This
+// is the default-view bound: at thousand-service scale the busiest N
+// (gateways + core services) are what the operator wants to see
+// first; everything else is reachable via focus/search. v0.6.48.
+//
+// Ranking is by total in+out call volume per service, matching the
+// client-side ranking that used to live in Topology.tsx — but doing
+// it server-side means the browser never receives the full fabric.
+func topNServiceEdges(edges []chstore.ServiceTopologyEdge, n int) []chstore.ServiceTopologyEdge {
+	score := map[string]uint64{}
+	for _, e := range edges {
+		score[e.ParentService] += e.Calls
+		if e.NodeKind == "service" {
+			score[e.ChildNode] += e.Calls
+		}
+	}
+	type sv struct {
+		name  string
+		calls uint64
+	}
+	ranked := make([]sv, 0, len(score))
+	for k, v := range score {
+		ranked = append(ranked, sv{k, v})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].calls != ranked[j].calls {
+			return ranked[i].calls > ranked[j].calls
+		}
+		return ranked[i].name < ranked[j].name // stable tie-break
+	})
+	keep := map[string]struct{}{}
+	for i := 0; i < n && i < len(ranked); i++ {
+		keep[ranked[i].name] = struct{}{}
+	}
+	out := edges[:0]
+	for _, e := range edges {
+		// Parent must be kept. Child must be kept when it's a
+		// service; infra children (db/queue/external) ride along
+		// with their kept parent so the operator still sees "kept
+		// service → its postgres".
+		if _, ok := keep[e.ParentService]; !ok {
+			continue
+		}
+		if e.NodeKind == "service" {
+			if _, ok := keep[e.ChildNode]; !ok {
+				continue
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// focusNeighborhood returns the subgraph within `hops` layers of
+// `focus`, following edges in BOTH directions (callers + callees).
+// Moved server-side (v0.6.48) so a focus on a service outside the
+// default top-N still resolves. Bidirectional on purpose: the
+// payload is a SUPERSET so the client's own down/both direction
+// filter narrows correctly within it — a downstream-only server
+// bound would strand the "show me who calls X" (dir=both) view with
+// no upstream data to filter.
+func focusNeighborhood(edges []chstore.ServiceTopologyEdge, focus string, hops int) []chstore.ServiceTopologyEdge {
+	keepNodes := map[string]struct{}{focus: {}}
+	frontier := map[string]struct{}{focus: {}}
+	for h := 0; h < hops && len(frontier) > 0; h++ {
+		next := map[string]struct{}{}
+		add := func(id string) {
+			if _, seen := keepNodes[id]; !seen {
+				next[id] = struct{}{}
+				keepNodes[id] = struct{}{}
+			}
+		}
+		for _, e := range edges {
+			if _, ok := frontier[e.ParentService]; ok {
+				add(e.ChildNode) // outgoing (callee)
+			}
+			if _, ok := frontier[e.ChildNode]; ok {
+				add(e.ParentService) // incoming (caller)
+			}
+		}
+		frontier = next
+	}
+	out := edges[:0]
+	for _, e := range edges {
+		_, p := keepNodes[e.ParentService]
+		_, c := keepNodes[e.ChildNode]
+		if p && c {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// plural — "" for n==1, "s" otherwise. Inline so the scope-reason
+// string reads naturally ("+1 hop" / "+2 hops").
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // fmtCount — short pluralised count helper for HealthReason

@@ -99,6 +99,15 @@ export interface ServiceTopologyResponse {
   from: number;
   to: number;
   truncated: boolean;
+  // v0.6.48 — server-side scoping for thousand-service fabrics.
+  // totalServices is the full fabric size before the top-N / focus
+  // bound; scoped=true means the returned graph is a bounded subset
+  // (so the UI shows a "showing N of M — search/focus to refine"
+  // banner). scopeReason describes the bound, e.g. "top-60 by call
+  // volume" or "focus: checkout +2 hops".
+  totalServices?: number;
+  scoped?: boolean;
+  scopeReason?: string;
 }
 
 // Root-anchored business flows (v0.5.103) — top entry points by

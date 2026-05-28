@@ -430,10 +430,20 @@ function ServiceView({ range }: { range: TimeRange }) {
     // Only enabled in live mode (shift=0); time-shifted views
     // would be comparing two arbitrary historical windows which
     // is rarely what the operator wants.
+    // v0.6.48 — server-side scoping. Pass top / focus / hops to the
+    // backend so the payload is bounded BEFORE it reaches the
+    // browser. At thousand-service scale the old "fetch all 5k
+    // edges, rank client-side" path froze the page. focus is sent
+    // to the server too, so focusing a service outside the default
+    // top-N still resolves its neighbourhood (the picker is now a
+    // server-side ServicePicker that can reach any service).
     api.serviceTopology({
       from, to,
       noise: noiseShow ? 'show' : undefined,
       compare: shiftMin === 0 ? 'prior' : undefined,
+      top: topN,
+      focus: focus || undefined,
+      hops: focus ? focusHops : undefined,
     })
       // Normalise: nil slices from older backend / empty windows
       // marshal as JSON null, which crashes data.edges.forEach.
@@ -444,7 +454,7 @@ function ServiceView({ range }: { range: TimeRange }) {
         edges: d?.edges ?? [],
       }))
       .catch(() => setData(null));
-  }, [range, noiseShow, shiftMin]);
+  }, [range, noiseShow, shiftMin, topN, focus, focusHops]);
 
   // Compute the visible subgraph from the raw response based on
   // the two controls. All filtering is client-side because the
@@ -540,26 +550,35 @@ function ServiceView({ range }: { range: TimeRange }) {
   const totalEdges = data.edges.length;
   const showingNodes = visibleFiltered?.nodes.length ?? 0;
   const showingEdges = visibleFiltered?.edges.length ?? 0;
-  // Build the focus-picker options from the full node list so the
-  // operator can pivot to any service even when it's not in the
-  // current top-N slice.
-  const focusOptions = data.nodes
-    .filter(n => n.kind === 'service')
-    .map(n => n.name)
-    .sort();
   return (
     <>
       <div className="controls" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
         <label style={{ fontSize: 12, color: 'var(--text2)' }}>Focus on</label>
-        <select value={focus} onChange={e => setFocus(e.target.value)}
-          style={{ fontSize: 12, padding: '3px 6px', minWidth: 180 }}>
-          <option value="">— top services —</option>
-          {focusOptions.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
+        {/* v0.6.48 — server-side ServicePicker (was a <select> built
+            from data.nodes). At thousand-service scale the node list
+            is now bounded to the top-N, so a plain dropdown could
+            only reach the busiest services. ServicePicker queries
+            /api/service-names server-side, so the operator can focus
+            ANY service — even one outside the default top-N — and the
+            backend resolves its neighbourhood. */}
+        <ServicePicker value={focus} onChange={setFocus}
+          placeholder="— top services —" width={200} />
+        {focus && (
+          <button type="button" className="sec"
+            onClick={() => setFocus('')}
+            style={{ fontSize: 11, padding: '3px 8px' }}
+            title="Clear focus, back to the top-services overview">
+            ✕ clear focus
+          </button>
+        )}
         {!focus && (
           <>
             <label style={{ fontSize: 12, color: 'var(--text2)' }}>Top services</label>
-            <input type="range" min={10} max={Math.min(200, totalNodes)} value={topN}
+            {/* v0.6.48 — slider max from the FULL fabric size
+                (data.totalServices), not the bounded node count, so
+                the operator can pull more of the fabric in. Server
+                clamps at 300. */}
+            <input type="range" min={10} max={Math.min(300, data.totalServices ?? totalNodes)} value={topN}
               onChange={e => setTopN(parseInt(e.target.value, 10))}
               style={{ width: 140 }} />
             <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)' }}>{topN}</span>
@@ -716,6 +735,23 @@ function ServiceView({ range }: { range: TimeRange }) {
           color: 'var(--text2)', fontSize: 11,
         }}>
           Edge query hit its 5k cap — heaviest strands only. Narrow the time range for full coverage.
+        </div>
+      )}
+      {/* v0.6.48 — scope banner. When the server bounded the graph
+          (top-N by volume, or a focus neighbourhood) and the fabric
+          is bigger than what's shown, tell the operator how to reach
+          the rest. Prevents the "where's my service?" confusion at
+          thousand-service scale where the default top-N can't list
+          everything. */}
+      {data.scoped && (data.totalServices ?? 0) > showingNodes && !focus && (
+        <div style={{
+          background: 'rgba(56,139,253,0.10)', border: '1px solid rgba(56,139,253,0.35)',
+          borderRadius: 4, padding: '6px 10px', marginBottom: 10,
+          color: 'var(--text2)', fontSize: 11,
+        }}>
+          Showing <strong>{showingNodes}</strong> of <strong>{data.totalServices}</strong> services
+          {data.scopeReason ? <> ({data.scopeReason})</> : null}.
+          {' '}Use the <strong>Focus on</strong> picker to jump to any service, or raise <strong>Top services</strong>.
         </div>
       )}
       {visibleFiltered && visibleFiltered.nodes.length === 0 && (

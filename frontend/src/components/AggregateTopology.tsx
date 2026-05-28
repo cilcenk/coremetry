@@ -94,9 +94,9 @@ export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
         style={{ display: 'block', background: 'var(--bg2)', borderRadius: 6 }}>
         <defs>
           <marker id="agg-topo-arrow" viewBox="0 0 10 10"
-            refX="9" refY="5" markerWidth="6" markerHeight="6"
+            refX="8" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"
             orient="auto">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text3)" />
+            <path d="M 0 2 L 10 5 L 0 8 z" fill="var(--text3)" />
           </marker>
         </defs>
 
@@ -108,8 +108,10 @@ export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
           const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2;
           const x2 = b.x,         y2 = b.y + NODE_H / 2;
           const mx = (x1 + x2) / 2;
-          // 0.6-3.6 px stroke width scaled to log(calls).
-          const sw = 0.6 + 3 * (Math.log10(e.calls + 1) / Math.log10(maxCalls + 1));
+          // v0.6.49 — 0.5–2.25 px stroke scaled to log(calls).
+          // Thinner than the old 0.6–3.6 for a cleaner, modern
+          // wiring-diagram look matching the main topology views.
+          const sw = 0.5 + 1.75 * (Math.log10(e.calls + 1) / Math.log10(maxCalls + 1));
           // Error-tinted edges get a red overlay so the eye lands
           // there without reading the count.
           const errored = e.errorCount > 0;

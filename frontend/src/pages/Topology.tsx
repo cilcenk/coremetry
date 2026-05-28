@@ -1783,9 +1783,15 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
         xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
         <defs>
           {(['http', 'rpc', 'db', 'kafka', 'internal'] as const).map(p => (
-            <marker key={p} id={`arrow-${p}`} viewBox="0 0 10 10" refX="9" refY="5"
-              markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill={protoColor(p)} />
+            // v0.6.49 — markerUnits="userSpaceOnUse" fixes the
+            // arrowhead at a constant ~9px regardless of stroke
+            // width. The SVG default ("strokeWidth") scaled the
+            // arrow WITH the line, so a busy edge got a chunky
+            // 17px arrowhead. Fixed-size + a slimmer triangle
+            // (M 0 2 … 0 8) reads modern, like Datadog's map.
+            <marker key={p} id={`arrow-${p}`} viewBox="0 0 10 10" refX="8" refY="5"
+              markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
+              <path d="M 0 2 L 10 5 L 0 8 z" fill={protoColor(p)} />
             </marker>
           ))}
         </defs>
@@ -1840,11 +1846,13 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const x1 = src.x + NODE_W, y1 = src.y + NODE_H / 2;
           const x2 = dst.x,          y2 = dst.y + NODE_H / 2;
           const mx = (x1 + x2) / 2;
-          // v0.5.415 — crit-path edges get a stroke-width boost
-          // (×1.8) so the highlighted chain reads "this is THE
-          // problem" without needing the operator to interpret
-          // colour alone.
-          const swBase = 1 + (Number(e.calls) / maxCalls) * 3;
+          // v0.6.49 — thinner, more modern edge weights. Was
+          // 1–4px (chunky at high volume); now 0.75–2.5px so the
+          // graph reads like a clean wiring diagram rather than a
+          // pipe schematic. Crit-path keeps its ×1.8 emphasis
+          // (now tops out ~4.5px) so the highlighted chain still
+          // reads "this is THE problem" without colour alone.
+          const swBase = 0.75 + (Number(e.calls) / maxCalls) * 1.75;
           const inCritPathSw = critPathEdges?.has(`${e.parentService}|${e.childNode}|${e.protocol}`) ?? false;
           const sw = inCritPathSw ? swBase * 1.8 : swBase;
           const color = protoColor(e.protocol);
@@ -2146,9 +2154,10 @@ function OpTopologySVG({ layers, edges, anchor, colorFilter }: {
         viewBox={`-20 -20 ${width + 40} ${height + 40}`}
         xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
         <defs>
-          <marker id="op-arrow" viewBox="0 0 10 10" refX="9" refY="5"
-            markerWidth="7" markerHeight="7" orient="auto">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text3)" />
+          {/* v0.6.49 — fixed-size slim arrowhead (see service view) */}
+          <marker id="op-arrow" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
+            <path d="M 0 2 L 10 5 L 0 8 z" fill="var(--text3)" />
           </marker>
         </defs>
         {edges.map((e, i) => {
@@ -2158,10 +2167,10 @@ function OpTopologySVG({ layers, edges, anchor, colorFilter }: {
           const x1 = src.x + NODE_W, y1 = src.y + NODE_H / 2;
           const x2 = dst.x,          y2 = dst.y + NODE_H / 2;
           const mx = (x1 + x2) / 2;
-          // 1-4px stroke width scaled to call volume. Same
-          // scale as the Service topology so the two views
-          // read identically.
-          const sw = 1 + (Number(e.calls) / maxCalls) * 3;
+          // v0.6.49 — 0.75–2.5px stroke scaled to call volume.
+          // Same thinner scale as the Service topology so the two
+          // views read identically.
+          const sw = 0.75 + (Number(e.calls) / maxCalls) * 1.75;
           const showLabel = Number(e.calls) >= callThreshold;
           // Heuristic protocol tag from the parent op shape:
           // HTTP-ish ops contain "/" or upper-case HTTP method

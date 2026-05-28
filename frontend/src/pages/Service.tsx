@@ -26,7 +26,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
 import { useQueryClient } from '@tanstack/react-query';
 import { keys } from '@/lib/queries/keys';
-import type { Service, Problem, TimeRange, OperationSummary, SpanMetricSeries } from '@/lib/types';
+import type { Service, Problem, TimeRange, OperationSummary, SpanMetricSeries, SLORow } from '@/lib/types';
 
 const SINCE_MAP: Record<string, string> = {
   '5m': '5m', '10m': '10m', '15m': '15m', '30m': '30m',
@@ -45,6 +45,13 @@ function ServiceDetailInner() {
   const [info, setInfo] = useState<Service | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
+  // v0.6.51 — this service's SLOs, surfaced as a compact health
+  // strip so the service detail page unifies RED + problems +
+  // operations + deploys + SLO without bouncing to /slos. listSLOs
+  // already pre-computes status (sli/budget/burn), so we filter
+  // client-side by service — the list is tens of rows, not worth a
+  // dedicated endpoint.
+  const [slos, setSlos] = useState<SLORow[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Memoize the absolute window so JSX-level reads (passed as
@@ -150,6 +157,20 @@ function ServiceDetailInner() {
     return () => { cancelled = true; };
   }, [svc, range, queryClient]);
 
+  // v0.6.51 — SLO strip. Separate from the bundle because SLO
+  // status moves slowly (window_days horizon) and is service-
+  // independent of the RED range picker, so it doesn't refetch on
+  // every range change. Filter the (small) full list to this
+  // service's SLOs.
+  useEffect(() => {
+    if (!svc) return;
+    let cancelled = false;
+    api.listSLOs()
+      .then(rows => { if (!cancelled) setSlos((rows ?? []).filter(s => s.service === svc)); })
+      .catch(() => { if (!cancelled) setSlos([]); });
+    return () => { cancelled = true; };
+  }, [svc]);
+
   if (!svc) {
     return (
       <>
@@ -226,6 +247,32 @@ function ServiceDetailInner() {
         <div style={{ marginBottom: 12 }}>
           <ServiceCatalogPill service={svc} />
         </div>
+
+        {/* v0.6.51 — SLO health strip. Unifies SLO status into the
+            service detail page (was /slos-only). One chip per SLO:
+            target, current SLI, budget bar, burn-rate badge. Click
+            jumps to /slos. Hidden when the service has no SLOs. */}
+        {slos.length > 0 && (
+          <div style={{
+            border: '1px solid var(--border)', background: 'var(--bg1)',
+            borderRadius: 6, padding: 12, marginBottom: 14,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>
+                ◉ SLOs ({slos.length})
+              </span>
+              <span style={{ flex: 1 }} />
+              <Link to="/slos" style={{ fontSize: 11 }}>Manage in SLOs →</Link>
+            </div>
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 8,
+            }}>
+              {slos.map(o => (
+                <ServiceSLOChip key={o.id} slo={o} />
+              ))}
+            </div>
+          </div>
+        )}
 
         {openProbs.length > 0 && (
           <div style={{
@@ -392,6 +439,55 @@ function KPI({ label, value, cls }: { label: string; value: string; cls?: string
         color: cls === 'err' ? 'var(--err)' : cls === 'warn' ? 'var(--warn)'
           : cls === 'ok' ? 'var(--ok)' : 'var(--text)',
       }}>{value}</b>
+    </div>
+  );
+}
+
+// ServiceSLOChip — compact one-SLO health card for the service
+// detail page's SLO strip (v0.6.51). Target + current SLI + a
+// budget-remaining bar + burn-rate badge. Self-contained so the
+// strip stays a simple .map(); links to /slos for full management.
+function ServiceSLOChip({ slo }: { slo: SLORow }) {
+  const st = slo.status;
+  const healthy = st?.healthy ?? true;
+  const budget = st ? Math.max(0, Math.min(1, st.budgetRemaining)) : 1;
+  // Budget bar tint: green > 25% left, amber 0–25%, red exhausted.
+  const budgetCls = budget > 0.25 ? 'var(--ok)' : budget > 0 ? 'var(--warn)' : 'var(--err)';
+  const burn = st?.burnRate ?? 0;
+  return (
+    <div style={{
+      padding: 10, borderRadius: 6,
+      background: 'var(--bg2)', border: '1px solid var(--border)',
+      borderLeft: `3px solid ${healthy ? 'var(--ok)' : 'var(--err)'}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>{slo.name}</span>
+        <span style={{ flex: 1 }} />
+        <span className={`badge ${healthy ? 'b-ok' : 'b-err'}`} style={{ fontSize: 10 }}>
+          {healthy ? 'Healthy' : 'Breached'}
+        </span>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 6 }}>
+        {slo.sliType === 'latency' ? `latency ≤ ${slo.thresholdMs}ms` : 'availability'}
+        {' · target '}<b>{(slo.target * 100).toFixed(2)}%</b>
+        {st && <> · SLI <b style={{ color: healthy ? 'var(--ok)' : 'var(--err)' }}>{(st.sli * 100).toFixed(2)}%</b></>}
+      </div>
+      {st && (
+        <>
+          {/* Budget-remaining bar */}
+          <div style={{ height: 6, borderRadius: 3, background: 'var(--bg0)', overflow: 'hidden', marginBottom: 4 }}>
+            <div style={{ height: '100%', width: `${budget * 100}%`, background: budgetCls }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text3)' }}>
+            <span>{(budget * 100).toFixed(0)}% budget left</span>
+            <span title="Error-budget burn rate (>1 = consuming faster than allowed)"
+              style={{ color: burn > 1 ? 'var(--err)' : 'var(--text3)' }}>
+              burn {burn.toFixed(2)}×
+            </span>
+          </div>
+        </>
+      )}
+      {!st && <div style={{ fontSize: 10, color: 'var(--text3)' }}>no status yet</div>}
     </div>
   );
 }

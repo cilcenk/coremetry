@@ -364,7 +364,7 @@ func (s *Server) collectTagValues(ctx context.Context, key string) ([]string, er
 	case "kind":
 		sql = `SELECT DISTINCT kind FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY kind LIMIT 50 SETTINGS max_execution_time = 5`
 	case "status":
-		sql = `SELECT DISTINCT status_code FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY status_code SETTINGS max_execution_time = 5`
+		sql = `SELECT DISTINCT status_code FROM spans WHERE time > now() - INTERVAL 24 HOUR ORDER BY status_code LIMIT 50 SETTINGS max_execution_time = 5`
 	default:
 		// Generic attribute lookup (try span attrs first, fall back to resource).
 		key2 := strings.TrimPrefix(strings.TrimPrefix(key, "span."), "resource.")

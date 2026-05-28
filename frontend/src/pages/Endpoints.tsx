@@ -315,7 +315,7 @@ export default function EndpointsPage() {
                           </button>
                         </td>
                         <td>
-                          <Link to={`/services?name=${encodeURIComponent(r.service)}`}
+                          <Link to={`/service?name=${encodeURIComponent(r.service)}`}
                                 style={{ fontFamily: 'monospace', fontSize: 12 }}>
                             {r.service}
                           </Link>
@@ -499,7 +499,7 @@ function EndpointMetricModal({
           View traces →
         </Link>
         <Link
-          to={`/services?name=${encodeURIComponent(row.service)}`}
+          to={`/service?name=${encodeURIComponent(row.service)}`}
           style={{ fontSize: 12, color: 'var(--accent2)' }}
         >
           Service detail →
@@ -697,7 +697,7 @@ function DependencyStrip({ service, deps }: {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {top.map((d, i) => (
           <Link key={i}
-            to={`/services?name=${encodeURIComponent(d.service)}`}
+            to={`/service?name=${encodeURIComponent(d.service)}`}
             title={`${fmtNum(d.spanCount)} spans across ${fmtNum(d.traceCount)} traces in the last 1h`}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,

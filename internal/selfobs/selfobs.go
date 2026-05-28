@@ -67,8 +67,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -110,9 +108,16 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	}
 
 	// ── Traces ────────────────────────────────────────────────────
+	// v0.6.45 — WithInsecure(), NOT WithDialOption(insecure creds).
+	// The first cut (v0.6.42) used WithDialOption which left
+	// otlptracegrpc's own TLS default in place, so the client tried
+	// a TLS handshake against the collector's plaintext OTLP port →
+	// "tls: first record does not look like a TLS handshake" and
+	// every export hit the 10s deadline. WithInsecure flips the
+	// transport to h2c, matching the metric exporter below.
 	traceExp, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
+		otlptracegrpc.WithInsecure(),
 		// Block until first connect would deadlock when the collector
 		// boots in the same docker-compose; the default async dial
 		// retries indefinitely which is what we want for a sidecar

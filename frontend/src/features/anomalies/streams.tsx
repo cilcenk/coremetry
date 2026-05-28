@@ -14,6 +14,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Card, Badge, Row } from '@/components/ui';
 import { ClusterChips } from '@/components/ClusterChips';
 import { CopilotExplain } from '@/components/CopilotExplain';
+import { useAuth } from '@/components/AuthProvider';
 import {
   useLogPatternAnomalies, useTraceOpAnomalies, useMetricAnomalies,
   useAnomalyEvents, useAnomalySilences,
@@ -32,6 +33,12 @@ import type {
 // Returns a single render block — the consumer wraps it in a Topbar
 // + #content if used as a top-level page.
 export function AnomalyStreams() {
+  const { user } = useAuth();
+  // Editor+ can mute/unmute; viewers see the silence chips and
+  // anomaly cards read-only (invariant #7). The backend enforces
+  // the same gate on POST/DELETE /api/anomalies/silences — hiding
+  // the buttons here keeps viewers from clicking into a 403.
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const logPatterns = useLogPatternAnomalies().data;
   const traceOps    = useTraceOpAnomalies().data;
   const metrics     = useMetricAnomalies().data;
@@ -56,9 +63,9 @@ export function AnomalyStreams() {
 
   return (
     <>
-      <SilencesSection items={silences} onUnmute={onUnmute} onUnmuteAll={onUnmuteAll} />
-      <LogPatternsSection items={logPatterns} onMute={onMute} />
-      <TraceOpsSection    items={traceOps}    onMute={onMute} />
+      <SilencesSection items={silences} onUnmute={onUnmute} onUnmuteAll={onUnmuteAll} canEdit={canEdit} />
+      <LogPatternsSection items={logPatterns} onMute={onMute} canEdit={canEdit} />
+      <TraceOpsSection    items={traceOps}    onMute={onMute} canEdit={canEdit} />
       <MetricSection      items={metrics} />
       <HistorySection items={history} />
     </>
@@ -83,9 +90,10 @@ function AnomalyShell({ title, hint, count, children }: {
   );
 }
 
-function TraceOpsSection({ items, onMute }: {
+function TraceOpsSection({ items, onMute, canEdit }: {
   items: TraceOpAnomaly[] | undefined;
   onMute: (kind: string, pattern: string, service: string, durationSec: number) => void;
+  canEdit: boolean;
 }) {
   if (items === undefined) return null;
   return (
@@ -114,7 +122,7 @@ function TraceOpsSection({ items, onMute }: {
                   trace ↗
                 </Link>
               )}
-              <SnoozeButton onMute={d => onMute('trace_op', a.operation, a.service, d)} />
+              {canEdit && <SnoozeButton onMute={d => onMute('trace_op', a.operation, a.service, d)} />}
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
               <Link to={`/service?name=${encodeURIComponent(a.service)}`}
@@ -206,10 +214,11 @@ function MetricSection({ items }: { items: Problem[] | undefined }) {
   );
 }
 
-function SilencesSection({ items, onUnmute, onUnmuteAll }: {
+function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
   items: AnomalySilence[] | undefined;
   onUnmute: (id: string) => void;
   onUnmuteAll: (ids: string[]) => void;
+  canEdit: boolean;
 }) {
   if (!items || items.length === 0) return null;
   return (
@@ -221,7 +230,7 @@ function SilencesSection({ items, onUnmute, onUnmuteAll }: {
       <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 600 }}>
         Muted ({items.length})
       </span>
-      {items.length > 1 && (
+      {canEdit && items.length > 1 && (
         <button type="button"
           onClick={() => {
             if (window.confirm(`Unmute all ${items.length} silences?`)) {
@@ -256,12 +265,14 @@ function SilencesSection({ items, onUnmute, onUnmuteAll }: {
               {s.service && <span style={{ color: 'var(--text3)' }}> @ {s.service}</span>}
             </span>
             <span style={{ color: 'var(--text3)' }}>{remainStr} left</span>
-            <button type="button" onClick={() => onUnmute(s.id)}
-              title="Unmute now"
-              style={{
-                background: 'transparent', border: 'none', color: 'var(--text3)',
-                cursor: 'pointer', padding: 0, fontSize: 11, lineHeight: 1,
-              }}>×</button>
+            {canEdit && (
+              <button type="button" onClick={() => onUnmute(s.id)}
+                title="Unmute now"
+                style={{
+                  background: 'transparent', border: 'none', color: 'var(--text3)',
+                  cursor: 'pointer', padding: 0, fontSize: 11, lineHeight: 1,
+                }}>×</button>
+            )}
           </span>
         );
       })}
@@ -425,9 +436,10 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
   );
 }
 
-function LogPatternsSection({ items, onMute }: {
+function LogPatternsSection({ items, onMute, canEdit }: {
   items: LogPatternAnomaly[] | undefined;
   onMute: (kind: string, pattern: string, service: string, durationSec: number) => void;
+  canEdit: boolean;
 }) {
   if (items === undefined) return null;
   if (items.length === 0) return null;
@@ -468,7 +480,7 @@ function LogPatternsSection({ items, onMute }: {
                     title="Open /logs filtered to this pattern + service">
                 logs ↗
               </Link>
-              <SnoozeButton onMute={d => onMute('log_pattern', a.pattern, a.service, d)} />
+              {canEdit && <SnoozeButton onMute={d => onMute('log_pattern', a.pattern, a.service, d)} />}
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
               <span style={{ fontFamily: 'monospace' }}>{a.service || 'unknown'}</span>

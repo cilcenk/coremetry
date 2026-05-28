@@ -536,11 +536,17 @@ func (s *Server) Start() error {
 	// (v0.5.459). Editor-gated since the only useful next step is
 	// creating a silence, and that's editor-gated too.
 	mux.HandleFunc("GET /api/anomalies/active",       auth.RequireAnyRole(editorRoles, s.listActiveAnomalies))
-	// Anomaly silencing — anyone signed in can mute (admin / editor / viewer).
+	// Anomaly silencing — editor+ can mute/unmute (invariant #7:
+	// viewer = read-only everywhere). A silence suppresses a signal
+	// for EVERY operator, so it's a state mutation, not a personal
+	// preference. GET stays open so viewers see the muted strip
+	// read-only; the frontend hides the mute/unmute buttons for
+	// viewers (features/anomalies/streams.tsx) so they never click
+	// into a 403.
 	mux.HandleFunc("GET    /api/anomalies/silences",    s.listAnomalySilences)
-	mux.HandleFunc("POST   /api/anomalies/silences",    s.createAnomalySilence)
-	mux.HandleFunc("DELETE /api/anomalies/silences/{id}", s.deleteAnomalySilence)
-	mux.HandleFunc("POST   /api/anomalies/silences/bulk-delete", s.bulkDeleteAnomalySilences)
+	mux.HandleFunc("POST   /api/anomalies/silences",    auth.RequireAnyRole(editorRoles, s.createAnomalySilence))
+	mux.HandleFunc("DELETE /api/anomalies/silences/{id}", auth.RequireAnyRole(editorRoles, s.deleteAnomalySilence))
+	mux.HandleFunc("POST   /api/anomalies/silences/bulk-delete", auth.RequireAnyRole(editorRoles, s.bulkDeleteAnomalySilences))
 	// Audit log — admin-only read.
 	mux.HandleFunc("GET /api/admin/audit",            s.listAuditLog)
 	mux.HandleFunc("GET /api/admin/alert-tuning/noisy-rules", s.alertTuningNoisyRules)
@@ -1568,6 +1574,7 @@ func (s *Server) putServiceMetadata(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "service_metadata.update", "service_metadata", name, "")
 	// v0.5.337 — invalidate the catalog cache on every peer so
 	// the Owner-team chip on /services reflects the edit in
 	// <50ms instead of waiting out the 60s soft TTL.
@@ -6588,6 +6595,7 @@ func (s *Server) statusPagePutConfig(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpsertStatusPageConfig(r.Context(), c); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "status_page.config_update", "status_page", "", "")
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
 }
@@ -6603,6 +6611,7 @@ func (s *Server) statusPageCreateComponent(w http.ResponseWriter, r *http.Reques
 	}
 	c.ID = ""
 	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil { writeErr(w, err); return }
+	s.audit(r, "status_page.component_create", "status_page", c.ID, c.Name)
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
 }
@@ -6614,13 +6623,16 @@ func (s *Server) statusPageUpdateComponent(w http.ResponseWriter, r *http.Reques
 	}
 	c.ID = id
 	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil { writeErr(w, err); return }
+	s.audit(r, "status_page.component_update", "status_page", id, c.Name)
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
 }
 func (s *Server) statusPageDeleteComponent(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteStatusComponent(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteStatusComponent(r.Context(), id); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "status_page.component_delete", "status_page", id, "")
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
@@ -6633,6 +6645,7 @@ func (s *Server) statusPageDeleteSubscriber(w http.ResponseWriter, r *http.Reque
 	email := r.URL.Query().Get("email")
 	if email == "" { http.Error(w, "email required", http.StatusBadRequest); return }
 	if err := s.store.RemoveStatusSubscriber(r.Context(), email); err != nil { writeErr(w, err); return }
+	s.audit(r, "status_page.subscriber_delete", "status_page", email, "")
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
 func (s *Server) statusPagePublishIncident(w http.ResponseWriter, r *http.Request) {
@@ -6643,6 +6656,7 @@ func (s *Server) statusPagePublishIncident(w http.ResponseWriter, r *http.Reques
 	}
 	p.IncidentID = id
 	if err := s.store.SetIncidentPublished(r.Context(), p); err != nil { writeErr(w, err); return }
+	s.audit(r, "status_page.incident_publish", "status_page", id, fmt.Sprintf("published=%v", p.Published))
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, p)
 }

@@ -13,6 +13,7 @@ import type {
   MetricPanelConfig, SpanMetricPanelConfig,
 } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
+import { serializeDashboard, suggestedFilename } from '@/lib/dashboardIO';
 
 // Wrapper handles the Suspense requirement of useSearchParams() in App
 // Router with static export.
@@ -221,6 +222,23 @@ function Inner() {
     navigate('/dashboards');
   };
 
+  // v0.6.50 — export the dashboard to a JSON file. Read-only, so
+  // every role can use it (a viewer exporting a board to share is
+  // fine). Builds the portable subset from the already-loaded
+  // panels + variables via serializeDashboard; triggers a client-
+  // side download with no backend round-trip.
+  const exportDashboard = () => {
+    if (!draft) return;
+    const json = serializeDashboard({ ...draft, panels, variables });
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = suggestedFilename(draft.name);
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const editingPanelObj = editingPanel ? panels.find(p => p.id === editingPanel) : null;
 
   return (
@@ -247,6 +265,10 @@ function Inner() {
                 <span style={{ color: 'var(--text2)', fontSize: 12 }}>{draft.description}</span>
               )}
               <span style={{ marginLeft: 'auto' }} />
+              {/* Export is read-only → available to every role so a
+                  viewer can grab a board to share / version. */}
+              <button className="sec" onClick={exportDashboard}
+                title="Download this dashboard as a portable JSON file">↓ Export JSON</button>
               {isAdmin && (
                 <>
                   <button className="sec" onClick={removeDashboard}

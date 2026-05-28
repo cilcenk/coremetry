@@ -59,7 +59,6 @@ const AdminStats        = lazy(() => import('./pages/AdminStats'));
 const AdminClickhouse   = lazy(() => import('./pages/AdminClickhouse'));
 const AdminElastic      = lazy(() => import('./pages/AdminElastic'));
 const AdminStatusPage   = lazy(() => import('./pages/AdminStatusPage'));
-const AdminContracts    = lazy(() => import('./pages/AdminContracts'));
 const AdminCluster      = lazy(() => import('./pages/AdminCluster'));
 const AdminQuery        = lazy(() => import('./pages/AdminQuery'));
 
@@ -122,7 +121,6 @@ export default function App() {
             <Route path="/admin/clickhouse"   element={<AdminClickhouse />} />
             <Route path="/admin/elastic"      element={<AdminElastic />} />
             <Route path="/admin/status-page"  element={<AdminStatusPage />} />
-            <Route path="/admin/contracts"    element={<AdminContracts />} />
             <Route path="/admin/cluster"      element={<AdminCluster />} />
             <Route path="/admin/query"        element={<AdminQuery />} />
             {/* Unknown path → bounce to Home so navigate() never

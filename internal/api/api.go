@@ -643,6 +643,9 @@ func (s *Server) Start() error {
 
 	// ── AI Copilot ─────────────────────────────────────────────────
 	mux.HandleFunc("GET    /api/copilot/config",            s.copilotConfig)
+	// v0.6.53 — in-app agentic chatbot. SSE stream; any authenticated
+	// user (the 7 telemetry tools it calls are all read-only).
+	mux.HandleFunc("POST   /api/copilot/chat",             s.copilotChat)
 	mux.HandleFunc("POST   /api/copilot/explain-trace/{id}", s.copilotExplainTrace)
 	// v0.5.255 — natural-language → DSL filter converter. /explore
 	// gets a "✦ Natural language" input that feeds this endpoint.

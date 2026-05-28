@@ -64,14 +64,31 @@ type Deps struct {
 // the given MCP server. Idempotent — calling twice overwrites
 // with the latest closures, but that's a logic-error pattern
 // the mcp package logs about.
+// ToolList returns the 7 telemetry tools as plain mcp.Tool values
+// closed over the given Deps, WITHOUT registering them on an MCP
+// server. v0.6.53 — the in-app chatbot reuses this exact set as its
+// function-calling backend: it maps each tool's Name / Description /
+// InputSchema into a copilot.ToolSpec for the LLM, and invokes
+// Handler(ctx, args) directly (the handler signature is transport-
+// agnostic — no JSON-RPC envelope needed). Register() delegates here
+// so the MCP server and the chatbot can never drift to different
+// tool sets.
+func ToolList(d Deps) []mcp.Tool {
+	return []mcp.Tool{
+		listServicesTool(d),
+		getServiceHealthTool(d),
+		listProblemsTool(d),
+		listAnomaliesTool(d),
+		searchLogsTool(d),
+		getTraceTool(d),
+		queryMetricTool(d),
+	}
+}
+
 func Register(srv *mcp.Server, d Deps) {
-	srv.RegisterTool(listServicesTool(d))
-	srv.RegisterTool(getServiceHealthTool(d))
-	srv.RegisterTool(listProblemsTool(d))
-	srv.RegisterTool(listAnomaliesTool(d))
-	srv.RegisterTool(searchLogsTool(d))
-	srv.RegisterTool(getTraceTool(d))
-	srv.RegisterTool(queryMetricTool(d))
+	for _, t := range ToolList(d) {
+		srv.RegisterTool(t)
+	}
 	// v0.6.6 — resources: pinned references the LLM can attach
 	// to its context or browse. Same data tools surface, but
 	// addressable by stable URI so an inspector / Claude Desktop

@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { ShortcutsHelp } from './ShortcutsHelp';
 import { CommandPalette } from './CommandPalette';
+import { CopilotChat } from './CopilotChat';
 import { GlobalShortcuts } from './GlobalShortcuts';
 import { Toaster } from './Toaster';
 import { useAuth } from './AuthProvider';
@@ -145,6 +146,11 @@ export function AppShell() {
           Self-contained, renders null. Mounted here so every
           authenticated page inherits the bindings. */}
       <GlobalShortcuts />
+      {/* CopilotChat (v0.6.53) — global in-app AI assistant. Fixed
+          bottom-right launcher → drawer. Self-hides when no AI key
+          is configured. Mounted here so it's reachable on every
+          authenticated page, like CommandPalette. */}
+      <CopilotChat />
       {/* Toaster (v0.5.455) — singleton notification surface.
           toast.success/error/info from anywhere in the app lands
           here. Renders null when empty so no overhead. */}

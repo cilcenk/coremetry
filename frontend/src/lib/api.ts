@@ -844,6 +844,52 @@ export const api = {
 
   // AI Copilot
   copilotConfig:         () => get<{ enabled: boolean }>(`/api/copilot/config`),
+  // v0.6.53 — agentic chatbot stream. POST + SSE (EventSource is
+  // GET-only, so we read the fetch body stream and parse SSE frames
+  // by hand). onEvent fires per `event:`/`data:` frame; the promise
+  // resolves when the stream closes (the `done` event) or rejects on
+  // transport error. abort via the AbortSignal.
+  copilotChat: async (
+    messages: import('./types').ChatMessage[],
+    onEvent: (e: import('./types').ChatStreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const r = await fetch(API_BASE + '/api/copilot/chat', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+      signal,
+    });
+    if (!r.ok || !r.body) {
+      throw new Error(`chat failed: ${r.status}`);
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE frames are separated by a blank line.
+      let sep: number;
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        let event = 'message';
+        let data = '';
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) data += line.slice(5).trim();
+        }
+        if (!data) continue;
+        try {
+          const payload = JSON.parse(data);
+          onEvent({ kind: event, ...payload } as import('./types').ChatStreamEvent);
+        } catch { /* ignore malformed frame */ }
+      }
+    }
+  },
   copilotExplainTrace:   (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-trace/${id}`, { method: 'POST' }),
   // Per-span explain (v0.5.144). Backend pulls target span +

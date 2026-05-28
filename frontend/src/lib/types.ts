@@ -2101,6 +2101,30 @@ export interface DBQueryStat {
   totalMs: number;
 }
 
+// In-app AI chatbot (v0.6.53). Conversation is ephemeral — held in
+// the CopilotChat component, sent whole to /api/copilot/chat each
+// turn. The backend runs an agentic loop over the 7 MCP telemetry
+// tools and streams progress via SSE.
+//
+// ChatMessage mirrors the Go copilot.ChatMessage wire shape: a user
+// turn carries `text`; an assistant turn carries `text` and/or the
+// tool calls it made (kept so the next request replays full context
+// to the model). The UI only ever SENDS role+text (tool plumbing is
+// server-internal) but the type allows the richer shape for replay.
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  text?: string;
+}
+
+// One streamed event from the chat SSE. `step` = a tool the model
+// called (render as a progress chip); `answer` = final prose;
+// `error` = failure; `done` = stream closed.
+export type ChatStreamEvent =
+  | { kind: 'step'; tool: string; args: string }
+  | { kind: 'answer'; text: string }
+  | { kind: 'error'; error: string }
+  | { kind: 'done'; ok: boolean };
+
 // Deploy impact (v0.5.189) — before/after RED + signed deltas
 // for one service.version transition. Powers the "Recent
 // deploys" panel on the service detail page.

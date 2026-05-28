@@ -828,13 +828,15 @@ func (s *Server) Start() error {
 	handler := otelhttp.NewHandler(cors(s.auth.Middleware(mux)),
 		"coremetry-api",
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-			// "GET /api/services" — far more useful than the default
-			// "/api/services" alone. Stays cardinality-bounded
-			// because we don't echo path params (those are :id'd
-			// out by the otelhttp middleware's RoutePattern hook
-			// when one is set; we don't set one — the std mux
-			// gives us literal paths back).
-			return r.Method + " " + r.URL.Path
+			// "GET /api/traces/:id" — method + cardinality-collapsed
+			// path. v0.6.46 — the raw r.URL.Path includes path params
+			// (trace IDs, service names, problem IDs), so naming the
+			// span after it would mint one distinct span name per ID.
+			// The spans table's `name` column is LowCardinality(String)
+			// — unbounded distinct names degrade it (CLAUDE.md anti-
+			// pattern). collapseRoute() rewrites the volatile segments
+			// to :id so the span name stays a bounded route template.
+			return r.Method + " " + collapseRoute(r.URL.Path)
 		}),
 	)
 	return http.ListenAndServe(s.addr, handler)
@@ -9450,6 +9452,70 @@ func parseInt(s string, def int) int {
 func parseFloat(s string) float64 {
 	v, _ := strconv.ParseFloat(s, 64)
 	return v
+}
+
+// collapseRoute rewrites volatile path segments (trace IDs, span
+// IDs, service names, numeric IDs) to bounded placeholders so the
+// otelhttp span name stays a route TEMPLATE rather than one name
+// per ID. Keeps the spans table's LowCardinality(String) `name`
+// column bounded (v0.6.46 — see the WithSpanNameFormatter call in
+// Run() for the cardinality rationale).
+//
+// Rules, applied per `/`-segment:
+//   - segment right after a name-keyed collection ("services") →
+//     ":svc" (service names are high-cardinality: 1000s)
+//   - hex string ≥ 8 chars (trace_id 32, span_id 16) → ":id"
+//   - all-digit segment → ":id"
+//   - everything else kept verbatim (static route words)
+//
+// Pure + allocation-light: most API paths have ≤4 segments.
+func collapseRoute(p string) string {
+	if p == "" || p == "/" {
+		return p
+	}
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		if s == "" {
+			continue
+		}
+		if i > 0 && segs[i-1] == "services" {
+			segs[i] = ":svc"
+			continue
+		}
+		if isVolatileSegment(s) {
+			segs[i] = ":id"
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+func isVolatileSegment(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	allDigit := true
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			allDigit = false
+			break
+		}
+	}
+	if allDigit {
+		return true
+	}
+	// Hex ≥ 8 chars catches trace IDs (32), span IDs (16), and
+	// UUID-ish tokens (with or without dashes). Dashes allowed so a
+	// canonical UUID still collapses.
+	if len(s) >= 8 {
+		for _, r := range s {
+			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+			if !isHex && r != '-' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // parseTime converts a nanosecond-epoch string to time.Time

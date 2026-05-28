@@ -182,7 +182,7 @@ export default function AdminElasticPage() {
               </thead>
               <tbody>
                 {rows.map(r => (
-                  <tr key={r.name}>
+                  <tr key={r.name} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                     <td className="mono">{r.name}</td>
                     <td>
                       <span className="badge" style={{

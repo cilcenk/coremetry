@@ -2378,7 +2378,7 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
               </thead>
               <tbody>
                 {instances.rows.map(r => (
-                  <tr key={r.instance}>
+                  <tr key={r.instance} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 24px' }}>
                     <td>{r.instance}</td>
                     <td style={{ textAlign: 'right' }}>{fmtNum(r.calls)}</td>
                     <td style={{ textAlign: 'right' }}>{r.avgMs.toFixed(1)}</td>

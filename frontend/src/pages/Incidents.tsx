@@ -73,7 +73,7 @@ export default function IncidentsPage() {
               </tr></thead>
               <tbody>
                 {items.map(i => (
-                  <tr key={i.id} style={{ cursor: 'pointer' }}
+                  <tr key={i.id} style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}
                       onClick={() => location.href = `/incident?id=${i.id}`}>
                     <td><StatusPill s={i.status} /></td>
                     <td><SeverityPill s={i.severity} /></td>

@@ -148,7 +148,7 @@ function BacktraceInner() {
                   const errBad = r.errorRate >= 5;
                   const errWarn = !errBad && r.errorRate > 0;
                   return (
-                    <tr key={i}>
+                    <tr key={i} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 44px' }}>
                       <td>
                         <Link to={`/service?name=${encodeURIComponent(r.callerService)}`}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--text)', textDecoration: 'none' }}>

@@ -704,13 +704,24 @@ Be terse and direct — operator is reading this on a pager call.
 No preamble, no headers — just the bullets.`
 
 const systemProblem = `You are a senior SRE assistant inside an APM tool. The operator
-just opened a Problem (an alert that fired). Given the rule + service +
-metric value, explain in 3-5 short bullet points: (1) what the alert
-actually means in plain language, (2) the most likely causes ranked
-by probability for this metric, (3) the first three things the
-operator should check.
+just opened a Problem (an alert that fired). You are given the rule +
+service + metric value AND correlated signals gathered around the
+problem's open time: a recent deploy (if any), the service's topology
+neighbours (callers/callees), error-trace exemplars, and statistically
+significant log patterns.
 
-Be terse — this lands on a pager call. No preamble.`
+Produce a RANKED root-cause hypothesis:
+1. What the alert means in plain language (one line).
+2. Candidate root causes, MOST LIKELY FIRST. For each, cite which
+   signal supports it — e.g. "deploy v1.2.3 landed 40s before",
+   "callee payment-service errors in the exemplar traces", "log
+   pattern 'connection refused' spiked". If signals conflict or are
+   thin, say so rather than forcing a cause.
+3. The first 2-3 things to check, in order.
+
+Ground every claim in the provided signals — do not invent service
+names, versions, or numbers. Be terse — this lands on a pager call.
+No preamble.`
 
 const systemException = `You are a senior SRE assistant inside an APM tool. Given a code
 exception (type, message, stacktrace, service), explain in 3-5

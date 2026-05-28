@@ -6932,9 +6932,87 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 			"\n\nRecent deploy: service.version=%q first seen %d seconds before this problem opened. Consider whether this regression coincides with that deploy.",
 			p.RecentDeploy.Version, p.RecentDeploy.AgeSeconds)
 	}
+	// v0.6.54 — multi-signal root-cause correlation. Beyond the
+	// deploy hint, gather the service's topology neighbours, error-
+	// trace exemplars, and significant log patterns around the
+	// problem's open time so the model ranks causes from evidence
+	// instead of metric-shape priors alone. All bounded (top-5,
+	// windowed) and best-effort — a failed signal lookup just omits
+	// that block rather than failing the explain. Only meaningful
+	// when the problem is scoped to a concrete service.
+	if p.Service != "" {
+		user += s.problemCorrelationContext(r.Context(), p)
+	}
 	out, err := s.copilotExplain(r, copilot.SystemPromptProblem(), user)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, map[string]string{"explanation": out})
+}
+
+// problemCorrelationContext gathers the multi-signal evidence the
+// root-cause prompt reasons over (v0.6.54): 1-hop topology
+// neighbours, error-trace exemplars, and significant log patterns
+// around the problem's open time. All bounded (top-5, windowed) and
+// best-effort — any signal that errors or comes up empty is simply
+// omitted so a flaky lookup never blocks the explain. Window is
+// [open-30m, open+5m]; the leading 30m captures the run-up, the
+// trailing 5m the immediate aftermath.
+func (s *Server) problemCorrelationContext(ctx context.Context, p *chstore.Problem) string {
+	var b strings.Builder
+	open := time.Unix(0, p.StartedAt)
+	from, to := open.Add(-30*time.Minute), open.Add(5*time.Minute)
+
+	// 1) Topology neighbours — who calls / is called by this service.
+	// Direction is the key root-cause hint: a callee erroring points
+	// downstream, a caller spike points upstream.
+	if up, down, _, _, err := s.store.ServiceNeighbors(ctx, p.Service, 35*time.Minute, 50); err == nil && (len(up) > 0 || len(down) > 0) {
+		b.WriteString("\n\nTopology neighbours (from trace structure):")
+		if len(up) > 0 {
+			b.WriteString("\n  callers: " + topNeighborNames(up, 5))
+		}
+		if len(down) > 0 {
+			b.WriteString("\n  callees: " + topNeighborNames(down, 5))
+		}
+	}
+
+	// 2) Error-trace exemplars for this service in the window.
+	if traces, _, _, terr := s.store.GetTraces(ctx, chstore.TraceFilter{
+		Service: p.Service, HasError: true, From: from, To: to,
+		Limit: 5, Sort: "time", Order: "desc", CountMode: "skip",
+	}); terr == nil && len(traces) > 0 {
+		b.WriteString("\n\nError-trace exemplars (this service, in window):")
+		for _, t := range traces {
+			b.WriteString(fmt.Sprintf("\n  %s — %.0fms, %d spans", t.RootName, t.DurationMs, t.SpanCount))
+		}
+	}
+
+	// 3) Significant log patterns in the window. Unsupervised
+	// significant_text is index-global (not service-scoped), so we
+	// label it honestly — it still surfaces "what tokens spiked
+	// during this problem's window" which the model can weigh.
+	if s.logs != nil {
+		if pats, lerr := s.logs.SignificantPatterns(ctx, from, from.Add(-6*time.Hour), to, 5); lerr == nil && len(pats) > 0 {
+			b.WriteString("\n\nSignificant log patterns in the window (across services):")
+			for _, pt := range pats {
+				b.WriteString(fmt.Sprintf("\n  %q (%d in window vs %d baseline)", pt.Token, pt.DocCount, pt.BgCount))
+			}
+		}
+	}
+	return b.String()
+}
+
+// topNeighborNames renders the top-N neighbours by span volume as a
+// compact "svc(N sp), …" line for the root-cause prompt.
+func topNeighborNames(ns []chstore.NeighborStat, n int) string {
+	sorted := append([]chstore.NeighborStat(nil), ns...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].SpanCount > sorted[j].SpanCount })
+	parts := make([]string, 0, n)
+	for i, x := range sorted {
+		if i >= n {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s(%d sp)", x.Service, x.SpanCount))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // copilotExplainIncident fetches an Incident (plus its attached

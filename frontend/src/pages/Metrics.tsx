@@ -108,7 +108,7 @@ export default function MetricsPage() {
   // histogram instrument we additionally fetch the bucket heatmap and
   // render it in place of the line chart.
   const [histData, setHistData] = useState<HistogramResult | null | undefined>(undefined);
-  const [histMode, setHistMode] = useState<'heatmap' | 'percentile'>('heatmap');
+  const [histMode, setHistMode] = useState<'heatmap' | 'volume' | 'percentile'>('heatmap');
 
   // Suggestion sources for filters and group-by
   const [hostValues, setHostValues] = useState<string[]>([]);
@@ -477,7 +477,7 @@ export default function MetricsPage() {
               {isHistogram ? (
                 <div style={{ position: 'relative' }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 6 }}>
-                    {(['heatmap', 'percentile'] as const).map(m => (
+                    {(['heatmap', 'volume', 'percentile'] as const).map(m => (
                       <button key={m} type="button" onClick={() => setHistMode(m)}
                         style={{
                           fontSize: 11, padding: '2px 10px', borderRadius: 3, cursor: 'pointer',
@@ -485,7 +485,7 @@ export default function MetricsPage() {
                           color: histMode === m ? '#fff' : 'var(--text2)',
                           border: '1px solid var(--border)',
                         }}>
-                        {m === 'heatmap' ? 'Heatmap' : 'Percentiles'}
+                        {m === 'heatmap' ? 'Heatmap' : m === 'volume' ? 'Volume' : 'Percentiles'}
                       </button>
                     ))}
                   </div>

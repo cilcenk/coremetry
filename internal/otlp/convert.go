@@ -159,6 +159,21 @@ func ConvertMetrics(req *metricscollpb.ExportMetricsServiceRequest) []*chstore.M
 	return out
 }
 
+// temporalityStr maps the OTLP aggregation-temporality enum to the
+// compact string stored on metric_points. "" for unspecified/unknown so
+// the read path treats it as best-effort (delta-assume) rather than
+// mis-delta-ing a series we can't classify.
+func temporalityStr(t metricspb.AggregationTemporality) string {
+	switch t {
+	case metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA:
+		return "delta"
+	case metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE:
+		return "cumulative"
+	default:
+		return ""
+	}
+}
+
 func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []string) []*chstore.MetricPoint {
 	base := func(instrument string, startNs, timeNs uint64, val float64, cnt uint64, sum, mn, mx float64, attrs []*commonpb.KeyValue) *chstore.MetricPoint {
 		attrK, attrV := attrsToArrays(attrs)
@@ -181,8 +196,10 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 		}
 	case *metricspb.Metric_Sum:
 		for _, dp := range d.Sum.DataPoints {
-			out = append(out, base("sum", dp.StartTimeUnixNano, dp.TimeUnixNano,
-				numberVal(dp), 0, 0, 0, 0, dp.Attributes))
+			p := base("sum", dp.StartTimeUnixNano, dp.TimeUnixNano,
+				numberVal(dp), 0, 0, 0, 0, dp.Attributes)
+			p.Temporality = temporalityStr(d.Sum.AggregationTemporality)
+			out = append(out, p)
 		}
 	case *metricspb.Metric_Histogram:
 		for _, dp := range d.Histogram.DataPoints {
@@ -195,6 +212,7 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 			mx := derefF64(dp.Max)
 			p := base("histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
 				avg, dp.Count, sum, mn, mx, dp.Attributes)
+			p.Temporality = temporalityStr(d.Histogram.AggregationTemporality)
 			// v0.5.358 — preserve the explicit bucket layout so
 			// the read path can estimate quantiles. dp.BucketCounts
 			// has len(ExplicitBounds)+1 elements (one per bucket,

@@ -79,6 +79,11 @@ type MetricPoint struct {
 	// element-wise across data points to compute quantiles.
 	BucketBounds []float64
 	BucketCounts []uint64
+	// v0.6.56 — OTLP aggregation temporality ("delta" | "cumulative"
+	// | ""). Set for Histogram + Sum points by otlp/convert.go. The
+	// histogram read path deltas cumulative series before bucketing
+	// so a cumulative heatmap doesn't grow monotonically to the right.
+	Temporality string
 }
 
 // ── API response types ────────────────────────────────────────────────────────

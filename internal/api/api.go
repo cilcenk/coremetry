@@ -469,6 +469,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
+	mux.HandleFunc("GET /api/metrics/histogram", s.getMetricHistogram)
 	// v0.5.350 — span-metrics-derived per-service RED. Lets
 	// operators whose collectors emit spanmetrics (traces.
 	// spanmetrics.calls.total / duration) see the metric
@@ -3453,6 +3454,33 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, series)
+}
+
+// getMetricHistogram renders an explicit-histogram metric as a time×bucket
+// heatmap + per-bucket p50/p95/p99 (v0.6.56). Cached 30s; the key carries
+// every result-affecting input — the window is bucketed to the minute so
+// concurrent polls share a round-trip, and the full filter string is in the
+// key (no length-only collapse, cf. v0.5.187).
+func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	step, _ := strconv.Atoi(q.Get("step"))
+	name := q.Get("name")
+	svc := q.Get("service")
+	filtersRaw := q.Get("filters")
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
+	key := fmt.Sprintf("metric-hist:name=%s:svc=%s:step=%d:f=%s:from=%d:to=%d",
+		name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.QueryMetricHistogram(r.Context(), chstore.MetricQueryFilter{
+			Name:        name,
+			Service:     svc,
+			Filters:     parseFilters(filtersRaw),
+			From:        from,
+			To:          to,
+			StepSeconds: step,
+		})
+	})
 }
 
 func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {

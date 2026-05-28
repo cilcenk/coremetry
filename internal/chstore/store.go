@@ -843,7 +843,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			-- (otlp/convert.go Metric_Histogram). Default [] keeps
 			-- old data + non-histogram instruments compatible.
 			bucket_bounds Array(Float64) DEFAULT [],
-			bucket_counts Array(UInt64)  DEFAULT []
+			bucket_counts Array(UInt64)  DEFAULT [],
+			-- v0.6.56 — OTLP aggregation temporality ('delta' |
+			-- 'cumulative' | ''). Captured so the histogram read path
+			-- can delta cumulative series before bucketing; without it
+			-- a cumulative heatmap grows monotonically to the right
+			-- (wrong). Empty = legacy rows / producer didn't report it.
+			temporality   LowCardinality(String) DEFAULT ''
 		) ENGINE = MergeTree()
 		PARTITION BY toDate(time)
 		ORDER BY (service_name, metric, time)
@@ -1168,6 +1174,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// spam attack can't drown a real subscriber in mail.
 		`ALTER TABLE status_page_subscribers ADD COLUMN IF NOT EXISTS confirm_token String DEFAULT ''`,
 		`ALTER TABLE status_page_subscribers ADD COLUMN IF NOT EXISTS confirm_sent_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
+		// v0.6.56 — OTLP aggregation temporality on metric_points, so the
+		// histogram read path can delta cumulative series before bucketing.
+		// IF NOT EXISTS makes this a no-op on fresh installs (already in the
+		// CREATE) and re-runs.
+		`ALTER TABLE metric_points ADD COLUMN IF NOT EXISTS temporality LowCardinality(String) DEFAULT ''`,
 	}
 	for _, q := range alters {
 		if err := s.execDDL(ctx, q); err != nil {

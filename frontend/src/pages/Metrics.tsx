@@ -7,6 +7,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { MetricNamePicker } from '@/components/MetricNamePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { MultiLineChart } from '@/components/MultiLineChart';
+import { HistogramHeatmap } from '@/components/HistogramHeatmap';
 import { EventMarkers } from '@/components/EventMarkers';
 import { DrillButton } from '@/components/DrillButton';
 import { ShareButton } from '@/components/ShareButton';
@@ -14,7 +15,7 @@ import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { decodeRange } from '@/lib/urlState';
 import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
-import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange } from '@/lib/types';
+import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, HistogramResult } from '@/lib/types';
 
 const AGG_OPTIONS = [
   { v: 'avg',  label: 'Average' },
@@ -103,6 +104,11 @@ export default function MetricsPage() {
   const [compareSeries, setCompareSeries] = useState<SpanMetricSeries[] | null>(null);
   const [groupDraft, setGroupDraft] = useState('');
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
+  // v0.6.56 — explicit-histogram view. When the picked metric is a
+  // histogram instrument we additionally fetch the bucket heatmap and
+  // render it in place of the line chart.
+  const [histData, setHistData] = useState<HistogramResult | null | undefined>(undefined);
+  const [histMode, setHistMode] = useState<'heatmap' | 'percentile'>('heatmap');
 
   // Suggestion sources for filters and group-by
   const [hostValues, setHostValues] = useState<string[]>([]);
@@ -156,6 +162,12 @@ export default function MetricsPage() {
   // call (which is a stable-references trap because of now()).
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
+  // Auto-switch to the histogram heatmap when the picked metric is an
+  // explicit-histogram instrument (MetricInfo.type mirrors the OTel
+  // instrument kind). Declared before the effects + render that depend on
+  // it; gauge/sum/etc. stay on the line chart.
+  const isHistogram = currentMeta?.name === metric && currentMeta?.type === 'histogram';
+
   useEffect(() => {
     if (!metric) { setSeries(null); return; }
     setSeries(undefined);
@@ -168,6 +180,23 @@ export default function MetricsPage() {
       from, to, step: step || undefined,
     }).then(r => setSeries(r ?? [])).catch(() => setSeries(null));
   }, [metric, service, agg, filters, groupBy, step, from, to]);
+
+  // v0.6.56 — histogram bucket fetch, only when the picked metric is a
+  // histogram. Deps mirror the line-chart effect minus agg/groupBy, which
+  // the heatmap ignores (it aggregates all matching series into one).
+  useEffect(() => {
+    if (!metric || !isHistogram) { setHistData(undefined); return; }
+    setHistData(undefined);
+    let cancelled = false;
+    api.metricHistogram({
+      name: metric,
+      service: service || undefined,
+      filters: filters.length ? JSON.stringify(filters) : undefined,
+      from, to, step: step || undefined,
+    }).then(r => { if (!cancelled) setHistData(r ?? null); })
+      .catch(() => { if (!cancelled) setHistData(null); });
+    return () => { cancelled = true; };
+  }, [metric, service, filters, step, from, to, isHistogram]);
 
   // v0.5.484 — compare-period fetch. Off → null. 1h/24h/7d use
   // fixed offsets; 'prev' uses the matched window (to - from)
@@ -445,21 +474,47 @@ export default function MetricsPage() {
                   when one matches (e.g. http.server.request.
                   duration → 1000ms). Operator clears/edits via
                   the row beneath the chart. */}
-              <div style={{ position: 'relative' }}>
-                <MultiLineChart series={series} unit={unit}
-                  compareSeries={compareSeries ?? undefined}
-                  compareOffsetNs={compareOffsetNs > 0 ? compareOffsetNs : undefined}
-                  compareLabel={compareLabelFor(compare) ?? undefined}
-                  logScale={logScale}
-                  thresholds={threshold !== null ? [{
-                    value: threshold,
-                    label: appliedTemplate?.threshold
-                      ? `${appliedTemplate.id} threshold`
-                      : 'threshold',
-                    severity: 'warn',
-                  }] : undefined} />
-                <EventMarkers fromNs={from} toNs={to} service={service || undefined} />
-              </div>
+              {isHistogram ? (
+                <div style={{ position: 'relative' }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 6 }}>
+                    {(['heatmap', 'percentile'] as const).map(m => (
+                      <button key={m} type="button" onClick={() => setHistMode(m)}
+                        style={{
+                          fontSize: 11, padding: '2px 10px', borderRadius: 3, cursor: 'pointer',
+                          background: histMode === m ? 'var(--accent2)' : 'var(--bg3)',
+                          color: histMode === m ? '#fff' : 'var(--text2)',
+                          border: '1px solid var(--border)',
+                        }}>
+                        {m === 'heatmap' ? 'Heatmap' : 'Percentiles'}
+                      </button>
+                    ))}
+                  </div>
+                  {histData === undefined ? <Spinner />
+                    : !histData || !histData.bounds || histData.bounds.length === 0 ? (
+                      <Empty icon="📊" title="No histogram buckets">
+                        This metric has no explicit-bucket histogram data in the selected window.
+                      </Empty>
+                    ) : (
+                      <HistogramHeatmap data={histData} mode={histMode} unit={unit} />
+                    )}
+                </div>
+              ) : (
+                <div style={{ position: 'relative' }}>
+                  <MultiLineChart series={series} unit={unit}
+                    compareSeries={compareSeries ?? undefined}
+                    compareOffsetNs={compareOffsetNs > 0 ? compareOffsetNs : undefined}
+                    compareLabel={compareLabelFor(compare) ?? undefined}
+                    logScale={logScale}
+                    thresholds={threshold !== null ? [{
+                      value: threshold,
+                      label: appliedTemplate?.threshold
+                        ? `${appliedTemplate.id} threshold`
+                        : 'threshold',
+                      severity: 'warn',
+                    }] : undefined} />
+                  <EventMarkers fromNs={from} toNs={to} service={service || undefined} />
+                </div>
+              )}
 
               {/* v0.6.18 — SLO/alert threshold control. Lives
                   beneath the chart so it doesn't clutter the

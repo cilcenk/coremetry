@@ -1,7 +1,7 @@
 import type {
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
   LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
-  ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries,
+  ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, HistogramResult,
   SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
   AlertRule, Problem, ServiceEdgeStats, Exception,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
@@ -1160,6 +1160,10 @@ export const api = {
 
   metricQuery: (params: MetricQueryParams) =>
     get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs(params)}`),
+  // v0.6.56 — explicit-histogram heatmap + percentile bands. Reuses
+  // MetricQueryParams (agg/groupBy ignored server-side for histograms).
+  metricHistogram: (params: MetricQueryParams) =>
+    get<HistogramResult | null>(`/api/metrics/histogram?${qs(params)}`),
   endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number; compare?: 'prior' }) =>
     get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
   serviceAttrs: (service: string, from: number, to: number, opts?: { top?: number; samples?: number }) =>

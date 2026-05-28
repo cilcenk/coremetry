@@ -115,7 +115,7 @@ func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 		 service_name, host_name, time, start_time,
 		 value, count, sum_value, min_value, max_value,
 		 attr_keys, attr_values, res_keys, res_values,
-		 bucket_bounds, bucket_counts)`)
+		 bucket_bounds, bucket_counts, temporality)`)
 	if err != nil {
 		return fmt.Errorf("prepare metrics: %w", err)
 	}
@@ -136,7 +136,7 @@ func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 			p.ServiceName, p.HostName, p.Time, p.StartTime,
 			p.Value, p.Count, p.SumValue, p.MinValue, p.MaxValue,
 			p.AttrKeys, p.AttrValues, p.ResKeys, p.ResValues,
-			bounds, counts,
+			bounds, counts, p.Temporality,
 		); err != nil {
 			return fmt.Errorf("append metric: %w", err)
 		}

@@ -1002,6 +1002,20 @@ export interface SpanMetricSeries {
   points: { time: number; value: number }[]; // time = unix nanoseconds
 }
 
+// v0.6.56 — explicit OTel histogram over a window: shared bucket bounds,
+// one summed bucket-count vector per time bucket, and p50/p95/p99 estimated
+// from those vectors at read time. Drives the /metrics histogram heatmap
+// (the avg line can't show the distribution; this does).
+export interface HistogramResult {
+  bounds: number[];     // explicit upper bounds (len N)
+  times: number[];      // ns epoch, one per time bucket
+  counts: number[][];   // [timeBucket][bucket] summed (len N+1, last = +Inf)
+  p50: number[];
+  p95: number[];
+  p99: number[];
+  skipped: number;      // series dropped for a mismatched bucket layout
+}
+
 // ── Alerts & Problems ───────────────────────────────────────────────────────
 
 export interface AlertRule {

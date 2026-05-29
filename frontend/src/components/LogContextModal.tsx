@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Modal } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
-import { fmtNum } from '@/lib/utils';
+import { fmtNum, tsLong } from '@/lib/utils';
 import type { LogRow } from '@/lib/types';
 
 // LogContextModal — v0.5.402. Datadog "Context" tab for /logs.
@@ -87,7 +87,7 @@ export function LogContextModal({
         <span style={{ fontSize: 13 }}>
           Context · ±50
           <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
-            {pivot.serviceName || '(no service)'} · {new Date(pivot.timestamp / 1e6).toLocaleString()}
+            {pivot.serviceName || '(no service)'} · {tsLong(pivot.timestamp)}
           </span>
         </span>
       }

@@ -369,7 +369,7 @@ function TraceDetailInner() {
               <KPI label="Duration"
                    value={stub.durationMs.toFixed(stub.durationMs < 10 ? 2 : 0) + ' ms'} />
               <KPI label="Started"
-                   value={new Date(stub.startTimeNs / 1e6).toLocaleString()} />
+                   value={tsLong(stub.startTimeNs)} />
             </div>
           </div>
         )}

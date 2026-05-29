@@ -85,6 +85,7 @@ type AuditFilter struct {
 	Actor      string // user id OR email substring; empty = all
 	Action     string // exact match; empty = all
 	TargetKind string // exact match; empty = all
+	TargetID   string // exact match on the target's id; empty = all
 	Limit      int
 }
 
@@ -106,6 +107,9 @@ func (s *Store) ListAuditLog(ctx context.Context, f AuditFilter) ([]AuditEntry, 
 	}
 	if f.TargetKind != "" {
 		wc.add("target_kind = ?", f.TargetKind)
+	}
+	if f.TargetID != "" {
+		wc.add("target_id = ?", f.TargetID)
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, toUnixTimestamp64Nano(time),

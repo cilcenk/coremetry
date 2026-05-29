@@ -4,9 +4,11 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { RenderedMarkdown } from '@/components/Markdown';
-import { useRunbook, useUpdateRunbook, useDeleteRunbook } from '@/lib/queries';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { useRunbook, useUpdateRunbook, useDeleteRunbook, useRunbookExecutions, useExecuteRunbook } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
-import type { Runbook, RunbookStep, RunbookStepKind } from '@/lib/types';
+import type { Runbook, RunbookStep, RunbookStepKind, RunbookExecution } from '@/lib/types';
 
 // Runbook detail (v0.7.0) — Overview + the Steps editor (the OneUptime
 // "Runbook Steps" surface: kind cards to add, drag-to-reorder, per-step
@@ -21,7 +23,18 @@ const KIND_META: { kind: RunbookStepKind; icon: string; label: string; desc: str
   { kind: 'bash',       icon: '▣',   label: 'Bash',       desc: 'Run a shell command on the agent.' },
 ];
 
-type Tab = 'overview' | 'steps';
+const EXEC_BADGE: Record<string, string> = {
+  running: 'b-info', waiting_for_user: 'b-warn', completed: 'b-ok', failed: 'b-err', cancelled: 'b-gray',
+};
+const STEP_TERMINAL = ['completed', 'skipped', 'failed'];
+function fmtDur(ns: number): string {
+  const s = Math.max(0, Math.round(ns / 1e9));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+type Tab = 'overview' | 'steps' | 'executions' | 'audit';
 
 export default function RunbookDetailPage() {
   return <Suspense fallback={<Spinner />}><Inner /></Suspense>;
@@ -37,16 +50,19 @@ function Inner() {
   const rbQ = useRunbook(id);
   const updateRb = useUpdateRunbook();
   const deleteRb = useDeleteRunbook();
+  const executeRb = useExecuteRunbook();
 
   // Local editable draft, hydrated from the loaded runbook. While dirty
   // we don't re-hydrate so a background refetch can't clobber edits.
   const [draft, setDraft] = useState<Runbook | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     if (rbQ.data && !dirty) setDraft(structuredClone(rbQ.data));
   }, [rbQ.data, dirty]);
 
-  const tab: Tab = sp.get('tab') === 'steps' ? 'steps' : 'overview';
+  const tp = sp.get('tab');
+  const tab: Tab = tp === 'steps' || tp === 'executions' || tp === 'audit' ? tp : 'overview';
   const setTab = (t: Tab) => setSp(prev => {
     const p = new URLSearchParams(prev);
     if (t === 'overview') p.delete('tab'); else p.set('tab', t);
@@ -58,11 +74,27 @@ function Inner() {
   if (!draft) return <Spinner />;
 
   const patch = (p: Partial<Runbook>) => { setDraft({ ...draft, ...p }); setDirty(true); };
-  const save = async () => { await updateRb.mutateAsync({ id, patch: draft }); setDirty(false); };
+  // save renumbers step order to array position (the backend re-derives this
+  // too, but keep the draft consistent) then persists. Throws on failure so
+  // run() can abort; the Save button catches into the error banner.
+  const save = async () => {
+    const normalized = { ...draft, steps: draft.steps.map((s, k) => ({ ...s, order: k })) };
+    await updateRb.mutateAsync({ id, patch: normalized });
+    setDraft(normalized);
+    setDirty(false);
+  };
   const remove = async () => {
     if (!confirm(`Delete runbook "${draft.title}"? Historical executions are kept for audit.`)) return;
-    await deleteRb.mutateAsync(id);
-    navigate('/runbooks');
+    try { await deleteRb.mutateAsync(id); navigate('/runbooks'); }
+    catch (e) { setErr(`Delete failed: ${e instanceof Error ? e.message : String(e)}`); }
+  };
+  const run = async () => {
+    setErr(null);
+    try {
+      if (dirty) await save(); // the run snapshots the latest steps, so persist first
+      const ex = await executeRb.mutateAsync({ id });
+      if (ex?.id) navigate(`/runbook-exec?id=${encodeURIComponent(ex.id)}`);
+    } catch (e) { setErr(`Run failed: ${e instanceof Error ? e.message : String(e)}`); }
   };
 
   const addStep = (kind: RunbookStepKind) => {
@@ -88,6 +120,11 @@ function Inner() {
     <>
       <Topbar title={draft.title || 'Runbook'} />
       <div id="content">
+        {err && (
+          <div style={{ background: 'var(--bg1)', border: '1px solid var(--err)', color: 'var(--err)', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
+            {err} <button className="sec" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</button>
+          </div>
+        )}
         <div className="controls" style={{ marginBottom: 8, alignItems: 'center' }}>
           <button className="sec" onClick={() => navigate('/runbooks')}>← Runbooks</button>
           <span className={`badge ${draft.enabled ? 'b-ok' : 'b-gray'}`} style={{ marginLeft: 4 }}>
@@ -97,8 +134,15 @@ function Inner() {
             <span style={{ color: 'var(--text3)', fontSize: 11 }}>by {draft.createdBy}</span>
           )}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {canEdit && (
+              <button onClick={run} disabled={executeRb.isPending || draft.steps.length === 0 || !draft.enabled}
+                title={!draft.enabled ? 'Runbook is disabled — enable it to run' : draft.steps.length === 0 ? 'Add steps before running' : 'Start an execution'}>
+                ▶ Run
+              </button>
+            )}
             {canEdit && dirty && (
-              <button onClick={save} disabled={updateRb.isPending}>
+              <button className="sec" disabled={updateRb.isPending}
+                onClick={() => { setErr(null); save().catch(e => setErr(`Save failed: ${e instanceof Error ? e.message : String(e)}`)); }}>
                 {updateRb.isPending ? 'Saving…' : 'Save changes'}
               </button>
             )}
@@ -117,8 +161,83 @@ function Inner() {
             onAdd={addStep} onUpdate={updateStep} onRemove={removeStep} onMove={moveStep}
           />
         )}
+        {tab === 'executions' && <ExecutionsTab runbookId={draft.id} />}
+        {tab === 'audit' && <AuditTab runbookId={draft.id} isAdmin={user?.role === 'admin'} />}
       </div>
     </>
+  );
+}
+
+function ExecutionsTab({ runbookId }: { runbookId: string }) {
+  const navigate = useNavigate();
+  const q = useRunbookExecutions({ runbookId });
+  const execs = q.isLoading ? undefined : q.data ?? [];
+  if (execs === undefined) return <Spinner />;
+  if (execs.length === 0) {
+    return <Empty icon="▷" title="No runs yet">Click ▶ Run to execute this runbook. Every run is recorded here — who ran it, when, and which steps executed.</Empty>;
+  }
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Status</th><th>Started by</th><th>Started</th><th className="num">Steps</th><th>Duration</th><th></th></tr>
+        </thead>
+        <tbody>
+          {execs.map((e: RunbookExecution) => {
+            const done = e.stepStates.filter(s => STEP_TERMINAL.includes(s.status)).length;
+            return (
+              <tr key={e.id}>
+                <td><span className={`badge ${EXEC_BADGE[e.status] ?? 'b-gray'}`}>{e.status.replace(/_/g, ' ')}</span></td>
+                <td className="mono">{e.startedBy || '—'}</td>
+                <td className="mono" style={{ fontSize: 11 }}>{tsLong(e.startedAt)}</td>
+                <td className="num mono">{done}/{e.stepStates.length}</td>
+                <td className="mono" style={{ fontSize: 11 }}>{e.completedAt ? fmtDur(e.completedAt - e.startedAt) : '—'}</td>
+                <td style={{ textAlign: 'right' }}>
+                  <button className="sec" onClick={() => navigate(`/runbook-exec?id=${encodeURIComponent(e.id)}`)}>Open</button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AuditTab({ runbookId, isAdmin }: { runbookId: string; isAdmin: boolean }) {
+  const q = useQuery({
+    queryKey: ['runbook-audit', runbookId],
+    queryFn: () => api.auditLog('30d', { targetId: runbookId }),
+    enabled: isAdmin,
+    staleTime: 30_000,
+  });
+  if (!isAdmin) {
+    return <Empty icon="🔒" title="Admin only">The change/run audit log (audit_events) is admin-only. The per-run step audit — who ticked each step, when, with what output — is on the Executions tab and visible to everyone.</Empty>;
+  }
+  const rows = q.isLoading ? undefined : q.data ?? [];
+  if (rows === undefined) return <Spinner />;
+  if (rows.length === 0) {
+    return <Empty icon="▤" title="No audit entries">No recorded changes or runs for this runbook in the last 30 days.</Empty>;
+  }
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Details</th></tr></thead>
+        <tbody>
+          {rows.map(a => (
+            <tr key={a.id}>
+              <td className="mono" style={{ fontSize: 11 }}>{tsLong(a.time)}</td>
+              <td className="mono">{a.actorEmail || '—'}</td>
+              <td><span className="badge b-gray">{a.action}</span></td>
+              <td className="mono" title={a.details}
+                style={{ fontSize: 11, color: 'var(--text3)', maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {a.details || '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -128,6 +247,8 @@ function TabStrip({ tab, onChange, stepCount }: {
   const items: { key: Tab; label: string; hint?: string }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'steps', label: 'Steps', hint: stepCount > 0 ? String(stepCount) : undefined },
+    { key: 'executions', label: 'Executions' },
+    { key: 'audit', label: 'Audit Logs' },
   ];
   return (
     <div style={{ display: 'flex', gap: 0, marginTop: 8, marginBottom: 14, borderBottom: '1px solid var(--border)' }}>

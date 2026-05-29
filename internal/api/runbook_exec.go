@@ -29,6 +29,10 @@ func (s *Server) executeRunbook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"runbook not found"}`, http.StatusNotFound)
 		return
 	}
+	if !rb.Enabled {
+		http.Error(w, `{"error":"runbook is disabled — enable it before running"}`, http.StatusConflict)
+		return
+	}
 	var body struct {
 		ProblemID string `json:"problemId"`
 	}

@@ -33,11 +33,14 @@ export default function RunbooksPage() {
   const disableRb = useDisableRunbook();
 
   const newRunbook = async () => {
-    const created = await createRb.mutateAsync({
-      title: 'Untitled runbook', steps: [], enabled: true,
-    });
-    const rb = created as { id?: string } | undefined;
-    if (rb?.id) navigate(`/runbook?id=${encodeURIComponent(rb.id)}`);
+    try {
+      const created = await createRb.mutateAsync({
+        title: 'Untitled runbook', steps: [], enabled: true,
+      });
+      if (created?.id) navigate(`/runbook?id=${encodeURIComponent(created.id)}`);
+    } catch (e) {
+      alert(`Could not create runbook: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   const remove = async (id: string, title: string) => {

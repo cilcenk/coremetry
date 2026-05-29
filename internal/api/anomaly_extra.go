@@ -196,6 +196,7 @@ func (s *Server) listAuditLog(w http.ResponseWriter, r *http.Request) {
 		Actor:      strings.TrimSpace(q.Get("actor")),
 		Action:     strings.TrimSpace(q.Get("action")),
 		TargetKind: strings.TrimSpace(q.Get("target")),
+		TargetID:   strings.TrimSpace(q.Get("targetId")),
 		Limit:      parseInt(q.Get("limit"), 200),
 	})
 	if err != nil {

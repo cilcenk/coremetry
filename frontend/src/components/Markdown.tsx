@@ -78,8 +78,18 @@ function renderInline(s: string): React.ReactNode[] {
   // doesn't get consumed by the bold pass first.
   const patterns: { re: RegExp; render: (m: RegExpMatchArray) => React.ReactNode }[] = [
     { re: /^\[([^\]]+)\]\(([^)]+)\)/,
-      render: m => <a key={key++} href={m[2]} target="_blank" rel="noopener"
-                       style={{ color: 'var(--accent2)' }}>{m[1]}</a> },
+      render: m => {
+        // Scheme allowlist — this markdown is operator-authored and rendered to
+        // OTHER users (viewers read editor-authored runbooks), so a
+        // `javascript:` href would be a stored-XSS vector. Allow only
+        // http(s)/mailto/relative/anchor; otherwise drop to plain text.
+        const href = m[2].trim();
+        const safe = /^(https?:|mailto:|\/|#)/i.test(href);
+        return safe
+          ? <a key={key++} href={href} target="_blank" rel="noopener noreferrer"
+               style={{ color: 'var(--accent2)' }}>{m[1]}</a>
+          : <span key={key++}>{m[1]}</span>;
+      } },
     { re: /^\*\*([^*]+)\*\*/,
       render: m => <b key={key++}>{m[1]}</b> },
     { re: /^\*([^*]+)\*/,

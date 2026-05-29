@@ -52,6 +52,42 @@ export interface Threshold {
   severity?: 'warn' | 'err'; // default 'warn'
 }
 
+// placeTooltip positions the floating hover panel so it never sits UNDER the
+// cursor (v0.7.11, operator-reported). The old logic flipped per-axis then
+// `Math.max(0, …)` clamped a flipped position back to the edge — on a narrow
+// chart or a wide multi-series tooltip the clamp pulled the panel over the
+// pointer, hiding the value at the cursor.
+//
+// Per axis we place the panel BESIDE the cursor: after it (`c + pad`), else
+// before it (`c - pad - size`). Either of those is `clear` — the pointer is
+// not on the panel along that axis. Only when the panel is larger than the
+// chart on an axis (fits on neither side) do we centre+clamp, which can't
+// avoid overlap on that one axis; in that case we force the vertical axis to a
+// clear side so at least one axis keeps the pointer off the panel. Returns the
+// top-left, already clamped within [0, max-size] so nothing renders off-canvas.
+export function placeTooltip(
+  cx: number, cy: number, tw: number, th: number,
+  cw: number, ch: number, pad = 12,
+): { x: number; y: number } {
+  const place = (c: number, size: number, max: number): { p: number; clear: boolean } => {
+    if (c + pad + size <= max) return { p: c + pad, clear: true };       // after the cursor
+    if (c - pad - size >= 0)   return { p: c - pad - size, clear: true }; // before the cursor
+    // Larger than the chart on this axis — can't sit beside; centre on the
+    // cursor and clamp on-canvas (overlap unavoidable here).
+    return { p: Math.max(0, Math.min(c - size / 2, max - size)), clear: false };
+  };
+  const hx = place(cx, tw, cw);
+  const hy = place(cy, th, ch);
+  // Neither axis clear → force vertical to a clear side so the pointer is never
+  // on top of the panel (prefer the side of the cursor with more room).
+  if (!hx.clear && !hy.clear) {
+    hy.p = cy < ch / 2
+      ? Math.min(cy + pad, Math.max(0, ch - th)) // below
+      : Math.max(0, cy - pad - th);              // above
+  }
+  return { x: hx.p, y: hy.p };
+}
+
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
   compareSeries, compareOffsetNs, compareLabel, logScale,
@@ -486,20 +522,15 @@ export function MultiLineChart({
                 `</div>`;
               }).join('');
             tip.style.opacity = '1';
-            // Position: by default 12px right + below the
-            // cursor. If the tooltip would clip past the
-            // right edge, flip to the left side. Same flip
-            // for the bottom edge so the tooltip never goes
-            // outside the chart canvas.
-            const cw = el.clientWidth;
-            const tw = tip.offsetWidth;
-            const th = tip.offsetHeight;
-            const left = u.cursor.left ?? 0;
-            const top  = u.cursor.top  ?? 0;
-            const x = left + 12 + tw > cw ? left - tw - 12 : left + 12;
-            const y = top + 12 + th > height ? top - th - 12 : top + 12;
-            tip.style.left = `${Math.max(0, x)}px`;
-            tip.style.top  = `${Math.max(0, y)}px`;
+            // Position beside the cursor, flipping per-axis and never landing
+            // under the pointer — see placeTooltip (v0.7.11).
+            const { x, y } = placeTooltip(
+              u.cursor.left ?? 0, u.cursor.top ?? 0,
+              tip.offsetWidth, tip.offsetHeight,
+              el.clientWidth, height,
+            );
+            tip.style.left = `${x}px`;
+            tip.style.top  = `${y}px`;
           },
         ],
       },

@@ -9517,7 +9517,23 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 // serveCached lives in cache.go — multi-tier (L1 + Redis +
 // singleflight + SWR). Kept here as a pointer for grep.
 
+// statusClientClosedRequest is nginx's non-standard 499 — the client closed
+// the connection before the server responded. Go has no stdlib constant.
+const statusClientClosedRequest = 499
+
 func writeErr(w http.ResponseWriter, err error) {
+	// Client hung up (browser navigated away / React Query superseded an
+	// in-flight poll) — the request context died, so the error the handler
+	// bubbled up is context.Canceled, NOT a server failure. Emit 499 and skip
+	// the body (the client is gone) and the error log. Counting these as 5xx
+	// inflated coremetry-api's self-obs error_rate and tripped false anomalies;
+	// logging them spammed "[api] error: context canceled". context.Deadline-
+	// Exceeded (a real server-side timeout) is NOT context.Canceled, so it
+	// still falls through to the 500 path. v0.7.13.
+	if errors.Is(err, context.Canceled) {
+		w.WriteHeader(statusClientClosedRequest)
+		return
+	}
 	log.Printf("[api] error: %v", err)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)

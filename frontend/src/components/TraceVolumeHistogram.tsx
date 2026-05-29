@@ -41,8 +41,8 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
-  const dataRef = useRef<{ ok: number[]; err: number[]; ts: number[] }>({ ok: [], err: [], ts: [] });
-  const [stats, setStats] = useState<{ total: number; errors: number } | null>(null);
+  const dataRef = useRef<{ ok: number[]; err: number[]; p99: (number | null)[]; ts: number[] }>({ ok: [], err: [], p99: [], ts: [] });
+  const [stats, setStats] = useState<{ total: number; errors: number; p99Max: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // v0.5.478 — lifted out of useEffect so the EventMarkers
@@ -65,11 +65,16 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
     Promise.all([
       api.spanMetric({ agg: 'count',  dsl, filters, search, from, to, step }),
       api.spanMetric({ agg: 'errors', dsl, filters, search, from, to, step }),
-    ]).then(([total, errs]) => {
+      // v0.6.64 — p99 latency per bucket, overlaid as a line on a secondary
+      // (right) axis: bars = how many spans, line = how slow. Dynatrace-style
+      // volume+latency combo the operator asked for on the Traces page.
+      api.spanMetric({ agg: 'p99',    dsl, filters, search, from, to, step }),
+    ]).then(([total, errs, p99]) => {
       if (cancelled) return;
       const totalPoints = total?.[0]?.points ?? [];
       const errorPoints = errs?.[0]?.points ?? [];
       const errMap = new Map(errorPoints.map(p => [p.time, p.value]));
+      const p99Map = new Map((p99?.[0]?.points ?? []).map(p => [p.time, p.value]));
       const ts: number[] = [];
       // v0.6.35 — inverse-overlay layout. Operator-reported: the
       // prior stacked-paths approach (ok bar from 0..ok, err bar
@@ -83,17 +88,21 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
       // visual artifact.
       const okData:  number[] = []; // here = TOTAL spans; drawn in gray, full bar
       const errData: number[] = []; // errors; drawn in red, from 0, OVER the bottom of gray
-      let totalAll = 0, errAll = 0;
+      const p99Data: (number | null)[] = []; // p99 ms; right-axis line (null = empty bucket → gap)
+      let totalAll = 0, errAll = 0, p99Max = 0;
       for (const p of totalPoints) {
         const e = errMap.get(p.time) ?? 0;
+        const lat = p99Map.get(p.time) ?? 0;
         ts.push(p.time / 1e9); // ns → unix seconds
         okData.push(p.value);                  // full bar height = total spans
         errData.push(Math.min(e, p.value));    // clamp — err can't exceed total
+        p99Data.push(lat > 0 ? lat : null);    // gap when the bucket had no spans
+        if (lat > p99Max) p99Max = lat;
         totalAll += p.value;
         errAll   += e;
       }
-      setStats({ total: totalAll, errors: errAll });
-      dataRef.current = { ok: okData, err: errData, ts };
+      setStats({ total: totalAll, errors: errAll, p99Max });
+      dataRef.current = { ok: okData, err: errData, p99: p99Data, ts };
       drawChart();
     }).catch((e) => {
       if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -107,7 +116,7 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
     if (!el) return;
     plotRef.current?.destroy();
     plotRef.current = null;
-    const { ok, err, ts } = dataRef.current;
+    const { ok, err, p99, ts } = dataRef.current;
     if (ts.length === 0) return;
 
     // Stacked bars via path-builder factories. Data arrays are
@@ -143,6 +152,10 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
         // bar (drawn from ok to ok+err) isn't clipped by the
         // auto-range only seeing ok or err individually.
         y: { range: () => [0, stackedMax * 1.05 || 1] },
+        // v0.6.64 — secondary LOG latency axis for the p99 line, so a
+        // multi-second tail-latency spike doesn't flatten the typical band
+        // (the lesson from the /metrics histogram Volume axis).
+        lat: { distr: 3 },
       },
       axes: [
         {
@@ -170,6 +183,18 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
           // "no count visible".
           size: 50,
           values: (_u, splits) => splits.map(v => v == null ? '' : fmtSmart(v)),
+        },
+        {
+          // v0.6.64 — right-side p99 latency axis (log). Amber to match the
+          // p99 line; no grid so it doesn't fight the count gridlines.
+          scale: 'lat',
+          side: 1,
+          stroke: '#d6a23c',
+          grid: { show: false },
+          ticks: { stroke: 'rgba(214,162,60,0.15)', width: 1 },
+          font: '10px ui-monospace, monospace',
+          size: 54,
+          values: (_u, splits) => splits.map(v => v == null ? '' : fmtSmart(v, 'ms')),
         },
       ],
       series: [
@@ -199,6 +224,18 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
           fill: '#e84e4e',
           paths: barsPath(0),
           points: { show: false },
+        },
+        // v0.6.64 — p99 latency line on the right (log) axis. spanGaps so a
+        // sparse trace stream still draws a continuous trend; points so an
+        // isolated bucket's p99 stays visible (the histogram sparse-line
+        // lesson). bars = how many, line = how slow.
+        {
+          label: 'p99',
+          stroke: '#e0a83b',
+          width: 1.6,
+          scale: 'lat',
+          spanGaps: true,
+          points: { show: true, size: 4, fill: '#e0a83b' },
         },
       ],
       hooks: {
@@ -234,6 +271,7 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
             }
             const okN = ok[idx];
             const errN = err[idx];
+            const latN = p99[idx];
             const tot = okN + errN;
             const rate = tot > 0 ? (errN / tot * 100).toFixed(2) : '0.00';
             const d = new Date(ts[idx] * 1000);
@@ -243,7 +281,8 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
               `<div style="font-weight:600;margin-bottom:2px">${hh}:${mm}</div>` +
               `<div>total · ${tot.toLocaleString()}</div>` +
               `<div>errors · ${errN.toLocaleString()}</div>` +
-              `<div>error rate · ${rate}%</div>`;
+              `<div>error rate · ${rate}%</div>` +
+              `<div>p99 · ${latN != null ? fmtSmart(latN, 'ms') : '—'}</div>`;
             tip.style.opacity = '1';
             tip.style.left = `${(u.cursor.left ?? 0) + 12}px`;
             tip.style.top  = `${(u.cursor.top  ?? 0) + 12}px`;
@@ -255,7 +294,7 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
     // Data layout: ts (x), ok (y for slate bar), err (y for
     // stacked red bar). The path builder for the err series
     // reads u.data[1] (ok) as its baseline.
-    plotRef.current = new uPlot(opts, [ts, ok, err], el);
+    plotRef.current = new uPlot(opts, [ts, ok, err, p99], el);
 
     const ro = new ResizeObserver(() => {
       if (plotRef.current && el) {
@@ -300,11 +339,14 @@ export function TraceVolumeHistogram({ range, dsl, filters, search, onZoom }: {
                   tone={stats.errors > 0 ? 'err' : 'mute'} />
             <Stat label="error rate" value={errRate ? `${errRate}%` : '—'}
                   tone={stats && stats.errors > 0 ? 'err' : 'mute'} emphasised />
+            <Stat label="p99 max" value={stats.p99Max ? fmtSmart(stats.p99Max, 'ms') : '—'} />
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text3)' }}>
               <span style={{ width: 8, height: 8, background: '#5b6776', borderRadius: 2 }} />
               ok
               <span style={{ width: 8, height: 8, background: '#e84e4e', borderRadius: 2, marginLeft: 6 }} />
               error
+              <span style={{ width: 12, height: 2, background: '#e0a83b', display: 'inline-block', marginLeft: 6 }} />
+              p99
             </span>
           </>
         )}

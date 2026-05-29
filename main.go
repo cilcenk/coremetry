@@ -448,6 +448,7 @@ func main() {
 	if err := seedInitialAdmin(ctx, store, cfg.Auth); err != nil {
 		log.Printf("[auth] seed initial admin: %v", err)
 	}
+	seedExampleRunbooks(ctx, store)
 	// Custom-role catalog — operator-defined viewer subsets, persisted
 	// in system_settings. Failure to load is non-fatal: the service
 	// boots with no custom roles and the admin can recreate them later.
@@ -862,6 +863,67 @@ func seedInitialAdmin(ctx context.Context, store *chstore.Store, ac config.AuthC
 	}
 	log.Printf("[auth] seeded initial admin %q (change the password via API after first login)", ac.InitialAdmin)
 	return nil
+}
+
+// exampleRunbooks are the starter runbooks seeded into a FRESH install so the
+// /runbooks page demonstrates the feature — and every step kind — out of the
+// box. Incident-response themed. Deterministic ids so a concurrent multi-pod
+// seed dedups to one copy each (ReplacingMergeTree), same lesson as the
+// bootstrap admin. (v0.7.5)
+func exampleRunbooks() []chstore.Runbook {
+	mk := func(id, title, desc string, steps []chstore.RunbookStep) chstore.Runbook {
+		for i := range steps {
+			steps[i].ID = fmt.Sprintf("%s-s%d", id, i+1)
+			steps[i].Order = i
+		}
+		return chstore.Runbook{ID: id, Title: title, Description: desc, Steps: steps, Enabled: true, Labels: []string{"example"}, CreatedBy: "system"}
+	}
+	return []chstore.Runbook{
+		mk("example-api-5xx", "API gateway 5xx spike",
+			"# When to run\nElevated 5xx error rate on the API gateway.\n\n## Goal\nLocalise the fault, then decide rollback vs scale.",
+			[]chstore.RunbookStep{
+				{Kind: "manual", Title: "Acknowledge & assess", Instructions: "Open the service's RED dashboard. Is the 5xx **service-wide** or one route? Note the start time and the last deploy."},
+				{Kind: "query", Title: "Pull error rate (last 15m)", Instructions: "Confirm the breach and which operations are affected.", Query: "error_rate by operation where service = 'api-gateway'"},
+				{Kind: "http", Title: "Page on-call", Instructions: "Notify the on-call channel (edit the URL for your webhook).", Method: "POST", URL: "https://example.com/webhook", Headers: map[string]string{"Content-Type": "application/json"}, Body: `{"text":"API gateway 5xx spike — runbook started"}`},
+				{Kind: "manual", Title: "Decide: roll back or scale", Instructions: "If the spike followed a deploy → **roll back**. If it's load-driven → **scale out**. Record the decision here."},
+			}),
+		mk("example-db-pool", "Database connection pool exhausted",
+			"# When to run\nClients see `too many connections` or DB-call timeouts.",
+			[]chstore.RunbookStep{
+				{Kind: "manual", Title: "Confirm the symptom", Instructions: "Are clients seeing connection timeouts / 'too many connections'?"},
+				{Kind: "query", Title: "DB latency & errors", Instructions: "Which service's DB calls are degraded?", Query: "p99_ms by service where db_system != ''"},
+				{Kind: "bash", Title: "Restart the offending pod", Instructions: "**Edit the command for your cluster, then remove the leading `echo`.**", Command: "echo 'kubectl rollout restart deploy/<service> -n prod'"},
+				{Kind: "manual", Title: "Verify recovery", Instructions: "Connection count back to baseline? Resolve the incident."},
+			}),
+		mk("example-health-triage", "Service health check & triage",
+			"# Quick triage\nProbe an upstream and summarise. Demonstrates the **coremetry-agent** running an `http` step then a `javascript` step automatically.",
+			[]chstore.RunbookStep{
+				{Kind: "http", Title: "Probe upstream", Instructions: "The agent fetches the upstream and records the status + body.", Method: "GET", URL: "https://example.com"},
+				{Kind: "javascript", Title: "Summarise", Instructions: "The agent computes a one-line summary (pure JS — no I/O).", Script: "const healthy = true;\n'triage: upstream ' + (healthy ? 'reachable ✓' : 'DOWN ✗');"},
+				{Kind: "manual", Title: "Confirm & close", Instructions: "Eyeball the step outputs above, then close the runbook."},
+			}),
+	}
+}
+
+// seedExampleRunbooks populates the starter runbooks on a FRESH install only
+// (no-op once any runbook exists, so operator edits/deletes stick). Idempotent
+// across concurrent pods via the deterministic ids in exampleRunbooks.
+func seedExampleRunbooks(ctx context.Context, store *chstore.Store) {
+	existing, err := store.ListRunbooks(ctx)
+	if err != nil {
+		log.Printf("[runbooks] seed check: %v", err)
+		return
+	}
+	if len(existing) > 0 {
+		return
+	}
+	rbs := exampleRunbooks()
+	for _, rb := range rbs {
+		if err := store.UpsertRunbook(ctx, rb); err != nil {
+			log.Printf("[runbooks] seed example %q: %v", rb.ID, err)
+		}
+	}
+	log.Printf("[runbooks] seeded %d example runbooks", len(rbs))
 }
 
 // runMigration is the --migrate-from one-shot path. Resolves each

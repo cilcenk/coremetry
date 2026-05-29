@@ -131,14 +131,16 @@ docker-distributed-down:
 # securityContext (vanilla k8s has no SCC to inject a runAsUser).
 minikube-up:
 	@minikube status >/dev/null 2>&1 || minikube start --driver=docker --cpus=4 --memory=6144
-	@# v0.6.71 — pass VERSION through as build-args. Without these the
-	@# Dockerfile's `ARG VERSION=dev` default baked "dev" (and the frontend
-	@# footer stayed stale) into coremetry:local, so /api/version + the login
-	@# chrome never matched the deployed tag. Mirrors docker-compose's build.
-	docker build --build-arg VERSION=$(VERSION) --build-arg VITE_APP_VERSION=$(VERSION) -t ghcr.io/cilcenk/coremetry:local .
-	minikube image load ghcr.io/cilcenk/coremetry:local
+	@# v0.6.71 — pass VERSION as build-args (else the Dockerfile's ARG
+	@# VERSION=dev default bakes "dev"). v0.7.2 — tag the image with the real
+	@# $(VERSION), NOT :local. minikube's image store keys on the tag, so
+	@# reloading the same :local tag silently kept the STALE binary on the node
+	@# (operator saw v0.6.65 long after newer tags shipped — a unique per-build
+	@# tag can't collide). --set image.tag wires the version tag into the deploy.
+	docker build --build-arg VERSION=$(VERSION) --build-arg VITE_APP_VERSION=$(VERSION) -t ghcr.io/cilcenk/coremetry:$(VERSION) .
+	minikube image load ghcr.io/cilcenk/coremetry:$(VERSION)
 	helm upgrade --install coremetry charts/coremetry -n coremetry --create-namespace \
-	  -f values-minikube.yaml --wait --timeout 8m
+	  -f values-minikube.yaml --set image.tag=$(VERSION) --wait --timeout 8m
 	@echo "[make] Coremetry distributed on minikube — all roles up."
 	@echo "[make]   UI:        kubectl port-forward -n coremetry svc/coremetry 8090:8088  → http://localhost:8090"
 	@echo "[make]   Dashboard: minikube dashboard --url"

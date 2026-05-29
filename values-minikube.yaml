@@ -22,7 +22,7 @@
 image:
   registry: "ghcr.io"
   repository: "cilcenk/coremetry"
-  tag: "local"            # built + loaded by `make minikube-up`
+  tag: "v0.7.1"           # 'make minikube-up' overrides via --set image.tag=$VERSION; a unique per-build tag avoids minikube's stale-:local image cache
   pullPolicy: Never       # image is side-loaded into minikube; never pull
 
 deployment:

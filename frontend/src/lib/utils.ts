@@ -110,7 +110,15 @@ export function tsDateTime(ns: number): string {
 
 export function tsLong(ns: number): string {
   if (!ns) return '—';
-  return new Date(ns / 1e6).toLocaleString('en', { dateStyle: 'short', timeStyle: 'medium' });
+  const d = new Date(ns / 1e6);
+  const p = (n: number) => String(n).padStart(2, '0');
+  // v0.6.65 — dd.mm.yyyy HH:mm:ss, 24-hour. Operator-reported: the prior
+  // toLocaleString('en', …) rendered US M/D/YY + 12h ("5/28/26, 11:22:34
+  // PM"), which (a) clashed with the 24h waterfall timeline ("23:22:34")
+  // and (b) isn't the operator's gün.ay.yıl convention. Manual format so
+  // it's locale-stable regardless of the browser/container locale.
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} `
+       + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 // tsRel renders a unix-ns timestamp as a coarse relative duration

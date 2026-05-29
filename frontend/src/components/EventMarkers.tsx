@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { tsLong } from '@/lib/utils';
 
 // EventMarkers (v0.5.478) — vertical markers overlaid on a
 // time-series chart for operator events ("deploy v1.2.3", "config
@@ -74,7 +75,7 @@ export function EventMarkers({ fromNs, toNs, service }: EventMarkersProps) {
         const pctX = ((e.time - fromNs) / range) * 100;
         if (pctX < 0 || pctX > 100) return null;
         const colour = KIND_COLOUR[e.kind] ?? DEFAULT_COLOUR;
-        const niceTime = new Date(e.time / 1_000_000).toLocaleString();
+        const niceTime = tsLong(e.time);
         const title =
           `${e.kind.toUpperCase()} · ${e.label}` +
           (e.service ? `\nservice: ${e.service}` : '') +

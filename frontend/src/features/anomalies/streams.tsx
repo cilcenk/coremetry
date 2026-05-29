@@ -555,7 +555,7 @@ function DeployChip({ d, service }: {
     : { bg: 'rgba(212,165,55,0.10)', border: 'rgba(212,165,55,0.35)', color: 'var(--warn, #d4a537)' };
   return (
     <Link to={`/service?name=${encodeURIComponent(service)}#deploys`}
-      title={`Service ${service} deployed v${d.version} at ${new Date(d.timeUnixNs / 1e6).toLocaleString()} — ${ageLabel}. Likely-cause window: ≤ 5 min.`}
+      title={`Service ${service} deployed v${d.version} at ${tsLong(d.timeUnixNs)} — ${ageLabel}. Likely-cause window: ≤ 5 min.`}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 4,
         marginLeft: 8, marginTop: 2,

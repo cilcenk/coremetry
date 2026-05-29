@@ -43,7 +43,7 @@ const PAGES: Result[] = [
   { kind: 'page', label: 'Logs',        hint: 'Elasticsearch logs', to: '/logs' },
   { kind: 'page', label: 'Metrics',     hint: 'Time-series explorer', to: '/metrics' },
   { kind: 'page', label: 'Explore',     hint: 'Cross-signal ad-hoc query', to: '/explore' },
-  { kind: 'page', label: 'Notebook',    hint: 'Saved investigations', to: '/notebook' },
+  { kind: 'page', label: 'Runbooks',    hint: 'Operational procedures', to: '/runbooks' },
   { kind: 'page', label: 'Databases',   hint: 'DBM-style query catalog', to: '/databases' },
   { kind: 'page', label: 'Messaging',   hint: 'Kafka / RabbitMQ / SQS', to: '/messaging' },
   { kind: 'page', label: 'Dashboards',  hint: 'Operator-curated', to: '/dashboards' },

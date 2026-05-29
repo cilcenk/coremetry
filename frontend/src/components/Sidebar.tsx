@@ -76,7 +76,7 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'navGroup.workspaces',
     items: [
       { href: '/explore',    label: 'nav.explore',    icon: '◎' },
-      { href: '/notebook',   label: 'nav.notebook',   icon: '◰' },
+      { href: '/runbooks',   label: 'nav.runbooks',   icon: '▤' },
       { href: '/dashboards', label: 'nav.dashboards', icon: '◫' },
     ],
   },

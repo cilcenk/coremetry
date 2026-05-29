@@ -78,7 +78,7 @@ export function AppShell() {
       { keys: 'g t', label: 'Go to Traces',       group: 'Navigation', handler: () => navigate('/traces') },
       { keys: 'g l', label: 'Go to Logs',         group: 'Navigation', handler: () => navigate('/logs') },
       { keys: 'g e', label: 'Go to Explore',      group: 'Navigation', handler: () => navigate('/explore') },
-      { keys: 'g n', label: 'Go to Notebook',     group: 'Navigation', handler: () => navigate('/notebook') },
+      { keys: 'g r', label: 'Go to Runbooks',     group: 'Navigation', handler: () => navigate('/runbooks') },
       { keys: 'g d', label: 'Go to Dashboards',   group: 'Navigation', handler: () => navigate('/dashboards') },
       { keys: 'g i', label: 'Go to Incidents',    group: 'Navigation', handler: () => navigate('/incidents') },
       { keys: 'g p', label: 'Go to Problems',     group: 'Navigation', handler: () => navigate('/problems') },

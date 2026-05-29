@@ -43,7 +43,7 @@ var availablePages = []AvailablePage{
 	{ID: "/profiling", Label: "nav.profiling", Group: "navGroup.signals"},
 
 	{ID: "/explore", Label: "nav.explore", Group: "navGroup.workspaces"},
-	{ID: "/notebook", Label: "nav.notebook", Group: "navGroup.workspaces"},
+	{ID: "/runbooks", Label: "nav.runbooks", Group: "navGroup.workspaces"},
 	{ID: "/dashboards", Label: "nav.dashboards", Group: "navGroup.workspaces"},
 
 	{ID: "/alerts", Label: "nav.alerts", Group: "navGroup.alerting"},

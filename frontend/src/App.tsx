@@ -23,7 +23,8 @@ const Logs              = lazy(() => import('./pages/Logs'));
 const Metrics           = lazy(() => import('./pages/Metrics'));
 const Endpoints         = lazy(() => import('./pages/Endpoints'));
 const Explore           = lazy(() => import('./pages/Explore'));
-const Notebook          = lazy(() => import('./pages/Notebook'));
+const Runbooks          = lazy(() => import('./pages/Runbooks'));
+const Runbook           = lazy(() => import('./pages/Runbook'));
 const Databases         = lazy(() => import('./pages/Databases'));
 const SlowQueries       = lazy(() => import('./pages/SlowQueries'));
 const Messaging         = lazy(() => import('./pages/Messaging'));
@@ -88,7 +89,8 @@ export default function App() {
             <Route path="/metrics"        element={<Metrics />} />
             <Route path="/endpoints"      element={<Endpoints />} />
             <Route path="/explore"        element={<Explore />} />
-            <Route path="/notebook"       element={<Notebook />} />
+            <Route path="/runbooks"      element={<Runbooks />} />
+            <Route path="/runbook"       element={<Runbook />} />
             <Route path="/databases"      element={<Databases />} />
             <Route path="/databases/slow-queries" element={<SlowQueries />} />
             <Route path="/messaging"      element={<Messaging />} />

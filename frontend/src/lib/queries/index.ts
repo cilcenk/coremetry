@@ -34,6 +34,11 @@ export {
   useCreateAlertRule, useUpdateAlertRule,
   useDeleteAlertRule, useEnableAlertRule, useDisableAlertRule,
 } from './alerts';
+export {
+  useRunbooks, useRunbook,
+  useCreateRunbook, useUpdateRunbook,
+  useDeleteRunbook, useEnableRunbook, useDisableRunbook,
+} from './runbooks';
 export { useLogs } from './logs';
 export {
   useMonitors, useMonitorTimeline,

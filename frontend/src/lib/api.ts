@@ -4,7 +4,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, HistogramResult,
   SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
   AlertRule, Problem, ServiceEdgeStats, Exception,
-  Runbook,
+  Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
   ExceptionGroup, ExceptionGroupState, ExceptionSample,
@@ -1374,6 +1374,32 @@ export const api = {
     request<void>(`/api/runbooks/${id}/enable`, { method: 'POST' }),
   disableRunbook: (id: string) =>
     request<void>(`/api/runbooks/${id}/disable`, { method: 'POST' }),
+  // Runbook executions (v0.7.0)
+  executeRunbook: (id: string, problemId?: string) =>
+    request<RunbookExecution>(`/api/runbooks/${id}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(problemId ? { problemId } : {}),
+    }),
+  runbookExecutions: (params?: { runbookId?: string; status?: string; problemId?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.runbookId) qs.set('runbookId', params.runbookId);
+    if (params?.status)    qs.set('status', params.status);
+    if (params?.problemId) qs.set('problemId', params.problemId);
+    if (params?.limit)     qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return get<RunbookExecution[] | null>(`/api/runbooks/executions${q ? '?' + q : ''}`);
+  },
+  runbookExecution: (execId: string) =>
+    get<RunbookExecution>(`/api/runbooks/executions/${execId}`),
+  runbookStepAction: (execId: string, stepId: string, action: 'complete' | 'skip' | 'fail', note?: string) =>
+    request<RunbookExecution>(`/api/runbooks/executions/${execId}/steps/${stepId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, note }),
+    }),
+  cancelRunbookExecution: (execId: string) =>
+    request<RunbookExecution>(`/api/runbooks/executions/${execId}/cancel`, { method: 'POST' }),
 
   // ── Auth ─────────────────────────────────────────────────────────────────
   authConfig: () => get<AuthConfigResponse>('/api/auth/config'),

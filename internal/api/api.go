@@ -526,6 +526,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /api/runbooks/{id}",             auth.RequireAnyRole(editorRoles, s.deleteRunbook))
 	mux.HandleFunc("POST   /api/runbooks/{id}/enable",      auth.RequireAnyRole(editorRoles, s.enableRunbook))
 	mux.HandleFunc("POST   /api/runbooks/{id}/disable",     auth.RequireAnyRole(editorRoles, s.disableRunbook))
+	// Runbook executions (v0.7.0) — a run is the audit record. List/detail
+	// open (read-only audit for viewers); start/step/cancel gated to editor+.
+	// Literal /executions segments out-rank the {id} wildcard in the Go 1.22
+	// mux, so they match before /api/runbooks/{id}.
+	mux.HandleFunc("POST   /api/runbooks/{id}/execute",                   auth.RequireAnyRole(editorRoles, s.executeRunbook))
+	mux.HandleFunc("GET    /api/runbooks/executions",                    s.listExecutions)
+	mux.HandleFunc("GET    /api/runbooks/executions/{id}",               s.getExecution)
+	mux.HandleFunc("POST   /api/runbooks/executions/{id}/steps/{stepId}", auth.RequireAnyRole(editorRoles, s.execStepAction))
+	mux.HandleFunc("POST   /api/runbooks/executions/{id}/cancel",         auth.RequireAnyRole(editorRoles, s.cancelExecution))
 	mux.HandleFunc("GET /api/health", s.getHealth)
 	// Alias for the k8s readinessProbe convention. Same body +
 	// same 503-on-overload behaviour so a `httpGet: { path:

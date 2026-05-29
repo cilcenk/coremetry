@@ -1116,6 +1116,31 @@ func (s *Store) migrate(ctx context.Context) error {
 			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
+
+		// v0.7.0 — Runbook executions: one tracked RUN of a runbook (the
+		// audit record of "who ran what when, which steps executed"). Steps
+		// are SNAPSHOTTED onto the execution at start (step_states_json) so
+		// editing/deleting the template never rewrites a historical run —
+		// audit integrity, and removes the need for a runbook version table.
+		// Low-volume long-retention (operator runs), so PARTITION BY month
+		// (not day) per /clickhouse-schema; no TTL — executions are the
+		// audit trail. completed_at uses an epoch-0 sentinel (not Nullable)
+		// per the no-Nullable rule; 0 = not yet completed.
+		`CREATE TABLE IF NOT EXISTS runbook_executions (
+			id               String,
+			runbook_id       String,
+			title_snapshot   String,
+			status           LowCardinality(String),   -- running|waiting_for_user|completed|failed|cancelled
+			started_by       String        DEFAULT '',
+			started_at       DateTime64(9),
+			completed_at     DateTime64(9) DEFAULT toDateTime64(0, 9),  -- 0 = not completed
+			problem_id       String        DEFAULT '',
+			step_states_json String        DEFAULT '[]',  -- snapshot of steps + live per-step state
+			updated_at       DateTime64(9) DEFAULT now64(9),
+			version          UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toYYYYMM(started_at)
+		ORDER BY id`,
 		// v0.5.209 — triage assignee. Populated from service
 		// metadata's owner_team when the problem opens, then
 		// overridable by an operator claim via PATCH

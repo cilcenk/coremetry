@@ -1084,6 +1084,42 @@ export interface Runbook {
   updatedAt: number;
 }
 
+export type RunbookExecStatus =
+  | 'running' | 'waiting_for_user' | 'completed' | 'failed' | 'cancelled';
+export type RunbookStepStatus =
+  | 'pending' | 'running' | 'waiting_for_user' | 'completed' | 'skipped' | 'failed';
+
+// StepState is a step's snapshot + live status within an execution. Steps
+// are frozen at execution start (snapshot-on-start) so template edits never
+// rewrite a historical run — this IS the audit trail.
+export interface RunbookStepState {
+  stepId: string;
+  order: number;
+  kind: RunbookStepKind;
+  title: string;
+  instructions?: string;
+  status: RunbookStepStatus;
+  by?: string;        // user (manual) or agent id (automated)
+  note?: string;
+  output?: string;    // stdout / returnValue / HTTP body
+  error?: string;
+  startedAt?: number;
+  endedAt?: number;
+}
+
+export interface RunbookExecution {
+  id: string;
+  runbookId: string;
+  titleSnapshot: string;
+  status: RunbookExecStatus;
+  startedBy?: string;
+  startedAt: number;
+  completedAt?: number;
+  problemId?: string;
+  stepStates: RunbookStepState[];
+  updatedAt: number;
+}
+
 // Noisy-rules report row (v0.5.131). Pairs a rule's open-rate
 // stats with a heuristic suggestion + the current knob values
 // so the UI can render a one-click "Apply" affordance.

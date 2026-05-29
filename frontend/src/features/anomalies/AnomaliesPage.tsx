@@ -7,6 +7,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { ClusterChips } from '@/components/ClusterChips';
+import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -1037,6 +1038,10 @@ function TriageDrawer({ problem, onClose }: {
             <CopilotExplain kind="runbook" id={problem.id}
               label={<><IconSparkles /> <span>Runbook AI</span></>} />
           </div>
+
+          {/* Problem→Runbook bridge: run an operational runbook against this
+              fire (tagged with problemId) + the runs already attached. */}
+          <ProblemRunbookPanel problemId={problem.id} />
 
           <div style={{ marginTop: 4 }}>
             <div style={{

@@ -14,6 +14,17 @@ import (
 // every write is gated to editor+ at the mux (api.go) and audited here.
 // Executions + the coremetry-agent dispatch land in later increments.
 
+// ensureStepIDs backfills a stable id for any step created without one (e.g.
+// via the API — the frontend editor already assigns ids). Empty or duplicate
+// step ids corrupt execution result-matching, which keys on stepId. (v0.7.6)
+func ensureStepIDs(steps []chstore.RunbookStep) {
+	for i := range steps {
+		if steps[i].ID == "" {
+			steps[i].ID = "st-" + newID(6)
+		}
+	}
+}
+
 func (s *Server) listRunbooks(w http.ResponseWriter, r *http.Request) {
 	rbs, err := s.store.ListRunbooks(r.Context())
 	if err != nil {
@@ -47,6 +58,7 @@ func (s *Server) createRunbook(w http.ResponseWriter, r *http.Request) {
 	if c := auth.FromContext(r.Context()); c != nil {
 		rb.CreatedBy = c.Email
 	}
+	ensureStepIDs(rb.Steps)
 	if err := s.store.UpsertRunbook(r.Context(), rb); err != nil {
 		writeErr(w, err)
 		return
@@ -75,6 +87,7 @@ func (s *Server) updateRunbook(w http.ResponseWriter, r *http.Request) {
 	rb.CreatedAt = existing.CreatedAt
 	rb.CreatedBy = existing.CreatedBy
 	rb.UpdatedAt = time.Now().UnixNano()
+	ensureStepIDs(rb.Steps)
 	if err := s.store.UpsertRunbook(r.Context(), rb); err != nil {
 		writeErr(w, err)
 		return

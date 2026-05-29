@@ -31,6 +31,19 @@ func TestSnapshotSteps(t *testing.T) {
 	if len(snapshotSteps(nil)) != 0 {
 		t.Error("nil steps should snapshot to empty")
 	}
+
+	// v0.7.6 regression — empty-id steps (e.g. created via the API without
+	// ids) must get unique, non-empty snapshot ids. Otherwise ApplyStepResult
+	// (matched by stepId) writes every result onto the first empty-id step,
+	// so one step shows another's output and the rest stick pending. (This is
+	// the bug behind "I ran `date` but saw no output".)
+	noid := snapshotSteps([]RunbookStep{{Kind: "bash"}, {Kind: "http"}})
+	if noid[0].StepID == "" || noid[1].StepID == "" {
+		t.Fatal("empty-id steps must get assigned snapshot ids")
+	}
+	if noid[0].StepID == noid[1].StepID {
+		t.Fatalf("assigned snapshot ids must be unique, got %q twice", noid[0].StepID)
+	}
 }
 
 func TestDeriveExecStatus(t *testing.T) {

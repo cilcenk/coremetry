@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -73,8 +74,17 @@ const (
 func snapshotSteps(steps []RunbookStep) []StepState {
 	out := make([]StepState, len(steps))
 	for i, st := range steps {
+		id := st.ID
+		if id == "" {
+			// Defensive: a step missing an id (e.g. created via the API
+			// without one) would collide with other empty-id steps in
+			// ApplyStepResult (matched by stepId), corrupting which step a
+			// result lands on. The snapshot is frozen, so an index-based id is
+			// unique + stable for the run. (v0.7.6)
+			id = fmt.Sprintf("st%d", i+1)
+		}
 		out[i] = StepState{
-			StepID:       st.ID,
+			StepID:       id,
 			Order:        i,
 			Kind:         st.Kind,
 			Title:        st.Title,

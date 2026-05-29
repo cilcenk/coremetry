@@ -1094,6 +1094,28 @@ func (s *Store) migrate(ctx context.Context) error {
 			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY (time, id)`,
+
+		// v0.7.0 — Runbooks: operator-authored, executable operational
+		// procedures (OneUptime model). DEDICATED table, NOT saved_views:
+		// a runbook is a first-class SHARED operational entity (same class
+		// as alert_rules / problems — invariant #4), with its own
+		// lifecycle, executions that reference it, and audit coverage — it
+		// is not a per-user VIEW/preset (which is what saved_views /
+		// invariant #5 covers). steps are an ordered JSON blob (no per-step
+		// rows, mirrors OneUptime). See docs/runbooks-agent-design.md.
+		`CREATE TABLE IF NOT EXISTS runbooks (
+			id          String,
+			title       String,
+			description String        DEFAULT '',     -- markdown (the "knowledge")
+			steps_json  String        DEFAULT '[]',   -- ordered []RunbookStep, marshaled
+			enabled     UInt8         DEFAULT 1,
+			labels      Array(LowCardinality(String)),
+			created_by  String        DEFAULT '',     -- creator email
+			created_at  DateTime64(9) DEFAULT now64(9),
+			updated_at  DateTime64(9) DEFAULT now64(9),
+			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY id`,
 		// v0.5.209 — triage assignee. Populated from service
 		// metadata's owner_team when the problem opens, then
 		// overridable by an operator claim via PATCH

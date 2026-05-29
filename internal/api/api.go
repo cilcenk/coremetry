@@ -516,6 +516,16 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/alert-rules/{id}/enable",   auth.RequireAnyRole(editorRoles, s.enableAlertRule))
 	mux.HandleFunc("POST   /api/alert-rules/{id}/disable",  auth.RequireAnyRole(editorRoles, s.disableAlertRule))
 	mux.HandleFunc("GET    /api/alert-rules/baseline",      auth.RequireAnyRole(editorRoles, s.getAlertBaseline))
+	// Runbooks (v0.7.0) — operator-authored executable procedures.
+	// GET list/detail open so viewers see them read-only (invariant #7);
+	// every write gated to editor+. Executions + agent dispatch land next.
+	mux.HandleFunc("GET    /api/runbooks",                  s.listRunbooks)
+	mux.HandleFunc("POST   /api/runbooks",                  auth.RequireAnyRole(editorRoles, s.createRunbook))
+	mux.HandleFunc("GET    /api/runbooks/{id}",             s.getRunbook)
+	mux.HandleFunc("PUT    /api/runbooks/{id}",             auth.RequireAnyRole(editorRoles, s.updateRunbook))
+	mux.HandleFunc("DELETE /api/runbooks/{id}",             auth.RequireAnyRole(editorRoles, s.deleteRunbook))
+	mux.HandleFunc("POST   /api/runbooks/{id}/enable",      auth.RequireAnyRole(editorRoles, s.enableRunbook))
+	mux.HandleFunc("POST   /api/runbooks/{id}/disable",     auth.RequireAnyRole(editorRoles, s.disableRunbook))
 	mux.HandleFunc("GET /api/health", s.getHealth)
 	// Alias for the k8s readinessProbe convention. Same body +
 	// same 503-on-overload behaviour so a `httpGet: { path:

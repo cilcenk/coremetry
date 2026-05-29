@@ -1048,6 +1048,42 @@ export interface AlertRule {
   createdAt: number;
 }
 
+// ── Runbooks (v0.7.0) ───────────────────────────────────────────────────────
+// Operator-authored executable procedures (OneUptime model). A Runbook is an
+// ordered list of steps; automated steps (http/javascript/bash) run on the
+// coremetry-agent, manual/query resolve server-side. See
+// docs/runbooks-agent-design.md.
+export type RunbookStepKind = 'manual' | 'query' | 'http' | 'javascript' | 'bash';
+
+export interface RunbookStep {
+  id: string;
+  order: number;
+  kind: RunbookStepKind;
+  title: string;
+  instructions?: string;             // markdown
+  expected?: string;                 // expected outcome (manual)
+  query?: string;                    // kind=query — CH SQL / Explore DSL
+  url?: string;                      // kind=http
+  method?: string;                   // kind=http
+  headers?: Record<string, string>;  // kind=http
+  body?: string;                     // kind=http
+  timeoutMs?: number;                // kind=http|bash
+  script?: string;                   // kind=javascript
+  command?: string;                  // kind=bash
+}
+
+export interface Runbook {
+  id: string;
+  title: string;
+  description?: string;              // markdown — the "knowledge"
+  steps: RunbookStep[];
+  enabled: boolean;
+  labels?: string[];
+  createdBy?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // Noisy-rules report row (v0.5.131). Pairs a rule's open-rate
 // stats with a heuristic suggestion + the current knob values
 // so the UI can render a one-click "Apply" affordance.

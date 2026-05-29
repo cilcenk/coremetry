@@ -4,6 +4,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, HistogramResult,
   SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
   AlertRule, Problem, ServiceEdgeStats, Exception,
+  Runbook,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
   ExceptionGroup, ExceptionGroupState, ExceptionSample,
@@ -1351,6 +1352,28 @@ export const api = {
     request<void>(`/api/alert-rules/${id}/enable`, { method: 'POST' }),
   disableAlertRule: (id: string) =>
     request<void>(`/api/alert-rules/${id}/disable`, { method: 'POST' }),
+
+  // ── Runbooks (v0.7.0) ──────────────────────────────────────────────────────
+  runbooks: () => get<Runbook[] | null>('/api/runbooks'),
+  runbook: (id: string) => get<Runbook>(`/api/runbooks/${id}`),
+  createRunbook: (rb: Partial<Runbook>) =>
+    request<Runbook>('/api/runbooks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rb),
+    }),
+  updateRunbook: (id: string, rb: Partial<Runbook>) =>
+    request<Runbook>(`/api/runbooks/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rb),
+    }),
+  deleteRunbook: (id: string) =>
+    request<void>(`/api/runbooks/${id}`, { method: 'DELETE' }),
+  enableRunbook: (id: string) =>
+    request<void>(`/api/runbooks/${id}/enable`, { method: 'POST' }),
+  disableRunbook: (id: string) =>
+    request<void>(`/api/runbooks/${id}/disable`, { method: 'POST' }),
 
   // ── Auth ─────────────────────────────────────────────────────────────────
   authConfig: () => get<AuthConfigResponse>('/api/auth/config'),

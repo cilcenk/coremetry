@@ -131,6 +131,12 @@ spec:
             - name: COREMETRY_REDIS_URL
               value: {{ $redisURL | quote }}
             {{- end }}
+            {{- if $.Values.selfObs.enabled }}
+            - name: COREMETRY_SELF_OBS_OTLP_ENDPOINT
+              value: {{ $.Values.selfObs.endpoint | default (printf "%s-otelcol:%v" (include "coremetry.fullname" $) $.Values.otelCollector.service.grpcPort) | quote }}
+            - name: COREMETRY_SELF_OBS_SAMPLE_RATE
+              value: {{ $.Values.selfObs.sampleRate | quote }}
+            {{- end }}
             {{- if eq (default "clickhouse" $.Values.logs.backend) "elasticsearch" }}
             - name: COREMETRY_LOGS_BACKEND
               value: "elasticsearch"

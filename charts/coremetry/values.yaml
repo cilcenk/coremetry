@@ -354,6 +354,17 @@ redis:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { cpu: "1",  memory: 1Gi }
 
+# Self-observability (v0.7.1) — Coremetry instruments its OWN pods (api /
+# worker / all roles) and ships those traces + metrics via OTLP so coremetry-*
+# shows up on /services like any monitored app. Blank endpoint = default to the
+# bundled <release>-otelcol Service. The pure-ingest pod self-disables (avoids
+# a span-about-receiving-spans loop). If you run WITHOUT the bundled collector,
+# set endpoint to the ingest Service, e.g. "<release>-ingest:4317".
+selfObs:
+  enabled: true
+  endpoint: ""           # blank → <fullname>-otelcol:<otelCollector.service.grpcPort>
+  sampleRate: "0.1"
+
 # OTel Collector — runs as a sidecar deployment, accepts OTLP from apps,
 # forwards to coremetry over gRPC. Disable if you already operate a collector
 # elsewhere and point apps directly at coremetry's gRPC service.

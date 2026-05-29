@@ -23,7 +23,13 @@ data:
         send_batch_size: 1000
     exporters:
       otlp/coremetry:
-        endpoint: {{ include "coremetry.fullname" . }}:{{ .Values.service.grpcPort }}
+        # Mode-aware target: in distributed mode the OTLP gRPC receiver runs
+        # on the INGEST role (the stable <release> Service aliases the API
+        # role, which serves HTTP only and binds no :4317), so forward to
+        # <release>-ingest. In monolithic mode the all-mode pod receives, so
+        # the stable Service is correct. (v0.6.69 — without this, distributed
+        # installs silently dropped every span at the api pod.)
+        endpoint: {{ include "coremetry.fullname" . }}{{ if eq .Values.deployment.mode "distributed" }}-ingest{{ end }}:{{ .Values.service.grpcPort }}
         tls: { insecure: true }
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 5000 }
         retry_on_failure: { enabled: true, initial_interval: 1s, max_interval: 30s }

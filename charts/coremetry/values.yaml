@@ -396,13 +396,6 @@ javaDemo:
   # attributes, async-profiler tuning). Standard env vars are wired
   # automatically — Otel endpoint and the coremetry profile-push URL.
   extraEnv: []
-  service:
-    type: ClusterIP
-    grpcPort: 4317
-    httpPort: 4318
-  resources:
-    requests: { cpu: 100m, memory: 128Mi }
-    limits:   { cpu: "1",  memory: 512Mi }
 
 serviceAccount:
   create: true

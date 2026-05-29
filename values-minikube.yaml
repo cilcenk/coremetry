@@ -79,12 +79,15 @@ logs:
   backend: clickhouse     # no ES pod locally
 
 javaDemo:
-  # Off for the first install: the chart pulls
-  # ghcr.io/cilcenk/coremetry-java-demo:<appVersion> which isn't
-  # published for this tag (ImagePullBackOff). Core-stack traffic comes
-  # from each pod's self-observability for now. To add realistic load
-  # later: build + `minikube image load` the demo image, flip this on.
-  enabled: false
+  # Live traffic generator. The GHCR demo image isn't published for this
+  # tag, so we side-load a locally-built one (`gotrace-java-demo` →
+  # ghcr.io/cilcenk/coremetry-java-demo:local) and never pull. `make
+  # minikube-up` builds + loads it; this flag wires it into the deploy so
+  # the k8s stack shows real spans/metrics/logs end-to-end.
+  enabled: true
+  image:
+    tag: "local"
+    pullPolicy: Never
   resources:
     requests: { cpu: 200m, memory: 384Mi }
     limits:   { cpu: "1",  memory: 1Gi }

@@ -37,6 +37,16 @@ type StepState struct {
 	Error        string `json:"error,omitempty"`
 	StartedAt    int64  `json:"startedAt,omitempty"`
 	EndedAt      int64  `json:"endedAt,omitempty"`
+	// Executable payload — snapshotted from the step at execution start so the
+	// coremetry-agent runs exactly what the runbook said at run time (template
+	// edits never change an in-flight run). Only the fields for Kind are set.
+	URL       string            `json:"url,omitempty"`
+	Method    string            `json:"method,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Body      string            `json:"body,omitempty"`
+	Script    string            `json:"script,omitempty"`
+	Command   string            `json:"command,omitempty"`
+	TimeoutMs int               `json:"timeoutMs,omitempty"`
 }
 
 // Execution statuses.
@@ -70,6 +80,13 @@ func snapshotSteps(steps []RunbookStep) []StepState {
 			Title:        st.Title,
 			Instructions: st.Instructions,
 			Status:       StepPending,
+			URL:          st.URL,
+			Method:       st.Method,
+			Headers:      st.Headers,
+			Body:         st.Body,
+			Script:       st.Script,
+			Command:      st.Command,
+			TimeoutMs:    st.TimeoutMs,
 		}
 	}
 	return out

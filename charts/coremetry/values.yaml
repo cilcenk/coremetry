@@ -70,6 +70,16 @@ deployment:
     worker:
       replicas: 1       # DO NOT change — leader-elected workloads
       resources: {}
+    # Runbook agent (v0.7.4) — executes automated runbook steps
+    # (http/javascript/bash) in an isolated, non-data-plane pod. Off by
+    # default; enable in distributed mode to run automated steps (the
+    # monolithic all-pod already runs the agent in-process). Multiple replicas
+    # are HA-safe — each automated step is claimed via a per-execution Redis
+    # lock, so only one agent runs a given step.
+    agent:
+      enabled: false
+      replicas: 1
+      resources: {}
 
 # Pod-level options
 podAnnotations: {}

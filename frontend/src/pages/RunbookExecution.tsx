@@ -137,7 +137,7 @@ function Inner() {
                 isAgent ? (
                   <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text2)' }}>
                     <span className="badge b-warn">agent</span>{' '}
-                    This {s.kind} step runs on the coremetry-agent (wired in a later v0.7.0 increment). Skip to proceed.
+                    This {s.kind} step runs on the coremetry-agent — it will pick it up shortly (status updates on the next poll). You can also skip it.
                     <div style={{ marginTop: 6 }}>
                       <button className="sec" onClick={() => act(s.stepId, 'skip')} disabled={stepAction.isPending}>Skip</button>
                     </div>

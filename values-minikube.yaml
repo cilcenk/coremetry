@@ -43,6 +43,12 @@ deployment:
       resources:
         requests: { cpu: 100m, memory: 256Mi }
         limits:   { cpu: "1",  memory: 1Gi }
+    agent:
+      enabled: true       # HA test — runbook automated-step agent (http/js/bash)
+      replicas: 2         # per-execution Redis lock makes 2 agents safe
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits:   { cpu: "1",  memory: 1Gi }
 
 # Chart-wide fallback (consulted by any role with empty resources).
 resources:

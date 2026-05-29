@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	agentpkg "github.com/cilcenk/coremetry/internal/agent"
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/api"
 	"github.com/cilcenk/coremetry/internal/auth"
@@ -86,23 +87,25 @@ var Version = "dev"
 //
 // Older deployments are unchanged: COREMETRY_MODE unset → "all".
 type runMode struct {
-	ingest, api, worker bool
-	name                string
+	ingest, api, worker, agent bool
+	name                       string
 }
 
 func parseRunMode() runMode {
 	m := strings.ToLower(strings.TrimSpace(os.Getenv("COREMETRY_MODE")))
 	switch m {
 	case "", "all":
-		return runMode{ingest: true, api: true, worker: true, name: "all"}
+		return runMode{ingest: true, api: true, worker: true, agent: true, name: "all"}
 	case "ingest":
 		return runMode{ingest: true, name: "ingest"}
 	case "api":
 		return runMode{api: true, name: "api"}
 	case "worker":
 		return runMode{worker: true, name: "worker"}
+	case "agent":
+		return runMode{agent: true, name: "agent"}
 	default:
-		log.Fatalf("invalid COREMETRY_MODE=%q (must be one of: all, ingest, api, worker)", m)
+		log.Fatalf("invalid COREMETRY_MODE=%q (must be one of: all, ingest, api, worker, agent)", m)
 		return runMode{}
 	}
 }
@@ -424,6 +427,20 @@ func main() {
 		// the snapshot the worker pod is keeping warm in CH.
 		corr := correlator.New(store)
 		store.SetNeighborProvider(corr)
+	}
+
+	// ── Runbook agent (executes automated runbook steps in an isolated role) ──
+	// http/javascript/bash steps run HERE, never in the api/ingest/worker
+	// roles. Same store + Redis lock as the worker; the per-execution lock
+	// keeps multi-agent claims HA-safe. The all-mode pod runs it too, so
+	// monolithic installs execute runbooks without a separate agent pod.
+	if mode.agent {
+		agentID := os.Getenv("HOSTNAME")
+		if agentID == "" {
+			agentID = "agent"
+		}
+		go agentpkg.NewRunner(store, lockImpl, agentID, 5*time.Second).Start(ctx)
+		log.Printf("[agent] runbook automated-step agent enabled (id=%s)", agentID)
 	}
 
 	// ── Auth (JWT issuer + initial admin seed) ────────────────────────────────

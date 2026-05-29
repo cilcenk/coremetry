@@ -54,7 +54,14 @@ func (r *Runner) Start(ctx context.Context) {
 }
 
 func (r *Runner) tick(ctx context.Context) {
-	execs, err := r.store.ListExecutions(ctx, chstore.ExecutionFilter{Status: chstore.RunExecRunning, Limit: 200})
+	// SinceNs bounds the poll to runs started in the last 30 days so this
+	// 5s tick partition-prunes instead of FINAL-scanning the forever-growing
+	// audit table (v0.7.8). A run open longer than that is abandoned.
+	execs, err := r.store.ListExecutions(ctx, chstore.ExecutionFilter{
+		Status:  chstore.RunExecRunning,
+		SinceNs: time.Now().Add(-30 * 24 * time.Hour).UnixNano(),
+		Limit:   200,
+	})
 	if err != nil {
 		log.Printf("[agent] list executions: %v", err)
 		return

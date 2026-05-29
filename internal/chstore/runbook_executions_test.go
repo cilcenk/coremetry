@@ -1,6 +1,10 @@
 package chstore
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 // v0.7.0 — Runbook execution state machine. snapshotSteps freezes the
 // template at start (audit integrity); DeriveExecStatus + ApplyStepResult
@@ -81,5 +85,60 @@ func TestApplyStepResult(t *testing.T) {
 	}
 	if _, ok := ApplyStepResult(states, "nope", StepCompleted, "", "", "", "", 1); ok {
 		t.Error("unknown stepID should return ok=false")
+	}
+}
+
+// v0.7.8 regression — the agent polls ListExecutions(Status=running) every 5s.
+// runbook_executions is ORDER BY id with no TTL (the audit trail), so a status
+// filter scans the whole forever-growing table under FINAL. SinceNs must emit
+// `started_at >= ?` so PARTITION BY toYYYYMM(started_at) prunes the poll to
+// recent partitions — but ONLY when set, so the UI's full-history list
+// (SinceNs=0) stays unbounded. A regression that dropped the predicate would
+// silently reintroduce the O(all-time-rows) scan.
+func TestExecutionWhere(t *testing.T) {
+	const startedPred = "started_at >= ?"
+	cases := []struct {
+		name      string
+		f         ExecutionFilter
+		wantConds []string // substrings that MUST appear in the WHERE sql
+		wantArgs  int
+		noStarted bool // started_at predicate must be ABSENT
+	}{
+		{"empty = no where", ExecutionFilter{}, nil, 0, true},
+		{"status only, no time bound", ExecutionFilter{Status: "running"}, []string{"status = ?"}, 1, true},
+		{"agent poll prunes by started_at", ExecutionFilter{Status: "running", SinceNs: 1}, []string{"status = ?", startedPred}, 2, false},
+		{"runbook + problem + since", ExecutionFilter{RunbookID: "rb1", ProblemID: "p1", SinceNs: 1}, []string{"runbook_id = ?", "problem_id = ?", startedPred}, 3, false},
+		{"SinceNs<=0 stays unbounded (UI history)", ExecutionFilter{RunbookID: "rb1", SinceNs: 0}, []string{"runbook_id = ?"}, 1, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wc := executionWhere(c.f)
+			sql := wc.sql()
+			for _, want := range c.wantConds {
+				if !strings.Contains(sql, want) {
+					t.Errorf("sql %q missing %q", sql, want)
+				}
+			}
+			if len(wc.args) != c.wantArgs {
+				t.Errorf("args=%d, want %d (sql=%q)", len(wc.args), c.wantArgs, sql)
+			}
+			if c.noStarted && strings.Contains(sql, startedPred) {
+				t.Errorf("started_at predicate must be absent for %+v, got %q", c.f, sql)
+			}
+			if len(c.wantConds) == 0 && sql != "" {
+				t.Errorf("empty filter must produce empty WHERE, got %q", sql)
+			}
+		})
+	}
+
+	// The agent's 30-day window must resolve to a real, recent lower bound
+	// (not the zero time, which would scan all partitions).
+	wc := executionWhere(ExecutionFilter{Status: "running", SinceNs: time.Now().Add(-30 * 24 * time.Hour).UnixNano()})
+	bound, ok := wc.args[len(wc.args)-1].(time.Time)
+	if !ok {
+		t.Fatalf("started_at arg should be time.Time, got %T", wc.args[len(wc.args)-1])
+	}
+	if bound.IsZero() || time.Since(bound) < 29*24*time.Hour || time.Since(bound) > 31*24*time.Hour {
+		t.Errorf("30-day window resolved to %v (since=%v), want ~30d ago", bound, time.Since(bound))
 	}
 }

@@ -227,10 +227,24 @@ type ExecutionFilter struct {
 	RunbookID string
 	Status    string
 	ProblemID string
+	SinceNs   int64 // v0.7.8 — >0 → started_at >= this (partition-prunes; see executionWhere)
 	Limit     int
 }
 
-func (s *Store) ListExecutions(ctx context.Context, f ExecutionFilter) ([]RunbookExecution, error) {
+// executionWhere builds the WHERE clause for ListExecutions. Extracted as a
+// pure helper so the v0.7.8 partition-prune predicate stays unit-testable.
+//
+// runbook_executions is the audit trail — no TTL, grows forever — and is
+// ORDER BY id, so a status filter is NOT an index-prefix prune. The agent
+// polls Status=running every 5s per pod; without a bound that FINAL-scans the
+// whole all-time table every tick to find a handful of live runs (work grows
+// O(total executions)). SinceNs adds `started_at >= ?`; with PARTITION BY
+// toYYYYMM(started_at) that prunes the scan to recent partitions. The agent
+// passes a 30-day window — generous enough to cover any run still legitimately
+// progressing (incl. ones blocked on a slow human between a manual and an
+// agent step); a run open longer than that is abandoned. The UI list leaves
+// SinceNs=0 (no bound) so operators always see full history.
+func executionWhere(f ExecutionFilter) whereClause {
 	var wc whereClause
 	if f.RunbookID != "" {
 		wc.add("runbook_id = ?", f.RunbookID)
@@ -241,6 +255,14 @@ func (s *Store) ListExecutions(ctx context.Context, f ExecutionFilter) ([]Runboo
 	if f.ProblemID != "" {
 		wc.add("problem_id = ?", f.ProblemID)
 	}
+	if f.SinceNs > 0 {
+		wc.add("started_at >= ?", time.Unix(0, f.SinceNs).UTC())
+	}
+	return wc
+}
+
+func (s *Store) ListExecutions(ctx context.Context, f ExecutionFilter) ([]RunbookExecution, error) {
+	wc := executionWhere(f)
 	limit := f.Limit
 	if limit <= 0 || limit > 500 {
 		limit = 200

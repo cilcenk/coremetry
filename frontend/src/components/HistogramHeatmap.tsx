@@ -58,13 +58,14 @@ export function HistogramHeatmap({ data, mode = 'heatmap', unit = 'ms', height =
   const maxVolume = Math.max(1, ...volume);
   let maxCount = 1;
   for (const col of data.counts) for (const c of col) if (c > maxCount) maxCount = c;
-  // Latency axis ceiling for the volume mode's line: the tallest percentile
-  // plus headroom, falling back to the last finite bound.
-  const latMax = Math.max(
-    1e-9,
-    ...data.p99, ...data.p95, ...data.p50,
-    data.bounds.length ? data.bounds[data.bounds.length - 1] : 0,
-  ) * 1.08;
+  // Latency axis ceiling for the volume mode's duration line: scale to the
+  // PERCENTILES, never the last bucket bound. OTel histogram bounds often
+  // run to 10000ms+ while real p99 is tens of ms — including the last bound
+  // squashed the line flat against the x-axis, so the operator saw the bars
+  // but not the süre line (v0.6.61). Fall back to the last bound only when
+  // there are no percentile values at all.
+  const pMax = Math.max(0, ...data.p99, ...data.p95, ...data.p50);
+  const latMax = (pMax > 0 ? pMax : (data.bounds.length ? data.bounds[data.bounds.length - 1] : 1)) * 1.12;
 
   useEffect(() => {
     const canvas = canvasRef.current, wrap = containerRef.current;

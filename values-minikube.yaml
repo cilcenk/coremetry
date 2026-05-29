@@ -1,0 +1,90 @@
+# values-minikube.yaml — local minikube prod-parity install (v0.6.66)
+#
+# Runs the REAL Helm chart (charts/coremetry) in distributed mode on a
+# laptop minikube (docker driver, ~6GB), so the production deployment
+# artifact gets exercised end-to-end — not the docker-compose
+# approximation. Use docker-compose for the fast edit→rebuild→verify dev
+# loop; use this for "does the chart actually deploy + run distributed".
+#
+#   make minikube-up      # build + minikube image load + helm upgrade --install
+#   make minikube-down
+#
+# Differences from the production defaults, all to fit a laptop:
+#   - image: a locally-built coremetry:local loaded via `minikube image
+#     load`, pullPolicy: Never (never reach out to GHCR).
+#   - distributed mode but 1 replica per role (5→3 pods) — enough to
+#     prove the split + leader-lock without 5×1Gi requests.
+#   - resource requests cut hard so the whole stack (CH + Redis +
+#     collector + demo + 3 coremetry) schedules under 6GB.
+#   - javaDemo on, so there's live traffic to look at.
+#   - logs.backend=clickhouse (chart default) — no Elasticsearch pod.
+
+image:
+  registry: "ghcr.io"
+  repository: "cilcenk/coremetry"
+  tag: "local"            # built + loaded by `make minikube-up`
+  pullPolicy: Never       # image is side-loaded into minikube; never pull
+
+deployment:
+  mode: distributed
+  roles:
+    ingest:
+      replicas: 1         # 1 is enough locally; prod runs 2+
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits:   { cpu: "1",  memory: 1Gi }
+    api:
+      replicas: 1
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits:   { cpu: "1",  memory: 1Gi }
+    worker:
+      replicas: 1         # leader-elected — stays 1 in prod too
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits:   { cpu: "1",  memory: 1Gi }
+
+# Chart-wide fallback (consulted by any role with empty resources).
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: "1",  memory: 1Gi }
+
+secrets:
+  initialAdminPassword: "admin"   # matches the compose dev creds
+  jwtSecret: ""                   # ephemeral key — fine for local
+
+clickhouse:
+  enabled: true
+  containerSecurityContext: null   # null (not {}) so Helm coalesce DROPS the hardened default → CH image runs as its own user
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+  storage:
+    size: 5Gi             # laptop PVC
+
+redis:
+  enabled: true
+  containerSecurityContext: null   # null (not {}) so Helm coalesce DROPS the hardened default → redis runs as its own user
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+otelCollector:
+  enabled: true
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+logs:
+  backend: clickhouse     # no ES pod locally
+
+javaDemo:
+  # Off for the first install: the chart pulls
+  # ghcr.io/cilcenk/coremetry-java-demo:<appVersion> which isn't
+  # published for this tag (ImagePullBackOff). Core-stack traffic comes
+  # from each pod's self-observability for now. To add realistic load
+  # later: build + `minikube image load` the demo image, flip this on.
+  enabled: false
+  resources:
+    requests: { cpu: 200m, memory: 384Mi }
+    limits:   { cpu: "1",  memory: 1Gi }

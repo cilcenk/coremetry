@@ -11,10 +11,18 @@
       logs are scraped from stdout instead. The OTel-shipped log records
       ALSO carry these IDs as separate fields, so this is purely about
       what humans see in the rendered text.
+
+      The banking controllers also stuff domain context into MDC:
+        - account.id   the account number under operation
+        - txn.id       the transfer / payment reference
+        - fraud.score  the fraud-engine score (when one was computed)
+      These ride both the rendered console line below AND the OTLP log
+      record attributes, so an operator can pivot a log straight to the
+      account / transaction it concerns.
     -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{30} trace_id=%X{trace_id:-} span_id=%X{span_id:-} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{30} trace_id=%X{trace_id:-} span_id=%X{span_id:-} account.id=%X{account.id:-} txn.id=%X{txn.id:-} fraud.score=%X{fraud.score:-} - %msg%n</pattern>
         </encoder>
     </appender>
     <root level="INFO">

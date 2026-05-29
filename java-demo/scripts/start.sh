@@ -2,6 +2,16 @@
 set -e
 echo "[start] Java demo: launching with OpenTelemetry javaagent (zero-code instrumentation)"
 
+# ── Simulated Oracle core-banking telemetry ──────────────────────────────────
+# Turn OFF the agent's JDBC auto-instrumentation so the REAL H2 statements
+# don't shadow the synthetic Oracle CLIENT spans that CoreBankingGateway emits
+# manually (db.system=oracle, db.name=COREBANK, server.address=corebank-scan…).
+# To an operator the trace then looks like a genuine Oracle round-trip; the
+# H2/JPA work still happens underneath, just untraced by the agent.
+# (Can be overridden from compose/helm by re-exporting the var if you ever
+#  want to see the underlying H2 spans for debugging.)
+export OTEL_INSTRUMENTATION_JDBC_ENABLED="${OTEL_INSTRUMENTATION_JDBC_ENABLED:-false}"
+
 # Background CPU profiler — uses async-profiler, attaches via JVM TI (no app code).
 /profile-pusher.sh &
 

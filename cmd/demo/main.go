@@ -1,8 +1,18 @@
-// Coremetry demo: realistic e-commerce traffic generator that emits
-// OTLP traces, logs, and metrics over HTTP to Coremetry.
+// Coremetry demo: realistic retail-banking traffic generator that
+// emits OTLP traces, logs, and metrics over HTTP to Coremetry.
+//
+// The simulated domain is a retail-banking backend: balance
+// inquiry, money transfer, card payment, bill pay, fraud check and
+// account-statement flows. Multi-hop HTTP server/client spans chain
+// the mobile/web channel → API gateway → core-banking services, and
+// every persistence hop emits an Oracle DB client span (db.system =
+// "oracle", Oracle-style SQL + PL/SQL, server.address like
+// "corebank-scan.prod:1521"). Errors (~5-10%) cover insufficient
+// funds, fraud blocks and ORA- style database faults.
 //
 // Usage:
-//   go run ./cmd/demo -endpoint http://localhost:14318 -rps 2.0
+//
+//	go run ./cmd/demo -endpoint http://localhost:14318 -rps 2.0
 package main
 
 import (
@@ -65,48 +75,48 @@ type Service struct {
 }
 
 var services = map[string]Service{
-	// Edge / public-facing
-	"frontend":               {"frontend",               []string{"web-prod-1", "web-prod-2", "web-prod-3"},                "nodejs", "node",  "20.11.1",  "Node.js v20.11.1"},
-	"api-gateway":            {"api-gateway",            []string{"gw-prod-1", "gw-prod-2", "gw-prod-3"},                   "go",     "go",    "1.22.5",   "go version go1.22.5 linux/amd64"},
+	// Edge / public-facing channels
+	"mobile-bff":  {"mobile-bff", []string{"mbff-prod-1", "mbff-prod-2", "mbff-prod-3"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
+	"api-gateway": {"api-gateway", []string{"gw-prod-1", "gw-prod-2", "gw-prod-3"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
 	// Core domain services
-	"user-service":           {"user-service",           []string{"users-prod-1", "users-prod-2", "users-prod-3"},          "go",     "go",    "1.22.5",   "go version go1.22.5 linux/amd64"},
-	"order-service":          {"order-service",          []string{"orders-prod-1", "orders-prod-2"},                        "java",   "OpenJDK Runtime Environment", "21.0.2+13", "OpenJDK 64-Bit Server VM Temurin-21.0.2+13 (build 21.0.2+13-LTS)"},
-	"payment-service":        {"payment-service",        []string{"pay-prod-1", "pay-prod-2"},                              "java",   "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
-	"product-service":        {"product-service",        []string{"products-prod-1", "products-prod-2", "products-prod-3"}, "go",     "go",    "1.22.5",   "go version go1.22.5 linux/amd64"},
-	"cart-service":           {"cart-service",           []string{"cart-prod-1", "cart-prod-2"},                            "nodejs", "node",  "20.11.1",  "Node.js v20.11.1"},
-	"search-service":         {"search-service",         []string{"search-prod-1", "search-prod-2"},                        "rust",   "rust",  "1.78.0",   "rustc 1.78.0 (9b00956e5 2024-04-29)"},
-	// Supporting services — added so the topology fan-out reads
-	// like a real e-commerce mesh and the backtrace / graph views
+	"auth-service":     {"auth-service", []string{"auth-prod-1", "auth-prod-2", "auth-prod-3"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
+	"account-service":  {"account-service", []string{"acct-prod-1", "acct-prod-2", "acct-prod-3"}, "java", "OpenJDK Runtime Environment", "21.0.2+13", "OpenJDK 64-Bit Server VM Temurin-21.0.2+13 (build 21.0.2+13-LTS)"},
+	"transfer-service": {"transfer-service", []string{"xfer-prod-1", "xfer-prod-2"}, "java", "OpenJDK Runtime Environment", "21.0.2+13", "OpenJDK 64-Bit Server VM Temurin-21.0.2+13 (build 21.0.2+13-LTS)"},
+	"ledger-service":   {"ledger-service", []string{"ledger-prod-1", "ledger-prod-2"}, "java", "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
+	"card-service":     {"card-service", []string{"card-prod-1", "card-prod-2"}, "dotnet", ".NET", "8.0.4", ".NET 8.0.4"},
+	"payment-service":  {"payment-service", []string{"pay-prod-1", "pay-prod-2"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
+	// Supporting services — modelled so the topology fan-out reads
+	// like a real core-banking mesh and the backtrace / graph views
 	// have meaningful caller-callee chains to inspect.
-	"inventory-service":      {"inventory-service",      []string{"inv-prod-1", "inv-prod-2", "inv-prod-3"},                "java",   "OpenJDK Runtime Environment", "21.0.2+13", "OpenJDK 64-Bit Server VM Temurin-21.0.2+13 (build 21.0.2+13-LTS)"},
-	"recommendation-service": {"recommendation-service", []string{"rec-prod-1", "rec-prod-2"},                              "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
-	"review-service":         {"review-service",         []string{"review-prod-1", "review-prod-2"},                        "ruby",   "ruby",  "3.3.0",    "ruby 3.3.0 (2023-12-25 revision 5124f9ac75) [x86_64-linux]"},
-	"pricing-service":        {"pricing-service",        []string{"pricing-prod-1", "pricing-prod-2"},                      "dotnet", ".NET",  "8.0.4",    ".NET 8.0.4"},
-	"shipping-service":       {"shipping-service",       []string{"ship-prod-1", "ship-prod-2"},                            "go",     "go",    "1.22.5",   "go version go1.22.5 linux/amd64"},
-	"fraud-service":          {"fraud-service",          []string{"fraud-prod-1", "fraud-prod-2"},                          "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
-	"notification-service":   {"notification-service",   []string{"notif-prod-1", "notif-prod-2"},                          "nodejs", "node",  "20.11.1",  "Node.js v20.11.1"},
-	"email-service":          {"email-service",          []string{"mail-prod-1"},                                           "nodejs", "node",  "20.11.1",  "Node.js v20.11.1"},
-	"sms-service":            {"sms-service",            []string{"sms-prod-1"},                                            "go",     "go",    "1.22.5",   "go version go1.22.5 linux/amd64"},
-	"analytics-service":      {"analytics-service",      []string{"analytics-prod-1", "analytics-prod-2"},                  "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
-	"audit-service":          {"audit-service",          []string{"audit-prod-1"},                                          "java",   "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
-	"ml-service":             {"ml-service",             []string{"ml-prod-1", "ml-prod-2"},                                "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
+	"fraud-service":        {"fraud-service", []string{"fraud-prod-1", "fraud-prod-2", "fraud-prod-3"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
+	"billpay-service":      {"billpay-service", []string{"billpay-prod-1", "billpay-prod-2"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
+	"statement-service":    {"statement-service", []string{"stmt-prod-1", "stmt-prod-2"}, "java", "OpenJDK Runtime Environment", "21.0.2+13", "OpenJDK 64-Bit Server VM Temurin-21.0.2+13 (build 21.0.2+13-LTS)"},
+	"customer-service":     {"customer-service", []string{"cust-prod-1", "cust-prod-2"}, "ruby", "ruby", "3.3.0", "ruby 3.3.0 (2023-12-25 revision 5124f9ac75) [x86_64-linux]"},
+	"limits-service":       {"limits-service", []string{"limits-prod-1", "limits-prod-2"}, "dotnet", ".NET", "8.0.4", ".NET 8.0.4"},
+	"forex-service":        {"forex-service", []string{"forex-prod-1", "forex-prod-2"}, "rust", "rust", "1.78.0", "rustc 1.78.0 (9b00956e5 2024-04-29)"},
+	"notification-service": {"notification-service", []string{"notif-prod-1", "notif-prod-2"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
+	"sms-service":          {"sms-service", []string{"sms-prod-1"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
+	"email-service":        {"email-service", []string{"mail-prod-1"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
+	"aml-service":          {"aml-service", []string{"aml-prod-1", "aml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
+	"audit-service":        {"audit-service", []string{"audit-prod-1"}, "java", "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
+	"fraud-ml-service":     {"fraud-ml-service", []string{"fraudml-prod-1", "fraudml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
 }
 
-// User-agent pool — each trace picks one to put on the frontend's
+// User-agent pool — each trace picks one to put on the channel's
 // client/server boundary so the backtrace view can group traffic by
-// browser / mobile app / health check / scraper.
+// mobile app / web banking / ATM / partner API / health check.
 var userAgents = []string{
+	"RetailBankApp/4.7.2 (iOS 17.4; iPhone15,3)",
+	"RetailBankApp/4.7.2 (Android 14; Pixel 8)",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) Safari/17.4",
 	"Mozilla/5.0 (X11; Linux x86_64) Firefox/126.0",
-	"Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) Mobile/15E148 Safari/604.1",
-	"CoremetryApp/2.4.1 (Android 14; Pixel 8)",
-	"curl/8.6.0",
+	"ATM-NCR-SelfServ/6.3.1 (XFS 3.40)",
+	"OpenBanking-AISP/1.0 (psp_id=ACME-PISP-042)",
 	"kube-probe/1.29",
-	"GoogleBot/2.1 (+http://www.google.com/bot.html)",
 }
 
-// Synthetic egress IPs for the user-facing frontend hits — looks
+// Synthetic egress IPs for the customer-facing channel hits — looks
 // like real-world geo-distributed traffic in the consumer table.
 var browserIPs = []string{
 	"185.42.18.91", "203.0.113.42", "198.51.100.7", "104.16.249.180",
@@ -140,8 +150,8 @@ var demoClusters = []string{"prod-eu-west", "prod-eu-central", "prod-us-east"}
 // to a single cluster so the trace topology stays readable.
 func clusterFor(serviceName string) string {
 	switch serviceName {
-	case "frontend", "api-gateway", "bff-frontend":
-		// Front-tier pinned to the EU-west "primary" cluster so
+	case "mobile-bff", "api-gateway", "web-bff":
+		// Channel tier pinned to the EU-west "primary" cluster so
 		// the trace waterfall has a stable entry point.
 		return demoClusters[0]
 	}
@@ -169,10 +179,10 @@ type Trace struct {
 	// on host.name / service.instance.id. Lazy: first reference to
 	// a service materialises its pod.
 	podOf map[string]string
-	// Per-trace browser-like client identity for the frontend's
-	// inbound edge (frontend's user request). All other inbound
-	// edges (api-gateway → user-service, order-service → payment,
-	// …) derive client.address from the parent pod's IP.
+	// Per-trace device-like client identity for the channel's
+	// inbound edge (mobile-bff's customer request). All other inbound
+	// edges (api-gateway → transfer-service, transfer-service →
+	// ledger-service, …) derive client.address from the parent pod's IP.
 	browserIP string
 	userAgent string
 }
@@ -250,10 +260,10 @@ func (t *Trace) Send() error {
 	}
 
 	// Walk parent edges and decorate inbound (cross-service) server
-	// spans with client.address + user_agent.original. The frontend's
-	// inbound edge gets the synthetic browser IP / UA picked at trace
-	// creation; every other inbound edge gets the parent pod's
-	// deterministic IP and the same UA so the request signature
+	// spans with client.address + user_agent.original. The mobile/web
+	// channel's inbound edge gets the synthetic device IP / UA picked
+	// at trace creation; every other inbound edge gets the parent
+	// pod's deterministic IP and the same UA so the request signature
 	// flows through the call chain.
 	spanByID := map[string]spanInfo{}
 	for _, si := range t.spans {
@@ -269,7 +279,7 @@ func (t *Trace) Send() error {
 			continue
 		}
 		var clientAddr string
-		if parent.service == "frontend" {
+		if parent.service == "mobile-bff" {
 			clientAddr = t.browserIP
 		} else {
 			clientAddr = podIP(t.pickPod(parent.service))
@@ -333,496 +343,698 @@ func (t *Trace) Send() error {
 	return sendOTLP("/v1/traces", &tracecollpb.ExportTraceServiceRequest{ResourceSpans: rs})
 }
 
+// ─── Banking domain helpers ────────────────────────────────────────────────────
+
+// Oracle core-banking endpoints. corebank-scan.prod is the RAC SCAN
+// listener (shared across the read/write core), corebank-dg.prod is
+// the Data Guard standby that read-only inquiries route to. Both
+// listen on the conventional Oracle 1521 port.
+const (
+	oracleCore = "corebank-scan.prod:1521"
+	oracleDG   = "corebank-dg.prod:1521"
+)
+
+// oraDB builds the attribute map for an Oracle DB client span. system
+// + name + statement + operation + sql.table + server.address follow
+// the OTel db.* semantic conventions so the /database surface groups
+// by table / operation correctly. peer.service stays "oracle" so the
+// topology graph collapses every core-banking DB hop onto one node.
+func oraDB(dbName, op, table, stmt, server string) map[string]any {
+	return kv(
+		"db.system", "oracle",
+		"db.name", dbName,
+		"db.operation", op,
+		"db.sql.table", table,
+		"db.statement", stmt,
+		"server.address", server,
+		"server.port", 1521,
+		"network.peer.address", server,
+		"peer.service", "oracle",
+	)
+}
+
+// acctID / cardMasked / txnRef synthesise believable banking
+// identifiers for span attributes and log context.
+func acctID() string { return fmt.Sprintf("ACCT-%09d", mrand.IntN(900_000_000)+100_000_000) }
+func custID() string { return fmt.Sprintf("CUST-%07d", mrand.IntN(9_000_000)+1_000_000) }
+func txnRef() string { return fmt.Sprintf("TXN-%d-%06d", time.Now().Year(), mrand.IntN(999_999)+1) }
+func cardMasked() string {
+	return fmt.Sprintf("4%03d-****-****-%04d", mrand.IntN(1000), mrand.IntN(10000))
+}
+
+// amount returns a plausible money amount in the given range, rounded
+// to cents.
+func amount(minMaj, maxMaj int) float64 {
+	cents := mrand.IntN((maxMaj-minMaj)*100) + minMaj*100
+	return float64(cents) / 100.0
+}
+
+// ccy picks a settlement currency. EUR-heavy because the primary
+// cluster is eu-west, with a long tail of FX-able currencies that
+// route through forex-service.
+func ccy() string { return pick("EUR", "EUR", "EUR", "GBP", "USD", "CHF", "PLN") }
+
 // ─── Scenarios ────────────────────────────────────────────────────────────────
 
 type scenario func() *Trace
 
-// scenarioBrowseProducts: GET /products → product-service → cache/db
-func scenarioBrowseProducts() *Trace {
+// scenarioBalanceInquiry: GET /accounts/{id}/balance → account-service
+// → Oracle (read-only, routes to the Data Guard standby). The hot
+// path of retail banking — highest weight in the driver.
+func scenarioBalanceInquiry() *Trace {
 	t := NewTrace()
-	totalDur := dur(60, 180)
-	method := pick("GET", "GET", "GET", "POST")
-	route := pick("/api/products", "/api/products/featured", "/api/products?category=electronics")
-	M.RecordHTTP("api-gateway", method, route, 200, ms(totalDur))
-	M.RecordDB("product-service", "postgresql", "SELECT", ms(totalDur)*0.6)
+	totalDur := dur(40, 140)
+	acct := acctID()
+	M.RecordHTTP("api-gateway", "GET", "/api/v1/accounts/{id}/balance", 200, ms(totalDur))
+	M.RecordDB("account-service", "oracle", "SELECT", ms(totalDur)*0.6)
+	M.RecordBiz("balance.inquiries")
 
-	feSpan := t.Add("frontend", method+" "+route, tracepb.Span_SPAN_KIND_CLIENT,
-		nil, 0, totalDur, kv("http.method", method, "http.url", route, "user.agent", "Mozilla/5.0",
+	feSpan := t.Add("mobile-bff", "GET /accounts/balance", tracepb.Span_SPAN_KIND_CLIENT,
+		nil, 0, totalDur, kv("http.method", "GET", "http.url", "/accounts/balance",
 			"peer.service", "api-gateway"), true, "")
 
-	apiDur := totalDur - 10*time.Millisecond
-	apiSpan := t.Add("api-gateway", method+" "+route, tracepb.Span_SPAN_KIND_SERVER,
-		feSpan, 5*time.Millisecond, apiDur, kv("http.method", method, "http.route", route,
-			"http.status_code", 200), true, "")
+	apiDur := totalDur - 8*time.Millisecond
+	apiSpan := t.Add("api-gateway", "GET /api/v1/accounts/{id}/balance", tracepb.Span_SPAN_KIND_SERVER,
+		feSpan, 4*time.Millisecond, apiDur, kv("http.method", "GET",
+			"http.route", "/api/v1/accounts/{id}/balance", "http.status_code", 200,
+			"banking.account_id", acct), true, "")
 
-	prodDur := apiDur - 20*time.Millisecond
-	prodSpan := t.Add("product-service", "ProductService.List", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 10*time.Millisecond, prodDur, kv("rpc.system", "grpc", "rpc.method", "List",
-			"peer.service", "product-service"), true, "")
+	acctDur := apiDur - 14*time.Millisecond
+	acctSpan := t.Add("account-service", "AccountService.GetBalance", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, 8*time.Millisecond, acctDur, kv("rpc.system", "grpc", "rpc.method", "GetBalance",
+			"peer.service", "account-service", "banking.account_id", acct), true, "")
 
-	t.Add("product-service", "db.SELECT products", tracepb.Span_SPAN_KIND_CLIENT,
-		prodSpan, 15*time.Millisecond, prodDur-20*time.Millisecond,
-		kv("db.system", "postgresql", "db.name", "shop", "db.statement",
-			"SELECT id, name, price FROM products WHERE active=true LIMIT 50",
-			"peer.service", "postgres"), true, "")
+	t.Add("account-service", "SELECT ACCOUNTS", tracepb.Span_SPAN_KIND_CLIENT,
+		acctSpan, 14*time.Millisecond, acctDur-22*time.Millisecond,
+		oraDB("COREBANK", "SELECT", "ACCOUNTS",
+			"SELECT BALANCE, AVAIL_BALANCE, CCY, STATUS FROM ACCOUNTS WHERE ACCT_ID = :1",
+			oracleDG), true, "")
 	return t
 }
 
-// scenarioUserLogin: POST /login → api → user-service → db
-func scenarioUserLogin() *Trace {
+// scenarioLogin: POST /auth/login → api → auth-service → Oracle.
+// Verifies credentials + steps up to OTP on a new device.
+func scenarioLogin() *Trace {
 	t := NewTrace()
 	totalDur := dur(80, 220)
-	authFail := mrand.IntN(100) < 8 // 8% fail
+	authFail := mrand.IntN(100) < 8 // 8% bad credential
 	status := iff(authFail, 401, 200)
-	M.RecordHTTP("api-gateway", "POST", "/api/auth/login", status, ms(totalDur))
-	M.RecordDB("user-service", "postgresql", "SELECT", ms(totalDur)*0.5)
+	cust := custID()
+	M.RecordHTTP("api-gateway", "POST", "/api/v1/auth/login", status, ms(totalDur))
+	M.RecordDB("auth-service", "oracle", "SELECT", ms(totalDur)*0.5)
 	if authFail {
-		M.RecordBiz("users.login_failed")
+		M.RecordBiz("auth.login_failed")
 	} else {
-		M.RecordBiz("users.logged_in")
+		M.RecordBiz("auth.logged_in")
 	}
 
-	feSpan := t.Add("frontend", "POST /login", tracepb.Span_SPAN_KIND_CLIENT,
-		nil, 0, totalDur, kv("http.method", "POST", "http.url", "/login",
+	feSpan := t.Add("mobile-bff", "POST /auth/login", tracepb.Span_SPAN_KIND_CLIENT,
+		nil, 0, totalDur, kv("http.method", "POST", "http.url", "/auth/login",
 			"peer.service", "api-gateway"), !authFail, ifErr(authFail, "401 Unauthorized"))
 
 	statusCode := 200
 	if authFail {
 		statusCode = 401
 	}
-	apiSpan := t.Add("api-gateway", "POST /api/auth/login", tracepb.Span_SPAN_KIND_SERVER,
+	apiSpan := t.Add("api-gateway", "POST /api/v1/auth/login", tracepb.Span_SPAN_KIND_SERVER,
 		feSpan, 3*time.Millisecond, totalDur-6*time.Millisecond,
-		kv("http.method", "POST", "http.route", "/api/auth/login", "http.status_code", statusCode),
+		kv("http.method", "POST", "http.route", "/api/v1/auth/login", "http.status_code", statusCode,
+			"banking.customer_id", cust),
 		!authFail, ifErr(authFail, "invalid credentials"))
 
-	userDur := totalDur - 20*time.Millisecond
-	userSpan := t.Add("user-service", "UserService.Authenticate", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 8*time.Millisecond, userDur, kv("rpc.system", "grpc", "rpc.method", "Authenticate",
-			"peer.service", "user-service"), !authFail, ifErr(authFail, "user not found or wrong password"))
+	authDur := totalDur - 20*time.Millisecond
+	authSpan := t.Add("auth-service", "AuthService.Authenticate", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, 8*time.Millisecond, authDur, kv("rpc.system", "grpc", "rpc.method", "Authenticate",
+			"peer.service", "auth-service", "banking.customer_id", cust),
+		!authFail, ifErr(authFail, "credential mismatch for customer"))
 
-	t.Add("user-service", "db.SELECT users", tracepb.Span_SPAN_KIND_CLIENT,
-		userSpan, 15*time.Millisecond, userDur-25*time.Millisecond,
-		kv("db.system", "postgresql", "db.name", "auth", "db.statement",
-			"SELECT id, password_hash FROM users WHERE email=$1",
-			"peer.service", "postgres"), true, "")
-	// On a successful sign-in from a new device, user-service fires
-	// off an alert to notification-service. notification-service
-	// now has two upstream entry points (kafka consumer for events +
-	// rpc from user-service for live alerts) — exercises fan-in
-	// across transport types in the consumer view.
+	t.Add("auth-service", "SELECT CUSTOMER_AUTH", tracepb.Span_SPAN_KIND_CLIENT,
+		authSpan, 15*time.Millisecond, authDur-25*time.Millisecond,
+		oraDB("COREBANK", "SELECT", "CUSTOMER_AUTH",
+			"SELECT CUST_ID, PWD_HASH, MFA_ENABLED, STATUS FROM CUSTOMER_AUTH WHERE LOGIN_ID = :1",
+			oracleDG), true, "")
+
+	// New-device step-up: auth-service issues an OTP via the
+	// notification fan-out (sms + email). notification-service has
+	// two upstream entry points (kafka consumer for async events +
+	// rpc from auth-service for live OTP) — exercises fan-in across
+	// transport types in the consumer view.
 	if !authFail && mrand.IntN(100) < 35 {
 		notifDur := dur(20, 60)
-		t.Add("user-service", "notification-service/SendLoginAlert", tracepb.Span_SPAN_KIND_CLIENT,
-			userSpan, 30*time.Millisecond, notifDur,
-			kv("rpc.system", "grpc", "rpc.method", "SendLoginAlert",
+		t.Add("auth-service", "notification-service/SendOTP", tracepb.Span_SPAN_KIND_CLIENT,
+			authSpan, 30*time.Millisecond, notifDur,
+			kv("rpc.system", "grpc", "rpc.method", "SendOTP",
 				"peer.service", "notification-service"), true, "")
-		notifSpan := t.Add("notification-service", "NotificationService.SendLoginAlert", tracepb.Span_SPAN_KIND_SERVER,
-			userSpan, 32*time.Millisecond, notifDur-4*time.Millisecond,
-			kv("rpc.system", "grpc", "rpc.method", "SendLoginAlert"), true, "")
-		t.Add("notification-service", "email-service/Send", tracepb.Span_SPAN_KIND_CLIENT,
+		notifSpan := t.Add("notification-service", "NotificationService.SendOTP", tracepb.Span_SPAN_KIND_SERVER,
+			authSpan, 32*time.Millisecond, notifDur-4*time.Millisecond,
+			kv("rpc.system", "grpc", "rpc.method", "SendOTP", "notification.channel", "sms"), true, "")
+		t.Add("notification-service", "sms-service/Send", tracepb.Span_SPAN_KIND_CLIENT,
 			notifSpan, 34*time.Millisecond, dur(15, 45),
 			kv("rpc.system", "grpc", "rpc.method", "Send",
-				"peer.service", "email-service"), true, "")
+				"peer.service", "sms-service"), true, "")
 	}
 	return t
 }
 
-// scenarioCheckout: complex multi-service trace with payment
-func scenarioCheckout() *Trace {
+// scenarioTransfer: the flagship multi-hop banking flow.
+// POST /transfers → api-gateway → transfer-service, which:
+//  1. resolves both accounts (account-service → Oracle)
+//  2. checks the daily transfer limit (limits-service → Oracle)
+//  3. makes a CLIENT span to fraud-service for a real-time score
+//     (fraud-service → fraud-ml-service model inference)
+//  4. posts the double-entry to the ledger via a PL/SQL package
+//     call (ledger-service → Oracle PKG_LEDGER.POST_TRANSFER)
+//  5. fires a confirmation notification on success.
+//
+// ~5% of transfers fail: insufficient funds or a fraud block, each
+// setting span status=Error with a descriptive message.
+func scenarioTransfer() *Trace {
 	t := NewTrace()
 	totalDur := dur(350, 700)
-	payFail := mrand.IntN(100) < 5 // 5% fail
-	M.RecordHTTP("api-gateway", "POST", "/api/orders", iff(payFail, 502, 201), ms(totalDur))
-	M.RecordDB("order-service", "postgresql", "INSERT", ms(totalDur)*0.25)
-	if payFail {
-		M.RecordBiz("orders.failed")
-		M.RecordBiz("payments.failed")
+	srcAcct, dstAcct := acctID(), acctID()
+	ref := txnRef()
+	amt := amount(10, 5000)
+	currency := ccy()
+
+	// Failure mode: ~3% insufficient funds, ~2% fraud blocked.
+	roll := mrand.IntN(100)
+	insufficient := roll < 3
+	fraudBlocked := roll >= 3 && roll < 5
+	failed := insufficient || fraudBlocked
+	httpStatus := iff(failed, 422, 201)
+
+	M.RecordHTTP("api-gateway", "POST", "/api/v1/transfers", httpStatus, ms(totalDur))
+	M.RecordDB("ledger-service", "oracle", "BEGIN", ms(totalDur)*0.3)
+	M.RecordBiz("transfers.attempted")
+	if failed {
+		M.RecordBiz("transfers.failed")
+		if fraudBlocked {
+			M.RecordBiz("fraud.blocked")
+		}
 	} else {
-		M.RecordBiz("orders.created")
-		M.RecordBiz("payments.processed")
-		M.RecordBiz("kafka.messages_published")
+		M.RecordBiz("transfers.completed")
 	}
 
-	feSpan := t.Add("frontend", "POST /checkout", tracepb.Span_SPAN_KIND_CLIENT,
-		nil, 0, totalDur, kv("http.method", "POST", "http.url", "/checkout",
-			"order.items", mrand.IntN(5)+1, "peer.service", "api-gateway"),
-		!payFail, ifErr(payFail, "payment failed"))
+	feSpan := t.Add("mobile-bff", "POST /transfers", tracepb.Span_SPAN_KIND_CLIENT,
+		nil, 0, totalDur, kv("http.method", "POST", "http.url", "/transfers",
+			"banking.txn_ref", ref, "banking.amount", amt, "banking.currency", currency,
+			"peer.service", "api-gateway"),
+		!failed, ifErr(failed, iff(insufficient, "insufficient funds", "transfer blocked by fraud")))
 
 	apiDur := totalDur - 10*time.Millisecond
-	apiSpan := t.Add("api-gateway", "POST /api/orders", tracepb.Span_SPAN_KIND_SERVER,
-		feSpan, 5*time.Millisecond, apiDur, kv("http.method", "POST", "http.route", "/api/orders",
-			"http.status_code", iff(payFail, 502, 201), "user.id", mrand.IntN(99999)+1),
-		!payFail, ifErr(payFail, "downstream payment failed"))
+	apiSpan := t.Add("api-gateway", "POST /api/v1/transfers", tracepb.Span_SPAN_KIND_SERVER,
+		feSpan, 5*time.Millisecond, apiDur, kv("http.method", "POST", "http.route", "/api/v1/transfers",
+			"http.status_code", httpStatus, "banking.txn_ref", ref),
+		!failed, ifErr(failed, iff(insufficient, "422 Unprocessable Entity: insufficient funds",
+			"422 Unprocessable Entity: fraud block")))
 
-	// Auth check
-	t.Add("api-gateway", "user-service/ValidateToken", tracepb.Span_SPAN_KIND_CLIENT,
-		apiSpan, 8*time.Millisecond, dur(8, 18), kv("rpc.system", "grpc", "rpc.method", "ValidateToken",
-			"peer.service", "user-service"), true, "")
+	// Token validation at the edge.
+	t.Add("api-gateway", "auth-service/ValidateToken", tracepb.Span_SPAN_KIND_CLIENT,
+		apiSpan, 8*time.Millisecond, dur(6, 16), kv("rpc.system", "grpc", "rpc.method", "ValidateToken",
+			"peer.service", "auth-service"), true, "")
 
-	// Inventory reserve before the order is placed — checkout
-	// fails fast if any item is out of stock so this fan-out is
-	// authentic for the topology view.
-	invDur := dur(10, 30)
-	t.Add("api-gateway", "inventory-service/Reserve", tracepb.Span_SPAN_KIND_CLIENT,
-		apiSpan, 16*time.Millisecond, invDur,
-		kv("rpc.system", "grpc", "rpc.method", "Reserve",
-			"peer.service", "inventory-service"), true, "")
-	invSpan := t.Add("inventory-service", "InventoryService.Reserve", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 18*time.Millisecond, invDur-4*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "Reserve"), true, "")
-	t.Add("inventory-service", "db.UPDATE inventory", tracepb.Span_SPAN_KIND_CLIENT,
-		invSpan, 20*time.Millisecond, dur(4, 18),
-		kv("db.system", "postgresql", "db.name", "inventory",
-			"db.statement", "UPDATE inventory SET reserved=reserved+$1 WHERE sku=$2",
-			"peer.service", "postgres"), true, "")
+	// Transfer orchestration begins.
+	xferStart := 24 * time.Millisecond
+	xferDur := apiDur - 30*time.Millisecond
+	xferSpan := t.Add("transfer-service", "TransferService.Execute", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, xferStart, xferDur, kv("rpc.system", "grpc", "rpc.method", "Execute",
+			"peer.service", "transfer-service", "banking.txn_ref", ref,
+			"banking.source_account", srcAcct, "banking.dest_account", dstAcct,
+			"banking.amount", amt, "banking.currency", currency),
+		!failed, ifErr(failed, iff(insufficient, "debit rejected: insufficient available balance",
+			"debit rejected: fraud decision DECLINE")))
 
-	// Order creation
-	orderStart := 30 * time.Millisecond
-	orderDur := apiDur - 40*time.Millisecond
-	orderSpan := t.Add("order-service", "OrderService.Create", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, orderStart, orderDur, kv("order.id", fmt.Sprintf("ord-%d", mrand.IntN(99999)),
-			"order.amount", mrand.Float64()*500+10, "peer.service", "order-service"),
-		!payFail, ifErr(payFail, "payment service error"))
-
-	// Pre-order fraud screen — order-service asks fraud-service for
-	// a quick green-light before persisting the order. fraud-service
-	// now has two upstream callers (order-service here, plus the
-	// deeper card-side check inside payment-service below).
-	t.Add("order-service", "fraud-service/PreScreen", tracepb.Span_SPAN_KIND_CLIENT,
-		orderSpan, orderStart+3*time.Millisecond, dur(8, 28),
-		kv("rpc.system", "grpc", "rpc.method", "PreScreen",
-			"peer.service", "fraud-service"), true, "")
-	t.Add("fraud-service", "FraudService.PreScreen", tracepb.Span_SPAN_KIND_SERVER,
-		orderSpan, orderStart+4*time.Millisecond, dur(6, 24),
-		kv("rpc.system", "grpc", "rpc.method", "PreScreen",
-			"fraud.score", mrand.Float64()*0.5), true, "")
-
-	// Final pricing / discount validation. pricing-service has
-	// cart-service (live cart total) + order-service (final
-	// discount apply) as upstreams now.
-	t.Add("order-service", "pricing-service/ApplyDiscounts", tracepb.Span_SPAN_KIND_CLIENT,
-		orderSpan, orderStart+4*time.Millisecond, dur(6, 18),
-		kv("rpc.system", "grpc", "rpc.method", "ApplyDiscounts",
-			"peer.service", "pricing-service"), true, "")
-	priceSpan := t.Add("pricing-service", "PricingService.ApplyDiscounts", tracepb.Span_SPAN_KIND_SERVER,
-		orderSpan, orderStart+5*time.Millisecond, dur(4, 14),
-		kv("rpc.system", "grpc", "rpc.method", "ApplyDiscounts"), true, "")
-	t.Add("pricing-service", "redis.GET discounts:active", tracepb.Span_SPAN_KIND_CLIENT,
-		priceSpan, orderStart+6*time.Millisecond, dur(1, 3),
-		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
-
-	// DB insert
-	t.Add("order-service", "db.INSERT orders", tracepb.Span_SPAN_KIND_CLIENT,
-		orderSpan, orderStart+5*time.Millisecond, dur(40, 120),
-		kv("db.system", "postgresql", "db.name", "orders", "db.statement",
-			"INSERT INTO orders(user_id, total, status) VALUES($1, $2, $3) RETURNING id",
-			"peer.service", "postgres"), true, "")
-
-	// Payment call (the one that may fail)
-	payDur := dur(120, 280)
-	payStart := orderStart + dur(140, 200)
-	t.Add("order-service", "payment-service/Charge", tracepb.Span_SPAN_KIND_CLIENT,
-		orderSpan, payStart, payDur, kv("rpc.system", "grpc", "rpc.method", "Charge",
-			"peer.service", "payment-service"), !payFail, ifErr(payFail, "stripe gateway timeout"))
-
-	paySpan := t.Add("payment-service", "PaymentService.Charge", tracepb.Span_SPAN_KIND_SERVER,
-		orderSpan, payStart+1*time.Millisecond, payDur-2*time.Millisecond,
-		kv("payment.provider", "stripe", "payment.amount", mrand.Float64()*500+10,
-			"payment.currency", "USD"), !payFail, ifErr(payFail, "stripe: gateway timeout"))
-
-	// Fraud check fans out from payment-service before charging —
-	// real flow regardless of whether the charge later succeeds.
-	t.Add("payment-service", "fraud-service/Score", tracepb.Span_SPAN_KIND_CLIENT,
-		paySpan, payStart+3*time.Millisecond, dur(15, 50),
-		kv("rpc.system", "grpc", "rpc.method", "Score",
-			"peer.service", "fraud-service"), true, "")
-	fraudSpan := t.Add("fraud-service", "FraudService.Score", tracepb.Span_SPAN_KIND_SERVER,
-		paySpan, payStart+5*time.Millisecond, dur(12, 45),
-		kv("rpc.system", "grpc", "rpc.method", "Score",
-			"fraud.score", mrand.Float64()), true, "")
-	t.Add("fraud-service", "redis.GET fraud:rules", tracepb.Span_SPAN_KIND_CLIENT,
-		fraudSpan, payStart+6*time.Millisecond, dur(1, 4),
-		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
-
-	if payFail {
-		t.Add("payment-service", "stripe.charge", tracepb.Span_SPAN_KIND_CLIENT,
-			paySpan, payStart+5*time.Millisecond, payDur-10*time.Millisecond,
-			kv("http.method", "POST", "http.url", "https://api.stripe.com/v1/charges",
-				"http.status_code", 504, "peer.service", "stripe"), false, "504 Gateway Timeout")
-	} else {
-		t.Add("payment-service", "stripe.charge", tracepb.Span_SPAN_KIND_CLIENT,
-			paySpan, payStart+5*time.Millisecond, payDur-10*time.Millisecond,
-			kv("http.method", "POST", "http.url", "https://api.stripe.com/v1/charges",
-				"http.status_code", 200, "peer.service", "stripe"), true, "")
-		// Shipping label generation (only on payment success)
-		shipStart := orderStart + orderDur - 60*time.Millisecond
-		shipDur := dur(20, 70)
-		t.Add("order-service", "shipping-service/CreateLabel", tracepb.Span_SPAN_KIND_CLIENT,
-			orderSpan, shipStart, shipDur,
-			kv("rpc.system", "grpc", "rpc.method", "CreateLabel",
-				"peer.service", "shipping-service"), true, "")
-		shipSpan := t.Add("shipping-service", "ShippingService.CreateLabel", tracepb.Span_SPAN_KIND_SERVER,
-			orderSpan, shipStart+2*time.Millisecond, shipDur-4*time.Millisecond,
-			kv("rpc.system", "grpc", "rpc.method", "CreateLabel"), true, "")
-		t.Add("shipping-service", "fedex.create_shipment", tracepb.Span_SPAN_KIND_CLIENT,
-			shipSpan, shipStart+4*time.Millisecond, dur(15, 50),
-			kv("http.method", "POST", "http.url", "https://api.fedex.com/ship/v1/shipments",
-				"http.status_code", 200, "peer.service", "fedex"), true, "")
-
-		// Kafka publish on success
-		kafkaStart := orderStart + orderDur - 30*time.Millisecond
-		t.Add("order-service", "kafka.publish order.confirmed", tracepb.Span_SPAN_KIND_PRODUCER,
-			orderSpan, kafkaStart, dur(8, 25), kv("messaging.system", "kafka",
-				"messaging.destination", "order.confirmed", "peer.service", "kafka"), true, "")
+	// 1. Resolve source account + balance (read-only → standby).
+	t.Add("transfer-service", "account-service/GetAccount", tracepb.Span_SPAN_KIND_CLIENT,
+		xferSpan, xferStart+3*time.Millisecond, dur(15, 40),
+		kv("rpc.system", "grpc", "rpc.method", "GetAccount",
+			"peer.service", "account-service"), true, "")
+	acctSpan := t.Add("account-service", "AccountService.GetAccount", tracepb.Span_SPAN_KIND_SERVER,
+		xferSpan, xferStart+4*time.Millisecond, dur(12, 36),
+		kv("rpc.system", "grpc", "rpc.method", "GetAccount",
+			"banking.account_id", srcAcct), true, "")
+	insMsg := ""
+	if insufficient {
+		insMsg = "balance check: available balance below transfer amount"
 	}
+	t.Add("account-service", "SELECT ACCOUNTS", tracepb.Span_SPAN_KIND_CLIENT,
+		acctSpan, xferStart+6*time.Millisecond, dur(8, 28),
+		oraDB("COREBANK", "SELECT", "ACCOUNTS",
+			"SELECT BALANCE, STATUS FROM ACCOUNTS WHERE ACCT_ID = :1",
+			oracleCore), !insufficient, insMsg)
+
+	// 2. Daily-limit guard.
+	limStart := xferStart + 30*time.Millisecond
+	t.Add("transfer-service", "limits-service/CheckDaily", tracepb.Span_SPAN_KIND_CLIENT,
+		xferSpan, limStart, dur(6, 18), kv("rpc.system", "grpc", "rpc.method", "CheckDaily",
+			"peer.service", "limits-service"), true, "")
+	limSpan := t.Add("limits-service", "LimitsService.CheckDaily", tracepb.Span_SPAN_KIND_SERVER,
+		xferSpan, limStart+1*time.Millisecond, dur(4, 14),
+		kv("rpc.system", "grpc", "rpc.method", "CheckDaily",
+			"banking.account_id", srcAcct, "banking.amount", amt), true, "")
+	t.Add("limits-service", "SELECT TRANSFER_LIMITS", tracepb.Span_SPAN_KIND_CLIENT,
+		limSpan, limStart+2*time.Millisecond, dur(2, 8),
+		oraDB("COREBANK", "SELECT", "TRANSFER_LIMITS",
+			"SELECT DAILY_LIMIT, USED_TODAY FROM TRANSFER_LIMITS WHERE ACCT_ID = :1",
+			oracleDG), true, "")
+
+	// 3. Real-time fraud score — the CLIENT span the task calls out.
+	fraudStart := xferStart + 56*time.Millisecond
+	fraudOK := !fraudBlocked
+	fraudScore := mrand.Float64() * 0.4
+	if fraudBlocked {
+		fraudScore = 0.85 + mrand.Float64()*0.15
+	}
+	t.Add("transfer-service", "fraud-service/ScoreTransfer", tracepb.Span_SPAN_KIND_CLIENT,
+		xferSpan, fraudStart, dur(30, 90), kv("rpc.system", "grpc", "rpc.method", "ScoreTransfer",
+			"peer.service", "fraud-service", "banking.txn_ref", ref),
+		fraudOK, ifErr(fraudBlocked, "fraud decision: DECLINE"))
+	fraudSvcSpan := t.Add("fraud-service", "FraudService.ScoreTransfer", tracepb.Span_SPAN_KIND_SERVER,
+		xferSpan, fraudStart+2*time.Millisecond, dur(26, 84),
+		kv("rpc.system", "grpc", "rpc.method", "ScoreTransfer",
+			"fraud.score", fraudScore, "fraud.decision", iff(fraudBlocked, "DECLINE", "APPROVE"),
+			"banking.txn_ref", ref),
+		fraudOK, ifErr(fraudBlocked, "rule HIGH_VELOCITY + model score 0.9 over threshold"))
+	// Model inference hop — fraud-service → fraud-ml-service.
+	t.Add("fraud-service", "fraud-ml-service/Predict", tracepb.Span_SPAN_KIND_CLIENT,
+		fraudSvcSpan, fraudStart+4*time.Millisecond, dur(15, 50),
+		kv("rpc.system", "grpc", "rpc.method", "Predict",
+			"peer.service", "fraud-ml-service"), true, "")
+	mlSpan := t.Add("fraud-ml-service", "FraudMLService.Predict", tracepb.Span_SPAN_KIND_SERVER,
+		fraudSvcSpan, fraudStart+6*time.Millisecond, dur(12, 44),
+		kv("rpc.system", "grpc", "rpc.method", "Predict",
+			"ml.model", "fraud-gbm-v7", "fraud.score", fraudScore), true, "")
+	t.Add("fraud-ml-service", "redis.HGETALL feat:acct", tracepb.Span_SPAN_KIND_CLIENT,
+		mlSpan, fraudStart+8*time.Millisecond, dur(1, 5),
+		kv("db.system", "redis", "db.operation", "HGETALL", "peer.service", "redis"), true, "")
+
+	if failed {
+		// On insufficient funds the failing DB hop is the ACCOUNTS
+		// read above; on a fraud block the failing edge is the
+		// fraud ScoreTransfer call. No ledger post happens. The
+		// transfer-service span carries the error status set above.
+		return t
+	}
+
+	// 4. Post the double-entry to the ledger via PL/SQL.
+	postStart := fraudStart + dur(90, 140)
+	t.Add("transfer-service", "ledger-service/PostTransfer", tracepb.Span_SPAN_KIND_CLIENT,
+		xferSpan, postStart, dur(80, 180), kv("rpc.system", "grpc", "rpc.method", "PostTransfer",
+			"peer.service", "ledger-service", "banking.txn_ref", ref), true, "")
+	ledgerSpan := t.Add("ledger-service", "LedgerService.PostTransfer", tracepb.Span_SPAN_KIND_SERVER,
+		xferSpan, postStart+2*time.Millisecond, dur(74, 170),
+		kv("rpc.system", "grpc", "rpc.method", "PostTransfer",
+			"banking.txn_ref", ref, "banking.amount", amt, "banking.currency", currency), true, "")
+	// PL/SQL package call posts both legs atomically.
+	t.Add("ledger-service", "BEGIN PKG_LEDGER.POST_TRANSFER", tracepb.Span_SPAN_KIND_CLIENT,
+		ledgerSpan, postStart+4*time.Millisecond, dur(40, 120),
+		oraDB("COREBANK", "BEGIN", "GL_POSTINGS",
+			"BEGIN PKG_LEDGER.POST_TRANSFER(:1, :2, :3); END;",
+			oracleCore), true, "")
+	// Statement journal insert.
+	t.Add("ledger-service", "INSERT TXN_JOURNAL", tracepb.Span_SPAN_KIND_CLIENT,
+		ledgerSpan, postStart+50*time.Millisecond, dur(10, 40),
+		oraDB("COREBANK", "INSERT", "TXN_JOURNAL",
+			"INSERT INTO TXN_JOURNAL(TXN_REF, SRC_ACCT, DST_ACCT, AMOUNT, CCY, POSTED_TS) "+
+				"VALUES(:1, :2, :3, :4, :5, SYSTIMESTAMP)",
+			oracleCore), true, "")
+
+	// 5. Confirmation notification + Kafka event on success.
+	notifStart := postStart + dur(40, 90)
+	t.Add("transfer-service", "notification-service/SendTransferReceipt", tracepb.Span_SPAN_KIND_CLIENT,
+		xferSpan, notifStart, dur(15, 50),
+		kv("rpc.system", "grpc", "rpc.method", "SendTransferReceipt",
+			"peer.service", "notification-service"), true, "")
+	notifSpan := t.Add("notification-service", "NotificationService.SendTransferReceipt", tracepb.Span_SPAN_KIND_SERVER,
+		xferSpan, notifStart+2*time.Millisecond, dur(10, 40),
+		kv("rpc.system", "grpc", "rpc.method", "SendTransferReceipt",
+			"notification.channel", "push"), true, "")
+	t.Add("notification-service", "email-service/Send", tracepb.Span_SPAN_KIND_CLIENT,
+		notifSpan, notifStart+4*time.Millisecond, dur(10, 30),
+		kv("rpc.system", "grpc", "rpc.method", "Send", "peer.service", "email-service"), true, "")
+
+	kafkaStart := postStart + dur(60, 110)
+	t.Add("transfer-service", "kafka.publish transfer.posted", tracepb.Span_SPAN_KIND_PRODUCER,
+		xferSpan, kafkaStart, dur(8, 25), kv("messaging.system", "kafka",
+			"messaging.destination", "transfer.posted", "peer.service", "kafka",
+			"banking.txn_ref", ref), true, "")
+	M.RecordBiz("kafka.events_published")
 	return t
 }
 
-// scenarioSearch: full-text search
-func scenarioSearch() *Trace {
+// scenarioCardPayment: card authorization at POS / online.
+// POST /cards/authorize → api-gateway → card-service, which scores
+// fraud, applies an authorization hold on the ledger, and (rarely)
+// declines for insufficient funds or a fraud block.
+func scenarioCardPayment() *Trace {
 	t := NewTrace()
-	totalDur := dur(40, 140)
-	query := pick("laptop", "headphones", "monitor 4k", "mechanical keyboard", "wireless mouse")
-	M.RecordHTTP("api-gateway", "GET", "/api/search", 200, ms(totalDur))
-	M.RecordDB("search-service", "elasticsearch", "search", ms(totalDur)*0.7)
-	M.RecordBiz("products.searched")
+	totalDur := dur(120, 320)
+	pan := cardMasked()
+	ref := txnRef()
+	amt := amount(2, 800)
+	currency := ccy()
+	merchant := pick("AMZ MKTPLACE", "TESCO STORES 4471", "SHELL OIL 9921",
+		"UBER *TRIP", "NETFLIX.COM", "STEAM GAMES")
 
-	feSpan := t.Add("frontend", "GET /search", tracepb.Span_SPAN_KIND_CLIENT,
-		nil, 0, totalDur, kv("http.method", "GET", "http.url", "/search?q="+query,
-			"peer.service", "api-gateway"), true, "")
-	apiSpan := t.Add("api-gateway", "GET /api/search", tracepb.Span_SPAN_KIND_SERVER,
-		feSpan, 3*time.Millisecond, totalDur-6*time.Millisecond,
-		kv("http.method", "GET", "http.route", "/api/search", "http.status_code", 200,
-			"search.query", query), true, "")
-	searchSpan := t.Add("search-service", "SearchService.Query", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 8*time.Millisecond, totalDur-20*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "Query", "peer.service", "search-service",
-			"search.results", mrand.IntN(50)+1), true, "")
-	t.Add("search-service", "elasticsearch.search products", tracepb.Span_SPAN_KIND_CLIENT,
-		searchSpan, 12*time.Millisecond, totalDur-30*time.Millisecond,
-		kv("db.system", "elasticsearch", "db.statement",
-			fmt.Sprintf(`{"query":{"match":{"name":"%s"}}}`, query),
-			"peer.service", "elasticsearch"), true, "")
-	// Semantic re-ranking: search-service hands the top hits to
-	// ml-service for a vector-similarity rerank. ml-service now
-	// has two distinct upstream callers (recommendation-service +
-	// search-service), exercising the fan-in case in the
-	// backtrace view.
-	rerankStart := totalDur - 25*time.Millisecond
-	rerankDur := dur(8, 25)
-	t.Add("search-service", "ml-service/Rerank", tracepb.Span_SPAN_KIND_CLIENT,
-		searchSpan, rerankStart, rerankDur,
-		kv("rpc.system", "grpc", "rpc.method", "Rerank",
-			"peer.service", "ml-service"), true, "")
-	mlSpan := t.Add("ml-service", "MLService.Rerank", tracepb.Span_SPAN_KIND_SERVER,
-		searchSpan, rerankStart+1*time.Millisecond, rerankDur-2*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "Rerank",
-			"ml.model", "rerank-v2", "search.query", query), true, "")
-	t.Add("ml-service", "redis.GET emb:query", tracepb.Span_SPAN_KIND_CLIENT,
-		mlSpan, rerankStart+3*time.Millisecond, dur(1, 4),
+	roll := mrand.IntN(100)
+	insufficient := roll < 4
+	fraudBlocked := roll >= 4 && roll < 7
+	declined := insufficient || fraudBlocked
+	authStatus := iff(declined, 402, 200)
+
+	M.RecordHTTP("api-gateway", "POST", "/api/v1/cards/authorize", authStatus, ms(totalDur))
+	M.RecordDB("card-service", "oracle", "UPDATE", ms(totalDur)*0.4)
+	M.RecordBiz("card.authorizations")
+	if declined {
+		M.RecordBiz("card.declined")
+		if fraudBlocked {
+			M.RecordBiz("fraud.blocked")
+		}
+	} else {
+		M.RecordBiz("card.approved")
+	}
+
+	feSpan := t.Add("mobile-bff", "POST /cards/authorize", tracepb.Span_SPAN_KIND_CLIENT,
+		nil, 0, totalDur, kv("http.method", "POST", "http.url", "/cards/authorize",
+			"banking.card", pan, "banking.amount", amt, "banking.currency", currency,
+			"banking.merchant", merchant, "peer.service", "api-gateway"),
+		!declined, ifErr(declined, iff(insufficient, "402 insufficient funds", "402 fraud decline")))
+
+	apiDur := totalDur - 8*time.Millisecond
+	apiSpan := t.Add("api-gateway", "POST /api/v1/cards/authorize", tracepb.Span_SPAN_KIND_SERVER,
+		feSpan, 4*time.Millisecond, apiDur, kv("http.method", "POST",
+			"http.route", "/api/v1/cards/authorize", "http.status_code", authStatus,
+			"banking.txn_ref", ref), !declined,
+		ifErr(declined, iff(insufficient, "insufficient funds", "fraud block")))
+
+	cardStart := 10 * time.Millisecond
+	cardDur := apiDur - 16*time.Millisecond
+	cardSpan := t.Add("card-service", "CardService.Authorize", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, cardStart, cardDur, kv("rpc.system", "grpc", "rpc.method", "Authorize",
+			"peer.service", "card-service", "banking.card", pan, "banking.txn_ref", ref,
+			"banking.amount", amt, "banking.merchant", merchant),
+		!declined, ifErr(declined, iff(insufficient, "auth declined: NSF",
+			"auth declined: fraud DECLINE")))
+
+	// Resolve card → linked account.
+	t.Add("card-service", "SELECT CARDS", tracepb.Span_SPAN_KIND_CLIENT,
+		cardSpan, cardStart+3*time.Millisecond, dur(6, 22),
+		oraDB("CARDS", "SELECT", "CARDS",
+			"SELECT ACCT_ID, CARD_STATUS, AVAIL_CREDIT FROM CARDS WHERE CARD_TOKEN = :1",
+			oracleDG), true, "")
+
+	// Real-time fraud score on the card txn.
+	fraudStart := cardStart + 28*time.Millisecond
+	fraudScore := mrand.Float64() * 0.4
+	if fraudBlocked {
+		fraudScore = 0.82 + mrand.Float64()*0.18
+	}
+	t.Add("card-service", "fraud-service/ScoreCard", tracepb.Span_SPAN_KIND_CLIENT,
+		cardSpan, fraudStart, dur(20, 70), kv("rpc.system", "grpc", "rpc.method", "ScoreCard",
+			"peer.service", "fraud-service", "banking.txn_ref", ref),
+		!fraudBlocked, ifErr(fraudBlocked, "fraud decision: DECLINE"))
+	fraudSpan := t.Add("fraud-service", "FraudService.ScoreCard", tracepb.Span_SPAN_KIND_SERVER,
+		cardSpan, fraudStart+2*time.Millisecond, dur(16, 64),
+		kv("rpc.system", "grpc", "rpc.method", "ScoreCard",
+			"fraud.score", fraudScore, "fraud.decision", iff(fraudBlocked, "DECLINE", "APPROVE"),
+			"banking.merchant", merchant),
+		!fraudBlocked, ifErr(fraudBlocked, "rule CARD_NOT_PRESENT_GEO_MISMATCH"))
+	t.Add("fraud-service", "redis.GET fraud:cardrules", tracepb.Span_SPAN_KIND_CLIENT,
+		fraudSpan, fraudStart+4*time.Millisecond, dur(1, 4),
 		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
+
+	if declined {
+		return t
+	}
+
+	// Apply the authorization hold on the ledger.
+	holdStart := fraudStart + dur(40, 80)
+	t.Add("card-service", "ledger-service/Hold", tracepb.Span_SPAN_KIND_CLIENT,
+		cardSpan, holdStart, dur(20, 60), kv("rpc.system", "grpc", "rpc.method", "Hold",
+			"peer.service", "ledger-service", "banking.txn_ref", ref), true, "")
+	ledgerSpan := t.Add("ledger-service", "LedgerService.Hold", tracepb.Span_SPAN_KIND_SERVER,
+		cardSpan, holdStart+2*time.Millisecond, dur(16, 54),
+		kv("rpc.system", "grpc", "rpc.method", "Hold", "banking.amount", amt), true, "")
+	t.Add("ledger-service", "UPDATE ACCOUNTS", tracepb.Span_SPAN_KIND_CLIENT,
+		ledgerSpan, holdStart+4*time.Millisecond, dur(10, 40),
+		oraDB("COREBANK", "UPDATE", "ACCOUNTS",
+			"UPDATE ACCOUNTS SET HOLD_AMOUNT = HOLD_AMOUNT + :1 WHERE ACCT_ID = :2",
+			oracleCore), true, "")
 	return t
 }
 
-// scenarioCart: add item to cart
-func scenarioCart() *Trace {
+// scenarioBillPay: pay a registered biller.
+// POST /billpay → api-gateway → billpay-service, which looks up the
+// biller, debits via the ledger, and notifies the customer.
+func scenarioBillPay() *Trace {
 	t := NewTrace()
-	totalDur := dur(40, 110)
-	M.RecordHTTP("api-gateway", "POST", "/api/cart/items", 201, ms(totalDur))
-	M.RecordDB("cart-service", "redis", "HSET", ms(totalDur)*0.3)
-	M.RecordBiz("cart.items_added")
-	feSpan := t.Add("frontend", "POST /cart/items", tracepb.Span_SPAN_KIND_CLIENT,
-		nil, 0, totalDur, kv("http.method", "POST", "http.url", "/cart/items",
-			"peer.service", "api-gateway"), true, "")
-	apiSpan := t.Add("api-gateway", "POST /api/cart/items", tracepb.Span_SPAN_KIND_SERVER,
+	totalDur := dur(140, 360)
+	acct := acctID()
+	ref := txnRef()
+	amt := amount(5, 1200)
+	biller := pick("BRITISH GAS", "THAMES WATER", "VODAFONE UK", "COUNCIL TAX LBTH",
+		"SKY BROADBAND", "TV LICENSING")
+
+	insufficient := mrand.IntN(100) < 5
+	httpStatus := iff(insufficient, 422, 201)
+	M.RecordHTTP("api-gateway", "POST", "/api/v1/billpay", httpStatus, ms(totalDur))
+	M.RecordDB("billpay-service", "oracle", "SELECT", ms(totalDur)*0.3)
+	M.RecordBiz("billpay.attempted")
+	if insufficient {
+		M.RecordBiz("billpay.failed")
+	} else {
+		M.RecordBiz("billpay.completed")
+	}
+
+	feSpan := t.Add("mobile-bff", "POST /billpay", tracepb.Span_SPAN_KIND_CLIENT,
+		nil, 0, totalDur, kv("http.method", "POST", "http.url", "/billpay",
+			"banking.biller", biller, "banking.amount", amt, "peer.service", "api-gateway"),
+		!insufficient, ifErr(insufficient, "insufficient funds"))
+	apiSpan := t.Add("api-gateway", "POST /api/v1/billpay", tracepb.Span_SPAN_KIND_SERVER,
 		feSpan, 3*time.Millisecond, totalDur-6*time.Millisecond,
-		kv("http.method", "POST", "http.route", "/api/cart/items", "http.status_code", 201), true, "")
-	cartSpan := t.Add("cart-service", "CartService.AddItem", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 8*time.Millisecond, totalDur-20*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "AddItem", "peer.service", "cart-service"), true, "")
-	t.Add("cart-service", "redis.HSET cart:user", tracepb.Span_SPAN_KIND_CLIENT,
-		cartSpan, 12*time.Millisecond, dur(2, 8),
-		kv("db.system", "redis", "db.operation", "HSET", "peer.service", "redis"), true, "")
-	// Cart now also calls inventory + pricing for the live total —
-	// gives the graph two more downstream edges out of cart-service.
-	t.Add("cart-service", "inventory-service/CheckStock", tracepb.Span_SPAN_KIND_CLIENT,
-		cartSpan, 14*time.Millisecond, dur(6, 18),
-		kv("rpc.system", "grpc", "rpc.method", "CheckStock", "peer.service", "inventory-service"),
-		true, "")
-	invSpan := t.Add("inventory-service", "InventoryService.CheckStock", tracepb.Span_SPAN_KIND_SERVER,
-		cartSpan, 16*time.Millisecond, dur(4, 14),
-		kv("rpc.system", "grpc", "rpc.method", "CheckStock"), true, "")
-	t.Add("inventory-service", "redis.GET stock:sku", tracepb.Span_SPAN_KIND_CLIENT,
-		invSpan, 17*time.Millisecond, dur(1, 4),
-		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
-	t.Add("cart-service", "pricing-service/Calculate", tracepb.Span_SPAN_KIND_CLIENT,
-		cartSpan, 22*time.Millisecond, dur(4, 12),
-		kv("rpc.system", "grpc", "rpc.method", "Calculate", "peer.service", "pricing-service"),
-		true, "")
-	priceSpan := t.Add("pricing-service", "PricingService.Calculate", tracepb.Span_SPAN_KIND_SERVER,
-		cartSpan, 24*time.Millisecond, dur(2, 10),
-		kv("rpc.system", "grpc", "rpc.method", "Calculate"), true, "")
-	t.Add("pricing-service", "redis.GET prices:sku", tracepb.Span_SPAN_KIND_CLIENT,
-		priceSpan, 25*time.Millisecond, dur(1, 3),
-		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
+		kv("http.method", "POST", "http.route", "/api/v1/billpay", "http.status_code", httpStatus,
+			"banking.txn_ref", ref), !insufficient,
+		ifErr(insufficient, "422 Unprocessable Entity: insufficient funds"))
+
+	bpStart := 8 * time.Millisecond
+	bpDur := totalDur - 16*time.Millisecond
+	bpSpan := t.Add("billpay-service", "BillPayService.Pay", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, bpStart, bpDur, kv("rpc.system", "grpc", "rpc.method", "Pay",
+			"peer.service", "billpay-service", "banking.account_id", acct,
+			"banking.biller", biller, "banking.amount", amt, "banking.txn_ref", ref),
+		!insufficient, ifErr(insufficient, "debit rejected: insufficient available balance"))
+
+	// Biller lookup.
+	t.Add("billpay-service", "SELECT BILLERS", tracepb.Span_SPAN_KIND_CLIENT,
+		bpSpan, bpStart+3*time.Millisecond, dur(6, 22),
+		oraDB("COREBANK", "SELECT", "BILLERS",
+			"SELECT BILLER_ID, SETTLE_ACCT, STATUS FROM BILLERS WHERE BILLER_REF = :1",
+			oracleDG), true, "")
+
+	// Ledger debit (the leg that fails on NSF).
+	postStart := bpStart + dur(30, 70)
+	insMsg := ""
+	if insufficient {
+		insMsg = "ORA-20012: PKG_LEDGER raised INSUFFICIENT_FUNDS for ACCT"
+	}
+	t.Add("billpay-service", "ledger-service/Debit", tracepb.Span_SPAN_KIND_CLIENT,
+		bpSpan, postStart, dur(40, 120), kv("rpc.system", "grpc", "rpc.method", "Debit",
+			"peer.service", "ledger-service", "banking.txn_ref", ref),
+		!insufficient, ifErr(insufficient, "ledger debit failed"))
+	ledgerSpan := t.Add("ledger-service", "LedgerService.Debit", tracepb.Span_SPAN_KIND_SERVER,
+		bpSpan, postStart+2*time.Millisecond, dur(36, 110),
+		kv("rpc.system", "grpc", "rpc.method", "Debit", "banking.amount", amt),
+		!insufficient, ifErr(insufficient, insMsg))
+	t.Add("ledger-service", "BEGIN PKG_LEDGER.POST_DEBIT", tracepb.Span_SPAN_KIND_CLIENT,
+		ledgerSpan, postStart+4*time.Millisecond, dur(20, 80),
+		oraDB("COREBANK", "BEGIN", "GL_POSTINGS",
+			"BEGIN PKG_LEDGER.POST_DEBIT(:1, :2, :3); END;",
+			oracleCore), !insufficient, insMsg)
+
+	if insufficient {
+		return t
+	}
+
+	// Confirmation notification on success.
+	notifStart := postStart + dur(40, 90)
+	t.Add("billpay-service", "notification-service/SendBillReceipt", tracepb.Span_SPAN_KIND_CLIENT,
+		bpSpan, notifStart, dur(12, 40), kv("rpc.system", "grpc", "rpc.method", "SendBillReceipt",
+			"peer.service", "notification-service"), true, "")
+	t.Add("notification-service", "NotificationService.SendBillReceipt", tracepb.Span_SPAN_KIND_SERVER,
+		bpSpan, notifStart+2*time.Millisecond, dur(8, 32),
+		kv("rpc.system", "grpc", "rpc.method", "SendBillReceipt",
+			"notification.channel", "push"), true, "")
 	return t
 }
 
-// scenarioHomePage: parallel fan-out for the home page — frontend
-// requests a personalised home view that the api-gateway resolves
-// by calling several services concurrently. Exercises a wide
-// cross-service edge set (api-gateway → recommendation-service →
-// ml-service, api-gateway → product-service → postgres,
-// api-gateway → user-service → postgres) so the graph view shows
-// real fan-out from a single inbound request.
-func scenarioHomePage() *Trace {
+// scenarioDashboard: parallel fan-out for the post-login dashboard —
+// the mobile/web channel requests a consolidated view that the
+// api-gateway resolves by calling several core services concurrently.
+// Exercises a wide cross-service edge set (api-gateway →
+// account-service → Oracle, api-gateway → customer-service → Oracle,
+// api-gateway → forex-service for the FX ticker) so the graph view
+// shows real fan-out from a single inbound request.
+func scenarioDashboard() *Trace {
 	t := NewTrace()
 	totalDur := dur(180, 360)
-	M.RecordHTTP("api-gateway", "GET", "/api/home", 200, ms(totalDur))
-	M.RecordBiz("home.viewed")
+	cust := custID()
+	M.RecordHTTP("api-gateway", "GET", "/api/v1/dashboard", 200, ms(totalDur))
+	M.RecordBiz("dashboard.viewed")
 
-	feSpan := t.Add("frontend", "GET /home", tracepb.Span_SPAN_KIND_CLIENT,
-		nil, 0, totalDur, kv("http.method", "GET", "http.url", "/home",
+	feSpan := t.Add("mobile-bff", "GET /dashboard", tracepb.Span_SPAN_KIND_CLIENT,
+		nil, 0, totalDur, kv("http.method", "GET", "http.url", "/dashboard",
 			"peer.service", "api-gateway"), true, "")
-	apiSpan := t.Add("api-gateway", "GET /api/home", tracepb.Span_SPAN_KIND_SERVER,
+	apiSpan := t.Add("api-gateway", "GET /api/v1/dashboard", tracepb.Span_SPAN_KIND_SERVER,
 		feSpan, 4*time.Millisecond, totalDur-8*time.Millisecond,
-		kv("http.method", "GET", "http.route", "/api/home", "http.status_code", 200), true, "")
+		kv("http.method", "GET", "http.route", "/api/v1/dashboard", "http.status_code", 200,
+			"banking.customer_id", cust), true, "")
 
-	// Recommendations branch: api-gateway → recommendation → ml-service
-	recDur := dur(80, 180)
-	t.Add("api-gateway", "recommendation-service/Personalise", tracepb.Span_SPAN_KIND_CLIENT,
-		apiSpan, 10*time.Millisecond, recDur,
-		kv("rpc.system", "grpc", "rpc.method", "Personalise",
-			"peer.service", "recommendation-service"), true, "")
-	recSpan := t.Add("recommendation-service", "RecommendationService.Personalise", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 12*time.Millisecond, recDur-4*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "Personalise"), true, "")
-	t.Add("recommendation-service", "ml-service/Embed", tracepb.Span_SPAN_KIND_CLIENT,
-		recSpan, 16*time.Millisecond, dur(40, 110),
-		kv("rpc.system", "grpc", "rpc.method", "Embed", "peer.service", "ml-service"),
-		true, "")
-	mlSpan := t.Add("ml-service", "MLService.Embed", tracepb.Span_SPAN_KIND_SERVER,
-		recSpan, 18*time.Millisecond, dur(35, 100),
-		kv("rpc.system", "grpc", "rpc.method", "Embed", "ml.model", "embedding-v3"), true, "")
-	t.Add("ml-service", "redis.GET emb:user", tracepb.Span_SPAN_KIND_CLIENT,
-		mlSpan, 22*time.Millisecond, dur(1, 5),
-		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
+	// Accounts + balances branch: api-gateway → account-service → Oracle
+	acctDur := dur(80, 180)
+	t.Add("api-gateway", "account-service/ListAccounts", tracepb.Span_SPAN_KIND_CLIENT,
+		apiSpan, 10*time.Millisecond, acctDur,
+		kv("rpc.system", "grpc", "rpc.method", "ListAccounts",
+			"peer.service", "account-service"), true, "")
+	acctSpan := t.Add("account-service", "AccountService.ListAccounts", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, 12*time.Millisecond, acctDur-4*time.Millisecond,
+		kv("rpc.system", "grpc", "rpc.method", "ListAccounts",
+			"banking.customer_id", cust), true, "")
+	t.Add("account-service", "SELECT ACCOUNTS", tracepb.Span_SPAN_KIND_CLIENT,
+		acctSpan, 16*time.Millisecond, dur(40, 110),
+		oraDB("COREBANK", "SELECT", "ACCOUNTS",
+			"SELECT ACCT_ID, PRODUCT, BALANCE, AVAIL_BALANCE, CCY FROM ACCOUNTS WHERE CUST_ID = :1",
+			oracleDG), true, "")
+	t.Add("account-service", "SELECT TXN_JOURNAL", tracepb.Span_SPAN_KIND_CLIENT,
+		acctSpan, 60*time.Millisecond, dur(20, 70),
+		oraDB("COREBANK", "SELECT", "TXN_JOURNAL",
+			"SELECT * FROM (SELECT TXN_REF, AMOUNT, CCY, POSTED_TS FROM TXN_JOURNAL "+
+				"WHERE ACCT_ID = :1 ORDER BY POSTED_TS DESC) WHERE ROWNUM <= 10",
+			oracleDG), true, "")
 
-	// Featured products branch (parallel to recommendations)
-	prodDur := dur(40, 110)
-	t.Add("api-gateway", "product-service/ListFeatured", tracepb.Span_SPAN_KIND_CLIENT,
-		apiSpan, 10*time.Millisecond, prodDur,
-		kv("rpc.system", "grpc", "rpc.method", "ListFeatured",
-			"peer.service", "product-service"), true, "")
-	prodSpan := t.Add("product-service", "ProductService.ListFeatured", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 12*time.Millisecond, prodDur-4*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "ListFeatured"), true, "")
-	t.Add("product-service", "db.SELECT products WHERE featured", tracepb.Span_SPAN_KIND_CLIENT,
-		prodSpan, 16*time.Millisecond, dur(20, 80),
-		kv("db.system", "postgresql", "db.name", "shop", "db.statement",
-			"SELECT id, name, price FROM products WHERE featured=true LIMIT 12",
-			"peer.service", "postgres"), true, "")
-
-	// User profile branch (parallel)
-	userDur := dur(20, 60)
-	t.Add("api-gateway", "user-service/GetProfile", tracepb.Span_SPAN_KIND_CLIENT,
-		apiSpan, 10*time.Millisecond, userDur,
+	// Customer profile branch (parallel)
+	custDur := dur(40, 110)
+	t.Add("api-gateway", "customer-service/GetProfile", tracepb.Span_SPAN_KIND_CLIENT,
+		apiSpan, 10*time.Millisecond, custDur,
 		kv("rpc.system", "grpc", "rpc.method", "GetProfile",
-			"peer.service", "user-service"), true, "")
-	userSpan := t.Add("user-service", "UserService.GetProfile", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 12*time.Millisecond, userDur-4*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "GetProfile"), true, "")
-	t.Add("user-service", "db.SELECT users", tracepb.Span_SPAN_KIND_CLIENT,
-		userSpan, 14*time.Millisecond, dur(8, 30),
-		kv("db.system", "postgresql", "db.name", "auth", "db.statement",
-			"SELECT id, email, prefs FROM users WHERE id=$1",
-			"peer.service", "postgres"), true, "")
+			"peer.service", "customer-service"), true, "")
+	custSpan := t.Add("customer-service", "CustomerService.GetProfile", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, 12*time.Millisecond, custDur-4*time.Millisecond,
+		kv("rpc.system", "grpc", "rpc.method", "GetProfile", "banking.customer_id", cust), true, "")
+	t.Add("customer-service", "SELECT CUSTOMERS", tracepb.Span_SPAN_KIND_CLIENT,
+		custSpan, 16*time.Millisecond, dur(8, 30),
+		oraDB("COREBANK", "SELECT", "CUSTOMERS",
+			"SELECT CUST_ID, FULL_NAME, SEGMENT, KYC_STATUS FROM CUSTOMERS WHERE CUST_ID = :1",
+			oracleDG), true, "")
+
+	// FX ticker branch (parallel) — forex-service serves live rates
+	// out of its in-memory cache, no DB hop.
+	fxDur := dur(20, 60)
+	t.Add("api-gateway", "forex-service/GetRates", tracepb.Span_SPAN_KIND_CLIENT,
+		apiSpan, 10*time.Millisecond, fxDur,
+		kv("rpc.system", "grpc", "rpc.method", "GetRates",
+			"peer.service", "forex-service"), true, "")
+	fxSpan := t.Add("forex-service", "ForexService.GetRates", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, 12*time.Millisecond, fxDur-4*time.Millisecond,
+		kv("rpc.system", "grpc", "rpc.method", "GetRates", "banking.base_ccy", "EUR"), true, "")
+	t.Add("forex-service", "redis.MGET fx:EUR:*", tracepb.Span_SPAN_KIND_CLIENT,
+		fxSpan, 14*time.Millisecond, dur(1, 5),
+		kv("db.system", "redis", "db.operation", "MGET", "peer.service", "redis"), true, "")
 	return t
 }
 
-// scenarioProductDetail: product page with reviews + live stock —
-// product-service fans out to review-service (mongodb) and
-// inventory-service (redis). Adds two more services into the
-// product-service neighbourhood.
-func scenarioProductDetail() *Trace {
+// scenarioStatement: generate / fetch an account statement.
+// GET /accounts/{id}/statement → api-gateway → statement-service,
+// which fans out to account-service (header + balance) and reads the
+// transaction journal directly, then renders a PDF. Adds two more
+// services into the statement neighbourhood.
+func scenarioStatement() *Trace {
 	t := NewTrace()
-	totalDur := dur(120, 280)
-	productID := fmt.Sprintf("prod-%d", mrand.IntN(9999)+1)
-	M.RecordHTTP("api-gateway", "GET", "/api/products/{id}", 200, ms(totalDur))
+	totalDur := dur(220, 520)
+	acct := acctID()
+	period := pick("2026-04", "2026-03", "2026-02", "2026-01")
+	M.RecordHTTP("api-gateway", "GET", "/api/v1/accounts/{id}/statement", 200, ms(totalDur))
+	M.RecordDB("statement-service", "oracle", "SELECT", ms(totalDur)*0.5)
+	M.RecordBiz("statements.generated")
 
-	feSpan := t.Add("frontend", "GET /products/"+productID, tracepb.Span_SPAN_KIND_CLIENT,
-		nil, 0, totalDur, kv("http.method", "GET", "http.url", "/products/"+productID,
-			"peer.service", "api-gateway"), true, "")
-	apiSpan := t.Add("api-gateway", "GET /api/products/{id}", tracepb.Span_SPAN_KIND_SERVER,
+	feSpan := t.Add("mobile-bff", "GET /accounts/statement", tracepb.Span_SPAN_KIND_CLIENT,
+		nil, 0, totalDur, kv("http.method", "GET", "http.url", "/accounts/statement?period="+period,
+			"banking.account_id", acct, "peer.service", "api-gateway"), true, "")
+	apiSpan := t.Add("api-gateway", "GET /api/v1/accounts/{id}/statement", tracepb.Span_SPAN_KIND_SERVER,
 		feSpan, 3*time.Millisecond, totalDur-6*time.Millisecond,
-		kv("http.method", "GET", "http.route", "/api/products/{id}",
-			"http.status_code", 200, "product.id", productID), true, "")
-	prodSpan := t.Add("product-service", "ProductService.Get", tracepb.Span_SPAN_KIND_SERVER,
-		apiSpan, 8*time.Millisecond, totalDur-20*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "Get", "product.id", productID), true, "")
-	t.Add("product-service", "db.SELECT product", tracepb.Span_SPAN_KIND_CLIENT,
-		prodSpan, 12*time.Millisecond, dur(8, 40),
-		kv("db.system", "postgresql", "db.name", "shop", "db.statement",
-			"SELECT * FROM products WHERE id=$1", "peer.service", "postgres"), true, "")
-	// Reviews fan-out
-	t.Add("product-service", "review-service/List", tracepb.Span_SPAN_KIND_CLIENT,
-		prodSpan, 18*time.Millisecond, dur(20, 80),
-		kv("rpc.system", "grpc", "rpc.method", "List", "peer.service", "review-service"),
-		true, "")
-	revSpan := t.Add("review-service", "ReviewService.List", tracepb.Span_SPAN_KIND_SERVER,
-		prodSpan, 20*time.Millisecond, dur(18, 70),
-		kv("rpc.system", "grpc", "rpc.method", "List"), true, "")
-	t.Add("review-service", "mongodb.find reviews", tracepb.Span_SPAN_KIND_CLIENT,
-		revSpan, 22*time.Millisecond, dur(15, 60),
-		kv("db.system", "mongodb", "db.operation", "find", "db.collection", "reviews",
-			"peer.service", "mongodb"), true, "")
-	// Stock fan-out
-	t.Add("product-service", "inventory-service/CheckStock", tracepb.Span_SPAN_KIND_CLIENT,
-		prodSpan, 22*time.Millisecond, dur(4, 16),
-		kv("rpc.system", "grpc", "rpc.method", "CheckStock",
-			"peer.service", "inventory-service"), true, "")
-	invSpan := t.Add("inventory-service", "InventoryService.CheckStock", tracepb.Span_SPAN_KIND_SERVER,
-		prodSpan, 24*time.Millisecond, dur(2, 12),
-		kv("rpc.system", "grpc", "rpc.method", "CheckStock"), true, "")
-	t.Add("inventory-service", "redis.GET stock:sku", tracepb.Span_SPAN_KIND_CLIENT,
-		invSpan, 25*time.Millisecond, dur(1, 4),
-		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
-	// Related-products fan-out — recommendation-service now has a
-	// second upstream (api-gateway from the home page + product-
-	// service from the product detail page), so the consumer view
-	// for recommendation-service shows real fan-in.
-	relStart := 24 * time.Millisecond
-	relDur := dur(20, 60)
-	t.Add("product-service", "recommendation-service/RelatedProducts", tracepb.Span_SPAN_KIND_CLIENT,
-		prodSpan, relStart, relDur,
-		kv("rpc.system", "grpc", "rpc.method", "RelatedProducts",
-			"peer.service", "recommendation-service"), true, "")
-	relSpan := t.Add("recommendation-service", "RecommendationService.RelatedProducts", tracepb.Span_SPAN_KIND_SERVER,
-		prodSpan, relStart+2*time.Millisecond, relDur-4*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "RelatedProducts",
-			"product.id", productID), true, "")
-	t.Add("recommendation-service", "redis.GET related:product", tracepb.Span_SPAN_KIND_CLIENT,
-		relSpan, relStart+4*time.Millisecond, dur(1, 5),
-		kv("db.system", "redis", "db.operation", "GET", "peer.service", "redis"), true, "")
+		kv("http.method", "GET", "http.route", "/api/v1/accounts/{id}/statement",
+			"http.status_code", 200, "banking.account_id", acct, "banking.period", period), true, "")
+
+	stmtStart := 8 * time.Millisecond
+	stmtDur := totalDur - 16*time.Millisecond
+	stmtSpan := t.Add("statement-service", "StatementService.Generate", tracepb.Span_SPAN_KIND_SERVER,
+		apiSpan, stmtStart, stmtDur, kv("rpc.system", "grpc", "rpc.method", "Generate",
+			"banking.account_id", acct, "banking.period", period), true, "")
+
+	// Account header fan-out.
+	t.Add("statement-service", "account-service/GetAccount", tracepb.Span_SPAN_KIND_CLIENT,
+		stmtSpan, stmtStart+3*time.Millisecond, dur(20, 60),
+		kv("rpc.system", "grpc", "rpc.method", "GetAccount",
+			"peer.service", "account-service"), true, "")
+	acctSpan := t.Add("account-service", "AccountService.GetAccount", tracepb.Span_SPAN_KIND_SERVER,
+		stmtSpan, stmtStart+5*time.Millisecond, dur(16, 52),
+		kv("rpc.system", "grpc", "rpc.method", "GetAccount", "banking.account_id", acct), true, "")
+	t.Add("account-service", "SELECT ACCOUNTS", tracepb.Span_SPAN_KIND_CLIENT,
+		acctSpan, stmtStart+7*time.Millisecond, dur(8, 30),
+		oraDB("COREBANK", "SELECT", "ACCOUNTS",
+			"SELECT ACCT_ID, IBAN, PRODUCT, OPEN_BAL, CCY FROM ACCOUNTS WHERE ACCT_ID = :1",
+			oracleDG), true, "")
+
+	// Transaction journal scan for the period — the heavy read.
+	t.Add("statement-service", "SELECT TXN_JOURNAL", tracepb.Span_SPAN_KIND_CLIENT,
+		stmtSpan, stmtStart+10*time.Millisecond, dur(80, 220),
+		oraDB("COREBANK", "SELECT", "TXN_JOURNAL",
+			"SELECT TXN_REF, AMOUNT, CCY, DESCR, POSTED_TS FROM TXN_JOURNAL "+
+				"WHERE ACCT_ID = :1 AND POSTED_TS >= :2 AND POSTED_TS < :3 ORDER BY POSTED_TS",
+			oracleCore), true, "")
+
+	// Standing-orders / direct-debit schedule fan-out.
+	soStart := stmtStart + 30*time.Millisecond
+	t.Add("statement-service", "billpay-service/ListSchedule", tracepb.Span_SPAN_KIND_CLIENT,
+		stmtSpan, soStart, dur(15, 50), kv("rpc.system", "grpc", "rpc.method", "ListSchedule",
+			"peer.service", "billpay-service"), true, "")
+	bpSpan := t.Add("billpay-service", "BillPayService.ListSchedule", tracepb.Span_SPAN_KIND_SERVER,
+		stmtSpan, soStart+2*time.Millisecond, dur(12, 44),
+		kv("rpc.system", "grpc", "rpc.method", "ListSchedule",
+			"banking.account_id", acct), true, "")
+	t.Add("billpay-service", "SELECT STANDING_ORDERS", tracepb.Span_SPAN_KIND_CLIENT,
+		bpSpan, soStart+4*time.Millisecond, dur(6, 24),
+		oraDB("COREBANK", "SELECT", "STANDING_ORDERS",
+			"SELECT SO_ID, BILLER_REF, AMOUNT, NEXT_RUN FROM STANDING_ORDERS WHERE ACCT_ID = :1",
+			oracleDG), true, "")
+
+	// PDF render — statement-service writes the document to object
+	// storage (S3-compatible), no DB.
+	pdfStart := stmtStart + dur(120, 200)
+	t.Add("statement-service", "s3.PutObject statement.pdf", tracepb.Span_SPAN_KIND_CLIENT,
+		stmtSpan, pdfStart, dur(20, 70),
+		kv("http.method", "PUT", "http.url", "https://s3.eu-west-1.amazonaws.com/bank-statements",
+			"http.status_code", 200, "peer.service", "s3"), true, "")
 	return t
 }
 
-// scenarioOrderEvent: event-driven side. Synthesises an
-// order.confirmed Kafka event being consumed by notification +
-// analytics + audit services; notification then fans out to email
-// and sms. Roots itself at a kafka consumer span (no parent) so
-// the trace is initiated by the broker, not the user — exercises
-// the producer / consumer kind handling and gives the graph view
-// a downstream tree from kafka outward.
-func scenarioOrderEvent() *Trace {
+// scenarioTransferEvent: event-driven side. Synthesises a
+// transfer.posted Kafka event being consumed by notification +
+// aml (AML / transaction-monitoring) + audit services; notification
+// then fans out to email and sms. Roots itself at a kafka consumer
+// span (no parent) so the trace is initiated by the broker, not the
+// customer — exercises the producer / consumer kind handling and
+// gives the graph view a downstream tree from kafka outward.
+func scenarioTransferEvent() *Trace {
 	t := NewTrace()
 	totalDur := dur(120, 280)
+	ref := txnRef()
 	M.RecordBiz("kafka.events_consumed")
 
-	notifSpan := t.Add("notification-service", "kafka.consume order.confirmed", tracepb.Span_SPAN_KIND_CONSUMER,
+	notifSpan := t.Add("notification-service", "kafka.consume transfer.posted", tracepb.Span_SPAN_KIND_CONSUMER,
 		nil, 0, totalDur, kv("messaging.system", "kafka",
-			"messaging.destination", "order.confirmed",
-			"messaging.operation", "receive", "peer.service", "kafka"), true, "")
+			"messaging.destination", "transfer.posted",
+			"messaging.operation", "receive", "peer.service", "kafka",
+			"banking.txn_ref", ref), true, "")
 
 	// Email branch
 	emailDur := dur(40, 120)
@@ -832,7 +1044,7 @@ func scenarioOrderEvent() *Trace {
 		true, "")
 	emailSpan := t.Add("email-service", "EmailService.Send", tracepb.Span_SPAN_KIND_SERVER,
 		notifSpan, 10*time.Millisecond, emailDur-4*time.Millisecond,
-		kv("rpc.system", "grpc", "rpc.method", "Send", "email.template", "order.confirmation"),
+		kv("rpc.system", "grpc", "rpc.method", "Send", "email.template", "transfer.receipt"),
 		true, "")
 	t.Add("email-service", "sendgrid.send", tracepb.Span_SPAN_KIND_CLIENT,
 		emailSpan, 14*time.Millisecond, dur(30, 90),
@@ -860,27 +1072,30 @@ func scenarioOrderEvent() *Trace {
 			"http.status_code", twilioStatus, "peer.service", "twilio"),
 		!smsFail, ifErr(smsFail, "429 Too Many Requests"))
 
-	// Analytics consumer (parallel root in real life — modelled
-	// here as a sibling so the trace stays a single tree).
-	analyticsDur := dur(20, 80)
-	analSpan := t.Add("analytics-service", "kafka.consume order.confirmed", tracepb.Span_SPAN_KIND_CONSUMER,
-		notifSpan, 4*time.Millisecond, analyticsDur,
-		kv("messaging.system", "kafka", "messaging.destination", "order.confirmed",
-			"messaging.operation", "receive"), true, "")
-	t.Add("analytics-service", "elasticsearch.index events", tracepb.Span_SPAN_KIND_CLIENT,
-		analSpan, 6*time.Millisecond, dur(15, 70),
+	// AML / transaction-monitoring consumer (parallel root in real
+	// life — modelled here as a sibling so the trace stays a single
+	// tree). Screens the posting against sanctions + structuring
+	// rules and indexes it for downstream analytics.
+	amlDur := dur(20, 80)
+	amlSpan := t.Add("aml-service", "kafka.consume transfer.posted", tracepb.Span_SPAN_KIND_CONSUMER,
+		notifSpan, 4*time.Millisecond, amlDur,
+		kv("messaging.system", "kafka", "messaging.destination", "transfer.posted",
+			"messaging.operation", "receive", "banking.txn_ref", ref), true, "")
+	t.Add("aml-service", "elasticsearch.index txn", tracepb.Span_SPAN_KIND_CLIENT,
+		amlSpan, 6*time.Millisecond, dur(15, 70),
 		kv("db.system", "elasticsearch", "db.operation", "index",
 			"peer.service", "elasticsearch"), true, "")
 
-	// Audit consumer
-	auditSpan := t.Add("audit-service", "kafka.consume order.confirmed", tracepb.Span_SPAN_KIND_CONSUMER,
+	// Audit consumer — immutable audit trail in Oracle.
+	auditSpan := t.Add("audit-service", "kafka.consume transfer.posted", tracepb.Span_SPAN_KIND_CONSUMER,
 		notifSpan, 4*time.Millisecond, dur(20, 70),
-		kv("messaging.system", "kafka", "messaging.destination", "order.confirmed"), true, "")
-	t.Add("audit-service", "db.INSERT audit_log", tracepb.Span_SPAN_KIND_CLIENT,
+		kv("messaging.system", "kafka", "messaging.destination", "transfer.posted",
+			"banking.txn_ref", ref), true, "")
+	t.Add("audit-service", "INSERT AUDIT_LOG", tracepb.Span_SPAN_KIND_CLIENT,
 		auditSpan, 6*time.Millisecond, dur(8, 30),
-		kv("db.system", "postgresql", "db.name", "audit",
-			"db.statement", "INSERT INTO audit_log(event, payload) VALUES($1, $2)",
-			"peer.service", "postgres"), true, "")
+		oraDB("AUDIT", "INSERT", "AUDIT_LOG",
+			"INSERT INTO AUDIT_LOG(EVENT, TXN_REF, PAYLOAD, TS) VALUES(:1, :2, :3, SYSTIMESTAMP)",
+			oracleCore), true, "")
 	return t
 }
 
@@ -926,7 +1141,10 @@ func sendLog(service string, severity int32, sevText, body string, traceID, span
 // Records actual traffic from each scenario into in-memory aggregates.
 // Flushed every 10s as OTLP metrics with method/route/status labels.
 
-type httpKey struct{ service, method, route string; status int }
+type httpKey struct {
+	service, method, route string
+	status                 int
+}
 type dbKey struct{ service, system, op string }
 
 type metricsState struct {
@@ -937,7 +1155,7 @@ type metricsState struct {
 	// Business counters
 	bizCounters map[string]uint64 // metric name → delta count
 	// DB query counts
-	dbQueries map[dbKey]uint64
+	dbQueries  map[dbKey]uint64
 	dbDuration map[dbKey]*histogramAgg
 	// Cumulative totals (for monotonic Sum metrics)
 	cumRequests map[httpKey]uint64
@@ -953,8 +1171,12 @@ type histogramAgg struct {
 }
 
 func (h *histogramAgg) record(v float64) {
-	if h.count == 0 || v < h.min { h.min = v }
-	if v > h.max { h.max = v }
+	if h.count == 0 || v < h.min {
+		h.min = v
+	}
+	if v > h.max {
+		h.max = v
+	}
 	h.count++
 	h.sum += v
 }
@@ -978,7 +1200,10 @@ func (m *metricsState) RecordHTTP(service, method, route string, status int, dur
 	m.httpRequests[k]++
 	m.cumRequests[k]++
 	h := m.httpDuration[k]
-	if h == nil { h = &histogramAgg{}; m.httpDuration[k] = h }
+	if h == nil {
+		h = &histogramAgg{}
+		m.httpDuration[k] = h
+	}
 	h.record(durMs)
 }
 
@@ -989,7 +1214,10 @@ func (m *metricsState) RecordDB(service, system, op string, durMs float64) {
 	m.dbQueries[k]++
 	m.cumDBQ[k]++
 	h := m.dbDuration[k]
-	if h == nil { h = &histogramAgg{}; m.dbDuration[k] = h }
+	if h == nil {
+		h = &histogramAgg{}
+		m.dbDuration[k] = h
+	}
 	h.record(durMs)
 }
 
@@ -1063,12 +1291,13 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 	for k := range m.dbQueries {
 		dbReqByService[k.service] = append(dbReqByService[k.service], &metricspb.NumberDataPoint{
 			StartTimeUnixNano: startNs, TimeUnixNano: nowNs,
-			Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(m.cumDBQ[k])},
+			Value:      &metricspb.NumberDataPoint_AsInt{AsInt: int64(m.cumDBQ[k])},
 			Attributes: []*commonpb.KeyValue{kvStr("db.system", k.system), kvStr("db.operation", k.op)},
 		})
 	}
 	for k, h := range m.dbDuration {
-		sum := h.sum; mn, mx := h.min, h.max
+		sum := h.sum
+		mn, mx := h.min, h.max
 		dbDurByService[k.service] = append(dbDurByService[k.service], &metricspb.HistogramDataPoint{
 			StartTimeUnixNano: startNs, TimeUnixNano: nowNs,
 			Count: h.count, Sum: &sum, Min: &mn, Max: &mx,
@@ -1079,9 +1308,9 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		addMetric(svc, &metricspb.Metric{
 			Name: "db.client.queries", Unit: "1", Description: "Total DB client queries",
 			Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
-				IsMonotonic: true,
+				IsMonotonic:            true,
 				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
-				DataPoints: dps,
+				DataPoints:             dps,
 			}},
 		})
 	}
@@ -1090,31 +1319,44 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 			Name: "db.client.duration", Unit: "ms", Description: "DB client query duration",
 			Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
 				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
-				DataPoints: dps,
+				DataPoints:             dps,
 			}},
 		})
 	}
 
-	// ── Business counters (orders, payments, cart) ───────────────────────────
+	// ── Business counters (transfers, cards, bill pay, fraud) ─────────────────
+	// Owning service per banking counter. transfers.* / fraud.blocked
+	// feed the transfers-per-sec + fraud-block-rate dashboards; the
+	// HTTP duration histogram on transfer-service / card-service is
+	// the payment-latency distribution.
 	bizMap := map[string]string{
-		"orders.created":      "order-service",
-		"orders.failed":       "order-service",
-		"payments.processed":  "payment-service",
-		"payments.failed":     "payment-service",
-		"cart.items_added":    "cart-service",
-		"users.logged_in":     "user-service",
-		"users.login_failed":  "user-service",
-		"products.searched":   "search-service",
-		"kafka.messages_published": "order-service",
+		"balance.inquiries":      "account-service",
+		"dashboard.viewed":       "api-gateway",
+		"transfers.attempted":    "transfer-service",
+		"transfers.completed":    "transfer-service",
+		"transfers.failed":       "transfer-service",
+		"card.authorizations":    "card-service",
+		"card.approved":          "card-service",
+		"card.declined":          "card-service",
+		"billpay.attempted":      "billpay-service",
+		"billpay.completed":      "billpay-service",
+		"billpay.failed":         "billpay-service",
+		"statements.generated":   "statement-service",
+		"fraud.blocked":          "fraud-service",
+		"auth.logged_in":         "auth-service",
+		"auth.login_failed":      "auth-service",
+		"kafka.events_published": "transfer-service",
 	}
 	for name, svc := range bizMap {
 		v, ok := m.cumBiz[name]
-		if !ok { continue }
+		if !ok {
+			continue
+		}
 		addMetric(svc, &metricspb.Metric{
 			Name: "demo." + name, Unit: "1",
 			Description: "Demo business counter: " + name,
 			Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
-				IsMonotonic: true,
+				IsMonotonic:            true,
 				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
 				DataPoints: []*metricspb.NumberDataPoint{{
 					StartTimeUnixNano: startNs, TimeUnixNano: nowNs,
@@ -1126,7 +1368,9 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 
 	// ── System / runtime gauges (per backend service) ─────────────────────────
 	for svcKey := range services {
-		if svcKey == "frontend" { continue }
+		if svcKey == "mobile-bff" {
+			continue
+		}
 		addMetric(svcKey, &metricspb.Metric{
 			Name: "process.runtime.memory.rss", Unit: "By",
 			Description: "Process resident memory size",
@@ -1160,6 +1404,71 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
 				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
 					Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(2 + mrand.IntN(40))},
+				}},
+			}},
+		})
+	}
+
+	// ── Banking domain metrics ────────────────────────────────────────────────
+	// Derived gauges + histogram the operator dashboards graph directly:
+	// transfers/sec, fraud-block rate, and the payment latency
+	// distribution. Computed from this interval's delta counters /
+	// duration aggregates (the flush cadence is the 10s window).
+	const windowSec = 10.0
+
+	// transfers/sec — completed transfers in the interval / window.
+	tps := float64(m.bizCounters["transfers.completed"]) / windowSec
+	addMetric("transfer-service", &metricspb.Metric{
+		Name: "banking.transfers.rate", Unit: "{transfer}/s",
+		Description: "Completed money transfers per second",
+		Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
+			DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
+				Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: tps}}},
+		}},
+	})
+
+	// fraud-block rate — fraud blocks / total risk-scored attempts
+	// (transfers + card authorizations) this interval.
+	scored := m.bizCounters["transfers.attempted"] + m.bizCounters["card.authorizations"]
+	var blockRate float64
+	if scored > 0 {
+		blockRate = float64(m.bizCounters["fraud.blocked"]) / float64(scored)
+	}
+	addMetric("fraud-service", &metricspb.Metric{
+		Name: "banking.fraud.block_rate", Unit: "1",
+		Description: "Fraction of risk-scored transactions blocked by fraud",
+		Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
+			DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
+				Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: blockRate}}},
+		}},
+	})
+
+	// payment latency histogram — folds the transfer + card-payment
+	// HTTP server durations into a single payment-path distribution.
+	payLat := &histogramAgg{}
+	for k, h := range m.httpDuration {
+		if k.service != "transfer-service" && k.service != "card-service" {
+			continue
+		}
+		if payLat.count == 0 || h.min < payLat.min {
+			payLat.min = h.min
+		}
+		if h.max > payLat.max {
+			payLat.max = h.max
+		}
+		payLat.count += h.count
+		payLat.sum += h.sum
+	}
+	if payLat.count > 0 {
+		psum, pmn, pmx := payLat.sum, payLat.min, payLat.max
+		addMetric("payment-service", &metricspb.Metric{
+			Name: "banking.payment.latency", Unit: "ms",
+			Description: "End-to-end payment (transfer + card) latency",
+			Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
+				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
+				DataPoints: []*metricspb.HistogramDataPoint{{
+					StartTimeUnixNano: startNs, TimeUnixNano: nowNs,
+					Count: payLat.count, Sum: &psum, Min: &pmn, Max: &pmx,
 				}},
 			}},
 		})
@@ -1201,7 +1510,9 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 func sendMetrics(startNs uint64) uint64 {
 	now := uint64(time.Now().UnixNano())
 	rms := M.flush(startNs, now)
-	if len(rms) == 0 { return now }
+	if len(rms) == 0 {
+		return now
+	}
 	if err := sendOTLP("/v1/metrics", &metricscollpb.ExportMetricsServiceRequest{ResourceMetrics: rms}); err != nil {
 		log.Printf("[metrics] send error: %v", err)
 	}
@@ -1215,14 +1526,14 @@ var scenarios = []struct {
 	weight int
 	fn     scenario
 }{
-	{"BrowseProducts", 4, scenarioBrowseProducts},
-	{"HomePage",       4, scenarioHomePage},
-	{"ProductDetail",  4, scenarioProductDetail},
-	{"Search",         3, scenarioSearch},
-	{"AddToCart",      3, scenarioCart},
-	{"Login",          2, scenarioUserLogin},
-	{"Checkout",       2, scenarioCheckout},
-	{"OrderEvent",     2, scenarioOrderEvent},
+	{"BalanceInquiry", 5, scenarioBalanceInquiry},
+	{"Dashboard", 4, scenarioDashboard},
+	{"CardPayment", 4, scenarioCardPayment},
+	{"BillPay", 3, scenarioBillPay},
+	{"Statement", 3, scenarioStatement},
+	{"Login", 2, scenarioLogin},
+	{"Transfer", 3, scenarioTransfer},
+	{"TransferEvent", 2, scenarioTransferEvent},
 }
 
 func pickScenario() (string, scenario) {
@@ -1246,7 +1557,7 @@ func main() {
 		// Default to coremetry directly (collector doesn't speak our pprof protocol).
 		*profileEndpoint = "http://coremetry:8088"
 	}
-	log.Printf("Coremetry demo")
+	log.Printf("Coremetry demo — retail-banking traffic generator")
 	log.Printf("  endpoint:         %s (traces/logs/metrics)", *endpoint)
 	log.Printf("  profile endpoint: %s", *profileEndpoint)
 	log.Printf("  rate:             %.1f scenarios/sec", *rps)
@@ -1372,22 +1683,28 @@ func sendScenarioLog(scenarioName string, t *Trace) {
 // the server-side detector matches on so the /anomalies page has
 // a live source of synthetic ORA- / NPE / OOM / deadlock / panic
 // lines without us having to hand-craft a separate scenario.
+// Banking-flavoured: Oracle core-banking faults, ledger PL/SQL
+// exceptions, fraud / limit declines, payment-rail timeouts.
 var anomalyLines = []string{
-	"ORA-00060: deadlock detected while waiting for resource",
-	"ORA-01017: invalid username/password; logon denied",
-	"ORA-12541: TNS:no listener — connection to oracle-prod refused",
-	"java.lang.NullPointerException: Cannot invoke method on null reference at com.shop.UserService.lookup(UserService.java:142)",
+	"ORA-00060: deadlock detected while waiting for resource on TXN_JOURNAL",
+	"ORA-01017: invalid username/password; logon denied for COREBANK_APP",
+	"ORA-12541: TNS:no listener — connection to corebank-scan.prod:1521 refused",
+	"ORA-00054: resource busy and acquire with NOWAIT specified on ACCOUNTS row",
+	"ORA-01555: snapshot too old: rollback segment too small during statement scan",
+	"ORA-20012: PKG_LEDGER.POST_TRANSFER raised INSUFFICIENT_FUNDS for ACCT-204918337",
+	"ORA-04068: existing state of package PKG_LEDGER has been discarded",
+	"java.lang.NullPointerException: Cannot invoke balance on null Account at com.bank.LedgerService.post(LedgerService.java:214)",
 	"java.lang.OutOfMemoryError: Java heap space — heap dump written to /var/log/heapdump-1715.hprof",
 	"OOMKilled: container exceeded memory limit (1Gi), restarting",
-	"deadlock detected on relation orders: process 12345 waits for ShareLock; killed",
-	"ECONNREFUSED: connection refused to redis-prod-2:6379 — circuit breaker open",
+	"ECONNREFUSED: connection refused to redis-prod-2:6379 — fraud rule cache circuit breaker open",
 	"x509: certificate has expired or is not yet valid: current time 2026-05-09 is after 2026-05-08T00:00:00Z",
-	"tls: handshake failure with payment-gateway: unsupported cipher suite",
+	"tls: handshake failure with card-network gateway: unsupported cipher suite",
 	"panic: runtime error: index out of range [5] with length 3 — goroutine 142 stack",
-	"context deadline exceeded — upstream user-service did not respond within 5s",
-	"401 Unauthorized — invalid credentials for tenant=acme route=/api/orders",
-	"no space left on device: cannot write to /var/lib/postgresql/wal — disk full",
-	"java.lang.IllegalStateException: cannot complete transaction — already committed",
+	"context deadline exceeded — upstream ledger-service did not respond within 5s",
+	"401 Unauthorized — MFA step-up required for customer route=/api/v1/transfers",
+	"transfer declined: daily transfer limit exceeded for ACCT-118273645",
+	"fraud decision DECLINE: rule HIGH_VELOCITY tripped, model score 0.93 over threshold 0.80",
+	"no space left on device: cannot write Oracle redo log to /u02/oradata — disk full",
 }
 
 func pickAnomalyLine(service string) string {
@@ -1405,7 +1722,7 @@ func runProfileLoop(ctx context.Context, wg *sync.WaitGroup) {
 
 	// Pick a "service" label for the profile. We use one of our backend
 	// services so trace-to-profile linking finds matches in the demo data.
-	const profileSvc = "order-service"
+	const profileSvc = "ledger-service"
 
 	t := time.NewTicker(10 * time.Second)
 	defer t.Stop()
@@ -1575,4 +1892,3 @@ func anyVal(v any) *commonpb.AnyValue {
 		return &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: fmt.Sprint(v)}}
 	}
 }
-

@@ -18,11 +18,36 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- Keep in lockstep with the OTEL_AGENT_VERSION baked into the
+             Dockerfile (2.10.0 -> opentelemetry-java API 1.44.x). The
+             javaagent provides the runtime SDK/exporter; we only compile
+             against the API for the manual Oracle CLIENT spans. -->
+        <opentelemetry.version>1.44.1</opentelemetry.version>
     </properties>
 
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.opentelemetry</groupId>
+                <artifactId>opentelemetry-bom</artifactId>
+                <version>${opentelemetry.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
-        <!-- NOTE: no OpenTelemetry imports here. All instrumentation comes
-             from the javaagent at runtime. -->
+        <!-- OpenTelemetry API ONLY. Auto-instrumentation (HTTP, Spring,
+             JDBC, logback-MDC) still comes from the -javaagent at runtime;
+             this dependency is just so CoreBankingGateway can open MANUAL
+             CLIENT spans for the simulated Oracle core-banking calls. The
+             agent supplies the real TracerProvider, so GlobalOpenTelemetry
+             resolves to it at runtime. -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

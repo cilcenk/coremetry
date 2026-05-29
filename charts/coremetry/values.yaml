@@ -285,6 +285,17 @@ clickhouse:
     nativePort: 9000        # CH native protocol — coremetry connects here
     httpPort: 8123          # Useful for ad-hoc clickhouse-client / debugging
   podSecurityContext: {}    # OpenShift assigns UID + fsGroup automatically
+  # Container-level SC for the bundled CH. Default = hardened (works on
+  # OpenShift, where the SCC injects a runAsUser, or with anyuid bound).
+  # The clickhouse-server image's USER is root, so on VANILLA k8s (minikube,
+  # kind, plain kubeadm) — where no SCC injects a uid — runAsNonRoot:true is
+  # REJECTED at admission. Set this to {} there (see values-minikube.yaml) so
+  # the image runs as its own user.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities: { drop: ["ALL"] }
+    seccompProfile: { type: RuntimeDefault }
 
 # ── Logs read backend ───────────────────────────────────────────────────────
 #
@@ -318,6 +329,16 @@ logs:
 # deployments use a managed Redis and set `external.url` instead.
 redis:
   enabled: true
+  # Container-level SC for the bundled Redis. Default = hardened (OpenShift,
+  # which injects a runAsUser). The redis image's USER is root, so on vanilla
+  # k8s set this to {} (see values-minikube.yaml) so it can start. Data is
+  # ephemeral (appendonly + RDB off) so uid churn is harmless.
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: { drop: ["ALL"] }
+    seccompProfile: { type: RuntimeDefault }
   external:
     url: ""               # e.g. "redis://my-redis.svc:6379/0" — overrides in-cluster
   image:

@@ -23,16 +23,16 @@ spec:
       containers:
         - name: redis
           image: {{ include "coremetry.image" (dict "imageRoot" .Values.redis.image "global" .Values.global) | quote }}
-          # SCC-friendly: no fixed UID, no privileged caps. The official
-          # redis image refuses to start as root; with restricted-v2 the
-          # platform assigns a high non-root UID — that works because we
-          # never persist anything (appendonly + RDB off below).
-          securityContext:
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: { drop: ["ALL"] }
-            seccompProfile: { type: RuntimeDefault }
+          # Container SC is values-driven (redis.containerSecurityContext).
+          # The official redis image's USER is root (the entrypoint drops to
+          # the redis user via gosu), so runAsNonRoot:true WITHOUT a runAsUser
+          # is REJECTED on vanilla k8s — only an OpenShift SCC injects a uid.
+          # Default keeps the hardened block (OpenShift); set {} on vanilla
+          # k8s / minikube to let the image run as its own user. Data is
+          # ephemeral (appendonly + RDB off below) so uid churn is harmless.
+          {{- with .Values.redis.containerSecurityContext }}
+          securityContext: {{ toYaml . | nindent 12 }}
+          {{- end }}
           # All cached/locked data is rebuildable from ClickHouse, so
           # appendonly + RDB are off. Treat this Redis as ephemeral.
           args: ["redis-server", "--appendonly", "no", "--save", ""]

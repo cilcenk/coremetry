@@ -51,15 +51,16 @@ spec:
         - name: clickhouse
           image: {{ include "coremetry.image" (dict "imageRoot" .Values.clickhouse.image "global" .Values.global) | quote }}
           imagePullPolicy: {{ .Values.clickhouse.image.pullPolicy }}
-          # The official clickhouse-server image runs as fixed UID 101.
-          # Vanilla k8s admits this fine; on OpenShift you need to bind
-          # `anyuid` SCC to this chart's service account first
-          # (see README OpenShift section).
-          securityContext:
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            capabilities: { drop: ["ALL"] }
-            seccompProfile: { type: RuntimeDefault }
+          # Container SC is values-driven (clickhouse.containerSecurityContext).
+          # The official clickhouse-server image's USER is root (it drops to
+          # uid 101 internally), so runAsNonRoot:true WITHOUT a runAsUser is
+          # REJECTED on vanilla k8s — only an OpenShift SCC injects a uid at
+          # admission. Default keeps the hardened block (OpenShift + anyuid);
+          # set it to {} on vanilla k8s / minikube to let the image run as
+          # its own user.
+          {{- with .Values.clickhouse.containerSecurityContext }}
+          securityContext: {{ toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - { name: native, containerPort: 9000 }
             - { name: http,   containerPort: 8123 }

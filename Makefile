@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down audit
+.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down minikube-up minikube-down audit
 
 # VERSION is auto-derived from `git describe` so local builds
 # show something like "v0.4.48-3-gabcdef" instead of literal
@@ -120,6 +120,28 @@ docker-distributed-up: .env-version
 docker-distributed-down:
 	docker compose -f docker-compose.yml -f docker-compose.distributed.yml \
 	  --profile demo --profile tempo --profile pyroscope --profile grafana down
+
+# v0.6.67 — PROD-PARITY: deploy the REAL Helm chart to local minikube in
+# distributed mode (ingest/api/worker + bundled CH/Redis/collector) via
+# values-minikube.yaml. Builds the coremetry image, side-loads it into
+# minikube (no registry/no GHCR), then helm upgrade --install. Use
+# docker-compose for the fast edit→rebuild→verify dev loop; use THIS to
+# validate that the production Helm chart + distributed topology actually
+# deploy + run. The minikube values relax the bundled CH/Redis container
+# securityContext (vanilla k8s has no SCC to inject a runAsUser).
+minikube-up:
+	@minikube status >/dev/null 2>&1 || minikube start --driver=docker --cpus=4 --memory=6144
+	docker build -t ghcr.io/cilcenk/coremetry:local .
+	minikube image load ghcr.io/cilcenk/coremetry:local
+	helm upgrade --install coremetry charts/coremetry -n coremetry --create-namespace \
+	  -f values-minikube.yaml --wait --timeout 8m
+	@echo "[make] Coremetry distributed on minikube — all roles up."
+	@echo "[make]   UI:        kubectl port-forward -n coremetry svc/coremetry 8090:8088  → http://localhost:8090"
+	@echo "[make]   Dashboard: minikube dashboard --url"
+
+minikube-down:
+	-helm uninstall coremetry -n coremetry
+	-kubectl delete namespace coremetry --ignore-not-found
 
 clean:
 	rm -rf coremetry demo frontend/out frontend/.next frontend/node_modules

@@ -33,11 +33,27 @@ data:
         tls: { insecure: true }
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 5000 }
         retry_on_failure: { enabled: true, initial_interval: 1s, max_interval: 30s }
+      {{- if .Values.otelCollector.oneuptime.enabled }}
+      # v0.6.70 — cloud fan-out: ALSO forward every signal to a second OTLP/HTTP
+      # backend (OneUptime, Grafana Cloud, any OTLP/HTTP ingest), in ADDITION to
+      # the in-cluster Coremetry ingest. Independent sending_queue + retry so a
+      # cloud-backend outage back-pressures only its own queue, never the
+      # Coremetry export. The auth token is sourced from a Secret via the
+      # ONEUPTIME_TOKEN env (never inlined in this ConfigMap); the otlphttp
+      # exporter auto-appends /v1/{traces,metrics,logs} to the base endpoint,
+      # which matches OneUptime's /otlp ingest path.
+      otlphttp/oneuptime:
+        endpoint: {{ .Values.otelCollector.oneuptime.endpoint | quote }}
+        headers:
+          {{ .Values.otelCollector.oneuptime.tokenHeader }}: "${env:ONEUPTIME_TOKEN}"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 5000 }
+        retry_on_failure: { enabled: true, initial_interval: 1s, max_interval: 30s }
+      {{- end }}
     service:
       pipelines:
-        traces:  { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry] }
-        metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry] }
-        logs:    { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry] }
+        traces:  { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry{{ if .Values.otelCollector.oneuptime.enabled }}, otlphttp/oneuptime{{ end }}] }
+        metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry{{ if .Values.otelCollector.oneuptime.enabled }}, otlphttp/oneuptime{{ end }}] }
+        logs:    { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry{{ if .Values.otelCollector.oneuptime.enabled }}, otlphttp/oneuptime{{ end }}] }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -70,6 +86,17 @@ spec:
             capabilities: { drop: ["ALL"] }
             seccompProfile: { type: RuntimeDefault }
           args: ["--config=/etc/otelcol/config.yaml"]
+          {{- if .Values.otelCollector.oneuptime.enabled }}
+          # Cloud-backend ingestion token — sourced from a Secret, exposed to the
+          # collector as ${env:ONEUPTIME_TOKEN} (referenced in the exporter
+          # header above). Never inlined in the ConfigMap. (v0.6.70)
+          env:
+            - name: ONEUPTIME_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "otelCollector.oneuptime.existingSecret is required when otelCollector.oneuptime.enabled=true" .Values.otelCollector.oneuptime.existingSecret }}
+                  key: {{ .Values.otelCollector.oneuptime.tokenSecretKey | default "token" }}
+          {{- end }}
           ports:
             - { name: otlp-grpc, containerPort: 4317 }
             - { name: otlp-http, containerPort: 4318 }

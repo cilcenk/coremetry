@@ -375,6 +375,20 @@ otelCollector:
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits:   { cpu: "2",  memory: 2Gi }
+  # Cloud fan-out (v0.6.70) — additionally forward EVERY signal to a second
+  # OTLP/HTTP backend (OneUptime, Grafana Cloud, any OTLP/HTTP ingest) ALONGSIDE
+  # the in-cluster Coremetry ingest. The collector dual-exports; app/demo pods
+  # are unchanged. Default off. The auth token is NEVER inlined here — provide
+  # it via a Secret and the chart injects it as ONEUPTIME_TOKEN, referenced by
+  # ${env:ONEUPTIME_TOKEN} in the exporter header:
+  #   kubectl create secret generic coremetry-oneuptime \
+  #     -n <namespace> --from-literal=token=<your-ingestion-token>
+  oneuptime:
+    enabled: false
+    endpoint: "https://oneuptime.com/otlp"   # otlphttp base; /v1/{signal} auto-appended
+    tokenHeader: "x-oneuptime-token"          # header name the backend expects
+    existingSecret: ""                         # Secret holding the ingestion token
+    tokenSecretKey: "token"                    # key within that Secret
 
 # Java demo — Spring Boot e-commerce app with zero-code OTel auto-
 # instrumentation + sidecar profile pusher. Off by default; flip on for

@@ -71,6 +71,18 @@ redis:
 
 otelCollector:
   enabled: true
+  # Cloud fan-out → OneUptime (v0.6.70). The collector dual-exports: every span/
+  # metric/log goes to BOTH the in-cluster Coremetry ingest AND OneUptime cloud.
+  # The ingestion token lives in a Secret (NOT in this committed file) — create
+  # it once before `make minikube-up`:
+  #   kubectl create secret generic coremetry-oneuptime \
+  #     -n coremetry --from-literal=token=<your-oneuptime-ingestion-token>
+  oneuptime:
+    enabled: true
+    endpoint: "https://oneuptime.com/otlp"
+    tokenHeader: "x-oneuptime-token"
+    existingSecret: "coremetry-oneuptime"
+    tokenSecretKey: "token"
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { cpu: "1",  memory: 1Gi }

@@ -95,6 +95,33 @@ export function HistogramHeatmap({ data, mode = 'heatmap', unit = 'ms', height =
       const css = getComputedStyle(document.documentElement);
       const axisCol = css.getPropertyValue('--text2').trim() || '#7d8693';
 
+      // Percentile line: ONE polyline through the non-zero points (connect
+      // across empty buckets) + a dot at each point. v0.6.62 — at fine
+      // auto-step a sparse histogram exports into single buckets with empty
+      // neighbours, so every percentile point was isolated; the old
+      // gap-breaking loop did moveTo with no lineTo and stroked an empty
+      // path → the operator saw bars but no süre line. Connecting across
+      // gaps + dots makes even a lone sample visible.
+      const drawPctl = (vals: number[], color: string, yOf: (v: number) => number) => {
+        const pts: [number, number][] = [];
+        for (let i = 0; i < cols; i++) {
+          const v = vals[i] ?? 0;
+          if (v > 0) pts.push([xOf(i), yOf(v)]);
+        }
+        if (pts.length === 0) return;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        pts.forEach(([x, y], k) => (k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+        ctx.stroke();
+        for (const [x, y] of pts) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      };
+
       if (mode === 'volume') {
         // span-COUNT bars (right axis).
         ctx.fillStyle = BAR_FILL;
@@ -106,20 +133,7 @@ export function HistogramHeatmap({ data, mode = 'heatmap', unit = 'ms', height =
         }
         // DURATION lines (left latency axis, linear 0..latMax).
         const yLat = (v: number) => padT + plotH * (1 - Math.min(1, v / latMax));
-        for (const p of PCTL) {
-          const vals = data[p.key] ?? [];
-          ctx.strokeStyle = p.color;
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          let started = false;
-          for (let i = 0; i < cols; i++) {
-            const v = vals[i] ?? 0;
-            if (v <= 0) { started = false; continue; }
-            const y = yLat(v);
-            if (!started) { ctx.moveTo(xOf(i), y); started = true; } else ctx.lineTo(xOf(i), y);
-          }
-          ctx.stroke();
-        }
+        for (const p of PCTL) drawPctl(data[p.key] ?? [], p.color, yLat);
         // left axis = latency, right axis = count.
         ctx.fillStyle = axisCol;
         ctx.font = '10px ui-monospace, SFMono-Regular, monospace';
@@ -149,21 +163,8 @@ export function HistogramHeatmap({ data, mode = 'heatmap', unit = 'ms', height =
             }
           }
         }
-        // percentile lines on the bucket-band axis
-        for (const p of PCTL) {
-          const vals = data[p.key] ?? [];
-          ctx.strokeStyle = p.color;
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          let started = false;
-          for (let i = 0; i < cols; i++) {
-            const v = vals[i] ?? 0;
-            if (v <= 0) { started = false; continue; }
-            const y = padT + plotH * (1 - valueToRow(v, data.bounds) / rows);
-            if (!started) { ctx.moveTo(xOf(i), y); started = true; } else ctx.lineTo(xOf(i), y);
-          }
-          ctx.stroke();
-        }
+        // percentile lines on the bucket-band axis (connect across gaps + dots)
+        for (const p of PCTL) drawPctl(data[p.key] ?? [], p.color, (v) => padT + plotH * (1 - valueToRow(v, data.bounds) / rows));
         // y-axis labels = bucket upper bounds
         ctx.fillStyle = axisCol;
         ctx.font = '10px ui-monospace, SFMono-Regular, monospace';

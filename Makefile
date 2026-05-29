@@ -131,7 +131,11 @@ docker-distributed-down:
 # securityContext (vanilla k8s has no SCC to inject a runAsUser).
 minikube-up:
 	@minikube status >/dev/null 2>&1 || minikube start --driver=docker --cpus=4 --memory=6144
-	docker build -t ghcr.io/cilcenk/coremetry:local .
+	@# v0.6.71 — pass VERSION through as build-args. Without these the
+	@# Dockerfile's `ARG VERSION=dev` default baked "dev" (and the frontend
+	@# footer stayed stale) into coremetry:local, so /api/version + the login
+	@# chrome never matched the deployed tag. Mirrors docker-compose's build.
+	docker build --build-arg VERSION=$(VERSION) --build-arg VITE_APP_VERSION=$(VERSION) -t ghcr.io/cilcenk/coremetry:local .
 	minikube image load ghcr.io/cilcenk/coremetry:local
 	helm upgrade --install coremetry charts/coremetry -n coremetry --create-namespace \
 	  -f values-minikube.yaml --wait --timeout 8m

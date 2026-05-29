@@ -2,11 +2,13 @@ package chstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cilcenk/coremetry/internal/selfobs"
 )
@@ -64,6 +66,36 @@ func truncStmt(s string) string {
 	return s[:maxStmtBytes] + "…"
 }
 
+// chErrorIsBenignCancel reports whether a ClickHouse call error is a
+// client-side cancellation that should NOT mark the span as a failure
+// (v0.7.12). context.Canceled means the inbound API request was cancelled by
+// the caller — the browser navigated away, or React Query superseded an
+// in-flight poll — so the handler's request context died and any CH query it
+// then issues returns instantly (these are the 0ms "context canceled" error
+// spans the operator saw on coremetry-api). Per OTel CLIENT-span convention a
+// caller-cancelled op is not a server error; flagging it floods the self-obs
+// trace view + error_rate with noise. context.DeadlineExceeded (a real
+// server-side timeout / slow query) is deliberately NOT benign — it stays an
+// error so genuine slowness still surfaces.
+func chErrorIsBenignCancel(err error) bool {
+	return errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+// recordCHError sets span status from a ClickHouse call error: benign
+// client-cancellations get a queryable attribute but no error status; every
+// real error (incl. context.DeadlineExceeded) is recorded as codes.Error.
+func recordCHError(span trace.Span, err error) {
+	if err == nil {
+		return
+	}
+	if chErrorIsBenignCancel(err) {
+		span.SetAttributes(attribute.Bool("clickhouse.canceled", true))
+		return
+	}
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+}
+
 func (t *tracedConn) Query(ctx context.Context, q string, args ...any) (driver.Rows, error) {
 	ctx, span := selfobs.Tracer().Start(ctx, "clickhouse.query")
 	span.SetAttributes(
@@ -72,10 +104,7 @@ func (t *tracedConn) Query(ctx context.Context, q string, args ...any) (driver.R
 	)
 	defer span.End()
 	rows, err := t.Conn.Query(ctx, q, args...)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-	}
+	recordCHError(span, err)
 	return rows, err
 }
 
@@ -101,12 +130,9 @@ func (t *tracedConn) Exec(ctx context.Context, q string, args ...any) error {
 		attribute.String("db.statement", truncStmt(q)),
 	)
 	defer span.End()
-	if err := t.Conn.Exec(ctx, q, args...); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return err
-	}
-	return nil
+	err := t.Conn.Exec(ctx, q, args...)
+	recordCHError(span, err)
+	return err
 }
 
 func (t *tracedConn) PrepareBatch(ctx context.Context, q string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
@@ -117,10 +143,7 @@ func (t *tracedConn) PrepareBatch(ctx context.Context, q string, opts ...driver.
 	)
 	defer span.End()
 	b, err := t.Conn.PrepareBatch(ctx, q, opts...)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-	}
+	recordCHError(span, err)
 	return b, err
 }
 
@@ -132,10 +155,7 @@ func (t *tracedConn) AsyncInsert(ctx context.Context, q string, wait bool, args 
 		attribute.Bool("clickhouse.async_wait", wait),
 	)
 	defer span.End()
-	if err := t.Conn.AsyncInsert(ctx, q, wait, args...); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return err
-	}
-	return nil
+	err := t.Conn.AsyncInsert(ctx, q, wait, args...)
+	recordCHError(span, err)
+	return err
 }

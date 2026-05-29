@@ -58,14 +58,6 @@ export function HistogramHeatmap({ data, mode = 'heatmap', unit = 'ms', height =
   const maxVolume = Math.max(1, ...volume);
   let maxCount = 1;
   for (const col of data.counts) for (const c of col) if (c > maxCount) maxCount = c;
-  // Latency axis ceiling for the volume mode's duration line: scale to the
-  // PERCENTILES, never the last bucket bound. OTel histogram bounds often
-  // run to 10000ms+ while real p99 is tens of ms — including the last bound
-  // squashed the line flat against the x-axis, so the operator saw the bars
-  // but not the süre line (v0.6.61). Fall back to the last bound only when
-  // there are no percentile values at all.
-  const pMax = Math.max(0, ...data.p99, ...data.p95, ...data.p50);
-  const latMax = (pMax > 0 ? pMax : (data.bounds.length ? data.bounds[data.bounds.length - 1] : 1)) * 1.12;
 
   useEffect(() => {
     const canvas = canvasRef.current, wrap = containerRef.current;
@@ -131,20 +123,27 @@ export function HistogramHeatmap({ data, mode = 'heatmap', unit = 'ms', height =
           if (h <= 0) continue;
           ctx.fillRect(padL + i * cellW + (cellW - bw) / 2, padT + plotH - h, bw, h);
         }
-        // DURATION lines (left latency axis, linear 0..latMax).
-        const yLat = (v: number) => padT + plotH * (1 - Math.min(1, v / latMax));
-        for (const p of PCTL) drawPctl(data[p.key] ?? [], p.color, yLat);
-        // left axis = latency, right axis = count.
+        // DURATION lines on the bucket-band axis — SAME layout as the
+        // heatmap mode. The bounds are exponentially spaced (0,5,…,2500,
+        // 10000), so the band axis reads like a log scale and a multi-second
+        // p99 outlier no longer squashes the 180ms p50 flat against the
+        // x-axis. v0.6.63: a linear latency axis collapsed every normal-range
+        // percentile under one spike — the operator saw bars but no süre line.
+        for (const p of PCTL) drawPctl(data[p.key] ?? [], p.color, (v) => padT + plotH * (1 - valueToRow(v, data.bounds) / rows));
+        // left axis = latency bucket bounds (matches heatmap), right = count.
         ctx.fillStyle = axisCol;
         ctx.font = '10px ui-monospace, SFMono-Regular, monospace';
         ctx.textBaseline = 'middle';
+        const yLabels = Math.min(5, data.bounds.length);
+        for (let i = 0; i < yLabels; i++) {
+          const k = Math.floor((data.bounds.length - 1) * (i / Math.max(1, yLabels - 1)));
+          ctx.textAlign = 'right';
+          ctx.fillText(fmtSmart(data.bounds[k], unit), padL - 6, padT + (rows - 1 - k) * bandH + bandH / 2);
+        }
         for (let i = 0; i <= 4; i++) {
           const frac = i / 4;
-          const y = padT + plotH * (1 - frac);
-          ctx.textAlign = 'right';
-          ctx.fillText(fmtSmart(latMax * frac, unit), padL - 6, y);
           ctx.textAlign = 'left';
-          ctx.fillText(fmtCount(maxVolume * frac), w - padR + 6, y);
+          ctx.fillText(fmtCount(maxVolume * frac), w - padR + 6, padT + plotH * (1 - frac));
         }
       } else {
         // heatmap density cells (heatmap mode only)

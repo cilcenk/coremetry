@@ -29,17 +29,17 @@ deployment:
   mode: distributed
   roles:
     ingest:
-      replicas: 1         # 1 is enough locally; prod runs 2+
+      replicas: 2         # HA test (was 1) — 2 ingest pods behind the gRPC Service
       resources:
         requests: { cpu: 100m, memory: 256Mi }
         limits:   { cpu: "1",  memory: 1Gi }
     api:
-      replicas: 1
+      replicas: 2         # HA test — 2 api pods (SSE/MCP session affinity via ClientIP)
       resources:
         requests: { cpu: 100m, memory: 256Mi }
         limits:   { cpu: "1",  memory: 1Gi }
     worker:
-      replicas: 1         # leader-elected — stays 1 in prod too
+      replicas: 2         # HA test — leader-elected via Redis: 1 active + 1 hot standby
       resources:
         requests: { cpu: 100m, memory: 256Mi }
         limits:   { cpu: "1",  memory: 1Gi }

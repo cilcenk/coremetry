@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-up-demo docker-down audit
+.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down audit
 
 # VERSION is auto-derived from `git describe` so local builds
 # show something like "v0.4.48-3-gabcdef" instead of literal
@@ -102,6 +102,24 @@ docker-down:
 	# containers that an operator may have started via
 	# `make docker-up-demo`.
 	docker compose --profile demo --profile tempo --profile pyroscope --profile grafana down
+
+# v0.6.65 — local distributed (ingest/api/worker) overlay, mirroring
+# the Helm chart's deployment.mode=distributed. Reuses .env-version so
+# the freshly-built image is stamped with the real git-describe VERSION
+# (same as docker-up). `--scale coremetry=0` neutralizes the monolithic
+# all-mode pod so coremetry-api cleanly owns 8088. Core stack only — add
+# `--profile demo` by hand for traffic generators.
+docker-distributed-up: .env-version
+	docker compose -f docker-compose.yml -f docker-compose.distributed.yml up -d --build --scale coremetry=0
+	@IMG=$$(docker compose -f docker-compose.yml -f docker-compose.distributed.yml images coremetry-api --quiet 2>/dev/null | head -1); \
+	  if [ -n "$$IMG" ]; then \
+	    docker tag "$$IMG" coremetry:latest && \
+	      echo "[make] tagged $$IMG as coremetry:latest"; \
+	  fi
+
+docker-distributed-down:
+	docker compose -f docker-compose.yml -f docker-compose.distributed.yml \
+	  --profile demo --profile tempo --profile pyroscope --profile grafana down
 
 clean:
 	rm -rf coremetry demo frontend/out frontend/.next frontend/node_modules

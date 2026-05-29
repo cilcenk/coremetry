@@ -1,0 +1,124 @@
+# OpenTelemetry Collector configuration for Coremetry — DISTRIBUTED.
+#
+# Identical to otel-collector-config.yaml EXCEPT the otlp/coremetry
+# exporter targets `dns:///coremetry-ingest:4317` instead of
+# `dns:///coremetry:4317`. In docker-compose.distributed.yml the
+# monolithic `coremetry` (mode=all) is neutralized and OTLP receivers
+# live on the two `coremetry-ingest-*` pods, both behind the
+# `coremetry-ingest` network alias — so the gRPC DNS resolver returns
+# both A-records and round-robins span/metric/log batches across them.
+# Mounted over /etc/otelcol/config.yaml by the distributed overlay so
+# the monolithic `make docker-up` path keeps using the base config.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 32
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins: ["*"]
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  batch:
+    timeout: 5s
+    send_batch_size: 1000
+    send_batch_max_size: 2000
+
+  resource:
+    attributes:
+      - key: telemetry.processed_by
+        value: otel-collector
+        action: upsert
+
+  probabilistic_sampler/coremetry:
+    sampling_percentage: 30
+
+exporters:
+  # DISTRIBUTED: target the ingest fleet alias. `dns:///` forces the
+  # gRPC resolver to re-resolve (survives rebuild IP changes) AND
+  # returns BOTH ingest pods' A-records so batches round-robin across
+  # coremetry-ingest-1 / coremetry-ingest-2.
+  otlp/coremetry:
+    endpoint: dns:///coremetry-ingest:4317
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+
+  elasticsearch:
+    endpoints: ["http://elasticsearch:9200"]
+    logs_index: "logs-otel-default"
+    mapping:
+      mode: ecs
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 5000
+    retry:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_requests: 5
+
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 5m
+
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+service:
+  extensions: [health_check, pprof]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces/coremetry:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, probabilistic_sampler/coremetry, batch]
+      exporters:  [otlp/coremetry]
+    traces/tempo:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters:  [otlp/tempo]
+    metrics:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters:  [otlp/coremetry]
+    logs:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters:  [otlp/coremetry, elasticsearch]

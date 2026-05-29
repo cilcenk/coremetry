@@ -1,0 +1,211 @@
+# docker-compose.distributed.yml — v0.6.65
+#
+# Overlay that brings the v0.6.0 COREMETRY_MODE split (ingest /
+# api / worker) to local docker, mirroring the Helm chart's
+# `deployment.mode: distributed` topology (chart v0.6.2). Shared
+# backends (ClickHouse, Redis, Elasticsearch, otel-collector) are
+# inherited UNCHANGED from docker-compose.yml — this overlay only
+# carves the single monolithic `coremetry` (mode=all) pod into
+# role-gated replicas that all talk to the same CH database and the
+# same Redis (the worker leader lock + SSE pub/sub bridge require
+# Redis in this topology).
+#
+# Bring up:
+#   make docker-distributed-up
+#   (or: docker compose -f docker-compose.yml -f docker-compose.distributed.yml up -d --build --scale coremetry=0)
+#
+# Tear down:
+#   make docker-distributed-down
+#
+# Role topology (mirrors charts/coremetry deployment-distributed):
+#   coremetry-ingest-1 + coremetry-ingest-2  (COREMETRY_MODE=ingest)
+#       OTLP gRPC :4317 receivers + CH writers. Both share the
+#       `coremetry-ingest` network alias so the collector's
+#       dns:///coremetry-ingest:4317 exporter round-robins across
+#       them (same trick docker-compose.ha.yml uses for coremetry-ha).
+#   coremetry-api      (COREMETRY_MODE=api, owns host port 8088)
+#       UI + REST + SSE + MCP + Copilot — the stable front door.
+#   coremetry-worker   (COREMETRY_MODE=worker, EXACTLY 1 replica)
+#       evaluator + anomaly + topology agg + Drain templater +
+#       notifier, leader-elected via the Redis lock. >1 worker only
+#       churns the lock — do not scale.
+#
+# Neutralizing the monolith: the inherited `coremetry` (mode=all)
+# would otherwise start and bind 8088, clashing with coremetry-api.
+# We override it to deploy.replicas:0 + clear its port publish
+# (`!reset` — Compose v2.24+, and the bring-up also passes
+# `--scale coremetry=0` as belt-and-braces).
+
+services:
+  # ── Neutralize the monolithic all-mode pod ──────────────────
+  coremetry:
+    deploy:
+      replicas: 0
+    ports: !reset []
+
+  # ── INGEST replica 1 (OTLP receivers + CH writers) ──────────
+  coremetry-ingest-1:
+    image: coremetry:${VERSION:-latest}
+    container_name: coremetry-ingest-1
+    networks:
+      default:
+        aliases:
+          - coremetry-ingest
+    environment:
+      COREMETRY_MODE: "ingest"
+      COREMETRY_CH_ADDR: "clickhouse:9000"
+      COREMETRY_CH_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      COREMETRY_JWT_SECRET: "${COREMETRY_JWT_SECRET:-}"
+      COREMETRY_INITIAL_ADMIN: "${COREMETRY_INITIAL_ADMIN:-admin@coremetry.local}"
+      COREMETRY_INITIAL_PASSWORD: "${COREMETRY_INITIAL_PASSWORD:-admin}"
+      COREMETRY_DEMO_MODE: "${COREMETRY_DEMO_MODE:-}"
+      COREMETRY_REDIS_URL: "redis://redis:6379/0"
+      COREMETRY_AI_API_KEY: "${COREMETRY_AI_API_KEY:-}"
+      COREMETRY_AI_MODEL: "${COREMETRY_AI_MODEL:-claude-sonnet-4-6}"
+      COREMETRY_LOGS_BACKEND: "elasticsearch"
+      COREMETRY_ES_ADDRESSES: "http://elasticsearch:9200"
+      COREMETRY_ES_INDEX: "logs-otel-default"
+      COREMETRY_SELF_OBS_OTLP_ENDPOINT: "${COREMETRY_SELF_OBS_OTLP_ENDPOINT:-otel-collector:4317}"
+      COREMETRY_SELF_OBS_SAMPLE_RATE: "${COREMETRY_SELF_OBS_SAMPLE_RATE:-0.1}"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── INGEST replica 2 ────────────────────────────────────────
+  coremetry-ingest-2:
+    image: coremetry:${VERSION:-latest}
+    container_name: coremetry-ingest-2
+    networks:
+      default:
+        aliases:
+          - coremetry-ingest
+    environment:
+      COREMETRY_MODE: "ingest"
+      COREMETRY_CH_ADDR: "clickhouse:9000"
+      COREMETRY_CH_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      COREMETRY_JWT_SECRET: "${COREMETRY_JWT_SECRET:-}"
+      COREMETRY_INITIAL_ADMIN: "${COREMETRY_INITIAL_ADMIN:-admin@coremetry.local}"
+      COREMETRY_INITIAL_PASSWORD: "${COREMETRY_INITIAL_PASSWORD:-admin}"
+      COREMETRY_DEMO_MODE: "${COREMETRY_DEMO_MODE:-}"
+      COREMETRY_REDIS_URL: "redis://redis:6379/0"
+      COREMETRY_AI_API_KEY: "${COREMETRY_AI_API_KEY:-}"
+      COREMETRY_AI_MODEL: "${COREMETRY_AI_MODEL:-claude-sonnet-4-6}"
+      COREMETRY_LOGS_BACKEND: "elasticsearch"
+      COREMETRY_ES_ADDRESSES: "http://elasticsearch:9200"
+      COREMETRY_ES_INDEX: "logs-otel-default"
+      COREMETRY_SELF_OBS_OTLP_ENDPOINT: "${COREMETRY_SELF_OBS_OTLP_ENDPOINT:-otel-collector:4317}"
+      COREMETRY_SELF_OBS_SAMPLE_RATE: "${COREMETRY_SELF_OBS_SAMPLE_RATE:-0.1}"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+      # Let ingest-1 win the idempotent CREATE TABLE IF NOT EXISTS
+      # race first, then ingest-2 joins (mirrors ha.yml's
+      # coremetry-2 → coremetry dependency).
+      coremetry-ingest-1:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── API (UI + REST + SSE + MCP + Copilot) — owns host 8088 ──
+  coremetry-api:
+    image: coremetry:${VERSION:-latest}
+    container_name: coremetry-api
+    ports:
+      - "8088:8088"   # Web UI + REST API + SSE + MCP + OTLP/HTTP fallback
+    environment:
+      COREMETRY_MODE: "api"
+      COREMETRY_CH_ADDR: "clickhouse:9000"
+      COREMETRY_CH_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      COREMETRY_JWT_SECRET: "${COREMETRY_JWT_SECRET:-}"
+      COREMETRY_INITIAL_ADMIN: "${COREMETRY_INITIAL_ADMIN:-admin@coremetry.local}"
+      COREMETRY_INITIAL_PASSWORD: "${COREMETRY_INITIAL_PASSWORD:-admin}"
+      COREMETRY_DEMO_MODE: "${COREMETRY_DEMO_MODE:-}"
+      COREMETRY_REDIS_URL: "redis://redis:6379/0"
+      COREMETRY_AI_API_KEY: "${COREMETRY_AI_API_KEY:-}"
+      COREMETRY_AI_MODEL: "${COREMETRY_AI_MODEL:-claude-sonnet-4-6}"
+      COREMETRY_LOGS_BACKEND: "elasticsearch"
+      COREMETRY_ES_ADDRESSES: "http://elasticsearch:9200"
+      COREMETRY_ES_INDEX: "logs-otel-default"
+      COREMETRY_SELF_OBS_OTLP_ENDPOINT: "${COREMETRY_SELF_OBS_OTLP_ENDPOINT:-otel-collector:4317}"
+      COREMETRY_SELF_OBS_SAMPLE_RATE: "${COREMETRY_SELF_OBS_SAMPLE_RATE:-0.1}"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+      # Schema is settled by the ingest pods first.
+      coremetry-ingest-1:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── WORKER (evaluator/anomaly/topology/templater/notifier) ──
+  # EXACTLY ONE replica — leader-elected via Redis lock. Do not
+  # scale this service; extra workers only churn the lock.
+  coremetry-worker:
+    image: coremetry:${VERSION:-latest}
+    container_name: coremetry-worker
+    deploy:
+      replicas: 1
+    environment:
+      COREMETRY_MODE: "worker"
+      COREMETRY_CH_ADDR: "clickhouse:9000"
+      COREMETRY_CH_PASSWORD: "${CLICKHOUSE_PASSWORD:-}"
+      COREMETRY_JWT_SECRET: "${COREMETRY_JWT_SECRET:-}"
+      COREMETRY_INITIAL_ADMIN: "${COREMETRY_INITIAL_ADMIN:-admin@coremetry.local}"
+      COREMETRY_INITIAL_PASSWORD: "${COREMETRY_INITIAL_PASSWORD:-admin}"
+      COREMETRY_DEMO_MODE: "${COREMETRY_DEMO_MODE:-}"
+      # Redis is NON-NEGOTIABLE for the worker — it is the leader
+      # lock backend. Without it the worker assumes always-leader.
+      COREMETRY_REDIS_URL: "redis://redis:6379/0"
+      COREMETRY_AI_API_KEY: "${COREMETRY_AI_API_KEY:-}"
+      COREMETRY_AI_MODEL: "${COREMETRY_AI_MODEL:-claude-sonnet-4-6}"
+      COREMETRY_LOGS_BACKEND: "elasticsearch"
+      COREMETRY_ES_ADDRESSES: "http://elasticsearch:9200"
+      COREMETRY_ES_INDEX: "logs-otel-default"
+      COREMETRY_SELF_OBS_OTLP_ENDPOINT: "${COREMETRY_SELF_OBS_OTLP_ENDPOINT:-otel-collector:4317}"
+      COREMETRY_SELF_OBS_SAMPLE_RATE: "${COREMETRY_SELF_OBS_SAMPLE_RATE:-0.1}"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+      coremetry-ingest-1:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Repoint the collector at the ingest fleet ───────────────
+  # The base otel-collector forwards to dns:///coremetry:4317,
+  # which in this split maps to no OTLP-receiving pod (the monolith
+  # is neutralized; coremetry-api runs no gRPC receiver). Mount a
+  # distributed override config that targets dns:///coremetry-ingest
+  # :4317 (round-robins the 2 ingest pods).
+  otel-collector:
+    volumes:
+      - ./otel-collector-config.distributed.yaml:/etc/otelcol/config.yaml:ro
+    depends_on:
+      coremetry-ingest-1:
+        condition: service_started
+      coremetry-ingest-2:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy

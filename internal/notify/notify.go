@@ -459,6 +459,43 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 	}
 }
 
+// SendRunbookComplete fans a finished runbook execution out to the configured
+// notification channels and publishes a runbook.complete SSE event. It reuses
+// the Problem-shaped channel path via a synthetic Problem (the channels format
+// Severity/Service/RuleName/Description). Called only when the runbook opted in
+// (NotifyOnComplete). completed → info; failed → critical. (v0.7.7)
+func (n *Notifier) SendRunbookComplete(ctx context.Context, e chstore.RunbookExecution) {
+	severity := "info"
+	if e.Status == chstore.RunExecFailed {
+		severity = "critical"
+	}
+	done := 0
+	for _, s := range e.StepStates {
+		switch s.Status {
+		case chstore.StepCompleted, chstore.StepSkipped, chstore.StepFailed:
+			done++
+		}
+	}
+	n.Publish("runbook.complete", e)
+	p := chstore.Problem{
+		Severity:    severity,
+		Service:     e.TitleSnapshot,
+		RuleName:    fmt.Sprintf("Runbook %s: %s", e.Status, e.TitleSnapshot),
+		Description: fmt.Sprintf("Execution %s %s — %d/%d steps, started by %s.", e.ID, e.Status, done, len(e.StepStates), e.StartedBy),
+		Status:      "open",
+	}
+	channels, err := n.store.EnabledChannelsForSeverity(ctx, severity)
+	if err != nil {
+		log.Printf("[notify] runbook-complete load channels: %v", err)
+		return
+	}
+	for _, c := range channels {
+		if err := n.sendOne(ctx, c, p); err != nil {
+			log.Printf("[notify] runbook-complete %s (%s): %v", c.Name, c.Type, err)
+		}
+	}
+}
+
 // SendTest dispatches a synthetic Problem to a single channel — used by
 // the "Send test" button on the settings UI so admins can verify config
 // without waiting for a real incident.

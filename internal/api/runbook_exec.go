@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -130,7 +131,22 @@ func (s *Server) execStepAction(w http.ResponseWriter, r *http.Request) {
 	}
 	details, _ := json.Marshal(map[string]any{"executionId": execID, "stepId": stepID, "status": status})
 	s.audit(r, "runbook.step."+body.Action, "runbook_execution", execID, string(details))
+	s.maybeNotifyRunbookComplete(r.Context(), e)
 	writeJSON(w, e)
+}
+
+// maybeNotifyRunbookComplete fires a completion notification iff the execution
+// just reached a terminal state AND its runbook opted in (NotifyOnComplete).
+// Shared by the manual-tick path here and reused conceptually by the agent.
+func (s *Server) maybeNotifyRunbookComplete(ctx context.Context, e *chstore.RunbookExecution) {
+	if e == nil || (e.Status != chstore.RunExecCompleted && e.Status != chstore.RunExecFailed) {
+		return
+	}
+	rb, err := s.store.GetRunbook(ctx, e.RunbookID)
+	if err != nil || rb == nil || !rb.NotifyOnComplete {
+		return
+	}
+	go s.notify.SendRunbookComplete(context.Background(), *e)
 }
 
 func (s *Server) cancelExecution(w http.ResponseWriter, r *http.Request) {

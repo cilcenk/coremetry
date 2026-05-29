@@ -7,6 +7,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/notify"
 )
 
 // terminalStep / agentKind classify step statuses + kinds. Manual + query
@@ -26,15 +27,16 @@ var agentKind = map[string]bool{"http": true, "javascript": true, "bash": true}
 type Runner struct {
 	store    *chstore.Store
 	lock     cache.Lock
+	notifier *notify.Notifier // nil = no completion notifications
 	agentID  string
 	interval time.Duration
 }
 
-func NewRunner(store *chstore.Store, lock cache.Lock, agentID string, interval time.Duration) *Runner {
+func NewRunner(store *chstore.Store, lock cache.Lock, notifier *notify.Notifier, agentID string, interval time.Duration) *Runner {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	return &Runner{store: store, lock: lock, agentID: agentID, interval: interval}
+	return &Runner{store: store, lock: lock, notifier: notifier, agentID: agentID, interval: interval}
 }
 
 func (r *Runner) Start(ctx context.Context) {
@@ -117,6 +119,14 @@ func (r *Runner) runStep(ctx context.Context, execID string, st chstore.StepStat
 	}
 	if err := r.store.UpsertExecution(ctx, *e); err != nil {
 		log.Printf("[agent] persist result for %s/%s: %v", execID, st.StepID, err)
+		return
+	}
+	// Completion notification (opt-in per runbook) — the agent path covers
+	// fully-automated runbooks that never pass through the manual API tick.
+	if r.notifier != nil && (e.Status == chstore.RunExecCompleted || e.Status == chstore.RunExecFailed) {
+		if rb, err := r.store.GetRunbook(ctx, e.RunbookID); err == nil && rb != nil && rb.NotifyOnComplete {
+			r.notifier.SendRunbookComplete(context.Background(), *e)
+		}
 	}
 }
 

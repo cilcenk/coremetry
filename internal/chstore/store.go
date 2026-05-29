@@ -1111,11 +1111,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			enabled     UInt8         DEFAULT 1,
 			labels      Array(LowCardinality(String)),
 			created_by  String        DEFAULT '',     -- creator email
+			notify_on_complete UInt8   DEFAULT 0,     -- v0.7.7 — notify channels when an execution finishes
 			created_at  DateTime64(9) DEFAULT now64(9),
 			updated_at  DateTime64(9) DEFAULT now64(9),
 			version     UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
+		// v0.7.7 — runbook completion notifications: existing installs backfill.
+		`ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS notify_on_complete UInt8 DEFAULT 0`,
 
 		// v0.7.0 — Runbook executions: one tracked RUN of a runbook (the
 		// audit record of "who ran what when, which steps executed"). Steps

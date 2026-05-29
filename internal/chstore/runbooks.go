@@ -29,6 +29,11 @@ type Runbook struct {
 	CreatedBy   string        `json:"createdBy,omitempty"` // creator email
 	CreatedAt   int64         `json:"createdAt"`           // unix ns
 	UpdatedAt   int64         `json:"updatedAt"`           // unix ns
+	// NotifyOnComplete — when set, an execution of this runbook reaching a
+	// terminal state (completed/failed) fans out to the configured
+	// notification channels (email/Slack/webhook) + a runbook.complete SSE
+	// event. (v0.7.7)
+	NotifyOnComplete bool `json:"notifyOnComplete"`
 }
 
 // RunbookStep is one step in a runbook. kind decides where it runs:
@@ -109,6 +114,7 @@ func parseRunbookSteps(j string) []RunbookStep {
 func (s *Store) ListRunbooks(ctx context.Context) ([]Runbook, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, title, description, steps_json, enabled, labels, created_by,
+		       notify_on_complete,
 		       toUnixTimestamp64Nano(created_at), toUnixTimestamp64Nano(updated_at)
 		FROM runbooks FINAL
 		ORDER BY title
@@ -120,13 +126,14 @@ func (s *Store) ListRunbooks(ctx context.Context) ([]Runbook, error) {
 	var out []Runbook
 	for rows.Next() {
 		var rb Runbook
-		var enabled uint8
+		var enabled, notifyOnComplete uint8
 		var stepsJSON string
 		if err := rows.Scan(&rb.ID, &rb.Title, &rb.Description, &stepsJSON,
-			&enabled, &rb.Labels, &rb.CreatedBy, &rb.CreatedAt, &rb.UpdatedAt); err != nil {
+			&enabled, &rb.Labels, &rb.CreatedBy, &notifyOnComplete, &rb.CreatedAt, &rb.UpdatedAt); err != nil {
 			return nil, err
 		}
 		rb.Enabled = enabled == 1
+		rb.NotifyOnComplete = notifyOnComplete == 1
 		rb.Steps = parseRunbookSteps(stepsJSON)
 		out = append(out, rb)
 	}
@@ -135,18 +142,20 @@ func (s *Store) ListRunbooks(ctx context.Context) ([]Runbook, error) {
 
 func (s *Store) GetRunbook(ctx context.Context, id string) (*Runbook, error) {
 	var rb Runbook
-	var enabled uint8
+	var enabled, notifyOnComplete uint8
 	var stepsJSON string
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, title, description, steps_json, enabled, labels, created_by,
+		       notify_on_complete,
 		       toUnixTimestamp64Nano(created_at), toUnixTimestamp64Nano(updated_at)
 		FROM runbooks FINAL WHERE id = ? LIMIT 1`, id).
 		Scan(&rb.ID, &rb.Title, &rb.Description, &stepsJSON, &enabled,
-			&rb.Labels, &rb.CreatedBy, &rb.CreatedAt, &rb.UpdatedAt)
+			&rb.Labels, &rb.CreatedBy, &notifyOnComplete, &rb.CreatedAt, &rb.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	rb.Enabled = enabled == 1
+	rb.NotifyOnComplete = notifyOnComplete == 1
 	rb.Steps = parseRunbookSteps(stepsJSON)
 	return &rb, nil
 }
@@ -159,6 +168,10 @@ func (s *Store) UpsertRunbook(ctx context.Context, rb Runbook) error {
 	enabled := uint8(0)
 	if rb.Enabled {
 		enabled = 1
+	}
+	notifyOnComplete := uint8(0)
+	if rb.NotifyOnComplete {
+		notifyOnComplete = 1
 	}
 	createdAt := time.Now().UTC()
 	if rb.CreatedAt > 0 {
@@ -176,12 +189,12 @@ func (s *Store) UpsertRunbook(ctx context.Context, rb Runbook) error {
 	// migration can't shift the positional arg shape on upgraded installs.
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO runbooks
 		(id, title, description, steps_json, enabled, labels, created_by,
-		 created_at, updated_at, version)`)
+		 notify_on_complete, created_at, updated_at, version)`)
 	if err != nil {
 		return err
 	}
 	if err := batch.Append(rb.ID, rb.Title, rb.Description, string(stepsJSON),
-		enabled, labels, rb.CreatedBy, createdAt, updatedAt,
+		enabled, labels, rb.CreatedBy, notifyOnComplete, createdAt, updatedAt,
 		uint64(time.Now().UnixNano())); err != nil {
 		return err
 	}

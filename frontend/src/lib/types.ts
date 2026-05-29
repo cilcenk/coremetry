@@ -1082,6 +1082,7 @@ export interface Runbook {
   createdBy?: string;
   createdAt: number;
   updatedAt: number;
+  notifyOnComplete?: boolean;  // email/Slack/webhook when an execution finishes (v0.7.7)
 }
 
 export type RunbookExecStatus =

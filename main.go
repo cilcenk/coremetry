@@ -439,7 +439,7 @@ func main() {
 		if agentID == "" {
 			agentID = "agent"
 		}
-		go agentpkg.NewRunner(store, lockImpl, agentID, 5*time.Second).Start(ctx)
+		go agentpkg.NewRunner(store, lockImpl, notifier, agentID, 5*time.Second).Start(ctx)
 		log.Printf("[agent] runbook automated-step agent enabled (id=%s)", agentID)
 	}
 

@@ -304,6 +304,13 @@ function Overview({ draft, canEdit, patch }: {
             Enabled (runbook can be executed)
           </label>
         )}
+        {canEdit && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <input type="checkbox" checked={!!draft.notifyOnComplete}
+              onChange={e => patch({ notifyOnComplete: e.target.checked })} />
+            Notify on completion (email / Slack / webhook when a run finishes)
+          </label>
+        )}
         <div style={{ fontSize: 11, color: 'var(--text3)' }}>
           Updated {tsLong(draft.updatedAt)} · Created {tsLong(draft.createdAt)}
         </div>

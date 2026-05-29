@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"flag"
@@ -805,6 +805,16 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 	}
 }
 
+// bootstrapAdminID derives a STABLE id for the seeded admin from its email so
+// concurrent multi-pod boots (distributed mode) and re-seeds converge on the
+// SAME id — ReplacingMergeTree(ORDER BY id) then dedups them to a single row
+// instead of leaving N duplicate "admin" rows on /users (operator-reported,
+// v0.7.3). Pure — unit-tested in main_test.go.
+func bootstrapAdminID(email string) string {
+	sum := sha256.Sum256([]byte(email))
+	return hex.EncodeToString(sum[:8]) // 16 hex chars — same width as the old random id
+}
+
 // seedInitialAdmin creates the bootstrap admin if the users table is empty.
 // Subsequent runs are no-ops, so changing initial_password in config has no
 // effect once a user exists — that's intentional, real password rotation
@@ -824,10 +834,8 @@ func seedInitialAdmin(ctx context.Context, store *chstore.Store, ac config.AuthC
 	if err != nil {
 		return err
 	}
-	id := make([]byte, 8)
-	_, _ = rand.Read(id)
 	u := chstore.User{
-		ID:           hex.EncodeToString(id),
+		ID:           bootstrapAdminID(ac.InitialAdmin),
 		Email:        ac.InitialAdmin,
 		PasswordHash: hash,
 		Role:         auth.RoleAdmin,

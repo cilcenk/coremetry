@@ -541,7 +541,7 @@ export default function ServicesPage() {
                             style={{
                               all: 'unset', cursor: 'pointer',
                               fontSize: 13, marginRight: 6,
-                              color: pinned.has(s.name) ? 'var(--warn, #facc15)' : 'var(--text3)',
+                              color: pinned.has(s.name) ? 'var(--warn)' : 'var(--text3)',
                               opacity: pinned.has(s.name) ? 1 : 0.4,
                               transition: 'opacity .15s, color .15s',
                             }}>
@@ -706,7 +706,7 @@ function HealthDot({ health, reason, openProblems }: {
 }) {
   if (!health) return null;
   const color = health === 'red' ? 'var(--err)'
-              : health === 'yellow' ? 'var(--warn, #facc15)'
+              : health === 'yellow' ? 'var(--warn)'
               : 'var(--ok, #22c55e)';
   const title = reason
     ? `${health.toUpperCase()} · ${reason}${openProblems ? ` · ${openProblems} open problem${openProblems === 1 ? '' : 's'}` : ''}`

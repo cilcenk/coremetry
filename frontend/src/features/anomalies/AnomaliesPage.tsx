@@ -823,7 +823,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                               padding: '2px 8px', borderRadius: 12,
                               background: 'rgba(250,204,21,0.10)',
                               border: '1px solid rgba(250,204,21,0.40)',
-                              color: 'var(--warn, #facc15)',
+                              color: 'var(--warn)',
                               whiteSpace: 'nowrap',
                             }}>
                             ⬇ {p.recentDeploy.version} · {fmtAge(p.recentDeploy.ageSeconds)} before
@@ -1163,7 +1163,7 @@ function PriorityBadge({ p, reason }: { p?: 'P1' | 'P2' | 'P3'; reason?: string 
   const palette = p === 'P1'
     ? { bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.55)', color: 'var(--err)' }
     : p === 'P2'
-      ? { bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.45)', color: 'var(--warn, #facc15)' }
+      ? { bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.45)', color: 'var(--warn)' }
       : { bg: 'rgba(148,163,184,0.10)', border: 'rgba(148,163,184,0.30)', color: 'var(--text3)' };
   return (
     <span
@@ -1493,7 +1493,7 @@ function BlastRadiusChip({ service }: { service: string }) {
         padding: '2px 8px', borderRadius: 12,
         background: cascading ? 'rgba(250,204,21,0.10)' : 'rgba(56,139,253,0.08)',
         border: `1px solid ${cascading ? 'rgba(250,204,21,0.40)' : 'rgba(56,139,253,0.30)'}`,
-        color: cascading ? 'var(--warn, #facc15)' : 'var(--accent2)',
+        color: cascading ? 'var(--warn)' : 'var(--accent2)',
         whiteSpace: 'nowrap', cursor: 'help',
       }}>
       ↘ {data.totalCallers} svc{data.totalCallers === 1 ? '' : 's'} · {data.totalRps.toFixed(0)} rps

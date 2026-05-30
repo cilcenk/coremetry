@@ -56,11 +56,19 @@ export default function StatusPageAdmin() {
 }
 
 function ConfigTab() {
-  const [c, setC] = useState<StatusPageConfig | null>(null);
+  const [c, setC] = useState<StatusPageConfig | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  useEffect(() => { api.statusPageGetConfig().then(setC).catch(() => setC({ title: 'Service Status' })); }, []);
-  if (!c) return <Spinner />;
+  // null = fetch failed (don't mask a load error with a default object —
+  // saving over the top would clobber the real persisted config).
+  useEffect(() => { api.statusPageGetConfig().then(d => setC(d ?? { title: 'Service Status' })).catch(() => setC(null)); }, []);
+  if (c === undefined) return <Spinner />;
+  if (c === null) return (
+    <Empty icon="⚠" title="Couldn't load page header">
+      The status-page config failed to load. Reload the tab — editing now would
+      risk overwriting the stored header.
+    </Empty>
+  );
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true); setMsg(null);
@@ -88,16 +96,22 @@ function ConfigTab() {
 }
 
 function ComponentsTab() {
-  const [items, setItems] = useState<StatusComponent[] | undefined>(undefined);
+  // undefined = loading, null = fetch failed, [] = loaded-but-empty.
+  const [items, setItems] = useState<StatusComponent[] | null | undefined>(undefined);
   const [monitors, setMonitors] = useState<MonitorRow[]>([]);
   const [editing, setEditing] = useState<StatusComponent | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const refresh = () => api.statusPageListComponents().then(d => setItems(d ?? []));
+  const refresh = () => api.statusPageListComponents().then(d => setItems(d ?? [])).catch(() => setItems(null));
   useEffect(() => {
     refresh();
-    api.listMonitors().then(m => setMonitors(m ?? []));
+    api.listMonitors().then(m => setMonitors(m ?? [])).catch(() => setMonitors([]));
   }, []);
   if (items === undefined) return <Spinner />;
+  if (items === null) return (
+    <Empty icon="⚠" title="Couldn't load components">
+      The status-page components failed to load. Reload the tab to try again.
+    </Empty>
+  );
   return (
     <>
       <div className="controls" style={{ marginBottom: 12 }}>
@@ -227,10 +241,16 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
 }
 
 function SubsTab() {
-  const [subs, setSubs] = useState<StatusSubscriber[] | undefined>(undefined);
-  const refresh = () => { api.statusPageListSubscribers().then(d => setSubs(d ?? [])); };
+  // undefined = loading, null = fetch failed, [] = loaded-but-empty.
+  const [subs, setSubs] = useState<StatusSubscriber[] | null | undefined>(undefined);
+  const refresh = () => { api.statusPageListSubscribers().then(d => setSubs(d ?? [])).catch(() => setSubs(null)); };
   useEffect(() => { refresh(); }, []);
   if (subs === undefined) return <Spinner />;
+  if (subs === null) return (
+    <Empty icon="⚠" title="Couldn't load subscribers">
+      The subscriber list failed to load. Reload the tab to try again.
+    </Empty>
+  );
   if (subs.length === 0) return <Empty icon="✉" title="No subscribers yet">Subscribers sign up via the public status page.</Empty>;
   return (
     <div className="status-grid">

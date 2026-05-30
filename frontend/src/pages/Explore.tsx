@@ -1586,7 +1586,7 @@ function NLQueryBox({
       )}
       {state.kind === 'warn' && (
         <div style={{
-          marginTop: 6, fontSize: 11, color: 'var(--warn, #facc15)',
+          marginTop: 6, fontSize: 11, color: 'var(--warn)',
         }}>
           ⚠ {state.msg}
           {state.raw && (

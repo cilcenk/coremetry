@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
-import { Spinner } from '@/components/Spinner';
+import { Spinner, Empty } from '@/components/Spinner';
 import { DependenciesTable } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
@@ -41,11 +41,19 @@ export default function MessagingPage() {
         </div>
         {q.isPending && <Spinner />}
         {q.isError && (
-          <div style={{ color: 'var(--err)', fontSize: 12 }}>
-            Failed to load messaging overview.
-          </div>
+          <Empty icon="⚠" title="Couldn't load messaging overview">
+            The messaging query failed. Check ClickHouse connectivity and retry —
+            the range selector above re-runs the fetch.
+          </Empty>
         )}
-        {q.data && (
+        {q.data && (q.data as MessagingInstance[]).length === 0 && (
+          <Empty icon="◯" title="No messaging activity in this window">
+            No spans with a <code>messaging.system</code> attribute landed in the
+            selected range. Widen the time range, or instrument a producer /
+            consumer with the OTel messaging semconv to see queues and topics here.
+          </Empty>
+        )}
+        {q.data && (q.data as MessagingInstance[]).length > 0 && (
           <DependenciesTable
             rows={(q.data as MessagingInstance[]).map(d => ({
               system: d.system,

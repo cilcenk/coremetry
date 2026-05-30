@@ -639,7 +639,7 @@ function StatusBreakdown({ r }: { r: EndpointRow }) {
         <span title={`${s4.toLocaleString()} 4xx client errors`}
           style={{
             padding: '1px 5px', borderRadius: 8,
-            background: 'rgba(250,204,21,0.10)', color: 'var(--warn, #facc15)',
+            background: 'rgba(250,204,21,0.10)', color: 'var(--warn)',
             border: '1px solid rgba(250,204,21,0.30)',
           }}>4xx {compactNum(s4)}</span>
       )}

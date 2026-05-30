@@ -1,6 +1,7 @@
 import { useEffect, useState, FormEvent } from 'react';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { Spinner, Empty } from '@/components/Spinner';
 
 // /public-status — customer-facing status page. Standalone
 // layout (no sidebar, no auth, no Coremetry chrome). Polls
@@ -68,10 +69,20 @@ export default function PublicStatusPage() {
   }, []);
 
   if (data === undefined) {
-    return <div style={{ padding: 80, textAlign: 'center', color: 'var(--text3)' }}>Loading…</div>;
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
+        <Spinner label="Loading status…" />
+      </div>
+    );
   }
   if (data === null) {
-    return <div style={{ padding: 80, textAlign: 'center', color: 'var(--err)' }}>Could not load status</div>;
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
+        <Empty icon="⚠" title="Could not load status">
+          The status feed didn't respond. It refreshes automatically — this page will recover on its own once the service is reachable.
+        </Empty>
+      </div>
+    );
   }
 
   return (

@@ -343,7 +343,7 @@ function TraceDetailInner() {
           // instead of a blank "Trace not found".
           <div style={{
             padding: 16, border: '1px solid var(--border)',
-            borderLeft: '3px solid var(--warn, #facc15)',
+            borderLeft: '3px solid var(--warn)',
             borderRadius: 6, background: 'var(--bg2)',
           }}>
             <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>

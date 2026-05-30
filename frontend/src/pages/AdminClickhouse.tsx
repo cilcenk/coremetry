@@ -388,10 +388,7 @@ function CHQueryOptimizer() {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <h3 style={{ margin: 0, fontSize: 14 }}>AI query optimizer</h3>
-        <span style={{
-          fontSize: 10, padding: '2px 6px', borderRadius: 4,
-          background: 'var(--accent2-bg)', color: 'var(--accent2)',
-        }}>v0.6.8</span>
+        <span className="badge b-info">v0.6.8</span>
         <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>
           MV bypass · LIMIT · max_execution_time · time-bounded WHERE
         </span>
@@ -423,10 +420,9 @@ function CHQueryOptimizer() {
       {result && (
         <div style={{ marginTop: 14 }}>
           {result.warning && (
-            <div style={{
-              fontSize: 12, color: 'var(--warn)', marginBottom: 8,
-              padding: '6px 10px', background: 'var(--warn-bg)',
-              borderRadius: 4,
+            <div className="b-warn" style={{
+              fontSize: 12, marginBottom: 8,
+              padding: '6px 10px', borderRadius: 4,
             }}>{result.warning}</div>
           )}
           {result.optimized && (

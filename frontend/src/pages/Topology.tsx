@@ -680,7 +680,7 @@ function ServiceView({ range }: { range: TimeRange }) {
               ? 'Live (now)'
               : `As of ${formatShift(shiftMin)} ago`} />
           <span style={{
-            color: shiftMin > 0 ? 'var(--warn, #facc15)' : 'var(--text3)',
+            color: shiftMin > 0 ? 'var(--warn)' : 'var(--text3)',
             minWidth: 70, fontFamily: 'ui-monospace, monospace',
             fontSize: 11,
           }}>
@@ -2488,14 +2488,14 @@ function WhatChangedBanner({ edges, shiftMin, onPickEdge }: {
   return (
     <div style={{
       marginBottom: 12, padding: '8px 12px',
-      borderRadius: 6, border: '1px solid var(--warn, #facc15)',
+      borderRadius: 6, border: '1px solid var(--warn)',
       background: 'rgba(250, 204, 21, 0.08)',
       fontSize: 12, color: 'var(--text)',
       display: 'flex', flexDirection: 'column', gap: 4,
     }}>
       <div style={{
         fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-        letterSpacing: 0.4, color: 'var(--warn, #facc15)',
+        letterSpacing: 0.4, color: 'var(--warn)',
       }}>
         What changed · vs prior {hits.length === 1 ? 'edge' : `${hits.length} edges`} ≥2× worse
       </div>

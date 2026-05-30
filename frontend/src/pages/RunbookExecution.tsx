@@ -43,8 +43,21 @@ function Inner() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
 
-  if (!execId) return <Empty icon="⚠" title="No execution selected" />;
-  if (execQ.isError) return <Empty icon="⚠" title="Execution not found" />;
+  if (!execId || execQ.isError) {
+    return (
+      <>
+        <Topbar title="Execution" />
+        <div id="content">
+          <div className="controls" style={{ marginBottom: 12 }}>
+            <button className="sec" onClick={() => navigate('/runbooks')}>← Runbooks</button>
+          </div>
+          {!execId
+            ? <Empty icon="⚠" title="No execution selected">Open a run from a runbook's Executions tab.</Empty>
+            : <Empty icon="⚠" title="Execution not found">This execution may have been removed, or the link is stale. Pick a run from the Runbooks list.</Empty>}
+        </div>
+      </>
+    );
+  }
   if (!exec) return <Spinner />;
 
   const terminal = TERMINAL.includes(exec.status);

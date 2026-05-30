@@ -3924,7 +3924,7 @@ function BackupTab() {
                     title={d.willAdd.length > 0 ? d.willAdd.slice(0, 20).join('\n') : 'no new rows'}>
                     +{d.willAdd.length} new
                   </span>
-                  <span style={{ color: d.willOverwrite.length > 0 ? 'var(--warn, #facc15)' : 'var(--text3)' }}
+                  <span style={{ color: d.willOverwrite.length > 0 ? 'var(--warn)' : 'var(--text3)' }}
                     title={d.willOverwrite.length > 0 ? d.willOverwrite.slice(0, 20).join('\n') : 'no overwrites'}>
                     ~{d.willOverwrite.length} overwrite
                   </span>

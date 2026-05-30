@@ -164,7 +164,7 @@ export default function InboxPage() {
             {(['P1', 'P2', 'P3'] as const).map(pp => {
               const on = prioSet.has(pp);
               const colour = pp === 'P1' ? 'var(--err)'
-                          : pp === 'P2' ? 'var(--warn, #facc15)'
+                          : pp === 'P2' ? 'var(--warn)'
                           : 'var(--text3)';
               return (
                 <button key={pp} onClick={() => togglePrio(pp)}
@@ -358,7 +358,7 @@ function PriorityBadge({ p, reason }: { p: 'P1' | 'P2' | 'P3'; reason?: string }
   const palette = p === 'P1'
     ? { bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.55)', color: 'var(--err)' }
     : p === 'P2'
-      ? { bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.45)', color: 'var(--warn, #facc15)' }
+      ? { bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.45)', color: 'var(--warn)' }
       : { bg: 'rgba(148,163,184,0.10)', border: 'rgba(148,163,184,0.30)', color: 'var(--text3)' };
   return (
     <span title={reason ? `${p} — ${reason}` : p}

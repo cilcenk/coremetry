@@ -69,8 +69,21 @@ function Inner() {
     return p;
   }, { replace: true });
 
-  if (!id) return <Empty icon="⚠" title="No runbook selected" />;
-  if (rbQ.isError) return <Empty icon="⚠" title="Runbook not found" />;
+  if (!id || rbQ.isError) {
+    return (
+      <>
+        <Topbar title="Runbook" />
+        <div id="content">
+          <div className="controls" style={{ marginBottom: 12 }}>
+            <button className="sec" onClick={() => navigate('/runbooks')}>← Runbooks</button>
+          </div>
+          {!id
+            ? <Empty icon="⚠" title="No runbook selected">Pick a runbook from the list to view or edit it.</Empty>
+            : <Empty icon="⚠" title="Runbook not found">This runbook may have been deleted, or the link is stale. Head back to the Runbooks list.</Empty>}
+        </div>
+      </>
+    );
+  }
   if (!draft) return <Spinner />;
 
   const patch = (p: Partial<Runbook>) => { setDraft({ ...draft, ...p }); setDirty(true); };

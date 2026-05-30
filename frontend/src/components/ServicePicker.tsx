@@ -1,6 +1,25 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 
+// shouldAutoCommit decides whether a single onChange event represents a
+// datalist PICK (or paste) rather than the operator typing — only then does the
+// picker auto-fire onEnter. A pick replaces the field with a full option value
+// in one event, so the length grows by MORE THAN ONE char at once. Incremental
+// typing only ever grows the value one char at a time, so a single-char change
+// is NEVER a pick.
+//
+// v0.7.27 — Operator-reported: in service-topology "Focus on", typing the FIRST
+// letter of a service immediately loaded it. The old heuristic was
+// `Math.abs(next.length-prev.length) > 1 || (next.length > 0 && prev === '')`;
+// the `prev === ''` clause treated the first keystroke from an empty field as a
+// jump, so if that first char exact-matched a (1-char) known option it
+// committed on keystroke one. Directional `>1` growth removes the false
+// positive. The only case it gives up — clicking a 1-char option from an empty
+// field — is negligible and ambiguous with typing anyway.
+export function shouldAutoCommit(prev: string, next: string, isKnownOption: boolean): boolean {
+  return isKnownOption && next.length - prev.length > 1;
+}
+
 /**
  * ServicePicker — drop-in replacement for the old `<Combobox options={services}>`
  * pattern. Fetches matching service names from /api/service-names with a

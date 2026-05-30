@@ -379,6 +379,11 @@ function ServiceView({ range }: { range: TimeRange }) {
   // only special-case the explicit "hide" value.
   const noiseShow = params.get('noise') !== 'hide';
   const setNoiseShow = (v: boolean) => setURLParam('noise', v ? null : 'hide');
+  // v0.7.19 — namespace soft-cluster outlines. OFF by default (operator-
+  // reported: the dashed per-namespace "frame" is noise on most graphs);
+  // opt in with ?ns=show.
+  const nsOutlines = params.get('ns') === 'show';
+  const setNsOutlines = (v: boolean) => setURLParam('ns', v ? 'show' : null);
   // v0.5.412 — live traffic flow animation. URL-shareable
   // (?flow=on); default off so the static topology stays the
   // unsurprising default. When on, edges get a CSS-driven
@@ -622,6 +627,16 @@ function ServiceView({ range }: { range: TimeRange }) {
             onChange={e => setNoiseShow(e.target.checked)} />
           Show noise
         </label>
+        {/* v0.7.19 — namespace outline toggle. OFF by default (the dashed
+            per-namespace frame is noise on most graphs); operator opts in. */}
+        <label style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          fontSize: 12, color: 'var(--text2)',
+        }} title="Draw a dashed outline grouping services by namespace. Off by default.">
+          <input type="checkbox" checked={nsOutlines}
+            onChange={e => setNsOutlines(e.target.checked)} />
+          Namespaces
+        </label>
         {/* v0.5.412 — live-flow toggle. Off by default; when on,
             edges visually pulse along the path direction at a
             speed proportional to call volume. Datadog Live
@@ -774,6 +789,7 @@ function ServiceView({ range }: { range: TimeRange }) {
             anchor={focus || undefined}
             flowOn={flowOn}
             critPathOn={critPathOn}
+            nsOutlines={nsOutlines}
           />
           {selectedEdge && (
             <EdgeDetailPanel edge={selectedEdge} onClose={() => setSelectedEdge(null)} range={range} simplified={!!focus} />
@@ -1631,7 +1647,7 @@ function protoColor(proto: string): string {
   }
 }
 
-function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor, colorFilter, flowOn, critPathOn }: {
+function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, incidentServices, onNodeClick, onIncidentClick, metaByService, anchor, colorFilter, flowOn, critPathOn, nsOutlines }: {
   nodes: ServiceTopologyNode[];
   edges: ServiceTopologyEdge[];
   layout: Map<string, number>;
@@ -1667,6 +1683,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   // the chain of edges forming the highest cumulative-p99 path
   // (root → leaf) in a bold red overlay. Honeycomb BubbleUp.
   critPathOn?: boolean;
+  nsOutlines?: boolean;  // v0.7.19 — draw the dashed per-namespace cluster frames (off by default)
 }) {
   // maxCalls is computed below near the layout block; we reuse it
   // for the live-flow per-edge animation-duration mapping.
@@ -1800,8 +1817,9 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
             services by n.namespace; ignores nodes without one
             (most infra nodes — db/queue/external — don't carry
             a namespace, which is correct). Bounding box
-            inflated by 12px so nodes don't kiss the border. */}
-        {(() => {
+            inflated by 12px so nodes don't kiss the border.
+            v0.7.19 — gated behind the Namespaces toggle (off by default). */}
+        {nsOutlines && (() => {
           type Group = { ns: string; xs: number[]; ys: number[] };
           const byNs = new Map<string, Group>();
           for (const n of nodes) {

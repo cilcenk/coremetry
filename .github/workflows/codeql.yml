@@ -1,0 +1,64 @@
+name: CodeQL
+
+# GitHub-native SAST (v0.7.24). Catches injection / path-traversal / unsafe-
+# deserialization / hardcoded-credential classes that grep-based `make audit`
+# can't. Findings land in the repo Security tab as code-scanning alerts; the
+# weekly cron re-scans the default branch even when no PR is open so newly
+# added CodeQL queries get applied to existing code.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '21 6 * * 1' # weekly, Monday 06:21 UTC
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # main.go's //go:embed all:frontend/dist needs the directory non-empty or
+      # the build won't compile. Stub a placeholder so CodeQL can extract the Go
+      # call graph without a full Vite build — the SPA itself is covered by the
+      # javascript-typescript matrix leg, not this one.
+      - if: matrix.language == 'go'
+        name: Build (stub embed + go build)
+        shell: bash
+        run: |
+          mkdir -p frontend/dist
+          echo '<!doctype html><title>codeql-stub</title>' > frontend/dist/index.html
+          go build ./...
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

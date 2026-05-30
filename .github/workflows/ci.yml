@@ -71,6 +71,62 @@ jobs:
       - name: go test -race (concurrency packages)
         run: go test -race ./internal/agent/... ./internal/notify/... ./internal/sse/... ./internal/cache/...
 
+  security:
+    name: Security (vuln + dep scan)
+    needs: frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      # main.go embeds frontend/dist (//go:embed) — govulncheck type-checks +
+      # builds the package graph, so it needs the rendered SPA like the backend
+      # job does. Pull the artifact instead of rebuilding the frontend here.
+      - name: Pull built UI
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      # govulncheck only flags vulnerabilities in code paths actually REACHED
+      # (call-graph analysis), so false positives are rare. Advisory for now
+      # (|| true + ::warning::) so a freshly-disclosed CVE in a transitive dep
+      # doesn't redball every PR before someone can triage it. Flip to blocking
+      # once the baseline is clean.
+      - name: govulncheck (Go reachable CVEs)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./... \
+            || echo "::warning title=govulncheck::reachable vulnerabilities found — triage (non-blocking)"
+      - name: npm audit (frontend deps)
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=high \
+            || echo "::warning title=npm audit::high/critical advisories found — triage (non-blocking)"
+      # Trivy filesystem scan: catches vulnerable pinned versions in go.sum /
+      # package-lock.json that govulncheck's reachability filter skips, plus
+      # any leaked secret / misconfig. exit-code 0 = advisory (results visible
+      # in the step log + SARIF upload below feeds the Security tab).
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+          format: sarif
+          output: trivy-results.sarif
+          skip-dirs: frontend/node_modules,frontend/dist
+      - name: Upload Trivy results to the Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
   helm:
     name: Helm (lint + template)
     runs-on: ubuntu-latest

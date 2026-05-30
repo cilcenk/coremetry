@@ -1,0 +1,32 @@
+# Dependabot — automated dependency-update PRs + vulnerable-dependency alerts
+# (v0.7.24). For an enterprise APM handling auth/RBAC/LDAP/secrets, keeping the
+# Go modules, the frontend npm tree, and the GitHub Actions pinned-versions
+# patched is a baseline security control. Grouped so a weekly batch lands as a
+# few reviewable PRs rather than a flood.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

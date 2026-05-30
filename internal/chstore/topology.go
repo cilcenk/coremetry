@@ -548,16 +548,31 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
 				''
 			) AS p_env,
+			-- v0.7.31 — messaging.destination (topic) so each Kafka topic is a
+			-- DISTINCT queue node (queue:<system>:<topic>) instead of every
+			-- topic on a broker collapsing into one queue:<system> hairball.
+			-- Operator-reported: a broadcast topic (bsa.kafka.core.cache.refresh)
+			-- fanned out to thousands of consumers and tangled the whole graph;
+			-- separating topics lets it be muted/collapsed surgically. The
+			-- attr_values[indexOf(...)] lookup mirrors what messaging_summary_5m
+			-- already pays — and this is the 5-min worker aggregation, off the
+			-- hot read path.
+			coalesce(
+				nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+				nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+				''
+			) AS msg_dest,
 			multiIf(
 				db_system  != '' AND infra_host != '',
 					concat('db:',    db_system, '@', infra_host),
 				db_system  != '',
 					concat('db:',    db_system),
-				-- v0.5.411 — messaging branch now scoped to non-
-				-- consumer spans only. Consumer spans get their
-				-- own queue → consumer pass below so the edge
-				-- direction reads producer → queue → consumer
-				-- instead of both arrows pointing at the queue.
+				-- v0.5.411 — messaging branch scoped to non-consumer spans only
+				-- (consumer spans get the queue → consumer pass below).
+				-- v0.7.31 — topic-aware: prefer the destination so topics
+				-- separate; fall back to broker host, then bare system.
+				msg_system != '' AND kind != 'consumer' AND msg_dest != '',
+					concat('queue:', msg_system, ':', msg_dest),
 				msg_system != '' AND kind != 'consumer' AND infra_host != '',
 					concat('queue:', msg_system, '@', infra_host),
 				msg_system != '' AND kind != 'consumer',
@@ -646,7 +661,19 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
 				''
 			) AS infra_host,
+			-- v0.7.31 — MUST mirror the infra (producer) pass's queue-node
+			-- naming exactly, or producer → queue and queue → consumer land on
+			-- different nodes and the chain breaks. Both producer + consumer
+			-- spans carry messaging.destination.name (OTel semconv), so they
+			-- resolve to the same queue:<system>:<topic> node.
+			coalesce(
+				nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+				nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+				''
+			) AS msg_dest,
 			multiIf(
+				msg_system != '' AND msg_dest != '',
+					concat('queue:', msg_system, ':', msg_dest),
 				msg_system != '' AND infra_host != '',
 					concat('queue:', msg_system, '@', infra_host),
 				msg_system != '',

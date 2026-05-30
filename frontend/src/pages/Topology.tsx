@@ -388,6 +388,11 @@ function ServiceView({ range }: { range: TimeRange }) {
   // only special-case the explicit "hide" value.
   const noiseShow = params.get('noise') !== 'hide';
   const setNoiseShow = (v: boolean) => setURLParam('noise', v ? null : 'hide');
+  // v0.7.32 — broadcast fan-out collapse. OFF (collapsed) by default; a kafka
+  // topic with >threshold consumers (cache.refresh broadcast) shows as one hub.
+  // ?broadcast=show reveals the full consumer mesh.
+  const broadcastShow = params.get('broadcast') === 'show';
+  const setBroadcastShow = (v: boolean) => setURLParam('broadcast', v ? 'show' : null);
   // v0.7.19 — namespace soft-cluster outlines. OFF by default (operator-
   // reported: the dashed per-namespace "frame" is noise on most graphs);
   // opt in with ?ns=show.
@@ -458,6 +463,7 @@ function ServiceView({ range }: { range: TimeRange }) {
       top: topN,
       focus: focus || undefined,
       hops: focus ? focusHops : undefined,
+      broadcast: broadcastShow ? 'show' : undefined,
     })
       // Normalise: nil slices from older backend / empty windows
       // marshal as JSON null, which crashes data.edges.forEach.
@@ -468,7 +474,7 @@ function ServiceView({ range }: { range: TimeRange }) {
         edges: d?.edges ?? [],
       }))
       .catch(() => setData(null));
-  }, [range, noiseShow, shiftMin, topN, focus, focusHops]);
+  }, [range, noiseShow, shiftMin, topN, focus, focusHops, broadcastShow]);
 
   // Compute the visible subgraph from the raw response based on
   // the two controls. All filtering is client-side because the
@@ -777,6 +783,25 @@ function ServiceView({ range }: { range: TimeRange }) {
           Showing <strong>{showingNodes}</strong> of <strong>{data.totalServices}</strong> services
           {data.scopeReason ? <> ({data.scopeReason})</> : null}.
           {' '}Use the <strong>Focus on</strong> picker to jump to any service, or raise <strong>Top services</strong>.
+        </div>
+      )}
+      {/* v0.7.32 — broadcast collapse notice. Shown when a kafka topic with a
+          huge consumer fan-out (cache.refresh broadcast) was collapsed to one
+          hub, or when the operator has expanded it. Toggles ?broadcast=show. */}
+      {((data.broadcastCollapsed ?? 0) > 0 || broadcastShow) && (
+        <div style={{
+          background: 'rgba(210,153,34,0.10)', border: '1px solid rgba(210,153,34,0.35)',
+          borderRadius: 4, padding: '6px 10px', marginBottom: 10,
+          color: 'var(--text2)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span>⇶</span>
+          {broadcastShow
+            ? <span>Broadcast fan-out expanded — every consumer edge is shown.</span>
+            : <span><strong>{data.broadcastCollapsed}</strong> broadcast topic{data.broadcastCollapsed === 1 ? '' : 's'} collapsed (a topic fanning out to 50+ consumers renders as one hub).</span>}
+          <button type="button" className="sec" style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }}
+            onClick={() => setBroadcastShow(!broadcastShow)}>
+            {broadcastShow ? 'Collapse' : 'Show fan-out'}
+          </button>
         </div>
       )}
       {visibleFiltered && visibleFiltered.nodes.length === 0 && (
@@ -2080,6 +2105,11 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                       {n.kind === 'external' && n.extDisplay && (
                         <tspan dx={6} fill="var(--text3)" fontSize={9}>· {truncate(n.name, 22)}</tspan>
                       )}
+                      {/* v0.7.32 — collapsed broadcast fan-out: show the hidden
+                          consumer count instead of N edges. */}
+                      {n.broadcastFanout ? (
+                        <tspan dx={6} fill="var(--warn)" fontSize={9}>· ⇶ {fmtNum(n.broadcastFanout)} svc</tspan>
+                      ) : null}
                     </text>
                   </>
                 );

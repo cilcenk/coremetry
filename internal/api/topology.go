@@ -185,6 +185,11 @@ type ServiceTopologyResponse struct {
 	TotalServices int    `json:"totalServices"`
 	Scoped        bool   `json:"scoped"`
 	ScopeReason   string `json:"scopeReason,omitempty"` // "top-50 by call volume" | "focus: <svc> +2 hops"
+	// v0.7.32 — number of broadcast queue topics whose consumer fan-out was
+	// collapsed (a topic with >threshold distinct consumers, e.g. a kafka
+	// cache-refresh broadcast). The UI shows a "N broadcast topics collapsed —
+	// show" affordance that flips ?broadcast=show. 0 when none / ?broadcast=show.
+	BroadcastCollapsed int `json:"broadcastCollapsed,omitempty"`
 }
 
 // ServiceTopologyNode is one node in the service-level graph.
@@ -219,6 +224,11 @@ type ServiceTopologyNode struct {
 	// small chip ("prod" / "stage") next to the service name
 	// so multi-env installs distinguish at-a-glance.
 	Env        string `json:"env,omitempty"`
+	// v0.7.32 — for a collapsed broadcast queue node, the real number of
+	// distinct consumer services its fan-out was hidden behind. The renderer
+	// shows "→ N services (broadcast)" on the node instead of N edges. Only set
+	// on queue nodes whose consumer count exceeded the broadcast threshold.
+	BroadcastFanout int `json:"broadcastFanout,omitempty"`
 }
 
 // topologyExcludeKey persists the operator's curated list of
@@ -448,9 +458,14 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	if focusHops > 4 {
 		focusHops = 4
 	}
-	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d",
+	// v0.7.32 — broadcast collapse (default ON; ?broadcast=show reveals the full
+	// fan-out mesh). A queue topic node with >broadcastFanoutMin distinct
+	// consumers (e.g. config-server's kafka cache.refresh to thousands of
+	// services) renders as one collapsed hub instead of N edges.
+	broadcastShow := r.URL.Query().Get("broadcast") == "show"
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:ex=%s:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d:bc=%v",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
-		excludeKeyDigest(exclude), noiseShow, minCallPct, comparePrior, topN, focusSvc, focusHops)
+		excludeKeyDigest(exclude), noiseShow, minCallPct, comparePrior, topN, focusSvc, focusHops, broadcastShow)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
@@ -556,6 +571,15 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		}
 		edges = filtered
 
+		// v0.7.32 — collapse broadcast queue fan-out BEFORE the scope bound so a
+		// single cache.refresh topic to thousands of consumers doesn't eat the
+		// top-N budget + inflate the service count. Returns the consumer count
+		// per collapsed topic for the node badge. ?broadcast=show bypasses it.
+		var bcFanout map[string]int
+		if !broadcastShow {
+			edges, bcFanout = collapseBroadcastQueues(edges, broadcastFanoutMin)
+		}
+
 		// v0.6.48 — server-side scope bound. Count distinct
 		// services across the noise-filtered edge set FIRST so the
 		// "showing N of M" banner reflects the real fabric size,
@@ -611,6 +635,14 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			nodesOut = append(nodesOut, n)
 		}
 		sort.Slice(nodesOut, func(i, j int) bool { return nodesOut[i].ID < nodesOut[j].ID })
+		// v0.7.32 — stamp the collapsed-consumer count onto each broadcast
+		// queue node so the renderer shows "→ N services (broadcast)" instead
+		// of the (dropped) fan-out edges.
+		for i := range nodesOut {
+			if n := bcFanout[nodesOut[i].ID]; n > 0 {
+				nodesOut[i].BroadcastFanout = n
+			}
+		}
 		// v0.5.312 — Phase 2 enrichment: namespace (for soft
 		// cluster grouping in the renderer) + open-problem
 		// counts (for health colouring). Both done after the
@@ -657,11 +689,62 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 			From:          from.UnixNano(),
 			To:            to.UnixNano(),
 			Truncated:     len(edges) >= edgeCap,
-			TotalServices: totalServices,
-			Scoped:        scoped,
-			ScopeReason:   scopeReason,
+			TotalServices:      totalServices,
+			Scoped:             scoped,
+			ScopeReason:        scopeReason,
+			BroadcastCollapsed: len(bcFanout),
 		}, nil
 	})
+}
+
+// broadcastFanoutMin is the distinct-consumer count above which a queue topic
+// node is treated as a BROADCAST and its fan-out collapsed by default. 50 is
+// well above normal pub/sub (a handful of consumers per topic) but far below a
+// cache-invalidation broadcast (config-server → thousands). Fixed for now;
+// promote to a system_setting if operators need to tune per install.
+const broadcastFanoutMin = 50
+
+// collapseBroadcastQueues hides the consumer fan-out of broadcast queue topics.
+// After v0.7.31 each Kafka topic is its own node (queue:<system>:<topic>), so a
+// broadcast shows up as one queue parent with a huge distinct-consumer count.
+// Any such node above `threshold` has its queue→consumer edges dropped and its
+// consumer count returned in the map (keyed by the queue node id) for the
+// "→ N services (broadcast)" badge. The producer→queue edge and every
+// non-broadcast queue are untouched. Pure + allocation-light (one pass to
+// count, one to filter) — runs on the 60s-cached read path. ?broadcast=show
+// skips this entirely (the caller gates the call).
+func collapseBroadcastQueues(edges []chstore.ServiceTopologyEdge, threshold int) ([]chstore.ServiceTopologyEdge, map[string]int) {
+	// Distinct consumers per queue parent (queue→consumer edges have
+	// ParentService = "queue:<system>:<topic>").
+	consumers := map[string]map[string]struct{}{}
+	for _, e := range edges {
+		if !strings.HasPrefix(e.ParentService, "queue:") {
+			continue
+		}
+		set := consumers[e.ParentService]
+		if set == nil {
+			set = map[string]struct{}{}
+			consumers[e.ParentService] = set
+		}
+		set[e.ChildNode] = struct{}{}
+	}
+	broadcast := map[string]int{}
+	for q, set := range consumers {
+		if len(set) > threshold {
+			broadcast[q] = len(set)
+		}
+	}
+	if len(broadcast) == 0 {
+		return edges, nil
+	}
+	kept := make([]chstore.ServiceTopologyEdge, 0, len(edges))
+	for _, e := range edges {
+		if _, isBroadcast := broadcast[e.ParentService]; isBroadcast {
+			continue // drop the collapsed topic's queue→consumer fan-out edge
+		}
+		kept = append(kept, e)
+	}
+	return kept, broadcast
 }
 
 // countDistinctServices counts the unique service-kind endpoints in

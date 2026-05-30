@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { passesLocalDisplayFilters } from '@/lib/serviceFilters';
 import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
@@ -191,23 +192,13 @@ export default function ServicesPage() {
   // service-name spelling.
   const sorted = useMemo(() => {
     if (!data) return data;
-    const minS = parseFloat(minSpans);
-    const minP = parseFloat(minP99);
-    const term = serviceFilter.trim().toLowerCase();
-    const filtered = data.filter(s => {
-      if (term) {
-        const md = catalog[s.name];
-        const matches =
-          s.name.toLowerCase().includes(term) ||
-          (md?.ownerTeam ?? '').toLowerCase().includes(term) ||
-          (md?.sreTeam ?? '').toLowerCase().includes(term);
-        if (!matches) return false;
-      }
-      if (errorsOnly && !(s.errorCount > 0 || s.errorRate > 0)) return false;
-      if (!isNaN(minS) && s.spanCount < minS) return false;
-      if (!isNaN(minP) && s.p99DurationMs < minP) return false;
-      return true;
-    });
+    // Client-side REFINEMENTS only (errors-only / min-spans / min-p99). Name +
+    // team filtering is server-side — the typed draft auto-commits (debounced)
+    // to committedFilter → ?name across ALL services, and team dropdowns
+    // resolve server-side. v0.7.29: the old local name-substring filter is gone
+    // (it emptied the loaded page to "no services" until Search committed).
+    const f = { errorsOnly, minSpans: parseFloat(minSpans), minP99: parseFloat(minP99) };
+    const filtered = data.filter(s => passesLocalDisplayFilters(s, f));
     // v0.5.276 — pinned float to top. Server already sorted the
     // page by the chosen column; partition into [pinned, rest]
     // while preserving the server-side order within each group.
@@ -219,9 +210,20 @@ export default function ServicesPage() {
       else restRows.push(row);
     }
     return [...pinnedRows, ...restRows];
-  }, [data, serviceFilter, errorsOnly, minSpans, minP99, catalog, pinned]);
+  }, [data, errorsOnly, minSpans, minP99, pinned]);
 
   const apply = () => setCommittedFilter(serviceFilter.trim());
+  // v0.7.29 — auto-commit the typed filter after a short idle so the list
+  // filters LIVE (server-side, across ALL services) without the operator having
+  // to press Search. Operator-reported: typing showed "no services" because
+  // only the loaded page was filtered locally until Search committed the server
+  // query. Debounced (350ms) so we don't fan a ClickHouse query out per
+  // keystroke; Enter / Search / dropdown-pick still commit immediately via
+  // apply(). Idempotent if apply() already set the same committedFilter.
+  useEffect(() => {
+    const t = setTimeout(() => setCommittedFilter(serviceFilter.trim()), 350);
+    return () => clearTimeout(t);
+  }, [serviceFilter]);
 
   const reset = () => {
     setServiceFilter(''); setCommittedFilter('');
@@ -367,7 +369,7 @@ export default function ServicesPage() {
           <div className="controls">
             <ServicePicker value={serviceFilter} onChange={setServiceFilter}
               onEnter={apply}
-              placeholder="Service… (Enter to search)" width={220} />
+              placeholder="Filter services…" width={220} />
             <button onClick={apply}
                     title="Search server-side for matching services"
                     style={{ padding: '5px 12px', fontSize: 12 }}>Search</button>

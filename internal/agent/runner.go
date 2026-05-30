@@ -132,7 +132,7 @@ func (r *Runner) runStep(ctx context.Context, execID string, st chstore.StepStat
 	// fully-automated runbooks that never pass through the manual API tick.
 	if r.notifier != nil && (e.Status == chstore.RunExecCompleted || e.Status == chstore.RunExecFailed) {
 		if rb, err := r.store.GetRunbook(ctx, e.RunbookID); err == nil && rb != nil && rb.NotifyOnComplete {
-			r.notifier.SendRunbookComplete(context.Background(), *e)
+			r.notifier.SendRunbookComplete(context.Background(), *e, rb.NotifyChannels)
 		}
 	}
 }

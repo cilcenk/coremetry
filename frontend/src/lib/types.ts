@@ -1082,7 +1082,8 @@ export interface Runbook {
   createdBy?: string;
   createdAt: number;
   updatedAt: number;
-  notifyOnComplete?: boolean;  // email/Slack/webhook when an execution finishes (v0.7.7)
+  notifyOnComplete?: boolean;  // fire a completion notification (v0.7.7)
+  notifyChannels?: string[];   // which channel TYPES (email/slack/teams/zoomchat/webhook/whatsapp); empty = email (v0.7.22)
 }
 
 export type RunbookExecStatus =

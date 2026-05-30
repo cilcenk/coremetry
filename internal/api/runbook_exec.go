@@ -146,7 +146,7 @@ func (s *Server) maybeNotifyRunbookComplete(ctx context.Context, e *chstore.Runb
 	if err != nil || rb == nil || !rb.NotifyOnComplete {
 		return
 	}
-	go s.notify.SendRunbookComplete(context.Background(), *e)
+	go s.notify.SendRunbookComplete(context.Background(), *e, rb.NotifyChannels)
 }
 
 func (s *Server) cancelExecution(w http.ResponseWriter, r *http.Request) {

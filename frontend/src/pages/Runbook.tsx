@@ -287,6 +287,19 @@ function TabStrip({ tab, onChange, stepCount }: {
   );
 }
 
+// Selectable runbook-completion notification channel TYPES (v0.7.22). Mirrors
+// the backend sendOne() switch (mattermost rides the slack type). The operator
+// picks which of their configured channels of each type fire on completion.
+const RUNBOOK_NOTIFY_TYPES: { type: string; label: string }[] = [
+  { type: 'email', label: 'Email' },
+  { type: 'slack', label: 'Slack' },
+  { type: 'mattermost', label: 'Mattermost' }, // distinct .Type from slack — must be selectable or its channels get filtered out
+  { type: 'teams', label: 'Teams' },
+  { type: 'zoomchat', label: 'Zoom' },
+  { type: 'webhook', label: 'Webhook' },
+  { type: 'whatsapp', label: 'WhatsApp' },
+];
+
 function Overview({ draft, canEdit, patch }: {
   draft: Runbook; canEdit: boolean; patch: (p: Partial<Runbook>) => void;
 }) {
@@ -320,9 +333,33 @@ function Overview({ draft, canEdit, patch }: {
         {canEdit && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
             <input type="checkbox" checked={!!draft.notifyOnComplete}
-              onChange={e => patch({ notifyOnComplete: e.target.checked })} />
-            Notify on completion (email / Slack / webhook when a run finishes)
+              onChange={e => patch({
+                notifyOnComplete: e.target.checked,
+                // Materialise the email default so the channel picker reflects
+                // what will fire (the backend treats an empty selection as email).
+                notifyChannels: e.target.checked && !(draft.notifyChannels && draft.notifyChannels.length)
+                  ? ['email'] : draft.notifyChannels,
+              })} />
+            Notify on completion when a run finishes
           </label>
+        )}
+        {canEdit && draft.notifyOnComplete && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontSize: 13, paddingLeft: 24 }}>
+            <span style={{ color: 'var(--text3)' }}>Channels:</span>
+            {RUNBOOK_NOTIFY_TYPES.map(({ type, label }) => (
+              <label key={type} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="checkbox" checked={!!draft.notifyChannels?.includes(type)}
+                  onChange={e => {
+                    const cur = draft.notifyChannels ?? [];
+                    patch({ notifyChannels: e.target.checked
+                      ? Array.from(new Set([...cur, type]))
+                      : cur.filter(x => x !== type) });
+                  }} />
+                {label}
+              </label>
+            ))}
+            <span style={{ color: 'var(--text3)', fontSize: 11 }}>(fires the enabled channels of each type; empty = email)</span>
+          </div>
         )}
         <div style={{ fontSize: 11, color: 'var(--text3)' }}>
           Updated {tsLong(draft.updatedAt)} · Created {tsLong(draft.createdAt)}

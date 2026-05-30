@@ -464,7 +464,7 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 // the Problem-shaped channel path via a synthetic Problem (the channels format
 // Severity/Service/RuleName/Description). Called only when the runbook opted in
 // (NotifyOnComplete). completed → info; failed → critical. (v0.7.7)
-func (n *Notifier) SendRunbookComplete(ctx context.Context, e chstore.RunbookExecution) {
+func (n *Notifier) SendRunbookComplete(ctx context.Context, e chstore.RunbookExecution, channelTypes []string) {
 	severity := "info"
 	if e.Status == chstore.RunExecFailed {
 		severity = "critical"
@@ -489,11 +489,32 @@ func (n *Notifier) SendRunbookComplete(ctx context.Context, e chstore.RunbookExe
 		log.Printf("[notify] runbook-complete load channels: %v", err)
 		return
 	}
+	want := runbookNotifyTypes(channelTypes)
 	for _, c := range channels {
+		if !want[strings.ToLower(c.Type)] {
+			continue // runbook opted out of this channel type
+		}
 		if err := n.sendOne(ctx, c, p); err != nil {
 			log.Printf("[notify] runbook-complete %s (%s): %v", c.Name, c.Type, err)
 		}
 	}
+}
+
+// runbookNotifyTypes is the set of channel TYPES a runbook-completion
+// notification fires to. An empty selection defaults to email — both the
+// sensible default and back-compat for runbooks created before the
+// per-runbook channel selector (v0.7.22). Pure — unit-tested in notify_test.go.
+func runbookNotifyTypes(types []string) map[string]bool {
+	m := make(map[string]bool, len(types))
+	for _, t := range types {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			m[t] = true
+		}
+	}
+	if len(m) == 0 {
+		m = map[string]bool{"email": true}
+	}
+	return m
 }
 
 // SendTest dispatches a synthetic Problem to a single channel — used by

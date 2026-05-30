@@ -2321,30 +2321,19 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("attr-keys:since=%s:limit=%d:f=%s",
 		q.Get("since"), limit, rawFilters)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		// Time floor — same on both union branches.
-		timeWhere := "WHERE time >= now() - toIntervalSecond(?)"
-		// Filter-derived WHERE fragment via the public chstore
-		// helper so we don't need to reach into the package's
-		// internal whereClause type. AND-merge with the time
-		// floor for each union branch.
+		// Filter-derived WHERE fragment via the public chstore helper so we
+		// don't reach into the package's internal whereClause type. AND-merged
+		// with the time floor inside attributeKeysSQL for each union branch.
 		filterSQL, filterArgs := chstore.BuildFilterWhere(filters)
 		extra := ""
 		if filterSQL != "" {
 			extra = " AND " + strings.TrimPrefix(filterSQL, "WHERE ")
 		}
-
-		sqlText := `
-			SELECT scope, k, count() AS c FROM (
-				SELECT 'span'     AS scope, arrayJoin(attr_keys) AS k
-				FROM coremetry.spans ` + timeWhere + extra + `
-				UNION ALL
-				SELECT 'resource' AS scope, arrayJoin(res_keys)  AS k
-				FROM coremetry.spans ` + timeWhere + extra + `
-			)
-			GROUP BY scope, k
-			ORDER BY c DESC
-			LIMIT ?
-			SETTINGS max_execution_time = 30`
+		// v0.7.30 — sample the inner scan (see attributeKeysSQL). At billions of
+		// spans the old full-window arrayJoin timed out (max_execution_time=30
+		// → error → empty), and the Traces "Add column" picker showed "no more
+		// attribute keys to add". The sample makes it O(sample), not O(window).
+		sqlText := attributeKeysSQL(extra, attrKeysSampleRows)
 		// Args layout: span(time, filter-args...), resource(time, filter-args...), limit
 		secs := int64(since.Seconds())
 		args := []any{secs}
@@ -2373,6 +2362,47 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		return out, rows.Err()
 	})
+}
+
+// attrKeysSampleRows bounds the per-branch inner scan in attributeKeysSQL.
+// 200k recent spans is enough to surface essentially every attribute KEY
+// (keys are low-cardinality and broadly present, unlike values) while keeping
+// the query O(sample) instead of O(window) at billion-span scale.
+const attrKeysSampleRows = 200_000
+
+// attributeKeysSQL builds the distinct-attribute-keys discovery query that
+// drives the Traces "Add column" picker + FilterBuilder autocomplete.
+//
+// v0.7.30 — Operator-reported: at billions of spans the previous query
+// arrayJoin'd attr_keys/res_keys across the ENTIRE time window and blew past
+// max_execution_time=30, returning an error → the picker showed "no more
+// attribute keys to add". Each union branch now SAMPLES the inner scan with a
+// LIMIT before the arrayJoin, so the cost is bounded by the sample size rather
+// than the (unbounded) span count in the window. The resulting counts are
+// sample-relative — used only to order keys by rough popularity, never as exact
+// usage figures. `extra` is the optional filter fragment, already prefixed with
+// " AND " (empty when no /explore filter is set).
+func attributeKeysSQL(extra string, sampleRows int) string {
+	return fmt.Sprintf(`
+		SELECT scope, k, count() AS c FROM (
+			SELECT 'span' AS scope, arrayJoin(attr_keys) AS k
+			FROM (
+				SELECT attr_keys FROM coremetry.spans
+				WHERE time >= now() - toIntervalSecond(?)%s
+				LIMIT %d
+			)
+			UNION ALL
+			SELECT 'resource' AS scope, arrayJoin(res_keys) AS k
+			FROM (
+				SELECT res_keys FROM coremetry.spans
+				WHERE time >= now() - toIntervalSecond(?)%s
+				LIMIT %d
+			)
+		)
+		GROUP BY scope, k
+		ORDER BY c DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 30`, extra, sampleRows, extra, sampleRows)
 }
 
 // getAttributeValues returns the most-frequent values observed for a

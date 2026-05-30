@@ -29,6 +29,13 @@ jobs:
       - name: Type check
         working-directory: frontend
         run: npx tsc --noEmit
+      # First frontend test gate (v0.7.25). Vitest over the pure lib/ helpers
+      # that carry incident history (unit formatters, timeRangeToNs now()-trap,
+      # escapeHTML XSS, dashboard-var expansion). Runs before the build so a
+      # broken helper fails fast.
+      - name: Unit tests (vitest)
+        working-directory: frontend
+        run: npx vitest run
       - name: Build (Vite SPA)
         working-directory: frontend
         run: npx vite build

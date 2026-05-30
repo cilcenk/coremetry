@@ -6702,7 +6702,45 @@ func (s *Server) putRetention(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetRetention(r.Context(), sp, actorOf(r)); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "retention.update", "retention", "", retentionDetails(sp))
+	// v0.7.28 — kick an immediate enforcer sweep so REDUCING retention reclaims
+	// old day-partitions within seconds instead of waiting for the worker's
+	// hourly tick. ALTER MODIFY TTL runs with materialize_ttl_after_modify=0 (so
+	// it does NOT re-evaluate existing parts on the spot — that would block the
+	// request at scale), and CH's merge-based TTL drop can lag hours; without
+	// this sweep an operator who drops retention from 30d→1d keeps seeing the
+	// old spans until the next hourly worker pass. Detached context: the request
+	// ctx is canceled once we respond (the v0.7.12 context-canceled lesson).
+	// DROP PARTITION is idempotent + metadata-only, so a one-shot from the API
+	// pod is safe even though the periodic sweep is worker-leader-gated.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := s.store.EnforceRetention(ctx); err != nil {
+			log.Printf("[retention] post-apply sweep: %v", err)
+		}
+	}()
 	writeJSON(w, sp)
+}
+
+// retentionDetails builds the audit-log detail string for a retention change —
+// only the fields the operator actually set (empty fields preserve the prior
+// value, so they're not part of this mutation).
+func retentionDetails(sp chstore.RetentionSpec) string {
+	var parts []string
+	if sp.Spans != "" {
+		parts = append(parts, "spans="+sp.Spans)
+	}
+	if sp.Logs != "" {
+		parts = append(parts, "logs="+sp.Logs)
+	}
+	if sp.Metrics != "" {
+		parts = append(parts, "metrics="+sp.Metrics)
+	}
+	if sp.Profiles != "" {
+		parts = append(parts, "profiles="+sp.Profiles)
+	}
+	return strings.Join(parts, " ")
 }
 
 // getAnomalyPromotion returns the live anomaly auto-promotion

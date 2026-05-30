@@ -92,9 +92,21 @@ otelCollector:
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits:   { cpu: "1",  memory: 1Gi }
+  # v0.7.14 — dual-ship logs to the standalone minikube ES (kubectl apply -f
+  # minikube-elasticsearch.yaml) so the logs.backend=elasticsearch read path is
+  # exercised locally. Collector writes logs to BOTH Coremetry (CH) and ES.
+  elasticsearch:
+    enabled: true
+    endpoint: "http://coremetry-elasticsearch:9200"
+    logsIndex: "coremetry-logs"
 
 logs:
-  backend: clickhouse     # no ES pod locally
+  # Read logs from the standalone ES the collector dual-ships to (v0.7.14).
+  # CH is still the write store; ES is the read backend (invariant #2).
+  backend: elasticsearch
+  elasticsearch:
+    addresses: ["http://coremetry-elasticsearch:9200"]
+    index: "coremetry-logs*"
 
 javaDemo:
   # Live traffic generator. The GHCR demo image isn't published for this

@@ -49,11 +49,28 @@ data:
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 5000 }
         retry_on_failure: { enabled: true, initial_interval: 1s, max_interval: 30s }
       {{- end }}
+      {{- if .Values.otelCollector.elasticsearch.enabled }}
+      # v0.7.14 — dual-ship LOGS to an Elasticsearch cluster, in ADDITION to the
+      # in-cluster Coremetry OTLP export. Coremetry's logs.backend=elasticsearch
+      # then READS them back (CLAUDE.md invariant #2: CH is the write store, ES
+      # is a read backend the operator's pipeline already populates — this is
+      # that pipeline for installs that want the collector to do the shipping).
+      # ECS mapping mode emits @timestamp / message / service.name / log.level,
+      # which Coremetry's ESStore pickString fallbacks read without extra config.
+      elasticsearch/logs:
+        endpoints: [{{ .Values.otelCollector.elasticsearch.endpoint | quote }}]
+        logs_index: {{ .Values.otelCollector.elasticsearch.logsIndex | quote }}
+        mapping: { mode: ecs }
+        # The ES exporter has its own retry/flush config (NOT the standard
+        # exporterhelper retry_on_failure/sending_queue keys); defaults are fine
+        # for the dev/demo volumes here.
+        retry: { enabled: true, max_requests: 5 }
+      {{- end }}
     service:
       pipelines:
         traces:  { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry{{ if .Values.otelCollector.oneuptime.enabled }}, otlphttp/oneuptime{{ end }}] }
         metrics: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry{{ if .Values.otelCollector.oneuptime.enabled }}, otlphttp/oneuptime{{ end }}] }
-        logs:    { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry{{ if .Values.otelCollector.oneuptime.enabled }}, otlphttp/oneuptime{{ end }}] }
+        logs:    { receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/coremetry{{ if .Values.otelCollector.oneuptime.enabled }}, otlphttp/oneuptime{{ end }}{{ if .Values.otelCollector.elasticsearch.enabled }}, elasticsearch/logs{{ end }}] }
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -410,6 +410,16 @@ otelCollector:
     tokenHeader: "x-oneuptime-token"          # header name the backend expects
     existingSecret: ""                         # Secret holding the ingestion token
     tokenSecretKey: "token"                    # key within that Secret
+  # Dual-ship LOGS to Elasticsearch (v0.7.14) — in ADDITION to the in-cluster
+  # Coremetry OTLP export. Pair with logs.backend=elasticsearch so Coremetry
+  # READS the same logs back (CH stays the write store; this is the operator's
+  # ES shipping pipeline, done by the collector). ECS mapping → @timestamp /
+  # message / service.name / log.level, which Coremetry's ESStore reads as-is.
+  # Default off.
+  elasticsearch:
+    enabled: false
+    endpoint: "http://elasticsearch:9200"   # ES HTTP endpoint the collector ships to
+    logsIndex: "coremetry-logs"              # index/data-stream the logs land in
 
 # Java demo — Spring Boot e-commerce app with zero-code OTel auto-
 # instrumentation + sidecar profile pusher. Off by default; flip on for

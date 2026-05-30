@@ -379,13 +379,14 @@ function LogsInner() {
               padding still works. */}
           <input
             placeholder="Trace ID"
+            aria-label="Filter logs by trace ID"
             value={draft.traceId}
             onChange={e => setDraft({ ...draft, traceId: e.target.value.trim().toLowerCase().replace(/^0x/, '') })}
             onKeyDown={e => e.key === 'Enter' && apply()}
             title="Filter logs to a single trace. Time range is ignored when this is set — searches across full retention."
             className="mono"
             style={{ width: 180, fontSize: 12 }} />
-          <select value={draft.severity} onChange={e => setDraft({ ...draft, severity: Number(e.target.value) })}>
+          <select value={draft.severity} aria-label="Minimum log severity" onChange={e => setDraft({ ...draft, severity: Number(e.target.value) })}>
             {SEV_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
           </select>
           <button onClick={apply}>Search</button>

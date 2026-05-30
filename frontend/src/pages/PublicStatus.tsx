@@ -486,6 +486,7 @@ function SubscribeForm() {
         <input required type="email" value={email}
           onChange={e => setEmail(e.target.value)}
           placeholder="you@example.com"
+          aria-label="Email address to subscribe"
           style={{ flex: 1 }} />
         <button type="submit" disabled={busy}>
           {busy ? 'Subscribing…' : 'Subscribe'}

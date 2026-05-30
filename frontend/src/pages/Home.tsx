@@ -1,8 +1,6 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 
 export default function HomePage() {
-  const navigate = useNavigate();
-  useEffect(() => { navigate('/services'); }, [navigate]);
-  return null;
+  // replace (not push) so Back doesn't bounce off "/" → "/services" again.
+  return <Navigate to="/services" replace />;
 }

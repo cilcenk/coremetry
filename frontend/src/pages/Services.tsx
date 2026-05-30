@@ -371,9 +371,9 @@ export default function ServicesPage() {
             <button onClick={apply}
                     title="Search server-side for matching services"
                     style={{ padding: '5px 12px', fontSize: 12 }}>Search</button>
-            <input placeholder="Min spans" value={minSpans} type="number"
+            <input placeholder="Min spans" aria-label="Minimum spans" value={minSpans} type="number"
               onChange={e => setMinSpans(e.target.value)} style={{ width: 100 }} />
-            <input placeholder="Min P99 (ms)" value={minP99} type="number"
+            <input placeholder="Min P99 (ms)" aria-label="Minimum P99 latency in milliseconds" value={minP99} type="number"
               onChange={e => setMinP99(e.target.value)} style={{ width: 110 }} />
             {/* Team dropdowns derived from the catalog. Server
                 resolves the selection to a service-name

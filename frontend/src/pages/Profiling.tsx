@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { IconFlame } from '@/components/icons';
@@ -22,6 +22,7 @@ export default function ProfilingPage() {
   // operators into a pre-filtered profiling view (v0.5.161).
   // Range stays local — the topbar picker mutates it post-mount
   // and bookmarks aren't time-stable anyway.
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const service = params.get('service') || '';
@@ -156,7 +157,7 @@ export default function ProfilingPage() {
                   </thead>
                   <tbody>
                     {data.map(p => (
-                      <tr key={p.profileId} onClick={() => window.location.href = `/profile?id=${p.profileId}`}>
+                      <tr key={p.profileId} onClick={() => navigate(`/profile?id=${p.profileId}`)}>
                         <td className="mono">{tsShort(p.startTime)}</td>
                         <td>
                           <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--bg3)', borderRadius: 3, fontFamily: 'monospace' }}>

@@ -195,7 +195,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+        <label htmlFor="login-username" style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
           {ldapEnabled
             ? (brand.usernameLabel === 'Email' ? t('login.usernameOrEmail') : brand.usernameLabel)
             : (brand.usernameLabel === 'Email' ? t('login.email') : brand.usernameLabel)}
@@ -205,14 +205,14 @@ export default function LoginPage() {
             before /api/auth/config resolved the flag flipped briefly
             anyway. Backend owns the format check; the input type
             doesn't add safety beyond a soft hint, so we drop it. */}
-        <input type="text" autoComplete="username" required autoFocus
+        <input id="login-username" type="text" autoComplete="username" required autoFocus
           value={email} onChange={e => setEmail(e.target.value)}
           style={{ width: '100%', marginBottom: 14 }} />
 
-        <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+        <label htmlFor="login-password" style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
           {t('login.password')}
         </label>
-        <input type="password" autoComplete="current-password" required
+        <input id="login-password" type="password" autoComplete="current-password" required
           value={password} onChange={e => setPassword(e.target.value)}
           style={{ width: '100%', marginBottom: 18 }} />
 

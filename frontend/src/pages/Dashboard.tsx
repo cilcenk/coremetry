@@ -248,10 +248,10 @@ function Inner() {
         <div className="controls" style={{ marginBottom: 14 }}>
           {editing ? (
             <>
-              <input value={draft.name} placeholder="Dashboard name"
+              <input value={draft.name} placeholder="Dashboard name" aria-label="Dashboard name"
                 onChange={e => setDraft({ ...draft, name: e.target.value })}
                 style={{ width: 220 }} />
-              <input value={draft.description} placeholder="Description"
+              <input value={draft.description} placeholder="Description" aria-label="Dashboard description"
                 onChange={e => setDraft({ ...draft, description: e.target.value })}
                 style={{ width: 320 }} />
               <AddPanelMenu onAdd={addPanel} />
@@ -452,7 +452,21 @@ function DashboardGrid({
                      const next = new Set(collapsed);
                      next.has(g.rowPanel.id) ? next.delete(g.rowPanel.id) : next.add(g.rowPanel.id);
                      setCollapsed(next);
-                   }}>
+                   }}
+                   onKeyDown={e => {
+                     // Keyboard parity with the click toggle — Enter/Space
+                     // collapses/expands the row the same way a click does.
+                     if (!g.rowPanel) return;
+                     if (e.key === 'Enter' || e.key === ' ') {
+                       e.preventDefault();
+                       const next = new Set(collapsed);
+                       next.has(g.rowPanel.id) ? next.delete(g.rowPanel.id) : next.add(g.rowPanel.id);
+                       setCollapsed(next);
+                     }
+                   }}
+                   role="button"
+                   tabIndex={0}
+                   aria-expanded={!isCollapsed}>
                 <span className="dash-row-toggle">{isCollapsed ? '▶' : '▼'}</span>
                 <span className="dash-row-title">{g.rowPanel.title || 'Row'}</span>
                 <span className="dash-row-count">

@@ -113,6 +113,7 @@ function BacktraceInner() {
 
         <div className="controls" style={{ marginBottom: 8 }}>
           <input placeholder="Filter by service / host / IP / user-agent…"
+            aria-label="Filter backtrace by service, host, IP, or user-agent"
             value={filter} onChange={e => setFilter(e.target.value)}
             style={{ flex: 1, minWidth: 280 }} />
           {filter && <button className="sec" onClick={() => setFilter('')}>Clear</button>}

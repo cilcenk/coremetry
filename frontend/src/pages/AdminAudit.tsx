@@ -127,21 +127,21 @@ export default function AuditPage() {
       <Topbar title="Audit log" />
       <div id="content">
         <div className="controls" style={{ marginBottom: 8 }}>
-          <select value={since} onChange={e => setSince(e.target.value)}>
+          <select value={since} onChange={e => setSince(e.target.value)} aria-label="Time range">
             <option value="1h">Last 1h</option>
             <option value="24h">Last 24h</option>
             <option value="7d">Last 7d</option>
             <option value="30d">Last 30d</option>
           </select>
-          <input placeholder="Actor (email or id)…"
+          <input placeholder="Actor (email or id)…" aria-label="Filter by actor (email or id)"
             value={actor} onChange={e => setActor(e.target.value)} style={{ width: 220 }} />
-          <select value={action} onChange={e => setAction(e.target.value)}>
+          <select value={action} onChange={e => setAction(e.target.value)} aria-label="Filter by action">
             <option value="">All actions</option>
             {distinctActions.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
-          <input placeholder="Target kind (e.g. alert_rule)"
+          <input placeholder="Target kind (e.g. alert_rule)" aria-label="Filter by target kind"
             value={target} onChange={e => setTarget(e.target.value)} style={{ width: 200 }} />
-          <input placeholder="Search within results…"
+          <input placeholder="Search within results…" aria-label="Search within results"
             value={search} onChange={e => setSearch(e.target.value)} style={{ width: 220 }} />
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {search.trim() && data
@@ -211,6 +211,18 @@ export default function AuditPage() {
                         {e.targetId && <span style={{ color: 'var(--text3)' }}> · {e.targetId}</span>}
                       </td>
                       <td onClick={() => e.details && toggleExpand(e.id)}
+                          onKeyDown={ev => {
+                            // Keyboard parity with the click affordance —
+                            // Enter/Space toggles the expanded JSON the
+                            // same way a click does, when there are details.
+                            if (e.details && (ev.key === 'Enter' || ev.key === ' ')) {
+                              ev.preventDefault();
+                              toggleExpand(e.id);
+                            }
+                          }}
+                          role={e.details ? 'button' : undefined}
+                          tabIndex={e.details ? 0 : undefined}
+                          aria-expanded={e.details ? isExpanded : undefined}
                           style={{ fontSize: 11, color: 'var(--text2)',
                                    maxWidth: isExpanded ? undefined : 360,
                                    overflow: isExpanded ? 'visible' : 'hidden',

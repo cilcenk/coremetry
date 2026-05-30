@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
@@ -15,6 +15,7 @@ import type { Incident, IncidentStatus } from '@/lib/types';
 // firing within a 30-min window; can also be created manually for
 // non-alert sourced events (e.g. customer-reported issue).
 export default function IncidentsPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
   const [statusFilter, setStatusFilter] = useState<'all' | IncidentStatus>('all');
@@ -74,7 +75,7 @@ export default function IncidentsPage() {
               <tbody>
                 {items.map(i => (
                   <tr key={i.id} style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}
-                      onClick={() => location.href = `/incident?id=${i.id}`}>
+                      onClick={() => navigate(`/incident?id=${i.id}`)}>
                     <td><StatusPill s={i.status} /></td>
                     <td><SeverityPill s={i.severity} /></td>
                     <td>

@@ -201,6 +201,7 @@ export default function ServiceMapPage() {
               all just work. */}
           <label style={{ fontSize: 12, color: 'var(--text2)' }}>Focus</label>
           <input list="svc-map-services"
+                 aria-label="Focus map on a service"
                  placeholder={focus || 'select a service…'}
                  value={pickerOpen ? pickerText : focus}
                  onChange={e => {

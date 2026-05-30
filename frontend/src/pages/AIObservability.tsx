@@ -154,10 +154,11 @@ export default function AIObservabilityPage() {
 
         {/* Filter strip */}
         <div className="controls" style={{ marginTop: 18, marginBottom: 8 }}>
-          <input type="search" placeholder="Filter by surface…"
+          <input type="search" placeholder="Filter by surface…" aria-label="Filter by surface"
             value={surface} onChange={e => setSurface(e.target.value)}
             style={{ fontSize: 12, padding: '3px 8px', width: 200 }} />
           <select value={provider} onChange={e => setProvider(e.target.value)}
+            aria-label="Filter by provider"
             style={{ fontSize: 12 }}>
             <option value="">All providers</option>
             <option value="openai">openai</option>
@@ -165,6 +166,7 @@ export default function AIObservabilityPage() {
             <option value="github">github</option>
           </select>
           <select value={status} onChange={e => setStatus(e.target.value)}
+            aria-label="Filter by status"
             style={{ fontSize: 12 }}>
             <option value="">All statuses</option>
             <option value="ok">ok</option>

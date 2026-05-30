@@ -157,7 +157,7 @@ function Inner() {
                   </div>
                 ) : (
                   <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input placeholder="note (optional)" value={notes[s.stepId] ?? ''}
+                    <input placeholder="note (optional)" aria-label="Step note (optional)" value={notes[s.stepId] ?? ''}
                       onChange={e => setNotes({ ...notes, [s.stepId]: e.target.value })}
                       style={{ flex: '1 1 220px' }} />
                     <button onClick={() => act(s.stepId, 'complete')} disabled={stepAction.isPending}>✓ Done</button>

@@ -464,6 +464,7 @@ function SpanFilterBar({ spans, value, onChange }: {
   return (
     <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
       <input value={value} onChange={e => onChange(e.target.value)}
+        aria-label="Filter spans by name, service, or attribute value"
         placeholder="Filter spans (name, service, attr value)…"
         style={{ flex: 1, maxWidth: 360, padding: '4px 10px', fontSize: 12,
                  background: 'var(--bg)', color: 'var(--text)',

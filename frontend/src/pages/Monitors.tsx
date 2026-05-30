@@ -2,6 +2,7 @@ import { useState, FormEvent } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
+import { CopyButton } from '@/components/CopyButton';
 import { Modal, Field, SelectField, Button, Stack, Row as UiRow } from '@/components/ui';
 import {
   useMonitors, useMonitorTimeline,
@@ -106,17 +107,17 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
           }} title={m.url}>{m.url}</span>
         )}
         {m.type === 'heartbeat' && m.heartbeatToken && (
-          <code style={{
-            fontSize: 11, padding: '2px 6px', borderRadius: 3,
-            background: 'var(--bg0)', color: 'var(--text2)', cursor: 'pointer',
-          }}
-          title="Click to copy cron-friendly URL"
-          onClick={() => {
-            const url = `${window.location.origin}/api/heartbeats/${m.heartbeatToken}`;
-            navigator.clipboard?.writeText(url);
-          }}>
-            /api/heartbeats/{m.heartbeatToken!.slice(0, 8)}…
-          </code>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <code style={{
+              fontSize: 11, padding: '2px 6px', borderRadius: 3,
+              background: 'var(--bg0)', color: 'var(--text2)',
+            }}>
+              /api/heartbeats/{m.heartbeatToken.slice(0, 8)}…
+            </code>
+            <CopyButton
+              value={`${window.location.origin}/api/heartbeats/${m.heartbeatToken}`}
+              title="Copy cron-friendly heartbeat URL" />
+          </span>
         )}
         {m.lastResult?.message && (
           <span style={{ color: 'var(--text3)', fontSize: 12, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.lastResult.message}>

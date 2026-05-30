@@ -760,6 +760,17 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                 return (
                   <tr key={p.id}
                       onClick={() => navigate(`/service?name=${encodeURIComponent(p.service)}`)}
+                      onKeyDown={(e) => {
+                        // Keyboard accessibility — mirror the exception-row
+                        // pattern so screen-reader + keyboard users can open
+                        // a Problem's service the same way a click does.
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          navigate(`/service?name=${encodeURIComponent(p.service)}`);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
                       style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 44px' }}>
                       <td onClick={e => e.stopPropagation()}>
                         <input type="checkbox"

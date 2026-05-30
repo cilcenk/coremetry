@@ -23,6 +23,17 @@ type SavedView struct {
 	CreatedAt   int64  `json:"createdAt"`   // unix ns
 }
 
+// savedViewsInsertCols is the explicit INSERT column list for saved_views. It
+// MUST stay 1:1 with the Append() arguments in UpsertSavedView and OMIT
+// `version` (which defaults so it auto-increments per upsert). See the v0.7.36
+// fix note in UpsertSavedView.
+const savedViewsInsertCols = "id, owner_id, name, page, query_string, pinned, created_at"
+
+// savedViewsInsertColCount is the number of columns/values UpsertSavedView
+// binds — pinned by a test so adding a column to one side without the other
+// can't silently re-break the insert.
+const savedViewsInsertColCount = 7
+
 func (s *Store) UpsertSavedView(ctx context.Context, v SavedView) error {
 	if v.ID == "" {
 		v.ID = newSavedViewID()
@@ -30,7 +41,15 @@ func (s *Store) UpsertSavedView(ctx context.Context, v SavedView) error {
 	if v.CreatedAt == 0 {
 		v.CreatedAt = time.Now().UnixNano()
 	}
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO saved_views")
+	// v0.7.36 — Operator-reported: "Save view → expected 8 arguments got 7"
+	// (repro: trace-detail → Logs → Save view). PrepareBatch WITHOUT a column
+	// list binds ALL 8 table columns (id, owner_id, name, page, query_string,
+	// pinned, created_at, version), but Append passes 7 → count mismatch, every
+	// save fails on a fresh schema. The explicit list omits `version` so it
+	// defaults to toUnixTimestamp64Nano(now64(9)) — which is exactly what drives
+	// the ReplacingMergeTree(version) dedup (each upsert gets a fresh, larger
+	// version). Keep this list 1:1 with the Append() args below.
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO saved_views ("+savedViewsInsertCols+")")
 	if err != nil {
 		return err
 	}

@@ -215,7 +215,7 @@ export default function AIObservabilityPage() {
                   const cost = costForCall(rates, c.model, c.inputTokens, c.outputTokens);
                   return (
                   <tr key={c.id} onClick={() => setOpen(c)}
-                    style={{ cursor: 'pointer' }}>
+                    style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                     <td className="mono" style={{ fontSize: 11 }}>{tsLong(c.createdAt)}</td>
                     <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{c.surface}</td>
                     <td style={{ fontSize: 12 }}>

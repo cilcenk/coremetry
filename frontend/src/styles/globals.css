@@ -366,6 +366,8 @@ tbody tr:hover { background: var(--bg2); }
 tbody tr.agg-row { background: var(--bg2); border-bottom: 2px solid var(--border); cursor: default; }
 tbody tr.agg-row:hover { background: var(--bg2); }
 tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Numeric columns — right-align + tabular figures so digits line up by place value. */
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Badges */
 .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }

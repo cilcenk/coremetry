@@ -46,7 +46,6 @@ export default function ProfilingPage() {
     if (v === 'hotspots') p.set('view', 'hotspots'); else p.delete('view');
     return p;
   }, { replace: true });
-  const [services, setServices] = useState<string[]>([]);
   const [data, setData] = useState<ProfileRow[] | null | undefined>(undefined);
   const [hotspots, setHotspots] = useState<ProfileHotspotsResponse | null | undefined>(undefined);
   // Setup recipes accordion — empty/no profiles is the common
@@ -54,12 +53,6 @@ export default function ProfilingPage() {
   // to figure out the wire format. Surfacing copy-paste snippets
   // here turns "is profiling working?" into a 90-second exercise.
   const [setupOpen, setSetupOpen] = useState(false);
-
-  useEffect(() => {
-    api.services(timeRangeToNs(range))
-      .then(s => setServices((s ?? []).map(x => x.name)))
-      .catch(() => setServices([]));
-  }, [range]);
 
   useEffect(() => {
     if (view !== 'list') return;
@@ -138,6 +131,11 @@ export default function ProfilingPage() {
         {view === 'list' && (
           <>
             {data === undefined && <Spinner />}
+            {data === null && (
+              <Empty icon="⚠" title="Failed to load profiles">
+                The backend rejected the request — try widening the time range.
+              </Empty>
+            )}
             {data && data.length === 0 && (
               <Empty icon={<IconFlame size={28} />} title="No profiles yet">
                 The demo pushes profiles every 10s to <code>POST /v1/profiles</code>.

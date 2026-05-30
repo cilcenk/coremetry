@@ -760,7 +760,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                 return (
                   <tr key={p.id}
                       onClick={() => navigate(`/service?name=${encodeURIComponent(p.service)}`)}
-                      style={{ cursor: 'pointer' }}>
+                      style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 44px' }}>
                       <td onClick={e => e.stopPropagation()}>
                         <input type="checkbox"
                           checked={selectedIds.has(p.id)}

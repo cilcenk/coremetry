@@ -1320,7 +1320,7 @@ name ~ checkout`}
                     <tr key={t.traceId}
                         {...rowClickHandlers(`/trace?id=${t.traceId}`,
                                              () => navigate(`/trace?id=${t.traceId}`))}
-                        style={{ cursor: 'pointer' }}>
+                        style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
                       <td className="mono">
                         <Link to={`/trace?id=${t.traceId}`}
                               onClick={e => e.stopPropagation()}
@@ -1386,7 +1386,7 @@ name ~ checkout`}
                   {repeats.map((r, i) => (
                     <tr key={`${r.traceId}|${i}`}
                         onClick={() => navigate(`/trace?id=${r.traceId}`)}
-                        style={{ cursor: 'pointer' }}>
+                        style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
                       <td>
                         <Link to={`/trace?id=${r.traceId}`}
                               onClick={e => e.stopPropagation()}

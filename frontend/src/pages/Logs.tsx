@@ -70,7 +70,6 @@ function LogsInner() {
   });
   const [draft, setDraft] = useState(filter);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [services, setServices] = useState<string[]>([]);
   // v0.5.471 — cluster list for the inline selector. /api/clusters
   // returns the distinct k8s/openshift cluster names seen in the
   // last 24h; small list, fetched once on mount.
@@ -122,12 +121,6 @@ function LogsInner() {
     setDraft(next);
     setPage(0);
   }, [searchParams]);
-
-  useEffect(() => {
-    api.services(timeRangeToNs(range))
-      .then(svcs => setServices((svcs ?? []).map(s => s.name)))
-      .catch(() => setServices([]));
-  }, [range]);
 
   // Build the params for the static-window query. When live
   // tail is on, we don't run this query (the live useQuery

@@ -335,6 +335,7 @@ function TraceDetailInner() {
         </div>
 
         {spans === undefined && <Spinner />}
+        {spans === null && <Empty icon="⚠" title="Failed to load trace" />}
         {spans && spans.length === 0 && source === 'mv_only' && stub && (
           // v0.6.34 — aged-out stub. trace_summary_5m still has
           // the aggregates but raw spans dropped past the 30-day

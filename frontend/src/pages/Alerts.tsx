@@ -823,7 +823,7 @@ export default function AlertsPage() {
                   // is a watcher vs a metric alert.
                   const isWatcher = r.metric === 'log_query';
                   return (
-                  <tr key={r.id}>
+                  <tr key={r.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}>
                     <td><b>{r.name}</b></td>
                     <td className="mono">{r.service || (isWatcher ? '— logs —' : '— all —')}</td>
                     <td className="mono" style={{ maxWidth: 380 }}>

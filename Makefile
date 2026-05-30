@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-go build-demo run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down minikube-up minikube-down audit
+.PHONY: build build-ui build-go build-demo test test-race run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down minikube-up minikube-down audit
 
 # VERSION is auto-derived from `git describe` so local builds
 # show something like "v0.4.48-3-gabcdef" instead of literal
@@ -22,6 +22,16 @@ build-go:
 
 build-demo:
 	go build -o demo ./cmd/demo
+
+# The pre-tag gate from CLAUDE.md's release flow. Run before every `git tag`.
+# CI enforces the same (.github/workflows/ci.yml backend job).
+test:
+	go test ./...
+
+# Race detector on the concurrency-heavy packages (background agent, notifier,
+# SSE broker, Redis cache/locks).
+test-race:
+	go test -race ./internal/agent/... ./internal/notify/... ./internal/sse/... ./internal/cache/...
 
 run: build
 	./coremetry

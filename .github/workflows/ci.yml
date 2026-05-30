@@ -40,7 +40,7 @@ jobs:
           retention-days: 1
 
   backend:
-    name: Backend (vet + build)
+    name: Backend (vet + build + test)
     needs: frontend
     runs-on: ubuntu-latest
     steps:
@@ -60,6 +60,16 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      # CLAUDE.md's release flow requires "go test ./... pre-tag", and every
+      # bug-fix ships a regression test — but nothing ENFORCED it in CI, so a
+      # forgotten local run could ship a regression undetected. This is the gate.
+      - name: go test
+        run: go test ./...
+      # Race detector on the concurrency-heavy packages (background agent runner,
+      # notifier fan-out, SSE broker, Redis cache/locks) where a data race would
+      # otherwise hide until a production heisenbug.
+      - name: go test -race (concurrency packages)
+        run: go test -race ./internal/agent/... ./internal/notify/... ./internal/sse/... ./internal/cache/...
 
   helm:
     name: Helm (lint + template)

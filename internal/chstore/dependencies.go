@@ -141,6 +141,26 @@ type DBDetail struct {
 // 100 and LIMIT 20) keep the query cheap even on multi-billion
 // span tables; the same idx_db_system + service_name primary
 // key prune that powers the overview applies here.
+// distinctCallerServices returns the unique, non-empty service names from a
+// database's caller breakdown — used to scope the top-statement scan to just
+// those services so it can use the spans (service_name, time) primary key
+// instead of a full-window scan that times out at billion-span scale (v0.7.35).
+func distinctCallerServices(callers []DBCallerBreakdown) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, c := range callers {
+		if c.Service == "" {
+			continue
+		}
+		if _, ok := seen[c.Service]; ok {
+			continue
+		}
+		seen[c.Service] = struct{}{}
+		out = append(out, c.Service)
+	}
+	return out
+}
+
 func (s *Store) GetDatabaseDetail(
 	ctx context.Context, system, instance string, from, to time.Time,
 ) (*DBDetail, error) {
@@ -252,17 +272,33 @@ func (s *Store) GetDatabaseDetail(
 	// the cardinality; 80 chars catches the SELECT / UPDATE /
 	// INSERT prefix + table name which is what an SRE actually
 	// pivots on.
-	opRows, err := s.conn.Query(ctx, `
+	// v0.7.35 — scope the statement scan to the services that actually call
+	// this database (known cheaply from the caller breakdown above, which reads
+	// the db_caller_summary_5m MV). The spans primary key is (service_name,
+	// time); WITHOUT a service_name predicate this scan can't prune and times
+	// out at billion-span scale — operator-reported: "top statements blank at
+	// 1000s of services / 100+ DBs" while fine locally. IN (literal list) keeps
+	// the (service_name, time) prefix usable (no GLOBAL needed — it's a value
+	// list, not a subquery). Empty list → unscoped fallback (nothing to show
+	// anyway when the MV has no callers).
+	callerSvcs := distinctCallerServices(out.Callers)
+	stmtSQL := `
 		SELECT substring(db_statement, 1, 80) AS stmt,
 		       count(), avg(duration) / 1e6
 		FROM spans
-		WHERE time >= ? AND time <= ? AND db_system = ? AND `+instancePredicate+`
+		WHERE time >= ? AND time <= ? AND db_system = ? AND ` + instancePredicate
+	stmtArgs := append([]any{from, to, system}, argIfNeeded(instancePredicate, instanceArg)...)
+	if len(callerSvcs) > 0 {
+		stmtSQL += ` AND service_name IN (?)`
+		stmtArgs = append(stmtArgs, callerSvcs)
+	}
+	stmtSQL += `
 		  AND db_statement != ''
 		GROUP BY stmt
 		ORDER BY count() DESC
 		LIMIT 20
-		SETTINGS max_execution_time = 15`,
-		append([]any{from, to, system}, argIfNeeded(instancePredicate, instanceArg)...)...)
+		SETTINGS max_execution_time = 15`
+	opRows, err := s.conn.Query(ctx, stmtSQL, stmtArgs...)
 	if err != nil {
 		return out, nil
 	}

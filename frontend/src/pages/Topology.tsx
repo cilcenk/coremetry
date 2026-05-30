@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
+import { infraNodeLabel, infraNodeSystem } from '@/lib/topologyNodes';
 import { useAuth } from '@/components/AuthProvider';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -2060,7 +2061,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                           keep the original truncated name. */}
                       {n.kind === 'external' && n.extDisplay
                         ? truncate(n.extDisplay, 24)
-                        : truncate(n.name, 24)}
+                        : truncate(infraNodeLabel(n.name), 24)}
                     </text>
                     <text x={10} y={40} fontSize={10} fill="var(--text3)">
                       {n.kind === 'external' && n.extKind
@@ -2309,11 +2310,11 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
   >({ kind: 'idle' });
   useEffect(() => {
     if (!isInfra || !range) return;
-    // childNode = "db:postgresql" / "queue:kafka" — strip prefix
-    // to get the system column value the backend filters on.
-    const colonAt = edge.childNode.indexOf(':');
-    if (colonAt < 0) return;
-    const system = edge.childNode.slice(colonAt + 1);
+    // childNode = "db:postgresql" / "queue:kafka@host" / "queue:kafka:topic"
+    // (v0.7.31) — extract just the SYSTEM column the backend filters on,
+    // ignoring any @host or :topic suffix. infraNodeSystem handles all forms.
+    const system = infraNodeSystem(edge.childNode);
+    if (!system) return;
     setInstances({ kind: 'loading' });
     const { from, to } = timeRangeToNs(range);
     api.topologyEdgeInstances({

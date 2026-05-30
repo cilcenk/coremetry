@@ -318,6 +318,14 @@ function ServiceView({ range }: { range: TimeRange }) {
   const setFocus    = (v: string) => setURLParam('focus', v);
   const setFocusHops = (v: number) => setURLParam('hops',  v === 1   ? null : String(v));
   const setFocusDir = (v: 'down' | 'both') => setURLParam('dir', v === 'down' ? null : v);
+  // v0.7.27 — local draft for the Focus picker. Operator-reported: typing the
+  // first letter of a service immediately loaded it, because the picker was
+  // wired onChange={setFocus} → the URL `focus` param (and the neighbourhood
+  // fetch) committed on every keystroke. Now typing only updates this draft;
+  // focus commits to the URL only on pick/Enter via onEnter. Sync from `focus`
+  // so Esc-clear and saved-view loads keep the input in step.
+  const [focusDraft, setFocusDraft] = useState(focus);
+  useEffect(() => { setFocusDraft(focus); }, [focus]);
   // Esc clears the focus and pops the diagram back to the
   // top-N overview (v0.5.173). Guard against firing in editable
   // inputs (search box etc.) — global keyboard layer already
@@ -566,7 +574,8 @@ function ServiceView({ range }: { range: TimeRange }) {
             /api/service-names server-side, so the operator can focus
             ANY service — even one outside the default top-N — and the
             backend resolves its neighbourhood. */}
-        <ServicePicker value={focus} onChange={setFocus}
+        <ServicePicker value={focusDraft} onChange={setFocusDraft}
+          onEnter={v => setFocus(v ?? focusDraft)}
           placeholder="— top services —" width={200} />
         {focus && (
           <button type="button" className="sec"
@@ -852,6 +861,10 @@ function OperationView({ params, setParams, range }: {
     p.set('depth', String(v));
     return p;
   }, { replace: true });
+  // v0.7.27 — same first-keystroke fix as ServiceView's Focus picker: local
+  // draft for the Root picker, commit to the `root` param only on pick/Enter.
+  const [rootDraft, setRootDraft] = useState(root);
+  useEffect(() => { setRootDraft(root); }, [root]);
 
   const layers = useMemo(() => layerOpNodes(data, root, rootOp || undefined), [data, root, rootOp]);
   const drawioHref = data && root
@@ -877,7 +890,8 @@ function OperationView({ params, setParams, range }: {
     <>
       <div className="controls" style={{ marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
         <label style={{ fontSize: 12, color: 'var(--text2)' }}>Root service</label>
-        <ServicePicker value={root} onChange={setRoot} placeholder="Pick a service…" width={220} />
+        <ServicePicker value={rootDraft} onChange={setRootDraft}
+          onEnter={v => setRoot(v ?? rootDraft)} placeholder="Pick a service…" width={220} />
         {root && (
           <>
             <label style={{ fontSize: 12, color: 'var(--text2)' }}>Operation</label>

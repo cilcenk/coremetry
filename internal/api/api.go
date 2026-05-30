@@ -53,6 +53,7 @@ type Server struct {
 	addr        string
 	store       *chstore.Store
 	logs        logstore.Store    // read-side abstraction; CH or external ES
+	logTail     *logTailer        // v0.7.14 — pod-local SSE live-log fan-out
 	ing         *otlp.Ingester
 	webFS       embed.FS
 	auth        *auth.Service
@@ -215,7 +216,7 @@ type rateSample struct {
 
 func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, ldapSvc *ldap.Service, c cache.Cache, n *notify.Notifier, cop *copilot.Service, smp *sampling.Sampler, bus *sse.Broker) *Server {
 	return &Server{
-		addr: addr, store: store, logs: logs, ing: ing, webFS: webFS,
+		addr: addr, store: store, logs: logs, logTail: newLogTailer(logs), ing: ing, webFS: webFS,
 		auth: authSvc, oidc: oidcSvc, ldap: ldapSvc, cache: c, notify: n, copilot: cop,
 		sampler: smp, bus: bus,
 		rateSamples: map[string]rateSample{},
@@ -228,6 +229,16 @@ func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logst
 		// fallback path is logged + counted, never blocks.
 		auditQ: make(chan chstore.AuditEntry, 1024),
 	}
+}
+
+// StartLogTailer runs the live-log SSE tailer loop until ctx is cancelled
+// (v0.7.14). Started on api/all pods only — ingest/worker take no operator
+// traffic so they have no /logs subscribers. No-op if the logs store is nil.
+func (s *Server) StartLogTailer(ctx context.Context) {
+	if s.logTail == nil {
+		return
+	}
+	go s.logTail.run(ctx)
 }
 
 // StartAuditDrainer runs the batched audit-write loop until ctx
@@ -441,6 +452,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /api/traces/share/{token}",  auth.RequireAnyRole(editorRoles, s.revokeTraceSnapshot))
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
+	mux.HandleFunc("GET /api/logs/stream", s.handleLogStream) // v0.7.14 — SSE live tail
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
 	// v0.5.464 — field-aware autocomplete on the /logs search

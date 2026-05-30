@@ -681,6 +681,10 @@ func main() {
 	// bottlenecked high-rate admin scripts (bulk alert-rule
 	// imports, mass acks).
 	srv.StartAuditDrainer(ctx)
+	// v0.7.14 — live-log SSE tailer (api/all only; serves /logs live tail).
+	if mode.api {
+		srv.StartLogTailer(ctx)
+	}
 	if cfg.Auth.DemoMode {
 		// Demo mode auto-signs the visitor in as the configured initial
 		// admin so they can poke at every screen, including admin-only

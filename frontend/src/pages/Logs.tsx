@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
-import { useLogStream } from '@/lib/useLogStream';
+import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { KqlSearchInput } from '@/components/KqlSearchInput';
 import { EQLPanel } from '@/components/EQLPanel';
@@ -92,7 +92,12 @@ function LogsInner() {
   // LogContextModal fetches the before/after halves and renders
   // the chronological strip.
   const [contextPivot, setContextPivot] = useState<import('@/lib/types').LogRow | null>(null);
-  // Live tail (HyperDX-style): SSE push stream, prepend new rows (v0.7.15).
+  // Live tail (HyperDX-style): poll, prepend new rows. Cadence is 10s — the
+  // ≥10s polling budget, and at the operator's ES scale the ingest pipeline
+  // (collector batch + ES exporter flush + index refresh) lags ~10s, so a
+  // faster poll just burns ES queries without surfacing data any sooner.
+  // (v0.7.17 — the v0.7.15 SSE push tailer was reverted: its LIMIT-per-tick
+  // fetch dropped logs on a busy service at 10B logs/day.)
   const [live, setLive] = useState(false);
 
   // Sync filter state from URL params on every URL change. This
@@ -151,24 +156,40 @@ function LogsInner() {
     spanId:  filter.spanId  || undefined,
   });
 
-  // Live-tail over SSE (v0.7.15) — the server pushes new rows; one backend
-  // query per filter is fanned out to every subscriber, so the browser no
-  // longer polls (the old 2s refetch violated the ≥10s budget + drove ~30
-  // CH/ES queries/min per operator). Pauses on document.hidden internally.
-  const liveStream = useLogStream(live, {
-    service: filter.service || undefined,
-    cluster: filter.cluster || undefined,
-    search: filter.search || undefined,
-    severity: filter.severity > 0 ? filter.severity : undefined,
+  // Live-tail query — separate hook with refetchInterval so
+  // RQ owns the polling loop. The query key includes the
+  // service/search/severity filters but NOT a moving `from`/
+  // `to` (the polling fetches the latest 5 min each tick).
+  // Disabled when live=false; the static query (above) takes
+  // over in that case.
+  const liveQ = useQuery({
+    queryKey: ['logs', 'live', filter.service, filter.cluster, filter.search, filter.severity],
+    queryFn: () => {
+      const now = Date.now() * 1_000_000;
+      const fromNs = Math.floor((Date.now() - 5 * 60_000) * 1_000_000);
+      return api.logs({
+        limit: 200, from: fromNs, to: now,
+        service: filter.service || undefined,
+        cluster: filter.cluster || undefined,
+        search: filter.search || undefined,
+        severity: filter.severity > 0 ? filter.severity : undefined,
+      });
+    },
+    enabled: live,
+    // 10s, not 2s — ≥10s budget + ~10s ES pipeline lag (see the `live` decl).
+    // refetchIntervalInBackground defaults false, so RQ already pauses the
+    // poll when the tab is hidden (document.hidden rule).
+    refetchInterval: live ? 10_000 : false,
+    staleTime: 0,
   });
 
-  // When live is on, the data is the streamed buffer; otherwise the static
-  // window result. Mirrors the previous behaviour where live overwrote static.
-  const data: LogsResponse | undefined | null = live
-    ? { logs: liveStream.rows, total: liveStream.rows.length }
-    : staticQ.isLoading ? undefined
-    : staticQ.isError ? null
-    : staticQ.data;
+  // Merge: when live is on, prefer the live data; otherwise
+  // the static window result. Mirrors the previous setData
+  // behaviour where live overwrote static.
+  const dataSource = live ? liveQ : staticQ;
+  const data = dataSource.isLoading ? undefined
+    : dataSource.isError ? null
+    : dataSource.data;
 
   // Reset expansion state when the filter / range / page
   // changes — opening row #5 in one window doesn't translate

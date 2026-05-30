@@ -62,6 +62,11 @@ export interface ServiceTopologyNode {
   // k8s.namespace.name). UI renders as a small chip next to
   // the service name on multi-env installs.
   env?: string;
+  // v0.7.32 — for a collapsed broadcast queue node (a kafka topic with
+  // >threshold distinct consumers, e.g. cache.refresh), the real consumer
+  // count its fan-out was hidden behind. UI shows "→ N services (broadcast)"
+  // on the node instead of N edges; only set on collapsed queue nodes.
+  broadcastFanout?: number;
 }
 export interface ServiceTopologyEdge {
   parentService: string;
@@ -108,6 +113,10 @@ export interface ServiceTopologyResponse {
   totalServices?: number;
   scoped?: boolean;
   scopeReason?: string;
+  // v0.7.32 — number of broadcast queue topics whose consumer fan-out was
+  // collapsed by default. >0 → the UI shows a "N broadcast topics collapsed —
+  // show" toggle that flips ?broadcast=show to reveal the full mesh.
+  broadcastCollapsed?: number;
 }
 
 // Root-anchored business flows (v0.5.103) — top entry points by

@@ -130,7 +130,7 @@ docker-distributed-down:
 # deploy + run. The minikube values relax the bundled CH/Redis container
 # securityContext (vanilla k8s has no SCC to inject a runAsUser).
 minikube-up:
-	@minikube status >/dev/null 2>&1 || minikube start --driver=docker --cpus=4 --memory=6144
+	@minikube status >/dev/null 2>&1 || minikube start --driver=docker --cpus=4 --memory=8192
 	@# v0.6.71 — pass VERSION as build-args (else the Dockerfile's ARG
 	@# VERSION=dev default bakes "dev"). v0.7.2 — tag the image with the real
 	@# $(VERSION), NOT :local. minikube's image store keys on the tag, so

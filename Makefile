@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-go build-demo test test-race run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down minikube-up minikube-down audit
+.PHONY: build build-ui build-go build-demo test test-race lint run dev-ui clean docker-up docker-up-demo docker-down docker-distributed-up docker-distributed-down minikube-up minikube-down audit
 
 # VERSION is auto-derived from `git describe` so local builds
 # show something like "v0.4.48-3-gabcdef" instead of literal
@@ -32,6 +32,13 @@ test:
 # SSE broker, Redis cache/locks).
 test-race:
 	go test -race ./internal/agent/... ./internal/notify/... ./internal/sse/... ./internal/cache/...
+
+# golangci-lint umbrella (errcheck/govet/ineffassign/staticcheck/unused via
+# .golangci.yml). Advisory while the standard-set baseline is triaged; CI runs
+# the same with continue-on-error. Install once:
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+lint:
+	golangci-lint run ./...
 
 run: build
 	./coremetry

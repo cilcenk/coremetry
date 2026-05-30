@@ -1,0 +1,41 @@
+# golangci-lint v2 — Go lint umbrella (v0.7.26).
+#
+# ADVISORY-FIRST. The CI `lint` job runs continue-on-error until the existing
+# ~82-finding baseline is triaged: real correctness findings (SA4003 in
+# sampling, SA4017/SA4006 in chstore/shapes, the SA1019 deprecations) ship as
+# their own bug-fix releases with regression tests (CLAUDE.md #11); intentional
+# patterns get excluded here. Once `golangci-lint run` is clean, drop
+# continue-on-error in .github/workflows/ci.yml and this becomes a hard gate.
+#
+# golangci-lint BUNDLES staticcheck (SA/ST/S/QF/U checks), so this is the only
+# Go linter install — no separate staticcheck binary.
+version: "2"
+
+run:
+  timeout: 5m
+  # Lint test files too — the new *_test.go regression tests are first-class.
+  tests: true
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused. Kept tight
+  # on the first pass — high-signal core only. (misspell etc. can be added once
+  # the standard-set baseline is triaged.)
+  default: standard
+  settings:
+    errcheck:
+      # In this codebase these are idiomatically fire-and-forget: deferred
+      # Close on rows/bodies, and Fprint into an http.ResponseWriter or a
+      # bytes.Buffer (the write can't meaningfully fail / failure is already
+      # observable downstream). Excluding them keeps errcheck's signal on what
+      # matters — ignored ClickHouse / notify / store errors.
+      exclude-functions:
+        - (io.Closer).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+formatters:
+  # gofmt drift is a real finding — surface it, but as a formatter (auto-
+  # fixable via `golangci-lint fmt`) rather than a blocking linter.
+  enable:
+    - gofmt

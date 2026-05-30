@@ -78,6 +78,33 @@ jobs:
       - name: go test -race (concurrency packages)
         run: go test -race ./internal/agent/... ./internal/notify/... ./internal/sse/... ./internal/cache/...
 
+  lint:
+    name: Lint (golangci-lint)
+    needs: frontend
+    runs-on: ubuntu-latest
+    # ADVISORY (v0.7.26): the existing ~32-finding standard-set baseline
+    # (errcheck/govet/ineffassign/staticcheck/unused) is being triaged — real
+    # bugs ship as their own bug-fix releases, intentional patterns get
+    # excluded in .golangci.yml. Drop continue-on-error to make this a hard
+    # gate once `golangci-lint run` is clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      # golangci-lint compiles the package graph → needs the //go:embed SPA.
+      - name: Pull built UI
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.12.2
+
   security:
     name: Security (vuln + dep scan)
     needs: frontend

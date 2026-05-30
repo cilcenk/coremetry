@@ -378,3 +378,51 @@ func (s *Store) IncidentProblems(ctx context.Context, incidentID string) ([]stri
 	}
 	return out, rows.Err()
 }
+
+// OpenIncidentRollup summarises one open incident's attached-problem state for
+// the cascade-resolution sweep (v0.7.33).
+type OpenIncidentRollup struct {
+	ID            string
+	ProblemCount  int
+	Unresolved    int
+	MaxResolvedAt int64 // unix ns of the latest attached-problem resolution; 0 if none
+}
+
+// OpenIncidentRollups returns, for every OPEN incident, the number of attached
+// problems, how many are NOT yet resolved, and the latest problem-resolution
+// time. The evaluator's cascade sweep uses this to auto-resolve incidents whose
+// problems have ALL cleared — operator-reported: problems auto-resolve but
+// incidents stayed open forever (CH ground truth: 214 problems resolved / 0
+// open, yet 57 incidents open / 0 resolved). One aggregate query, not N
+// per-incident lookups, keeps the 1-minute sweep cheap; the state tables are
+// small and the joins are LIMIT- + time-bounded.
+func (s *Store) OpenIncidentRollups(ctx context.Context) ([]OpenIncidentRollup, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT i.id AS id,
+		       toInt32(count())                                              AS n,
+		       toInt32(countIf(p.status != 'resolved'))                      AS unresolved,
+		       ifNull(max(toUnixTimestamp64Nano(p.resolved_at)), toInt64(0)) AS max_resolved
+		FROM incidents i FINAL
+		INNER JOIN incident_problems ip FINAL ON ip.incident_id = i.id
+		INNER JOIN problems p FINAL ON p.id = ip.problem_id
+		WHERE i.status = 'open'
+		GROUP BY i.id
+		LIMIT 5000
+		SETTINGS max_execution_time = 15, distributed_product_mode = 'global'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []OpenIncidentRollup
+	for rows.Next() {
+		var ro OpenIncidentRollup
+		var n, unresolved int32
+		if err := rows.Scan(&ro.ID, &n, &unresolved, &ro.MaxResolvedAt); err != nil {
+			return nil, err
+		}
+		ro.ProblemCount = int(n)
+		ro.Unresolved = int(unresolved)
+		out = append(out, ro)
+	}
+	return out, rows.Err()
+}

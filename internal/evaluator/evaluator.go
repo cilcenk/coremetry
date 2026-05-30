@@ -290,6 +290,16 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	// a truly decommissioned service closes within ~minutes.
 	e.sweepStaleProblems(ctx)
 
+	// v0.7.33 — cascade incident resolution. Operator-reported: Problems
+	// auto-resolve but Incidents stayed open forever (CH ground truth: 214
+	// problems resolved / 0 open, yet 57 incidents open / 0 resolved). An
+	// incident is a container for its attached problems; once they've ALL
+	// cleared the incident is over, so auto-resolve it with resolved_at = the
+	// last problem's clear time (the started→resolved interval then reflects the
+	// real impact window). Operators still resolve manually for a postmortem
+	// note; this just stops the inbox filling with stale containers.
+	e.cascadeResolveIncidents(ctx)
+
 	// Anomaly auto-promotion — convert strong, sustained
 	// anomaly events into first-class Problems so the
 	// existing alert pipeline picks them up. Threshold-driven
@@ -297,6 +307,59 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	// detector keeps re-firing with a real ratio become
 	// pageable.
 	e.promoteStrongAnomalies(ctx)
+}
+
+// incidentCascadeDecision decides whether an OPEN incident should auto-resolve
+// because every problem attached to it has cleared, and at what end time. It
+// resolves only when the incident has at least one attached problem and NONE
+// remain unresolved. endedAt is the latest problem-clear time so the resolved
+// incident's started→ended interval reflects the real impact window; it falls
+// back to `now` when no clear timestamp is recorded. Pure for unit testing.
+func incidentCascadeDecision(problemCount, unresolved int, maxResolvedAt, now int64) (resolve bool, endedAt int64) {
+	if problemCount == 0 || unresolved > 0 {
+		return false, 0
+	}
+	if maxResolvedAt > 0 {
+		return true, maxResolvedAt
+	}
+	return true, now
+}
+
+// cascadeResolveIncidents auto-resolves every open incident whose attached
+// problems have ALL cleared (the operator-reported gap — see the evaluateAll
+// call site). One bounded rollup query, then a per-settled-incident upsert +
+// timeline event.
+func (e *Evaluator) cascadeResolveIncidents(ctx context.Context) {
+	rollups, err := e.store.OpenIncidentRollups(ctx)
+	if err != nil {
+		log.Printf("[evaluator] incident cascade rollup: %v", err)
+		return
+	}
+	now := time.Now().UnixNano()
+	for _, ro := range rollups {
+		resolve, endedAt := incidentCascadeDecision(ro.ProblemCount, ro.Unresolved, ro.MaxResolvedAt, now)
+		if !resolve {
+			continue
+		}
+		inc, err := e.store.GetIncident(ctx, ro.ID)
+		if err != nil || inc == nil || inc.Status == "resolved" {
+			continue
+		}
+		inc.Status = "resolved"
+		inc.ResolvedAt = &endedAt
+		if err := e.store.UpsertIncident(ctx, inc); err != nil {
+			log.Printf("[evaluator] incident cascade upsert %s: %v", ro.ID, err)
+			continue
+		}
+		_ = e.store.AppendIncidentEvent(ctx, chstore.IncidentEvent{
+			IncidentID: inc.ID,
+			Time:       endedAt,
+			Kind:       "resolved",
+			Actor:      "system",
+			Body:       "auto-resolved: all attached problems cleared",
+		})
+		log.Printf("[evaluator] INCIDENT AUTO-RESOLVED: %s (%d problems, all cleared)", inc.ID, ro.ProblemCount)
+	}
 }
 
 func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string) {

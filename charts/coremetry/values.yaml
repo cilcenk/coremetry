@@ -442,6 +442,29 @@ javaDemo:
   # automatically — Otel endpoint and the coremetry profile-push URL.
   extraEnv: []
 
+# Go demo — cmd/demo synthetic retail-banking traffic generator. Emits a full
+# multi-service OTLP/HTTP firehose (traces + logs + metrics + pprof profiles)
+# from its own internal services map (mobile-bff → api-gateway → core-banking),
+# so it populates the service graph / topology / database views without any
+# auto-instrumentation. Egress-only client — no inbound Service. Off by default;
+# flip on for a "see realistic traffic flow end-to-end" demo install.
+goDemo:
+  enabled: false
+  image:
+    registry: "ghcr.io"
+    repository: cilcenk/coremetry-go-demo
+    tag: ""               # defaults to .Chart.appVersion
+    pullPolicy: IfNotPresent
+  # Scenarios per second the generator drives. ~3 rps is a comfortable demo
+  # firehose; raise for a denser graph, lower to keep ingest light.
+  rps: 3
+  resources:
+    requests: { cpu: 100m, memory: 64Mi }
+    limits:   { cpu: "1",  memory: 256Mi }
+  # Extra env to inject into the pod (the OTLP endpoint + rps ride the binary's
+  # CLI flags, wired automatically; this is for anything else you need).
+  extraEnv: []
+
 serviceAccount:
   create: true
   annotations: {}

@@ -1,0 +1,56 @@
+{{- if .Values.goDemo.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "coremetry.fullname" . }}-go-demo
+  labels:
+    {{- include "coremetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: go-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "coremetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: go-demo
+  template:
+    metadata:
+      labels:
+        {{- include "coremetry.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: go-demo
+    spec:
+      {{- include "coremetry.imagePullSecrets" (dict "imageRoot" .Values.goDemo.image "global" .Values.global) | nindent 6 }}
+      containers:
+        - name: go-demo
+          image: {{ include "coremetry.image" (dict "imageRoot" .Values.goDemo.image "global" .Values.global "defaultTag" .Chart.AppVersion) | quote }}
+          imagePullPolicy: {{ .Values.goDemo.image.pullPolicy }}
+          # go-demo is a synthetic retail-banking traffic generator. Unlike
+          # java-demo it is NOT auto-instrumented — it crafts OTLP/HTTP payloads
+          # itself and emits its own service.name set (mobile-bff, api-gateway,
+          # account-service, …) from cmd/demo's internal services map. So there
+          # is no OTEL_SERVICE_NAME / OTEL_EXPORTER_* to set; instead the target
+          # endpoint rides the binary's -endpoint flag below. It speaks
+          # OTLP/HTTP (4318), not gRPC.
+          args:
+            # Traces / logs / metrics → the in-cluster collector's OTLP/HTTP
+            # port (the binary appends /v1/{traces,logs,metrics}). Falls back to
+            # the Coremetry core service's direct OTLP/HTTP when the collector is
+            # disabled, matching java-demo's endpoint selection.
+            - "-endpoint"
+            - {{ if .Values.otelCollector.enabled -}}
+                "http://{{ include "coremetry.fullname" . }}-otelcol:{{ .Values.otelCollector.service.httpPort }}"
+              {{- else -}}
+                "http://{{ include "coremetry.fullname" . }}:{{ .Values.service.httpPort }}"
+              {{- end }}
+            # Profiles use Coremetry's own pprof ingest (/v1/profiles), NOT the
+            # collector — the collector doesn't speak the pprof protocol. Point
+            # straight at the Coremetry core HTTP service.
+            - "-profile-endpoint"
+            - "http://{{ include "coremetry.fullname" . }}:{{ .Values.service.httpPort }}"
+            - "-rps"
+            - {{ .Values.goDemo.rps | quote }}
+          {{- with .Values.goDemo.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources: {{- toYaml .Values.goDemo.resources | nindent 12 }}
+{{- end -}}

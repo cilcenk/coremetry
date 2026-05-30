@@ -1462,8 +1462,15 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 			strings.ToLower(f.SpanID), "span"))
 	}
 	if f.Service != "" {
+		// v0.7.16 — match the EXACT-value `.keyword` sub-field, not the
+		// analyzed text field. ES dynamic-maps service.name as text+keyword;
+		// the standard analyzer tokenizes a hyphenated value like "java-demo"
+		// into ["java","demo"], so a term query against the analyzed field
+		// matches NOTHING and the service filter silently returned 0 (surfaced
+		// once we read collector-written, dynamically-mapped ES indices). The
+		// histogram + pattern aggs at lines ~830/1057 already use `.keyword`.
 		must = append(must, map[string]any{
-			"term": map[string]any{s.fields.Service: f.Service},
+			"term": map[string]any{s.fields.Service + ".keyword": f.Service},
 		})
 	}
 	// v0.5.471 — cluster filter. Match any of the three known
@@ -1473,12 +1480,17 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 	// bool.should so missing-field indices don't fail the
 	// whole query.
 	if f.Cluster != "" {
+		// v0.7.16 — exact-value match on the `.keyword` sub-fields, same fix as
+		// the service filter above: a hyphenated cluster name (e.g. "prod-eu")
+		// would be tokenized by the analyzer and never match an analyzed-field
+		// term. Harmless on indices where the field is absent (the should
+		// clause just doesn't match).
 		must = append(must, map[string]any{
 			"bool": map[string]any{
 				"should": []any{
-					map[string]any{"term": map[string]any{"resource_attributes.k8s.cluster.name":       f.Cluster}},
-					map[string]any{"term": map[string]any{"resource_attributes.openshift.cluster.name": f.Cluster}},
-					map[string]any{"term": map[string]any{"resource_attributes.cluster":                f.Cluster}},
+					map[string]any{"term": map[string]any{"resource_attributes.k8s.cluster.name.keyword":       f.Cluster}},
+					map[string]any{"term": map[string]any{"resource_attributes.openshift.cluster.name.keyword": f.Cluster}},
+					map[string]any{"term": map[string]any{"resource_attributes.cluster.keyword":                f.Cluster}},
 				},
 				"minimum_should_match": 1,
 			},

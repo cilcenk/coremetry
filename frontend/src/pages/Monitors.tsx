@@ -39,7 +39,7 @@ export default function MonitorsPage() {
       <div id="content">
         {isAdmin && (
           <div className="controls" style={{ marginBottom: 12 }}>
-            <button onClick={() => setShowNew(true)}>+ New monitor</button>
+            <Button variant="primary" onClick={() => setShowNew(true)}>+ New monitor</Button>
             <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
               {items?.length ?? 0} monitors
             </span>
@@ -143,13 +143,13 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
           every {m.intervalSec}s
         </span>
         <span className={`status-pill status-pill-${cls}`}>{status === 'unknown' ? 'PENDING' : status.toUpperCase()}</span>
-        <button className="sec" onClick={onTimeline} style={{ padding: '4px 10px', fontSize: 11 }}>
+        <Button variant="secondary" size="sm" onClick={onTimeline}>
           {showTimeline ? '▲' : 'History ▼'}
-        </button>
+        </Button>
         {isAdmin && (
           <>
-            <button className="sec" onClick={onEdit} style={{ padding: '4px 10px', fontSize: 11 }}>Edit</button>
-            <button className="sec" onClick={onDelete} style={{ padding: '4px 10px', fontSize: 11, color: 'var(--err)' }}>Delete</button>
+            <Button variant="secondary" size="sm" onClick={onEdit}>Edit</Button>
+            <Button variant="danger" size="sm" onClick={onDelete}>Delete</Button>
           </>
         )}
       </div>

@@ -7,6 +7,7 @@ import { infraNodeLabel, infraNodeSystem } from '@/lib/topologyNodes';
 import { useAuth } from '@/components/AuthProvider';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 import type {
   ServiceTopologyResponse, ServiceTopologyNode, ServiceTopologyEdge,
   TopologyResponse, TopologyNode,
@@ -229,13 +230,12 @@ export default function TopologyPage() {
                 </select>
               );
             })()}
-            <button type="button" className="sec" onClick={saveCurrent}
-              style={{ fontSize: 11, padding: '4px 10px' }}
+            <Button type="button" variant="secondary" size="sm" onClick={saveCurrent}
               title={isAdmin
                 ? 'Save the current URL state — admins can publish to the team'
                 : 'Save the current URL state to your account'}>
               ★ Save view
-            </button>
+            </Button>
             {saved.length > 0 && (
               <button type="button" className="sec"
                 onClick={() => {
@@ -585,12 +585,11 @@ function ServiceView({ range }: { range: TimeRange }) {
           onEnter={v => setFocus(v ?? focusDraft)}
           placeholder="— top services —" width={200} />
         {focus && (
-          <button type="button" className="sec"
+          <Button type="button" variant="secondary" size="sm"
             onClick={() => setFocus('')}
-            style={{ fontSize: 11, padding: '3px 8px' }}
             title="Clear focus, back to the top-services overview">
             ✕ clear focus
-          </button>
+          </Button>
         )}
         {!focus && (
           <>
@@ -798,10 +797,10 @@ function ServiceView({ range }: { range: TimeRange }) {
           {broadcastShow
             ? <span>Broadcast fan-out expanded — every consumer edge is shown.</span>
             : <span><strong>{data.broadcastCollapsed}</strong> broadcast topic{data.broadcastCollapsed === 1 ? '' : 's'} collapsed (a topic fanning out to 50+ consumers renders as one hub).</span>}
-          <button type="button" className="sec" style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }}
+          <Button type="button" variant="secondary" size="sm" style={{ marginLeft: 'auto' }}
             onClick={() => setBroadcastShow(!broadcastShow)}>
             {broadcastShow ? 'Collapse' : 'Show fan-out'}
-          </button>
+          </Button>
         </div>
       )}
       {visibleFiltered && visibleFiltered.nodes.length === 0 && (
@@ -1132,11 +1131,10 @@ function FlowsView({ range }: { range: TimeRange }) {
       {picked && (
         <>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12 }}>
-            <button type="button" className="sec"
-              onClick={() => setPicked(null)}
-              style={{ fontSize: 11, padding: '3px 10px' }}>
+            <Button type="button" variant="secondary" size="sm"
+              onClick={() => setPicked(null)}>
               ← All flows
-            </button>
+            </Button>
             <span style={{ fontWeight: 700, fontSize: 13 }}>{picked.rootOp}</span>
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
               {picked.rootService} · {fmtNum(picked.traceCount)} traces
@@ -1346,10 +1344,8 @@ function FlowsByService({ flows, hasSearch, onPick }: {
       <div style={{ display: 'flex', gap: 8, fontSize: 11, color: 'var(--text3)' }}>
         <span>{groups.length} service{groups.length === 1 ? '' : 's'}</span>
         <span style={{ flex: 1 }} />
-        <button type="button" className="sec" onClick={expandAll}
-          style={{ fontSize: 11, padding: '3px 8px' }}>Expand all</button>
-        <button type="button" className="sec" onClick={collapseAll}
-          style={{ fontSize: 11, padding: '3px 8px' }}>Collapse all</button>
+        <Button type="button" variant="secondary" size="sm" onClick={expandAll}>Expand all</Button>
+        <Button type="button" variant="secondary" size="sm" onClick={collapseAll}>Collapse all</Button>
       </div>
       {groups.map(g => {
         const open = isExpanded(g);
@@ -2384,10 +2380,10 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
           {edge.protocol.toUpperCase()} · {fmtNum(edge.calls)} calls
           {!simplified && ` · ${edge.distinctLabels} endpoint${edge.distinctLabels === 1 ? '' : 's'}`}
         </div>
-        <button type="button" onClick={onClose} className="sec"
-          style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px' }}>
+        <Button type="button" onClick={onClose} variant="secondary" size="sm"
+          style={{ marginLeft: 'auto' }}>
           Close
-        </button>
+        </Button>
       </div>
       {/* v0.5.393 — RED tile row. Surfaces the error count + rate
           plus avg / p99 latency for the edge so the operator

@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { IconShield } from '@/components/icons';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
+import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
 import type { StatusPageConfig, StatusComponent, StatusSubscriber, MonitorRow } from '@/lib/types';
@@ -89,7 +90,7 @@ function ConfigTab() {
         <input type="url" value={c.supportUrl ?? ''} onChange={e => setC({ ...c, supportUrl: e.target.value })}
           placeholder="https://support.example.com" style={{ width: '100%' }} />
       </Field>
-      <button type="submit" disabled={busy} style={{ marginTop: 12 }}>{busy ? 'Saving…' : 'Save'}</button>
+      <Button type="submit" variant="primary" disabled={busy} style={{ marginTop: 12 }}>{busy ? 'Saving…' : 'Save'}</Button>
       {msg && <span style={{ marginLeft: 10, fontSize: 12, color: 'var(--text2)' }}>{msg}</span>}
     </form>
   );
@@ -115,7 +116,7 @@ function ComponentsTab() {
   return (
     <>
       <div className="controls" style={{ marginBottom: 12 }}>
-        <button onClick={() => setShowNew(true)}>+ Add component</button>
+        <Button variant="primary" onClick={() => setShowNew(true)}>+ Add component</Button>
         <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
           {items.length} component{items.length === 1 ? '' : 's'} on the public page
         </span>
@@ -146,11 +147,11 @@ function ComponentsTab() {
                 )}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button className="sec" onClick={() => setEditing(c)} style={{ padding: '4px 10px', fontSize: 11 }}>Edit</button>
-                <button className="sec" onClick={async () => {
+                <Button variant="secondary" size="sm" onClick={() => setEditing(c)}>Edit</Button>
+                <Button variant="danger" size="sm" onClick={async () => {
                   if (!confirm(`Remove "${c.name}"?`)) return;
                   await api.statusPageDeleteComponent(c.id); refresh();
-                }} style={{ padding: '4px 10px', fontSize: 11, color: 'var(--err)' }}>Remove</button>
+                }}>Remove</Button>
               </div>
             </div>
           ))}
@@ -231,8 +232,8 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
           </Field>
           {error && <div className="trp-error" style={{ marginTop: 10 }}>{error}</div>}
           <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
-            <button type="button" className="sec" onClick={onClose}>Cancel</button>
-            <button type="submit" disabled={busy}>{busy ? 'Saving…' : initial ? 'Save' : 'Create'}</button>
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Saving…' : initial ? 'Save' : 'Create'}</Button>
           </div>
         </form>
       </div>
@@ -268,10 +269,10 @@ function SubsTab() {
                 </span>}
             <span style={{ color: 'var(--text3)', fontSize: 11 }}>· joined {tsLong(s.createdAt)}</span>
           </div>
-          <button className="sec" onClick={async () => {
+          <Button variant="danger" size="sm" onClick={async () => {
             if (!confirm(`Remove subscriber ${s.email}?`)) return;
             await api.statusPageDeleteSubscriber(s.email); refresh();
-          }} style={{ padding: '4px 10px', fontSize: 11, color: 'var(--err)' }}>Remove</button>
+          }}>Remove</Button>
         </div>
       ))}
     </div>

@@ -6,6 +6,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { useRunbookExecution, useRunbookStepAction, useCancelRunbookExecution } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
+import { Button } from '@/components/ui/Button';
 
 // Runbook execution runner (v0.7.0) — step through a live run. Manual steps
 // are ticked here (Done / Skip / Fail + note); automated steps
@@ -49,7 +50,7 @@ function Inner() {
         <Topbar title="Execution" />
         <div id="content">
           <div className="controls" style={{ marginBottom: 12 }}>
-            <button className="sec" onClick={() => navigate('/runbooks')}>← Runbooks</button>
+            <Button variant="secondary" size="sm" onClick={() => navigate('/runbooks')}>← Runbooks</Button>
           </div>
           {!execId
             ? <Empty icon="⚠" title="No execution selected">Open a run from a runbook's Executions tab.</Empty>
@@ -78,11 +79,11 @@ function Inner() {
       <div id="content">
         {err && (
           <div style={{ background: 'var(--bg1)', border: '1px solid var(--err)', color: 'var(--err)', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
-            {err} <button className="sec" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</button>
+            {err} <Button variant="secondary" size="sm" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</Button>
           </div>
         )}
         <div className="controls" style={{ marginBottom: 12, alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <button className="sec" onClick={() => navigate(`/runbook?id=${encodeURIComponent(exec.runbookId)}`)}>← Runbook</button>
+          <Button variant="secondary" size="sm" onClick={() => navigate(`/runbook?id=${encodeURIComponent(exec.runbookId)}`)}>← Runbook</Button>
           <span className={`badge ${EXEC_BADGE[exec.status] ?? 'b-gray'}`}>{exec.status.replace(/_/g, ' ')}</span>
           <span style={{ color: 'var(--text3)', fontSize: 11 }}>
             {done}/{exec.stepStates.length} steps
@@ -95,10 +96,10 @@ function Inner() {
               style={{ fontSize: 11, color: 'var(--accent2)' }}>problem {exec.problemId}</a>
           )}
           {canEdit && !terminal && (
-            <button className="sec" style={{ marginLeft: 'auto', color: 'var(--err)' }}
+            <Button variant="danger" size="sm" style={{ marginLeft: 'auto' }}
               onClick={() => { if (confirm('Cancel this execution?')) cancelExec.mutateAsync(execId).catch(e => setErr(e instanceof Error ? e.message : String(e))); }}>
               Cancel run
-            </button>
+            </Button>
           )}
         </div>
 
@@ -152,7 +153,7 @@ function Inner() {
                     <span className="badge b-warn">agent</span>{' '}
                     This {s.kind} step runs on the coremetry-agent — it will pick it up shortly (status updates on the next poll). You can also skip it.
                     <div style={{ marginTop: 6 }}>
-                      <button className="sec" onClick={() => act(s.stepId, 'skip')} disabled={stepAction.isPending}>Skip</button>
+                      <Button variant="secondary" size="sm" onClick={() => act(s.stepId, 'skip')} disabled={stepAction.isPending}>Skip</Button>
                     </div>
                   </div>
                 ) : (
@@ -160,10 +161,10 @@ function Inner() {
                     <input placeholder="note (optional)" aria-label="Step note (optional)" value={notes[s.stepId] ?? ''}
                       onChange={e => setNotes({ ...notes, [s.stepId]: e.target.value })}
                       style={{ flex: '1 1 220px' }} />
-                    <button onClick={() => act(s.stepId, 'complete')} disabled={stepAction.isPending}>✓ Done</button>
-                    <button className="sec" onClick={() => act(s.stepId, 'skip')} disabled={stepAction.isPending}>Skip</button>
-                    <button className="sec" style={{ color: 'var(--err)' }}
-                      onClick={() => act(s.stepId, 'fail')} disabled={stepAction.isPending}>Fail</button>
+                    <Button variant="primary" size="sm" onClick={() => act(s.stepId, 'complete')} disabled={stepAction.isPending}>✓ Done</Button>
+                    <Button variant="secondary" size="sm" onClick={() => act(s.stepId, 'skip')} disabled={stepAction.isPending}>Skip</Button>
+                    <Button variant="danger" size="sm"
+                      onClick={() => act(s.stepId, 'fail')} disabled={stepAction.isPending}>Fail</Button>
                   </div>
                 )
               )}

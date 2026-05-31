@@ -7,6 +7,7 @@ import { tsLong, tsRel } from '@/lib/utils';
 import { IconLock } from '@/components/icons';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { Button } from '@/components/ui/Button';
 
 // Columns for the shared sortable + resizable DataTable. Cell ORDER
 // below must mirror this list. The previous bespoke <thead> had no
@@ -89,7 +90,7 @@ export default function AdminClusterPage() {
             topology aggregator) use a per-tick Redis lock so only one replica
             runs each tick — scaling to N pods is safe.
           </span>
-          <button className="sec" onClick={load} style={{ fontSize: 12 }}>↻ Refresh</button>
+          <Button variant="secondary" size="sm" onClick={load}>↻ Refresh</Button>
         </div>
 
         {data === undefined && <Spinner />}

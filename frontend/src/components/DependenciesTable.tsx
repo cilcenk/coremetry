@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
+import { Button } from '@/components/ui/Button';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, OracleMetrics, PostgresMetrics, MySQLMetrics, RedisMetrics, SpanMetricSeries, DBTrend } from '@/lib/types';
 
@@ -690,11 +691,13 @@ function DetailDrawer({ system, cluster, name, kind, source, range }: {
 // operator sorts within that page, no full-fleet re-fetch
 // trip. Default sort is Calls desc so the heaviest caller
 // keeps surfacing on first paint.
-type CallerSortKey = 'service' | 'pod' | 'role' | 'calls' | 'errRate' | 'avg' | 'p99';
-const CALLER_NATURAL: Record<CallerSortKey, 'asc' | 'desc'> = {
-  service: 'asc', pod: 'asc', role: 'asc',
-  calls: 'desc', errRate: 'desc', avg: 'desc', p99: 'desc',
-};
+//
+// v0.7.x — the last bespoke sort-header variant in the app
+// retired: these nested tables now ride the shared useDataTable
+// primitive (same depCols + DataTableHead/DataTableColgroup
+// contract the page-level table above uses). The client-side
+// search filter is preserved and feeds filtered rows into the
+// primitive; sort + column-resize layout persist per-tone.
 
 function CallerSection({ title, rows, emptyMessage, tone }: {
   title: string;
@@ -702,24 +705,19 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
   emptyMessage: string;
   tone: 'producer' | 'consumer' | 'other' | 'db';
 }) {
+  type Caller = import('@/lib/types').DBCallerBreakdown;
   const dotColor =
     tone === 'producer' ? 'var(--accent2)' :
     tone === 'consumer' ? 'var(--ok)' :
     tone === 'other'    ? 'var(--text3)' :
                           'var(--accent2)';
   const hasRole = rows.some(r => r.role);
-  const [sortBy, setSortBy] = useState<CallerSortKey>('calls');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   // Client-side search across service / pod / role so an
   // operator with hundreds of pods hitting one DB can pinpoint
   // a specific instance fast. Backend caps the result set at
   // LIMIT 500 (v0.5.12) so filtering 500 rows stays
   // sub-millisecond.
   const [search, setSearch] = useState('');
-  const toggleSort = (col: CallerSortKey) => {
-    if (sortBy === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(col); setSortDir(CALLER_NATURAL[col]); }
-  };
   const filtered = useMemo(() => {
     const t = search.trim().toLowerCase();
     if (!t) return rows;
@@ -728,21 +726,32 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
       r.pod.toLowerCase().includes(t) ||
       (r.role ?? '').toLowerCase().includes(t));
   }, [rows, search]);
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    arr.sort((a, b) => {
-      switch (sortBy) {
-        case 'service': return a.service.localeCompare(b.service);
-        case 'pod':     return a.pod.localeCompare(b.pod);
-        case 'role':    return (a.role ?? '').localeCompare(b.role ?? '');
-        case 'calls':   return a.spanCount - b.spanCount;
-        case 'errRate': return a.errorRate - b.errorRate;
-        case 'avg':     return a.avgDurationMs - b.avgDurationMs;
-        case 'p99':     return a.p99DurationMs - b.p99DurationMs;
-      }
-    });
-    return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [filtered, sortBy, sortDir]);
+
+  // Caller columns mirror the prior CallerSortTh sort keys +
+  // CALLER_NATURAL directions. Role is conditional on hasRole
+  // (messaging-only). Default sort = Calls desc (preserved).
+  const callerCols = useMemo<DataTableColumn<Caller>[]>(() => [
+    { id: 'service', label: 'Service',    sortValue: r => r.service, naturalDir: 'asc', width: 200 },
+    { id: 'pod',     label: 'Pod / host', sortValue: r => r.pod,     naturalDir: 'asc', width: 200 },
+    ...(hasRole
+      ? [{ id: 'role', label: 'Role', sortValue: (r: Caller) => r.role ?? '', naturalDir: 'asc', width: 110 } as DataTableColumn<Caller>]
+      : []),
+    { id: 'calls',   label: 'Calls', sortValue: r => r.spanCount,     numeric: true, naturalDir: 'desc', width: 90 },
+    { id: 'errRate', label: 'Err %', sortValue: r => r.errorRate,     numeric: true, naturalDir: 'desc', width: 90 },
+    { id: 'avg',     label: 'Avg',   sortValue: r => r.avgDurationMs, numeric: true, naturalDir: 'desc', width: 84 },
+    { id: 'p99',     label: 'P99',   sortValue: r => r.p99DurationMs, numeric: true, naturalDir: 'desc', width: 84 },
+  ], [hasRole]);
+
+  // Distinct storageKey per tone so the Publishers / Consumers /
+  // Other / DB instances rendered side-by-side don't share (and
+  // clobber) each other's sort + width layout.
+  const dt = useDataTable<Caller>({
+    storageKey: `deps-callers-${tone}`,
+    columns: callerCols,
+    rows: filtered,
+    initialSort: { id: 'calls', dir: 'desc' },
+  });
+
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{
@@ -763,33 +772,29 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
         )}
         {search && (
           <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400 }}>
-            {sorted.length} of {rows.length}
+            {dt.sortedRows.length} of {rows.length}
           </span>
         )}
       </div>
       {rows.length === 0 ? (
         emptyMessage && <div style={{ fontSize: 12, color: 'var(--text3)' }}>{emptyMessage}</div>
       ) : (
-        <div className="table-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
-          <table>
-            <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>
-              <tr>
-                <CallerSortTh col="service" label="Service"    sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <CallerSortTh col="pod"     label="Pod / host" sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                {hasRole && (
-                  <CallerSortTh col="role" label="Role" sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                )}
-                <CallerSortTh col="calls"   label="Calls"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                <CallerSortTh col="errRate" label="Err %"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                <CallerSortTh col="avg"     label="Avg"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                <CallerSortTh col="p99"     label="P99"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              </tr>
-            </thead>
+        // v0.7.x — adopting the shared primitive retires the inner-scroll
+        // wrapper (its sticky <thead> went with the bespoke header). Rows
+        // are capped at LIMIT 500 server-side; content-visibility:auto on
+        // each row lets the browser skip off-screen ones per CLAUDE.md's
+        // "tables > 100 rows" guidance, matching the Service.tsx (v0.7.54)
+        // adopter pattern.
+        <div className="table-wrap">
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} />
+            <DataTableHead dt={dt} />
             <tbody>
-              {sorted.map((c, i) => {
+              {dt.sortedRows.map((c, i) => {
                 const errCls = c.errorRate > 5 ? 'err' : c.errorRate > 0 ? 'warn' : 'ok';
                 return (
-                  <tr key={`${c.service}|${c.pod}|${c.role ?? ''}|${i}`}>
+                  <tr key={`${c.service}|${c.pod}|${c.role ?? ''}|${i}`}
+                      style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
                     <td>
                       <Link to={`/service?name=${encodeURIComponent(c.service)}`}
                             style={{ fontFamily: 'monospace', fontSize: 12 }}>
@@ -820,34 +825,6 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
         </div>
       )}
     </div>
-  );
-}
-
-// CallerSortTh is the sortable header used inside the drawer's
-// per-(service, pod) tables. Same accessibility shape as the
-// outer-table SortHeader (aria-sort + button + Enter/Space) so
-// keyboard users can sort the breakdown.
-function CallerSortTh({ col, label, sort, dir, onSort, align }: {
-  col: CallerSortKey; label: string;
-  sort: CallerSortKey; dir: 'asc' | 'desc';
-  onSort: (c: CallerSortKey) => void;
-  align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        style={{ textAlign: align ?? 'left' }}
-        aria-sort={active ? (dir === 'desc' ? 'descending' : 'ascending') : 'none'}>
-      <button type="button" onClick={() => onSort(col)}
-        style={{
-          all: 'unset', display: 'inline-flex', alignItems: 'baseline',
-          gap: 4, width: '100%', cursor: 'pointer',
-          justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
-        }}>
-        {label}
-        <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-      </button>
-    </th>
   );
 }
 
@@ -1189,7 +1166,7 @@ function OracleMetricDrillModal({ drill, range, onClose }: {
                   style={{ fontSize: 11, marginRight: 12 }}>
               Open in Explore →
             </Link>
-            <button className="sec" onClick={onClose} style={{ fontSize: 12 }}>Close</button>
+            <Button variant="secondary" size="sm" onClick={onClose}>Close</Button>
           </span>
         </div>
         {series === undefined && <Spinner />}

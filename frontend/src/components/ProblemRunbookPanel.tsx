@@ -8,6 +8,7 @@ import {
   useRunbookExecutions,
   useExecuteRunbook,
 } from '@/lib/queries/runbooks';
+import { Button } from '@/components/ui/Button';
 import type { Runbook } from '@/lib/types';
 
 // ProblemRunbookPanel (v0.7.10) — the Problem→Runbook bridge in the triage
@@ -47,10 +48,10 @@ export function ProblemRunbookPanel({ problemId }: { problemId: string }) {
         <span>Runbooks</span>
         <span style={{ flex: 1 }} />
         {canRun && (
-          <button className="sec" style={{ fontSize: 11, padding: '2px 10px' }}
+          <Button variant="secondary" size="sm"
             onClick={() => setPicking(v => !v)}>
             {picking ? 'Cancel' : '▶ Run a runbook'}
-          </button>
+          </Button>
         )}
       </div>
 

@@ -128,6 +128,29 @@ export function TimeRangePicker({ value, onChange }: {
           <div className="trp-custom">
             <div className="trp-section-title">Absolute range</div>
 
+            {/* v0.7.45 — Operator-requested (Grafana-style): pick a single day
+                → From/To snap to that day's 00:00:00 → 23:59:59.999 and apply
+                immediately. Native datetime-local can't expose a day
+                double-click, so this dedicated day picker delivers the intent
+                in one click; the From/To calendars below stay for precise
+                sub-day ranges. */}
+            <label>
+              Whole day
+              <input type="date" className="trp-cal"
+                title="Pick a day — sets the range to that day's start → end"
+                onChange={e => {
+                  const day = e.target.value; // YYYY-MM-DD (local)
+                  if (!day) return;
+                  const [y, mo, d] = day.split('-').map(Number);
+                  onChange({
+                    preset: 'custom',
+                    fromMs: new Date(y, mo - 1, d, 0, 0, 0, 0).getTime(),
+                    toMs:   new Date(y, mo - 1, d, 23, 59, 59, 999).getTime(),
+                  });
+                  setOpen(false);
+                }} />
+            </label>
+
             {/* From — text expression input + calendar picker.
                 Native datetime-local gives the user the Grafana-
                 style calendar + hour/minute spinner without

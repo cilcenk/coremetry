@@ -29,6 +29,11 @@ export interface DataTableColumn<T> {
   width?: number;
   // Resize floor (px).
   minWidth?: number;
+  // Sortable-only dimension that is NOT rendered as a header/column —
+  // e.g. a composite "impact" score a preset button sorts by. Excluded
+  // from <DataTableHead>/<DataTableColgroup>; still resolvable by
+  // sortRows + setSort. Keeps body cells aligned to visible headers.
+  headerHidden?: boolean;
 }
 
 export interface SortState {

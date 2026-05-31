@@ -33,6 +33,7 @@ export interface DataTable<T> {
   sortedRows: T[];
   sort: SortState;
   toggleSort: (id: string) => void;
+  setSort: (s: SortState) => void;
   colWidths: Record<string, number>;
   startResize: (id: string, e: ReactMouseEvent) => void;
   resetLayout: () => void;
@@ -99,7 +100,7 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort }: {
     return sortRows(rows, col, sort.dir);
   }, [rows, sort, columns]);
 
-  return { columns, sortedRows, sort, toggleSort, colWidths, startResize, resetLayout };
+  return { columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout };
 }
 
 // DataTableColgroup — emits the <colgroup> that makes table-layout:fixed
@@ -110,7 +111,7 @@ export function DataTableColgroup<T>({ dt, leading }: { dt: DataTable<T>; leadin
   return (
     <colgroup>
       {(leading ?? []).map((w, i) => <col key={`lead-${i}`} style={{ width: w }} />)}
-      {dt.columns.map(c => (
+      {dt.columns.filter(c => !c.headerHidden).map(c => (
         <col key={c.id} style={{ width: dt.colWidths[c.id] ?? c.width ?? DEFAULT_W }} />
       ))}
     </colgroup>
@@ -126,7 +127,7 @@ export function DataTableHead<T>({ dt, leading }: { dt: DataTable<T>; leading?: 
     <thead>
       <tr>
         {leading}
-        {dt.columns.map(c => {
+        {dt.columns.filter(c => !c.headerHidden).map(c => {
           const sortable = !!c.sortValue;
           const active = dt.sort.id === c.id;
           const align = c.align ?? (c.numeric ? 'right' : 'left');

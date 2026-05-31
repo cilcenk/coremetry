@@ -10,6 +10,8 @@ import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
@@ -19,8 +21,6 @@ import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 // Mirrors the /services list ergonomics: search + service
 // filter + sortable columns + drill-throughs into /traces and
 // /service detail.
-
-type SortKey = 'service' | 'path' | 'calls' | 'errors' | 'errorRate' | 'avgMs' | 'p99Ms' | 'impact';
 
 // impactOf — composite "fix me first" score blending traffic,
 // latency and error rate. Matches the /service Operations table's
@@ -38,6 +38,25 @@ function impactOf(r: EndpointRow): number {
   const errFactor = 1 + (r.errorRate / 100);
   return r.calls * r.p99Ms * errFactor;
 }
+
+// Columns for the shared sortable + resizable DataTable primitive.
+// Body order must match these (non-sortable Method/Status/Trend/Traces
+// omit sortValue but still resize). `impact` is headerHidden — the
+// "Worst by impact" preset sorts by it without rendering a column.
+const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
+  { id: 'service',   label: 'Service',    sortValue: r => r.service,   naturalDir: 'asc', width: 150 },
+  { id: 'path',      label: 'Path',       sortValue: r => r.path,      naturalDir: 'asc', width: 280 },
+  { id: 'method',    label: 'Method',     width: 72 },
+  { id: 'calls',     label: 'Calls',      sortValue: r => r.calls,     numeric: true, width: 90 },
+  { id: 'errors',    label: 'Errors',     sortValue: r => r.errors,    numeric: true, width: 82 },
+  { id: 'errorRate', label: 'Error rate', sortValue: r => r.errorRate, numeric: true, width: 96 },
+  { id: 'status',    label: 'Status',     width: 150 },
+  { id: 'avgMs',     label: 'Avg',        sortValue: r => r.avgMs,     numeric: true, width: 86 },
+  { id: 'p99Ms',     label: 'P99',        sortValue: r => r.p99Ms,     numeric: true, width: 86 },
+  { id: 'trend',     label: 'Trend',      width: 120 },
+  { id: 'traces',    label: 'Traces',     width: 64 },
+  { id: 'impact',    label: 'Impact',     sortValue: impactOf, headerHidden: true },
+];
 
 export default function EndpointsPage() {
   const [params, setParams] = useSearchParams();
@@ -63,8 +82,12 @@ export default function EndpointsPage() {
     return next;
   }, { replace: true });
 
-  const [sortKey, setSortKey] = useState<SortKey>('calls');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const dt = useDataTable<EndpointRow>({
+    storageKey: 'endpoints',
+    columns: ENDPOINT_COLS,
+    rows: rows ?? [],
+    initialSort: { id: 'calls', dir: 'desc' },
+  });
   // v0.5.389 — limit lifted to 2000 default, with an explicit
   // "load top 5000" toggle so the operator can pull the long
   // tail when they need it. Backend caps at 5000; values above
@@ -134,29 +157,6 @@ export default function EndpointsPage() {
       .then(r => setClusterOptions(r?.clusters ?? []))
       .catch(() => setClusterOptions([]));
   }, [from, to]);
-
-  const sorted = useMemo(() => {
-    const list = rows ?? [];
-    const arr = [...list].sort((a, b) => {
-      const dir = sortDir === 'asc' ? 1 : -1;
-      switch (sortKey) {
-        case 'service':   return dir * a.service.localeCompare(b.service);
-        case 'path':      return dir * a.path.localeCompare(b.path);
-        case 'calls':     return dir * (a.calls - b.calls);
-        case 'errors':    return dir * (a.errors - b.errors);
-        case 'impact':    return dir * (impactOf(a) - impactOf(b));
-        case 'errorRate': return dir * (a.errorRate - b.errorRate);
-        case 'avgMs':     return dir * (a.avgMs - b.avgMs);
-        case 'p99Ms':     return dir * (a.p99Ms - b.p99Ms);
-      }
-    });
-    return arr;
-  }, [rows, sortKey, sortDir]);
-
-  const setSort = (k: SortKey) => {
-    if (k === sortKey) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(k); setSortDir(k === 'service' || k === 'path' ? 'asc' : 'desc'); }
-  };
 
   const totalCalls = (rows ?? []).reduce((s, r) => s + r.calls, 0);
   const totalErrors = (rows ?? []).reduce((s, r) => s + r.errors, 0);
@@ -229,13 +229,13 @@ export default function EndpointsPage() {
               impact (calls × p99 × (1+errorRate)) so high-traffic
               slow + erroring endpoints float to the top. */}
           <button type="button"
-            onClick={() => { setSortKey('impact'); setSortDir('desc'); }}
+            onClick={() => dt.setSort({ id: 'impact', dir: 'desc' })}
             title="Sort by composite impact (calls × p99 × (1+errorRate)) — fix-me-first list"
             style={{
               padding: '3px 8px', fontSize: 11, borderRadius: 4,
-              background: sortKey === 'impact' ? 'rgba(56,139,253,0.15)' : 'var(--bg2)',
-              border: '1px solid ' + (sortKey === 'impact' ? 'rgba(56,139,253,0.45)' : 'var(--border)'),
-              color: sortKey === 'impact' ? 'var(--accent2)' : 'var(--text2)',
+              background: dt.sort.id === 'impact' ? 'rgba(56,139,253,0.15)' : 'var(--bg2)',
+              border: '1px solid ' + (dt.sort.id === 'impact' ? 'rgba(56,139,253,0.45)' : 'var(--border)'),
+              color: dt.sort.id === 'impact' ? 'var(--accent2)' : 'var(--text2)',
               cursor: 'pointer',
             }}>
             ⚡ Worst by impact
@@ -270,25 +270,11 @@ export default function EndpointsPage() {
                    cls={totalErrorRate >= 5 ? 'err' : totalErrorRate >= 1 ? 'warn' : ''} />
             </div>
             <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: 22 }} />
-                    <SortHeader k="service"   label="Service"    cur={sortKey} dir={sortDir} onSort={setSort} />
-                    <SortHeader k="path"      label="Path"       cur={sortKey} dir={sortDir} onSort={setSort} />
-                    <th>Method</th>
-                    <SortHeader k="calls"     label="Calls"      cur={sortKey} dir={sortDir} onSort={setSort} num />
-                    <SortHeader k="errors"    label="Errors"     cur={sortKey} dir={sortDir} onSort={setSort} num />
-                    <SortHeader k="errorRate" label="Error rate" cur={sortKey} dir={sortDir} onSort={setSort} num />
-                    <th>Status</th>
-                    <SortHeader k="avgMs"     label="Avg"        cur={sortKey} dir={sortDir} onSort={setSort} num />
-                    <SortHeader k="p99Ms"     label="P99"        cur={sortKey} dir={sortDir} onSort={setSort} num />
-                    <th>Trend</th>
-                    <th>Traces</th>
-                  </tr>
-                </thead>
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <DataTableColgroup dt={dt} leading={[22]} />
+                <DataTableHead dt={dt} leading={<th style={{ width: 22 }} />} />
                 <tbody>
-                  {sorted.map((r, i) => {
+                  {dt.sortedRows.map((r, i) => {
                     const errCls = r.errorRate >= 5 ? 'b-err' : r.errorRate >= 1 ? 'b-warn' : 'b-ok';
                     const rowKey = `${r.service}|${r.path}|${i}`;
                     const isExpanded = expandedRows.has(rowKey);
@@ -320,7 +306,7 @@ export default function EndpointsPage() {
                             {r.service}
                           </Link>
                         </td>
-                        <td className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }} title={r.path}>
+                        <td className="mono" style={{ fontSize: 12 }} title={r.path}>
                           {r.path}
                         </td>
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>
@@ -378,7 +364,7 @@ export default function EndpointsPage() {
                       {isExpanded && (
                         <tr>
                           <td />
-                          <td colSpan={10} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
+                          <td colSpan={11} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
                             <DependencyStrip
                               service={r.service}
                               deps={depsByService[r.service]} />
@@ -792,20 +778,5 @@ function KPI({ label, value, sub, cls }: { label: string; value: string; sub?: s
       }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{sub}</div>}
     </div>
-  );
-}
-
-function SortHeader({ k, label, cur, dir, onSort, num }: {
-  k: SortKey; label: string; cur: SortKey; dir: 'asc' | 'desc';
-  onSort: (k: SortKey) => void; num?: boolean;
-}) {
-  const active = cur === k;
-  return (
-    <th onClick={() => onSort(k)} className={num ? 'num' : ''}
-        style={{ cursor: 'pointer', userSelect: 'none' }}>
-      <span style={{ color: active ? 'var(--text)' : 'var(--text2)' }}>
-        {label}{active ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}
-      </span>
-    </th>
   );
 }

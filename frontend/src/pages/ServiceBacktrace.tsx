@@ -5,7 +5,9 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, hashColor, tsLong } from '@/lib/utils';
-import type { CallerRow, TimeRange, SortOrder } from '@/lib/types';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+import type { CallerRow, TimeRange } from '@/lib/types';
 
 // Dynatrace-style "service consumers" / backtrace view. One row per
 // distinct (caller service × pod/instance × client IP × user-agent)
@@ -18,12 +20,19 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
-type SortKey = 'calls' | 'errorRate' | 'p50Ms' | 'p95Ms' | 'p99Ms' | 'avgMs' | 'lastSeenNs' | 'callerService';
-
-const NATURAL: Record<SortKey, SortOrder> = {
-  calls: 'desc', errorRate: 'desc', p50Ms: 'desc', p95Ms: 'desc',
-  p99Ms: 'desc', avgMs: 'desc', lastSeenNs: 'desc', callerService: 'asc',
-};
+// Columns for the shared sortable + resizable DataTable.
+const BACKTRACE_COLS: DataTableColumn<CallerRow>[] = [
+  { id: 'callerService', label: 'Caller service', sortValue: r => r.callerService, naturalDir: 'asc', width: 200 },
+  { id: 'hostInstance',  label: 'Host / Instance', width: 180 },
+  { id: 'clientUa',      label: 'Client IP / User-Agent', width: 210 },
+  { id: 'calls',      label: 'Calls', sortValue: r => r.calls,      numeric: true, naturalDir: 'desc', width: 90 },
+  { id: 'errorRate',  label: 'Err %', sortValue: r => r.errorRate,  numeric: true, naturalDir: 'desc', width: 90 },
+  { id: 'p50Ms',      label: 'p50',   sortValue: r => r.p50Ms,      numeric: true, naturalDir: 'desc', width: 80 },
+  { id: 'p95Ms',      label: 'p95',   sortValue: r => r.p95Ms,      numeric: true, naturalDir: 'desc', width: 80 },
+  { id: 'p99Ms',      label: 'p99',   sortValue: r => r.p99Ms,      numeric: true, naturalDir: 'desc', width: 80 },
+  { id: 'lastSeenNs', label: 'Last seen', sortValue: r => r.lastSeenNs, naturalDir: 'desc', width: 160 },
+  { id: 'actions',    label: '', width: 96 },
+];
 
 function BacktraceInner() {
   const navigate = useNavigate();
@@ -33,8 +42,6 @@ function BacktraceInner() {
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [data, setData] = useState<CallerRow[] | null | undefined>(undefined);
   const [filter, setFilter] = useState('');
-  const [sort, setSort] = useState<SortKey>('calls');
-  const [order, setOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
     if (!svc) return;
@@ -46,45 +53,37 @@ function BacktraceInner() {
       .catch(() => setData(null));
   }, [svc, range]);
 
-  const rows = useMemo(() => {
+  const filtered = useMemo(() => {
     if (!data) return [];
     const f = filter.trim().toLowerCase();
-    const filtered = !f ? data : data.filter(r =>
+    return !f ? data : data.filter(r =>
       r.callerService.toLowerCase().includes(f) ||
       r.callerHost.toLowerCase().includes(f) ||
       r.callerInstance.toLowerCase().includes(f) ||
       r.clientAddress.toLowerCase().includes(f) ||
       r.userAgent.toLowerCase().includes(f)
     );
-    const sorted = [...filtered].sort((a, b) => {
-      const av = a[sort], bv = b[sort];
-      if (typeof av === 'string' && typeof bv === 'string') {
-        return order === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-      }
-      const ax = Number(av), bx = Number(bv);
-      return order === 'asc' ? ax - bx : bx - ax;
-    });
-    return sorted;
-  }, [data, filter, sort, order]);
+  }, [data, filter]);
 
-  const toggleSort = (col: SortKey) => {
-    if (sort === col) setOrder(order === 'desc' ? 'asc' : 'desc');
-    else { setSort(col); setOrder(NATURAL[col]); }
-  };
+  // Shared sortable + resizable table over the filtered callers.
+  const dt = useDataTable<CallerRow>({
+    storageKey: 'backtrace', columns: BACKTRACE_COLS,
+    rows: filtered, initialSort: { id: 'calls', dir: 'desc' },
+  });
 
   // Top-line KPIs across the visible (filtered) row set so the
   // operator gets a quick "scope of inbound traffic" feel without
   // tallying calls themselves.
   const totals = useMemo(() => {
     const t = { calls: 0, errors: 0, services: new Set<string>(), instances: new Set<string>() };
-    for (const r of rows) {
+    for (const r of filtered) {
       t.calls += r.calls;
       t.errors += r.errors;
       t.services.add(r.callerService);
       if (r.callerHost) t.instances.add(`${r.callerService}/${r.callerHost}`);
     }
     return t;
-  }, [rows]);
+  }, [filtered]);
 
   if (!svc) {
     return (
@@ -121,30 +120,20 @@ function BacktraceInner() {
 
         {data === undefined && <Spinner />}
         {data === null && <Empty icon="⚠" title="Failed to load backtrace" />}
-        {data && rows.length === 0 && (
+        {data && filtered.length === 0 && (
           <Empty icon="—" title={
             filter
               ? 'No callers match the filter'
               : `No inbound callers observed for ${svc} in this window`
           } />
         )}
-        {data && rows.length > 0 && (
+        {data && filtered.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead><tr>
-                <SortHeader col="callerService" label="Caller service" sort={sort} order={order} onSort={toggleSort} />
-                <th>Host / Instance</th>
-                <th>Client IP / User-Agent</th>
-                <SortHeader col="calls"       label="Calls"  sort={sort} order={order} onSort={toggleSort} numeric />
-                <SortHeader col="errorRate"   label="Err %"  sort={sort} order={order} onSort={toggleSort} numeric />
-                <SortHeader col="p50Ms"       label="p50"    sort={sort} order={order} onSort={toggleSort} numeric />
-                <SortHeader col="p95Ms"       label="p95"    sort={sort} order={order} onSort={toggleSort} numeric />
-                <SortHeader col="p99Ms"       label="p99"    sort={sort} order={order} onSort={toggleSort} numeric />
-                <SortHeader col="lastSeenNs"  label="Last seen" sort={sort} order={order} onSort={toggleSort} />
-                <th style={{ width: 1 }}></th>
-              </tr></thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {rows.map((r, i) => {
+                {dt.sortedRows.map((r, i) => {
                   const color = hashColor(r.callerService);
                   const errBad = r.errorRate >= 5;
                   const errWarn = !errBad && r.errorRate > 0;
@@ -215,23 +204,6 @@ function BacktraceInner() {
         )}
       </div>
     </>
-  );
-}
-
-function SortHeader({ col, label, sort, order, onSort, numeric }: {
-  col: SortKey;
-  label: string;
-  sort: SortKey;
-  order: SortOrder;
-  onSort: (c: SortKey) => void;
-  numeric?: boolean;
-}) {
-  const active = sort === col;
-  return (
-    <th onClick={() => onSort(col)}
-        style={{ cursor: 'pointer', userSelect: 'none', textAlign: numeric ? 'right' : 'left' }}>
-      {label}{active ? (order === 'asc' ? ' ↑' : ' ↓') : ''}
-    </th>
   );
 }
 

@@ -76,6 +76,43 @@ func (s *Store) WriteServiceCallersBucket(ctx context.Context, bucketStart time.
 	)
 }
 
+// serviceCallersAggSQL builds the inbound-callers rollup query for the service
+// backtrace.
+//
+// v0.7.41 — Operator-reported: Backtrace returned HTTP 500 "code 184: Aggregate
+// function sum(errors) AS errors is found inside another aggregate function".
+// calls/errors are plain UInt64, but aliasing `sum(calls) AS calls` /
+// `sum(errors) AS errors` SHADOWED those columns — so the later error_rate /
+// avg_ms expressions re-summed the ALIASES (sum(sum(...))), tripping CH's
+// nested-aggregate guard. Fix: alias the totals c_calls / c_errors so the
+// compound expressions still reference the raw columns. Scan stays positional,
+// so the alias rename is invisible to the Go side.
+func serviceCallersAggSQL(limit int) string {
+	return fmt.Sprintf(`
+		SELECT caller_service,
+		       caller_host,
+		       caller_instance,
+		       client_address,
+		       user_agent,
+		       sum(calls)                                              AS c_calls,
+		       sum(errors)                                             AS c_errors,
+		       sum(errors) * 100.0 / nullIf(sum(calls), 0)             AS error_rate,
+		       sum(sum_duration_ns) / nullIf(sum(calls), 0) / 1e6      AS avg_ms,
+		       max(p50_ms)                                             AS p50_ms,
+		       max(p95_ms)                                             AS p95_ms,
+		       max(p99_ms)                                             AS p99_ms,
+		       toInt64(max(last_seen_ns))                              AS last_seen_ns
+		FROM service_callers_5m FINAL
+		WHERE service = ?
+		  AND time_bucket >= ?
+		  AND time_bucket <= ?
+		GROUP BY caller_service, caller_host, caller_instance,
+		         client_address, user_agent
+		ORDER BY c_calls DESC
+		LIMIT %d
+		SETTINGS max_execution_time = 10`, limit)
+}
+
 // ReadServiceCallersAgg surfaces the same CallerRow shape from
 // the MV. Bucket-aligns the lower bound (the standard *_5m
 // idiom) and reads with FINAL so ReplacingMergeTree version
@@ -94,30 +131,7 @@ func (s *Store) ReadServiceCallersAgg(
 		to = time.Now()
 	}
 	bucketStart := from.Truncate(5 * time.Minute)
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT caller_service,
-		       caller_host,
-		       caller_instance,
-		       client_address,
-		       user_agent,
-		       sum(calls)                                              AS calls,
-		       sum(errors)                                             AS errors,
-		       sum(errors) * 100.0 / nullIf(sum(calls), 0)             AS error_rate,
-		       sum(sum_duration_ns) / nullIf(sum(calls), 0) / 1e6      AS avg_ms,
-		       max(p50_ms)                                             AS p50_ms,
-		       max(p95_ms)                                             AS p95_ms,
-		       max(p99_ms)                                             AS p99_ms,
-		       toInt64(max(last_seen_ns))                              AS last_seen_ns
-		FROM service_callers_5m FINAL
-		WHERE service = ?
-		  AND time_bucket >= ?
-		  AND time_bucket <= ?
-		GROUP BY caller_service, caller_host, caller_instance,
-		         client_address, user_agent
-		ORDER BY calls DESC
-		LIMIT %d
-		SETTINGS max_execution_time = 10`, limit),
-		service, bucketStart, to)
+	rows, err := s.conn.Query(ctx, serviceCallersAggSQL(limit), service, bucketStart, to)
 	if err != nil {
 		return nil, err
 	}

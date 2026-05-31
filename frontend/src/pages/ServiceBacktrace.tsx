@@ -189,10 +189,14 @@ function BacktraceInner() {
                             applies a HAVING-based fan-in check on the
                             backend so we land on actual caller × callee
                             traces rather than all traces from either side.
-                            view=list forces the trace list (Aggregated is
-                            the default landing tab). */}
+                            v0.7.42 — Operator-reported: these traces were
+                            hidden because /traces defaults rootOnly=ON, but a
+                            caller→callee hop is mid-trace, not a root span.
+                            Force rootOnly=false so the co-occurring traces
+                            actually show. (view=list is the default tab since
+                            v0.7.37 but kept explicit.) */}
                         <Link
-                          to={`/traces?services=${encodeURIComponent(r.callerService)},${encodeURIComponent(svc)}&view=list`}
+                          to={`/traces?services=${encodeURIComponent(r.callerService)},${encodeURIComponent(svc)}&view=list&rootOnly=false`}
                           title={`Traces where ${r.callerService} called ${svc}`}
                           style={{
                             fontSize: 11, padding: '3px 10px',

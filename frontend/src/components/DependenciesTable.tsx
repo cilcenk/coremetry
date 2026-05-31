@@ -4,6 +4,8 @@ import { Empty, Spinner } from './Spinner';
 import { MultiLineChart } from './MultiLineChart';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, OracleMetrics, PostgresMetrics, MySQLMetrics, RedisMetrics, SpanMetricSeries } from '@/lib/types';
 
 // OracleDrill — what the user clicked on. Carries enough state
@@ -72,8 +74,6 @@ export function DependenciesTable({
   // /messaging page uses for the overview.
   range: TimeRange;
 }) {
-  const [sortBy, setSortBy] = useState<SortKey>('spanCount');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [systemFilter, setSystemFilter] = useState<string>('');
   const [search, setSearch] = useState('');
   // Which row's drawer is open. Stores `system|name` so the
@@ -123,27 +123,29 @@ export function DependenciesTable({
     });
   }, [rows, systemFilter, search]);
 
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    const cmp = (a: DepRow, b: DepRow): number => {
-      switch (sortBy) {
-        case 'system':    return a.system.localeCompare(b.system);
-        case 'cluster':   return (a.cluster ?? '').localeCompare(b.cluster ?? '');
-        case 'name':      return nameOf(a).localeCompare(nameOf(b));
-        case 'spanCount': return a.spanCount - b.spanCount;
-        case 'errorRate': return a.errorRate - b.errorRate;
-        case 'avg':       return a.avgDurationMs - b.avgDurationMs;
-        case 'p99':       return a.p99DurationMs - b.p99DurationMs;
-      }
-    };
-    arr.sort(cmp);
-    return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [filtered, sortBy, sortDir]);
+  // Shared sortable + resizable table. Columns built per-render so the
+  // name label (Instance vs Destination) + the optional Cluster column
+  // track kind/hasClusterCol. Accessors mirror the prior sort keys.
+  const depCols = useMemo<DataTableColumn<DepRow>[]>(() => [
+    { id: 'system', label: 'System', sortValue: r => r.system, naturalDir: NATURAL.system, width: 150 },
+    ...(hasClusterCol
+      ? [{ id: 'cluster', label: 'Cluster', sortValue: (r: DepRow) => r.cluster ?? '', naturalDir: NATURAL.cluster, width: 120 } as DataTableColumn<DepRow>]
+      : []),
+    { id: 'name', label: kind === 'db' ? 'Instance' : 'Destination', sortValue: r => nameOf(r), naturalDir: NATURAL.name, width: 210 },
+    { id: 'spanCount', label: 'Calls', sortValue: r => r.spanCount, numeric: true, naturalDir: NATURAL.spanCount, width: 96 },
+    { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
+    { id: 'avg', label: 'Avg', sortValue: r => r.avgDurationMs, numeric: true, naturalDir: NATURAL.avg, width: 90 },
+    { id: 'p99', label: 'P99', sortValue: r => r.p99DurationMs, numeric: true, naturalDir: NATURAL.p99, width: 90 },
+    { id: 'callers', label: 'Top callers', width: 240 },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [hasClusterCol, kind]);
 
-  const toggleSort = (col: SortKey) => {
-    if (sortBy === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(col); setSortDir(NATURAL[col]); }
-  };
+  const dt = useDataTable<DepRow>({
+    storageKey: `deps-${kind}`,
+    columns: depCols,
+    rows: filtered,
+    initialSort: { id: 'spanCount', dir: 'desc' },
+  });
 
   // Click-through DSL — pre-filters /explore by the chosen
   // system + instance. For DBs the key is db.system; for
@@ -162,8 +164,6 @@ export function DependenciesTable({
         ? `messaging.destination.name = "${r.destination}"` : '');
     return `/explore?dsl=${encodeURIComponent(dsl)}&mode=advanced&result=traces`;
   };
-
-  const nameLabel = kind === 'db' ? 'Instance' : 'Destination';
 
   if (rows.length === 0) {
     return (
@@ -192,29 +192,16 @@ export function DependenciesTable({
                  : 'Search system / destination / caller…'}
                style={{ width: 280 }} />
         <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 'auto' }}>
-          {sorted.length} of {rows.length}
+          {dt.sortedRows.length} of {rows.length}
         </span>
       </div>
 
       <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: 24 }} aria-label="Expand"></th>
-              <SortHeader col="system"    label="System"      sort={sortBy} dir={sortDir} onSort={toggleSort} />
-              {hasClusterCol && (
-                <SortHeader col="cluster" label="Cluster" sort={sortBy} dir={sortDir} onSort={toggleSort} />
-              )}
-              <SortHeader col="name"      label={nameLabel}   sort={sortBy} dir={sortDir} onSort={toggleSort} />
-              <SortHeader col="spanCount" label="Calls"       sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <SortHeader col="errorRate" label="Err %"       sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <SortHeader col="avg"       label="Avg"         sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <SortHeader col="p99"       label="P99"         sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <th>Top callers</th>
-            </tr>
-          </thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} leading={[24]} />
+          <DataTableHead dt={dt} leading={<th style={{ width: 24 }} aria-label="Expand"></th>} />
           <tbody>
-            {sorted.map((r, i) => {
+            {dt.sortedRows.map((r, i) => {
               const errCls = r.errorRate > 5 ? 'err' : r.errorRate > 0 ? 'warn' : 'ok';
               // Key includes cluster so two rows with the same
               // (system, destination) but different physical
@@ -350,30 +337,6 @@ export function DependenciesTable({
         </table>
       </div>
     </>
-  );
-}
-
-function SortHeader({ col, label, sort, dir, onSort, align }: {
-  col: SortKey; label: string;
-  sort: SortKey; dir: 'asc' | 'desc';
-  onSort: (c: SortKey) => void;
-  align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        style={{ textAlign: align ?? 'left' }}
-        aria-sort={active ? (dir === 'desc' ? 'descending' : 'ascending') : 'none'}>
-      <button type="button" onClick={() => onSort(col)}
-        style={{
-          all: 'unset', display: 'inline-flex', alignItems: 'baseline',
-          gap: 4, width: '100%', cursor: 'pointer',
-          justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
-        }}>
-        {label}
-        <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-      </button>
-    </th>
   );
 }
 

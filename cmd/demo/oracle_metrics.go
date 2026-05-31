@@ -7,32 +7,44 @@
 // the DB-instances list.
 //
 // This file plays the role the real OpenTelemetry `oracledb` receiver
-// would: it scrapes nothing, but it emits the exact oracledb.* instrument
-// shapes that the read contract in internal/chstore/oracle.go +
-// internal/chstore/dependencies.go (discoverReceiverInstances) expect:
+// would. It is a FAITHFUL mirror of the upstream contrib receiver's
+// documented default metric set:
 //
-//   - Each datapoint carries an `instance` attribute. discoverReceiverInstances
-//     coalesces the receiver-row instance label from that attr (2nd in its
-//     coalesce list), and GetOracleMetrics filters on the same attr — so a
-//     single `instance` value BOTH creates the receiver row AND scopes every
-//     drill-down read to it.
-//   - Resource service.name = "oracledb-receiver" (a synthetic scraper
-//     identity, not one of the demo's app services). The receiver-row query
-//     keys on the `instance` attr, not service.name, so this name stays out
-//     of the way; it only shows up as the scope/owner of the points.
-//   - Gauges (oracledb.sessions.usage/limit, processes.usage/limit,
-//     pga_memory, sga_max_size, tablespace_size.usage/limit) are emitted as
-//     Gauge instruments — GetOracleMetrics reads them with argMax(value,time).
-//   - Counters (cpu_time, logical_reads, physical_reads, hard_parses,
-//     parse_calls, executions, user_commits, user_rollbacks, transactions,
-//     wait_time.<class>) are emitted as monotonic cumulative Sums whose value
-//     INCREASES every flush. GetOracleMetrics derives per-second rates as
-//     (max-min)/window, so the counter must keep climbing across the run —
-//     hence the per-instance state held in oracleReceiverState.
+//   https://github.com/open-telemetry/opentelemetry-collector-contrib/
+//     blob/main/receiver/oracledbreceiver/documentation.md
+//
+// — exact metric names, units, instrument types, and attributes — so the
+// operator who collects these in production sees the same shapes here.
+//
+// Read-contract alignment (internal/chstore/oracle.go +
+// internal/chstore/dependencies.go discoverReceiverInstances):
+//
+//   - Each datapoint carries an `instance` attribute (= "corebank-scan.prod"
+//     / "corebank-dg.prod"). discoverReceiverInstances coalesces the
+//     receiver-row instance label from that attr, and GetOracleMetrics
+//     filters on the same attr — so a single `instance` value BOTH creates
+//     the receiver row AND scopes every drill-down read to it. We KEEP this
+//     datapoint attr and ADD the faithful resource attributes alongside it.
+//   - Resource attributes mirror the real receiver: host.name,
+//     oracledb.instance.name, service.instance.id ("host:port/serviceName"),
+//     plus service.name + db.system=oracle as before.
+//   - Gauges (sessions/processes/transactions/dml_locks/enqueue_*/tablespace
+//     /pga_memory/sga_max_size) are emitted as Gauge instruments —
+//     GetOracleMetrics reads them with argMax(value,time).
+//   - Monotonic Sums (cpu_time, logical/physical reads, parses, executions,
+//     commits/rollbacks, deadlocks, io requests, block gets, transactions,
+//     wait_time.<class>) climb every flush so GetOracleMetrics's
+//     (max-min)/window rate read stays positive across the run — hence the
+//     per-instance cumulative state held in oracleReceiverState.
+//
+// NOTE on transactions: the upstream receiver emits transactions.usage /
+// .limit as GAUGES (emitted here). The backend's GetOracleMetrics also reads
+// a per-second TransactionsPS off a monotonic `oracledb.transactions` sum, so
+// we ALSO keep that cumulative sum — both are present, faithful + working.
 //
 // Emitted once per metric flush (the existing 10s metrics tick), for BOTH
-// instances (corebank-scan.prod RAC SCAN + corebank-dg.prod Data Guard
-// standby) so both receiver rows populate.
+// instances (corebank-scan.prod RAC SCAN primary at full load +
+// corebank-dg.prod Data Guard standby ~0.25x) so both receiver rows populate.
 
 package main
 
@@ -53,16 +65,29 @@ import (
 // collides with a span-derived service row.
 const oracleReceiverService = "oracledb-receiver"
 
-// Oracle instance labels carried on every oracledb.* datapoint's `instance`
-// attribute. These match the host portion of the oraDB span server.address
-// values (corebank-scan.prod:1521 / corebank-dg.prod:1521) without the port,
-// so the operator's eye maps the receiver row onto the same DB they see in
-// the span-derived topology.
-var oracleInstances = []string{"corebank-scan.prod", "corebank-dg.prod"}
+// oracleInstance describes one monitored Oracle instance. The `name` is the
+// `instance` datapoint-attribute label the backend read-contract filters on
+// (host portion of the oraDB span server.address). host/port/serviceName feed
+// the faithful resource attributes (oracledb.instance.name +
+// service.instance.id in "host:port/serviceName" form).
+type oracleInstance struct {
+	name        string  // `instance` datapoint attr (backend filter key)
+	host        string  // host.name resource attr
+	port        int     // for service.instance.id
+	serviceName string  // Oracle service name, for service.instance.id
+	load        float64 // counter advance multiplier (standby runs lighter)
+}
+
+// oracleInstances — the RAC SCAN primary (full load) + the Data Guard standby
+// (read-only, ~0.25x). Both populate a source="receiver" row.
+var oracleInstances = []oracleInstance{
+	{name: "corebank-scan.prod", host: "corebank-scan.prod", port: 1521, serviceName: "COREBANK", load: 1.0},
+	{name: "corebank-dg.prod", host: "corebank-dg.prod", port: 1521, serviceName: "COREBANK_DG", load: 0.25},
+}
 
 // Standard Oracle wait classes (V$SYSTEM_WAIT_CLASS). Each becomes a
 // oracledb.wait_time.<class> cumulative counter; GetOracleMetrics strips the
-// prefix to recover the bare class name.
+// prefix to recover the bare class name. (Opt-in / panel extra — kept.)
 var oracleWaitClasses = []string{
 	"user_io", "system_io", "concurrency", "commit",
 	"network", "application", "configuration", "scheduler",
@@ -73,8 +98,8 @@ var oracleWaitClasses = []string{
 // tablespace_name attribute on oracledb.tablespace_size.usage/.limit.
 // usedFrac is the steady-state fill ratio; limitBytes the configured max.
 var oracleTablespaces = []struct {
-	name      string
-	usedFrac  float64
+	name       string
+	usedFrac   float64
 	limitBytes float64
 }{
 	{"SYSTEM", 0.62, 2 * 1024 * 1024 * 1024},
@@ -89,9 +114,10 @@ var oracleTablespaces = []struct {
 // + executions and derives avg_elapsed_ms client-side. elapsedPerFlush is
 // added to the cumulative elapsed counter each flush; execsPerFlush to the
 // execution count — both monotonic so argMax reads the latest total.
+// (Panel extra — kept.)
 var oracleTopSQL = []struct {
-	sqlID          string
-	sqlText        string
+	sqlID           string
+	sqlText         string
 	elapsedPerFlush float64 // seconds added per flush
 	execsPerFlush   uint64
 }{
@@ -107,15 +133,27 @@ var oracleTopSQL = []struct {
 // reads (max-min)/window over the query window to recover a per-second rate,
 // so these MUST only ever increase across the process lifetime.
 type oracleCounters struct {
-	cpuTime       float64 // seconds
-	logicalReads  float64
-	physicalReads float64
-	hardParses    float64
-	parseCalls    float64
-	executions    float64
-	userCommits   float64
-	userRollbacks float64
-	transactions  float64
+	// ── canonical default monotonic sums ──
+	cpuTime        float64 // seconds  (oracledb.cpu_time)
+	enqueueDeadlks float64 // oracledb.enqueue_deadlocks
+	exchangeDeadlk float64 // oracledb.exchange_deadlocks
+	executions     float64 // oracledb.executions
+	hardParses     float64 // oracledb.hard_parses
+	parseCalls     float64 // oracledb.parse_calls
+	logicalReads   float64 // oracledb.logical_reads
+	physicalReads  float64 // oracledb.physical_reads
+	userCommits    float64 // oracledb.user_commits
+	userRollbacks  float64 // oracledb.user_rollbacks
+	// ── opt-in monotonic sums the operator's setup + panel use ──
+	physReadIOReq  float64 // oracledb.physical_read_io_requests
+	physWriteIOReq float64 // oracledb.physical_write_io_requests
+	physicalWrites float64 // oracledb.physical_writes
+	dbBlockGets    float64 // oracledb.db_block_gets
+	consistentGets float64 // oracledb.consistent_gets
+	// transactions — real receiver = gauge usage/limit; we ALSO keep a
+	// monotonic sum so the backend's TransactionsPS rate read still works.
+	transactions float64 // oracledb.transactions (cumulative)
+	// ── panel extras (kept) ──
 	waitTime      map[string]float64 // class → cumulative seconds waited
 	topSQLElapsed map[string]float64 // sql_id → cumulative elapsed seconds
 	topSQLExecs   map[string]uint64  // sql_id → cumulative executions
@@ -152,27 +190,23 @@ func oracleReceiverMetrics(startNs, nowNs uint64) []*metricspb.ResourceMetrics {
 	defer oracleRX.mu.Unlock()
 
 	var rms []*metricspb.ResourceMetrics
-	for _, instance := range oracleInstances {
-		c := oracleRX.get(instance)
-		// Advance every cumulative counter by a realistic per-flush delta
-		// (jittered) so the rate read is non-zero and varies. The standby
-		// (corebank-dg.prod) runs lighter than the RAC SCAN primary.
-		load := 1.0
-		if instance == "corebank-dg.prod" {
-			load = 0.25 // Data Guard standby: read-only, lighter
-		}
-		advanceOracleCounters(c, load)
+	for _, inst := range oracleInstances {
+		c := oracleRX.get(inst.name)
+		advanceOracleCounters(c, inst.load)
 
-		metrics := buildOracleMetrics(instance, c, startNs, nowNs, load)
+		metrics := buildOracleMetrics(inst, c, startNs, nowNs)
+		// service.instance.id in the receiver's documented
+		// "host:port/serviceName" shape, e.g. "corebank-scan.prod:1521/COREBANK".
+		svcInstID := inst.host + ":" + strconv.Itoa(inst.port) + "/" + inst.serviceName
 		rms = append(rms, &metricspb.ResourceMetrics{
 			Resource: &resourcepb.Resource{Attributes: []*commonpb.KeyValue{
 				kvStr("service.name", oracleReceiverService),
-				kvStr("host.name", instance),
-				kvStr("deployment.environment", "demo"),
-				// db.system on the resource mirrors the real oracledb
-				// receiver's resource shape; not read by the contract but
-				// keeps the points self-describing.
+				// Faithful oracledb-receiver resource attributes.
+				kvStr("host.name", inst.host),
+				kvStr("oracledb.instance.name", inst.name),
+				kvStr("service.instance.id", svcInstID),
 				kvStr("db.system", "oracle"),
+				kvStr("deployment.environment", "demo"),
 			}},
 			ScopeMetrics: []*metricspb.ScopeMetrics{{
 				Scope:   &commonpb.InstrumentationScope{Name: "otelcol/oracledbreceiver"},
@@ -185,25 +219,42 @@ func oracleReceiverMetrics(startNs, nowNs uint64) []*metricspb.ResourceMetrics {
 
 // advanceOracleCounters bumps every monotonic counter for one instance by a
 // jittered per-flush delta scaled by `load`. Keeps the (max-min)/window rate
-// read positive and lifelike across the run.
+// read positive and lifelike across the run. Internally consistent: logical
+// reads >> physical reads (~99% cache hit), deadlocks grow rarely/slowly,
+// commits >> rollbacks.
 func advanceOracleCounters(c *oracleCounters, load float64) {
 	jit := func(base float64) float64 { return base * load * (0.8 + mrand.Float64()*0.4) }
 
-	c.cpuTime += jit(2.5)            // ~2.5 CPU-sec per 10s flush at full load
-	c.logicalReads += jit(370_000)  // ~37k logical reads/sec
-	c.physicalReads += jit(4_200)   // ~420 physical reads/sec → ~98.9% cache hit
+	c.cpuTime += jit(2.5) // ~2.5 CPU-sec per 10s flush at full load
+	c.executions += jit(46_000)
 	c.hardParses += jit(180)
 	c.parseCalls += jit(9_500)
-	c.executions += jit(46_000)
+	c.logicalReads += jit(370_000) // ~37k logical reads/sec
+	c.physicalReads += jit(4_200)  // ~420 physical reads/sec → ~98.9% cache hit
 	c.userCommits += jit(3_100)
 	c.userRollbacks += jit(120)
-	c.transactions += jit(3_220)
+	c.transactions += jit(3_220) // commits + rollbacks ≈ transactions
+
+	// Deadlocks are rare: only occasionally tick up, and slowly. At full
+	// load roughly one enqueue-deadlock every few minutes; exchange even
+	// rarer. Keeps them monotonic without an unrealistic flood.
+	if mrand.Float64() < 0.15*load {
+		c.enqueueDeadlks += 1
+	}
+	if mrand.Float64() < 0.05*load {
+		c.exchangeDeadlk += 1
+	}
+
+	// I/O + block-gets — physical writes track a fraction of reads; block
+	// gets dominate (current + consistent reads make up the logical reads).
+	c.physReadIOReq += jit(3_400)
+	c.physWriteIOReq += jit(2_100)
+	c.physicalWrites += jit(2_600)
+	c.dbBlockGets += jit(95_000)
+	c.consistentGets += jit(275_000) // db_block_gets + consistent_gets ≈ logical_reads
 
 	for _, wc := range oracleWaitClasses {
-		// Per-class weight so the distribution looks like a real DB:
-		// user_io + commit dominate, scheduler/administrative are tiny.
-		w := oracleWaitClassWeight(wc)
-		c.waitTime[wc] += jit(w)
+		c.waitTime[wc] += jit(oracleWaitClassWeight(wc))
 	}
 
 	for _, sq := range oracleTopSQL {
@@ -241,8 +292,11 @@ func oracleWaitClassWeight(class string) float64 {
 
 // buildOracleMetrics assembles the oracledb.* Metric protobufs for one
 // instance. Gauges use the latest computed reading; sums emit the running
-// cumulative total. Every datapoint carries the `instance` attribute.
-func buildOracleMetrics(instance string, c *oracleCounters, startNs, nowNs uint64, load float64) []*metricspb.Metric {
+// cumulative total. Every datapoint carries the `instance` attribute that the
+// backend read-contract filters on.
+func buildOracleMetrics(inst oracleInstance, c *oracleCounters, startNs, nowNs uint64) []*metricspb.Metric {
+	instance := inst.name
+	load := inst.load
 	instAttr := func(extra ...*commonpb.KeyValue) []*commonpb.KeyValue {
 		return append([]*commonpb.KeyValue{kvStr("instance", instance)}, extra...)
 	}
@@ -276,78 +330,155 @@ func buildOracleMetrics(instance string, c *oracleCounters, startNs, nowNs uint6
 
 	var out []*metricspb.Metric
 
-	// ── Session / process gauges + caps ──────────────────────────────────────
-	// usage jitters under a fixed limit so the progress bar moves.
-	sessLimit := 600.0
-	sessUsage := 120.0 + 220.0*load*(0.7+mrand.Float64()*0.5)
-	if sessUsage > sessLimit {
-		sessUsage = sessLimit
+	// ──────────────────────────────────────────────────────────────────────
+	// CANONICAL DEFAULT GAUGES
+	// ──────────────────────────────────────────────────────────────────────
+
+	// Resource / lock caps. usage jitters under a fixed limit so the
+	// progress bars move and usage < limit always holds.
+	usageUnder := func(limit, base, span float64) float64 {
+		v := base + span*load*(0.7+mrand.Float64()*0.5)
+		if v > limit {
+			v = limit
+		}
+		return v
 	}
+
+	dmlLockLimit := 8000.0
+	dmlLockUsage := usageUnder(dmlLockLimit, 600, 2200)
+	enqLockLimit := 12000.0
+	enqLockUsage := usageUnder(enqLockLimit, 900, 4200)
+	enqResLimit := 16000.0
+	enqResUsage := usageUnder(enqResLimit, 1200, 5600)
 	procLimit := 800.0
-	procUsage := 150.0 + 260.0*load*(0.7+mrand.Float64()*0.5)
-	if procUsage > procLimit {
-		procUsage = procLimit
-	}
+	procUsage := usageUnder(procLimit, 150, 260)
+	sessLimit := 1224.0 // Oracle default = 1.1*processes + 5, rounded
+	txnLimit := 605.0    // transactions = 1.1*sessions, rounded
+	txnUsage := usageUnder(txnLimit, 60, 180)
+
 	out = append(out,
-		gauge("oracledb.sessions.usage", "{session}", "Active + inactive sessions", sessUsage, instAttr()),
-		gauge("oracledb.sessions.limit", "{session}", "Maximum session limit", sessLimit, instAttr()),
-		gauge("oracledb.processes.usage", "{process}", "Current processes", procUsage, instAttr()),
-		gauge("oracledb.processes.limit", "{process}", "Maximum process limit", procLimit, instAttr()),
+		gauge("oracledb.dml_locks.limit", "{locks}", "Maximum limit of DML locks, -1 if unlimited", dmlLockLimit, instAttr()),
+		gauge("oracledb.dml_locks.usage", "{locks}", "Current count of DML locks", dmlLockUsage, instAttr()),
+		gauge("oracledb.enqueue_locks.limit", "{locks}", "Maximum limit of enqueue locks, -1 if unlimited", enqLockLimit, instAttr()),
+		gauge("oracledb.enqueue_locks.usage", "{locks}", "Current count of enqueue locks", enqLockUsage, instAttr()),
+		gauge("oracledb.enqueue_resources.limit", "{resources}", "Maximum limit of enqueue resources, -1 if unlimited", enqResLimit, instAttr()),
+		gauge("oracledb.enqueue_resources.usage", "{resources}", "Current count of enqueue resources", enqResUsage, instAttr()),
+		gauge("oracledb.processes.limit", "{processes}", "Maximum limit of processes, -1 if unlimited", procLimit, instAttr()),
+		gauge("oracledb.processes.usage", "{processes}", "Current count of processes", procUsage, instAttr()),
+		gauge("oracledb.sessions.limit", "{sessions}", "Maximum limit of sessions, -1 if unlimited", sessLimit, instAttr()),
+		gauge("oracledb.transactions.limit", "{transactions}", "Maximum limit of transactions, -1 if unlimited", txnLimit, instAttr()),
+		gauge("oracledb.transactions.usage", "{transactions}", "Current count of transactions", txnUsage, instAttr()),
 	)
 
-	// Sessions active/inactive split — keyed on the `status` attribute,
-	// matching queryOracleSessionsByStatus. Active ~ 35-55% of usage.
-	active := sessUsage * (0.35 + mrand.Float64()*0.2)
-	inactive := sessUsage - active
+	// oracledb.sessions.usage — DIMENSIONED by session_type + session_status,
+	// exactly as the real receiver emits it. The four (type × status) buckets
+	// sum to a fraction of sessions.limit.
+	//
+	// We ALSO emit the legacy single-attr `oracledb.sessions` keyed on
+	// `status` (active/inactive) that the backend's queryOracleSessionsByStatus
+	// historically read, so neither read path goes blank.
+	totalSessions := usageUnder(sessLimit, 120, 440)
+	// Split: ~70% USER / 30% BACKGROUND; within each, active vs inactive.
+	userTotal := totalSessions * 0.70
+	bgTotal := totalSessions * 0.30
+	userActiveFrac := 0.40 + mrand.Float64()*0.15
+	bgActiveFrac := 0.85 + mrand.Float64()*0.10 // background mostly active
+	userActive := userTotal * userActiveFrac
+	userInactive := userTotal - userActive
+	bgActive := bgTotal * bgActiveFrac
+	bgInactive := bgTotal - bgActive
+
+	sessUsage := func(typ, status string, v float64) *metricspb.Metric {
+		return gauge("oracledb.sessions.usage", "{sessions}", "Count of active sessions", v,
+			instAttr(kvStr("session_type", typ), kvStr("session_status", status)))
+	}
 	out = append(out,
-		gauge("oracledb.sessions", "{session}", "Sessions by status", active,
+		sessUsage("USER", "ACTIVE", userActive),
+		sessUsage("USER", "INACTIVE", userInactive),
+		sessUsage("BACKGROUND", "ACTIVE", bgActive),
+		sessUsage("BACKGROUND", "INACTIVE", bgInactive),
+	)
+	// Legacy active/inactive split (status attr) for the backend's
+	// queryOracleSessionsByStatus read.
+	totalActive := userActive + bgActive
+	totalInactive := userInactive + bgInactive
+	out = append(out,
+		gauge("oracledb.sessions", "{sessions}", "Sessions by status", totalActive,
 			instAttr(kvStr("status", "active"))),
-		gauge("oracledb.sessions", "{session}", "Sessions by status", inactive,
+		gauge("oracledb.sessions", "{sessions}", "Sessions by status", totalInactive,
 			instAttr(kvStr("status", "inactive"))),
 	)
 
-	// ── Memory gauges ────────────────────────────────────────────────────────
-	pga := 2.4*1024*1024*1024 + load*mrand.Float64()*512*1024*1024
-	sga := 8.0 * 1024 * 1024 * 1024 // SGA max is a fixed allocation
-	out = append(out,
-		gauge("oracledb.pga_memory", "By", "PGA memory in use", pga, instAttr()),
-		gauge("oracledb.sga_max_size", "By", "SGA maximum size", sga, instAttr()),
-	)
-
-	// ── Tablespace size gauges (dimensioned by tablespace_name) ───────────────
+	// Tablespace size gauges (dimensioned by tablespace_name), unit By.
 	for _, ts := range oracleTablespaces {
 		used := ts.limitBytes * ts.usedFrac * (0.97 + mrand.Float64()*0.06)
 		if used > ts.limitBytes {
 			used = ts.limitBytes
 		}
 		out = append(out,
-			gauge("oracledb.tablespace_size.usage", "By", "Tablespace bytes used",
-				used, instAttr(kvStr("tablespace_name", ts.name))),
-			gauge("oracledb.tablespace_size.limit", "By", "Tablespace max bytes",
+			gauge("oracledb.tablespace_size.limit", "By", "Maximum size of tablespace in bytes, -1 if unlimited",
 				ts.limitBytes, instAttr(kvStr("tablespace_name", ts.name))),
+			gauge("oracledb.tablespace_size.usage", "By", "Used tablespace in bytes",
+				used, instAttr(kvStr("tablespace_name", ts.name))),
 		)
 	}
 
-	// ── Cumulative counters (monotonic sums) ─────────────────────────────────
+	// SGA max size gauge (panel extra — kept; fixed allocation).
 	out = append(out,
-		sum("oracledb.cpu_time", "s", "Cumulative DB CPU time", c.cpuTime, instAttr()),
-		sum("oracledb.logical_reads", "{read}", "Cumulative logical reads", c.logicalReads, instAttr()),
-		sum("oracledb.physical_reads", "{read}", "Cumulative physical reads", c.physicalReads, instAttr()),
-		sum("oracledb.hard_parses", "{parse}", "Cumulative hard parses", c.hardParses, instAttr()),
-		sum("oracledb.parse_calls", "{parse}", "Cumulative parse calls", c.parseCalls, instAttr()),
-		sum("oracledb.executions", "{execution}", "Cumulative SQL executions", c.executions, instAttr()),
-		sum("oracledb.user_commits", "{commit}", "Cumulative user commits", c.userCommits, instAttr()),
-		sum("oracledb.user_rollbacks", "{rollback}", "Cumulative user rollbacks", c.userRollbacks, instAttr()),
-		sum("oracledb.transactions", "{transaction}", "Cumulative transactions", c.transactions, instAttr()),
+		gauge("oracledb.sga_max_size", "By", "SGA maximum size", 8.0*1024*1024*1024, instAttr()),
 	)
 
-	// ── Wait-class cumulative counters ────────────────────────────────────────
+	// ──────────────────────────────────────────────────────────────────────
+	// CANONICAL DEFAULT MONOTONIC SUMS
+	// ──────────────────────────────────────────────────────────────────────
+	out = append(out,
+		sum("oracledb.cpu_time", "s", "Cumulative CPU time, in seconds", c.cpuTime, instAttr()),
+		sum("oracledb.enqueue_deadlocks", "{deadlocks}", "Total number of deadlocks between table or row locks in different sessions", c.enqueueDeadlks, instAttr()),
+		sum("oracledb.exchange_deadlocks", "{deadlocks}", "Number of times a process detected a potential deadlock when exchanging two buffers", c.exchangeDeadlk, instAttr()),
+		sum("oracledb.executions", "{executions}", "Total number of calls (user and recursive) that executed SQL statements", c.executions, instAttr()),
+		sum("oracledb.hard_parses", "{parses}", "Number of hard parses", c.hardParses, instAttr()),
+		sum("oracledb.parse_calls", "{parses}", "Total number of parse calls", c.parseCalls, instAttr()),
+		sum("oracledb.logical_reads", "{reads}", "Number of logical reads", c.logicalReads, instAttr()),
+		sum("oracledb.physical_reads", "{reads}", "Number of physical reads", c.physicalReads, instAttr()),
+		// PGA: the receiver types this as a monotonic Sum (By), but the
+		// reported value is the CURRENT total PGA allocated (V$PGASTAT), a
+		// roughly-stable ~2.4GB figure — NOT a runaway per-scrape accumulator.
+		// We emit it as a Sum (faithful instrument) whose datapoint carries the
+		// live value, so the backend's argMax gauge read shows real bytes.
+		sum("oracledb.pga_memory", "By", "Session PGA (Program Global Area) memory",
+			2.4*1024*1024*1024+load*mrand.Float64()*512*1024*1024, instAttr()),
+		sum("oracledb.user_commits", "{commits}", "Number of user commits. When a user commits a transaction, the redo generated that reflects the changes made to database blocks must be written to disk", c.userCommits, instAttr()),
+		sum("oracledb.user_rollbacks", "1", "Number of times users manually issue the ROLLBACK statement or an error occurs during a user's transactions", c.userRollbacks, instAttr()),
+	)
+
+	// transactions monotonic sum — kept ALONGSIDE the gauge usage/limit so
+	// the backend's TransactionsPS (max-min)/window rate read still renders.
+	out = append(out,
+		sum("oracledb.transactions", "{transaction}", "Cumulative transactions (kept for rate read)", c.transactions, instAttr()),
+	)
+
+	// ──────────────────────────────────────────────────────────────────────
+	// OPT-IN MONOTONIC SUMS (operator's setup + panel use these)
+	// ──────────────────────────────────────────────────────────────────────
+	out = append(out,
+		sum("oracledb.physical_read_io_requests", "{requests}", "Number of read requests for application activity", c.physReadIOReq, instAttr()),
+		sum("oracledb.physical_write_io_requests", "{requests}", "Number of write requests for application activity", c.physWriteIOReq, instAttr()),
+		sum("oracledb.physical_writes", "{writes}", "Number of physical writes", c.physicalWrites, instAttr()),
+		sum("oracledb.db_block_gets", "{gets}", "Number of times a current block was requested from the buffer cache", c.dbBlockGets, instAttr()),
+		sum("oracledb.consistent_gets", "{gets}", "Number of times a consistent read was requested for a block from the buffer cache", c.consistentGets, instAttr()),
+	)
+
+	// ──────────────────────────────────────────────────────────────────────
+	// PANEL EXTRAS (kept — backend currently reads these)
+	// ──────────────────────────────────────────────────────────────────────
+
+	// Wait-class cumulative counters.
 	for _, wc := range oracleWaitClasses {
 		out = append(out, sum("oracledb.wait_time."+wc, "s",
 			"Cumulative time waited in the "+wc+" class", c.waitTime[wc], instAttr()))
 	}
 
-	// ── Top SQL by elapsed (sql_id / sql_text / executions attrs) ─────────────
+	// Top SQL by elapsed (sql_id / sql_text / executions attrs).
 	for _, sq := range oracleTopSQL {
 		out = append(out, &metricspb.Metric{
 			Name: "oracledb.top_sql.elapsed", Unit: "s",

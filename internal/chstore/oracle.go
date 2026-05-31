@@ -173,6 +173,14 @@ func (s *Store) GetOracleMetrics(
 	// counters get their delta from min/max below.
 	gauges, err := s.queryOracleGauges(ctx, from, to, instance, hasInstanceFilter)
 	if err == nil && len(gauges) > 0 {
+		// NOTE: the faithful oracledb receiver dimensions
+		// oracledb.sessions.usage by session_type + session_status, so a
+		// plain argMax-per-metric read (queryOracleGauges) returns only ONE
+		// bucket's value, not the total. We therefore treat that value as a
+		// lower-bound seed only — the authoritative Usage comes from summing
+		// the active/inactive split in queryOracleSessionsByStatus just below
+		// (which sums across the dimensions). Single-attr receivers — where
+		// sessions.usage is undimensioned — still read correctly here.
 		out.Sessions.Usage = gauges["oracledb.sessions.usage"]
 		out.Sessions.Limit = gauges["oracledb.sessions.limit"]
 		out.Processes.Usage = gauges["oracledb.processes.usage"]
@@ -197,9 +205,12 @@ func (s *Store) GetOracleMetrics(
 		if act > 0 || inact > 0 {
 			out.Sessions.Active = act
 			out.Sessions.Inactive = inact
-			// If we didn't get a Usage from the gauge query, sum
-			// here so the progress bar still works.
-			if out.Sessions.Usage == 0 {
+			// The active/inactive split sums ACROSS the receiver's
+			// session_type/session_status dimensions, so it is the
+			// authoritative total — prefer it over the (possibly partial,
+			// single-dimension) argMax read of oracledb.sessions.usage above.
+			// Only keep the gauge read when no split was found at all.
+			if act+inact > out.Sessions.Usage {
 				out.Sessions.Usage = act + inact
 			}
 		}
@@ -433,14 +444,29 @@ func oracleInstanceClause(withInstance bool) string {
 func (s *Store) queryOracleSessionsByStatus(
 	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) (active, inactive float64, err error) {
+	// Session status rides on `status` (Prom exporter / legacy) OR
+	// `session_status` (the upstream oracledb receiver dimensions
+	// oracledb.sessions.usage by session_type + session_status). Coalesce the
+	// two so both wirings light up the active/inactive split. The receiver
+	// dimensions usage by (type × status), so we SUM per status (across types)
+	// rather than argMax — argMax would pick a single type's bucket.
 	q := `
-		SELECT lower(attr_values[indexOf(attr_keys, 'status')]) AS st,
-		       argMax(value, time) AS v
-		FROM metric_points
-		WHERE time >= ? AND time <= ?
-		  AND metric IN ('oracledb.sessions', 'oracledb_sessions_value', 'oracledb.sessions.value')
-		  AND has(attr_keys, 'status')
-		` + oracleInstanceClause(withInstance) + `
+		SELECT status_key AS st, sum(latest) AS v
+		FROM (
+		    SELECT
+		        lower(coalesce(
+		            nullIf(attr_values[indexOf(attr_keys, 'status')], ''),
+		            nullIf(attr_values[indexOf(attr_keys, 'session_status')], '')
+		        )) AS status_key,
+		        attr_values[indexOf(attr_keys, 'session_type')] AS type_key,
+		        argMax(value, time) AS latest
+		    FROM metric_points
+		    WHERE time >= ? AND time <= ?
+		      AND metric IN ('oracledb.sessions', 'oracledb.sessions.usage', 'oracledb_sessions_value', 'oracledb.sessions.value')
+		      AND (has(attr_keys, 'status') OR has(attr_keys, 'session_status'))
+		    ` + oracleInstanceClause(withInstance) + `
+		    GROUP BY status_key, type_key
+		)
 		GROUP BY st`
 	args := []any{from, to}
 	if withInstance {

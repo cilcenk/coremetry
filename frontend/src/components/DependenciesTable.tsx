@@ -4,6 +4,7 @@ import { Empty, Spinner } from './Spinner';
 import { MultiLineChart } from './MultiLineChart';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { encodeFilters } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, OracleMetrics, PostgresMetrics, MySQLMetrics, RedisMetrics, SpanMetricSeries } from '@/lib/types';
@@ -513,7 +514,30 @@ function DetailDrawer({ system, cluster, name, kind, source, range }: {
                     <td style={{
                       fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                       fontSize: 11, wordBreak: 'break-word', maxWidth: 600,
-                    }}>{o.statement || <span style={{ color: 'var(--text3)' }}>(empty)</span>}</td>
+                    }}>
+                      {o.statement
+                        ? (
+                          <>
+                            {o.statement}
+                            {/* Trace exemplars — DB rows only. No
+                                per-statement service in this drawer
+                                (it's the DB-side aggregate), so we
+                                scope on db.statement LIKE + rootOnly=
+                                false and leave service unset. */}
+                            {kind === 'db' && (
+                              <Link to={statementTracesHref(o.statement)}
+                                title="Find traces running this statement (LIKE-prefix, best-effort)"
+                                style={{
+                                  marginLeft: 8, fontSize: 10, whiteSpace: 'nowrap',
+                                  color: 'var(--accent2)', fontWeight: 500,
+                                }}>
+                                → traces
+                              </Link>
+                            )}
+                          </>
+                        )
+                        : <span style={{ color: 'var(--text3)' }}>(empty)</span>}
+                    </td>
                     <td className="num mono">{fmtNum(o.count)}</td>
                     <td className="num mono">{o.avgDurationMs.toFixed(1)}ms</td>
                   </tr>
@@ -881,6 +905,7 @@ function OraclePanel({ instance, range }: { instance: string; range: TimeRange }
         }}>
           instance: {instance || '(unknown)'}
         </span>
+        {instance && <HostLink instance={instance} />}
       </div>
 
       {data === undefined && <Spinner />}
@@ -943,7 +968,7 @@ function OraclePanel({ instance, range }: { instance: string; range: TimeRange }
           )}
 
           {data.topSQL.length > 0 && (
-            <TopSQLTable rows={data.topSQL} />
+            <TopSQLTable rows={data.topSQL} instance={instance} />
           )}
 
           {data.tablespaces.length > 0 && (
@@ -1256,7 +1281,10 @@ function WaitClassesBar({ waits, onClickClass }: {
 // Complementary to the span-derived "Top statements" further
 // down: V$SQL sees everything the DB executes, traces only see
 // what the application emits.
-function TopSQLTable({ rows }: { rows: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[] }) {
+function TopSQLTable({ rows, instance }: {
+  rows: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[];
+  instance: string;
+}) {
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{
@@ -1282,7 +1310,27 @@ function TopSQLTable({ rows }: { rows: { sql: string; elapsedSec: number; execut
                   fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 11,
                   maxWidth: 600, wordBreak: 'break-word',
                 }}>
-                  {r.sql || <span style={{ color: 'var(--text3)' }}>(unknown)</span>}
+                  {r.sql
+                    ? (
+                      <>
+                        {r.sql}
+                        {/* Trace exemplars — V$SQL text is normalised
+                            so the LIKE-prefix is best-effort. Scopes
+                            by the receiver instance as service +
+                            rootOnly=false (db.statement lives on the
+                            child DB span). */}
+                        <Link to={statementTracesHref(r.sql, instance)}
+                          onClick={e => e.stopPropagation()}
+                          title="Find traces running this statement (LIKE-prefix, best-effort)"
+                          style={{
+                            marginLeft: 8, fontSize: 10, whiteSpace: 'nowrap',
+                            color: 'var(--accent2)', fontWeight: 500,
+                          }}>
+                          → traces
+                        </Link>
+                      </>
+                    )
+                    : <span style={{ color: 'var(--text3)' }}>(unknown)</span>}
                 </td>
                 <td className="num mono">{r.elapsedSec.toFixed(1)}s</td>
                 <td className="num mono">{fmtNum(r.executions)}</td>
@@ -1357,6 +1405,35 @@ function fmtBytes(v: number): string {
   return v.toFixed(0) + ' B';
 }
 
+// fmtDuration — compact seconds → "Nd Nh" / "Nh Nm" / "Nm" /
+// "Ns" for the Redis uptime tile. Sub-day TTLs and uptimes read
+// better than a raw second count.
+function fmtDuration(sec: number): string {
+  if (!isFinite(sec) || sec <= 0) return '0s';
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${Math.floor(sec)}s`;
+}
+
+// statementTracesHref — trace-exemplar link for one heavy
+// statement. Mirrors the SlowQueries.tsx pattern (v0.5.200):
+// LIKE-prefix the first 60 chars of db.statement and disable
+// rootOnly so the DB child spans (which actually carry
+// db.statement) match. Oracle V$SQL text is normalised so the
+// prefix LIKE is best-effort. service is optional — the
+// DetailDrawer top-ops case has no per-statement service, so
+// we scope on db.statement alone and leave service blank.
+function statementTracesHref(statement: string, service?: string): string {
+  const snippet = statement.slice(0, 60);
+  const f = encodeFilters([{ k: 'db.statement', op: 'LIKE', v: [snippet] }]);
+  const svc = service ? `&service=${encodeURIComponent(service)}` : '';
+  return `/traces?view=list&rootOnly=false${svc}&filters=${encodeURIComponent(f)}`;
+}
+
 // PostgresPanel — drill-down for one Postgres instance, mirrors
 // OraclePanel's shape (status badge + KPI tiles + per-DB table).
 // Tile clicks open the same metric-chart modal used by Oracle.
@@ -1414,6 +1491,15 @@ function PostgresPanel({ instance, range }: { instance: string; range: TimeRange
               onClick={() => setDrill({ metric: 'postgresql.replication.data_delay', label: 'Replication delay', unit: 's' })} />
             <Stat label="Bgwriter alloc/s" value={fmtNum(data.bgwriter.buffersAllocatedPerSec)}
               onClick={() => setDrill({ metric: 'postgresql.bgwriter.buffers.allocated', label: 'Bgwriter buffers allocated', unit: '/s' })} />
+            <Stat label="Buffers by backend/s" value={fmtNum(data.bgwriter.buffersBackendPerSec)}
+              tone={data.bgwriter.buffersBackendPerSec > data.bgwriter.buffersCheckpointPerSec ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'postgresql.bgwriter.buffers.writes', label: 'Buffers written by backend', unit: '/s' })} />
+            <Stat label="Temp bytes/s" value={fmtBytes(data.tempBytesPerSec)}
+              tone={data.tempBytesPerSec > 0 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'postgresql.temp.io', label: 'Temp bytes', unit: 'B' })} />
+            <Stat label="WAL age" value={`${data.walAgeSec.toFixed(0)}s`}
+              tone={data.walAgeSec > 300 ? 'warn' : 'ok'}
+              onClick={() => setDrill({ metric: 'postgresql.wal.age', label: 'WAL age', unit: 's' })} />
           </div>
 
           {data.databases.length > 0 && (
@@ -1505,6 +1591,9 @@ function MySQLPanel({ instance, range }: { instance: string; range: TimeRange })
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
             gap: 8, marginBottom: 12,
           }}>
+            <GaugeStat label="Connections"
+              usage={data.connections.usage} limit={data.connections.limit}
+              onClick={() => setDrill({ metric: 'mysql.connection.count', label: 'Connections' })} />
             <Stat label="Threads connected" value={fmtNum(data.threads.connected)}
               sub={`${fmtNum(data.threads.running)} running`}
               onClick={() => setDrill({ metric: 'mysql.threads', label: 'Threads' })} />
@@ -1516,6 +1605,12 @@ function MySQLPanel({ instance, range }: { instance: string; range: TimeRange })
             <Stat label="Row-lock waits/s" value={data.rowLockWaitsPerSec.toFixed(2)}
               tone={data.rowLockWaitsPerSec > 1 ? 'err' : data.rowLockWaitsPerSec > 0.2 ? 'warn' : 'ok'}
               onClick={() => setDrill({ metric: 'mysql.row_locks', label: 'Row-lock waits', unit: '/s' })} />
+            <Stat label="Row-lock time" value={`${data.rowLockTimeSec.toFixed(1)}s`}
+              tone={data.rowLockTimeSec > 1 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'mysql.locks.time', label: 'Row-lock time', unit: 's' })} />
+            <Stat label="Opened tables/s" value={data.openedTablesPerSec.toFixed(2)}
+              tone={data.openedTablesPerSec > 1 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'mysql.opened_resources.table', label: 'Opened tables', unit: '/s' })} />
             <Stat label="Buffer pool usage" value={`${data.bufferPool.usagePct.toFixed(1)}%`}
               sub={`${data.bufferPool.dirtyPct.toFixed(1)}% dirty`}
               tone={data.bufferPool.usagePct >= 95 ? 'warn' : 'ok'}
@@ -1640,6 +1735,22 @@ function RedisPanel({ instance, range }: { instance: string; range: TimeRange })
             <Stat label="Conn rejected/s" value={data.connectionsRejectedPerSec.toFixed(2)}
               tone={data.connectionsRejectedPerSec > 0 ? 'err' : 'ok'}
               onClick={() => setDrill({ metric: 'redis.connections.rejected', label: 'Connections rejected', unit: '/s' })} />
+            <Stat label="Memory RSS" value={fmtBytes(data.memory.rssBytes)}
+              onClick={() => setDrill({ metric: 'redis.memory.rss', label: 'Memory RSS', unit: 'B' })} />
+            <Stat label="Peak memory" value={fmtBytes(data.memory.peakBytes)}
+              onClick={() => setDrill({ metric: 'redis.memory.peak', label: 'Peak memory', unit: 'B' })} />
+            <Stat label="Lua memory" value={fmtBytes(data.memory.luaBytes)}
+              onClick={() => setDrill({ metric: 'redis.memory.lua', label: 'Lua memory', unit: 'B' })} />
+            <Stat label="Unsaved changes" value={fmtNum(data.changesSinceLastSave)}
+              sub="since last save"
+              tone={data.changesSinceLastSave > 10000 ? 'warn' : undefined}
+              onClick={() => setDrill({ metric: 'redis.rdb.changes_since_last_save', label: 'Changes since last save' })} />
+            <Stat label="Uptime" value={fmtDuration(data.uptimeSec)}
+              onClick={() => setDrill({ metric: 'redis.uptime', label: 'Uptime', unit: 's' })} />
+            <Stat label="Max client in-buf" value={fmtBytes(data.clients.maxInputBufferBytes)}
+              onClick={() => setDrill({ metric: 'redis.clients.max_input_buffer', label: 'Max client input buffer', unit: 'B' })} />
+            <Stat label="Max client out-buf" value={fmtBytes(data.clients.maxOutputBufferBytes)}
+              onClick={() => setDrill({ metric: 'redis.clients.max_output_buffer', label: 'Max client output buffer', unit: 'B' })} />
           </div>
           {data.keyspaces.length > 0 && (
             <div>
@@ -1724,7 +1835,26 @@ function PanelHeader({ engineLabel, instance, status, color, extraBadge }: {
       }}>
         instance: {instance || '(unknown)'}
       </span>
+      {instance && <HostLink instance={instance} />}
     </div>
+  );
+}
+
+// HostLink — unobtrusive cross-link from a receiver instance to
+// the host/service infra view (/service?name=…). Degrades
+// gracefully when the instance doesn't resolve to a known
+// service (the Service page shows its own empty state).
+function HostLink({ instance }: { instance: string }) {
+  return (
+    <Link to={`/service?name=${encodeURIComponent(instance)}`}
+      onClick={e => e.stopPropagation()}
+      title="Open this host / service in the infra view"
+      style={{
+        fontSize: 10, fontWeight: 500, color: 'var(--accent2)',
+        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+      }}>
+      host ↗
+    </Link>
   );
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTableNav } from '@/lib/useTableNav';
+import { reconcileColOrder, moveColumn } from '@/lib/tableColumns';
 import { Topbar } from '@/components/Topbar';
 import { TraceShapesView } from '@/components/TraceShapesView';
 import { IconSearch } from '@/components/icons';
@@ -17,7 +18,7 @@ import { ColumnManager } from '@/components/ColumnManager';
 import { api } from '@/lib/api';
 import { tsDateTime, timeRangeToNs, fmtNum, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
-import type { TracesResponse, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
+import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
 
 type View = 'list' | 'aggregate' | 'shapes';
 // Group-by dimensions match the server-side whitelist + a special
@@ -49,6 +50,22 @@ const AGG_NATURAL: Record<AggSort, SortOrder> = {
   count: 'desc', perMin: 'desc', errorRate: 'desc', avg: 'desc',
   p50: 'desc', p95: 'desc', p99: 'desc', max: 'desc', name: 'asc',
 };
+
+// v0.7.47 — reorderable + resizable Traces list columns. The fixed columns and
+// the operator's attribute columns share one ordered, resizable model; order +
+// widths persist to localStorage. The pure order math lives in lib/tableColumns.
+const TRACE_FIXED_COLS = ['time', 'service', 'operation', 'duration', 'spans', 'status'] as const;
+const TRACE_COL_LABEL: Record<string, string> = {
+  time: 'Time', service: 'Service', operation: 'Operation',
+  duration: 'Duration', spans: 'Spans', status: 'Status',
+};
+const TRACE_COL_W: Record<string, number> = {
+  time: 168, service: 130, operation: 280, duration: 104, spans: 72, status: 84,
+};
+const TRACE_ATTR_W = 160;
+const traceColIsFixed = (id: string) => (TRACE_FIXED_COLS as readonly string[]).includes(id);
+const traceColWidth = (id: string, widths: Record<string, number>) =>
+  widths[id] ?? TRACE_COL_W[id] ?? TRACE_ATTR_W;
 
 function TracesPageInner() {
   const navigate = useNavigate();
@@ -117,6 +134,19 @@ function TracesPageInner() {
   // exact column set. Bounded to 8 server-side.
   const [extraCols, setExtraCols] = useState<string[]>(
     () => (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean));
+  // v0.7.47 — reorderable + resizable list columns. colOrder unifies the fixed
+  // + attribute columns into one ordered list; colWidths holds per-column px.
+  // Both persist to localStorage; reconcileColOrder keeps colOrder valid as
+  // attribute columns are added/removed.
+  const [colOrder, setColOrder] = useState<string[]>(() => {
+    try { const s = localStorage.getItem('traces.colOrder'); if (s) return JSON.parse(s) as string[]; } catch { /* ignore */ }
+    return [...TRACE_FIXED_COLS];
+  });
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    try { const s = localStorage.getItem('traces.colWidths'); if (s) return JSON.parse(s) as Record<string, number>; } catch { /* ignore */ }
+    return {};
+  });
+  const dragColRef = useRef<string | null>(null);
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
   const [agg, setAgg] = useState<AggregateRow[] | null | undefined>(undefined);
 
@@ -269,6 +299,65 @@ function TracesPageInner() {
     if (sort === col) setOrder(order === 'desc' ? 'asc' : 'desc');
     else { setSort(col); setOrder(col === 'service' || col === 'operation' ? 'asc' : 'desc'); }
     setPage(0);
+  };
+
+  // v0.7.47 — keep colOrder valid as attribute columns come/go, and persist
+  // order + widths to localStorage.
+  useEffect(() => {
+    setColOrder(o => {
+      const r = reconcileColOrder(o, [...TRACE_FIXED_COLS], extraCols);
+      return r.length === o.length && r.every((x, i) => x === o[i]) ? o : r;
+    });
+  }, [extraCols]);
+  useEffect(() => {
+    try { localStorage.setItem('traces.colOrder', JSON.stringify(colOrder)); } catch { /* ignore */ }
+  }, [colOrder]);
+  useEffect(() => {
+    try { localStorage.setItem('traces.colWidths', JSON.stringify(colWidths)); } catch { /* ignore */ }
+  }, [colWidths]);
+
+  // Column resize — drag the right-edge handle (min 48px). Listeners on window
+  // so the drag continues outside the th.
+  const startColResize = (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = traceColWidth(id, colWidths);
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.max(48, Math.round(startW + (ev.clientX - startX)));
+      setColWidths(prev => ({ ...prev, [id]: w }));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  // Column reorder — drop a dragged column immediately before the target.
+  const onColDrop = (targetId: string) => {
+    const d = dragColRef.current;
+    dragColRef.current = null;
+    if (d) setColOrder(o => moveColumn(o, d, targetId));
+  };
+
+  // Per-column cell content for a trace row (rendered in colOrder).
+  const renderTraceCell = (id: string, t: TraceRow) => {
+    switch (id) {
+      case 'time':      return <span className="mono">{tsDateTime(t.startTime)}</span>;
+      case 'service':   return <SvcBadge name={t.serviceName} />;
+      case 'operation': return <span title={t.rootName}>{t.rootName || '—'}</span>;
+      case 'duration':  return <span className="mono">{t.durationMs.toFixed(2)}ms</span>;
+      case 'spans':     return <>{t.spanCount}</>;
+      case 'status':    return t.hasError
+        ? <span className="badge b-err">ERROR</span>
+        : <span className="badge b-ok">OK</span>;
+      default: {
+        const v = t.extras?.[id] ?? '';
+        return <span className="mono" style={{ fontSize: 11, color: v ? 'var(--text2)' : 'var(--text3)' }} title={v || ''}>{v || '—'}</span>;
+      }
+    }
   };
   const toggleAggSort = (col: AggSort) => {
     if (aggSort === col) setAggOrder(aggOrder === 'desc' ? 'asc' : 'desc');
@@ -532,32 +621,51 @@ function TracesPageInner() {
         {view === 'list' && data && traces.length > 0 && (
           <>
             <div className="table-wrap">
-              <table>
+              {/* v0.7.47 — table-layout:fixed + colgroup so per-column widths
+                  (drag the right edge to resize) actually stick; columns also
+                  reorder via the ⠿ grip. Order + widths persist to localStorage.
+                  Fixed columns stay sortable (click the label); attribute
+                  columns keep their ✕ remove. */}
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <colgroup>
+                  {colOrder.map(id => <col key={id} style={{ width: traceColWidth(id, colWidths) }} />)}
+                  <col style={{ width: 110 }} />{/* +Column gutter */}
+                </colgroup>
                 <thead><tr>
-                  <SortHeader col="time"      label="Time"      sort={sort} order={order} onSort={toggleSort} />
-                  <SortHeader col="service"   label="Service"   sort={sort} order={order} onSort={toggleSort} />
-                  <SortHeader col="operation" label="Operation" sort={sort} order={order} onSort={toggleSort} />
-                  <SortHeader col="duration"  label="Duration"  sort={sort} order={order} onSort={toggleSort} />
-                  <SortHeader col="spans"     label="Spans"     sort={sort} order={order} onSort={toggleSort} />
-                  <SortHeader col="status"    label="Status"    sort={sort} order={order} onSort={toggleSort} />
-                  {/* User-added attribute columns. Right-click /
-                      ✕ button on each removes; "+ Column" header
-                      adds a new one via the manager dropdown. */}
-                  {extraCols.map(k => (
-                    <th key={k} style={{ position: 'relative', whiteSpace: 'nowrap' }}>
-                      <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>
-                        {k}
-                      </span>
-                      <button type="button" title="Remove column"
-                        onClick={() => setExtraCols(extraCols.filter(c => c !== k))}
-                        style={{
-                          marginLeft: 6, padding: '0 4px', fontSize: 10, lineHeight: 1,
-                          background: 'transparent', border: 'none', color: 'var(--text3)',
-                          cursor: 'pointer',
-                        }}>×</button>
-                    </th>
-                  ))}
-                  <th style={{ width: 1, whiteSpace: 'nowrap' }}>
+                  {colOrder.map(id => {
+                    const fixed = traceColIsFixed(id);
+                    return (
+                      <th key={id}
+                          onDragOver={e => e.preventDefault()}
+                          onDrop={e => { e.preventDefault(); onColDrop(id); }}
+                          className={fixed ? `sortable${sort === id ? ' sorted' : ''}` : undefined}
+                          style={{ position: 'relative', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <span draggable
+                              onDragStart={() => { dragColRef.current = id; }}
+                              onDragEnd={() => { dragColRef.current = null; }}
+                              title="Drag to reorder"
+                              style={{ cursor: 'grab', marginRight: 5, color: 'var(--text3)', userSelect: 'none' }}>⠿</span>
+                        {fixed ? (
+                          <span onClick={() => toggleSort(id as SortColumn)} style={{ cursor: 'pointer' }}>
+                            {TRACE_COL_LABEL[id]}
+                            <span className="sort-arrow">{sort === id ? (order === 'desc' ? '▼' : '▲') : '↕'}</span>
+                          </span>
+                        ) : (
+                          <>
+                            <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>{id}</span>
+                            <button type="button" title="Remove column"
+                              onClick={() => setExtraCols(extraCols.filter(c => c !== id))}
+                              style={{ marginLeft: 6, padding: '0 4px', fontSize: 10, lineHeight: 1, background: 'transparent', border: 'none', color: 'var(--text3)', cursor: 'pointer' }}>×</button>
+                          </>
+                        )}
+                        <span onMouseDown={e => startColResize(id, e)}
+                              onClick={e => e.stopPropagation()}
+                              title="Drag to resize"
+                              style={{ position: 'absolute', top: 0, right: 0, width: 6, height: '100%', cursor: 'col-resize', userSelect: 'none' }} />
+                      </th>
+                    );
+                  })}
+                  <th style={{ whiteSpace: 'nowrap' }}>
                     <ColumnManager
                       cols={extraCols}
                       onAdd={k => { if (!extraCols.includes(k) && extraCols.length < 8) setExtraCols([...extraCols, k]); }} />
@@ -570,35 +678,19 @@ function TracesPageInner() {
                         className={tableNav.selected === i ? 'row-selected' : undefined}
                         onMouseEnter={() => {
                           tableNav.setSelected(i);
-                          // Hover-prefetch the trace's spans —
-                          // /api/traces/{id} is server-cached 5
-                          // min, so by the time the operator
-                          // clicks the row the trace detail
-                          // page's mount fetch lands on a HIT
-                          // (L1 first, Redis second). Dedupe via
-                          // a ref-held Set so dragging across
-                          // 50 rows fires 50 requests once each,
-                          // not the same 50 re-fired.
+                          // Hover-prefetch the trace's spans (server-cached 5m)
+                          // so the row click lands on a HIT. Deduped via a ref.
                           prefetchTrace(t.traceId);
                         }}
                         {...rowClickHandlers(`/trace?id=${t.traceId}`,
                                              () => navigate(`/trace?id=${t.traceId}`))}>
-                      <td className="mono">{tsDateTime(t.startTime)}</td>
-                      <td><SvcBadge name={t.serviceName} /></td>
-                      <td title={t.rootName}>{t.rootName || '—'}</td>
-                      <td className="mono">{t.durationMs.toFixed(2)}ms</td>
-                      <td>{t.spanCount}</td>
-                      <td>{t.hasError ? <span className="badge b-err">ERROR</span> : <span className="badge b-ok">OK</span>}</td>
-                      {extraCols.map(k => {
-                        const v = t.extras?.[k] ?? '';
-                        return (
-                          <td key={k} className="mono" style={{ fontSize: 11, color: v ? 'var(--text2)' : 'var(--text3)', whiteSpace: 'nowrap', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={v || ''}>
-                            {v || '—'}
-                          </td>
-                        );
-                      })}
-                      {/* Filler cell aligning with the "+ Column"
-                          header — keeps the table layout stable. */}
+                      {colOrder.map(id => (
+                        <td key={id}
+                            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {renderTraceCell(id, t)}
+                        </td>
+                      ))}
+                      {/* Filler cell aligning with the "+ Column" header. */}
                       <td />
                     </tr>
                   ))}
@@ -741,16 +833,8 @@ function TracesPageInner() {
   );
 }
 
-function SortHeader({ col, label, sort, order, onSort }: {
-  col: SortColumn; label: string; sort: SortColumn; order: SortOrder; onSort: (c: SortColumn) => void;
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col)}>
-      {label}<span className="sort-arrow">{active ? (order === 'desc' ? '▼' : '▲') : '↕'}</span>
-    </th>
-  );
-}
+// SortHeader removed in v0.7.47 — the list view now renders its headers inline
+// (reorder grip + resize handle + sort click). The aggregate view uses AggHeader.
 
 function AggHeader({ col, label, sort, order, onSort, align }: {
   col: AggSort; label: string; sort: AggSort; order: SortOrder;

@@ -17,8 +17,8 @@ jobs:
     name: Frontend (typecheck + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
@@ -40,7 +40,7 @@ jobs:
         working-directory: frontend
         run: npx vite build
       - name: Upload built UI for the Go job
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dist
           path: frontend/dist
@@ -51,7 +51,7 @@ jobs:
     needs: frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
@@ -59,7 +59,7 @@ jobs:
       # main.go uses //go:embed all:frontend/dist, so the Go build
       # needs the Vite-rendered SPA from the frontend job.
       - name: Pull built UI
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: frontend/dist
@@ -89,19 +89,19 @@ jobs:
     # gate once `golangci-lint run` is clean.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
       # golangci-lint compiles the package graph → needs the //go:embed SPA.
       - name: Pull built UI
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: frontend/dist
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           # Advisory: exit 0 even with findings (the ~32-finding baseline is
@@ -122,7 +122,7 @@ jobs:
       # upload-sarif writes code-scanning alerts (Trivy results → Security tab).
       security-events: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
@@ -131,7 +131,7 @@ jobs:
       # builds the package graph, so it needs the rendered SPA like the backend
       # job does. Pull the artifact instead of rebuilding the frontend here.
       - name: Pull built UI
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: frontend/dist
@@ -177,7 +177,7 @@ jobs:
     name: Helm (lint + template)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: azure/setup-helm@v5
         with:
           version: 'v3.15.0'

@@ -4,6 +4,8 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
 
 // /inbox — unified triage view (v0.5.211). Merges Problems +
@@ -16,6 +18,19 @@ import type { InboxItem, InboxKind } from '@/lib/types';
 // page is the daily landing surface.
 
 const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
+
+// Columns for the shared sortable + resizable DataTable. Default sort is
+// priority desc (P1 first); rows are pre-sorted by lastSeen desc so the
+// stable sort yields "P1 first, newest within priority" — the prior
+// fixed ordering, now re-sortable + resizable per column.
+const INBOX_COLS: DataTableColumn<InboxItem>[] = [
+  { id: 'priority', label: 'Priority', sortValue: it => PRIO_RANK[it.priority] ?? 0, naturalDir: 'desc', width: 80 },
+  { id: 'source',   label: 'Source',   sortValue: it => it.source,           naturalDir: 'asc', width: 100 },
+  { id: 'service',  label: 'Service',  sortValue: it => it.service,          naturalDir: 'asc', width: 190 },
+  { id: 'detail',   label: 'Detail',   sortValue: it => it.title,            naturalDir: 'asc', width: 380 },
+  { id: 'lastSeen', label: 'Last seen', sortValue: it => it.lastSeen,        naturalDir: 'desc', width: 170 },
+  { id: 'assignee', label: 'Assignee', sortValue: it => it.assignee ?? '',   naturalDir: 'asc', width: 150 },
+];
 
 export default function InboxPage() {
   const navigate = useNavigate();
@@ -94,6 +109,19 @@ export default function InboxPage() {
       prioSet.has(it.priority) &&
       kindSet.has(it.kind));
   }, [data, prioSet, kindSet]);
+
+  // Shared sortable + resizable table. Pre-sort by lastSeen desc so the
+  // primitive's stable priority-desc sort reproduces the prior fixed
+  // ordering (P1 first, newest within priority). Hook is unconditional.
+  const inboxRows = useMemo(
+    () => (filtered ? [...filtered].sort((a, b) => b.lastSeen - a.lastSeen) : []),
+    [filtered]);
+  const dt = useDataTable<InboxItem>({
+    storageKey: 'inbox',
+    columns: INBOX_COLS,
+    rows: inboxRows,
+    initialSort: { id: 'priority', dir: 'desc' },
+  });
 
   const counts = useMemo(() => {
     const out: Record<string, number> = { P1: 0, P2: 0, P3: 0,
@@ -246,24 +274,11 @@ export default function InboxPage() {
         )}
         {filtered && filtered.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 56 }}>Priority</th>
-                  <th style={{ width: 90 }}>Source</th>
-                  <th>Service</th>
-                  <th>Detail</th>
-                  <th style={{ width: 160 }}>Last seen</th>
-                  <th style={{ width: 140 }}>Assignee</th>
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {filtered.sort((a, b) => {
-                  const ra = PRIO_RANK[a.priority] ?? 0;
-                  const rb = PRIO_RANK[b.priority] ?? 0;
-                  if (ra !== rb) return rb - ra;
-                  return b.lastSeen - a.lastSeen;
-                }).map(it => (
+                {dt.sortedRows.map(it => (
                   <tr key={it.id}
                     onClick={() => goToSource(it)}
                     style={{

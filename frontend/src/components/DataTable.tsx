@@ -103,6 +103,17 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort }: {
   return { columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout };
 }
 
+// ColResizeHandle — drop-in resize grip for tables that keep their OWN
+// <th>s (e.g. server-sorted Services, non-sortable LogTable) but still
+// want the shared column-resize behaviour. The host <th> must be
+// position:relative so the absolutely-positioned .col-resize-handle (see
+// globals.css) anchors to its right edge. mousedown starts the drag;
+// click is stopped so the handle can live inside a sort-on-click <th>
+// without triggering a sort. (v0.7.54)
+export function ColResizeHandle<T>({ dt, colId }: { dt: DataTable<T>; colId: string }) {
+  return <span className="col-resize-handle" onMouseDown={e => dt.startResize(colId, e)} onClick={e => e.stopPropagation()} title="Drag to resize" />;
+}
+
 // DataTableColgroup — emits the <colgroup> that makes table-layout:fixed
 // respect (and resize) per-column widths. `leading` is the px width of any
 // leading non-data columns (expand chevron, checkbox) rendered before the

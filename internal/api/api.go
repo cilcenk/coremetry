@@ -503,6 +503,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
 	mux.HandleFunc("GET    /api/problems/count",            s.countProblems)
 	mux.HandleFunc("GET    /api/problems/buckets",          s.listProblemBuckets)
+	mux.HandleFunc("GET    /api/problems/{id}/rootcause",   s.getProblemRootCause)
 	mux.HandleFunc("POST   /api/problems/acknowledge",      auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
 	mux.HandleFunc("PATCH  /api/problems/{id}/assignee",    auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
 	// Unified triage inbox (v0.5.211) — merges Problems +

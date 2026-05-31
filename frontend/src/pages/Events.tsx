@@ -5,6 +5,8 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange } from '@/lib/types';
 
 // v0.6.15 — Operator events list/delete UI.
@@ -101,6 +103,21 @@ export default function EventsPage() {
     }
   };
 
+  // Shared sortable + resizable table. Actions column only for deleters.
+  const eventCols = useMemo<DataTableColumn<Event>[]>(() => [
+    { id: 'time',    label: 'Time',    sortValue: e => e.time,    naturalDir: 'desc', width: 150 },
+    { id: 'kind',    label: 'Kind',    sortValue: e => e.kind,    naturalDir: 'asc',  width: 120 },
+    { id: 'label',   label: 'Label',   sortValue: e => e.label,   naturalDir: 'asc',  width: 300 },
+    { id: 'service', label: 'Service', sortValue: e => e.service, naturalDir: 'asc',  width: 170 },
+    { id: 'owner',   label: 'Owner',   sortValue: e => e.owner,   naturalDir: 'asc',  width: 130 },
+    { id: 'link',    label: 'Link',    width: 80 },
+    ...(canDelete ? [{ id: 'actions', label: '', width: 60 } as DataTableColumn<Event>] : []),
+  ], [canDelete]);
+  const dt = useDataTable<Event>({
+    storageKey: 'events', columns: eventCols,
+    rows: data ?? [], initialSort: { id: 'time', dir: 'desc' },
+  });
+
   return (
     <>
       <Topbar title="Events" range={range} onRangeChange={setRange} />
@@ -134,20 +151,11 @@ export default function EventsPage() {
         )}
         {data && data.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Kind</th>
-                  <th>Label</th>
-                  <th>Service</th>
-                  <th>Owner</th>
-                  <th>Link</th>
-                  {canDelete && <th style={{ width: 60 }}></th>}
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {data.map(ev => (
+                {dt.sortedRows.map(ev => (
                   <tr key={ev.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                     <td className="mono" style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}
                         title={new Date(ev.time / 1_000_000).toISOString()}>

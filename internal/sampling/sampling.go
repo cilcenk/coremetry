@@ -126,7 +126,10 @@ func (s *Sampler) Decide(span *chstore.Span) bool {
 	if threshold == 0 {
 		return false
 	}
-	if threshold >= 0xffffffff {
+	// threshold == max is the "keep 100%" sentinel (ratioToThreshold maps
+	// ratio>=1 → 0xffffffff). `==` not `>=`: nothing of type uint32 exceeds
+	// MaxUint32, so >= was a redundant compare (staticcheck SA4003).
+	if threshold == 0xffffffff {
 		return true
 	}
 	return traceHash(span.TraceID) < threshold

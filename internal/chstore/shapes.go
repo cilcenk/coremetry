@@ -73,25 +73,19 @@ func (s *Store) GetTraceShapes(ctx context.Context, f TraceShapesFilter) ([]Trac
 	sampleDivisor := 10 // 10% sample
 	sampleRate := 1.0 / float64(sampleDivisor)
 
-	args := []any{
-		f.From, f.To, // outer time window
-		sampleDivisor,
-		f.From, f.To,
-	}
+	// Optional service narrowing — inlined into the inner WHERE via the %s.
 	serviceFilter := ""
 	if f.Service != "" {
 		serviceFilter = ` AND service_name = ?`
-		args = append(args, f.Service)
 	}
-	args = append(args, f.Limit)
 
-	// CH idiom:
-	//   groupUniqArray(...) gathers per-trace_id distinct
-	//   "service|operation" tuples; arraySort gives a
-	//   canonical ordering so cityHash64 produces stable
-	//   shape IDs across traces with equivalent signatures.
-	//   arrayStringConcat is needed because cityHash64 wants
-	//   a String input.
+	// groupUniqArray(...) gathers per-trace_id distinct "service|operation"
+	// tuples; arraySort canonicalises the order so cityHash64 produces stable
+	// shape IDs across traces with equivalent signatures (arrayStringConcat →
+	// String for the hash). The cityHash64(trace_id) %% N sample keeps the scan
+	// bounded at billion-span scale; the inner WHERE does all the filtering
+	// (time window + sample divisor + optional service) and the outer query
+	// just rolls up. TraceCount is extrapolated back by 1/sampleRate on read.
 	q := fmt.Sprintf(`
 		SELECT
 			shape_hash,
@@ -120,53 +114,15 @@ func (s *Store) GetTraceShapes(ctx context.Context, f TraceShapesFilter) ([]Trac
 		SETTINGS max_execution_time = 30`,
 		serviceFilter)
 
-	// %s placeholder for the optional " AND service_name = ?"
-	// already inlined above; the inner WHERE block has its own
-	// time + sample-divisor placeholders. Re-order args for the
-	// final placeholder positions: inner-time, sample-divisor,
-	// outer-time(unused — we removed the outer time filter
-	// since the inner WHERE catches it), service?, limit.
-	//
-	// Actually the simpler form is: inner WHERE catches all
-	// filtering, the outer query just rolls up. Drop the outer
-	// f.From/f.To.
-	finalArgs := []any{f.From, f.To, sampleDivisor}
+	// Placeholder order: inner-time (from, to), sample divisor, optional
+	// service, outer LIMIT.
+	args := []any{f.From, f.To, sampleDivisor}
 	if f.Service != "" {
-		finalArgs = append(finalArgs, f.Service)
+		args = append(args, f.Service)
 	}
-	finalArgs = append(finalArgs, f.Limit)
+	args = append(args, f.Limit)
 
-	// Re-emit a simpler form of the query: outer SELECT has no
-	// own WHERE; everything's in the inner.
-	q = fmt.Sprintf(`
-		SELECT
-			shape_hash,
-			any(shape_signature) AS signature,
-			count() AS sample_count,
-			avg(trace_dur_ms)    AS avg_ms,
-			quantile(0.99)(trace_dur_ms) AS p99_ms,
-			countIf(has_error)   AS sample_error
-		FROM (
-			SELECT
-				trace_id,
-				cityHash64(arrayStringConcat(
-					arraySort(groupUniqArray(concat(service_name, '|', name))),
-					',')) AS shape_hash,
-				arraySort(groupUniqArray(concat(service_name, '|', name))) AS shape_signature,
-				(max(toUnixTimestamp64Milli(time)) - min(toUnixTimestamp64Milli(time))) AS trace_dur_ms,
-				maxIf(1, status_code = 'error') AS has_error
-			FROM spans
-			WHERE time >= ? AND time <= ?
-			  AND cityHash64(trace_id) %% ? = 0%s
-			GROUP BY trace_id
-		)
-		GROUP BY shape_hash
-		ORDER BY sample_count DESC
-		LIMIT ?
-		SETTINGS max_execution_time = 30`,
-		serviceFilter)
-
-	rows, err := s.conn.Query(ctx, q, finalArgs...)
+	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("trace shapes: %w", err)
 	}

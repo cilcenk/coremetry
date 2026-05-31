@@ -2,12 +2,13 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Empty, Spinner } from './Spinner';
 import { MultiLineChart } from './MultiLineChart';
+import { Sparkline } from './Sparkline';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { TimeRange, DBDetail, MessagingDetail, OracleMetrics, PostgresMetrics, MySQLMetrics, RedisMetrics, SpanMetricSeries } from '@/lib/types';
+import type { TimeRange, DBDetail, MessagingDetail, OracleMetrics, PostgresMetrics, MySQLMetrics, RedisMetrics, SpanMetricSeries, DBTrend } from '@/lib/types';
 
 // OracleDrill — what the user clicked on. Carries enough state
 // to build a metricQuery against /api/metrics/query and label
@@ -81,6 +82,12 @@ export function DependenciesTable({
   // drawer survives sort + filter changes (system+name are
   // stable identifiers).
   const [openKey, setOpenKey] = useState<string | null>(null);
+  // #1 sparkline + #6 health-chip source. One DBTrend per
+  // (dbSystem, instance, dbName); we join to the overview rows
+  // by (system, instance, dbName) — see trendFor below. null =
+  // backend returned null / fetch failed (render the '—'
+  // placeholder), undefined = not yet loaded.
+  const [trends, setTrends] = useState<Map<string, DBTrend> | null | undefined>(undefined);
 
   const systems = useMemo(() => {
     const s = new Set<string>();
@@ -138,6 +145,10 @@ export function DependenciesTable({
     { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
     { id: 'avg', label: 'Avg', sortValue: r => r.avgDurationMs, numeric: true, naturalDir: NATURAL.avg, width: 90 },
     { id: 'p99', label: 'P99', sortValue: r => r.p99DurationMs, numeric: true, naturalDir: NATURAL.p99, width: 90 },
+    // #1 — non-sortable RED sparkline column. No sortValue so the
+    // shared DataTable head renders it as a plain (un-clickable)
+    // header. Body cell joins the row to its DBTrend via trendFor.
+    { id: 'trend', label: 'Trend', width: 140 },
     { id: 'callers', label: 'Top callers', width: 240 },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [hasClusterCol, kind]);
@@ -165,6 +176,50 @@ export function DependenciesTable({
       (r.destination && r.destination !== 'unknown'
         ? `messaging.destination.name = "${r.destination}"` : '');
     return `/explore?dsl=${encodeURIComponent(dsl)}&mode=advanced&result=traces`;
+  };
+
+  // #1 + #6 — fetch per-row RED trends on range change. Kept
+  // unconditional (above the rows.length===0 early return) so the
+  // hook order is stable. Stores two keys per trend in the Map:
+  // the precise (system|instance|dbName) and a looser
+  // (system|instance) fallback — db.name on the trend ('' /
+  // 'default') doesn't always line up with the row's dbName, so
+  // trendFor tries exact first then falls back to (system,
+  // instance). cluster is empty for DB rows so it isn't part of
+  // the join.
+  useEffect(() => {
+    let live = true;
+    setTrends(undefined);
+    const { from, to } = timeRangeToNs(range);
+    api.dbTrends(from, to)
+      .then(list => {
+        if (!live) return;
+        if (!list) { setTrends(null); return; }
+        const m = new Map<string, DBTrend>();
+        for (const t of list) {
+          m.set(`${t.dbSystem}|${t.instance}|${t.dbName}`, t);
+          // Looser fallback key — first writer wins so a real
+          // db.name'd trend isn't clobbered by a 'default' sibling.
+          const loose = `${t.dbSystem}|${t.instance}`;
+          if (!m.has(loose)) m.set(loose, t);
+        }
+        setTrends(m);
+      })
+      .catch(() => { if (live) setTrends(null); });
+    return () => { live = false; };
+  }, [range]);
+
+  // trendFor — join one overview row to its DBTrend. Match on
+  // (system, instance, dbName) exactly; fall back to
+  // (system, instance) when dbName doesn't line up (trend's
+  // db.name may be '' / 'default' while the row carries a real
+  // one, or vice-versa). nameOf(r) is the instance/destination.
+  const trendFor = (r: DepRow): DBTrend | undefined => {
+    if (!trends) return undefined;
+    const inst = nameOf(r);
+    const db = r.dbName ?? '';
+    return trends.get(`${r.system}|${inst}|${db}`)
+        ?? trends.get(`${r.system}|${inst}`);
   };
 
   if (rows.length === 0) {
@@ -304,6 +359,16 @@ export function DependenciesTable({
                     </td>
                     <td className="mono" style={{ textAlign: 'right' }}>{r.avgDurationMs.toFixed(1)}ms</td>
                     <td className="mono" style={{ textAlign: 'right' }}>{r.p99DurationMs.toFixed(1)}ms</td>
+                    {/* #1 Trend + #6 health chips. Sparkline plots
+                        the call-rate (rps) over the window; it flips
+                        red/amber when the trend's CURRENT error rate
+                        is elevated so a row reads "unhealthy" without
+                        a mouse-over. Under it, compact p99 + err
+                        chips surface the latest-bucket gauge. '—'
+                        when no trend joins (or trends failed/loading). */}
+                    <td onClick={e => e.stopPropagation()}>
+                      <TrendCell trend={trendFor(r)} loading={trends === undefined} />
+                    </td>
                     <td style={{ fontSize: 11 }} onClick={e => e.stopPropagation()}>
                       {r.callers.length === 0
                         ? <span style={{ color: 'var(--text3)' }}>—</span>
@@ -321,7 +386,7 @@ export function DependenciesTable({
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={hasClusterCol ? 10 : 9} style={{
+                      <td colSpan={hasClusterCol ? 11 : 10} style={{
                         background: 'var(--bg1)', padding: '12px 16px',
                         borderTop: '1px solid var(--border)',
                       }}>
@@ -342,6 +407,66 @@ export function DependenciesTable({
         </table>
       </div>
     </>
+  );
+}
+
+// TrendCell renders the #1 RED sparkline + #6 latest-bucket
+// health chips for one overview row. Plots the call-rate (rps)
+// series; the sparkline tints red when the trend's CURRENT error
+// rate is high (>5) / amber (>1) reusing the badge tone vars.
+// Under the sparkline, compact p99 + err chips surface the
+// latest-bucket gauge (curP99Ms tinted by threshold; the err
+// chip only shows when curErrorRate > 0). A missing trend (no
+// join / failed / still loading) renders a muted '—'.
+function TrendCell({ trend, loading }: {
+  trend: DBTrend | undefined;
+  loading: boolean;
+}) {
+  if (!trend) {
+    return (
+      <span title={loading ? 'loading trend…' : 'no trend in this window'}
+        style={{ color: 'var(--text3)', fontSize: 11 }}>—</span>
+    );
+  }
+  const rps = trend.points.map(p => p.rps);
+  // Health tone from the latest-bucket gauge — drives both the
+  // sparkline colour and the err chip. Mirrors the row's errCls
+  // thresholds (>5 err, >0 warn) so the eye doesn't recalibrate.
+  const errTone: 'err' | 'warn' | 'ok' =
+    trend.curErrorRate > 5 ? 'err'
+    : trend.curErrorRate > 1 ? 'warn' : 'ok';
+  const sparkColor =
+    errTone === 'err' ? 'var(--err)'
+    : errTone === 'warn' ? 'var(--warn)'
+    : undefined; // undefined → Sparkline's default --accent2
+  // p99 chip tone — same ms thresholds the drawer's Stat tiles
+  // use elsewhere wouldn't fit (those are domain-specific); a
+  // generic latency band reads fine here: >500ms err, >200ms warn.
+  const p99Tone: 'err' | 'warn' | 'ok' =
+    trend.curP99Ms > 500 ? 'err'
+    : trend.curP99Ms > 200 ? 'warn' : 'ok';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <Sparkline
+        values={rps}
+        width={120}
+        height={20}
+        color={sparkColor}
+        unit="/s"
+        title={`call-rate · cur ${trend.curRps.toFixed(1)}/s`} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span className={`badge b-${p99Tone}`} style={{ fontSize: 9 }}
+          title="latest-bucket p99">
+          {trend.curP99Ms.toFixed(0)}ms
+        </span>
+        {trend.curErrorRate > 0 && (
+          <span className={`badge b-${errTone}`} style={{ fontSize: 9 }}
+            title="latest-bucket error rate">
+            {trend.curErrorRate.toFixed(1)}%
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

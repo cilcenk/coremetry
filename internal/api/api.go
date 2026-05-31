@@ -382,6 +382,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/endpoints",  s.getEndpoints)
 	mux.HandleFunc("GET /api/services/{name}/attrs", s.getServiceAttrs)
 	mux.HandleFunc("GET /api/databases",  s.getDatabases)
+	mux.HandleFunc("GET /api/databases/trends", s.getDBTrends)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
 	// Cross-service slow-query catalog (v0.5.165). One row per
 	// (service, normalised statement) ordered by total wall-clock
@@ -2020,6 +2021,22 @@ func (s *Server) getDatabases(w http.ResponseWriter, r *http.Request) {
 	key := "databases:" + cacheBucket(from, to)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.GetDatabases(r.Context(), from, to)
+	})
+}
+
+// getDBTrends serves the per-row RED sparklines (#1) + latest-bucket
+// health snapshot (#6) for the /databases + /messaging overview
+// grid. One DBTrend per (db_system, instance, db_name) — keyed
+// identically to the /api/databases rows so the frontend joins
+// trends → rows by (system, instance, dbName). Read-only; no auth
+// gate / audit. Cache key hashes the (minute-bucketed) window via
+// the shared cacheBucket helper; 30s TTL matches the overview so a
+// page load and its sparkline fetch share the same warm window.
+func (s *Server) getDBTrends(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, time.Hour)
+	key := "db-trends:" + cacheBucket(from, to)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.GetDBTrends(r.Context(), from, to)
 	})
 }
 

@@ -645,6 +645,14 @@ export const api = {
   databases: (fromNs: number, toNs: number) =>
     get<import('./types').DBInstance[] | null>(
       `/api/databases?from=${fromNs}&to=${toNs}`),
+  // Per-row RED sparklines + latest-bucket health snapshot for the
+  // /databases + /messaging overview grid. One DBTrend per
+  // (dbSystem, instance, dbName) — join to the overview rows by
+  // (system, instance, dbName). Sourced from db_summary_5m, 30s
+  // cached server-side.
+  dbTrends: (fromNs: number, toNs: number) =>
+    get<import('./types').DBTrend[] | null>(
+      `/api/databases/trends?from=${fromNs}&to=${toNs}`),
   // /messaging overview — parallel shape for queues / topics
   // (Kafka / RabbitMQ / IBM MQ / NATS / etc.).
   messaging: (fromNs: number, toNs: number) =>

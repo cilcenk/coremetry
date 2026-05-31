@@ -227,6 +227,39 @@ export interface DBInstance {
   source?: 'spans' | 'receiver';
 }
 
+// DBTrendPoint — one 5-minute bucket of a database's RED trend,
+// aligned to the db_summary_5m time_bucket grid. t is unix ns at
+// the bucket start. rps is spans/sec (span_count / 300), errorRate
+// is 0..100, p99Ms is the merged p99 in milliseconds.
+export interface DBTrendPoint {
+  t: number;          // unix ns — bucket start
+  rps: number;        // call rate: span_count / 300
+  errorRate: number;  // 0..100
+  p99Ms: number;      // p99 duration, ms
+}
+
+// DBTrend — per-row sparkline (#1) + latest-bucket health snapshot
+// (#6) for the /databases + /messaging overview grid. Keyed
+// identically to DBInstance / the DepRow join key:
+// (dbSystem, instance, dbName, cluster). cluster is empty for
+// DB rows (no cluster dimension); it rides the shape so the same
+// type can serve the messaging grid join. The component joins
+// trends → rows by matching (system, instance, dbName).
+//
+// points is ascending-time (one entry per 5-minute bucket the
+// window covers). The cur* fields are the latest non-empty
+// bucket's snapshot — the per-row gauge source.
+export interface DBTrend {
+  dbSystem: string;
+  instance: string;
+  dbName: string;
+  cluster: string;
+  points: DBTrendPoint[];
+  curRps: number;
+  curErrorRate: number;  // 0..100
+  curP99Ms: number;
+}
+
 // DBCallerBreakdown — one row of the per-(service, pod)
 // breakdown shown in the DB / messaging detail drawer. Pod is
 // the resource.host.name on the calling span — k8s pod name on

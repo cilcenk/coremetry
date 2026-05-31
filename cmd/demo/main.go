@@ -1504,6 +1504,15 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 			}},
 		})
 	}
+
+	// ── OracleDB receiver metrics ─────────────────────────────────────────────
+	// Synthetic oracledb.* points that make the /databases OracleDB-receiver
+	// panel show real data (Status="up") + surface a source="receiver" Oracle
+	// row per instance. Self-contained ResourceMetrics (own service.name =
+	// oracledb-receiver), appended on the existing metrics tick. See
+	// oracle_metrics.go for the read-contract mapping.
+	rms = append(rms, oracleReceiverMetrics(startNs, nowNs)...)
+
 	return rms
 }
 

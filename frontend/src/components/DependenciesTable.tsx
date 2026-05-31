@@ -132,6 +132,7 @@ export function DependenciesTable({
       ? [{ id: 'cluster', label: 'Cluster', sortValue: (r: DepRow) => r.cluster ?? '', naturalDir: NATURAL.cluster, width: 120 } as DataTableColumn<DepRow>]
       : []),
     { id: 'name', label: kind === 'db' ? 'Instance' : 'Destination', sortValue: r => nameOf(r), naturalDir: NATURAL.name, width: 210 },
+    { id: 'database', label: 'Database', sortValue: r => r.dbName ?? '', naturalDir: 'asc', width: 120 },
     { id: 'spanCount', label: 'Calls', sortValue: r => r.spanCount, numeric: true, naturalDir: NATURAL.spanCount, width: 96 },
     { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
     { id: 'avg', label: 'Avg', sortValue: r => r.avgDurationMs, numeric: true, naturalDir: NATURAL.avg, width: 90 },
@@ -269,19 +270,20 @@ export function DependenciesTable({
                           fallback
                         </span>
                       )}
-                      {/* v0.5.315 — db.name chip when present.
-                          One host serving N databases (Oracle
-                          SID/service, PostgreSQL / MongoDB /
-                          MSSQL DB) → row is keyed on (host,
-                          dbName). Chip surfaces the dbName so
-                          the operator sees the addressable
-                          unit at a glance. Hidden for the
-                          'default' fallback (means the OTel
-                          instrumentation didn't emit db.name). */}
-                      {r.dbName && r.dbName !== 'default' && (
+                    </td>
+                    {/* v0.5.315 / dedicated Database column — one host
+                        serving N databases (Oracle SID/service,
+                        PostgreSQL / MongoDB / MSSQL DB) → row is keyed
+                        on (host, dbName). Surfaced as its own column
+                        (was an inline ⛁ chip) so the operator can scan
+                        + sort by database. '—' for the 'default'
+                        fallback (OTel instrumentation didn't emit
+                        db.name). */}
+                    <td>
+                      {r.dbName && r.dbName !== 'default' ? (
                         <span title={`db.name = ${r.dbName}`}
                           style={{
-                            marginLeft: 8, fontSize: 10,
+                            fontSize: 10,
                             padding: '1px 6px', borderRadius: 3,
                             background: 'var(--bg3)',
                             border: '1px solid var(--border)',
@@ -291,6 +293,8 @@ export function DependenciesTable({
                           }}>
                           ⛁ {r.dbName}
                         </span>
+                      ) : (
+                        <span style={{ color: 'var(--text3)' }}>—</span>
                       )}
                     </td>
                     <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(r.spanCount)}</td>
@@ -316,7 +320,7 @@ export function DependenciesTable({
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={hasClusterCol ? 9 : 8} style={{
+                      <td colSpan={hasClusterCol ? 10 : 9} style={{
                         background: 'var(--bg1)', padding: '12px 16px',
                         borderTop: '1px solid var(--border)',
                       }}>

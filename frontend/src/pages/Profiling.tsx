@@ -7,7 +7,27 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { BreakdownBar, KindBadge } from '@/components/KindBadge';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { ProfileRow, ProfileHotspotsResponse, TimeRange } from '@/lib/types';
+
+// Columns for the shared sortable + resizable DataTable.
+const PROFILE_COLS: DataTableColumn<ProfileRow>[] = [
+  { id: 'time',    label: 'Time',    sortValue: p => p.startTime,        naturalDir: 'desc', width: 170 },
+  { id: 'service', label: 'Service', sortValue: p => p.serviceName,      naturalDir: 'asc',  width: 200 },
+  { id: 'type',    label: 'Type',    sortValue: p => p.profileType,      naturalDir: 'asc',  width: 110 },
+  { id: 'window',  label: 'Window',  sortValue: p => p.durationMs,       naturalDir: 'desc', width: 110 },
+  { id: 'samples', label: 'Samples', sortValue: p => p.sampleCount,      naturalDir: 'desc', width: 120 },
+  { id: 'host',    label: 'Host',    sortValue: p => p.hostName ?? '',   naturalDir: 'asc',  width: 180 },
+];
+type HotspotRow = ProfileHotspotsResponse['hotspots'][number];
+const HOTSPOT_COLS: DataTableColumn<HotspotRow>[] = [
+  { id: 'method',   label: 'Method',   sortValue: h => h.name,        naturalDir: 'asc',  width: 280 },
+  { id: 'location', label: 'Location', sortValue: h => h.file ?? '',  naturalDir: 'asc',  width: 240 },
+  { id: 'self',     label: 'Self',     sortValue: h => h.self,  numeric: true, naturalDir: 'desc', width: 160 },
+  { id: 'total',    label: 'Total',    sortValue: h => h.total, numeric: true, naturalDir: 'desc', width: 160 },
+  { id: 'paths',    label: 'Paths',    sortValue: h => h.paths, numeric: true, naturalDir: 'desc', width: 90 },
+];
 
 const TYPES = [
   { v: '', label: 'All types' },
@@ -49,6 +69,11 @@ export default function ProfilingPage() {
   }, { replace: true });
   const [data, setData] = useState<ProfileRow[] | null | undefined>(undefined);
   const [hotspots, setHotspots] = useState<ProfileHotspotsResponse | null | undefined>(undefined);
+  // Shared sortable + resizable profiles list (unconditional hook).
+  const profileDt = useDataTable<ProfileRow>({
+    storageKey: 'profiles', columns: PROFILE_COLS,
+    rows: data ?? [], initialSort: { id: 'time', dir: 'desc' },
+  });
   // Setup recipes accordion — empty/no profiles is the common
   // first-run state, and operators end up grepping the demo source
   // to figure out the wire format. Surfacing copy-paste snippets
@@ -144,19 +169,11 @@ export default function ProfilingPage() {
             )}
             {data && data.length > 0 && (
               <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Service</th>
-                      <th>Type</th>
-                      <th>Window</th>
-                      <th>Samples</th>
-                      <th>Host</th>
-                    </tr>
-                  </thead>
+                <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={profileDt} />
+                  <DataTableHead dt={profileDt} />
                   <tbody>
-                    {data.map(p => (
+                    {profileDt.sortedRows.map(p => (
                       <tr key={p.profileId} onClick={() => navigate(`/profile?id=${p.profileId}`)}>
                         <td className="mono">{tsShort(p.startTime)}</td>
                         <td>
@@ -211,6 +228,12 @@ function HotspotsPanel({ service, hotspots }: {
   service: string;
   hotspots: ProfileHotspotsResponse | null | undefined;
 }) {
+  // Sortable + resizable hotspots table — hook BEFORE the early returns
+  // (react-hooks rules-of-hooks).
+  const hsDt = useDataTable<HotspotRow>({
+    storageKey: 'hotspots', columns: HOTSPOT_COLS,
+    rows: hotspots?.hotspots ?? [],
+  });
   if (!service) {
     return (
       <Empty icon={<IconFlame size={28} />} title="Pick a service">
@@ -253,18 +276,11 @@ function HotspotsPanel({ service, hotspots }: {
         )}
       </div>
       <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Method</th>
-              <th style={{ width: 240 }}>Location</th>
-              <th className="num" style={{ width: 160 }}>Self</th>
-              <th className="num" style={{ width: 160 }}>Total</th>
-              <th className="num" style={{ width: 80 }}>Paths</th>
-            </tr>
-          </thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={hsDt} />
+          <DataTableHead dt={hsDt} />
           <tbody>
-            {hotspots.hotspots.map((h, i) => {
+            {hsDt.sortedRows.map((h, i) => {
               const selfPct = (h.self / totalSamples) * 100;
               const totalPct = (h.total / totalSamples) * 100;
               return (

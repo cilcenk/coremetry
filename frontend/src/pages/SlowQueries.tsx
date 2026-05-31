@@ -5,7 +5,23 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
+
+// Columns for the shared sortable + resizable DataTable primitive.
+// Default order matches the backend's total-wall-clock sort so the
+// first paint is unchanged; the operator can now re-sort/resize any.
+const SLOW_COLS: DataTableColumn<SlowQueryRow>[] = [
+  { id: 'service',    label: 'Service',                sortValue: r => r.service,    naturalDir: 'asc', width: 180 },
+  { id: 'dbSystem',   label: 'DB',                     sortValue: r => r.dbSystem,   naturalDir: 'asc', width: 90 },
+  { id: 'statement',  label: 'Statement (normalised)', sortValue: r => r.statement,  naturalDir: 'asc', width: 380 },
+  { id: 'count',      label: 'Calls',      sortValue: r => r.count,      numeric: true, width: 90 },
+  { id: 'avgMs',      label: 'Avg ms',     sortValue: r => r.avgMs,      numeric: true, width: 90 },
+  { id: 'p99Ms',      label: 'P99 ms',     sortValue: r => r.p99Ms,      numeric: true, width: 90 },
+  { id: 'totalMs',    label: 'Total time', sortValue: r => r.totalMs,    numeric: true, width: 110 },
+  { id: 'errorCount', label: 'Errors',     sortValue: r => r.errorCount, numeric: true, width: 90 },
+];
 
 // Per-row Copilot explain state — keeps the slow-query table
 // page lean while letting each expanded row hold its own AI
@@ -71,6 +87,16 @@ export default function SlowQueriesPage() {
     ? Array.from(new Set(rows.map(r => r.dbSystem).filter(Boolean))).sort()
     : [];
 
+  // Shared sortable + resizable table. Called unconditionally (hooks
+  // rule) with [] while loading; default sort = total time desc to match
+  // the backend's wall-clock ordering on first paint.
+  const dt = useDataTable<SlowQueryRow>({
+    storageKey: 'slowqueries',
+    columns: SLOW_COLS,
+    rows: rows ?? [],
+    initialSort: { id: 'totalMs', dir: 'desc' },
+  });
+
   return (
     <>
       <Topbar title="Slow queries" range={range} onRangeChange={setRange} />
@@ -107,22 +133,11 @@ export default function SlowQueriesPage() {
         )}
         {rows && rows.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 36 }}></th>
-                  <th>Service</th>
-                  <th>DB</th>
-                  <th>Statement (normalised)</th>
-                  <th className="num">Calls</th>
-                  <th className="num">Avg ms</th>
-                  <th className="num">P99 ms</th>
-                  <th className="num">Total time</th>
-                  <th className="num">Errors</th>
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} leading={[36]} />
+              <DataTableHead dt={dt} leading={<th style={{ width: 36 }}></th>} />
               <tbody>
-                {rows.map(r => {
+                {dt.sortedRows.map(r => {
                   const key = `${r.service}::${r.statement}`;
                   const isExpanded = expanded === key;
                   const totalSec = r.totalMs / 1000;

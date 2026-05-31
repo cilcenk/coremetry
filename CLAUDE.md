@@ -19,6 +19,7 @@ five years.
 | **Single-binary release** | One image, one tag, one release pipeline. `COREMETRY_MODE=all\|ingest\|api\|worker` (v0.6.0) lets that single binary act in different roles for scale-out, but it's still one binary. | `main.go`, `Dockerfile` |
 | **Picker = server-side search** | 10k+ ops can't ride a `<Combobox options={…}>`. | `ServicePicker` / `OperationPicker` / `MetricNamePicker` |
 | **Table > 100 rows** | Virtualize, paginate server-side, OR `content-visibility:auto`. | `globals.css`, every list page |
+| **Every data table sortable + column-resizable** | Operator can't scan 1000s of rows without re-sorting / widening a column. One shared primitive — never hand-roll sort/resize per page. | `useDataTable` + `<DataTableHead>`/`<DataTableColgroup>` (`components/DataTable.tsx`), pure core in `lib/dataTable.ts`. Template: `SlowQueries.tsx` (v0.7.53) |
 | **Cache key hashes ALL inputs** | Length-only digests cross-poison (v0.5.187 incident). Use sorted + FNV. | `internal/api/cache.go` |
 | **`timeRangeToNs(range)` inside `useEffect`/`useMemo`** | Bare call in JSX = `now()` ticks every render = infinite refetch (v0.5.184). | every page using `range` |
 | **ClickHouse query on `spans` / `metric_points`** | Must have `LIMIT`, `SETTINGS max_execution_time`, time-bounded WHERE on indexed column. | `internal/chstore/*.go` |
@@ -153,6 +154,26 @@ The wrapper writes the ai_calls row for /ai page attribution.
 ```tsx
 // YES — content-visibility lets the browser skip off-screen rows
 <tr style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
+```
+
+### Sortable + resizable table (the shared primitive — v0.7.53)
+Every data table is column-sortable AND column-resizable. Don't
+hand-roll it; adopt `useDataTable`. Sort state + widths persist to
+localStorage by `storageKey`. Client-side sort suits fetched arrays;
+server-paged tables (Services/Traces) keep their server sort and adopt
+only the resize half.
+```tsx
+const dt = useDataTable<Row>({
+  storageKey: 'slowqueries', columns: COLS, rows: rows ?? [],
+  initialSort: { id: 'totalMs', dir: 'desc' },
+});
+<table style={{ tableLayout: 'fixed', width: '100%' }}>
+  <DataTableColgroup dt={dt} leading={[36]} />     {/* leading = expand/checkbox col widths */}
+  <DataTableHead dt={dt} leading={<th style={{ width: 36 }} />} />
+  <tbody>{dt.sortedRows.map(renderRow)}</tbody>
+</table>
+// COLS: { id, label, sortValue?: r=>val, numeric?, naturalDir?, width? }[]
+// numeric → .num class; omit sortValue → column not sortable (still resizes).
 ```
 
 ### Cache key for a set

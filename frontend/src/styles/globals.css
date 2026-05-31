@@ -358,6 +358,14 @@ thead th.sortable { cursor: pointer; transition: color .1s; }
 thead th.sortable:hover { color: var(--text); }
 thead th.sorted { color: var(--accent2); }
 thead th .sort-arrow { margin-left: 4px; opacity: .7; }
+/* Shared column-resize handle (DataTable primitive, v0.7.53). 6px hot zone
+   on the th right edge; a faint accent line appears on hover so the operator
+   sees the grab target. Matches the .sidebar-resizer / .span-panel-resizer feel. */
+thead th .col-resize-handle {
+  position: absolute; top: 0; right: 0; width: 6px; height: 100%;
+  cursor: col-resize; user-select: none;
+}
+thead th .col-resize-handle:hover { background: var(--accent); opacity: .5; }
 tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; transition: background .08s; }
 tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--bg2); }

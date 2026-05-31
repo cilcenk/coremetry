@@ -62,12 +62,14 @@ function TracesPageInner() {
     // explicitly anyway; defaulting to 1h was paying for a wide CH
     // scan most visitors didn't actually need.
     () => decodeRange(searchParams.get('range'), { preset: '30m' }));
-  // Aggregated is the default landing tab — the most useful view for
-  // an SRE arriving at /traces is "what operations are slow / errored
-  // right now", not the raw flat list. The list view stays a click
-  // away and a ?view=list URL forces it on demand.
-  const [view, setView] = useState<View>(
-    () => (searchParams.get('view') === 'list' ? 'list' : 'aggregate'));
+  // v0.7.37 — Operator preference: the raw Traces list is the default landing
+  // tab (arriving at /traces, the operator wants the actual traces first).
+  // Aggregated + Shapes are a click away; ?view=aggregate / ?view=shapes force
+  // them on demand. Tab order: Traces | Aggregated | Shapes.
+  const [view, setView] = useState<View>(() => {
+    const v = searchParams.get('view');
+    return v === 'aggregate' || v === 'shapes' ? v : 'list';
+  });
 
   // List view sort
   const [sort, setSort] = useState<SortColumn>(
@@ -133,9 +135,9 @@ function TracesPageInner() {
   useEffect(() => {
     const qs = buildQuery([
       ['range',    encodeRange(range)],
-      // Aggregated is the new default — only emit ?view= when the
-      // user has explicitly switched away from it.
-      ['view',     view !== 'aggregate' ? view : ''],
+      // v0.7.37 — `list` is the default tab now; only emit ?view= when the
+      // user switched to aggregate / shapes.
+      ['view',     view !== 'list' ? view : ''],
       ['sort',     sort !== 'time' ? sort : ''],
       ['order',    order !== 'desc' ? order : ''],
       ['page',     page > 0 ? page : ''],
@@ -348,13 +350,13 @@ function TracesPageInner() {
         {/* View toggle + dedicated Trace ID lookup on the far right */}
         <div className="controls" style={{ marginBottom: 8, alignItems: 'center' }}>
           <div className="segmented">
-            <button onClick={() => setView('aggregate')}
-              className={view === 'aggregate' ? 'active' : ''}>
-              Aggregated
-            </button>
             <button onClick={() => setView('list')}
               className={view === 'list' ? 'active' : ''}>
               Traces
+            </button>
+            <button onClick={() => setView('aggregate')}
+              className={view === 'aggregate' ? 'active' : ''}>
+              Aggregated
             </button>
             <button onClick={() => setView('shapes')}
               className={view === 'shapes' ? 'active' : ''}

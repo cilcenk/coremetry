@@ -6,11 +6,51 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { useSystemStats, keys } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   TimeRange,
   SystemStatus, ComponentHealth, StatusComponent,
-  RedisStats, CacheStats,
+  RedisStats, CacheStats, SystemStats,
 } from '@/lib/types';
+
+// Row types for the shared sortable + resizable DataTable adoption.
+type TableStatRow = SystemStats['tables'][number];
+type HistoryRow = SystemStats['history'][number];
+type TopKeyRow = CacheStats['topKeys'][number];
+
+// ClickHouse per-table storage. Compression sorts on the raw ratio
+// (compressed/uncompressed) so the most-/least-compressible tables
+// sort sensibly even though the cell renders a "% (raw)" string.
+const STORAGE_COLS: DataTableColumn<TableStatRow>[] = [
+  { id: 'table',       label: 'Table',       sortValue: t => t.table,            naturalDir: 'asc',  width: 220 },
+  { id: 'rows',        label: 'Rows',        sortValue: t => t.rows,             numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'disk',        label: 'On disk',     sortValue: t => t.bytesOnDisk,      numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'compression', label: 'Compression', sortValue: t => t.uncompressedBytes > 0 ? t.compressedBytes / t.uncompressedBytes : 0,
+                                                                                  numeric: true, naturalDir: 'desc', width: 200 },
+  { id: 'parts',       label: 'Parts',       sortValue: t => t.parts,            numeric: true, naturalDir: 'desc', width: 90 },
+  { id: 'oldest',      label: 'Oldest',      sortValue: t => t.oldestNs,         naturalDir: 'asc',  width: 180 },
+  { id: 'newest',      label: 'Newest',      sortValue: t => t.newestNs,         naturalDir: 'desc', width: 180 },
+];
+
+// Daily history. Default sort = day desc (newest first), preserving
+// the prior `[...history].reverse()` ordering.
+const HISTORY_COLS: DataTableColumn<HistoryRow>[] = [
+  { id: 'day',      label: 'Day',      sortValue: d => d.day,                                naturalDir: 'desc', width: 140 },
+  { id: 'traces',   label: 'Traces',   sortValue: d => d.traces,            numeric: true,   naturalDir: 'desc', width: 110 },
+  { id: 'spans',    label: 'Spans',    sortValue: d => d.spans,             numeric: true,   naturalDir: 'desc', width: 110 },
+  { id: 'errors',   label: 'Errors',   sortValue: d => d.errors,            numeric: true,   naturalDir: 'desc', width: 110 },
+  { id: 'errPct',   label: 'Err %',    sortValue: d => d.spans > 0 ? (d.errors / d.spans) * 100 : 0,
+                                                                            numeric: true,   naturalDir: 'desc', width: 90 },
+  { id: 'services', label: 'Services', sortValue: d => d.services,          numeric: true,   naturalDir: 'desc', width: 100 },
+];
+
+// Hottest API cache keys. Default = hits desc (server already returns
+// them hottest-first).
+const TOPKEY_COLS: DataTableColumn<TopKeyRow>[] = [
+  { id: 'key',  label: 'Key',  sortValue: k => k.key,  naturalDir: 'asc',  width: 420 },
+  { id: 'hits', label: 'Hits', sortValue: k => k.hits, numeric: true, naturalDir: 'desc', width: 100 },
+];
 
 // Coremetry "what's inside" page. Three sections stacked top-to-
 // bottom:
@@ -70,6 +110,17 @@ export default function AdminStatsPage() {
     if (!data?.history?.length) return 0;
     return Math.max(...data.history.map(d => d.spans));
   }, [data]);
+
+  // Shared sortable + resizable tables. Hooks are unconditional —
+  // they sit above the `data` conditional render below.
+  const storageDt = useDataTable<TableStatRow>({
+    storageKey: 'adminstats-storage', columns: STORAGE_COLS,
+    rows: data?.tables ?? [], initialSort: { id: 'disk', dir: 'desc' },
+  });
+  const historyDt = useDataTable<HistoryRow>({
+    storageKey: 'adminstats-history', columns: HISTORY_COLS,
+    rows: data?.history ?? [], initialSort: { id: 'day', dir: 'desc' },
+  });
 
   return (
     <>
@@ -221,18 +272,11 @@ export default function AdminStatsPage() {
                 ClickHouse storage · {data.tables.length} table{data.tables.length === 1 ? '' : 's'}
               </div>
               <div className="table-wrap">
-                <table>
-                  <thead><tr>
-                    <th>Table</th>
-                    <th className="num">Rows</th>
-                    <th className="num">On disk</th>
-                    <th className="num">Compression</th>
-                    <th className="num">Parts</th>
-                    <th>Oldest</th>
-                    <th>Newest</th>
-                  </tr></thead>
+                <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={storageDt} />
+                  <DataTableHead dt={storageDt} />
                   <tbody>
-                    {data.tables.map(t => {
+                    {storageDt.sortedRows.map(t => {
                       const ratio = t.uncompressedBytes > 0
                         ? t.compressedBytes / t.uncompressedBytes
                         : 0;
@@ -270,17 +314,11 @@ export default function AdminStatsPage() {
                 Daily history
               </div>
               <div className="table-wrap" style={{ maxHeight: 360, overflowY: 'auto' }}>
-                <table>
-                  <thead><tr>
-                    <th>Day</th>
-                    <th className="num">Traces</th>
-                    <th className="num">Spans</th>
-                    <th className="num">Errors</th>
-                    <th className="num">Err %</th>
-                    <th className="num">Services</th>
-                  </tr></thead>
+                <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={historyDt} />
+                  <DataTableHead dt={historyDt} />
                   <tbody>
-                    {[...data.history].reverse().map(d => {
+                    {historyDt.sortedRows.map(d => {
                       const errPct = d.spans > 0 ? (d.errors / d.spans) * 100 : 0;
                       return (
                         <tr key={d.day}>
@@ -562,6 +600,12 @@ const TIER_COLOR: Record<string, string> = {
   'BYPASS':     '#a78bfa', // purple — operator forced refresh
 };
 function ApiCachePanel({ data }: { data: CacheStats | null | undefined }) {
+  // Shared sortable + resizable hot-keys table — hook BEFORE the
+  // early returns below (react-hooks rules-of-hooks).
+  const topKeysDt = useDataTable<TopKeyRow>({
+    storageKey: 'adminstats-topkeys', columns: TOPKEY_COLS,
+    rows: data?.topKeys ?? [], initialSort: { id: 'hits', dir: 'desc' },
+  });
   if (data === undefined) {
     return (
       <div style={{
@@ -674,13 +718,11 @@ function ApiCachePanel({ data }: { data: CacheStats | null | undefined }) {
                 Hottest cache keys
               </div>
               <div className="table-wrap">
-                <table style={{ fontSize: 12 }}>
-                  <thead><tr>
-                    <th>Key</th>
-                    <th className="num" style={{ width: 100 }}>Hits</th>
-                  </tr></thead>
+                <table style={{ fontSize: 12, tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={topKeysDt} />
+                  <DataTableHead dt={topKeysDt} />
                   <tbody>
-                    {data.topKeys.map(k => (
+                    {topKeysDt.sortedRows.map(k => (
                       <tr key={k.key}>
                         <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
                           {k.key}

@@ -4,6 +4,8 @@ import { Empty, Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { fmtNum, fmtBytes } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 
 // AdminElastic (v0.5.466) — operator-facing inventory of the
 // logs backend's indices: name, doc count, size, health, ILM
@@ -42,11 +44,22 @@ const HEALTH_COLOUR: Record<string, string> = {
   red:    'rgba(220,38,38,0.22)',
 };
 
+// Columns for the shared sortable + resizable DataTable (v0.7.54
+// adoption). Preserves the prior default sort (Size desc) and the
+// prior natural directions: text cols asc, numeric cols desc.
+// Body-cell order below MUST match this order.
+const ELASTIC_COLS: DataTableColumn<Row>[] = [
+  { id: 'name',      label: 'Index',     sortValue: r => r.name,      naturalDir: 'asc',  width: 320 },
+  { id: 'health',    label: 'Health',    sortValue: r => r.health,    naturalDir: 'asc',  width: 100 },
+  { id: 'docCount',  label: 'Docs',      sortValue: r => r.docCount,  naturalDir: 'desc', numeric: true, width: 120 },
+  { id: 'sizeBytes', label: 'Size',      sortValue: r => r.sizeBytes, naturalDir: 'desc', numeric: true, width: 120 },
+  { id: 'ilmPhase',  label: 'ILM phase', sortValue: r => r.ilmPhase,  naturalDir: 'asc',  width: 120 },
+  { id: 'ilmPolicy', label: 'Policy',    sortValue: r => r.ilmPolicy, naturalDir: 'asc',  width: 200 },
+];
+
 export default function AdminElasticPage() {
   const [data, setData] = useState<Payload | undefined>(undefined);
   const [err, setErr] = useState<string | null>(null);
-  const [sort, setSort] = useState<keyof Row>('sizeBytes');
-  const [dir, setDir] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     let cancelled = false;
@@ -57,26 +70,13 @@ export default function AdminElasticPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const rows = (data?.indices ?? []).slice().sort((a, b) => {
-    const va = a[sort];
-    const vb = b[sort];
-    const cmp = typeof va === 'number' && typeof vb === 'number'
-      ? va - vb
-      : String(va).localeCompare(String(vb));
-    return dir === 'asc' ? cmp : -cmp;
+  const rows = data?.indices ?? [];
+  const dt = useDataTable<Row>({
+    storageKey: 'admin-elastic',
+    columns: ELASTIC_COLS,
+    rows,
+    initialSort: { id: 'sizeBytes', dir: 'desc' },
   });
-
-  const toggleSort = (col: keyof Row) => {
-    if (sort === col) setDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setSort(col); setDir(col === 'name' ? 'asc' : 'desc'); }
-  };
-  const Th = ({ col, label, align }: { col: keyof Row; label: string; align?: 'left' | 'right' }) => (
-    <th onClick={() => toggleSort(col)}
-      className={`sortable${sort === col ? ' sorted' : ''}`}
-      style={{ textAlign: align ?? 'left', cursor: 'pointer' }}>
-      {label}{sort === col && <span className="sort-arrow">{dir === 'asc' ? '↑' : '↓'}</span>}
-    </th>
-  );
 
   const fileRef = useRef<HTMLInputElement>(null);
   const onImport = async (file: File) => {
@@ -169,19 +169,11 @@ export default function AdminElasticPage() {
               {fmtNum(rows.reduce((s, r) => s + r.docCount, 0))} docs ·{' '}
               {fmtBytes(rows.reduce((s, r) => s + r.sizeBytes, 0))}
             </div>
-            <table>
-              <thead>
-                <tr>
-                  <Th col="name" label="Index" />
-                  <Th col="health" label="Health" />
-                  <Th col="docCount" label="Docs" align="right" />
-                  <Th col="sizeBytes" label="Size" align="right" />
-                  <Th col="ilmPhase" label="ILM phase" />
-                  <Th col="ilmPolicy" label="Policy" />
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {rows.map(r => (
+                {dt.sortedRows.map(r => (
                   <tr key={r.name} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                     <td className="mono">{r.name}</td>
                     <td>

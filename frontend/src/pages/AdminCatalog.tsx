@@ -5,6 +5,8 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { useAuth } from '@/components/AuthProvider';
 import { IconShield } from '@/components/icons';
 import { api } from '@/lib/api';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { ServiceMetadata } from '@/lib/types';
 
 // /admin/catalog — admin-only bulk editor for the service
@@ -25,6 +27,25 @@ type Row = {
   meta: ServiceMetadata;
   hasTraffic: boolean;
 };
+
+// Shared sortable + resizable columns (v0.7.53 primitive). Body
+// cell ORDER must mirror this list. The four link/action columns
+// (runbook / oncall / repo / actions) are intentionally NOT
+// sortable — they carry an "open ↗" link or buttons, not a value
+// the operator would order by; they still resize. Default sort is
+// Service asc (the prior client default from the localeCompare in
+// reload()). headerHidden carries the previous empty actions
+// header without an extra label.
+const CATALOG_COLS: DataTableColumn<Row>[] = [
+  { id: 'service',  label: 'Service',           sortValue: r => r.service,              naturalDir: 'asc', width: 220 },
+  { id: 'owner',    label: 'Owner team',        sortValue: r => r.meta.ownerTeam ?? '', naturalDir: 'asc', width: 150 },
+  { id: 'sre',      label: 'SRE team',          sortValue: r => r.meta.sreTeam ?? '',   naturalDir: 'asc', width: 150 },
+  { id: 'chat',     label: 'Zoom Chat channel', sortValue: r => r.meta.chatChannel ?? '', naturalDir: 'asc', width: 170 },
+  { id: 'runbook',  label: 'Runbook',           width: 90 },
+  { id: 'oncall',   label: 'Oncall',            width: 90 },
+  { id: 'repo',     label: 'Repo',              width: 90 },
+  { id: 'actions',  label: '',                  width: 130 },
+];
 
 export default function AdminCatalogPage() {
   const { user } = useAuth();
@@ -77,6 +98,16 @@ export default function AdminCatalogPage() {
       (r.meta.ownerTeam ?? '').toLowerCase().includes(q) ||
       (r.meta.sreTeam ?? '').toLowerCase().includes(q));
   }, [rows, search]);
+
+  // Shared table primitive. Hook is UNCONDITIONAL and lives ABOVE
+  // the admin early-return below (rules-of-hooks). Keep the
+  // client-side FILTER (search) — feed the filtered array as rows.
+  const dt = useDataTable<Row>({
+    storageKey: 'admin-catalog',
+    columns: CATALOG_COLS,
+    rows: filtered ?? [],
+    initialSort: { id: 'service', dir: 'asc' },
+  });
 
   const startEdit = (r: Row) => {
     setEditing(r.service);
@@ -145,23 +176,18 @@ export default function AdminCatalogPage() {
           <Empty icon="◇" title="No services match your filter" />
         )}
         {filtered && filtered.length > 0 && (
-          <div className="table-wrap"
+          <div className="table-wrap catalog-scroll"
                style={{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto' }}>
-            <table>
-              <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>
-                <tr>
-                  <th>Service</th>
-                  <th>Owner team</th>
-                  <th>SRE team</th>
-                  <th>Zoom Chat channel</th>
-                  <th>Runbook</th>
-                  <th>Oncall</th>
-                  <th>Repo</th>
-                  <th></th>
-                </tr>
-              </thead>
+            {/* The catalog scrolls inside a tall max-height container,
+                so its header must stick — the shared DataTableHead
+                renders a plain <thead>, so we re-apply the prior
+                sticky behaviour scoped to this wrapper only. */}
+            <style>{`.catalog-scroll thead th { position: sticky; top: 0; background: var(--bg1); z-index: 1; }`}</style>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {filtered.map(r => (
+                {dt.sortedRows.map(r => (
                   editing === r.service && draft
                     ? <EditRow key={r.service}
                         draft={draft}

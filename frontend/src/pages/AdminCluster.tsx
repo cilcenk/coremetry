@@ -5,6 +5,23 @@ import { useAuth } from '@/components/AuthProvider';
 import { api, type ClusterMember } from '@/lib/api';
 import { tsLong, tsRel } from '@/lib/utils';
 import { IconLock } from '@/components/icons';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// Columns for the shared sortable + resizable DataTable. Cell ORDER
+// below must mirror this list. The previous bespoke <thead> had no
+// client sort; default to pod id (asc) — a stable roster ordering.
+// Started / Last heartbeat sort by the raw unix-ns number (numeric:
+// true would right-align, but these render as relative-time text so
+// we keep them left-aligned and only set sortValue) — biggest-first
+// 'desc' means most-recent-first.
+const CLUSTER_COLS: DataTableColumn<ClusterMember>[] = [
+  { id: 'pod',     label: 'Pod',                 sortValue: m => m.id,                    naturalDir: 'asc',  width: 280 },
+  { id: 'version', label: 'Version',             sortValue: m => m.version || '',         naturalDir: 'asc',  width: 140 },
+  { id: 'started', label: 'Started',             sortValue: m => m.startedAt,             naturalDir: 'desc', width: 150 },
+  { id: 'seen',    label: 'Last heartbeat',      sortValue: m => m.lastSeen,              naturalDir: 'desc', width: 160 },
+  { id: 'locks',   label: 'Active leader locks', sortValue: m => m.leaderLocks?.length ?? 0, naturalDir: 'desc', width: 260 },
+];
 
 // AdminCluster — v0.5.253 multi-pod HA visibility page.
 //
@@ -38,6 +55,14 @@ export default function AdminClusterPage() {
     }, 10_000);
     return () => clearInterval(id);
   }, []);
+
+  // Shared sortable + resizable table. Hook is UNCONDITIONAL and ABOVE
+  // the admin gate below (rules-of-hooks — on a render where `user`
+  // resolves null→admin the hook count must not change).
+  const dt = useDataTable<ClusterMember>({
+    storageKey: 'cluster', columns: CLUSTER_COLS,
+    rows: data?.members ?? [], initialSort: { id: 'pod', dir: 'asc' },
+  });
 
   if (user && user.role !== 'admin') {
     return (
@@ -106,18 +131,11 @@ export default function AdminClusterPage() {
             </div>
 
             <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Pod</th>
-                    <th>Version</th>
-                    <th>Started</th>
-                    <th>Last heartbeat</th>
-                    <th>Active leader locks</th>
-                  </tr>
-                </thead>
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <DataTableColgroup dt={dt} />
+                <DataTableHead dt={dt} />
                 <tbody>
-                  {data.members.map(m => {
+                  {dt.sortedRows.map(m => {
                     const stale = (now * 1e6 - m.lastSeen) > 30 * 1e9;
                     return (
                       <tr key={m.id} style={stale ? { opacity: 0.55 } : undefined}>

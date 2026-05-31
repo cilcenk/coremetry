@@ -26,6 +26,8 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
 import { useQueryClient } from '@tanstack/react-query';
 import { keys } from '@/lib/queries/keys';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { Service, Problem, TimeRange, OperationSummary, SpanMetricSeries, SLORow } from '@/lib/types';
 
 const SINCE_MAP: Record<string, string> = {
@@ -497,11 +499,17 @@ function ServiceSLOChip({ slo }: { slo: SLORow }) {
 // `name = <op>` pre-filtered alongside the service. Sortable; aggregate
 // "All" row at the top mirrors the services page so totals are visible
 // without scrolling.
-type OpSortKey = 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99' | 'apdex' | 'impact';
-const OP_NATURAL_DIR: Record<OpSortKey, 'asc' | 'desc'> = {
-  name: 'asc', spanCount: 'desc', errorRate: 'desc',
-  avg: 'desc', p99: 'desc', apdex: 'asc', impact: 'desc',
-};
+//
+// v0.7.54 — adopted the shared sortable + resizable table primitive
+// (useDataTable / DataTableHead / DataTableColgroup). The bespoke
+// OpSortKey state + OpSortTh header + manual .sort() were replaced by
+// the OP_COLS column defs below; client-side FILTER (name substring)
+// stays and feeds the hook as `rows`. Default sort preserved: impact
+// desc (Elastic-APM's heaviest-cumulative-consumer first). Trend /
+// P50 / P95 stay non-sortable (no sortValue) — they had no sort before.
+function impactOf(r: OperationSummary): number {
+  return r.avgDurationMs * r.spanCount;
+}
 
 // Elastic-APM's "Impact" = avg_duration × count. Surfaces the
 // heaviest cumulative consumers — the operation that's slow OR
@@ -509,9 +517,18 @@ const OP_NATURAL_DIR: Record<OpSortKey, 'asc' | 'desc'> = {
 // once-an-hour 30s job doesn't. Default sort so the top of the
 // table answers "what should I optimise first" without the
 // operator combining columns by eye.
-function impactOf(r: OperationSummary): number {
-  return r.avgDurationMs * r.spanCount;
-}
+const OP_COLS: DataTableColumn<OperationSummary>[] = [
+  { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 320 },
+  { id: 'trend',     label: 'Trend',     width: 92 },
+  { id: 'impact',    label: 'Impact',    sortValue: r => impactOf(r),       numeric: true,      width: 130 },
+  { id: 'spanCount', label: 'Calls',     sortValue: r => r.spanCount,       numeric: true,      width: 96 },
+  { id: 'errorRate', label: 'Err %',     sortValue: r => r.errorRate,       numeric: true,      width: 84 },
+  { id: 'avg',       label: 'Avg',       sortValue: r => r.avgDurationMs,   numeric: true,      width: 84 },
+  { id: 'p50',       label: 'P50',       numeric: true,                     width: 84 },
+  { id: 'p95',       label: 'P95',       numeric: true,                     width: 84 },
+  { id: 'p99',       label: 'P99',       sortValue: r => r.p99DurationMs,   numeric: true,      width: 84 },
+  { id: 'apdex',     label: 'Apdex',     sortValue: r => r.apdex ?? 0,      numeric: true,      naturalDir: 'asc', width: 84 },
+];
 
 // v0.5.292 — TabStrip sits between the persistent header
 // (KPIs / problems / deploy markers / RED charts) and the
@@ -572,8 +589,6 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   preset?: string;
   onWiden?: () => void;
 }) {
-  const [sortBy, setSortBy] = useState<OpSortKey>('impact');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   // v0.5.374 — client-side filter. At 500+ operations on a
   // monolith service the scroll-then-eyeball loop fails;
   // typing narrows live with no server round-trip.
@@ -602,26 +617,14 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   const opHref = (op: string) =>
     `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}&view=list&rootOnly=false`;
 
-  const sorted = useMemo(() => {
-    const cmp = (a: OperationSummary, b: OperationSummary): number => {
-      switch (sortBy) {
-        case 'name':      return a.name.localeCompare(b.name);
-        case 'spanCount': return a.spanCount - b.spanCount;
-        case 'errorRate': return a.errorRate - b.errorRate;
-        case 'avg':       return a.avgDurationMs - b.avgDurationMs;
-        case 'impact':    return impactOf(a) - impactOf(b);
-        case 'p99':       return a.p99DurationMs - b.p99DurationMs;
-        case 'apdex':     return (a.apdex ?? 0) - (b.apdex ?? 0);
-      }
-    };
-    // v0.5.374 — apply filter before sort. Case-insensitive
-    // substring match on the operation name, same idiom as the
-    // /endpoints page filter.
+  // v0.5.374 — client-side filter. Case-insensitive substring
+  // match on the operation name, same idiom as the /endpoints
+  // page filter. The shared table primitive (useDataTable below)
+  // owns the SORT half; we feed it this filtered array as `rows`.
+  const filtered = useMemo(() => {
     const trimmed = filter.trim().toLowerCase();
-    const source = trimmed ? rows.filter(r => r.name.toLowerCase().includes(trimmed)) : rows;
-    const arr = [...source].sort(cmp);
-    return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [rows, sortBy, sortDir, filter]);
+    return trimmed ? rows.filter(r => r.name.toLowerCase().includes(trimmed)) : rows;
+  }, [rows, filter]);
 
   // Same weighted-aggregate scheme as the services page totals row:
   // sum spans/errs, weight avg/apdex by span count, take max for p99.
@@ -665,10 +668,16 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
     return out;
   }, [rows]);
 
-  const toggleSort = (col: OpSortKey) => {
-    if (sortBy === col) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(col); setSortDir(OP_NATURAL_DIR[col]); }
-  };
+  // Shared sortable + resizable table primitive (v0.7.54). Feed the
+  // FILTERED rows so sorting acts on what's visible; default sort
+  // preserved as impact desc. Hook is unconditional + above the
+  // empty-state early return (rules-of-hooks).
+  const dt = useDataTable<OperationSummary>({
+    storageKey: 'service-operations',
+    columns: OP_COLS,
+    rows: filtered,
+    initialSort: { id: 'impact', dir: 'desc' },
+  });
 
   if (rows.length === 0) {
     // v0.5.292 — short-window (≤30 min) default hits "no
@@ -711,7 +720,7 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
         <h3 style={{ fontSize: 13, fontWeight: 700 }}>⊙ Operations</h3>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
           {filter.trim()
-            ? `${sorted.length} / ${rows.length} matching`
+            ? `${dt.sortedRows.length} / ${rows.length} matching`
             : `${rows.length} distinct span name${rows.length === 1 ? '' : 's'} in ${service}`}
         </span>
         <input value={filter} onChange={e => setFilter(e.target.value)}
@@ -725,25 +734,16 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
           claustrophobic. Virtualization via content-visibility:auto
           on each row (set below) handles the 500+ op perf case
           per CLAUDE.md's "tables > 100 rows" guidance, so the
-          inner scroll isn't earning its keep. Sticky thead now
-          sticks to the page viewport, which is the natural
-          behaviour operators expect from a long table. */}
+          inner scroll isn't earning its keep.
+          v0.7.54 — header is now the shared <DataTableHead> (sortable
+          + per-column resize); fixed layout via the <colgroup> +
+          tableLayout:fixed. Body cell order tracks OP_COLS:
+          Operation · Trend · Impact · Calls · Err% · Avg · P50 · P95 ·
+          P99 · Apdex. */}
       <div className="table-wrap">
-        <table>
-          <thead style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg1)' }}>
-            <tr>
-              <OpSortTh col="name"      label="Operation"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
-              <th style={{ textAlign: 'left', width: 92 }}>Trend</th>
-              <OpSortTh col="impact"    label="Impact"     sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <OpSortTh col="spanCount" label="Calls"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <OpSortTh col="errorRate" label="Err %"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <OpSortTh col="avg"       label="Avg"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <th style={{ textAlign: 'right' }}>P50</th>
-              <th style={{ textAlign: 'right' }}>P95</th>
-              <OpSortTh col="p99"       label="P99"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <OpSortTh col="apdex"     label="Apdex"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-            </tr>
-          </thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} />
+          <DataTableHead dt={dt} />
           <tbody>
             {agg && (
               <tr className="agg-row">
@@ -782,7 +782,7 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                 </td>
               </tr>
             )}
-            {sorted.map(op => {
+            {dt.sortedRows.map(op => {
               const errCls = op.errorRate > 5 ? 'err' : op.errorRate > 0 ? 'warn' : 'ok';
               // Tone the per-row sparkline with the same severity
               // colour as the err-rate badge so the eye reads "this
@@ -1003,24 +1003,6 @@ function fmtImpact(ms: number): string {
   const hr = min / 60;
   return `${hr.toFixed(1)}h`;
 }
-
-function OpSortTh({ col, label, sort, dir, onSort, align }: {
-  col: OpSortKey; label: string;
-  sort: OpSortKey; dir: 'asc' | 'desc';
-  onSort: (c: OpSortKey) => void;
-  align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        onClick={() => onSort(col)}
-        style={{ textAlign: align ?? 'left' }}>
-      {label}
-      <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-    </th>
-  );
-}
-
 
 export default function ServiceDetailPage() {
   return (

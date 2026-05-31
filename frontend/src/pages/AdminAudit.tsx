@@ -4,6 +4,25 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { useAuditLog } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+import type { AuditEntry } from '@/lib/types';
+
+// Columns for the shared sortable + resizable DataTable (v0.7.53
+// primitive). Default sort is Time desc — newest first, the
+// implicit append-only ordering an audit log should land on. The
+// Details column is non-sortable: it's a free-text JSON blob with
+// no meaningful order key, and it doubles as the expand-toggle
+// cell (click → pretty-printed JSON in place). Body cell order
+// below MUST match this column order.
+const AUDIT_COLS: DataTableColumn<AuditEntry>[] = [
+  { id: 'time',    label: 'Time',    sortValue: e => e.time,       naturalDir: 'desc', width: 170 },
+  { id: 'actor',   label: 'Actor',   sortValue: e => e.actorEmail, naturalDir: 'asc', width: 220 },
+  { id: 'action',  label: 'Action',  sortValue: e => e.action,     naturalDir: 'asc', width: 200 },
+  { id: 'target',  label: 'Target',  sortValue: e => e.targetKind, naturalDir: 'asc', width: 200 },
+  { id: 'details', label: 'Details', width: 360 },
+  { id: 'ip',      label: 'IP',      sortValue: e => e.ip,         naturalDir: 'asc', width: 130 },
+];
 
 // Curated catalog of every action the API currently emits via
 // s.audit(). Kept in lock-step with internal/api/*; new entries
@@ -110,6 +129,17 @@ export default function AuditPage() {
     });
   };
 
+  // Shared sortable + resizable table. Fed the client-FILTERED
+  // `visible` array so search narrows BEFORE the sort. Hook is
+  // unconditional and lives ABOVE the admin early-return below
+  // (rules-of-hooks). Default Time desc = newest first.
+  const dt = useDataTable<AuditEntry>({
+    storageKey: 'admin-audit',
+    columns: AUDIT_COLS,
+    rows: visible ?? [],
+    initialSort: { id: 'time', dir: 'desc' },
+  });
+
   if (!isAdmin) {
     return (
       <>
@@ -178,17 +208,11 @@ export default function AuditPage() {
         )}
         {data && visible.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead><tr>
-                <th>Time</th>
-                <th>Actor</th>
-                <th>Action</th>
-                <th>Target</th>
-                <th>Details</th>
-                <th>IP</th>
-              </tr></thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {visible.map(e => {
+                {dt.sortedRows.map(e => {
                   const isExpanded = expanded.has(e.id);
                   return (
                     <tr key={e.id}>
@@ -224,11 +248,13 @@ export default function AuditPage() {
                           tabIndex={e.details ? 0 : undefined}
                           aria-expanded={e.details ? isExpanded : undefined}
                           style={{ fontSize: 11, color: 'var(--text2)',
-                                   maxWidth: isExpanded ? undefined : 360,
-                                   overflow: isExpanded ? 'visible' : 'hidden',
-                                   textOverflow: isExpanded ? 'clip' : 'ellipsis',
+                                   // Fixed layout governs the column width via
+                                   // the colgroup; the global td ellipsis clips
+                                   // the collapsed state. Expanded → wrap the
+                                   // pretty-printed JSON within the (resizable)
+                                   // column so the operator reads it inline.
                                    whiteSpace: isExpanded ? 'pre-wrap' : 'nowrap',
-                                   wordBreak: isExpanded ? 'break-all' : undefined,
+                                   overflowWrap: isExpanded ? 'anywhere' : undefined,
                                    fontFamily: 'monospace',
                                    cursor: e.details ? 'pointer' : 'default' }}
                           title={isExpanded ? 'Click to collapse' : (e.details || '')}>

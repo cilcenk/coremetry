@@ -3,6 +3,8 @@ import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { VirtualList } from '@/components/ui';
+import { useDataTable } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import type { SQLResult, SchemaTable } from '@/lib/types';
 
@@ -358,6 +360,12 @@ export default function SQLPlaygroundPage() {
   );
 }
 
+// One result row is a positional tuple (rows[i][colIndex]); we
+// keep that shape and let the column accessors index by position.
+type ResultRow = unknown[];
+
+const RESULT_COL_W = 160; // default column width (px) for the fixed grid layout
+
 function ResultTable({ result }: { result: SQLResult }) {
   // Virtualised result grid. The previous implementation
   // rendered every result row to the DOM, which froze the
@@ -368,10 +376,46 @@ function ResultTable({ result }: { result: SQLResult }) {
   // Layout: explicit CSS Grid with one column per result column
   // so headers and body rows share the same template — matches
   // the visual `<table>` look without needing table semantics.
-  // Each column gets minmax(120px, 1fr) — small enough to fit
-  // many columns, large enough to read.
-  const cols = result.columns.length;
-  const gridTemplate = `repeat(${cols}, minmax(120px, 1fr))`;
+  //
+  // Shared-primitive adoption (v0.7.x): the body MUST stay
+  // virtualised (10k-row cap), so we don't render a real
+  // <table>/<tbody>. Instead we drive sort + per-column resize
+  // from the useDataTable hook and reflect its state onto this
+  // grid header + VirtualList body. Columns are dynamic (one per
+  // result column), so the column defs are built per-result with
+  // a positional accessor.
+  const dt = useDataTable<ResultRow>({
+    storageKey: 'adminsql-result',
+    columns: useMemo<DataTableColumn<ResultRow>[]>(() =>
+      result.columns.map((name, idx): DataTableColumn<ResultRow> => ({
+        id: `c${idx}`,
+        label: name,
+        width: RESULT_COL_W,
+        // Positional accessor: index into the row tuple. Coerce to a
+        // number when the cell parses cleanly as one (so numeric
+        // columns sort numerically), else fall back to a string;
+        // null/object cells sink last via the primitive's null rule.
+        sortValue: (row) => {
+          const v = row[idx];
+          if (v === null || v === undefined) return null;
+          if (typeof v === 'number') return v;
+          if (typeof v === 'object') return null;
+          const s = String(v);
+          const n = Number(s);
+          return s !== '' && Number.isFinite(n) ? n : s;
+        },
+        naturalDir: 'asc',
+      })),
+      [result.columns]),
+    rows: result.rows,
+  });
+
+  // Grid template driven by the primitive's per-column widths so a
+  // resize drag is reflected in both header + body. Fixed px widths
+  // (not 1fr) keep the columns stable while resizing.
+  const gridTemplate = dt.columns
+    .map(c => `${dt.colWidths[c.id] ?? c.width ?? RESULT_COL_W}px`)
+    .join(' ');
   const ROW_HEIGHT = 22; // matches the previous td vertical padding × 2 + line height
 
   return (
@@ -400,53 +444,84 @@ function ResultTable({ result }: { result: SQLResult }) {
         )}
       </div>
 
-      {/* Header row — same gridTemplate as data rows so columns
-          line up. Outside the virtualised body so it stays
-          pinned regardless of scroll position. */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: gridTemplate,
-        background: 'var(--bg2)',
-        borderBottom: '1px solid var(--border)',
-        fontFamily: 'monospace', fontSize: 11, fontWeight: 600,
-        flexShrink: 0,
-      }}>
-        {result.columns.map(c => (
-          <div key={c} style={{ padding: '4px 8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {c}
-          </div>
-        ))}
-      </div>
-
-      {/* Virtualised body. height: '100%' inside flex container
-          fills the remaining space; the inner scroll lives on
-          the VirtualList element. */}
-      <VirtualList
-        items={result.rows}
-        rowHeight={ROW_HEIGHT}
-        height="100%"
-        overscan={12}
-        renderRow={(row, i) => (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: gridTemplate,
-            borderBottom: '1px solid var(--border)',
-            fontSize: 11, fontFamily: 'monospace',
-            background: i % 2 === 0 ? 'transparent' : 'var(--bg0)',
-          }}>
-            {row.map((v, j) => (
-              <div key={j} style={{
-                padding: '3px 8px', whiteSpace: 'nowrap',
-                overflow: 'hidden', textOverflow: 'ellipsis',
-              }} title={String(v)}>
-                {v === null ? <span style={{ color: 'var(--text3)' }}>NULL</span>
-                            : typeof v === 'object' ? JSON.stringify(v)
-                            : String(v)}
+      {/* Scroll container: header + virtualised body share one
+          horizontal scroll so wide results pan together. The grid
+          is at least as wide as the sum of the column widths. */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowX: 'auto' }}>
+        {/* Header row — same gridTemplate as data rows so columns
+            line up. Click a header to sort (client-side, via the
+            shared primitive); drag the right edge to resize. */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: gridTemplate,
+          minWidth: 'max-content',
+          background: 'var(--bg2)',
+          borderBottom: '1px solid var(--border)',
+          fontFamily: 'monospace', fontSize: 11, fontWeight: 600,
+          flexShrink: 0,
+        }}>
+          {dt.columns.map(c => {
+            const active = dt.sort.id === c.id;
+            return (
+              <div key={c.id}
+                onClick={() => dt.toggleSort(c.id)}
+                title={`${c.label} — click to sort, drag right edge to resize`}
+                style={{
+                  position: 'relative', padding: '4px 8px',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  cursor: 'pointer', userSelect: 'none',
+                  color: active ? 'var(--accent2)' : undefined,
+                }}>
+                {c.label}
+                <span style={{ marginLeft: 4, opacity: 0.7 }}>
+                  {active ? (dt.sort.dir === 'desc' ? '▼' : '▲') : '↕'}
+                </span>
+                {/* Resize hot-zone on the right edge. stopPropagation
+                    on click so a resize drag never triggers a sort. */}
+                <span
+                  onMouseDown={e => dt.startResize(c.id, e)}
+                  onClick={e => e.stopPropagation()}
+                  title="Drag to resize"
+                  style={{
+                    position: 'absolute', top: 0, right: 0, width: 6, height: '100%',
+                    cursor: 'col-resize', userSelect: 'none',
+                  }} />
               </div>
-            ))}
-          </div>
-        )}
-      />
+            );
+          })}
+        </div>
+
+        {/* Virtualised body. height: '100%' inside flex container
+            fills the remaining space; the inner scroll lives on
+            the VirtualList element. */}
+        <VirtualList
+          items={dt.sortedRows}
+          rowHeight={ROW_HEIGHT}
+          height="100%"
+          overscan={12}
+          renderRow={(row, i) => (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: gridTemplate,
+              minWidth: 'max-content',
+              borderBottom: '1px solid var(--border)',
+              fontSize: 11, fontFamily: 'monospace',
+              background: i % 2 === 0 ? 'transparent' : 'var(--bg0)',
+            }}>
+              {row.map((v, j) => (
+                <div key={j} style={{
+                  padding: '3px 8px', whiteSpace: 'nowrap',
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                }} title={String(v)}>
+                  {v === null ? <span style={{ color: 'var(--text3)' }}>NULL</span>
+                              : typeof v === 'object' ? JSON.stringify(v)
+                              : String(v)}
+                </div>
+              ))}
+            </div>
+          )}
+        />
+      </div>
     </div>
   );
 }

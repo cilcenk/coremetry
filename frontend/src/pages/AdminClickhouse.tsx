@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
 import type { TimeRange } from '@/lib/types';
@@ -87,6 +89,77 @@ type CHHealth = {
   generatedAt: number;
 };
 
+// Shard-policy table iterates a Record<table, expr>; flatten to a
+// row type so it can ride the shared sortable + resizable primitive.
+type ShardPolicyRow = { table: string; expr: string };
+
+// Column defs for the shared DataTable primitive. Body cell ORDER on
+// each table must match its COLS order. Free-text columns (Query /
+// Command / Failure / shard expr) rely on the global td ellipsis under
+// table-layout:fixed — no per-cell maxWidth/nowrap needed.
+const SLOW_COLS: DataTableColumn<Slow>[] = [
+  { id: 'time',     label: 'Time',      sortValue: q => q.eventTimeNs, naturalDir: 'desc', width: 110 },
+  { id: 'user',     label: 'User',      sortValue: q => q.user ?? '',  naturalDir: 'asc',  width: 120 },
+  { id: 'elapsed',  label: 'Elapsed',   sortValue: q => q.elapsedMs, numeric: true, naturalDir: 'desc', width: 100 },
+  { id: 'memory',   label: 'Memory',    sortValue: q => q.memoryMb,  numeric: true, naturalDir: 'desc', width: 100 },
+  { id: 'readRows', label: 'Read rows', sortValue: q => q.readRows,  numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'query',    label: 'Query',     sortValue: q => q.query,     naturalDir: 'asc',  width: 540 },
+];
+
+const MERGE_COLS: DataTableColumn<Merge>[] = [
+  { id: 'database', label: 'Database',    sortValue: m => m.database, naturalDir: 'asc',  width: 160 },
+  { id: 'table',    label: 'Table',       sortValue: m => m.table,    naturalDir: 'asc',  width: 200 },
+  { id: 'elapsed',  label: 'Elapsed',     sortValue: m => m.elapsedSec,      numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'progress', label: 'Progress',    sortValue: m => m.progressPct,     numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'rowsRead', label: 'Rows read',   sortValue: m => m.rowsRead,        numeric: true, naturalDir: 'desc', width: 130 },
+  { id: 'merged',   label: 'Merged size', sortValue: m => m.mergedSizeBytes, numeric: true, naturalDir: 'desc', width: 130 },
+];
+
+const PARTHOT_COLS: DataTableColumn<PartHot>[] = [
+  { id: 'database', label: 'Database', sortValue: p => p.database, naturalDir: 'asc',  width: 160 },
+  { id: 'table',    label: 'Table',    sortValue: p => p.table,    naturalDir: 'asc',  width: 240 },
+  { id: 'parts',    label: 'Parts',    sortValue: p => p.parts,      numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'rows',     label: 'Rows',     sortValue: p => p.rowsTotal,  numeric: true, naturalDir: 'desc', width: 140 },
+  { id: 'bytes',    label: 'Bytes',    sortValue: p => p.bytesTotal, numeric: true, naturalDir: 'desc', width: 140 },
+];
+
+const ASYNC_COLS: DataTableColumn<AsyncIns>[] = [
+  { id: 'database', label: 'Database',       sortValue: a => a.database, naturalDir: 'asc',  width: 160 },
+  { id: 'table',    label: 'Table',          sortValue: a => a.table,    naturalDir: 'asc',  width: 240 },
+  { id: 'bytes',    label: 'Bytes buffered', sortValue: a => a.totalBytes,      numeric: true, naturalDir: 'desc', width: 150 },
+  { id: 'entries',  label: 'Entries',        sortValue: a => a.entriesCount,    numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'oldest',   label: 'Oldest',         sortValue: a => a.firstUpdateMsAgo, numeric: true, naturalDir: 'desc', width: 110 },
+];
+
+const MUTATION_COLS: DataTableColumn<Mutation>[] = [
+  { id: 'table',   label: 'Table',          sortValue: m => `${m.database}.${m.table}`, naturalDir: 'asc',  width: 240 },
+  { id: 'parts',   label: 'Parts left',     sortValue: m => m.parts,     numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'elapsed', label: 'Elapsed',        sortValue: m => m.elapsedMs, numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'command', label: 'Command',        sortValue: m => m.command,   naturalDir: 'asc', width: 360 },
+  { id: 'failure', label: 'Latest failure', sortValue: m => m.latestFail ?? '', naturalDir: 'asc', width: 240 },
+];
+
+const REPLAG_COLS: DataTableColumn<RepLag>[] = [
+  { id: 'database', label: 'Database',       sortValue: r => r.database, naturalDir: 'asc',  width: 160 },
+  { id: 'table',    label: 'Table',          sortValue: r => r.table,    naturalDir: 'asc',  width: 240 },
+  { id: 'queue',    label: 'Queue',          sortValue: r => r.queueSize,        numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'delay',    label: 'Absolute delay', sortValue: r => r.absoluteDelaySec, numeric: true, naturalDir: 'desc', width: 140 },
+];
+
+const NODE_COLS: DataTableColumn<ClusterNode>[] = [
+  { id: 'shard',   label: 'Shard',   sortValue: n => n.shardNum,   numeric: true, naturalDir: 'asc', width: 90 },
+  { id: 'replica', label: 'Replica', sortValue: n => n.replicaNum, numeric: true, naturalDir: 'asc', width: 90 },
+  { id: 'host',    label: 'Host',    sortValue: n => n.hostName,        naturalDir: 'asc', width: 220 },
+  { id: 'address', label: 'Address', sortValue: n => n.hostAddress ?? '', naturalDir: 'asc', width: 200 },
+  { id: 'port',    label: 'Port',    sortValue: n => n.port, numeric: true, naturalDir: 'asc', width: 90 },
+  { id: 'local',   label: 'Local',   sortValue: n => (n.isLocal ? 1 : 0), numeric: false, naturalDir: 'desc', width: 90 },
+];
+
+const SHARD_POLICY_COLS: DataTableColumn<ShardPolicyRow>[] = [
+  { id: 'table', label: 'Table',            sortValue: r => r.table, naturalDir: 'asc', width: 240 },
+  { id: 'expr',  label: 'Shard expression', sortValue: r => r.expr,  naturalDir: 'asc', width: 400 },
+];
+
 export default function AdminClickhousePage() {
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
   const [data, setData] = useState<CHHealth | null | undefined>(undefined);
@@ -107,6 +180,34 @@ export default function AdminClickhousePage() {
   // operator sees pressure without reading the table.
   const peakMergeSec = data?.merges?.reduce((m, x) => Math.max(m, x.elapsedSec), 0) ?? 0;
   const peakParts = data?.partHotspots?.reduce((m, x) => Math.max(m, x.parts), 0) ?? 0;
+
+  // Shared sortable + resizable tables. Hooks are UNCONDITIONAL
+  // (rules-of-hooks) — they live above the data === undefined/null
+  // render branches and feed each table its already-fetched array.
+  const slowDt = useDataTable<Slow>({
+    storageKey: 'ch-slowqueries', columns: SLOW_COLS,
+    rows: data?.slowQueries ?? [], initialSort: { id: 'elapsed', dir: 'desc' },
+  });
+  const mergeDt = useDataTable<Merge>({
+    storageKey: 'ch-merges', columns: MERGE_COLS,
+    rows: data?.merges ?? [], initialSort: { id: 'elapsed', dir: 'desc' },
+  });
+  const partDt = useDataTable<PartHot>({
+    storageKey: 'ch-parthotspots', columns: PARTHOT_COLS,
+    rows: data?.partHotspots ?? [], initialSort: { id: 'parts', dir: 'desc' },
+  });
+  const asyncDt = useDataTable<AsyncIns>({
+    storageKey: 'ch-asyncinserts', columns: ASYNC_COLS,
+    rows: data?.asyncInserts ?? [], initialSort: { id: 'bytes', dir: 'desc' },
+  });
+  const mutationDt = useDataTable<Mutation>({
+    storageKey: 'ch-mutations', columns: MUTATION_COLS,
+    rows: data?.mutations ?? [], initialSort: { id: 'parts', dir: 'desc' },
+  });
+  const repLagDt = useDataTable<RepLag>({
+    storageKey: 'ch-replicationlag', columns: REPLAG_COLS,
+    rows: data?.replicationLag ?? [], initialSort: { id: 'delay', dir: 'desc' },
+  });
 
   return (
     <>
@@ -144,19 +245,11 @@ export default function AdminClickhousePage() {
                 ? <EmptyNote text="No slow queries in the last hour" />
                 : (
                   <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Time</th>
-                          <th>User</th>
-                          <th className="num">Elapsed</th>
-                          <th className="num">Memory</th>
-                          <th className="num">Read rows</th>
-                          <th>Query</th>
-                        </tr>
-                      </thead>
+                    <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                      <DataTableColgroup dt={slowDt} />
+                      <DataTableHead dt={slowDt} />
                       <tbody>
-                        {data.slowQueries.map((q, i) => (
+                        {slowDt.sortedRows.map((q, i) => (
                           <tr key={i}>
                             <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
                               {new Date(q.eventTimeNs / 1e6).toLocaleTimeString()}
@@ -165,10 +258,7 @@ export default function AdminClickhousePage() {
                             <td className="num mono">{q.elapsedMs.toFixed(0)} ms</td>
                             <td className="num mono">{q.memoryMb.toFixed(0)} MB</td>
                             <td className="num mono">{fmtNum(q.readRows)}</td>
-                            <td className="mono" style={{
-                              fontSize: 11, maxWidth: 540,
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }} title={q.query}>
+                            <td className="mono" style={{ fontSize: 11 }} title={q.query}>
                               {q.query.replace(/\s+/g, ' ').slice(0, 200)}
                             </td>
                           </tr>
@@ -184,18 +274,11 @@ export default function AdminClickhousePage() {
                 ? <EmptyNote text="No merges in flight — CH idle or up-to-date" />
                 : (
                   <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Database</th><th>Table</th>
-                          <th className="num">Elapsed</th>
-                          <th className="num">Progress</th>
-                          <th className="num">Rows read</th>
-                          <th className="num">Merged size</th>
-                        </tr>
-                      </thead>
+                    <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                      <DataTableColgroup dt={mergeDt} />
+                      <DataTableHead dt={mergeDt} />
                       <tbody>
-                        {data.merges.map((m, i) => (
+                        {mergeDt.sortedRows.map((m, i) => (
                           <tr key={i}>
                             <td className="mono">{m.database}</td>
                             <td className="mono">{m.table}</td>
@@ -216,17 +299,11 @@ export default function AdminClickhousePage() {
                 ? <EmptyNote text="No part data available" />
                 : (
                   <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Database</th><th>Table</th>
-                          <th className="num">Parts</th>
-                          <th className="num">Rows</th>
-                          <th className="num">Bytes</th>
-                        </tr>
-                      </thead>
+                    <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                      <DataTableColgroup dt={partDt} />
+                      <DataTableHead dt={partDt} />
                       <tbody>
-                        {data.partHotspots.map((p, i) => (
+                        {partDt.sortedRows.map((p, i) => (
                           <tr key={i}>
                             <td className="mono">{p.database}</td>
                             <td className="mono">{p.table}</td>
@@ -247,17 +324,11 @@ export default function AdminClickhousePage() {
             {data.asyncInserts && data.asyncInserts.length > 0 && (
               <Section title="Async insert buffer">
                 <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Database</th><th>Table</th>
-                        <th className="num">Bytes buffered</th>
-                        <th className="num">Entries</th>
-                        <th className="num">Oldest</th>
-                      </tr>
-                    </thead>
+                  <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <DataTableColgroup dt={asyncDt} />
+                    <DataTableHead dt={asyncDt} />
                     <tbody>
-                      {data.asyncInserts.map((a, i) => (
+                      {asyncDt.sortedRows.map((a, i) => (
                         <tr key={i}>
                           <td className="mono">{a.database}</td>
                           <td className="mono">{a.table}</td>
@@ -285,29 +356,18 @@ export default function AdminClickhousePage() {
                   ReplacingMergeTree pattern instead of in-place mutation.
                 </p>
                 <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Table</th>
-                        <th className="num">Parts left</th>
-                        <th className="num">Elapsed</th>
-                        <th>Command</th>
-                        <th>Latest failure</th>
-                      </tr>
-                    </thead>
+                  <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <DataTableColgroup dt={mutationDt} />
+                    <DataTableHead dt={mutationDt} />
                     <tbody>
-                      {data.mutations.map((m, i) => (
+                      {mutationDt.sortedRows.map((m, i) => (
                         <tr key={i}>
                           <td className="mono">{m.database}.{m.table}</td>
                           <td className="num mono">{fmtNum(m.parts)}</td>
                           <td className="num mono">{fmtAge(m.elapsedMs)}</td>
-                          <td className="mono" style={{
-                            fontSize: 11, maxWidth: 360,
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }} title={m.command}>{m.command}</td>
+                          <td className="mono" style={{ fontSize: 11 }} title={m.command}>{m.command}</td>
                           <td className="mono" style={{
                             fontSize: 11, color: m.latestFail ? 'var(--err)' : 'var(--text3)',
-                            maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                           }} title={m.latestFail}>{m.latestFail || '—'}</td>
                         </tr>
                       ))}
@@ -320,16 +380,11 @@ export default function AdminClickhousePage() {
             {data.replicationLag && data.replicationLag.length > 0 && (
               <Section title="Replication lag (cluster only)">
                 <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Database</th><th>Table</th>
-                        <th className="num">Queue</th>
-                        <th className="num">Absolute delay</th>
-                      </tr>
-                    </thead>
+                  <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <DataTableColgroup dt={repLagDt} />
+                    <DataTableHead dt={repLagDt} />
                     <tbody>
-                      {data.replicationLag.map((r, i) => (
+                      {repLagDt.sortedRows.map((r, i) => (
                         <tr key={i}>
                           <td className="mono">{r.database}</td>
                           <td className="mono">{r.table}</td>
@@ -489,6 +544,20 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
   const probeFailed = !!t.clusterProbeError;
   const cacheStale = !!t.clusterNodesStale;
   const misconfigured = !!t.configuredCluster && (!t.nodes || t.nodes.length === 0) && !probeFailed && !cacheStale;
+
+  // Shared sortable + resizable tables for the cluster-nodes list and
+  // the resolved shard policy. Both hooks are unconditional; the tables
+  // themselves render conditionally below.
+  const nodesDt = useDataTable<ClusterNode>({
+    storageKey: 'ch-clusternodes', columns: NODE_COLS,
+    rows: t.nodes ?? [], initialSort: { id: 'shard', dir: 'asc' },
+  });
+  const shardRows: ShardPolicyRow[] = Object.entries(t.shardPolicy ?? {})
+    .map(([table, expr]) => ({ table, expr }));
+  const shardDt = useDataTable<ShardPolicyRow>({
+    storageKey: 'ch-shardpolicy', columns: SHARD_POLICY_COLS,
+    rows: shardRows, initialSort: { id: 'table', dir: 'asc' },
+  });
   const bannerCls = misconfigured || probeFailed ? 'warn' : (t.mode === 'cluster' ? 'ok' : 'info');
   const bannerColor =
     bannerCls === 'ok' ? 'var(--ok)' :
@@ -573,19 +642,11 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
 
       {t.nodes && t.nodes.length > 0 && (
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th className="num">Shard</th>
-                <th className="num">Replica</th>
-                <th>Host</th>
-                <th>Address</th>
-                <th className="num">Port</th>
-                <th>Local</th>
-              </tr>
-            </thead>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={nodesDt} />
+            <DataTableHead dt={nodesDt} />
             <tbody>
-              {t.nodes.map((n, i) => (
+              {nodesDt.sortedRows.map((n, i) => (
                 <tr key={i}>
                   <td className="num mono">{n.shardNum}</td>
                   <td className="num mono">{n.replicaNum}</td>
@@ -619,25 +680,19 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
             Shard policy (resolved)
           </div>
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Table</th>
-                  <th>Shard expression</th>
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={shardDt} />
+              <DataTableHead dt={shardDt} />
               <tbody>
-                {Object.entries(t.shardPolicy)
-                  .sort(([a], [b]) => a.localeCompare(b))
-                  .map(([table, expr]) => (
-                    <tr key={table}>
-                      <td className="mono">{table}</td>
-                      <td className="mono" style={{
-                        fontSize: 11,
-                        color: expr === 'rand()' ? 'var(--text3)' : 'var(--text)',
-                      }}>{expr}</td>
-                    </tr>
-                  ))}
+                {shardDt.sortedRows.map(({ table, expr }) => (
+                  <tr key={table}>
+                    <td className="mono">{table}</td>
+                    <td className="mono" style={{
+                      fontSize: 11,
+                      color: expr === 'rand()' ? 'var(--text3)' : 'var(--text)',
+                    }}>{expr}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

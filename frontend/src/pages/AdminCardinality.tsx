@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
@@ -6,6 +6,31 @@ import { Card, Badge, Stack, Row } from '@/components/ui';
 import { useCardinality, useSystemStats, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { fmtBytes, fmtNum } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// Row shapes for the cardinality data tables. Kept local — these
+// mirror the cardinality report response and aren't shared.
+type AttrKeyRow = { key: string; distinctValues: number; occurrences: number; source: string };
+type ColumnRow = { table: string; column: string; compressedBytes: number; uncompressedBytes: number; compressionRatio: number };
+type FinOpsServiceRow = { name: string; rows: number };
+
+// Sortable + resizable column defs for the attribute-key panel.
+const ATTR_KEY_COLS: DataTableColumn<AttrKeyRow>[] = [
+  { id: 'key',         label: 'Key',                 sortValue: r => r.key,            naturalDir: 'asc',  width: 280 },
+  { id: 'distinct',    label: 'Distinct values',     sortValue: r => r.distinctValues, numeric: true, naturalDir: 'desc', width: 150 },
+  { id: 'occurrences', label: 'Sampled occurrences', sortValue: r => r.occurrences,    numeric: true, naturalDir: 'desc', width: 170 },
+  { id: 'source',      label: 'Source',              sortValue: r => r.source,         naturalDir: 'asc',  width: 160 },
+];
+
+// Sortable + resizable column defs for the top-columns panel.
+const COLUMN_COLS: DataTableColumn<ColumnRow>[] = [
+  { id: 'table',        label: 'Table',               sortValue: r => r.table,            naturalDir: 'asc',  width: 180 },
+  { id: 'column',       label: 'Column',              sortValue: r => r.column,           naturalDir: 'asc',  width: 200 },
+  { id: 'compressed',   label: 'On disk (compressed)', sortValue: r => r.compressedBytes,  numeric: true, naturalDir: 'desc', width: 170 },
+  { id: 'uncompressed', label: 'Uncompressed',        sortValue: r => r.uncompressedBytes, numeric: true, naturalDir: 'desc', width: 150 },
+  { id: 'ratio',        label: 'Ratio',               sortValue: r => r.compressionRatio,  numeric: true, naturalDir: 'desc', width: 90 },
+];
 
 // /admin/cardinality — meta-observability dashboard answering
 // "which service / metric / label is eating my ClickHouse?".
@@ -161,21 +186,26 @@ function TopRowList({ rows, unit }: { rows: { name: string; rows: number }[]; un
   );
 }
 
-function AttrKeyTable({ rows }: { rows: { key: string; distinctValues: number; occurrences: number; source: string }[] }) {
+function AttrKeyTable({ rows }: { rows: AttrKeyRow[] }) {
+  // Sortable + resizable attribute-key table. Default sort matches the
+  // panel's intent — biggest distinct-value count first (the worst
+  // unbounded-label offenders) — which is also the server's order.
+  const dt = useDataTable<AttrKeyRow>({
+    storageKey: 'admincardinality-attrkeys',
+    columns: ATTR_KEY_COLS,
+    rows,
+    initialSort: { id: 'distinct', dir: 'desc' },
+  });
   if (rows.length === 0) {
     return <div style={{ fontSize: 12, color: 'var(--text3)' }}>No attributes sampled.</div>;
   }
   return (
     <div className="table-wrap">
-      <table>
-        <thead><tr>
-          <th>Key</th>
-          <th className="num">Distinct values</th>
-          <th className="num">Sampled occurrences</th>
-          <th>Source</th>
-        </tr></thead>
+      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+        <DataTableColgroup dt={dt} />
+        <DataTableHead dt={dt} />
         <tbody>
-          {rows.map((r, i) => {
+          {dt.sortedRows.map((r, i) => {
             // Heuristic: > 1000 distinct values in a 100k-span sample
             // is the unbounded-label red flag. Yellow at > 200.
             const tone = r.distinctValues > 1000 ? 'danger'
@@ -318,33 +348,62 @@ function FinOpsPanel({ services }: {
           }}>
             Top contributors (extrapolated monthly cost)
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr>
-                <th>Service</th>
-                <th className="num">24h spans</th>
-                <th className="num">Share</th>
-                <th className="num">Est. monthly cost</th>
-              </tr></thead>
-              <tbody>
-                {top.map(s => {
-                  const share = s.rows / totalSpans24h;
-                  const cost = (s.rows * bytesPerSpan * 30 / 1e12) * costPerTbMo;
-                  return (
-                    <tr key={s.name}>
-                      <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{s.name}</td>
-                      <td className="num mono">{fmtNum(s.rows)}</td>
-                      <td className="num mono">{(share * 100).toFixed(1)}%</td>
-                      <td className="num mono">${cost.toFixed(2)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <FinOpsContributorsTable
+            top={top}
+            bytesPerSpan={bytesPerSpan}
+            totalSpans24h={totalSpans24h}
+            costPerTbMo={costPerTbMo}
+          />
         </div>
       )}
     </Card>
+  );
+}
+
+// FinOpsContributorsTable — extrapolated per-service monthly cost.
+// Split into its own component so the shared DataTable hook is called
+// unconditionally (FinOpsPanel early-returns while stats load, which
+// would make a hook inside it conditional). Share + est. cost are
+// derived from props, so the column accessors are memoised here.
+function FinOpsContributorsTable({ top, bytesPerSpan, totalSpans24h, costPerTbMo }: {
+  top: FinOpsServiceRow[];
+  bytesPerSpan: number;
+  totalSpans24h: number;
+  costPerTbMo: number;
+}) {
+  const cols = useMemo<DataTableColumn<FinOpsServiceRow>[]>(() => [
+    { id: 'service', label: 'Service',           sortValue: s => s.name,                                       naturalDir: 'asc',  width: 220 },
+    { id: 'spans',   label: '24h spans',         sortValue: s => s.rows,                          numeric: true, naturalDir: 'desc', width: 130 },
+    { id: 'share',   label: 'Share',             sortValue: s => s.rows / totalSpans24h,          numeric: true, naturalDir: 'desc', width: 100 },
+    { id: 'cost',    label: 'Est. monthly cost', sortValue: s => s.rows * bytesPerSpan * 30 * costPerTbMo, numeric: true, naturalDir: 'desc', width: 150 },
+  ], [totalSpans24h, bytesPerSpan, costPerTbMo]);
+  const dt = useDataTable<FinOpsServiceRow>({
+    storageKey: 'admincardinality-finops',
+    columns: cols,
+    rows: top,
+    initialSort: { id: 'spans', dir: 'desc' },
+  });
+  return (
+    <div className="table-wrap">
+      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+        <DataTableColgroup dt={dt} />
+        <DataTableHead dt={dt} />
+        <tbody>
+          {dt.sortedRows.map(s => {
+            const share = s.rows / totalSpans24h;
+            const cost = (s.rows * bytesPerSpan * 30 / 1e12) * costPerTbMo;
+            return (
+              <tr key={s.name}>
+                <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{s.name}</td>
+                <td className="num mono">{fmtNum(s.rows)}</td>
+                <td className="num mono">{(share * 100).toFixed(1)}%</td>
+                <td className="num mono">${cost.toFixed(2)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -377,22 +436,26 @@ function KPI({ label, value, sub, tone }: {
   );
 }
 
-function ColumnTable({ rows }: { rows: { table: string; column: string; compressedBytes: number; uncompressedBytes: number; compressionRatio: number }[] }) {
+function ColumnTable({ rows }: { rows: ColumnRow[] }) {
+  // Sortable + resizable top-columns table. Default sort matches the
+  // panel's intent (and the server order) — largest compressed bytes
+  // first, the columns actually eating disk.
+  const dt = useDataTable<ColumnRow>({
+    storageKey: 'admincardinality-columns',
+    columns: COLUMN_COLS,
+    rows,
+    initialSort: { id: 'compressed', dir: 'desc' },
+  });
   if (rows.length === 0) {
     return <div style={{ fontSize: 12, color: 'var(--text3)' }}>system.columns empty.</div>;
   }
   return (
     <div className="table-wrap">
-      <table>
-        <thead><tr>
-          <th>Table</th>
-          <th>Column</th>
-          <th className="num">On disk (compressed)</th>
-          <th className="num">Uncompressed</th>
-          <th className="num">Ratio</th>
-        </tr></thead>
+      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+        <DataTableColgroup dt={dt} />
+        <DataTableHead dt={dt} />
         <tbody>
-          {rows.map((r, i) => (
+          {dt.sortedRows.map((r, i) => (
             <tr key={i} style={{
               contentVisibility: 'auto',
               containIntrinsicSize: 'auto 32px',

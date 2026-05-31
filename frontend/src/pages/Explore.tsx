@@ -16,6 +16,8 @@ import { ShareButton } from '@/components/ShareButton';
 import { LogsExplorer } from '@/components/LogsExplorer';
 import { MetricsExplorer } from '@/components/MetricsExplorer';
 import { ColumnManager } from '@/components/ColumnManager';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { useExemplarFetcher, useServiceDeploys, useSLOs } from '@/lib/queries';
 import { timeRangeToNs, fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
@@ -162,6 +164,31 @@ const STEP_OPTIONS = [
 
 type Source = 'spans' | 'metrics' | 'logs';
 type Viz = 'line' | 'bar' | 'topN' | 'kpi' | 'heatmap' | 'red';
+
+// Per-series summary row — one line of the split-by metric
+// breakdown table (Series / Last / Avg / Max / Buckets).
+type SummaryRow = { key: string[]; count: number; last: number; max: number; avg: number };
+
+// SUMMARY_COLS — column defs for the per-series summary table,
+// adopted onto the shared sortable+resizable primitive (v0.7.53).
+// Default sort is Max desc so the heaviest series surfaces first,
+// matching the chart's Top-N intent. The Series text column is
+// ascending-natural; the four numeric columns right-align via
+// numeric:true. Body-cell order below must match this order.
+const SUMMARY_COLS: DataTableColumn<SummaryRow>[] = [
+  { id: 'series',  label: 'Series',  sortValue: r => r.key.join(' / '), naturalDir: 'asc', width: 280 },
+  { id: 'last',    label: 'Last',    sortValue: r => r.last,  numeric: true, width: 130 },
+  { id: 'avg',     label: 'Avg',     sortValue: r => r.avg,   numeric: true, width: 130 },
+  { id: 'max',     label: 'Max',     sortValue: r => r.max,   numeric: true, width: 130 },
+  { id: 'buckets', label: 'Buckets', sortValue: r => r.count, numeric: true, width: 110 },
+];
+
+// REPEATS_COLS — column defs for the N+1 / fan-out finder table.
+// The backend already returns heaviest-first (by repeat count);
+// we preserve that as the initial client sort (count desc) so the
+// adopted table paints identically. The "Repeated shape" column
+// label is dynamic (tracks the active split-by) so the column set
+// is built per-render via useMemo inside the component.
 
 function ExploreInner() {
   const navigate = useNavigate();
@@ -617,7 +644,7 @@ function ExploreInner() {
     else { setTraceSort(col); setTraceSortDir(TRACE_SORT_NATURAL[col]); }
   };
 
-  const summary = useMemo(() => {
+  const summary = useMemo<SummaryRow[]>(() => {
     if (!series) return [];
     return series.map(s => {
       const vals = s.points.map(p => p.value).filter(v => v != null && !isNaN(v));
@@ -632,6 +659,34 @@ function ExploreInner() {
       };
     });
   }, [series]);
+
+  // Per-series summary table on the shared sortable+resizable
+  // primitive. Default Max desc surfaces the heaviest series first.
+  const summaryDt = useDataTable<SummaryRow>({
+    storageKey: 'explore-summary',
+    columns: SUMMARY_COLS,
+    rows: summary,
+    initialSort: { id: 'max', dir: 'desc' },
+  });
+
+  // Repeats (N+1 / fan-out) table. The "Repeated shape" column
+  // label tracks the active split-by, so columns are memoised on
+  // groupBy. Backend returns heaviest-first; initial sort = count
+  // desc preserves that paint.
+  const repeatCols = useMemo<DataTableColumn<import('@/lib/types').RepeatedSpanRow>[]>(() => [
+    { id: 'trace',   label: 'Trace',   sortValue: r => r.traceId, naturalDir: 'asc', width: 130 },
+    { id: 'service', label: 'Service · root', sortValue: r => `${r.service}${r.rootName ? ' · ' + r.rootName : ''}`, naturalDir: 'asc', width: 240 },
+    { id: 'shape',   label: `Repeated shape (${groupBy.length ? groupBy.join(' + ') : 'db.statement'})`, sortValue: r => (r.groupValues ?? []).join(' · '), naturalDir: 'asc', width: 360 },
+    { id: 'count',   label: 'Repeats',    sortValue: r => r.count,           numeric: true, width: 100 },
+    { id: 'total',   label: 'Total time', sortValue: r => r.totalDurationMs, numeric: true, width: 120 },
+    { id: 'started', label: 'Started',    sortValue: r => r.startedAt,                      width: 180 },
+  ], [groupBy]);
+  const repeatsDt = useDataTable<import('@/lib/types').RepeatedSpanRow>({
+    storageKey: 'explore-repeats',
+    columns: repeatCols,
+    rows: repeats ?? [],
+    initialSort: { id: 'count', dir: 'desc' },
+  });
 
   return (
     <>
@@ -1158,19 +1213,12 @@ name ~ checkout`}
             {/* Per-series summary */}
             {groupBy.length > 0 && summary.length > 1 && (
               <div className="table-wrap" style={{ marginTop: 14 }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Series</th>
-                      <th style={{ textAlign: 'right' }}>Last</th>
-                      <th style={{ textAlign: 'right' }}>Avg</th>
-                      <th style={{ textAlign: 'right' }}>Max</th>
-                      <th style={{ textAlign: 'right' }}>Buckets</th>
-                    </tr>
-                  </thead>
+                <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={summaryDt} />
+                  <DataTableHead dt={summaryDt} />
                   <tbody>
-                    {summary.map((row, i) => (
-                      <tr key={i}>
+                    {summaryDt.sortedRows.map((row, i) => (
+                      <tr key={`${row.key.join('')}|${i}`}>
                         <td><b>{row.key.join(' / ') || '(all)'}</b></td>
                         <td className="mono" style={{ textAlign: 'right' }}>{row.last.toFixed(2)}{unit}</td>
                         <td className="mono" style={{ textAlign: 'right' }}>{row.avg.toFixed(2)}{unit}</td>
@@ -1371,19 +1419,11 @@ name ~ checkout`}
               {repeats.length} trace{repeats.length === 1 ? '' : 's'} with ≥ {repeatMin} repeats of the same span shape — heaviest at the top.
             </div>
             <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Trace</th>
-                    <th>Service · root</th>
-                    <th>Repeated shape ({groupBy.length ? groupBy.join(' + ') : 'db.statement'})</th>
-                    <th className="num">Repeats</th>
-                    <th className="num">Total time</th>
-                    <th>Started</th>
-                  </tr>
-                </thead>
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <DataTableColgroup dt={repeatsDt} />
+                <DataTableHead dt={repeatsDt} />
                 <tbody>
-                  {repeats.map((r, i) => (
+                  {repeatsDt.sortedRows.map((r, i) => (
                     <tr key={`${r.traceId}|${i}`}
                         onClick={() => navigate(`/trace?id=${r.traceId}`)}
                         style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
@@ -1403,7 +1443,6 @@ name ~ checkout`}
                       <td style={{
                         fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                         fontSize: 11, color: 'var(--text2)',
-                        maxWidth: 520, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }} title={(r.groupValues ?? []).join(' · ')}>
                         {(r.groupValues ?? []).filter(Boolean).join(' · ') ||
                           <span style={{ color: 'var(--text3)' }}>(empty)</span>}

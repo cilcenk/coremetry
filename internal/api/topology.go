@@ -882,6 +882,9 @@ type FlowsResponse struct {
 	Flows []chstore.RootFlow `json:"flows"`
 	From  int64              `json:"from"`
 	To    int64              `json:"to"`
+	// v0.7.39 — total distinct flows in the window (the list is capped at
+	// ?top). >len(Flows) → the UI shows "showing N of M flows — raise top".
+	TotalFlows int `json:"totalFlows,omitempty"`
 }
 
 // getRootFlows surfaces the top business-level entry points by
@@ -923,7 +926,11 @@ func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		return FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano()}, nil
+		// v0.7.39 — total distinct flows in the window so the UI can show
+		// "showing N of M flows" and offer to raise ?top. Soft-fail: a count
+		// error just leaves TotalFlows 0 (no banner) rather than 500'ing.
+		total, _ := s.store.CountRootFlows(r.Context(), from, to)
+		return FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano(), TotalFlows: total}, nil
 	})
 }
 

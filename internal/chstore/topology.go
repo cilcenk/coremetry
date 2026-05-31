@@ -883,6 +883,27 @@ func (s *Store) ReadRootFlowsAgg(ctx context.Context, from, to time.Time, limit 
 	return out, rows.Err()
 }
 
+// CountRootFlows returns the number of DISTINCT business flows (root_service,
+// root_op) in the window — the denominator for the "showing N of M flows"
+// honesty banner (v0.7.39). Operator-reported: Business Flows is capped at
+// ?top and gave no signal that more flows existed beyond the cut. Cheap: one
+// uniqExact over the small pre-aggregated MV.
+func (s *Store) CountRootFlows(ctx context.Context, from, to time.Time) (int, error) {
+	var n uint64
+	err := s.conn.QueryRow(ctx, `
+		SELECT toUInt64(uniqExact((root_service, root_op)))
+		FROM topology_root_flows_5m FINAL
+		WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
+		  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+		SETTINGS max_execution_time = 10`,
+		from.Unix(), to.Unix(),
+	).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // FlowSig identifies a business flow by its (root_service, root_op)
 // pair. Used as a bounded IN-list for the p99 enrichment so the
 // query never scans more roots than the caller already listed.

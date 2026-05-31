@@ -478,6 +478,31 @@ export interface ChangedService {
   reasons: string[];          // pre-formatted human bullets, render verbatim
 }
 
+// RootCause — the assembled "what changed / likely cause" bundle for one
+// Problem (v0.7.51 backend, v0.7.52 panel). The /api/problems/{id}/rootcause
+// endpoint orchestrates signals that already exist but were scattered across
+// pages — recent deploy, correlated service changes, dimension bubble-up,
+// blast radius, an exemplar trace — into ONE cached read so the triage drawer
+// shows a single root-cause surface. Every sub-field is best-effort: a partial
+// bundle still helps triage, so the panel renders whatever is present.
+export interface RootCause {
+  problemId: string;
+  service: string;
+  metric: string;
+  startedAt: number;          // unix ns
+  fromNs: number;             // analysis window start (= startedAt)
+  toNs: number;               // analysis window end (clamped 10m..1h)
+  recentDeploy?: {
+    version: string;
+    timeUnixNs: number;
+    ageSeconds: number;
+  };
+  correlations: ChangedService[];   // always present (possibly empty)
+  blastRadius?: BlastRadius;
+  bubbleUp?: BubbleUpResult;        // error problems only
+  exemplar?: SpanExemplar;
+}
+
 // RedisStats matches cache.RedisStats — INFO + DBSIZE snapshot
 // rendered on the System page. version=="" means Redis is not
 // configured (Noop cache active); the UI shows a "wire it up for HA"

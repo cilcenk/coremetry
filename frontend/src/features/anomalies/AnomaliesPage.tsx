@@ -8,6 +8,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { ClusterChips } from '@/components/ClusterChips';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
+import { RootCausePanel } from '@/components/RootCausePanel';
 import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -1059,88 +1060,12 @@ function TriageDrawer({ problem, onClose }: {
               fontSize: 11, color: 'var(--text3)',
               textTransform: 'uppercase', letterSpacing: 0.4,
               marginBottom: 6,
-            }}>What changed around the fire</div>
-            <CorrelationsPanel atUnixNs={problem.startedAt} service={problem.service} />
+            }}>Root cause analysis</div>
+            <RootCausePanel problemId={problem.id} service={problem.service} />
           </div>
         </div>
       </div>
     </>
-  );
-}
-
-// CorrelationsPanel renders the "what changed around this time"
-// causal-correlation list. Pulls /api/correlations once on first
-// expand (no live polling — the data is for a fixed point in time
-// and reads expensively). Renders a compact table: top-N services
-// sorted by composite anomaly score with their per-signal deltas
-// + pre-formatted "reasons" bullets from the server.
-function CorrelationsPanel({ atUnixNs, service }: { atUnixNs: number; service: string }) {
-  type CS = import('@/lib/types').ChangedService;
-  const [data, setData] = useState<CS[] | null | undefined>(undefined);
-  useEffect(() => {
-    setData(undefined);
-    api.correlations(atUnixNs)
-      .then(r => setData(r ?? []))
-      .catch(() => setData(null));
-  }, [atUnixNs]);
-
-  if (data === undefined) return <Spinner />;
-  if (data === null) {
-    return <div style={{ fontSize: 12, color: 'var(--err)' }}>
-      Correlation query failed. Check the server log.
-    </div>;
-  }
-  if (data.length === 0) {
-    return <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-      No services in the surrounding window had notable RED-metric changes.
-      The fire may be local to <b>{service}</b> with no upstream / downstream propagation.
-    </div>;
-  }
-  return (
-    <div>
-      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-        Top {data.length} services that changed around this time
-        <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 8 }}>
-          (current 10 min vs. prior 40 min, ranked by composite score)
-        </span>
-      </div>
-      <div className="table-wrap">
-        <table>
-          <thead><tr>
-            <th style={{ width: 40 }}>#</th>
-            <th>Service</th>
-            <th>What changed</th>
-            <th className="num" style={{ width: 70 }}>Score</th>
-          </tr></thead>
-          <tbody>
-            {data.map((c, i) => (
-              <tr key={c.service}
-                  style={{ background: c.service === service ? 'rgba(220,38,38,0.06)' : undefined }}>
-                <td className="mono" style={{ color: 'var(--text3)' }}>{i + 1}</td>
-                <td>
-                  <Link to={`/service?name=${encodeURIComponent(c.service)}`}
-                        style={{ fontWeight: 600 }}>{c.service}</Link>
-                  {c.service === service && (
-                    <span style={{
-                      marginLeft: 6, fontSize: 10, padding: '1px 5px',
-                      borderRadius: 3, background: 'rgba(220,38,38,0.15)',
-                      color: 'var(--err)', fontWeight: 600,
-                    }}>SOURCE</span>
-                  )}
-                </td>
-                <td style={{ fontSize: 12, lineHeight: 1.55 }}>
-                  {c.reasons.map((r, k) => <div key={k}>{r}</div>)}
-                </td>
-                <td className="num mono" style={{
-                  fontWeight: 600,
-                  color: c.score > 50 ? 'var(--err)' : c.score > 20 ? 'var(--warn)' : 'var(--text2)',
-                }}>{c.score.toFixed(0)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
   );
 }
 

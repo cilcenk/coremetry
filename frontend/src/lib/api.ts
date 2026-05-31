@@ -725,6 +725,12 @@ export const api = {
     if (baselineSec) qs.set('baselineSec', String(baselineSec));
     return get<import('./types').ChangedService[] | null>(`/api/correlations?${qs}`);
   },
+  // Root-cause bundle — one cached read assembling deploy / correlations /
+  // blast-radius / bubble-up / exemplar for a Problem. Powers the triage
+  // drawer's RootCausePanel. Backend clamps the window + soft-fails each
+  // sub-signal, so the bundle is always returned (404 only if id unknown).
+  problemRootCause: (id: string) =>
+    get<import('./types').RootCause>(`/api/problems/${encodeURIComponent(id)}/rootcause`),
   // Branding overlay — public GET (login page reads pre-auth),
   // admin-only PUT. The save endpoint accepts up to 256 KB so a
   // pasted logo data URI fits.

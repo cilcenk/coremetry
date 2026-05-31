@@ -1,8 +1,29 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
+import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
 import { tsLong, sevName, sevClass } from '@/lib/utils';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
+
+// LOG_COLS — column definitions for the shared DataTable primitive.
+// RESIZE-ONLY (v0.7.54): /logs and the trace Logs tab are SERVER-paged
+// (100/page, time-desc order off ClickHouse), so client-side sort would
+// only reorder the visible page — misleading. Every column intentionally
+// omits `sortValue`, which makes DataTableHead render a plain,
+// non-clickable label (no ▲▼↕ glyph, no aria-sort) that still carries the
+// right-edge resize grip, and makes dt.sortedRows === the input rows in
+// server order. The Trace column is appended by the caller only when the
+// trace deep-link column is visible (omitted in the trace detail Logs tab).
+const TRACE_COL: DataTableColumn<LogRow> = { id: 'trace', label: 'Trace', width: 120 };
+const LOG_COLS: DataTableColumn<LogRow>[] = [
+  { id: 'time',    label: 'Time',    width: 150 },
+  { id: 'sev',     label: 'Sev',     width: 80 },
+  { id: 'service', label: 'Service', width: 140 },
+  { id: 'message', label: 'Message', width: 480 },
+  { id: 'cluster', label: 'Cluster', width: 120 },
+  { id: 'pod',     label: 'Pod',     width: 140 },
+];
 
 // Middle-truncate so long pod names like `payment-api-7d6f9b54c5-xkv2m`
 // stay scannable in a column (keeps the deployment prefix + the
@@ -195,22 +216,23 @@ export function LogTable({
   // shows where each log came from — operators were expanding
   // every row just to read the resource attrs.
   const cols = hideTraceColumn ? 6 : 7;
+  // Resize-only DataTable wiring. No column defines `sortValue`, so
+  // dt.sortedRows is `logs` unchanged (server time-desc order preserved)
+  // and the headers render as plain resizable labels. Persisted widths
+  // live under the 'logs' storageKey. The Trace column joins the set only
+  // when its deep-link column is shown (matches the body's `!hideTraceColumn`).
+  const columns = useMemo(
+    () => (hideTraceColumn ? LOG_COLS : [...LOG_COLS, TRACE_COL]),
+    [hideTraceColumn],
+  );
+  const dt = useDataTable<LogRow>({ storageKey: 'logs', columns, rows: logs });
   return (
     <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Sev</th>
-            <th>Service</th>
-            <th>Message</th>
-            <th>Cluster</th>
-            <th>Pod</th>
-            {!hideTraceColumn && <th>Trace</th>}
-          </tr>
-        </thead>
+      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+        <DataTableColgroup dt={dt} />
+        <DataTableHead dt={dt} />
         <tbody>
-          {logs.map((l, idx) => {
+          {dt.sortedRows.map((l, idx) => {
             const isExpanded = expanded.has(l.id);
             const isSelected = nav?.selected === idx;
             return (

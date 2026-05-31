@@ -7,6 +7,8 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
+import { useDataTable, DataTableColgroup, ColResizeHandle } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { useAllServiceRuntimes } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
@@ -27,6 +29,23 @@ const NATURAL_DIR: Record<SortKey, SortDir> = {
   p99: 'desc',
   apdex: 'asc',
 };
+
+// SERVICE_COLS — column defs for the shared DataTable primitive, used
+// here for RESIZE ONLY (v0.7.54). Sort stays SERVER-side via <SortTh>
+// (clicking re-fetches a sorted page off service_summary_5m), so these
+// intentionally omit `sortValue` — we read dt.colWidths + dt.startResize
+// and render the existing server-sorted rows, never dt.sortedRows. The
+// `id`s mirror the SortTh `col` values so the resize grip on each header
+// targets the right <col>. Persisted widths live under the 'services'
+// storageKey.
+const SERVICE_COLS: DataTableColumn<Service>[] = [
+  { id: 'name',      label: 'Service',    width: 280 },
+  { id: 'spanCount', label: 'Spans',      width: 130, align: 'right' },
+  { id: 'errorRate', label: 'Error rate', width: 130, align: 'right' },
+  { id: 'avg',       label: 'Avg',        width: 120, align: 'right' },
+  { id: 'p99',       label: 'P99',        width: 120, align: 'right' },
+  { id: 'apdex',     label: 'Apdex',      width: 100, align: 'right' },
+];
 
 export default function ServicesPage() {
   const navigate = useNavigate();
@@ -338,6 +357,12 @@ export default function ServicesPage() {
     onOpen: (svc) => goToService(svc.name),
   });
 
+  // Column RESIZE only (v0.7.54). The page is already server-sorted, so we
+  // render the existing `sorted` rows below and consume just dt.colWidths
+  // (via <DataTableColgroup>) + dt.startResize (via <ColResizeHandle>).
+  // dt.sortedRows is deliberately unused — no column has a sortValue.
+  const dt = useDataTable<Service>({ storageKey: 'services', columns: SERVICE_COLS, rows: sorted ?? [] });
+
   // v0.6.55 — sparkline click drills to /explore carrying the
   // CLICKED metric's agg (throughput→rate, error→error_rate,
   // avg→avg, p99→p99), scoped to the service. History: v0.5.485
@@ -476,15 +501,16 @@ export default function ServicesPage() {
         {sorted && sorted.length > 0 && (
           <>
             <div className="table-wrap">
-              <table>
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <DataTableColgroup dt={dt} />
                 <thead>
                   <tr>
-                    <SortTh col="name"      label="Service"    sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <SortTh col="spanCount" label="Spans"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                    <SortTh col="errorRate" label="Error rate" sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                    <SortTh col="avg"       label="Avg"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                    <SortTh col="p99"       label="P99"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                    <SortTh col="apdex"     label="Apdex"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
+                    <SortTh col="name"      label="Service"    sort={sortBy} dir={sortDir} onSort={toggleSort} resize={<ColResizeHandle dt={dt} colId="name" />} />
+                    <SortTh col="spanCount" label="Spans"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="spanCount" />} />
+                    <SortTh col="errorRate" label="Error rate" sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="errorRate" />} />
+                    <SortTh col="avg"       label="Avg"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="avg" />} />
+                    <SortTh col="p99"       label="P99"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="p99" />} />
+                    <SortTh col="apdex"     label="Apdex"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="apdex" />} />
                   </tr>
                 </thead>
                 <tbody>
@@ -700,19 +726,26 @@ function ApdexBadge({ value }: { value: number }) {
   return <span className={`badge ${cls}`}>{value.toFixed(2)}</span>;
 }
 
-function SortTh({ col, label, sort, dir, onSort, align }: {
+// SortTh keeps SERVER-side sort (onClick re-fetches a sorted page); the
+// optional `resize` slot carries the shared <ColResizeHandle> (v0.7.54).
+// position:relative anchors that handle's absolute right-edge grip, and
+// the handle stops its own click/mousedown so dragging the edge never
+// fires the header's sort.
+function SortTh({ col, label, sort, dir, onSort, align, resize }: {
   col: SortKey; label: string;
   sort: SortKey; dir: SortDir;
   onSort: (c: SortKey) => void;
   align?: 'left' | 'right';
+  resize?: React.ReactNode;
 }) {
   const active = sort === col;
   return (
     <th className={`sortable${active ? ' sorted' : ''}`}
         onClick={() => onSort(col)}
-        style={{ textAlign: align ?? 'left' }}>
+        style={{ textAlign: align ?? 'left', position: 'relative' }}>
       {label}
       <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
+      {resize}
     </th>
   );
 }

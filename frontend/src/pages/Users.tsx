@@ -25,6 +25,27 @@ export default function UsersPage() {
   };
   useEffect(refresh, []);
 
+  // Team filter — distinct non-empty teams from the loaded user list plus a
+  // synthetic "Unassigned" bucket; free-text so admins narrow as they type.
+  // v0.7.50 — hoisted ABOVE the admin-gate early return below: these hooks were
+  // after it, so on a render where `me` resolves null→admin the hook count
+  // changed (react-hooks/rules-of-hooks → "rendered fewer hooks" crash). Hooks
+  // must run unconditionally.
+  const [teamFilter, setTeamFilter] = useState('');
+  const teamOptions = useMemo(() => {
+    const set = new Set<string>();
+    (users ?? []).forEach(u => u.team && set.add(u.team));
+    return Array.from(set).sort();
+  }, [users]);
+  const filteredUsers = useMemo(() => {
+    if (!users) return users;
+    if (!teamFilter) return users;
+    if (teamFilter === '__unassigned__') {
+      return users.filter(u => !u.team);
+    }
+    return users.filter(u => u.team === teamFilter);
+  }, [users, teamFilter]);
+
   // Admin gate: if a viewer somehow lands here, surface a clear message
   // rather than a stack of 401s from listUsers.
   if (me && me.role !== 'admin') {
@@ -50,25 +71,6 @@ export default function UsersPage() {
       setActionError(humanize(e));
     }
   };
-
-  // Team filter — pulled from the loaded user list (every
-  // distinct non-empty team) plus a synthetic "Unassigned"
-  // bucket. Free-text filter so admins typing a partial team
-  // name (e.g. "platform") narrow the list as they type.
-  const [teamFilter, setTeamFilter] = useState('');
-  const teamOptions = useMemo(() => {
-    const set = new Set<string>();
-    (users ?? []).forEach(u => u.team && set.add(u.team));
-    return Array.from(set).sort();
-  }, [users]);
-  const filteredUsers = useMemo(() => {
-    if (!users) return users;
-    if (!teamFilter) return users;
-    if (teamFilter === '__unassigned__') {
-      return users.filter(u => !u.team);
-    }
-    return users.filter(u => u.team === teamFilter);
-  }, [users, teamFilter]);
 
   return (
     <>

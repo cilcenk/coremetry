@@ -2495,11 +2495,6 @@ function WhatChangedBanner({ edges, shiftMin, onPickEdge }: {
   shiftMin: number;
   onPickEdge: (e: ServiceTopologyEdge) => void;
 }) {
-  // Time-shifted views can't be compared meaningfully (the
-  // "prior" they'd compare to isn't the current "now") — banner
-  // suppressed.
-  if (shiftMin > 0) return null;
-
   const hits = useMemo(() => {
     type Hit = {
       edge: ServiceTopologyEdge;
@@ -2540,6 +2535,12 @@ function WhatChangedBanner({ edges, shiftMin, onPickEdge }: {
     return out.slice(0, 3);
   }, [edges]);
 
+  // v0.7.50 — checked AFTER the hook so hooks run unconditionally
+  // (react-hooks/rules-of-hooks). Time-shifted views can't be compared
+  // meaningfully (the "prior" isn't the current "now"), so the banner is
+  // suppressed; the hits useMemo doesn't depend on shiftMin, so computing it
+  // here and bailing is harmless.
+  if (shiftMin > 0) return null;
   if (hits.length === 0) return null;
 
   return (

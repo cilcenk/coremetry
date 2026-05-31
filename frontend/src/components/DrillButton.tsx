@@ -34,8 +34,10 @@ interface DrillButtonProps {
   title?: string;
   // Variant — primary uses accent2 colour; subtle uses --text. Most
   // drill chips are primary (call-to-action style); back-style
-  // navigation uses subtle.
-  variant?: 'primary' | 'subtle';
+  // navigation uses subtle. v0.7.48 — `secondary` renders the shared `.sec`
+  // button look so a drill chip sits flush with other `.sec` buttons in a
+  // toolbar (operator-reported: trace-detail Logs vs Share were mismatched).
+  variant?: 'primary' | 'subtle' | 'secondary';
 }
 
 function buildSearch(params: Record<string, string | number | boolean | undefined | null> | undefined): string {
@@ -53,6 +55,20 @@ export function DrillButton({ to, label, range, params, title, variant = 'primar
   if (range) merged.range = encodeRange(range);
   const search = buildSearch(merged);
   const href = search ? `${to}?${search}` : to;
+  if (variant === 'secondary') {
+    // Shared `.sec` look — identical size/style to other secondary buttons
+    // (Share, export) so a drill chip reads as one design language in a toolbar.
+    return (
+      <Link to={href} title={title} className="sec"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          fontSize: 12, padding: '3px 10px',
+          textDecoration: 'none', whiteSpace: 'nowrap',
+        }}>
+        {label}
+      </Link>
+    );
+  }
   return (
     <Link to={href} title={title}
       style={{

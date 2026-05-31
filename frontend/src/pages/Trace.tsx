@@ -321,7 +321,7 @@ function TraceDetailInner() {
                     saves the manual paste step. */}
                 <DrillButton to="/logs" params={{ traceId: id }}
                   title="Logs correlated to this trace_id"
-                  label="≡ Logs" />
+                  label="≡ Logs" variant="secondary" />
                 <SharePopover traceId={id} />
                 <button className="sec"
                   onClick={() => exportTraceJSON(id, spans)}

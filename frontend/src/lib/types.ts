@@ -135,6 +135,9 @@ export interface FlowsResponse {
   flows: RootFlow[];
   from: number;
   to: number;
+  // v0.7.39 — total distinct flows in the window (the list is capped at ?top).
+  // >flows.length → UI shows "showing N of M flows — raise top".
+  totalFlows?: number;
 }
 
 // One row of the system status grid on /status. Mirrors the

@@ -1039,6 +1039,9 @@ function FlowsView({ range }: { range: TimeRange }) {
   // hard cap) for the rare deployment with hundreds of distinct
   // root endpoints. Pre-aggregated table, so widening is cheap.
   const [top, setTop] = useState(100);
+  // v0.7.39 — total distinct flows in the window (the list is capped at `top`);
+  // surfaced so the operator knows how many flows exist beyond the cut.
+  const [totalFlows, setTotalFlows] = useState(0);
   const [search, setSearch] = useState('');
   // v0.5.290 — when a flow is picked and its subgraph spans
   // multiple services, the operator can isolate one downstream
@@ -1061,7 +1064,8 @@ function FlowsView({ range }: { range: TimeRange }) {
     setFlows(undefined);
     setPicked(null);
     const { from, to } = timeRangeToNs(range);
-    api.topologyFlows({ top, from, to }).then(d => setFlows(d.flows ?? []))
+    api.topologyFlows({ top, from, to })
+      .then(d => { setFlows(d.flows ?? []); setTotalFlows(d.totalFlows ?? 0); })
       .catch(() => setFlows(null));
   }, [range, top]);
 
@@ -1111,7 +1115,15 @@ function FlowsView({ range }: { range: TimeRange }) {
               title="How many root flows to fetch — backend cap is 200" />
             <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{top}</span>
             <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
-              {visibleFlows.length}/{flows.length} flows
+              {visibleFlows.length}/{flows.length}
+              {totalFlows > flows.length ? <> of <strong>{totalFlows}</strong></> : null} flows
+              {totalFlows > flows.length && (
+                <span style={{ color: 'var(--warn)' }}>
+                  {' '}· {totalFlows > 200
+                    ? 'raise “Show top” (max 200) — narrow the window for the rest'
+                    : 'raise “Show top” to see all'}
+                </span>
+              )}
             </span>
           </div>
           <FlowsByService flows={visibleFlows} hasSearch={!!term} onPick={setPicked} />

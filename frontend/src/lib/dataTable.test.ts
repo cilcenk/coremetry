@@ -50,8 +50,9 @@ describe('sortRows', () => {
     // desc sort keeps b before c (b is index 0, c is index 2).
     expect(sortRows(rows, COLS.calls, 'desc').map(r => r.svc)).toEqual(['a', 'b', 'c']);
   });
-  it('puts null/undefined first ascending, last descending', () => {
-    expect(sortRows(rows, COLS.p99, 'asc')[0].p99).toBeNull();
+  it('sinks null/undefined to the BOTTOM regardless of direction', () => {
+    // missing data shouldn't jump to the top when sorting ascending
+    expect(sortRows(rows, COLS.p99, 'asc').at(-1)!.p99).toBeNull();
     expect(sortRows(rows, COLS.p99, 'desc').at(-1)!.p99).toBeNull();
   });
   it('returns the input unchanged for a non-sortable column', () => {

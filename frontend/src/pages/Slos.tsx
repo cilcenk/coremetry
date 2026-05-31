@@ -6,22 +6,20 @@ import { useAuth } from '@/components/AuthProvider';
 import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
 import { useSLOs, useCreateSLO, useDeleteSLO } from '@/lib/queries';
 import { api } from '@/lib/api';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { SLIType, SLORow } from '@/lib/types';
 
 // v0.6.44 — sortable columns on /slos. Forecast + 7d trend stay
 // non-sortable because their values are loaded asynchronously per
 // row (separate /api/slos/{id}/forecast + /burn-series fetches) so
 // the SLORow object doesn't carry the numbers needed to compare.
-type SortCol = 'name' | 'service' | 'target' | 'sli' | 'budget' | 'burn' | 'status';
-type SortOrder = 'asc' | 'desc';
 
 export default function SLOsPage() {
   const { user } = useAuth();
   const [services, setServices] = useState<string[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [showAuto, setShowAuto] = useState(false);
-  const [sort, setSort] = useState<SortCol>('name');
-  const [order, setOrder] = useState<SortOrder>('asc');
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
 
   // useSLOs polls every 60s + auto-invalidates on
@@ -30,20 +28,30 @@ export default function SLOsPage() {
   const items = slosQ.isLoading ? undefined : slosQ.isError ? null : slosQ.data ?? [];
   const deleteSLO = useDeleteSLO();
 
-  // Click-toggle sort: same column → flip asc/desc; different
-  // column → switch and default to desc for numeric columns,
-  // asc for name/service. Mirrors the Traces page toggleSort.
-  const toggleSort = (col: SortCol) => {
-    if (col === sort) {
-      setOrder(o => (o === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSort(col);
-      // Numeric columns: most-bad-first is more useful than asc.
-      setOrder(col === 'name' || col === 'service' ? 'asc' : 'desc');
-    }
-  };
+  // Shared sortable + resizable table. Columns built per-render so the
+  // SLI header reflects the window + the admin actions column appears
+  // only for editors/admins. Numeric accessors preserve the prior
+  // sort semantics; null status (no telemetry yet) sinks to the bottom.
+  const windowDays = items && items.length > 0 ? items[0].windowDays : 0;
+  const sloCols = useMemo<DataTableColumn<SLORow>[]>(() => [
+    { id: 'name',     label: 'Name',        sortValue: o => o.name?.toLowerCase() ?? '',    naturalDir: 'asc', width: 220 },
+    { id: 'service',  label: 'Service',     sortValue: o => o.service?.toLowerCase() ?? '', naturalDir: 'asc', width: 150 },
+    { id: 'target',   label: 'Target',      sortValue: o => o.target,                       naturalDir: 'desc', width: 96 },
+    { id: 'sli',      label: `SLI (${windowDays}d)`, sortValue: o => o.status?.sli ?? null,  naturalDir: 'desc', width: 110 },
+    { id: 'budget',   label: 'Budget left', sortValue: o => o.status?.budgetRemaining ?? null, naturalDir: 'desc', width: 130 },
+    { id: 'burn',     label: 'Burn rate',   sortValue: o => o.status?.burnRate ?? null,      naturalDir: 'desc', width: 110 },
+    { id: 'forecast', label: 'Forecast',    width: 120 },
+    { id: 'trend',    label: '7d trend',    width: 100 },
+    { id: 'status',   label: 'Status',      sortValue: o => (o.status ? (o.status.healthy ? 1 : 0) : null), naturalDir: 'desc', width: 110 },
+    ...(isAdmin ? [{ id: 'actions', label: '', width: 130 } as DataTableColumn<SLORow>] : []),
+  ], [windowDays, isAdmin]);
 
-  const sortedItems = useMemo(() => sortSLOs(items ?? null, sort, order), [items, sort, order]);
+  const dt = useDataTable<SLORow>({
+    storageKey: 'slos',
+    columns: sloCols,
+    rows: items ?? [],
+    initialSort: { id: 'name', dir: 'asc' },
+  });
 
   // Service list for the picker — one-shot lookup, not
   // worth a hook abstraction.
@@ -85,23 +93,11 @@ export default function SLOsPage() {
         )}
         {items && items.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <SloSortHeader col="name"    label="Name"     sort={sort} order={order} onSort={toggleSort} />
-                  <SloSortHeader col="service" label="Service"  sort={sort} order={order} onSort={toggleSort} />
-                  <SloSortHeader col="target"  label="Target"   sort={sort} order={order} onSort={toggleSort} />
-                  <SloSortHeader col="sli"     label={`SLI (${items[0].windowDays}d)`} sort={sort} order={order} onSort={toggleSort} />
-                  <SloSortHeader col="budget"  label="Budget left" sort={sort} order={order} onSort={toggleSort} />
-                  <SloSortHeader col="burn"    label="Burn rate" sort={sort} order={order} onSort={toggleSort} />
-                  <th>Forecast</th>
-                  <th>7d trend</th>
-                  <SloSortHeader col="status"  label="Status"   sort={sort} order={order} onSort={toggleSort} />
-                  {isAdmin && <th></th>}
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {sortedItems.map(o => (
+                {dt.sortedRows.map(o => (
                   <tr key={o.id}>
                     <td>
                       <div style={{ fontWeight: 600 }}>{o.name}</div>
@@ -161,67 +157,6 @@ export default function SLOsPage() {
       </div>
     </>
   );
-}
-
-// v0.6.44 — column-header sort widget. Matches the visual style of
-// the SortHeader in Traces.tsx (sortable + sorted + sort-arrow CSS
-// classes already exist in globals.css).
-function SloSortHeader({ col, label, sort, order, onSort }: {
-  col: SortCol; label: string; sort: SortCol; order: SortOrder;
-  onSort: (c: SortCol) => void;
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col)}>
-      {label}<span className="sort-arrow">{active ? (order === 'desc' ? '▼' : '▲') : '↕'}</span>
-    </th>
-  );
-}
-
-// sortSLOs — pure ranking helper. Pulled out so a future test can
-// assert "Breached above Healthy when sort=status desc" and
-// "missing status (no telemetry yet) sinks to the bottom" without
-// rendering the whole page. SLO list size is tiny (~tens of rows
-// in any realistic install), so client-side sort over the full
-// array is fine.
-//
-// Tie-break: when the primary key is null/missing, push that row
-// to the END of the list regardless of order. Operators care
-// most about rows with real data; an SLO without status yet (just-
-// created, evaluator hasn't ticked) shouldn't jump to the top of
-// "highest burn rate" just because null > 0 in lexical sort.
-export function sortSLOs(items: SLORow[] | null, col: SortCol, order: SortOrder): SLORow[] {
-  if (!items) return [];
-  const dir = order === 'asc' ? 1 : -1;
-  const key = (o: SLORow): string | number | null => {
-    switch (col) {
-      case 'name':    return o.name?.toLowerCase() ?? '';
-      case 'service': return o.service?.toLowerCase() ?? '';
-      case 'target':  return o.target;
-      case 'sli':     return o.status?.sli ?? null;
-      case 'budget':  return o.status?.budgetRemaining ?? null;
-      case 'burn':    return o.status?.burnRate ?? null;
-      // Healthy = 1, Breached = 0 — sorts so Breached lands at
-      // top of "status desc" (the operator's natural "show me the
-      // broken ones first" reading).
-      case 'status':  return o.status ? (o.status.healthy ? 1 : 0) : null;
-    }
-  };
-  return [...items].sort((a, b) => {
-    const ka = key(a);
-    const kb = key(b);
-    // Null/undefined to the bottom, regardless of order direction.
-    if (ka === null && kb === null) return 0;
-    if (ka === null) return 1;
-    if (kb === null) return -1;
-    if (typeof ka === 'string' && typeof kb === 'string') {
-      return dir * ka.localeCompare(kb);
-    }
-    if (typeof ka === 'number' && typeof kb === 'number') {
-      return dir * (ka - kb);
-    }
-    return 0;
-  });
 }
 
 // AutoSLOModal (v0.5.147) walks the operator through dry-run →

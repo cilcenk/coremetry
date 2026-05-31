@@ -52,28 +52,24 @@ export function nextSort<T>(cur: SortState, col: DataTableColumn<T>): SortState 
   return { id: col.id, dir: col.naturalDir ?? 'desc' };
 }
 
-// compareValues — type-aware, null-tolerant comparator returning the
-// pre-direction ordering. null/undefined always sort BEFORE present
-// values (so with `desc` they land last); numbers compare numerically,
-// everything else via locale string compare.
-function compareValues(
-  a: number | string | null | undefined,
-  b: number | string | null | undefined,
-): number {
-  const an = a == null;
-  const bn = b == null;
-  if (an && bn) return 0;
-  if (an) return -1;
-  if (bn) return 1;
+// compareValues — type-aware comparator for two PRESENT (non-null)
+// values, returning the pre-direction ordering. Numbers compare
+// numerically; everything else via locale string compare. Null handling
+// lives in sortRows (nulls are direction-independent — always last).
+function compareValues(a: number | string, b: number | string): number {
   if (typeof a === 'number' && typeof b === 'number') return a - b;
   return String(a).localeCompare(String(b));
 }
 
 // sortRows — STABLE client-side sort by a column's accessor, returning
-// a NEW array (never mutates input). Stability matters: re-sorting by a
-// column with many ties (e.g. all the same db_system) must preserve the
-// server's original ordering within each group. Returns the input
-// unchanged when the column is absent or non-sortable.
+// a NEW array (never mutates input). Two invariants:
+//  • Stability — re-sorting by a column with many ties (e.g. all the
+//    same db_system) preserves the server's original order within each
+//    group (tiebreak on original index).
+//  • Nulls last — null/undefined accessor values sink to the BOTTOM
+//    regardless of direction (missing data shouldn't jump to the top
+//    when sorting ascending; matches the SLO list's intent).
+// Returns the input unchanged when the column is absent or non-sortable.
 export function sortRows<T>(
   rows: T[],
   col: DataTableColumn<T> | undefined,
@@ -85,8 +81,13 @@ export function sortRows<T>(
   return rows
     .map((r, i) => ({ r, i, v: acc(r) }))
     .sort((x, y) => {
-      const c = compareValues(x.v, y.v);
-      return c !== 0 ? c * mul : x.i - y.i; // stable tiebreak on original index
+      const a = x.v;
+      const b = y.v;
+      if (a == null && b == null) return x.i - y.i;
+      if (a == null) return 1;  // x is null → sinks below y
+      if (b == null) return -1; // y is null → x stays above
+      const c = compareValues(a, b) * mul;
+      return c !== 0 ? c : x.i - y.i; // stable tiebreak on original index
     })
     .map(x => x.r);
 }

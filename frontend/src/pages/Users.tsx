@@ -6,6 +6,19 @@ import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
 import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
 import { tsLong } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// Columns for the shared sortable + resizable DataTable.
+const USER_COLS: DataTableColumn<UserRow>[] = [
+  { id: 'email',      label: 'Email',       sortValue: u => u.email,             naturalDir: 'asc',  width: 240 },
+  { id: 'role',       label: 'Role',        sortValue: u => u.role,              naturalDir: 'asc',  width: 120 },
+  { id: 'customRole', label: 'Custom role', width: 150 },
+  { id: 'team',       label: 'Team',        sortValue: u => u.team ?? '',        naturalDir: 'asc',  width: 140 },
+  { id: 'provider',   label: 'Provider',    sortValue: u => u.authProvider ?? '', naturalDir: 'asc', width: 110 },
+  { id: 'created',    label: 'Created',     sortValue: u => u.createdAt,         naturalDir: 'desc', width: 170 },
+  { id: 'actions',    label: 'Actions',     align: 'right', width: 230 },
+];
 
 export default function UsersPage() {
   const { user: me } = useAuth();
@@ -45,6 +58,14 @@ export default function UsersPage() {
     }
     return users.filter(u => u.team === teamFilter);
   }, [users, teamFilter]);
+
+  // Shared sortable + resizable table. Hook is ABOVE the admin gate
+  // (rules-of-hooks — same reason teamFilter/filteredUsers were hoisted
+  // in v0.7.50).
+  const dt = useDataTable<UserRow>({
+    storageKey: 'users', columns: USER_COLS,
+    rows: filteredUsers ?? [], initialSort: { id: 'email', dir: 'asc' },
+  });
 
   // Admin gate: if a viewer somehow lands here, surface a clear message
   // rather than a stack of 401s from listUsers.
@@ -113,20 +134,11 @@ export default function UsersPage() {
         )}
         {users && users.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Custom role</th>
-                  <th>Team</th>
-                  <th>Provider</th>
-                  <th>Created</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {(filteredUsers ?? []).map(u => {
+                {dt.sortedRows.map(u => {
                   const isMe = me?.id === u.id;
                   const isOIDC = u.authProvider === 'oidc';
                   return (

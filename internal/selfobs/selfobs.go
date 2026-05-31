@@ -67,6 +67,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 const (
@@ -93,7 +94,7 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	endpoint := strings.TrimSpace(os.Getenv(envEndpoint))
 	if endpoint == "" {
 		log.Printf("[selfobs] %s unset — self-observability disabled", envEndpoint)
-		tracerSink = trace.NewNoopTracerProvider().Tracer("coremetry")
+		tracerSink = noop.NewTracerProvider().Tracer("coremetry")
 		meterSink = noopMeter{}
 		return func(context.Context) error { return nil }
 	}
@@ -102,7 +103,7 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	res, err := buildResource(mode, version)
 	if err != nil {
 		log.Printf("[selfobs] resource: %v — disabled", err)
-		tracerSink = trace.NewNoopTracerProvider().Tracer("coremetry")
+		tracerSink = noop.NewTracerProvider().Tracer("coremetry")
 		meterSink = noopMeter{}
 		return func(context.Context) error { return nil }
 	}
@@ -125,7 +126,7 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	)
 	if err != nil {
 		log.Printf("[selfobs] trace exporter: %v — disabled", err)
-		tracerSink = trace.NewNoopTracerProvider().Tracer("coremetry")
+		tracerSink = noop.NewTracerProvider().Tracer("coremetry")
 		meterSink = noopMeter{}
 		return func(context.Context) error { return nil }
 	}

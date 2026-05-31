@@ -107,12 +107,16 @@ export const api = {
     // on the backend since the service MV doesn't carry the
     // cluster dim.
     cluster?: string;
+    // v0.7.44 — opt-in distinct-service total for the First/Last pager.
+    // Default off keeps the hot path count-free.
+    withTotal?: '1';
   } = {}) =>
     get<{
       services: Service[];
       hasMore: boolean;
       offset: number;
       limit: number;
+      total?: number; // present only when withTotal='1' (MV path)
     }>(`/api/services?${qs({ ...r, ...opts })}`),
 
   // List distinct clusters seen in the window. Drives the

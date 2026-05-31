@@ -207,6 +207,46 @@ func servicesAggSortExpr(sort, dir string) string {
 // plus a service-name allowlist (the API uses this to
 // pre-narrow the universe by ownerTeam / sreTeam without
 // joining at query time). nil / empty = no constraint.
+// CountServicesAgg returns the number of DISTINCT services matching the same
+// MV-path filters as GetServicesAggFilteredIn — the denominator the Services
+// page needs for First/Last paging. uniqExact over service_summary_5m is cheap
+// (no per-service aggregation). Kept OPT-IN at the handler (?withTotal=1) so the
+// default hot path stays count-free per the /api/services p99<50ms budget
+// (v0.7.44).
+func (s *Store) CountServicesAgg(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string) (int, error) {
+	if from.IsZero() {
+		from = time.Now().Add(-24 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	nameClause := ""
+	args := []any{from, to}
+	if nameMatch != "" {
+		nameClause = " AND positionCaseInsensitive(service_name, ?) > 0"
+		args = append(args, nameMatch)
+	}
+	if len(serviceIn) > 0 {
+		holders := make([]string, len(serviceIn))
+		for i, n := range serviceIn {
+			holders[i] = "?"
+			args = append(args, n)
+		}
+		nameClause += " AND service_name IN (" + strings.Join(holders, ",") + ")"
+	}
+	var n uint64
+	err := s.conn.QueryRow(ctx, `
+		SELECT toUInt64(uniqExact(service_name))
+		FROM service_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?`+nameClause+`
+		SETTINGS max_execution_time = 30`,
+		args...).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
 	if from.IsZero() {
 		from = time.Now().Add(-24 * time.Hour)

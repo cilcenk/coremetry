@@ -1124,9 +1124,13 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// aligns timestamps to the same 30s window every operator
 	// hitting in that window sees, so back-to-back clicks
 	// land on a HIT instead of a cold MV scan.
+	// v0.7.44 — opt-in distinct-service total for the Services page First/Last
+	// pager. Default OFF so the hot path stays count-free (the count(DISTINCT)
+	// is the slowest part — see the limit+1 hasMore trick below).
+	withTotal := q.Get("withTotal") == "1"
 	bucket := cacheBucket(from, to)
-	key := fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:bucket=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s:cl=%s",
-		useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster)
+	key := fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:bucket=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s:cl=%s:wt=%t",
+		useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, withTotal)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
@@ -1192,12 +1196,21 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 				rows[i].Health, rows[i].HealthReason = scoreHealth(&rows[i], c)
 			}
 		}
-		return map[string]any{
+		resp := map[string]any{
 			"services": rows,
 			"hasMore":  hasMore,
 			"offset":   offset,
 			"limit":    limit,
-		}, nil
+		}
+		// v0.7.44 — opt-in distinct-service count for the First/Last pager. MV
+		// path only (cheap uniqExact over service_summary_5m); on the raw/cluster
+		// path total stays absent and the UI degrades to First + Next/Prev.
+		if withTotal && useMV {
+			if total, terr := s.store.CountServicesAgg(r.Context(), from, to, nameMatch, serviceIn); terr == nil {
+				resp["total"] = total
+			}
+		}
+		return resp, nil
 	})
 }
 

@@ -77,6 +77,9 @@ export default function ServicesPage() {
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  // v0.7.44 — distinct-service total (opt-in ?withTotal=1) drives the First/Last
+  // pager. null when unknown (e.g. cluster filter → raw path returns no total).
+  const [total, setTotal] = useState<number | null>(null);
 
   // Filters (in-memory — service list is small)
   const [serviceFilter, setServiceFilter] = useState('');
@@ -151,9 +154,11 @@ export default function ServicesPage() {
       ownerTeam: ownerTeam || undefined,
       sreTeam: sreTeam || undefined,
       cluster: cluster || undefined,
+      withTotal: '1',
     }).then(resp => {
       setData(resp?.services ?? []);
       setHasMore(resp?.hasMore ?? false);
+      setTotal(resp?.total ?? null);
       const names = (resp?.services ?? []).map(s => s.name);
       if (names.length > 0) {
         api.serviceSparklines(r, names).then(d => setSparklines(d ?? {})).catch(() => {});
@@ -422,8 +427,17 @@ export default function ServicesPage() {
               Errors only
             </label>
             <button className="sec" onClick={reset}>Reset</button>
-            <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-              {sorted?.length ?? 0} services on page {page + 1}
+            <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {sorted?.length ?? 0} services{total != null ? ` · ${total} total` : ''}
+              {/* v0.7.44 — First + Last jumps (Last needs the opt-in total;
+                  disabled when unknown, e.g. under a cluster filter). */}
+              <button className="sec" type="button"
+                disabled={page === 0}
+                onClick={() => setPage(0)}
+                title="First page"
+                style={{ padding: '3px 8px', fontSize: 11 }}>
+                ⏮ First
+              </button>
               <button className="sec" type="button"
                 disabled={page === 0}
                 onClick={() => setPage(p => Math.max(0, p - 1))}
@@ -431,13 +445,20 @@ export default function ServicesPage() {
                 ← Prev
               </button>
               <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
-                {page + 1}
+                {page + 1}{total != null ? ` / ${Math.max(1, Math.ceil(total / PAGE_SIZE))}` : ''}
               </span>
               <button className="sec" type="button"
                 disabled={!hasMore}
                 onClick={() => setPage(p => p + 1)}
                 style={{ padding: '3px 10px', fontSize: 11 }}>
                 Next →
+              </button>
+              <button className="sec" type="button"
+                disabled={total == null || page >= Math.ceil(total / PAGE_SIZE) - 1}
+                onClick={() => { if (total != null) setPage(Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)); }}
+                title={total != null ? `Last page (${Math.max(1, Math.ceil(total / PAGE_SIZE))})` : 'Last page unavailable with a cluster filter'}
+                style={{ padding: '3px 8px', fontSize: 11 }}>
+                Last ⏭
               </button>
             </span>
           </div>

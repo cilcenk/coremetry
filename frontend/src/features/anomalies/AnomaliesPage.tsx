@@ -9,6 +9,7 @@ import { CopilotExplain } from '@/components/CopilotExplain';
 import { ClusterChips } from '@/components/ClusterChips';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { RootCausePanel } from '@/components/RootCausePanel';
+import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
@@ -385,21 +386,19 @@ export default function ProblemsPage() {
             marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
             justifyContent: 'flex-end', fontSize: 12,
           }}>
-            <button type="button" className="sec"
+            <Button variant="secondary" size="sm"
               disabled={page === 0}
-              onClick={() => setPage(p => Math.max(0, p - 1))}
-              style={{ fontSize: 11, padding: '3px 10px' }}>
+              onClick={() => setPage(p => Math.max(0, p - 1))}>
               ← Prev
-            </button>
+            </Button>
             <span style={{ color: 'var(--text3)' }}>
               Page {page + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
             </span>
-            <button type="button" className="sec"
+            <Button variant="secondary" size="sm"
               disabled={(page + 1) * PAGE_SIZE >= total}
-              onClick={() => setPage(p => p + 1)}
-              style={{ fontSize: 11, padding: '3px 10px' }}>
+              onClick={() => setPage(p => p + 1)}>
               Next →
-            </button>
+            </Button>
           </div>
         )}
 
@@ -701,12 +700,11 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
           <span style={{ color: 'var(--accent2)', fontWeight: 600 }}>
             {selectedIds.size} selected
           </span>
-          <button onClick={() => setSelectedIds(new Set())}
-            className="sec" style={{ fontSize: 11, padding: '3px 8px' }}>
+          <Button variant="secondary" size="sm" onClick={() => setSelectedIds(new Set())}>
             Clear
-          </button>
+          </Button>
           <span style={{ flex: 1 }} />
-          <button disabled={bulkBusy}
+          <Button variant="primary" disabled={bulkBusy}
             onClick={async () => {
               if (bulkBusy) return;
               setBulkBusy(true);
@@ -719,10 +717,9 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
               } finally {
                 setBulkBusy(false);
               }
-            }}
-            style={{ fontSize: 12, padding: '4px 12px' }}>
+            }}>
             {bulkBusy ? 'Acknowledging…' : 'Acknowledge'}
-          </button>
+          </Button>
         </div>
       )}
       {sorted && sorted.length > 0 && (
@@ -908,14 +905,10 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             AI in one panel. Replaces the v0.5.x
                             inline "Why?" expansion and the
                             scattered per-cell AI buttons. */}
-                        <button className="sec"
-                          style={{ fontSize: 11, padding: '2px 8px',
-                                   color: 'var(--accent2)',
-                                   border: '1px solid var(--accent2)',
-                                   borderRadius: 4 }}
+                        <Button variant="secondary" size="sm"
                           onClick={() => setDrawerProblemId(p.id)}>
                           Triage ▶
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                 );
@@ -1196,10 +1189,10 @@ function SampleCard({ sample, index }: { sample: ExceptionSample; index: number 
       )}
       {hasTrace && (
         <>
-          <button className="sec" style={{ padding: '2px 8px', fontSize: 11, marginTop: 8 }}
+          <Button variant="secondary" size="sm" style={{ marginTop: 8 }}
             onClick={() => setShowTrace(t => !t)}>
             {showTrace ? '▾ Hide stacktrace' : '▸ Show stacktrace'}
-          </button>
+          </Button>
           {showTrace && (
             <pre style={{
               marginTop: 6, padding: 10, background: 'var(--bg)',
@@ -1217,39 +1210,29 @@ function SampleCard({ sample, index }: { sample: ExceptionSample; index: number 
 function ActionButtons({ g, onSet }: {
   g: ExceptionGroup; onSet: (g: ExceptionGroup, s: ExceptionGroupState) => void;
 }) {
-  const cls = { padding: '3px 7px', fontSize: 11 };
+  // Compact secondary actions in a flex row — uniform gap instead of
+  // per-button margins, all on the canonical secondary/sm Button.
+  const row = (...kids: React.ReactNode[]) => (
+    <span style={{ display: 'inline-flex', gap: 4 }}>{kids}</span>
+  );
   switch (g.state) {
     case 'new':
     case 'regressed':
-      return (
-        <>
-          <button className="sec" style={{ ...cls, marginRight: 4 }}
-            onClick={() => onSet(g, 'acknowledged')}>Ack</button>
-          <button className="sec" style={{ ...cls, marginRight: 4 }}
-            onClick={() => onSet(g, 'resolved')}>Resolve</button>
-          <button className="sec" style={cls}
-            onClick={() => onSet(g, 'ignored')}>Ignore</button>
-        </>
+      return row(
+        <Button key="ack" variant="secondary" size="sm" onClick={() => onSet(g, 'acknowledged')}>Ack</Button>,
+        <Button key="res" variant="secondary" size="sm" onClick={() => onSet(g, 'resolved')}>Resolve</Button>,
+        <Button key="ign" variant="secondary" size="sm" onClick={() => onSet(g, 'ignored')}>Ignore</Button>,
       );
     case 'acknowledged':
-      return (
-        <>
-          <button className="sec" style={{ ...cls, marginRight: 4 }}
-            onClick={() => onSet(g, 'resolved')}>Resolve</button>
-          <button className="sec" style={{ ...cls, marginRight: 4 }}
-            onClick={() => onSet(g, 'new')}>Reopen</button>
-          <button className="sec" style={cls}
-            onClick={() => onSet(g, 'ignored')}>Ignore</button>
-        </>
+      return row(
+        <Button key="res" variant="secondary" size="sm" onClick={() => onSet(g, 'resolved')}>Resolve</Button>,
+        <Button key="reo" variant="secondary" size="sm" onClick={() => onSet(g, 'new')}>Reopen</Button>,
+        <Button key="ign" variant="secondary" size="sm" onClick={() => onSet(g, 'ignored')}>Ignore</Button>,
       );
     case 'resolved':
-      return (
-        <button className="sec" style={cls} onClick={() => onSet(g, 'new')}>Reopen</button>
-      );
+      return <Button variant="secondary" size="sm" onClick={() => onSet(g, 'new')}>Reopen</Button>;
     case 'ignored':
-      return (
-        <button className="sec" style={cls} onClick={() => onSet(g, 'new')}>Unignore</button>
-      );
+      return <Button variant="secondary" size="sm" onClick={() => onSet(g, 'new')}>Unignore</Button>;
   }
   return null;
 }
@@ -1330,12 +1313,11 @@ function AssigneeCell({ problem, currentUserEmail, onChanged }: {
         )
         : <span style={{ color: 'var(--text3)' }}>—</span>}
       {currentUserEmail !== '' && !isSelf && (
-        <button className="sec" disabled={busy}
+        <Button variant="secondary" size="sm" disabled={busy}
           onClick={() => void set(currentUserEmail)}
-          style={{ fontSize: 10, padding: '2px 6px' }}
           title="Claim this problem for yourself">
           Take it
-        </button>
+        </Button>
       )}
     </span>
   );

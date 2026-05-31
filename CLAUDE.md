@@ -176,6 +176,24 @@ const dt = useDataTable<Row>({
 // numeric → .num class; omit sortValue → column not sortable (still resizes).
 ```
 
+### Buttons + fields — ONE design language (v0.7.54)
+Operator principle: no visual difference between sibling buttons /
+labels / elements. Use the shared `<Button>` atom — never hand-roll
+`<button style={{ fontSize, padding, border, borderRadius }}>`. The
+inline-style size/shape drift (2px6px vs 3px7px vs custom accent
+borders) is the exact anti-pattern that triggered this.
+```tsx
+import { Button } from '@/components/ui/Button';
+<Button variant="secondary" size="sm" onClick={…}>Triage ▶</Button>  // compact action
+<Button variant="primary" onClick={…}>Acknowledge</Button>           // primary CTA
+// variant: primary (accent) | secondary (.sec) | danger | ghost
+// size: sm (compact, the toolbar default) | md | lg
+// Fields: the global input/select style + .field/.field-label; for
+// labelled inputs use components/ui/Field.tsx. Badges: .badge + .b-ok/.b-err/…
+```
+Rollout is incremental (one surface per release, high-traffic first);
+new code uses `<Button>` from day one. See [[feedback-ui-consistency-principles]].
+
 ### Cache key for a set
 ```go
 // YES — stable digest

@@ -1469,6 +1469,39 @@ function TopSQLTable({ rows, instance }: {
   );
 }
 
+// TopSQLSection wraps TopSQLTable with the section header + an
+// explicit EMPTY state. Postgres / MySQL receivers only emit
+// engine-authoritative statement stats when the operator has
+// enabled pg_stat_statements / performance_schema scraping — the
+// common case (and the bundled demo, which only emits Oracle) is
+// zero rows. We render an Empty with a hint pointing at the fix
+// rather than a blank gap, mirroring the no-fake-data policy of
+// the rest of the panel. When rows exist we delegate to the same
+// TopSQLTable the Oracle panel uses, so the v0.7.67 statement→
+// /traces exemplar link is shared across all three engines.
+function TopSQLSection({ rows, instance, hint }: {
+  rows: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[];
+  instance: string;
+  hint: string;
+}) {
+  if (rows.length > 0) {
+    return <TopSQLTable rows={rows} instance={instance} />;
+  }
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
+        textTransform: 'uppercase', letterSpacing: 0.4,
+      }}>
+        Top SQL by elapsed time
+      </div>
+      <Empty icon="◯" title="No engine-authoritative statement metrics">
+        {hint}
+      </Empty>
+    </div>
+  );
+}
+
 function TablespaceBar({ ts, onClick }: {
   ts: { name: string; usedBytes: number; maxBytes: number; usedPct: number };
   onClick?: () => void;
@@ -1665,7 +1698,7 @@ function PostgresPanel({ instance, range }: { instance: string; range: TimeRange
           )}
 
           {data.locks.length > 0 && (
-            <div>
+            <div style={{ marginBottom: 12 }}>
               <SubHeader label="Locks by mode" />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {data.locks.map(l => (
@@ -1680,6 +1713,9 @@ function PostgresPanel({ instance, range }: { instance: string; range: TimeRange
               </div>
             </div>
           )}
+
+          <TopSQLSection rows={data.topSQL} instance={instance}
+            hint="Enable the pg_stat_statements extension + the receiver's statement scrape to populate." />
         </>
       )}
       {drill && (
@@ -1775,6 +1811,11 @@ function MySQLPanel({ instance, range }: { instance: string; range: TimeRange })
                 Check for missing indexes or stale query plans.
               </div>
             )}
+          </div>
+
+          <div style={{ marginTop: 12 }}>
+            <TopSQLSection rows={data.topSQL} instance={instance}
+              hint="Enable performance_schema statement instrumentation + the receiver's statement scrape to populate." />
           </div>
         </>
       )}

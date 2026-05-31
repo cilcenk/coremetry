@@ -40,6 +40,12 @@ type PostgresMetrics struct {
 	BgwriterPS     PGBgwriter         `json:"bgwriter"`
 	Databases      []PGDatabase       `json:"databases"`
 	Locks          []PGLockEntry      `json:"locks"`
+	// TopSQL — engine-authoritative heaviest statements from
+	// pg_stat_statements (receiver-side parity with Oracle's
+	// V$SQL TopSQL). Empty when the operator hasn't enabled the
+	// pg_stat_statements scrape — the panel renders an empty
+	// state, same no-fake-data policy as the rest of the panel.
+	TopSQL         []DBTopSQL         `json:"topSQL"`
 }
 
 // PGGaugeWithCap is the (usage, limit) pair pattern shared with
@@ -107,6 +113,7 @@ func (s *Store) GetPostgresMetrics(
 		WindowSeconds: windowSec,
 		Databases:     []PGDatabase{},
 		Locks:         []PGLockEntry{},
+		TopSQL:        []DBTopSQL{},
 	}
 
 	hasInstanceFilter := instance != "" && instance != "unknown"
@@ -149,6 +156,15 @@ func (s *Store) GetPostgresMetrics(
 	// Lock breakdown by mode.
 	if locks, err := s.queryPgLocks(ctx, from, to, instance, hasInstanceFilter); err == nil {
 		out.Locks = locks
+	}
+
+	// Top SQL by total exec time — pg_stat_statements parity with
+	// Oracle's V$SQL view. Empty when the operator hasn't wired
+	// the statement scrape (the common case); the panel renders
+	// an empty state. Read source is metric_points (see
+	// db_topsql.go), never raw spans.
+	if top, err := s.GetPostgresTopSQL(ctx, instance, from, to); err == nil && len(top) > 0 {
+		out.TopSQL = top
 	}
 
 	return out, nil

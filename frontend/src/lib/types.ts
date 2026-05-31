@@ -390,6 +390,12 @@ export interface PostgresMetrics {
   databases: { name: string; sizeBytes: number; commitsPerSec: number;
                 rollbacksPerSec: number; backendCount: number }[];
   locks: { mode: string; count: number }[];
+  // topSQL — engine-authoritative heaviest statements from
+  // pg_stat_statements (receiver-side parity with Oracle's V$SQL
+  // TopSQL). Same row shape as OracleMetrics.topSQL so the
+  // shared TopSQLTable renders all three engines. Empty when the
+  // operator hasn't enabled the pg_stat_statements scrape.
+  topSQL: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[];
 }
 
 // MySQLMetrics — receiver drill-down for one MySQL instance.
@@ -418,6 +424,12 @@ export interface MySQLMetrics {
     deletePerSec: number; selectPerSec: number;
   };
   replicaDelaySec: number;
+  // topSQL — engine-authoritative heaviest statements from
+  // performance_schema (events_statements_summary_by_digest).
+  // Same row shape as OracleMetrics.topSQL so the shared
+  // TopSQLTable renders it. Empty when the operator hasn't
+  // enabled the performance_schema statement scrape.
+  topSQL: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[];
 }
 
 // RedisMetrics — receiver drill-down for one Redis instance.

@@ -268,6 +268,15 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	// burn-rate breaches without additional plumbing.
 	e.evaluateSLOs(ctx)
 
+	// DB capacity / saturation alarms (feature #5) — page off the
+	// DB-receiver gauges (Oracle tablespace / sessions / processes,
+	// defensively Postgres / MySQL connections + Redis evictions) that
+	// the /databases dashboards only coloured cosmetically. Opens /
+	// resolves Problems deduped per (instance, check) on this same
+	// leader-locked tick, riding the existing notify / incident-attach
+	// pipeline like every other Problem.
+	e.evaluateDBCapacity(ctx)
+
 	// Escalation sweep — bump severity on problems that have
 	// been open past the configured threshold without
 	// acknowledgement. Refires SendProblemAlert with the new

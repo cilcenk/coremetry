@@ -36,6 +36,12 @@ type MySQLMetrics struct {
 	HandlersPS     MySQLHandlers   `json:"handlers"`
 	RowOpsPS       MySQLRowOps     `json:"rowOps"`
 	ReplicaDelay   float64         `json:"replicaDelaySec"`
+	// TopSQL — engine-authoritative heaviest statements from
+	// performance_schema (events_statements_summary_by_digest),
+	// receiver-side parity with Oracle's V$SQL TopSQL. Empty when
+	// the operator hasn't enabled the performance_schema statement
+	// scrape — panel renders an empty state.
+	TopSQL         []DBTopSQL      `json:"topSQL"`
 }
 
 // MySQLThreads — running vs connected says how many of the
@@ -95,6 +101,7 @@ func (s *Store) GetMySQLMetrics(
 	}
 	out := &MySQLMetrics{
 		Instance: instance, Status: "down", WindowSeconds: windowSec,
+		TopSQL: []DBTopSQL{},
 	}
 	hasInstanceFilter := instance != "" && instance != "unknown"
 
@@ -145,6 +152,15 @@ func (s *Store) GetMySQLMetrics(
 	// to window total here.
 	if t, err := s.queryMysqlRowLockTime(ctx, from, to, instance, hasInstanceFilter); err == nil {
 		out.RowLockTimeSec = t
+	}
+
+	// Top SQL by total exec time — performance_schema digest
+	// parity with Oracle's V$SQL view. Empty when the operator
+	// hasn't wired the statement scrape (the common case); panel
+	// renders an empty state. Read source is metric_points (see
+	// db_topsql.go), never raw spans.
+	if top, err := s.GetMySQLTopSQL(ctx, instance, from, to); err == nil && len(top) > 0 {
+		out.TopSQL = top
 	}
 
 	return out, nil

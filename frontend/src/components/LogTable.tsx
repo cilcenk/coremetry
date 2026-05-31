@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
-import { tsShort, sevName, sevClass } from '@/lib/utils';
+import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { LogRow } from '@/lib/types';
 
 // Middle-truncate so long pod names like `payment-api-7d6f9b54c5-xkv2m`
@@ -203,9 +203,9 @@ export function LogTable({
             <th>Time</th>
             <th>Sev</th>
             <th>Service</th>
-            <th>Pod</th>
-            <th>Cluster</th>
             <th>Message</th>
+            <th>Cluster</th>
+            <th>Pod</th>
             {!hideTraceColumn && <th>Trace</th>}
           </tr>
         </thead>
@@ -285,7 +285,7 @@ function LogRow({
           data-row-idx={idx}
           className={selected ? 'row-selected' : ''}
           style={{ cursor: 'pointer' }}>
-        <td className="mono">{tsShort(l.timestamp)}</td>
+        <td className="mono">{tsLong(l.timestamp)}</td>
         <td>
           <span className={sevClass(l.severity)}>
             {l.severityText || sevName(l.severity)}
@@ -300,15 +300,15 @@ function LogRow({
             {l.serviceName || '—'}
           </span>
         </td>
-        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
-            title={pod || 'no k8s.pod.name / kubernetes.pod_name resource attr'}>
-          {pod ? truncMid(pod, 22) : '—'}
-        </td>
+        <td style={{ maxWidth: 480 }} title={l.body}>{l.body}</td>
         <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
             title={cluster || 'no openshift.labels.cluster / openshift.cluster.name / k8s.cluster.name resource attr'}>
           {cluster || '—'}
         </td>
-        <td style={{ maxWidth: 480 }} title={l.body}>{l.body}</td>
+        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+            title={pod || 'no k8s.pod.name / kubernetes.pod_name resource attr'}>
+          {pod ? truncMid(pod, 22) : '—'}
+        </td>
         {!hideTraceColumn && (
           <td className="mono">
             {l.traceId ? (

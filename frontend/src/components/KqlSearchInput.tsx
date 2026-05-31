@@ -96,7 +96,7 @@ function quoteIfNeeded(v: string): string {
 export function KqlSearchInput({
   value, onChange, onSubmit, placeholder, title, width = 380,
 }: KqlSearchInputProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [cursor, setCursor] = useState(0);
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<string[]>([]);
@@ -104,6 +104,15 @@ export function KqlSearchInput({
   const [loading, setLoading] = useState(false);
 
   const token = useMemo(() => detectFieldToken(value, cursor), [value, cursor]);
+
+  // v0.7.46 — auto-grow the textarea to fit wrapped content (long KQL AND/OR
+  // queries), capped at ~5 rows then scroll. Keeps short queries one line tall.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  }, [value]);
 
   // Debounced fetch when the token changes. 180ms is short
   // enough for keystroke responsiveness; the 30s server cache
@@ -150,7 +159,7 @@ export function KqlSearchInput({
     });
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (open && values.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -179,19 +188,28 @@ export function KqlSearchInput({
         return;
       }
     }
-    if (e.key === 'Enter' && onSubmit) {
+    if (e.key === 'Enter' && onSubmit && !e.shiftKey) {
+      // Textarea would otherwise insert a newline — a KQL query is one logical
+      // line, so Enter submits. Shift+Enter still adds a newline for the rare
+      // operator who wants to visually break a very long query.
+      e.preventDefault();
       onSubmit();
     }
   };
 
-  const onSelect = (e: React.SyntheticEvent<HTMLInputElement>) => {
+  const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
     setCursor(e.currentTarget.selectionStart ?? 0);
   };
 
   return (
     <span style={{ position: 'relative', display: 'inline-block', width }}>
-      <input ref={inputRef}
+      {/* v0.7.46 — textarea (was <input>) so long KQL AND/OR queries WRAP and
+          the box grows to fit instead of scrolling off the right edge.
+          Auto-resized to content (capped) by the effect above; resize:none
+          since height is automatic. Enter submits (see onKeyDown). */}
+      <textarea ref={inputRef}
         value={value}
+        rows={1}
         onChange={e => { onChange(e.target.value); setCursor(e.target.selectionStart ?? e.target.value.length); }}
         onSelect={onSelect}
         onClick={onSelect}
@@ -199,7 +217,13 @@ export function KqlSearchInput({
         onBlur={() => setTimeout(() => setOpen(false), 120)}
         placeholder={placeholder}
         title={title}
-        style={{ width: '100%' }} />
+        spellCheck={false}
+        style={{
+          width: '100%', resize: 'none', overflow: 'hidden',
+          minHeight: 30, lineHeight: 1.4, whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word', fontFamily: 'inherit', fontSize: 'inherit',
+          verticalAlign: 'top',
+        }} />
       {open && values.length > 0 && (
         <div style={{
           position: 'absolute', top: '100%', left: 0,

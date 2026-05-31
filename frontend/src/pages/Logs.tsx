@@ -232,9 +232,10 @@ function LogsInner() {
     const cur = draft.search;
     const sep = cur && !cur.endsWith(' ') ? ' AND ' : '';
     setDraft({ ...draft, search: `${cur}${sep}${f}:` });
-    // Move keyboard focus back to the input.
+    // Move keyboard focus back to the search box. v0.7.46 — KqlSearchInput is
+    // now a <textarea> (wraps long KQL queries), so select the textarea.
     requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLInputElement>('input[placeholder^="Search…"]');
+      const el = document.querySelector<HTMLTextAreaElement>('textarea[placeholder^="Search…"]');
       el?.focus();
       el?.setSelectionRange(el.value.length, el.value.length);
     });

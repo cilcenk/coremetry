@@ -15,7 +15,20 @@ import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { decodeRange } from '@/lib/urlState';
 import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, HistogramResult } from '@/lib/types';
+
+// Per-series legend stats row + columns for the shared DataTable.
+interface MetricSummaryRow { key: string[]; last: number; avg: number; max: number; min: number; count: number; }
+const METRIC_SUMMARY_COLS: DataTableColumn<MetricSummaryRow>[] = [
+  { id: 'series', label: 'Series', sortValue: r => r.key.join(' / '), naturalDir: 'asc', width: 240 },
+  { id: 'last', label: 'Last',  sortValue: r => r.last,  numeric: true, width: 110 },
+  { id: 'min',  label: 'Min',   sortValue: r => r.min,   numeric: true, width: 110 },
+  { id: 'avg',  label: 'Avg',   sortValue: r => r.avg,   numeric: true, width: 110 },
+  { id: 'max',  label: 'Max',   sortValue: r => r.max,   numeric: true, width: 110 },
+  { id: 'count', label: 'Buckets', sortValue: r => r.count, numeric: true, width: 100 },
+];
 
 const AGG_OPTIONS = [
   { v: 'avg',  label: 'Average' },
@@ -259,6 +272,13 @@ export default function MetricsPage() {
       count: vs.length,
     };
   }), [series]);
+
+  // Shared sortable + resizable legend table (unconditional hook).
+  const summaryDt = useDataTable<MetricSummaryRow>({
+    storageKey: 'metrics-summary',
+    columns: METRIC_SUMMARY_COLS,
+    rows: summary,
+  });
 
   // v0.5.484 — window-wide aggregate for the stat tiles. Across
   // ALL series + ALL points in the visible window. delta is the
@@ -561,19 +581,11 @@ export default function MetricsPage() {
 
             {groupBy.length > 0 && summary.length > 1 && (
               <div className="table-wrap" style={{ marginTop: 14 }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Series</th>
-                      <th style={{ textAlign: 'right' }}>Last</th>
-                      <th style={{ textAlign: 'right' }}>Min</th>
-                      <th style={{ textAlign: 'right' }}>Avg</th>
-                      <th style={{ textAlign: 'right' }}>Max</th>
-                      <th style={{ textAlign: 'right' }}>Buckets</th>
-                    </tr>
-                  </thead>
+                <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={summaryDt} />
+                  <DataTableHead dt={summaryDt} />
                   <tbody>
-                    {summary.map((row, i) => (
+                    {summaryDt.sortedRows.map((row, i) => (
                       <tr key={i}>
                         <td><b>{row.key.join(' / ') || '(all)'}</b></td>
                         <td className="mono" style={{ textAlign: 'right' }}>{row.last.toFixed(2)}{unit}</td>

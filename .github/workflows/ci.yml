@@ -29,6 +29,12 @@ jobs:
       - name: Type check
         working-directory: frontend
         run: npx tsc --noEmit
+      # ADVISORY (v0.7.49): ESLint over the existing ~108-finding baseline
+      # (incl. real react-hooks/rules-of-hooks violations queued as bug-fixes).
+      # Non-blocking until triaged; drop the `|| echo` to make it a gate.
+      - name: ESLint (advisory)
+        working-directory: frontend
+        run: npx eslint src || echo "::warning title=eslint::lint findings — triage (non-blocking)"
       # First frontend test gate (v0.7.25). Vitest over the pure lib/ helpers
       # that carry incident history (unit formatters, timeRangeToNs now()-trap,
       # escapeHTML XSS, dashboard-var expansion). Runs before the build so a

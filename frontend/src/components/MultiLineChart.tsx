@@ -90,7 +90,7 @@ export function placeTooltip(
 
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
-  compareSeries, compareOffsetNs, compareLabel, logScale,
+  compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -116,6 +116,18 @@ export function MultiLineChart({
   // update its TimeRange state and re-fetch. Without this the
   // drag still works as a visual zoom but doesn't propagate.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // onBucketClick — v0.7.22. "Spike → exemplar": a plain click
+  // (not a drag) on the chart resolves the clicked time-bucket
+  // window in NANOSECONDS and hands it to the caller, which
+  // typically fetches a representative bad trace for that bucket
+  // and opens it. FULLY OPT-IN: when this prop is absent the
+  // chart registers no extra click listener, keeps the default
+  // cursor, and behaves byte-for-byte as before (MultiLineChart
+  // is shared across Endpoints, dashboards, Metrics, etc — those
+  // callers must not gain a click affordance). The window is
+  // [center − step/2, center + step/2] where step is the data's
+  // bucket width in seconds; see the click hook for the math.
+  onBucketClick?: (fromNs: number, toNs: number) => void;
   // compareSeries — past-period data overlaid as dashed,
   // half-opacity ghost lines aligned to the current window.
   // The page fetched the same series N hours/days ago and
@@ -134,6 +146,14 @@ export function MultiLineChart({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+
+  // Latest onBucketClick held in a ref so the click listener
+  // (registered once per plot build) always calls the current
+  // callback without the chart needing to rebuild when only the
+  // callback identity changes. The listener is only attached at
+  // all when onBucketClick is provided (opt-in).
+  const bucketClickRef = useRef(onBucketClick);
+  bucketClickRef.current = onBucketClick;
 
   // Mirror of the live "this index is currently visible" set.
   // Kept in a ref instead of useState so the click handler can
@@ -328,6 +348,57 @@ export function MultiLineChart({
             // takes over the new range — otherwise the grey
             // band sticks around until the next click.
             u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+          },
+        ] : undefined,
+        // Spike → exemplar click hook (v0.7.22). OPT-IN: only
+        // registered when onBucketClick is set, so non-exemplar
+        // callers are untouched. Attaches a plain-click listener
+        // to uPlot's `over` element once at build time; resolves
+        // the clicked time to the enclosing bucket window in ns
+        // and hands it off. A click that's really the tail of a
+        // drag-zoom (select width > 4px) is ignored so the two
+        // gestures don't fight.
+        ready: onBucketClick ? [
+          (u) => {
+            u.over.addEventListener('click', () => {
+              if (u.select && u.select.width > 4) return; // was a drag, not a click
+              const left = u.cursor.left ?? -1;
+              if (left < 0) return;
+              const xSec = u.posToVal(left, 'x'); // unix seconds at cursor
+              if (!isFinite(xSec)) return;
+              const xs = u.data[0];
+              if (!xs || xs.length === 0) return;
+              // Bucket width in seconds. Prefer the gap between the
+              // two data points straddling the cursor (handles
+              // irregular spacing); fall back to the first gap, then
+              // to a 60s default for a single-point series so we
+              // still open a sane window rather than a zero-width one.
+              let stepSec = 60;
+              if (xs.length >= 2) {
+                // Find the nearest point and measure its local gap.
+                let nearestI = 0;
+                let best = Infinity;
+                for (let i = 0; i < xs.length; i++) {
+                  const d = Math.abs((xs[i] as number) - xSec);
+                  if (d < best) { best = d; nearestI = i; }
+                }
+                const lo = nearestI > 0 ? (xs[nearestI] as number) - (xs[nearestI - 1] as number) : Infinity;
+                const hi = nearestI < xs.length - 1 ? (xs[nearestI + 1] as number) - (xs[nearestI] as number) : Infinity;
+                const gap = Math.min(lo, hi);
+                if (isFinite(gap) && gap > 0) stepSec = gap;
+                else {
+                  const fallback = (xs[1] as number) - (xs[0] as number);
+                  if (fallback > 0) stepSec = fallback;
+                }
+              }
+              const fromSec = xSec - stepSec / 2;
+              const toSec = xSec + stepSec / 2;
+              // unix seconds → ns. Math.round avoids float drift on
+              // the *1e9 scale-up so the server's BETWEEN matches.
+              const fromNs = Math.round(fromSec * 1e9);
+              const toNs = Math.round(toSec * 1e9);
+              bucketClickRef.current?.(fromNs, toNs);
+            });
           },
         ] : undefined,
         // Overlay draw hooks — paint deploy markers (dashed
@@ -554,7 +625,13 @@ export function MultiLineChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel, logScale]);
+    // onBucketClick is intentionally tracked by PRESENCE only
+    // (!!onBucketClick), not identity — the live callback is read
+    // through bucketClickRef so passing a fresh arrow each render
+    // doesn't churn a chart rebuild. Toggling the affordance
+    // on/off (prop added/removed) does rebuild, which is correct
+    // because the click listener + cursor style flip with it.
+  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel, logScale, !!onBucketClick]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling
@@ -634,7 +711,20 @@ export function MultiLineChart({
   return (
     <div ref={containerRef} style={{
       position: 'relative', width: '100%',
+      // Subtle "this chart is clickable" affordance — only when
+      // the spike→exemplar hook is wired (opt-in). Absent the
+      // prop, no cursor override (identical to prior behaviour).
+      cursor: onBucketClick ? 'pointer' : undefined,
     }}>
+      {onBucketClick && (
+        <div style={{
+          position: 'absolute', top: 4, right: 6, zIndex: 6,
+          fontSize: 9, color: 'var(--text3)', pointerEvents: 'none',
+          textTransform: 'uppercase', letterSpacing: 0.4, opacity: 0.7,
+        }}>
+          click → exemplar
+        </div>
+      )}
       <div className="uplot-tooltip" style={{
         // Theme-aware tokens — the previous hardcoded
         // rgba(20,24,30) painted dark on dark in dark mode

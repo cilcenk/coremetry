@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { EventMarkers } from './EventMarkers';
 import { Spinner } from './Spinner';
 import { CopilotExplain } from './CopilotExplain';
+import { TracePeekDrawer } from './TracePeekDrawer';
 import { IconSparkles } from './icons';
 import { api } from '@/lib/api';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
@@ -186,6 +187,63 @@ export function ServiceCharts({ service, range, onZoom }: {
 
   const syncKey = `service:${service}`;
 
+  // Spike → exemplar (v0.7.22). Clicking a point/peak on the
+  // latency or error-rate chart resolves the clicked bucket
+  // (ns window, computed inside MultiLineChart) to a
+  // representative bad trace and opens it in the TracePeekDrawer
+  // — same drawer the Logs page uses, so the operator stays in
+  // context instead of a hard navigate to /trace.
+  const [peekTraceId, setPeekTraceId] = useState<string | null>(null);
+  // Transient, non-blocking note when a clicked bucket has no
+  // matching exemplar (the operator clicked a quiet gap, or the
+  // window genuinely held no slow/error spans). Auto-clears.
+  const [exemplarNote, setExemplarNote] = useState<string | null>(null);
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (noteTimer.current) clearTimeout(noteTimer.current); }, []);
+
+  // service in a ref so the bucket-click callbacks stay
+  // referentially stable across renders (MultiLineChart reads
+  // the live callback through a ref, but keeping these stable is
+  // tidy and avoids any accidental rebuild churn).
+  const serviceRef = useRef(service);
+  serviceRef.current = service;
+
+  const flashNote = useCallback((msg: string) => {
+    setExemplarNote(msg);
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => setExemplarNote(null), 3200);
+  }, []);
+
+  const openExemplar = useCallback(
+    async (kind: 'slow' | 'error', fromNs: number, toNs: number) => {
+      try {
+        const ex = await api.spanExemplar({
+          service: serviceRef.current, from: fromNs, to: toNs, kind,
+        });
+        if (ex) {
+          setExemplarNote(null);
+          setPeekTraceId(ex.traceId);
+        } else {
+          flashNote(kind === 'error'
+            ? 'No error trace in this bucket'
+            : 'No slow trace in this bucket');
+        }
+      } catch {
+        flashNote('Exemplar lookup failed');
+      }
+    },
+    [flashNote],
+  );
+
+  const onLatencyBucketClick = useCallback(
+    (fromNs: number, toNs: number) => { void openExemplar('slow', fromNs, toNs); },
+    [openExemplar],
+  );
+  const onErrorBucketClick = useCallback(
+    (fromNs: number, toNs: number) => { void openExemplar('error', fromNs, toNs); },
+    [openExemplar],
+  );
+
   if (loading) {
     return (
       <div style={{
@@ -298,7 +356,8 @@ export function ServiceCharts({ service, range, onZoom }: {
                             compareSeries={errPrev ?? undefined}
                             compareOffsetNs={compareOffsetNs}
                             compareLabel={compareLabel}
-                            onZoom={onZoom} />
+                            onZoom={onZoom}
+                            onBucketClick={onErrorBucketClick} />
             <EventMarkers fromNs={from} toNs={to} service={service} />
           </div>
         </ChartCard>
@@ -312,11 +371,34 @@ export function ServiceCharts({ service, range, onZoom }: {
                             compareSeries={p99Prev ?? undefined}
                             compareOffsetNs={compareOffsetNs}
                             compareLabel={compareLabel}
-                            onZoom={onZoom} />
+                            onZoom={onZoom}
+                            onBucketClick={onLatencyBucketClick} />
             <EventMarkers fromNs={from} toNs={to} service={service} />
           </div>
         </ChartCard>
       </div>
+
+      {/* Spike → exemplar drawer. Opens with just the resolved
+          traceId; closing clears it. Stays mounted so the close
+          animation / ESC-handling matches the rest of the app. */}
+      <TracePeekDrawer
+        traceId={peekTraceId}
+        onClose={() => setPeekTraceId(null)} />
+
+      {/* Non-blocking "no exemplar in this bucket" affordance.
+          A small fixed toast bottom-right — doesn't shift the
+          chart layout, auto-dismisses after a few seconds. */}
+      {exemplarNote && (
+        <div role="status" aria-live="polite" style={{
+          position: 'fixed', bottom: 18, right: 18, zIndex: 50,
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '8px 12px', fontSize: 12,
+          color: 'var(--text2)', boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+          maxWidth: 280,
+        }}>
+          {exemplarNote}
+        </div>
+      )}
     </div>
   );
 }

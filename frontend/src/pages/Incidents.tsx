@@ -8,7 +8,20 @@ import { ClusterChips as ClusterChipsRef } from '@/components/ClusterChips';
 import { Modal, Button, Field, SelectField, TextareaField, Row } from '@/components/ui';
 import { useIncidents, useCreateIncident } from '@/lib/queries';
 import { tsLong, fmtNum } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { Incident, IncidentStatus } from '@/lib/types';
+
+// Columns for the shared sortable + resizable DataTable. Ongoing
+// incidents (no resolvedAt) sort as longest-duration.
+const INCIDENT_COLS: DataTableColumn<Incident>[] = [
+  { id: 'status',   label: 'Status',   sortValue: i => i.status,   naturalDir: 'asc', width: 120 },
+  { id: 'severity', label: 'Severity', sortValue: i => i.severity, naturalDir: 'asc', width: 120 },
+  { id: 'title',    label: 'Title',    sortValue: i => i.title,    naturalDir: 'asc', width: 320 },
+  { id: 'service',  label: 'Service',  sortValue: i => i.service,  naturalDir: 'asc', width: 180 },
+  { id: 'started',  label: 'Started',  sortValue: i => i.startedAt, naturalDir: 'desc', width: 170 },
+  { id: 'duration', label: 'Duration', sortValue: i => (i.resolvedAt ? i.resolvedAt - i.startedAt : Number.MAX_SAFE_INTEGER), numeric: true, naturalDir: 'desc', width: 120 },
+];
 
 // /incidents — declared events the oncall acknowledges and drives to
 // resolution. Auto-grouped from same-service same-severity Problems
@@ -32,6 +45,12 @@ export default function IncidentsPage() {
     : incidentsQ.isError
       ? null
       : incidentsQ.data ?? [];
+
+  // Shared sortable + resizable table (unconditional hook).
+  const dt = useDataTable<Incident>({
+    storageKey: 'incidents', columns: INCIDENT_COLS,
+    rows: items ?? [], initialSort: { id: 'started', dir: 'desc' },
+  });
 
   const counts = { open: 0, acknowledged: 0, resolved: 0 };
   for (const i of items ?? []) counts[i.status]++;
@@ -67,13 +86,11 @@ export default function IncidentsPage() {
         )}
         {items && items.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead><tr>
-                <th>Status</th><th>Severity</th><th>Title</th><th>Service</th>
-                <th>Started</th><th style={{ textAlign: 'right' }}>Duration</th>
-              </tr></thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {items.map(i => (
+                {dt.sortedRows.map(i => (
                   <tr key={i.id} style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}
                       onClick={() => navigate(`/incident?id=${i.id}`)}>
                     <td><StatusPill s={i.status} /></td>

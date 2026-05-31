@@ -10,6 +10,7 @@ import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
+import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
@@ -270,7 +271,7 @@ function TraceDetailInner() {
       <Topbar title="Trace Detail" range={range} onRangeChange={setRange} />
       <div id="content">
         <div style={{ marginBottom: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="sec" onClick={() => navigate(-1)}>← Back</button>
+          <Button variant="secondary" size="sm" onClick={() => navigate(-1)}>← Back</Button>
           <code style={{ fontSize: 11, color: 'var(--text2)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>
             {id}<CopyButton value={id} title="Copy trace ID" />
           </code>
@@ -323,12 +324,12 @@ function TraceDetailInner() {
                   title="Logs correlated to this trace_id"
                   label="≡ Logs" variant="secondary" />
                 <SharePopover traceId={id} />
-                <button className="sec"
+                <Button variant="secondary" size="sm"
                   onClick={() => exportTraceJSON(id, spans)}
                   title="Download this trace as JSON (full span list with attributes + events)"
-                  style={{ fontSize: 12, padding: '3px 10px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <IconDownload /> <span>Export JSON</span>
-                </button>
+                  leftIcon={<IconDownload />}>
+                  <span>Export JSON</span>
+                </Button>
               </span>
             </>
           )}
@@ -565,12 +566,11 @@ function CompareTracesButton({ aId }: { aId: string }) {
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="sec"
-        style={{ padding: '5px 12px', fontSize: 12, color: 'var(--accent2)',
-                 display: 'inline-flex', alignItems: 'center', gap: 6 }}
-        title="Diff this trace against another by ID — model explains why they diverged">
-        <IconSparkles /> <span>Compare with…</span>
-      </button>
+      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}
+        title="Diff this trace against another by ID — model explains why they diverged"
+        leftIcon={<IconSparkles />}>
+        <span>Compare with…</span>
+      </Button>
     );
   }
   return (
@@ -582,14 +582,13 @@ function CompareTracesButton({ aId }: { aId: string }) {
           placeholder="Other trace ID (hex)"
           className="mono"
           style={{ width: 320, fontSize: 12 }} />
-        <button onClick={submit} disabled={busy}
-          style={{ padding: '5px 12px', fontSize: 12 }}>
+        <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
           {busy ? 'Thinking…' : 'Compare'}
-        </button>
-        <button onClick={() => { setOpen(false); setText(null); setError(null); }}
-          className="sec" style={{ padding: '5px 10px', fontSize: 12 }}>
+        </Button>
+        <Button variant="secondary" size="sm"
+          onClick={() => { setOpen(false); setText(null); setError(null); }}>
           Cancel
-        </button>
+        </Button>
       </div>
       {error && (
         <div style={{

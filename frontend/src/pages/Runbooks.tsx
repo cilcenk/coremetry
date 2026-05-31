@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
+import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import {
@@ -58,10 +59,10 @@ export default function RunbooksPage() {
             ordered list of manual, query, HTTP, JavaScript, or Bash steps.
           </span>
           {canEdit && (
-            <button onClick={newRunbook} disabled={createRb.isPending}
+            <Button variant="primary" size="sm" onClick={newRunbook} disabled={createRb.isPending}
                     style={{ marginLeft: 'auto' }}>
               {createRb.isPending ? 'Creating…' : '+ New runbook'}
-            </button>
+            </Button>
           )}
         </div>
 
@@ -121,24 +122,23 @@ export default function RunbooksPage() {
                       {tsLong(rb.updatedAt)}
                     </td>
                     <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                      <button className="sec"
+                      <Button variant="secondary" size="sm"
                         onClick={() => navigate(`/runbook?id=${encodeURIComponent(rb.id)}`)}>
                         Open
-                      </button>
+                      </Button>
                       {canEdit && (rb.enabled
-                        ? <button className="sec" onClick={() => disableRb.mutateAsync(rb.id)}
+                        ? <Button variant="secondary" size="sm" onClick={() => disableRb.mutateAsync(rb.id)}
                             title="Stop this runbook from being executable without deleting it">
                             Disable
-                          </button>
-                        : <button className="sec" onClick={() => enableRb.mutateAsync(rb.id)}>
+                          </Button>
+                        : <Button variant="secondary" size="sm" onClick={() => enableRb.mutateAsync(rb.id)}>
                             Enable
-                          </button>)}
+                          </Button>)}
                       {canEdit && (
-                        <button className="sec" onClick={() => remove(rb.id, rb.title)}
-                          title="Remove the runbook entirely"
-                          style={{ color: 'var(--err)' }}>
+                        <Button variant="danger" size="sm" onClick={() => remove(rb.id, rb.title)}
+                          title="Remove the runbook entirely">
                           Delete
-                        </button>
+                        </Button>
                       )}
                     </td>
                   </tr>

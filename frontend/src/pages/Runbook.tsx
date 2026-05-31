@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { RenderedMarkdown } from '@/components/Markdown';
+import { Button } from '@/components/ui/Button';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useRunbook, useUpdateRunbook, useDeleteRunbook, useRunbookExecutions, useExecuteRunbook } from '@/lib/queries';
@@ -75,7 +76,7 @@ function Inner() {
         <Topbar title="Runbook" />
         <div id="content">
           <div className="controls" style={{ marginBottom: 12 }}>
-            <button className="sec" onClick={() => navigate('/runbooks')}>← Runbooks</button>
+            <Button variant="secondary" size="sm" onClick={() => navigate('/runbooks')}>← Runbooks</Button>
           </div>
           {!id
             ? <Empty icon="⚠" title="No runbook selected">Pick a runbook from the list to view or edit it.</Empty>
@@ -135,11 +136,11 @@ function Inner() {
       <div id="content">
         {err && (
           <div style={{ background: 'var(--bg1)', border: '1px solid var(--err)', color: 'var(--err)', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
-            {err} <button className="sec" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</button>
+            {err} <Button variant="secondary" size="sm" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</Button>
           </div>
         )}
         <div className="controls" style={{ marginBottom: 8, alignItems: 'center' }}>
-          <button className="sec" onClick={() => navigate('/runbooks')}>← Runbooks</button>
+          <Button variant="secondary" size="sm" onClick={() => navigate('/runbooks')}>← Runbooks</Button>
           <span className={`badge ${draft.enabled ? 'b-ok' : 'b-gray'}`} style={{ marginLeft: 4 }}>
             {draft.enabled ? 'ENABLED' : 'DISABLED'}
           </span>
@@ -148,19 +149,19 @@ function Inner() {
           )}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {canEdit && (
-              <button onClick={run} disabled={executeRb.isPending || draft.steps.length === 0 || !draft.enabled}
+              <Button variant="primary" size="sm" onClick={run} disabled={executeRb.isPending || draft.steps.length === 0 || !draft.enabled}
                 title={!draft.enabled ? 'Runbook is disabled — enable it to run' : draft.steps.length === 0 ? 'Add steps before running' : 'Start an execution'}>
                 ▶ Run
-              </button>
+              </Button>
             )}
             {canEdit && dirty && (
-              <button className="sec" disabled={updateRb.isPending}
+              <Button variant="secondary" size="sm" disabled={updateRb.isPending}
                 onClick={() => { setErr(null); save().catch(e => setErr(`Save failed: ${e instanceof Error ? e.message : String(e)}`)); }}>
                 {updateRb.isPending ? 'Saving…' : 'Save changes'}
-              </button>
+              </Button>
             )}
             {canEdit && (
-              <button className="sec" style={{ color: 'var(--err)' }} onClick={remove}>Delete</button>
+              <Button variant="danger" size="sm" onClick={remove}>Delete</Button>
             )}
           </span>
         </div>
@@ -206,7 +207,7 @@ function ExecutionsTab({ runbookId }: { runbookId: string }) {
                 <td className="num mono">{done}/{e.stepStates.length}</td>
                 <td className="mono" style={{ fontSize: 11 }}>{e.completedAt ? fmtDur(e.completedAt - e.startedAt) : '—'}</td>
                 <td style={{ textAlign: 'right' }}>
-                  <button className="sec" onClick={() => navigate(`/runbook-exec?id=${encodeURIComponent(e.id)}`)}>Open</button>
+                  <Button variant="secondary" size="sm" onClick={() => navigate(`/runbook-exec?id=${encodeURIComponent(e.id)}`)}>Open</Button>
                 </td>
               </tr>
             );

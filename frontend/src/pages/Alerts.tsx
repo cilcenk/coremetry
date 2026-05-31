@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
+import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import {
   useAlertRules,
@@ -438,10 +439,10 @@ export default function AlertsPage() {
             Evaluator runs every minute. Built-in rules ship pre-configured but
             can be edited or disabled to taste.
           </span>
-          <button onClick={() => showForm ? cancelForm() : setShowForm(true)}
+          <Button variant="primary" onClick={() => showForm ? cancelForm() : setShowForm(true)}
                   style={{ marginLeft: 'auto' }}>
             {showForm ? 'Cancel' : '+ New alert rule'}
-          </button>
+          </Button>
         </div>
 
         {/* Noisy-rules report — surfaces rules that have opened
@@ -462,23 +463,20 @@ export default function AlertsPage() {
               </span>
               {selected.size > 0 && (
                 <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
-                  <button onClick={applySelected}
+                  <Button variant="primary" size="sm" onClick={applySelected}
                     disabled={bulkBusy || actionableSelectedCount === 0}
-                    style={{ fontSize: 11, padding: '4px 12px' }}
                     title={actionableSelectedCount === 0
                       ? 'None of the selected rows ship a concrete value to apply'
                       : `Apply the suggested dampening values to ${actionableSelectedCount} rule${actionableSelectedCount === 1 ? '' : 's'} in one shot`}>
                     {bulkBusy
                       ? 'Working…'
                       : `Apply ${actionableSelectedCount} suggestion${actionableSelectedCount === 1 ? '' : 's'}`}
-                  </button>
-                  <button onClick={disableSelected}
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={disableSelected}
                     disabled={bulkBusy}
-                    className="sec"
-                    style={{ fontSize: 11, padding: '4px 12px', color: 'var(--err)' }}
                     title="Disable (soft-delete) every selected rule. Re-enable from the list below.">
                     Disable {selected.size} rule{selected.size === 1 ? '' : 's'}
-                  </button>
+                  </Button>
                 </span>
               )}
             </div>
@@ -527,12 +525,11 @@ export default function AlertsPage() {
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--text2)' }}>{n.suggestion}</td>
                       <td>
-                        <button className="sec"
+                        <Button variant="secondary" size="sm"
                           onClick={() => applySuggestion(n)}
-                          style={{ fontSize: 11, padding: '3px 10px' }}
                           title="Open edit form with the suggested dampening values pre-filled">
                           Apply →
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   );})}
@@ -735,15 +732,15 @@ export default function AlertsPage() {
               </Field>
             </div>
             <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button onClick={save}>{editingId ? 'Update rule' : 'Save rule'}</button>
+              <Button variant="primary" onClick={save}>{editingId ? 'Update rule' : 'Save rule'}</Button>
               {!editingId && (
-                <button type="button" className="sec" onClick={saveAsPreset}
+                <Button variant="secondary" type="button" onClick={saveAsPreset}
                   disabled={!draft.metric}
                   title={isAdmin
                     ? 'Save this draft as a reusable preset — admins can share with the team'
                     : 'Save this draft as a personal preset'}>
                   ★ Save as preset
-                </button>
+                </Button>
               )}
               {editingId && (
                 <span style={{ fontSize: 11, color: 'var(--text3)' }}>
@@ -868,18 +865,17 @@ export default function AlertsPage() {
                           ↗ logs
                         </a>
                       )}
-                      <button className="sec" onClick={() => startEdit(r)}>Edit</button>
+                      <Button variant="secondary" size="sm" onClick={() => startEdit(r)}>Edit</Button>
                       {r.enabled
-                        ? <button className="sec" onClick={() => disable(r.id)}
+                        ? <Button variant="secondary" size="sm" onClick={() => disable(r.id)}
                             title="Silence the rule without removing its definition">
                             Disable
-                          </button>
-                        : <button className="sec" onClick={() => enable(r.id)}>Enable</button>}
-                      <button className="sec" onClick={() => remove(r.id)}
-                        title="Remove the rule entirely from ClickHouse"
-                        style={{ color: 'var(--err)' }}>
+                          </Button>
+                        : <Button variant="secondary" size="sm" onClick={() => enable(r.id)}>Enable</Button>}
+                      <Button variant="danger" size="sm" onClick={() => remove(r.id)}
+                        title="Remove the rule entirely from ClickHouse">
                         Delete
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                   );

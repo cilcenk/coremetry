@@ -224,12 +224,12 @@ function PipelineTab() {
                     <input type="checkbox" checked={r.enabled} onChange={() => toggle(r)} />
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <button className="sec" onClick={() => setEditing(r)} style={{ marginRight: 6 }}>
+                    <Button variant="secondary" size="sm" onClick={() => setEditing(r)} style={{ marginRight: 6 }}>
                       Edit
-                    </button>
-                    <button className="sec" onClick={() => remove(r)}>
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={() => remove(r)}>
                       Delete
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -523,12 +523,12 @@ function CustomRolesTab() {
                       : r.pages.join(', ')}
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <button className="sec" onClick={() => setEditing(r)} style={{ marginRight: 6 }}>
+                    <Button variant="secondary" size="sm" onClick={() => setEditing(r)} style={{ marginRight: 6 }}>
                       Edit
-                    </button>
-                    <button className="sec" onClick={() => remove(r.name)} disabled={busy === r.name}>
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={() => remove(r.name)} disabled={busy === r.name}>
                       Delete
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -779,13 +779,13 @@ function SMTPTab() {
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
-        <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</button>
+        <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</Button>
         <div style={{ flex: 1 }} />
         <input type="email" value={testTo} placeholder="recipient@example.com"
           onChange={e => setTestTo(e.target.value)} style={{ width: 240 }} />
-        <button type="button" className="sec" onClick={sendTest} disabled={busy || !s.configured}>
+        <Button type="button" variant="secondary" onClick={sendTest} disabled={busy || !s.configured}>
           Send test email
-        </button>
+        </Button>
       </div>
       {!s.configured && (
         <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
@@ -841,7 +841,7 @@ function MaintenanceTab() {
         <code>name*</code> prefix.
       </div>
       <div className="controls" style={{ marginBottom: 12 }}>
-        <button onClick={() => setCreating(true)}>+ New maintenance window</button>
+        <Button variant="primary" onClick={() => setCreating(true)}>+ New maintenance window</Button>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
                         color: 'var(--text2)', cursor: 'pointer', marginLeft: 'auto' }}>
           <input type="checkbox" checked={showAll}
@@ -892,8 +892,7 @@ function MaintenanceTab() {
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       {!w.disabled && (
-                        <button className="sec" onClick={() => del(w.id)}
-                          style={{ color: 'var(--err)' }}>End / delete</button>
+                        <Button variant="danger" size="sm" onClick={() => del(w.id)}>End / delete</Button>
                       )}
                     </td>
                   </tr>
@@ -1040,7 +1039,7 @@ function ChannelsTab() {
         <p style={{ color: 'var(--text2)', fontSize: 13, margin: 0 }}>
           Channels receive Problem alerts whenever the evaluator or anomaly detector opens a new incident.
         </p>
-        <button onClick={() => setEditing('new')} style={{ marginLeft: 'auto' }}>+ New channel</button>
+        <Button variant="primary" onClick={() => setEditing('new')} style={{ marginLeft: 'auto' }}>+ New channel</Button>
       </div>
 
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
@@ -1076,10 +1075,9 @@ function ChannelsTab() {
                     : <span className="badge b-gray">OFF</span>}
                   </td>
                   <td style={{ textAlign: 'right' }}>
-                    <button className="sec" onClick={() => onTest(c)} style={{ marginRight: 6 }}>Test</button>
-                    <button className="sec" onClick={() => setEditing(c)} style={{ marginRight: 6 }}>Edit</button>
-                    <button className="sec" onClick={() => onDelete(c)}
-                      style={{ color: 'var(--err)' }}>Delete</button>
+                    <Button variant="secondary" size="sm" onClick={() => onTest(c)} style={{ marginRight: 6 }}>Test</Button>
+                    <Button variant="secondary" size="sm" onClick={() => setEditing(c)} style={{ marginRight: 6 }}>Edit</Button>
+                    <Button variant="danger" size="sm" onClick={() => onDelete(c)}>Delete</Button>
                   </td>
                 </tr>
               ))}
@@ -1527,10 +1525,10 @@ function ChannelModal({ initial, onClose, onSaved }: {
 
           {error && <FlashBox kind="err">{error}</FlashBox>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
-            <button type="button" className="sec" onClick={onClose}>Cancel</button>
-            <button type="submit" disabled={busy}>
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="submit" variant="primary" disabled={busy}>
               {busy ? 'Saving…' : initial ? 'Update' : 'Create'}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -1791,14 +1789,13 @@ function AITab() {
         )}
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="submit" disabled={busy || (!apiKey && !hasKey)}>
+          <Button type="submit" variant="primary" disabled={busy || (!apiKey && !hasKey)}>
             {busy ? 'Saving…' : 'Save'}
-          </button>
+          </Button>
           {hasKey && (
-            <button type="button" className="sec" onClick={clearKey} disabled={busy}
-                    style={{ color: 'var(--err)' }}>
+            <Button type="button" variant="danger" onClick={clearKey} disabled={busy}>
               Remove key
-            </button>
+            </Button>
           )}
         </div>
       </form>
@@ -2081,11 +2078,10 @@ function LDAPTab() {
             ))}
           </tbody>
         </table>
-        <button type="button" className="sec"
-                onClick={() => addMapping(cfg, setCfg)}
-                style={{ padding: '4px 10px', fontSize: 12 }}>
+        <Button type="button" variant="secondary" size="sm"
+                onClick={() => addMapping(cfg, setCfg)}>
           + Add mapping
-        </button>
+        </Button>
 
         <Row>
           <Field2 label="Default role" hint="Applied when no group matches">
@@ -2111,12 +2107,12 @@ function LDAPTab() {
         )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <button type="submit" disabled={busy}>
+          <Button type="submit" variant="primary" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button type="button" className="sec" disabled={busy} onClick={test}>
+          </Button>
+          <Button type="button" variant="secondary" disabled={busy} onClick={test}>
             Test connection
-          </button>
+          </Button>
         </div>
       </form>
 
@@ -2211,7 +2207,7 @@ function LDAPUserPicker() {
       <form onSubmit={search} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <input value={q} onChange={e => setQ(e.target.value)}
                placeholder="Name, email or username" style={{ flex: 1 }} />
-        <button type="submit" disabled={busy}>{busy ? 'Searching…' : 'Search'}</button>
+        <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Searching…' : 'Search'}</Button>
       </form>
       {error && (
         <div style={{ color: 'var(--err)', fontSize: 12, marginBottom: 8 }}>{error}</div>
@@ -2236,11 +2232,10 @@ function LDAPUserPicker() {
                 <td style={{ padding: 6 }}><code>{u.username}</code></td>
                 <td style={{ padding: 6 }}>{u.email || '—'}</td>
                 <td style={{ padding: 6, textAlign: 'right' }}>
-                  <button className="sec" type="button"
-                          onClick={() => setProvisionFor(u)}
-                          style={{ padding: '2px 8px', fontSize: 11 }}>
+                  <Button variant="secondary" size="sm" type="button"
+                          onClick={() => setProvisionFor(u)}>
                     Provision
-                  </button>
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -2272,10 +2267,10 @@ function LDAPUserPicker() {
               </select>
             </label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button type="button" className="sec" onClick={() => setProvisionFor(null)}>Cancel</button>
-              <button type="button" onClick={provision} disabled={busy}>
+              <Button type="button" variant="secondary" onClick={() => setProvisionFor(null)}>Cancel</Button>
+              <Button type="button" variant="primary" onClick={provision} disabled={busy}>
                 {busy ? 'Saving…' : 'Provision'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2378,7 +2373,7 @@ function RetentionTab() {
       <RetentionRow label="Profiles" row={profiles} setRow={setProfiles} />
 
       <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button type="submit" disabled={busy}>{busy ? 'Applying…' : 'Apply'}</button>
+        <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Applying…' : 'Apply'}</Button>
         {msg && (
           <span style={{ fontSize: 12, color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)' }}>
             {msg.text}
@@ -2527,10 +2522,9 @@ function AnomalyPromotionTab() {
       </div>
 
       <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button onClick={save} disabled={busy}
-          style={{ padding: '6px 16px', fontSize: 13 }}>
+        <Button variant="primary" onClick={save} disabled={busy}>
           {busy ? 'Saving…' : 'Save'}
-        </button>
+        </Button>
         {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
       </div>
     </div>
@@ -2662,8 +2656,8 @@ function SamplingTab() {
                      services: { ...s.services, [svc]: parseFloat(e.target.value) || 0 },
                    })}
                    style={{ width: 80 }} />
-            <button className="sec" style={{ padding: '2px 8px', fontSize: 11 }}
-                    onClick={() => removeOverride(svc)}>Remove</button>
+            <Button variant="secondary" size="sm"
+                    onClick={() => removeOverride(svc)}>Remove</Button>
           </div>
         ))}
 
@@ -2676,8 +2670,8 @@ function SamplingTab() {
           <input type="number" min={0} max={1} step={0.01}
                  value={newRatio} onChange={e => setNewRatio(e.target.value)}
                  style={{ width: 80 }} />
-          <button className="sec" style={{ padding: '4px 10px', fontSize: 12 }}
-                  onClick={addOverride}>Add</button>
+          <Button variant="secondary" size="sm"
+                  onClick={addOverride}>Add</Button>
         </div>
       </div>
 
@@ -2751,9 +2745,9 @@ function SamplingTab() {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button onClick={save} disabled={busy}>
+        <Button variant="primary" onClick={save} disabled={busy}>
           {busy ? 'Saving…' : 'Save & apply'}
-        </button>
+        </Button>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
           Head-stage drops since boot: <b>{s.droppedSinceBoot.toLocaleString()}</b>
         </span>
@@ -3136,11 +3130,10 @@ function BrandingTab() {
                      style={{ maxHeight: 48, maxWidth: 140, objectFit: 'contain',
                               border: '1px solid var(--border)', borderRadius: 4,
                               padding: 4, background: 'var(--bg)' }} />
-                <button type="button" className="sec"
-                  onClick={() => set('logoDataUri', '')}
-                  style={{ fontSize: 11, padding: '3px 8px', color: 'var(--err)' }}>
+                <Button type="button" variant="danger" size="sm"
+                  onClick={() => set('logoDataUri', '')}>
                   Remove
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -3158,13 +3151,12 @@ function BrandingTab() {
         )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-          <button type="submit" disabled={busy}>
+          <Button type="submit" variant="primary" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button type="button" className="sec" onClick={resetAll} disabled={busy}
-                  style={{ color: 'var(--err)' }}>
+          </Button>
+          <Button type="button" variant="danger" onClick={resetAll} disabled={busy}>
             Reset to defaults
-          </button>
+          </Button>
         </div>
       </form>
     </div>

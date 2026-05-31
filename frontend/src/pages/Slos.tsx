@@ -75,12 +75,12 @@ export default function SLOsPage() {
           </span>
           {isAdmin && (
             <>
-              <button className="sec" onClick={() => setShowAuto(true)}
+              <Button variant="secondary" size="sm" onClick={() => setShowAuto(true)}
                 style={{ marginLeft: 'auto' }}
                 title="Scan recent telemetry and propose baseline-grounded availability + latency SLOs">
                 ✨ Auto-create
-              </button>
-              <button onClick={() => setShowNew(true)}>+ New SLO</button>
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => setShowNew(true)}>+ New SLO</Button>
             </>
           )}
         </div>
@@ -133,7 +133,7 @@ export default function SLOsPage() {
                     {isAdmin && (
                       <td style={{ display: 'flex', gap: 6 }}>
                         <BurnExplainButton sloId={o.id} />
-                        <button className="sec" onClick={() => onDelete(o.id)}>Delete</button>
+                        <Button variant="secondary" size="sm" onClick={() => onDelete(o.id)}>Delete</Button>
                       </td>
                     )}
                   </tr>
@@ -255,13 +255,14 @@ function AutoSLOModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
           </div>
         )}
         <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-          <button className="sec" onClick={onClose}>Cancel</button>
-          <button disabled={running || !preview || proposed.length === 0}
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button variant="primary" size="sm"
+            disabled={running || !preview || proposed.length === 0}
             onClick={commit}
             style={{ marginLeft: 'auto' }}
             title="Create the SLOs listed above (existing SLOs untouched)">
             Create {proposed.length} SLO{proposed.length === 1 ? '' : 's'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

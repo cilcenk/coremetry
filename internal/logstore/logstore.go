@@ -47,6 +47,12 @@ type Filter struct {
 	// is a cityHash64 row digest giving a strict total order; ES:
 	// base64 of the hit's sort-values JSON array).
 	Cursor string
+	// Ascending (v0.7.83) — return oldest-first instead of the default
+	// newest-first. Used by the /logs Context "after" window so a
+	// LIMIT n read yields the n records immediately AFTER the pivot,
+	// not the n newest in the forward window. Backends honour it only
+	// on a non-cursor read (keyset paging is DESC-only).
+	Ascending bool
 }
 
 // LogRecord is the in-memory shape returned by every backend. It mirrors

@@ -397,10 +397,19 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 		n = 50
 	}
 	pivot := time.Unix(0, ts)
-	// 30 minute symmetric window. Each Search returns the N most-
-	// recent (before) or oldest (after) logs in its half-window —
-	// at ingest pressure both halves rarely hit the cap, but the
-	// hard ceiling keeps the round-trip bounded.
+	// 30 minute symmetric window. Each Search returns the N logs
+	// adjacent to the pivot in its half-window — at ingest pressure
+	// both halves rarely hit the cap, but the hard ceiling keeps the
+	// round-trip bounded.
+	//
+	// The "before" window is newest-first (default DESC): LIMIT n over
+	// [pivot-30m, pivot] gives the n rows closest to (just before) the
+	// pivot. The "after" window MUST be oldest-first (Ascending,
+	// v0.7.83): a DESC LIMIT n over [pivot, pivot+30m] would return the
+	// n NEWEST rows near pivot+30m — i.e. ~30 min after the pivot, with
+	// every line emitted immediately after it missing. Ascending makes
+	// LIMIT n return the n rows immediately AFTER the pivot. The client
+	// (LogContextModal) re-sorts the union by timestamp for display.
 	beforeF := logstore.Filter{
 		Service: service,
 		From:    pivot.Add(-30 * time.Minute),
@@ -408,10 +417,11 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 		Limit:   n,
 	}
 	afterF := logstore.Filter{
-		Service: service,
-		From:    pivot,
-		To:      pivot.Add(30 * time.Minute),
-		Limit:   n,
+		Service:   service,
+		From:      pivot,
+		To:        pivot.Add(30 * time.Minute),
+		Limit:     n,
+		Ascending: true,
 	}
 	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:n=%d", ts, service, n)
 	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {

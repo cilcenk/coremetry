@@ -2158,6 +2158,12 @@ type LogFilter struct {
 	// encoded (time, rowKey) position with a STRICT keyset predicate
 	// instead of OFFSET. Empty = first page; Offset still honoured.
 	Cursor string
+	// Ascending (v0.7.83) — flip the sort to oldest-first
+	// (time ASC, rowKey ASC). Only honoured on a non-cursor read
+	// (the keyset cursor is DESC-only). Used by the /logs Context
+	// "after" window so LIMIT n returns the n rows immediately
+	// AFTER the pivot, not the n newest in the forward window.
+	Ascending bool
 }
 
 // logsMaxLimit caps the per-page row count on the logs table. A
@@ -2354,6 +2360,16 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 		offset = 0
 	}
 
+	// Direction: newest-first by default. Ascending (oldest-first) is
+	// honoured only on a non-cursor read — the keyset cursor encodes a
+	// strict DESC boundary, so ASC + cursor would be incoherent. Used by
+	// the /logs Context "after" window (v0.7.83).
+	ascending := f.Ascending && !hasCursor
+	orderDir := "DESC"
+	if ascending {
+		orderDir = "ASC"
+	}
+
 	args := append(wc.args, f.Limit, offset)
 	rows, err := s.conn.Query(ctx, `
 		SELECT time, severity_num, severity_text, body,
@@ -2361,7 +2377,7 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 		       attr_keys, attr_values, res_keys, res_values,
 		       `+logsRowKeyExpr+` AS _rowkey
 		FROM logs `+wc.sql()+`
-		ORDER BY time DESC, `+logsRowKeyExpr+` DESC
+		ORDER BY time `+orderDir+`, `+logsRowKeyExpr+` `+orderDir+`
 		LIMIT ? OFFSET ?
 		SETTINGS max_execution_time = 30`, args...)
 	if err != nil {
@@ -2406,9 +2422,11 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	}
 
 	// NextCursor only when the page came back full — a short page is
-	// the last page, so no cursor (the UI stops paging).
+	// the last page, so no cursor (the UI stops paging). Never on an
+	// ascending read: the cursor encoding + keyset are DESC-only, and
+	// the only ascending caller (Context "after" window) doesn't page.
 	next := ""
-	if len(out) == f.Limit {
+	if len(out) == f.Limit && !ascending {
 		next = EncodeLogsCursor(lastTimeNs, lastRowKey)
 	}
 	return out, total, next, nil

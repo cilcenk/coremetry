@@ -779,16 +779,25 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// `_doc` (Lucene internal doc id) is a stable per-segment
 	// tiebreak that's valid on a plain search and gives search_after
 	// a deterministic boundary within a timestamp tie.
+	// Direction: newest-first by default. Ascending (oldest-first) is
+	// honoured only on a non-cursor read — the search_after cursor
+	// round-trips the prior page's DESC sort values, so flipping the
+	// order mid-paging would be incoherent. Used by the /logs Context
+	// "after" window (v0.7.83).
+	sortDir := "desc"
+	if f.Ascending && f.Cursor == "" {
+		sortDir = "asc"
+	}
 	searchBody := map[string]any{
 		"query": query,
 		"sort": []any{
 			map[string]any{
 				s.fields.Timestamp: map[string]any{
-					"order":         "desc",
+					"order":         sortDir,
 					"unmapped_type": "date",
 				},
 			},
-			map[string]any{"_doc": "desc"},
+			map[string]any{"_doc": sortDir},
 		},
 		"size":             limit,
 		"track_total_hits": true,

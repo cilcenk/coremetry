@@ -8584,6 +8584,22 @@ func spaHandler(root fs.FS) http.Handler {
 			p = indexHTML
 		}
 
+		// Cache policy (v0.7.85). Vite emits content-hashed, immutable
+		// filenames under assets/ (e.g. assets/index-BgyfWA8B.js) — a
+		// new build = a new name, so they can cache for a year and never
+		// be re-fetched on a reload / client-side navigation (the ~570kB
+		// JS bundle was being re-downloaded every load with stdlib
+		// defaults). index.html + any other root file (favicon …) MUST
+		// revalidate: index.html references the hashed chunks, so caching
+		// it would pin the browser to a stale deploy's asset URLs. Set
+		// once here so it applies through whichever ServeFileFS branch
+		// below runs.
+		if strings.HasPrefix(p, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+
 		// Try the literal path first — covers static assets like
 		// /_next/static/chunks/foo.js and the explicit /404.html.
 		if f, err := root.Open(p); err == nil {

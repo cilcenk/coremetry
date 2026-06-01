@@ -329,7 +329,12 @@ function LogsInner() {
 
   return (
     <>
-      <Topbar title="Logs" range={range} onRangeChange={setRange} />
+      {/* Changing the time range MUST reset the keyset cursor: a token
+          from the old window encodes time < staleCursorTime, so paging
+          into a new (wider/shifted) window with a stale cursor silently
+          drops every row newer than it from page 1. resetPaging mirrors
+          the apply/reset/search/URL-sync handlers. (v0.7.81 fix) */}
+      <Topbar title="Logs" range={range} onRangeChange={(r) => { setRange(r); resetPaging(); }} />
       <div id="content">
         <SavedViewsBar page="logs" />
         {filter.traceId && (

@@ -4,15 +4,27 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, keepPreviousData } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
-import { initOtel } from './lib/otel';
 import './styles/globals.css';
 
-// Initialise the OpenTelemetry browser SDK before the React
-// tree mounts so DocumentLoad spans capture the React boot
-// itself + the first fetch round-trips. initOtel is a no-op
-// when VITE_OTEL_DISABLE=1, so this is safe to call
-// unconditionally.
-initOtel();
+// Defer the OpenTelemetry browser SDK off the critical path (v0.7.84).
+// The SDK + auto-instrumentations are ~26kB gzip and main.tsx is their
+// ONLY importer (withSpan/getTracer have no other call sites), so a
+// dynamic import keeps the whole @opentelemetry/* tree out of the entry
+// chunk entirely. It's RUM of our OWN UI — not needed for first paint,
+// and the operator's value is their services' traces, not perfect
+// self-RUM on the cold-load fetch. Firing on idle means it never
+// competes with the initial render + first data fetch (TTFI budget
+// <1.5s). Trade-off: the earliest fetch spans before idle may be
+// missed — acceptable for self-observability. Still a no-op when
+// VITE_OTEL_DISABLE=1 (checked inside initOtel).
+function bootOtel() {
+  void import('./lib/otel').then(m => m.initOtel()).catch(() => {});
+}
+if ('requestIdleCallback' in window) {
+  window.requestIdleCallback(bootOtel, { timeout: 3000 });
+} else {
+  setTimeout(bootOtel, 1500);
+}
 
 // Single shared QueryClient for the whole app. Defaults tuned
 // for an internal observability dashboard:

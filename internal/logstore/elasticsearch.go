@@ -802,9 +802,17 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	} else {
 		searchBody["from"] = from
 	}
-	if f.TraceID != "" {
-		// Cap at 10× the page so paging works, min 1000 — a single
-		// trace's log fan-out is bounded.
+	if f.TraceID != "" && f.Cursor == "" && from == 0 {
+		// terminate_after ONLY on the first page (v0.7.82 fix). It caps
+		// docs collected PER SHARD counting from the shard's sorted START
+		// on EVERY request, and docs sorted before the search_after/from
+		// offset still count toward that cap (ES #40201). So combined with
+		// keyset/offset paging, a high-fan-out trace's deeper pages can hit
+		// the cap on already-paged-past rows and the shard terminates
+		// before reaching new rows — silently truncating the trace's log
+		// set with no error. The early-stop is only safe on page 1 (no
+		// search_after, offset 0), where it's the intended fast-path for
+		// the typical 1-100-line trace lookup.
 		t := limit * 10
 		if t < 1000 {
 			t = 1000

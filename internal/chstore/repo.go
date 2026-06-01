@@ -2179,13 +2179,18 @@ const logsMaxLimit = 1000
 // landing inside a run of (t0,'') rows dropped every remaining
 // (t0,'') row on the next page, because `time = t0 AND span_id < ''`
 // matches nothing. cityHash64 over the line's identifying columns is
-// effectively unique among same-time rows (64-bit collision ≈ 2^-64;
-// genuinely-identical duplicate lines hashing equal is acceptable),
+// effectively unique among same-time rows (64-bit collision ≈ 2^-64),
 // restoring a provable total order on (time, rowKey).
+//
+// host_name is in the hash (v0.7.80) so two pods emitting the SAME
+// body/severity/trace_id/span_id at the SAME nanosecond — routine at
+// scale — hash distinctly and don't collide at a page boundary. The
+// only residual collision is a single pod re-emitting a byte-identical
+// line at the same ns (a genuine duplicate); that is acceptable.
 //
 // MUST match byte-for-byte everywhere it appears (SELECT projection,
 // ORDER BY, keyset WHERE) — drift would break the total-order proof.
-const logsRowKeyExpr = "cityHash64(service_name, severity_num, severity_text, body, trace_id, span_id)"
+const logsRowKeyExpr = "cityHash64(service_name, severity_num, severity_text, body, trace_id, span_id, host_name)"
 
 // LogsCursor is the decoded form of a ClickHouse logs keyset token.
 // Encoded wire format: base64("ch|"+TimeNs+"|"+RowKey). The "ch|"
@@ -2253,9 +2258,19 @@ func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
 	if !hasCursor {
 		return "", nil
 	}
-	t := time.Unix(0, c.TimeNs).UTC()
-	sql := "(time < ? OR (time = ? AND " + logsRowKeyExpr + " < ?))"
-	return sql, []interface{}{t, t, c.RowKey}
+	// Compare the nanosecond instant as Int64 via toUnixTimestamp64Nano —
+	// NOT a bare time.Time. clickhouse-go/v2 formats a positional
+	// time.Time arg at SECONDS scale, so a bare `time = ?` against the
+	// DateTime64(9) column would match nothing and `time < ?` would drop
+	// every same-second row on the next page (silent page-boundary loss,
+	// v0.7.80). The cursor already carries the exact ns (c.TimeNs ==
+	// row.Timestamp == t.UnixNano()) and toUnixTimestamp64Nano(time)
+	// yields the column's raw Int64 ns, so the comparison is exact and
+	// matches the codebase's ns-precise convention. The From/To window
+	// bounds stay on raw `time` so they still prune granules via the
+	// time skip index — this extra predicate just refines within them.
+	sql := "(toUnixTimestamp64Nano(time) < ? OR (toUnixTimestamp64Nano(time) = ? AND " + logsRowKeyExpr + " < ?))"
+	return sql, []interface{}{c.TimeNs, c.TimeNs, c.RowKey}
 }
 
 // GetLogs reads a page of the logs table newest-first. v0.7.22
@@ -2370,9 +2385,16 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 			return nil, 0, "", err
 		}
 		lr.Timestamp = t.UnixNano()
-		// _rowkey is the deterministic keyset tiebreak (logsRowKeyExpr);
-		// lr.ID stays zero (JSON-back-compat field) and is not a key
-		// callers can depend on.
+		// _rowkey (logsRowKeyExpr) is the deterministic keyset tiebreak
+		// AND the per-row identity the frontend depends on: LogTable keys
+		// React rows on l.id and tracks expand state in a Set<id>. v0.7.77
+		// dropped the old rowNumberInAllBlocks() id and left lr.ID=0, which
+		// collapsed every CH-backed row to key=0 → duplicate React keys +
+		// expanding one row expanded ALL of them. Assign the hash
+		// (effectively unique among same-time rows) so each row carries a
+		// stable distinct id at zero extra query cost — same shape the ES
+		// backend already provides via stringToInt64ID. (v0.7.80 fix)
+		lr.ID = rowKey
 		lr.Attributes = arraysToMap(attrK, attrV)
 		lr.ResourceAttributes = arraysToMap(resK, resV)
 		out = append(out, lr)

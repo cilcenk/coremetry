@@ -3,7 +3,6 @@ package chstore
 import (
 	"encoding/base64"
 	"testing"
-	"time"
 )
 
 // v0.7.22 (SAFE-CORE) — regression guard for the log keyset-paging
@@ -101,40 +100,47 @@ func TestLogsKeysetPredicate(t *testing.T) {
 
 	// With a cursor, the predicate must be strict-less on BOTH legs
 	// over the (time, rowKey) TOTAL order:
-	//   time < t  OR  (time = t AND <rowKeyExpr> < h)
+	//   ts < t  OR  (ts = t AND <rowKeyExpr> < h)
 	// Strict on both legs over a total order means the boundary row is
 	// neither re-returned (dup) nor skipped (drop). Crucially, the
 	// same-time leg compares the deterministic row hash, NOT span_id —
 	// so a run of same-time outside-a-span rows (the v0.7.23 row-drop
 	// bug) is fully ordered by rowKey and none collapse out.
+	//
+	// v0.7.80 regression guard: the time legs MUST bind the exact
+	// nanosecond as an Int64 via toUnixTimestamp64Nano, NOT a bare
+	// time.Time. clickhouse-go/v2 formats a positional time.Time at
+	// SECONDS scale, so a bare `time = ?` on the DateTime64(9) column
+	// matched nothing and `time < ?` dropped every same-second row on
+	// the next page. Pin both the toUnixTimestamp64Nano SQL and the
+	// int64 (not time.Time) arg types so the truncation can't return.
 	const ns = int64(1717200000123456789)
 	const rk = uint64(0x0a1b2c3d4e5f6071)
 	c := LogsCursor{TimeNs: ns, RowKey: rk}
 	sql, args = logsKeysetPredicate(c, true)
-	wantSQL := "(time < ? OR (time = ? AND " + logsRowKeyExpr + " < ?))"
+	wantSQL := "(toUnixTimestamp64Nano(time) < ? OR (toUnixTimestamp64Nano(time) = ? AND " + logsRowKeyExpr + " < ?))"
 	if sql != wantSQL {
 		t.Fatalf("predicate sql = %q, want %q", sql, wantSQL)
 	}
 	if len(args) != 3 {
 		t.Fatalf("predicate args len = %d, want 3", len(args))
 	}
-	wantT := time.Unix(0, ns).UTC()
-	t0, ok := args[0].(time.Time)
-	if !ok || !t0.Equal(wantT) {
-		t.Errorf("args[0] = %v, want time %v", args[0], wantT)
+	if got, ok := args[0].(int64); !ok || got != ns {
+		t.Errorf("args[0] = %v (%T), want int64 ns %d — bare time.Time truncates to seconds (v0.7.80)", args[0], args[0], ns)
 	}
-	t1, ok := args[1].(time.Time)
-	if !ok || !t1.Equal(wantT) {
-		t.Errorf("args[1] = %v, want time %v", args[1], wantT)
+	if got, ok := args[1].(int64); !ok || got != ns {
+		t.Errorf("args[1] = %v (%T), want int64 ns %d — bare time.Time truncates to seconds (v0.7.80)", args[1], args[1], ns)
 	}
 	if h, ok := args[2].(uint64); !ok || h != rk {
 		t.Errorf("args[2] = %v, want rowKey %d", args[2], rk)
 	}
 
-	// The same-time leg references the SAME hash expression used by the
-	// SELECT projection + ORDER BY. If they ever drift the total-order
-	// proof breaks, so pin that the predicate embeds logsRowKeyExpr and
-	// not the legacy span_id tiebreak.
+	// The same-time leg must compare at ns precision and reference the
+	// SAME hash expression used by the SELECT projection + ORDER BY. If
+	// they ever drift the total-order proof breaks, so pin both.
+	if !containsSub(sql, "toUnixTimestamp64Nano(time)") {
+		t.Errorf("predicate %q must compare toUnixTimestamp64Nano(time), not a truncating time.Time bind", sql)
+	}
 	if !containsSub(sql, logsRowKeyExpr) {
 		t.Errorf("predicate %q does not embed logsRowKeyExpr %q", sql, logsRowKeyExpr)
 	}

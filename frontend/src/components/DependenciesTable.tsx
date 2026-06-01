@@ -141,7 +141,11 @@ export function DependenciesTable({
       ? [{ id: 'cluster', label: 'Cluster', sortValue: (r: DepRow) => r.cluster ?? '', naturalDir: NATURAL.cluster, width: 120 } as DataTableColumn<DepRow>]
       : []),
     { id: 'name', label: kind === 'db' ? 'Instance' : 'Destination', sortValue: r => nameOf(r), naturalDir: NATURAL.name, width: 210 },
-    { id: 'database', label: 'Database', sortValue: r => r.dbName ?? '', naturalDir: 'asc', width: 120 },
+    // db.name only makes sense for databases — Kafka/RabbitMQ/etc.
+    // (kind === 'queue') have no db.name, so the column is db-only.
+    ...(kind === 'db'
+      ? [{ id: 'database', label: 'Database', sortValue: (r: DepRow) => r.dbName ?? '', naturalDir: 'asc', width: 120 } as DataTableColumn<DepRow>]
+      : []),
     { id: 'spanCount', label: 'Calls', sortValue: r => r.spanCount, numeric: true, naturalDir: NATURAL.spanCount, width: 96 },
     { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
     { id: 'avg', label: 'Avg', sortValue: r => r.avgDurationMs, numeric: true, naturalDir: NATURAL.avg, width: 90 },
@@ -336,24 +340,26 @@ export function DependenciesTable({
                         + sort by database. '—' for the 'default'
                         fallback (OTel instrumentation didn't emit
                         db.name). */}
-                    <td>
-                      {r.dbName && r.dbName !== 'default' ? (
-                        <span title={`db.name = ${r.dbName}`}
-                          style={{
-                            fontSize: 10,
-                            padding: '1px 6px', borderRadius: 3,
-                            background: 'var(--bg3)',
-                            border: '1px solid var(--border)',
-                            color: 'var(--text2)',
-                            fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                            verticalAlign: 'middle',
-                          }}>
-                          ⛁ {r.dbName}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text3)' }}>—</span>
-                      )}
-                    </td>
+                    {kind === 'db' && (
+                      <td>
+                        {r.dbName && r.dbName !== 'default' ? (
+                          <span title={`db.name = ${r.dbName}`}
+                            style={{
+                              fontSize: 10,
+                              padding: '1px 6px', borderRadius: 3,
+                              background: 'var(--bg3)',
+                              border: '1px solid var(--border)',
+                              color: 'var(--text2)',
+                              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                              verticalAlign: 'middle',
+                            }}>
+                            ⛁ {r.dbName}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text3)' }}>—</span>
+                        )}
+                      </td>
+                    )}
                     <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(r.spanCount)}</td>
                     <td className="mono" style={{ textAlign: 'right' }}>
                       <span className={`badge b-${errCls}`}>{r.errorRate.toFixed(2)}%</span>
@@ -387,7 +393,7 @@ export function DependenciesTable({
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={hasClusterCol ? 11 : 10} style={{
+                      <td colSpan={9 + (hasClusterCol ? 1 : 0) + (kind === 'db' ? 1 : 0)} style={{
                         background: 'var(--bg1)', padding: '12px 16px',
                         borderTop: '1px solid var(--border)',
                       }}>

@@ -30,6 +30,46 @@ export function DashboardViz({ series, viz, height = 280, unit }: {
   // span_metric endpoint already returned uniformly-bucketed
   // series — it does, via the auto-step or explicit step).
   const matrix = useMemo(() => buildMatrix(series), [series]);
+
+  const isStacked = viz === 'stacked-bar' || viz === 'stacked-area';
+
+  // Per-series totals for legend ordering / stacking direction.
+  // Heaviest at the bottom for stacked variants keeps the
+  // dominant band as the visual anchor.
+  // Hoisted above the early return (rules-of-hooks) — the body
+  // narrows on `matrix` so it does nothing when there's no data.
+  const seriesOrder = useMemo(() => {
+    if (!matrix) return [];
+    const totals = matrix.values.map(arr => arr.reduce((a, b) => a + b, 0));
+    return matrix.values
+      .map((_, i) => i)
+      .sort((a, b) => totals[b] - totals[a]);
+  }, [matrix]);
+
+  // Domain max. Stacked variants need per-bucket sum;
+  // non-stacked use per-series max so a small series isn't
+  // flattened against a big one.
+  // Hoisted above the early return (rules-of-hooks) — narrows on
+  // `matrix`; `n` is derived inside so the dep set stays correct.
+  const yMax = useMemo(() => {
+    if (!matrix) return 1;
+    const n = matrix.times.length;
+    if (isStacked) {
+      let m = 0;
+      for (let i = 0; i < n; i++) {
+        let s = 0;
+        for (const arr of matrix.values) s += arr[i] ?? 0;
+        if (s > m) m = s;
+      }
+      return m || 1;
+    }
+    let m = 0;
+    for (const arr of matrix.values) {
+      for (const v of arr) if (v > m) m = v;
+    }
+    return m || 1;
+  }, [matrix, isStacked]);
+
   if (!matrix || matrix.times.length === 0) {
     return <div style={{ padding: 14, color: 'var(--text3)', fontSize: 12 }}>No data</div>;
   }
@@ -46,37 +86,6 @@ export function DashboardViz({ series, viz, height = 280, unit }: {
   const barW = isBar ? Math.max(1, slotW * 0.72) : slotW;
   const xLeft = (i: number) => padL + i * slotW + (isBar ? (slotW - barW) / 2 : 0);
   const xCenter = (i: number) => padL + i * slotW + slotW / 2;
-
-  // Per-series totals for legend ordering / stacking direction.
-  // Heaviest at the bottom for stacked variants keeps the
-  // dominant band as the visual anchor.
-  const seriesOrder = useMemo(() => {
-    const totals = matrix.values.map(arr => arr.reduce((a, b) => a + b, 0));
-    return matrix.values
-      .map((_, i) => i)
-      .sort((a, b) => totals[b] - totals[a]);
-  }, [matrix]);
-
-  // Domain max. Stacked variants need per-bucket sum;
-  // non-stacked use per-series max so a small series isn't
-  // flattened against a big one.
-  const isStacked = viz === 'stacked-bar' || viz === 'stacked-area';
-  const yMax = useMemo(() => {
-    if (isStacked) {
-      let m = 0;
-      for (let i = 0; i < n; i++) {
-        let s = 0;
-        for (const arr of matrix.values) s += arr[i] ?? 0;
-        if (s > m) m = s;
-      }
-      return m || 1;
-    }
-    let m = 0;
-    for (const arr of matrix.values) {
-      for (const v of arr) if (v > m) m = v;
-    }
-    return m || 1;
-  }, [matrix, isStacked, n]);
   const yOf = (v: number) => padT + innerH - (v / yMax) * innerH;
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {

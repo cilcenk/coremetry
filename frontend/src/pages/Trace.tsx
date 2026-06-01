@@ -121,21 +121,15 @@ function TraceDetailInner() {
     window.history.replaceState({}, '', url.toString());
   }, [selectedId, tab, id]);
 
-  if (!id) {
-    return (
-      <>
-        <Topbar title="Trace" range={range} onRangeChange={setRange} />
-        <div id="content"><Empty icon="⚠" title="Missing trace id" /></div>
-      </>
-    );
-  }
-
-  const sel = spans?.find(s => s.spanId === selectedId) ?? null;
-
   // Visible-order span list for j/k navigation. Same DFS the
   // waterfall renders — sort all spans by parent + start
   // time, then walk depth-first so j/k step through rows in
   // the order an operator's eye scans them.
+  // Hoisted above the `if (!id)` early return so every hook
+  // (this + useShortcuts + the criticalPath/spanFilter pair
+  // below) runs unconditionally. The bodies already no-op on
+  // an empty `spans` list, so the missing-id render is
+  // unchanged.
   const orderedSpanIds = useMemo<string[]>(() => {
     if (!spans || spans.length === 0) return [];
     const byParent = new Map<string, SpanRow[]>();
@@ -212,9 +206,6 @@ function TraceDetailInner() {
       handler: () => setSelectedId(null),
     },
   ], [orderedSpanIds, selectedId]);
-  const root = spans?.find(s => !s.parentSpanId) ?? spans?.[0];
-  const minT = spans && spans.length ? Math.min(...spans.map(s => s.startTime)) : 0;
-  const maxT = spans && spans.length ? Math.max(...spans.map(s => s.endTime)) : 0;
 
   // Critical path — synchronous longest chain through the
   // span DAG. Cheap O(N) DFS; useMemo only recomputes when
@@ -231,7 +222,6 @@ function TraceDetailInner() {
       duration: s.endTime - s.startTime,
     })));
   }, [spans]);
-  const criticalPathIds = (showCritical && criticalPath) ? criticalPath.ids : undefined;
 
   // v0.5.383 — span filter within ONE trace. Operator searches
   // by substring across span name, service, displayed name,
@@ -262,6 +252,27 @@ function TraceDetailInner() {
     }
     return hits;
   }, [spans, spanFilter]);
+
+  // Early return AFTER every hook so the hook call order is
+  // stable across renders (react-hooks/rules-of-hooks). When
+  // there's no id we render the missing-id placeholder — same
+  // output as before, just relocated below the hooks.
+  if (!id) {
+    return (
+      <>
+        <Topbar title="Trace" range={range} onRangeChange={setRange} />
+        <div id="content"><Empty icon="⚠" title="Missing trace id" /></div>
+      </>
+    );
+  }
+
+  // Plain derived values (not hooks) — fine to compute after the
+  // early return since they only feed the render below.
+  const sel = spans?.find(s => s.spanId === selectedId) ?? null;
+  const root = spans?.find(s => !s.parentSpanId) ?? spans?.[0];
+  const minT = spans && spans.length ? Math.min(...spans.map(s => s.startTime)) : 0;
+  const maxT = spans && spans.length ? Math.max(...spans.map(s => s.endTime)) : 0;
+  const criticalPathIds = (showCritical && criticalPath) ? criticalPath.ids : undefined;
   const totalNs = maxT - minT;
   const hasErr = spans?.some(s => s.statusCode === 'error') ?? false;
 

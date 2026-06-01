@@ -2,10 +2,12 @@ package chstore
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2151,9 +2153,135 @@ type LogFilter struct {
 	SpanID      string // optional: only logs attached to this span
 	Limit       int
 	Offset      int
+	// Cursor (v0.7.22, SAFE-CORE) — opaque CH keyset token from a
+	// prior GetLogs NextCursor. When set, GetLogs pages AFTER the
+	// encoded (time, rowKey) position with a STRICT keyset predicate
+	// instead of OFFSET. Empty = first page; Offset still honoured.
+	Cursor string
 }
 
-func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, error) {
+// logsMaxLimit caps the per-page row count on the logs table. A
+// CLAUDE.md hard-constraint: every query on a billion-row table
+// must carry a bounded LIMIT. The keyset cursor lets the caller
+// page deeper without ever asking for >logsMaxLimit rows at once.
+const logsMaxLimit = 1000
+
+// logsRowKeyExpr is the ONE SQL expression that makes a log line
+// distinguishable among rows sharing a DateTime64(9) timestamp. It is
+// a deterministic 64-bit hash over the columns that together identify
+// a log line: same row → same hash across every query, so it is a
+// stable keyset tiebreak with no stored column / migration.
+//
+// v0.7.23 (SAFE-CORE) — the prior tiebreak was `span_id` (String
+// DEFAULT ''). But (time, span_id) is NOT a total order on the logs
+// table: most log lines are emitted OUTSIDE a span (span_id='') and
+// DateTime64(9) timestamps collide at billions/day. A page boundary
+// landing inside a run of (t0,'') rows dropped every remaining
+// (t0,'') row on the next page, because `time = t0 AND span_id < ''`
+// matches nothing. cityHash64 over the line's identifying columns is
+// effectively unique among same-time rows (64-bit collision ≈ 2^-64;
+// genuinely-identical duplicate lines hashing equal is acceptable),
+// restoring a provable total order on (time, rowKey).
+//
+// MUST match byte-for-byte everywhere it appears (SELECT projection,
+// ORDER BY, keyset WHERE) — drift would break the total-order proof.
+const logsRowKeyExpr = "cityHash64(service_name, severity_num, severity_text, body, trace_id, span_id)"
+
+// LogsCursor is the decoded form of a ClickHouse logs keyset token.
+// Encoded wire format: base64("ch|"+TimeNs+"|"+RowKey). The "ch|"
+// prefix tags the backend so an ES cursor fed to the CH path (or
+// vice versa) fails to decode rather than silently mis-paging.
+// RowKey is the unsigned cityHash64 of logsRowKeyExpr for the last
+// row of the prior page.
+type LogsCursor struct {
+	TimeNs int64
+	RowKey uint64
+}
+
+// EncodeLogsCursor renders a (timeNs, rowKey) position as the opaque
+// base64 token the API layer round-trips. Kept as a pure function so
+// the roundtrip is unit-testable (CLAUDE.md #11).
+func EncodeLogsCursor(timeNs int64, rowKey uint64) string {
+	raw := "ch|" + strconv.FormatInt(timeNs, 10) + "|" + strconv.FormatUint(rowKey, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// DecodeLogsCursor parses a token produced by EncodeLogsCursor.
+// Returns ok=false for any malformed / wrong-backend token so the
+// caller falls back to a first-page read rather than erroring the
+// whole request.
+func DecodeLogsCursor(tok string) (LogsCursor, bool) {
+	if tok == "" {
+		return LogsCursor{}, false
+	}
+	b, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil {
+		return LogsCursor{}, false
+	}
+	s := string(b)
+	// Expect "ch|<ns>|<rowkey>" — both tail fields are numeric so a
+	// plain 3-way split is unambiguous.
+	parts := strings.SplitN(s, "|", 3)
+	if len(parts) != 3 || parts[0] != "ch" {
+		return LogsCursor{}, false
+	}
+	ns, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return LogsCursor{}, false
+	}
+	rk, err := strconv.ParseUint(parts[2], 10, 64)
+	if err != nil {
+		return LogsCursor{}, false
+	}
+	return LogsCursor{TimeNs: ns, RowKey: rk}, true
+}
+
+// logsKeysetPredicate returns the SQL fragment + positional args for
+// a STRICT keyset on the (time DESC, rowKey DESC) sort. For a DESC
+// scan the next page is everything strictly "less than" the last row:
+//
+//	time < :t OR (time = :t AND <rowKeyExpr> < :h)
+//
+// Strict-less on BOTH legs over a TOTAL order (rowKey is effectively
+// unique among same-time rows) means the boundary row itself is
+// neither re-returned (dup) nor skipped (drop), and a run of same-time
+// rows can no longer collapse to a single comparable value the way
+// `span_id < ''` did before v0.7.23. Returns ("", nil) when the cursor
+// is empty so the first page applies no keyset. Pure function for
+// table-driven testing (CLAUDE.md #11).
+func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
+	if !hasCursor {
+		return "", nil
+	}
+	t := time.Unix(0, c.TimeNs).UTC()
+	sql := "(time < ? OR (time = ? AND " + logsRowKeyExpr + " < ?))"
+	return sql, []interface{}{t, t, c.RowKey}
+}
+
+// GetLogs reads a page of the logs table newest-first. v0.7.22
+// (SAFE-CORE) hardened it for billion-row scale:
+//
+//   - Bounded LIMIT (capped at logsMaxLimit) + SETTINGS
+//     max_execution_time = 30 — CLAUDE.md hard constraint that was
+//     missing before (the count() + main SELECT could full-scan
+//     unbounded).
+//   - STABLE sort: ORDER BY time DESC, <rowKey> DESC, where rowKey is
+//     a deterministic cityHash64 over the line's identifying columns
+//     (logsRowKeyExpr). v0.7.23 (SAFE-CORE) replaced the span_id
+//     tiebreak: span_id is String DEFAULT '' and most log lines are
+//     emitted outside a span, so (time, span_id) was not a total
+//     order — a page boundary inside a run of (t0,'') rows dropped
+//     every remaining (t0,'') row on the next page. The hash makes
+//     (time, rowKey) a provable total order, so no boundary
+//     drop/dup.
+//   - Keyset cursor paging: when f.Cursor decodes, page strictly
+//     AFTER the encoded (time, rowKey) instead of OFFSET. Empty
+//     cursor → first page; Offset still honoured for back-compat.
+//
+// Returns the rows, the (capped-cost) total match count for the UI,
+// and a NextCursor — empty when fewer than the requested limit came
+// back (last page).
+func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, string, error) {
 	var wc whereClause
 	if !f.From.IsZero() {
 		wc.add("time >= ?", f.From)
@@ -2176,47 +2304,92 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, err
 	if f.SpanID != "" {
 		wc.add("span_id = ?", f.SpanID)
 	}
-	if f.Limit == 0 {
+	if f.Limit <= 0 {
 		f.Limit = 100
 	}
-
-	var total uint64
-	if err := s.conn.QueryRow(ctx, "SELECT count() FROM logs "+wc.sql(), wc.args...).Scan(&total); err != nil {
-		return nil, 0, err
+	if f.Limit > logsMaxLimit {
+		f.Limit = logsMaxLimit
 	}
 
-	args := append(wc.args, f.Limit, f.Offset)
+	// Total covers the full match window (independent of the cursor)
+	// so the UI's "N matches" stays stable while paging. Bounded by
+	// max_execution_time so a heavy window can't stall the request.
+	var total uint64
+	if err := s.conn.QueryRow(ctx,
+		"SELECT count() FROM logs "+wc.sql()+" SETTINGS max_execution_time = 30",
+		wc.args...).Scan(&total); err != nil {
+		return nil, 0, "", err
+	}
+
+	// Keyset: append the strict (time, span_id) predicate when a
+	// cursor decodes. This is additive to the WHERE clause — the
+	// first page (empty cursor) keeps OFFSET semantics for callers
+	// that page by offset.
+	cur, hasCursor := DecodeLogsCursor(f.Cursor)
+	keysetSQL, keysetArgs := logsKeysetPredicate(cur, hasCursor)
+	if keysetSQL != "" {
+		wc.add(keysetSQL, keysetArgs...)
+	}
+
+	offset := f.Offset
+	if hasCursor {
+		// With a keyset cursor, OFFSET is meaningless (and would
+		// re-skip rows the predicate already excluded). Page purely
+		// off the keyset.
+		offset = 0
+	}
+
+	args := append(wc.args, f.Limit, offset)
 	rows, err := s.conn.Query(ctx, `
-		SELECT rowNumberInAllBlocks() AS id,
-		       time, severity_num, severity_text, body,
+		SELECT time, severity_num, severity_text, body,
 		       service_name, trace_id, span_id,
-		       attr_keys, attr_values, res_keys, res_values
+		       attr_keys, attr_values, res_keys, res_values,
+		       `+logsRowKeyExpr+` AS _rowkey
 		FROM logs `+wc.sql()+`
-		ORDER BY time DESC
-		LIMIT ? OFFSET ?`, args...)
+		ORDER BY time DESC, `+logsRowKeyExpr+` DESC
+		LIMIT ? OFFSET ?
+		SETTINGS max_execution_time = 30`, args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	defer rows.Close()
 
 	var out []LogRow
+	var lastTimeNs int64
+	var lastRowKey uint64
 	for rows.Next() {
 		var lr LogRow
 		var t time.Time
+		var rowKey uint64
 		var attrK, attrV, resK, resV []string
 		if err := rows.Scan(
-			&lr.ID, &t, &lr.SeverityNumber, &lr.SeverityText, &lr.Body,
+			&t, &lr.SeverityNumber, &lr.SeverityText, &lr.Body,
 			&lr.ServiceName, &lr.TraceID, &lr.SpanID,
-			&attrK, &attrV, &resK, &resV,
+			&attrK, &attrV, &resK, &resV, &rowKey,
 		); err != nil {
-			return nil, 0, err
+			return nil, 0, "", err
 		}
 		lr.Timestamp = t.UnixNano()
+		// _rowkey is the deterministic keyset tiebreak (logsRowKeyExpr);
+		// lr.ID stays zero (JSON-back-compat field) and is not a key
+		// callers can depend on.
 		lr.Attributes = arraysToMap(attrK, attrV)
 		lr.ResourceAttributes = arraysToMap(resK, resV)
 		out = append(out, lr)
+		lastTimeNs = lr.Timestamp
+		lastRowKey = rowKey
 	}
-	return out, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, "", err
+	}
+
+	// NextCursor only when the page came back full — a short page is
+	// the last page, so no cursor (the UI stops paging).
+	next := ""
+	if len(out) == f.Limit {
+		next = EncodeLogsCursor(lastTimeNs, lastRowKey)
+	}
+	return out, total, next, nil
 }
 
 // ── Metric queries ────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,42 @@ import (
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 )
+
+// encodeESCursor serialises a hit's `sort` values array as the
+// opaque base64 token the API layer round-trips for search_after
+// paging (v0.7.22, SAFE-CORE). The values are exactly what ES
+// returned in the hit's `sort` field — typically [<epoch_millis>,
+// <shard_doc>] given the (time desc, _shard_doc desc) sort. We
+// base64 the JSON so the token survives a URL query param cleanly.
+func encodeESCursor(sortVals []any) string {
+	if len(sortVals) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(sortVals)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// decodeESCursor parses a token from encodeESCursor back into the
+// sort-values array to feed `search_after`. Returns ok=false for an
+// empty / malformed token so the caller falls back to a first-page
+// read.
+func decodeESCursor(tok string) ([]any, bool) {
+	if tok == "" {
+		return nil, false
+	}
+	b, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil {
+		return nil, false
+	}
+	var vals []any
+	if err := json.Unmarshal(b, &vals); err != nil || len(vals) == 0 {
+		return nil, false
+	}
+	return vals, true
+}
 
 // v0.5.424 — operator-tunable defaults for ES significant_text at
 // production scale. Both helpers parse the env var once per
@@ -729,6 +766,19 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// 10× the requested page so paging still works while keeping
 	// the early-stop tight. Skip when no trace_id is set so
 	// general searches still return accurate total_hits.
+	// v0.7.22 (SAFE-CORE) — add a doc-id tiebreak so the sort is a
+	// total order. This is what makes `search_after` stable AND
+	// removes the 10k `from+size` deep-paging cap (search_after has
+	// no such ceiling). Without a tiebreak two docs sharing a
+	// millisecond timestamp could straddle a page boundary and be
+	// duped or dropped.
+	//
+	// We use `_doc` rather than `_shard_doc` because these searches
+	// run WITHOUT a Point-in-Time — `_shard_doc` is only a valid
+	// sort field inside a PIT context and ES rejects it otherwise.
+	// `_doc` (Lucene internal doc id) is a stable per-segment
+	// tiebreak that's valid on a plain search and gives search_after
+	// a deterministic boundary within a timestamp tie.
 	searchBody := map[string]any{
 		"query": query,
 		"sort": []any{
@@ -738,10 +788,19 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 					"unmapped_type": "date",
 				},
 			},
+			map[string]any{"_doc": "desc"},
 		},
-		"from":             from,
 		"size":             limit,
 		"track_total_hits": true,
+	}
+	// Keyset paging: when a cursor decodes, page AFTER the encoded
+	// sort values instead of `from`. Empty cursor → first page,
+	// where Offset is still honoured for back-compat with callers
+	// that page by offset.
+	if after, ok := decodeESCursor(f.Cursor); ok {
+		searchBody["search_after"] = after
+	} else {
+		searchBody["from"] = from
 	}
 	if f.TraceID != "" {
 		// Cap at 10× the page so paging works, min 1000 — a single
@@ -788,6 +847,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			Hits []struct {
 				ID     string         `json:"_id"`
 				Source map[string]any `json:"_source"`
+				Sort   []any          `json:"sort"`
 			} `json:"hits"`
 		} `json:"hits"`
 	}
@@ -796,8 +856,17 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 
 	out := make([]*LogRecord, 0, len(raw.Hits.Hits))
+	var lastSort []any
 	for _, h := range raw.Hits.Hits {
 		out = append(out, s.mapHit(h.ID, h.Source))
+		lastSort = h.Sort
+	}
+	// NextCursor only on a full page — a short page is the last
+	// page, so no cursor (the UI stops paging). Encodes the last
+	// hit's sort values for the next search_after.
+	next := ""
+	if len(out) == limit {
+		next = encodeESCursor(lastSort)
 	}
 	// Diagnostic: when a trace/span ID search returns zero
 	// hits, log the exact request body + index hit. The
@@ -811,7 +880,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		log.Printf("[es-debug] zero hits for trace_id=%q span_id=%q index=%q query=%s",
 			f.TraceID, f.SpanID, s.cfg.Index, string(body))
 	}
-	return &Page{Total: raw.Hits.Total.Value, Logs: out}, nil
+	return &Page{Total: raw.Hits.Total.Value, Logs: out, NextCursor: next}, nil
 }
 
 // Histogram runs a date_histogram aggregation against ES,

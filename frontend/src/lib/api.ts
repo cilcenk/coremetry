@@ -1813,7 +1813,16 @@ export interface LogsParams {
   from?: number;
   to?: number;
   limit?: number;
+  // offset stays for back-compat (honored server-side only when
+  // `after` is empty), but the UI no longer drives it — cursor
+  // paging replaced the offset pager in v0.7.22.
   offset?: number;
+  // after = opaque keyset cursor. Omit/empty for the first page;
+  // pass the previous response's nextCursor verbatim to fetch the
+  // next page. Backend-owned format (CH base64 / ES search_after);
+  // treat as an opaque token. qs() drops it when empty so the
+  // first page is a no-cursor request.
+  after?: string;
 }
 
 export interface MetricsParams {

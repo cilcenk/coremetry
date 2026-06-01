@@ -18,7 +18,7 @@ import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogPatternStrip } from '@/components/LogPatternStrip';
 import { LivePatternsPanel } from '@/components/LivePatternsPanel';
 import { LogTemplatesPanel } from '@/components/LogTemplatesPanel';
-import { Pager } from '@/components/Pager';
+import { Button } from '@/components/ui/Button';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
@@ -64,7 +64,18 @@ function LogsInner() {
   const [searchParams] = useSearchParams();
 
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
-  const [page, setPage] = useState(0);
+  // Cursor paging (v0.7.22 — replaced the offset pager). `cursor`
+  // is the opaque `after` token for the page currently displayed
+  // ('' = first page). `cursorStack` holds the cursors of the
+  // pages we've walked past, so Back can pop one and refetch.
+  // Reset both whenever the filter / range / query changes (see
+  // resetPaging below + the apply/reset/URL-sync handlers).
+  const [cursor, setCursor] = useState('');
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  // Reset to the first page. Called whenever the query inputs
+  // change (filter / range / search) — a cursor from the old
+  // result set is meaningless against a new one.
+  const resetPaging = () => { setCursor(''); setCursorStack([]); };
   const [filter, setFilter] = useState({
     service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '',
   });
@@ -119,7 +130,7 @@ function LogsInner() {
     };
     setFilter(next);
     setDraft(next);
-    setPage(0);
+    resetPaging();
   }, [searchParams]);
 
   // Build the params for the static-window query. When live
@@ -140,7 +151,7 @@ function LogsInner() {
     [useTimeRange, range],
   );
   const staticQ = useLogs({
-    limit: 100, offset: page * 100, from, to,
+    limit: 100, after: cursor || undefined, from, to,
     service: filter.service || undefined,
     cluster: filter.cluster || undefined,
     search: filter.search || undefined,
@@ -186,8 +197,8 @@ function LogsInner() {
 
   // Reset expansion state when the filter / range / page
   // changes — opening row #5 in one window doesn't translate
-  // to the next.
-  useEffect(() => { setExpanded(new Set()); }, [range, filter, page]);
+  // to the next. `cursor` stands in for the page identity now.
+  useEffect(() => { setExpanded(new Set()); }, [range, filter, cursor]);
 
   // Field-mapping hint (v0.5.136 / v0.5.137). On the Elastic
   // backend, surface what fields are queryable so the operator
@@ -241,10 +252,10 @@ function LogsInner() {
     });
   };
 
-  const apply = () => { setPage(0); setFilter(draft); };
+  const apply = () => { resetPaging(); setFilter(draft); };
   const reset = () => {
     const empty = { service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '' };
-    setDraft(empty); setFilter(empty); setPage(0);
+    setDraft(empty); setFilter(empty); resetPaging();
   };
 
   // Append/remove a `key:value` clause from the search box.
@@ -285,7 +296,7 @@ function LogsInner() {
     const next = { ...filter, search: nextSearch };
     setDraft(d => ({ ...d, search: nextSearch }));
     setFilter(next);
-    setPage(0);
+    resetPaging();
   };
 
   // Expanded-row KvRow click-to-filter handlers (v0.5.229).
@@ -503,7 +514,7 @@ function LogsInner() {
           };
           setDraft(d => ({ ...d, search: s, service: sv || d.service }));
           setFilter(next);
-          setPage(0);
+          resetPaging();
         }} />
 
         {/* Live patterns panel (v0.5.243) — ES significant_text
@@ -536,7 +547,7 @@ function LogsInner() {
           const next = { ...filter, search: substring };
           setDraft(d => ({ ...d, search: substring }));
           setFilter(next);
-          setPage(0);
+          resetPaging();
         }} />
 
         {/* Severity-stacked histogram (v0.5.235) — spike of errors
@@ -579,8 +590,42 @@ function LogsInner() {
               onTracePeek={tid => setPeekTraceId(tid)}
               onContextOpen={l => setContextPivot(l)}
               extraExpanded={l => <SimilarTracesPanel body={l.body} />} />
-            <Pager page={page} pageSize={100} total={total} onPage={setPage}
-                   extras={<>{total.toLocaleString()} total</>} />
+            {/* Cursor pager (v0.7.22 — replaced the offset Pager).
+                Back pops the cursor stack; Next pushes the current
+                cursor and advances to the response's nextCursor.
+                Next is hidden during live tail (the live query owns
+                its own moving window — no cursor). Total still comes
+                from the backend so the "N total" label is unchanged. */}
+            {!live && (
+              <div className="row" style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                marginTop: 10, fontSize: 12, color: 'var(--text3)',
+              }}>
+                <Button variant="secondary" size="sm"
+                  disabled={cursorStack.length === 0}
+                  onClick={() => {
+                    setCursorStack(stack => {
+                      const next = stack.slice(0, -1);
+                      setCursor(stack[stack.length - 1] ?? '');
+                      return next;
+                    });
+                  }}
+                  title="Previous page">
+                  ← Back
+                </Button>
+                <Button variant="secondary" size="sm"
+                  disabled={!data.nextCursor}
+                  onClick={() => {
+                    if (!data.nextCursor) return;
+                    setCursorStack(stack => [...stack, cursor]);
+                    setCursor(data.nextCursor);
+                  }}
+                  title={data.nextCursor ? 'Next page' : 'No more pages'}>
+                  Next →
+                </Button>
+                <span>{total.toLocaleString()} total</span>
+              </div>
+            )}
           </>
         )}
       </div>

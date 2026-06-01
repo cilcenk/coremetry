@@ -3037,13 +3037,20 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		SpanID:      q.Get("spanId"),
 		Limit:       parseInt(q.Get("limit"), 100),
 		Offset:      parseInt(q.Get("offset"), 0),
+		// v0.7.22 (SAFE-CORE) — opaque keyset cursor. The UI passes
+		// back the prior response's nextCursor; backend-owned format.
+		Cursor: q.Get("after"),
 	}
 	page, err := s.logs.Search(r.Context(), f)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]interface{}{"total": page.Total, "logs": page.Logs})
+	writeJSON(w, map[string]interface{}{
+		"total":      page.Total,
+		"logs":       page.Logs,
+		"nextCursor": page.NextCursor,
+	})
 }
 
 // getLogsFields surfaces the searchable field paths discovered

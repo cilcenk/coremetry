@@ -36,6 +36,17 @@ type Filter struct {
 	SpanID      string
 	Limit       int
 	Offset      int
+	// Cursor (v0.7.22, SAFE-CORE) — opaque keyset paging token.
+	// When non-empty the backend decodes its OWN format and pages
+	// AFTER the encoded position instead of using Offset. The API
+	// layer treats this string as opaque (it just round-trips the
+	// value from the previous Page.NextCursor). Empty = first page,
+	// in which case Offset is still honoured for back-compat with
+	// callers that page by offset. Each backend defines its own
+	// cursor encoding (CH: base64("ch|"+timeNs+"|"+rowKey), where rowKey
+	// is a cityHash64 row digest giving a strict total order; ES:
+	// base64 of the hit's sort-values JSON array).
+	Cursor string
 }
 
 // LogRecord is the in-memory shape returned by every backend. It mirrors
@@ -59,6 +70,11 @@ type LogRecord struct {
 type Page struct {
 	Total int          `json:"total"`
 	Logs  []*LogRecord `json:"logs"`
+	// NextCursor (v0.7.22, SAFE-CORE) — opaque keyset token the
+	// caller passes back as Filter.Cursor to fetch the next page.
+	// Empty when this is the last page (fewer than Limit rows
+	// returned). Opaque to the API layer; format is backend-owned.
+	NextCursor string `json:"nextCursor,omitempty"`
 }
 
 // EQLQuery — parameters for an Event Query Language sequence

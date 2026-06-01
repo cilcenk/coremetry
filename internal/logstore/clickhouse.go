@@ -26,7 +26,7 @@ func (s *CHStore) Backend() string { return "clickhouse" }
 func (s *CHStore) Ping(ctx context.Context) error { return s.store.Ping(ctx) }
 
 func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
-	rows, total, err := s.store.GetLogs(ctx, chstore.LogFilter{
+	rows, total, next, err := s.store.GetLogs(ctx, chstore.LogFilter{
 		Service:     f.Service,
 		Search:      f.Search,
 		From:        f.From,
@@ -36,6 +36,7 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		SpanID:      f.SpanID,
 		Limit:       f.Limit,
 		Offset:      f.Offset,
+		Cursor:      f.Cursor, // v0.7.22 — opaque CH keyset token round-trip
 	})
 	if err != nil {
 		return nil, err
@@ -55,7 +56,7 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			ResourceAttributes: l.ResourceAttributes,
 		})
 	}
-	return &Page{Total: int(total), Logs: out}, nil
+	return &Page{Total: int(total), Logs: out, NextCursor: next}, nil
 }
 
 // Histogram buckets log volume server-side via the same logs

@@ -1025,6 +1025,10 @@ export interface LogRow {
 export interface LogsResponse {
   total: number;
   logs: LogRow[];
+  // nextCursor = opaque keyset cursor for the next page. Empty /
+  // omitted (Go `omitempty`) on the last page — the UI stops
+  // paging when it's absent. Pass it back verbatim as LogsParams.after.
+  nextCursor?: string;
 }
 
 export interface MetricInfo {

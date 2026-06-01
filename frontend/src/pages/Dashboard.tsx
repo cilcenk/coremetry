@@ -8,6 +8,7 @@ import { PanelEditor, defaultConfig } from '@/components/dashboard/PanelEditor';
 import { VariablesBar } from '@/components/dashboard/VariablesBar';
 import type { DashboardVariable } from '@/lib/types';
 import { api } from '@/lib/api';
+import { useUrlRange } from '@/lib/useUrlRange';
 import type {
   Dashboard, Panel, PanelType, TimeRange,
   MetricPanelConfig, SpanMetricPanelConfig,
@@ -28,7 +29,7 @@ function Inner() {
   const id = sp.get('id') ?? '';
   const startInEdit = sp.get('edit') === '1';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [doc, setDoc] = useState<Dashboard | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Dashboard | null>(null);

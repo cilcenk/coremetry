@@ -10,6 +10,7 @@ import {
   useDeleteAlertRule, useEnableAlertRule, useDisableAlertRule,
 } from '@/lib/queries';
 import { api } from '@/lib/api';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { tsLong } from '@/lib/utils';
 import type { AlertRule, NoisyRule, TimeRange } from '@/lib/types';
 
@@ -103,7 +104,7 @@ const TEMPLATES: { id: string; label: string; description: string; draft: Partia
 export default function AlertsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [services, setServices] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [draft, setDraft] = useState<Partial<AlertRule>>(emptyDraft);

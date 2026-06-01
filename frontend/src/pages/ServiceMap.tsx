@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceMapGraph } from '@/components/ServiceMapGraph';
 import { useServiceMap, useServiceNames } from '@/lib/queries';
 import { fmtNum, hashColor } from '@/lib/utils';
+import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange, ServiceMap, ServiceMapNode } from '@/lib/types';
 
 const PRESETS: { key: TimeRange['preset']; secs: number; label: string }[] = [
@@ -42,7 +43,7 @@ const DIFF_PRESETS: { key: string; label: string }[] = [
 ];
 
 export default function ServiceMapPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [samples, setSamples] = useState(200);
   const [focus, setFocus] = useState<string>('');
   // Picker input has its own state separate from focus so the

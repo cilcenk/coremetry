@@ -7,6 +7,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { BreakdownBar, KindBadge } from '@/components/KindBadge';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ProfileRow, ProfileHotspotsResponse, TimeRange } from '@/lib/types';
@@ -44,7 +45,7 @@ export default function ProfilingPage() {
   // and bookmarks aren't time-stable anyway.
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const service = params.get('service') || '';
   const ptype = params.get('type') || '';
   // `view` toggles between the per-profile list (default) and

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
 import {
   type AIRateTable, mergeRates, costForCall, fmtCost,
@@ -21,7 +22,7 @@ import type {
 // Admin-only — prompts can carry telemetry the viewer role
 // might not otherwise have access to.
 export default function AIObservabilityPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '24h' });
+  const [range, setRange] = useUrlRange('24h');
   const [stats, setStats] = useState<AIStats | null | undefined>(undefined);
   const [series, setSeries] = useState<AICallsTimePoint[] | undefined>(undefined);
   const [calls, setCalls] = useState<AICall[] | null | undefined>(undefined);

@@ -5,6 +5,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
+import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange } from '@/lib/types';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
@@ -161,7 +162,7 @@ const SHARD_POLICY_COLS: DataTableColumn<ShardPolicyRow>[] = [
 ];
 
 export default function AdminClickhousePage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [data, setData] = useState<CHHealth | null | undefined>(undefined);
 
   useEffect(() => {

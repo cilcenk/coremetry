@@ -8,6 +8,7 @@ import { fmtNum, hashColor, tsLong } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { CallerRow, TimeRange } from '@/lib/types';
+import { useUrlRange } from '@/lib/useUrlRange';
 
 // Dynatrace-style "service consumers" / backtrace view. One row per
 // distinct (caller service × pod/instance × client IP × user-agent)
@@ -39,7 +40,7 @@ function BacktraceInner() {
   const [searchParams] = useSearchParams();
   const svc = searchParams.get('name') ?? '';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [data, setData] = useState<CallerRow[] | null | undefined>(undefined);
   const [filter, setFilter] = useState('');
 

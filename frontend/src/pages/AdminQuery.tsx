@@ -5,6 +5,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { IconLock } from '@/components/icons';
 import { timeRangeToNs } from '@/lib/utils';
+import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange, SpanMetricSeries } from '@/lib/types';
 
 // AdminQuery — v0.5.265. Coremetry's unified query language
@@ -68,7 +69,7 @@ interface QueryResult {
 export default function AdminQueryPage() {
   const { user } = useAuth();
   const [query, setQuery] = useState(SAMPLE_QUERIES[1].text);
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

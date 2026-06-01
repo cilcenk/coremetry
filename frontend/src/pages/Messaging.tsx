@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { DependenciesTable } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
+import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange, MessagingInstance } from '@/lib/types';
 
 // /messaging — top-level queue / topic technologies overview.
@@ -17,7 +18,7 @@ import type { TimeRange, MessagingInstance } from '@/lib/types';
 // fetches. staleTime aligns with the backend's 30s cache TTL
 // so most refetches hit the warm slot.
 export default function MessagingPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
+  const [range, setRange] = useUrlRange('1h');
   // Memoize on range identity — without this, a relative range
   // resolved fresh every render reshuffles the useQuery key
   // and the table refetches on every paint.

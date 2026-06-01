@@ -5,6 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner } from '@/components/Spinner';
 import { DependenciesTable } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';
 import type { TimeRange, DBInstance } from '@/lib/types';
 
@@ -27,7 +28,7 @@ import type { TimeRange, DBInstance } from '@/lib/types';
 // vs receiver-driven) from colliding in one list; each
 // audience scans the panel that matches their question.
 export default function DatabasesPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
+  const [range, setRange] = useUrlRange('1h');
   // Memoize on range identity — without this, a relative range
   // resolved fresh every render reshuffles the useQuery key
   // and the table refetches on every paint.

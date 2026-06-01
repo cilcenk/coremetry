@@ -14,6 +14,7 @@ import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
+import { useUrlRange } from '@/lib/useUrlRange';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 
 type SortKey = 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99' | 'apdex';
@@ -49,7 +50,7 @@ const SERVICE_COLS: DataTableColumn<Service>[] = [
 
 export default function ServicesPage() {
   const navigate = useNavigate();
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [data, setData] = useState<Service[] | null | undefined>(undefined);
   const [sparklines, setSparklines] = useState<Record<string, SparklineBucket[]>>({});
   // Batch runtime fetch — one query for every service in the

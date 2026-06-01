@@ -5,6 +5,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange } from '@/lib/types';
@@ -63,7 +64,7 @@ export default function EventsPage() {
   const { user } = useAuth();
   const canDelete = user?.role === 'admin' || user?.role === 'editor';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '24h' });
+  const [range, setRange] = useUrlRange('24h');
   const [data, setData] = useState<Event[] | null | undefined>(undefined);
   const [serviceFilter, setServiceFilter] = useState('');
   const [kindFilter, setKindFilter] = useState('');

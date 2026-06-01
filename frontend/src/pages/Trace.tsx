@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
 
@@ -22,7 +23,7 @@ function TraceDetailInner() {
   const [searchParams] = useSearchParams();
   const id = searchParams.get('id') ?? '';
 
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   const [spans, setSpans] = useState<SpanRow[] | null | undefined>(undefined);
   // v0.5.208 — "clickhouse" when the trace lives in Coremetry's
   // store, "tempo" when getTrace fell back to the external Tempo

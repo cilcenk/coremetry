@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
@@ -40,7 +41,7 @@ type ExplainState = 'idle' | 'busy' | { text: string } | { error: string };
 // what's actually worth fixing. A 5ms query running a million
 // times beats a 5s query running once.
 export default function SlowQueriesPage() {
-  const [range, setRange] = useState<TimeRange>({ preset: '1h' });
+  const [range, setRange] = useUrlRange('1h');
   const [dbSystem, setDbSystem] = useState('');
   const [rows, setRows] = useState<SlowQueryRow[] | null | undefined>(undefined);
   const [expanded, setExpanded] = useState<string | null>(null);

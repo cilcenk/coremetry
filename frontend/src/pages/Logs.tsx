@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/Button';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass } from '@/lib/utils';
@@ -63,7 +64,7 @@ function buildKQLFromFilter(f: {
 function LogsInner() {
   const [searchParams] = useSearchParams();
 
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [range, setRange] = useUrlRange('30m');
   // Cursor paging (v0.7.22 — replaced the offset pager). `cursor`
   // is the opaque `after` token for the page currently displayed
   // ('' = first page). `cursorStack` holds the cursors of the

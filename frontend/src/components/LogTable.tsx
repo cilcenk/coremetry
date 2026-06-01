@@ -306,7 +306,11 @@ function LogRow({
       <tr onClick={onClick}
           data-row-idx={idx}
           className={selected ? 'row-selected' : ''}
-          style={{ cursor: 'pointer' }}>
+          /* content-visibility lets the browser skip layout/paint of
+             off-screen log rows — the table > 100 rows hard constraint.
+             ~28px row; containIntrinsicSize reserves space so the
+             scrollbar doesn't jump (v0.7.79). */
+          style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
         <td className="mono">{tsLong(l.timestamp)}</td>
         <td>
           <span className={sevClass(l.severity)}>

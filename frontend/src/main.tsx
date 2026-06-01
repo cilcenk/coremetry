@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, keepPreviousData } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
 import { initOtel } from './lib/otel';
@@ -37,6 +37,15 @@ initOtel();
 //   refetchOnReconnect — true so a network drop+resume restores
 //     the screen state without intervention.
 //
+//   placeholderData keepPreviousData (v0.7.79) — on ANY key change
+//     (range switch, filter edit, pagination Next/Back) keep the
+//     last successful data on screen while the new query loads,
+//     instead of dropping to a spinner. Kills the per-interaction
+//     loading flicker that made the dashboard feel janky; pages
+//     can read `isPlaceholderData`/`isFetching` if they want a
+//     subtle "updating…" hint. The biggest perceived-speed win
+//     for the marginal cost of one import.
+//
 // Per-query overrides (refetchInterval for live polling, longer
 // staleTime for slow-moving data, etc.) live next to each
 // useXyz() hook in lib/queries/*.
@@ -45,8 +54,14 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 10_000,
       gcTime: 5 * 60_000,
+      // refetchOnWindowFocus stays true: it's staleTime-gated (a
+      // <10s tab-away never refetches) and bounded to the mounted
+      // page's queries, so it's the SRE-correct "tab back → fresh"
+      // behaviour, not a 48-page storm. The real perceived-speed
+      // win is keepPreviousData below, not killing focus-refetch.
       refetchOnWindowFocus: true,
       refetchOnReconnect: true,
+      placeholderData: keepPreviousData,
       retry: 1,
       retryDelay: 800,
     },

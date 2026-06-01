@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, setUnauthorizedHandler, type AuthUser } from '@/lib/api';
 import { isPublicPath, normalizePath } from '@/lib/auth-paths';
@@ -69,8 +69,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     navigate('/login');
   }, [navigate]);
 
+  // v0.7.79 — memoise the context value. AuthProvider re-renders on
+  // EVERY route change (it reads pathname via useLocation), so an
+  // inline object literal here handed every useAuth() consumer a new
+  // reference per navigation and re-rendered all of them. login/logout
+  // are useCallback-stable, so the value now only changes when the
+  // session actually changes (user/loading).
+  const value = useMemo(
+    () => ({ user, loading, login, logout }),
+    [user, loading, login, logout],
+  );
+
   return (
-    <Ctx.Provider value={{ user, loading, login, logout }}>
+    <Ctx.Provider value={value}>
       {children}
     </Ctx.Provider>
   );

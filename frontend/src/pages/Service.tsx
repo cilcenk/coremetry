@@ -547,6 +547,12 @@ function impactOf(r: OperationSummary): number {
 // once-an-hour 30s job doesn't. Default sort so the top of the
 // table answers "what should I optimise first" without the
 // operator combining columns by eye.
+// Apdex cell color (README Status semantics): ≥0.94 ok, ≥0.85 warn, else err.
+function apdexColor(a: number): string {
+  if (!isFinite(a)) return 'var(--text3)';
+  return a >= 0.94 ? 'var(--ok)' : a >= 0.85 ? 'var(--warn)' : 'var(--err)';
+}
+
 const OP_COLS: DataTableColumn<OperationSummary>[] = [
   { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 320 },
   { id: 'trend',     label: 'Trend',     width: 92 },
@@ -811,7 +817,7 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                 <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
                 <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
                 <td className="mono" style={{ textAlign: 'right' }}>{agg.p99Ms.toFixed(1)}ms</td>
-                <td className="mono" style={{ textAlign: 'right' }}>
+                <td className="mono" style={{ textAlign: 'right', color: apdexColor(agg.apdex), fontWeight: 600 }}>
                   {isFinite(agg.apdex) ? agg.apdex.toFixed(2) : '—'}
                 </td>
               </tr>
@@ -864,7 +870,7 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                   <td className="mono" style={{ textAlign: 'right' }}>{op.p50DurationMs.toFixed(1)}ms</td>
                   <td className="mono" style={{ textAlign: 'right' }}>{op.p95DurationMs.toFixed(1)}ms</td>
                   <td className="mono" style={{ textAlign: 'right' }}>{op.p99DurationMs.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>
+                  <td className="mono" style={{ textAlign: 'right', color: apdexColor(op.apdex), fontWeight: 600 }}>
                     {isFinite(op.apdex) ? op.apdex.toFixed(2) : '—'}
                   </td>
                 </tr>

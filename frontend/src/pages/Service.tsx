@@ -6,6 +6,7 @@ import { DrillButton } from '@/components/DrillButton';
 import { Button } from '@/components/ui/Button';
 import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
 import { ServiceOverview } from './service/Overview';
+import { ServiceTracesTab, ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceStructure } from '@/components/ServiceStructure';
 import { ServiceCharts } from '@/components/ServiceCharts';
@@ -39,7 +40,7 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
-type ServiceTab = 'overview' | 'operations' | 'details';
+type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology';
 
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -84,6 +85,9 @@ function ServiceDetailInner() {
   const tabParam = searchParams.get('tab');
   const tab: ServiceTab = tabParam === 'operations' ? 'operations'
     : tabParam === 'details' ? 'details'
+    : tabParam === 'traces' ? 'traces'
+    : tabParam === 'logs' ? 'logs'
+    : tabParam === 'topology' ? 'topology'
     : 'overview';
   // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
   // the Details tab body actually exists in the DOM. Browser
@@ -368,6 +372,9 @@ function ServiceDetailInner() {
             {tab === 'overview' && (
               <ServiceOverview service={svc} range={range} info={info} problems={problems} operations={operations} />
             )}
+            {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
+            {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
+            {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}
             {tab === 'operations' && (
               <OperationsTable service={svc} rows={operations} range={range}
                 preset={range.preset}
@@ -567,6 +574,9 @@ function TabStrip({ tab, onChange, opCount }: {
     { key: 'overview',   label: 'Overview' },
     { key: 'operations', label: 'Operations', hint: opCount > 0 ? `${opCount}` : undefined },
     { key: 'details',    label: 'Details' },
+    { key: 'traces',     label: 'Traces' },
+    { key: 'logs',       label: 'Logs' },
+    { key: 'topology',   label: 'Topology' },
   ];
   return (
     <div style={{

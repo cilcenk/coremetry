@@ -1,11 +1,12 @@
 import { useId, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { Service, Problem, TimeRange, SpanMetricSeries } from '@/lib/types';
+import type { Service, Problem, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useServiceDeploys } from '@/lib/queries';
 import { OverviewChart, type OvChartSeries } from './charts/OverviewChart';
 import { ServiceFlow } from './ServiceFlow';
+import { OpsCard, DbCard } from './OverviewTables';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
 // from the design handoff. The new tab on /service?name=<svc> (becomes the
@@ -21,6 +22,7 @@ interface Props {
   range: TimeRange;
   info: Service | null;
   problems: Problem[];
+  operations: OperationSummary[];
 }
 
 function vals(s?: SpanMetricSeries[] | null): number[] {
@@ -120,7 +122,7 @@ function relTime(ns: number): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export function ServiceOverview({ service, range, info, problems }: Props) {
+export function ServiceOverview({ service, range, info, problems, operations }: Props) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const windowSec = Math.max(1, (to - from) / 1e9);
 
@@ -178,6 +180,12 @@ export function ServiceOverview({ service, range, info, problems }: Props) {
 
       {/* Service flow — 1-hop request-path map (callers → svc → deps) */}
       <ServiceFlow service={service} range={range} from={from} to={to} />
+
+      {/* Operations (compact) + Top DB statements */}
+      <div className="ov-grid ov-cols-2 ov-mb">
+        <OpsCard service={service} range={range} operations={operations} />
+        <DbCard service={service} from={from} to={to} />
+      </div>
 
       {/* Recent problems & events */}
       <div className="card">

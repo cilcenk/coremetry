@@ -367,7 +367,7 @@ function ServiceDetailInner() {
               opCount={operations.length} />
 
             {tab === 'overview' && (
-              <ServiceOverview service={svc} range={range} info={info} problems={problems} />
+              <ServiceOverview service={svc} range={range} info={info} problems={problems} operations={operations} />
             )}
             {tab === 'operations' && (
               <OperationsTable service={svc} rows={operations} range={range}

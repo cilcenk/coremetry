@@ -13,6 +13,7 @@ import { OperationPicker } from '@/components/OperationPicker';
 import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { TraceVolumeHistogram } from '@/components/TraceVolumeHistogram';
+import { Button } from '@/components/ui/Button';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
 import { api } from '@/lib/api';
@@ -149,6 +150,13 @@ function TracesPageInner() {
   const dragColRef = useRef<string | null>(null);
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
   const [agg, setAgg] = useState<AggregateRow[] | null | undefined>(undefined);
+  // v0.7.90 — surface a failed/timed-out trace query instead of
+  // swallowing it. Before, .catch set data=null which rendered a BLANK
+  // list area (or, on a 200-empty, the misleading "No traces found"),
+  // so an operator couldn't tell "no data" from "the query errored /
+  // timed out". listErr holds the message; retryNonce re-fires the fetch.
+  const [listErr, setListErr] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // The v0.5.64 lazy-load gate was removed in v0.5.72 because
   // operators wanted /traces to look like every other APM —
@@ -212,6 +220,7 @@ function TracesPageInner() {
   useEffect(() => {
     if (view !== 'list') return;
     setData(undefined);
+    setListErr(null);
     const tid = filter.traceId.trim().toLowerCase();
     const useTimeRange = tid.length === 0;
     const { from, to } = useTimeRange ? timeRangeToNs(range) : { from: undefined, to: undefined };
@@ -231,8 +240,15 @@ function TracesPageInner() {
       // "exact" only when the user explicitly asked. Pinned trace IDs
       // skip the toggle — count of 1 is implicit.
       count: showTotal && !tid ? 'exact' : 'skip',
-    }).then(setData).catch(() => setData(null));
-  }, [view, range, sort, order, page, filter, advFilters, extraCols, showTotal]);
+    }).then(d => { setData(d); }).catch((e: unknown) => {
+      // Distinguish error from empty: keep data=null (so the skeleton
+      // stops) but record the message so the UI shows a retryable error
+      // panel, not "No traces found". A CH-heavy window can exceed
+      // max_execution_time → 500; the operator must SEE that.
+      setListErr(e instanceof Error ? e.message : 'Request failed');
+      setData(null);
+    });
+  }, [view, range, sort, order, page, filter, advFilters, extraCols, showTotal, retryNonce]);
 
   // ── Aggregate fetch ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -611,7 +627,16 @@ function TracesPageInner() {
 
         {/* List view */}
         {view === 'list' && data === undefined && <TableSkeleton rows={10} cols={7} />}
-        {view === 'list' && data && traces.length === 0 && (
+        {view === 'list' && listErr && (
+          <Empty icon="⚠" title="Query failed">
+            <p>The trace query errored or timed out. Try a narrower time range, then retry —
+              the span-volume histogram above can still load even when the list query is too
+              heavy.</p>
+            <p className="mono" style={{ fontSize: 12, color: 'var(--text2)', wordBreak: 'break-word', margin: '8px 0' }}>{listErr}</p>
+            <Button variant="secondary" size="sm" onClick={() => setRetryNonce(n => n + 1)}>↻ Retry</Button>
+          </Empty>
+        )}
+        {view === 'list' && !listErr && data && traces.length === 0 && (
           <TracesEmpty
             service={filter.service}
             search={filter.search}

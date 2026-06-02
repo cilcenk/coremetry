@@ -574,9 +574,9 @@ function TabStrip({ tab, onChange, opCount }: {
     { key: 'overview',   label: 'Overview' },
     { key: 'operations', label: 'Operations', hint: opCount > 0 ? `${opCount}` : undefined },
     { key: 'details',    label: 'Details' },
+    { key: 'topology',   label: 'Topology' },
     { key: 'traces',     label: 'Traces' },
     { key: 'logs',       label: 'Logs' },
-    { key: 'topology',   label: 'Topology' },
   ];
   return (
     <div style={{

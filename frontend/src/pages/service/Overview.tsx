@@ -7,6 +7,7 @@ import { useServiceDeploys } from '@/lib/queries';
 import { OverviewChart, type OvChartSeries } from './charts/OverviewChart';
 import { ServiceFlow } from './ServiceFlow';
 import { OpsCard, DbCard } from './OverviewTables';
+import { ServiceInfra } from '@/components/ServiceInfra';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
 // from the design handoff. The new tab on /service?name=<svc> (becomes the
@@ -187,33 +188,36 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
         <DbCard service={service} from={from} to={to} />
       </div>
 
-      {/* Recent problems & events */}
-      <div className="card">
-        <div className="ov-card-h">
-          <h3>Recent problems &amp; events</h3>
-          {open.length > 0 && <span className="ov-sub">{open.length} open</span>}
-        </div>
-        {open.length === 0 ? (
-          <div className="ov-card-b" style={{ color: 'var(--text2)', fontSize: 13 }}>
-            No open problems for {service} in this window.
+      {/* Instances (infra health) + Recent problems & events */}
+      <div className="ov-grid ov-cols-2 ov-mb">
+        <ServiceInfra service={service} since={range.preset} />
+        <div className="card">
+          <div className="ov-card-h">
+            <h3>Recent problems &amp; events</h3>
+            {open.length > 0 && <span className="ov-sub">{open.length} open</span>}
           </div>
-        ) : (
-          <div>
-            {open.slice(0, 8).map(p => {
-              const sk = PROB_ICON[p.severity] ?? PROB_ICON.info;
-              return (
-                <div className="ov-prob" key={p.id}>
-                  <div className="ov-ic" style={{ background: 'var(--accent-soft)', color: sk.fg }}>{sk.ic}</div>
-                  <div>
-                    <div className="ov-ti">{p.ruleName}</div>
-                    <div className="ov-de">{p.description}</div>
+          {open.length === 0 ? (
+            <div className="ov-card-b" style={{ color: 'var(--text2)', fontSize: 13 }}>
+              No open problems for {service} in this window.
+            </div>
+          ) : (
+            <div>
+              {open.slice(0, 8).map(p => {
+                const sk = PROB_ICON[p.severity] ?? PROB_ICON.info;
+                return (
+                  <div className="ov-prob" key={p.id}>
+                    <div className="ov-ic" style={{ background: 'var(--accent-soft)', color: sk.fg }}>{sk.ic}</div>
+                    <div>
+                      <div className="ov-ti">{p.ruleName}</div>
+                      <div className="ov-de">{p.description}</div>
+                    </div>
+                    <div className="ov-tm">{relTime(p.startedAt)}</div>
                   </div>
-                  <div className="ov-tm">{relTime(p.startedAt)}</div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

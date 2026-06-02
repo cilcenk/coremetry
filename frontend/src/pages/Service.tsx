@@ -79,13 +79,12 @@ function ServiceDetailInner() {
   // v0.5.292 — tab in URL so a refresh / shareable link lands
   // on the same sub-view. Default = Operations (the operator's
   // daily entry point).
-  // v0.7.92 — 'overview' tab added (opt-in via ?tab=overview while it's
-  // built out; operations stays the default landing until the Overview is
-  // complete, then this flips to overview-default).
+  // v0.7.97 — Overview is now the DEFAULT landing tab (the at-a-glance
+  // health view). Operations / Details are opt-in via ?tab=.
   const tabParam = searchParams.get('tab');
-  const tab: ServiceTab = tabParam === 'overview' ? 'overview'
+  const tab: ServiceTab = tabParam === 'operations' ? 'operations'
     : tabParam === 'details' ? 'details'
-    : 'operations';
+    : 'overview';
   // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
   // the Details tab body actually exists in the DOM. Browser
   // doesn't auto-scroll because the target node is rendered
@@ -108,7 +107,7 @@ function ServiceDetailInner() {
   }, [loading, tab]);
   const setTab = (next: ServiceTab) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
-    if (next === 'operations') p.delete('tab'); else p.set('tab', next);
+    if (next === 'overview') p.delete('tab'); else p.set('tab', next);
     return p;
   }, { replace: true });
 

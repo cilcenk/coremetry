@@ -5,6 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Button } from '@/components/ui/Button';
 import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
+import { ServiceOverview } from './service/Overview';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceStructure } from '@/components/ServiceStructure';
 import { ServiceCharts } from '@/components/ServiceCharts';
@@ -38,7 +39,7 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
-type ServiceTab = 'operations' | 'details';
+type ServiceTab = 'overview' | 'operations' | 'details';
 
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -78,9 +79,13 @@ function ServiceDetailInner() {
   // v0.5.292 — tab in URL so a refresh / shareable link lands
   // on the same sub-view. Default = Operations (the operator's
   // daily entry point).
-  const tab = (searchParams.get('tab') as ServiceTab | null) === 'details'
-    ? 'details' as const
-    : 'operations' as const;
+  // v0.7.92 — 'overview' tab added (opt-in via ?tab=overview while it's
+  // built out; operations stays the default landing until the Overview is
+  // complete, then this flips to overview-default).
+  const tabParam = searchParams.get('tab');
+  const tab: ServiceTab = tabParam === 'overview' ? 'overview'
+    : tabParam === 'details' ? 'details'
+    : 'operations';
   // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
   // the Details tab body actually exists in the DOM. Browser
   // doesn't auto-scroll because the target node is rendered
@@ -361,6 +366,9 @@ function ServiceDetailInner() {
               onChange={setTab}
               opCount={operations.length} />
 
+            {tab === 'overview' && (
+              <ServiceOverview service={svc} range={range} info={info} problems={problems} />
+            )}
             {tab === 'operations' && (
               <OperationsTable service={svc} rows={operations} range={range}
                 preset={range.preset}
@@ -557,6 +565,7 @@ function TabStrip({ tab, onChange, opCount }: {
   opCount: number;
 }) {
   const items: { key: ServiceTab; label: string; hint?: string }[] = [
+    { key: 'overview',   label: 'Overview' },
     { key: 'operations', label: 'Operations', hint: opCount > 0 ? `${opCount}` : undefined },
     { key: 'details',    label: 'Details' },
   ];

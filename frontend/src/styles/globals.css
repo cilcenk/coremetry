@@ -27,6 +27,16 @@
   --warn: #d29922;
   --info: #79c0ff;
 
+  /* Chart-series + Service-Overview accents (v0.7.92). Not interactive —
+     used only for multi-series chart lines, KPI accent stripes, and the
+     flow-map. Tuned brighter for the dark canvas. */
+  --purple: #a371f7;
+  --indigo: #a371f7;
+  --orange: #f0883e;
+  --teal:   #39c5cf;
+  --accent-soft:   rgba(56, 139, 253, .16);
+  --border-strong: #484f58;
+
   color-scheme: dark;
 }
 
@@ -55,6 +65,14 @@
   --err:  #cf222e;
   --warn: #9a6700;
   --info: #0969da;
+
+  /* Chart-series + Service-Overview accents (v0.7.92) — Primer light. */
+  --purple: #8250df;
+  --indigo: #8250df;
+  --orange: #bc4c00;
+  --teal:   #137775;
+  --accent-soft:   rgba(9, 105, 218, .10);
+  --border-strong: #afb8c1;
 
   color-scheme: light;
 }
@@ -1371,3 +1389,91 @@ canvas { max-width: 100%; }
   from { opacity: 0; transform: translateX(20px); }
   to   { opacity: 1; transform: translateX(0); }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Service Overview (v0.7.92) — Dynatrace-style at-a-glance APM view, ported
+   from the design handoff. Design tokens remapped to the product palette
+   (--accent/--ok/--warn/--err + new chart-series --purple/--orange/--teal);
+   measurements/layout 1:1. Charts are uPlot; KPI sparklines + flow wires are
+   inline SVG (the existing Sparkline pattern). All `ov-` namespaced.
+   ════════════════════════════════════════════════════════════════════════ */
+.ov-grid { display: grid; gap: 16px; }
+.ov-grid.ov-mb { margin-bottom: 16px; }
+.ov-kpis { grid-template-columns: repeat(5, 1fr); }
+.ov-charts-3 { grid-template-columns: repeat(3, 1fr); }
+.ov-cols-2 { grid-template-columns: 1.35fr 1fr; }
+@media (max-width: 1100px) {
+  .ov-kpis { grid-template-columns: repeat(2, 1fr); }
+  .ov-charts-3, .ov-cols-2 { grid-template-columns: 1fr; }
+}
+
+/* KPI tile */
+.ov-kpi { padding: 14px 16px 16px; position: relative; overflow: hidden; min-height: 118px; }
+.ov-kpi-accent { position: absolute; top: 0; left: 0; width: 3px; height: 100%; }
+.ov-kpi .ov-lab { font-size: 11.5px; color: var(--text2); font-weight: 600; display: flex; align-items: center; gap: 6px; position: relative; z-index: 1; }
+.ov-kpi .ov-val { font-size: 27px; font-weight: 700; letter-spacing: -.6px; margin-top: 7px; font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 5px; position: relative; z-index: 1; }
+.ov-kpi .ov-val .ov-unit { font-size: 13px; color: var(--text3); font-weight: 600; }
+.ov-kpi .ov-delta { font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 3px; margin-top: 3px; position: relative; z-index: 1; }
+.ov-delta.up { color: var(--err); }
+.ov-delta.down { color: var(--ok); }
+.ov-delta.flat { color: var(--text3); }
+.ov-delta.up.good { color: var(--ok); }
+.ov-delta.down.bad { color: var(--err); }
+.ov-kpi .ov-spark { position: absolute; right: 0; bottom: 0; left: 0; height: 34px; opacity: .9; z-index: 0; pointer-events: none; }
+
+/* Overview card header/body (lighter than the generic .card-title) */
+.ov-card-h { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--border); }
+.ov-card-h h3 { margin: 0; font-size: 13.5px; font-weight: 700; letter-spacing: -.1px; }
+.ov-card-h .ov-sub { color: var(--text3); font-size: 11.5px; font-weight: 500; }
+.ov-card-h .ov-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.ov-card-b { padding: 16px; }
+
+/* Charts (uPlot host + legend + hover tooltip + deploy flag) */
+.ov-chart-wrap { position: relative; }
+.ov-legend { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.ov-legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text2); }
+.ov-sw { width: 9px; height: 9px; border-radius: 2px; flex: none; display: inline-block; }
+.ov-deploy-flag { position: absolute; font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--purple); transform: translateX(-50%); white-space: nowrap; pointer-events: none; }
+
+/* Service flow */
+.ov-flow { position: relative; }
+.ov-flow-cols { display: grid; grid-template-columns: 1fr 1.1fr 1fr; gap: 0; align-items: stretch; }
+.ov-flow-col { display: flex; flex-direction: column; gap: 10px; justify-content: center; padding: 4px 6px; }
+.ov-flow-col .ov-col-lab { font-size: 10.5px; letter-spacing: .7px; color: var(--text3); font-weight: 700; text-transform: uppercase; text-align: center; margin-bottom: 2px; }
+.ov-node { border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); padding: 10px 12px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: border-color .12s, box-shadow .12s; position: relative; z-index: 2; }
+.ov-node:hover, .ov-node.hot { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ov-node.dim { opacity: .4; }
+.ov-node .ov-nm { font-weight: 600; font-size: 12.5px; }
+.ov-node .ov-st { font-size: 10.5px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ov-node.center { border-width: 2px; border-color: var(--accent); background: var(--accent-soft); padding: 14px; }
+.ov-node.center .ov-nm { font-size: 14px; }
+.ov-node .ov-edge-stat { margin-left: auto; text-align: right; font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text3); line-height: 1.3; }
+.ov-flow svg.ov-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+
+/* Instances */
+.ov-inst { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); }
+.ov-inst + .ov-inst { margin-top: 9px; }
+.ov-inst .ov-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.ov-mini { text-align: right; min-width: 92px; }
+.ov-mini .l { font-size: 10px; color: var(--text3); }
+.ov-mini .v { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ov-gauge { height: 5px; border-radius: 3px; background: var(--bg2); margin-top: 4px; overflow: hidden; }
+.ov-gauge i { display: block; height: 100%; }
+
+/* Problems */
+.ov-prob { display: flex; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.ov-prob:last-child { border-bottom: none; }
+.ov-prob .ov-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; font-size: 14px; }
+.ov-prob .ov-ti { font-weight: 600; font-size: 13px; }
+.ov-prob .ov-de { color: var(--text2); font-size: 12px; margin-top: 2px; }
+.ov-prob .ov-tm { margin-left: auto; color: var(--text3); font-size: 11px; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Mini-bar (table cells), status dot, op-type tag — pills reuse .badge/.b-* */
+.ov-barcell { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; width: 100%; }
+.ov-minibar { height: 6px; border-radius: 3px; background: var(--bg2); overflow: hidden; flex: 1; max-width: 90px; }
+.ov-minibar i { display: block; height: 100%; border-radius: 3px; }
+.ov-tag { display: inline-block; padding: 1px 5px; border-radius: 4px; font-size: 9.5px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg2); color: var(--text2); margin-right: 7px; vertical-align: middle; }
+.ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.ov-dot.green { background: var(--ok); }
+.ov-dot.amber { background: var(--warn); }
+.ov-dot.red { background: var(--err); }

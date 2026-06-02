@@ -70,25 +70,32 @@ function KpiTile({ lab, val, unit, accent, spark }: {
   );
 }
 
-// One RED chart card: header (title + inline legend swatch) + the compact
-// uPlot OverviewChart. Extracts the (single) span-metric series into the
-// times + values OverviewChart consumes.
-function ChartCard({ title, series, color, label, unit, mode = 'line', deploy }: {
-  title: string; series: SpanMetricSeries[]; color: string; label: string;
-  unit: string; mode?: 'line' | 'area'; deploy?: { sec: number; label: string } | null;
+// One RED chart card: header (title + inline legend) + the compact uPlot
+// OverviewChart. Accepts N lines over the same x axis (Response time draws
+// p50/p95/p99 as three lines; throughput/failure draw one). The time axis
+// comes from the first non-empty line — all aggs share the WHERE + step so
+// the points align index-for-index.
+interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
+function ChartCard({ title, lines, unit, mode = 'line', deploy }: {
+  title: string; lines: ChartLine[]; unit: string;
+  mode?: 'line' | 'area'; deploy?: { sec: number; label: string } | null;
 }) {
-  const times = useMemo(() => (series[0]?.points ?? []).map(p => p.time / 1e9), [series]);
-  const ovSeries = useMemo<OvChartSeries[]>(() => {
-    const pts = series[0]?.points ?? [];
-    return pts.length ? [{ label, color, data: pts.map(p => p.value) }] : [];
-  }, [series, label, color]);
+  const times = useMemo(() => {
+    const base = lines.find(l => (l.series[0]?.points ?? []).length)?.series[0]?.points ?? [];
+    return base.map(p => p.time / 1e9);
+  }, [lines]);
+  const ovSeries = useMemo<OvChartSeries[]>(() =>
+    lines
+      .map(l => ({ label: l.label, color: l.color, data: (l.series[0]?.points ?? []).map(p => p.value) }))
+      .filter(s => s.data.length),
+  [lines]);
   return (
     <div className="card">
       <div className="ov-card-h">
         <h3>{title}</h3>
         <div className="ov-right">
           <span className="ov-legend">
-            <span><i className="ov-sw" style={{ background: color }} />{label}</span>
+            {lines.map(l => <span key={l.label}><i className="ov-sw" style={{ background: l.color }} />{l.label}</span>)}
           </span>
         </div>
       </div>
@@ -138,6 +145,7 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
         { name: 'rate', agg: 'rate' },
         { name: 'error_rate', agg: 'error_rate' },
         { name: 'p99', agg: 'p99', field: 'duration_ms' },
+        { name: 'p95', agg: 'p95', field: 'duration_ms' },
         { name: 'p50', agg: 'p50', field: 'duration_ms' },
       ],
     }),
@@ -174,9 +182,17 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
       {/* RED charts row — response time / throughput / failure rate, each
           with the deploy markers from the service bundle. */}
       <div className="ov-grid ov-charts-3 ov-mb">
-        <ChartCard title="Response time" series={s?.p99 ?? []} color="var(--orange)" label="P99" unit=" ms" mode="line" deploy={deploy} />
-        <ChartCard title="Throughput" series={s?.rate ?? []} color="var(--accent)" label="req/s" unit=" req/s" mode="area" deploy={deploy} />
-        <ChartCard title="Failure rate" series={s?.error_rate ?? []} color="var(--err)" label="errors" unit="%" mode="area" deploy={deploy} />
+        <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} lines={[
+          { series: s?.p50 ?? [], color: 'var(--accent)', label: 'P50' },
+          { series: s?.p95 ?? [], color: 'var(--purple)', label: 'P95' },
+          { series: s?.p99 ?? [], color: 'var(--orange)', label: 'P99' },
+        ]} />
+        <ChartCard title="Throughput" unit=" req/s" mode="area" deploy={deploy} lines={[
+          { series: s?.rate ?? [], color: 'var(--accent)', label: 'req/s' },
+        ]} />
+        <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} lines={[
+          { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
+        ]} />
       </div>
 
       {/* Service flow — 1-hop request-path map (callers → svc → deps) */}

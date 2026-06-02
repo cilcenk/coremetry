@@ -4,7 +4,7 @@ import type { Service, Problem, TimeRange, SpanMetricSeries } from '@/lib/types'
 import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useServiceDeploys } from '@/lib/queries';
-import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
+import { OverviewChart, type OvChartSeries } from './charts/OverviewChart';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
 // from the design handoff. The new tab on /service?name=<svc> (becomes the
@@ -66,16 +66,18 @@ function KpiTile({ lab, val, unit, accent, spark }: {
   );
 }
 
-// One RED chart card: header (title + inline legend) + a compact uPlot chart.
-function ChartCard({ title, series, color, label, unit, deploys, height = 150 }: {
+// One RED chart card: header (title + inline legend swatch) + the compact
+// uPlot OverviewChart. Extracts the (single) span-metric series into the
+// times + values OverviewChart consumes.
+function ChartCard({ title, series, color, label, unit, mode = 'line', deploy }: {
   title: string; series: SpanMetricSeries[]; color: string; label: string;
-  unit: string; deploys?: DeployMarker[]; height?: number;
+  unit: string; mode?: 'line' | 'area'; deploy?: { sec: number; label: string } | null;
 }) {
-  // Label the (single) series so the chart legend/tooltip reads cleanly.
-  const labelled = useMemo(
-    () => series.map(s => ({ ...s, groupKey: [label] })),
-    [series, label],
-  );
+  const times = useMemo(() => (series[0]?.points ?? []).map(p => p.time / 1e9), [series]);
+  const ovSeries = useMemo<OvChartSeries[]>(() => {
+    const pts = series[0]?.points ?? [];
+    return pts.length ? [{ label, color, data: pts.map(p => p.value) }] : [];
+  }, [series, label, color]);
   return (
     <div className="card">
       <div className="ov-card-h">
@@ -87,12 +89,13 @@ function ChartCard({ title, series, color, label, unit, deploys, height = 150 }:
         </div>
       </div>
       <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
-        {labelled.length === 0 || labelled[0].points.length === 0 ? (
-          <div style={{ height, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
+        {times.length < 2 ? (
+          <div style={{ height: 150, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
             No data in this window
           </div>
         ) : (
-          <MultiLineChart series={labelled} unit={unit} height={height} deploys={deploys} />
+          <OverviewChart times={times} series={ovSeries} unit={unit} mode={mode}
+            deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} />
         )}
       </div>
     </div>
@@ -140,10 +143,14 @@ export function ServiceOverview({ service, range, info, problems }: Props) {
   const s = seriesQ.data;
 
   const deploysQ = useServiceDeploys(service, from, to);
-  const deployMarkers: DeployMarker[] | undefined = useMemo(() => {
-    if (!deploysQ.data) return undefined;
-    return deploysQ.data.map(d => ({ timeUnixNs: d.timeUnixNs, label: d.version }));
-  }, [deploysQ.data]);
+  // The single deploy marker drawn on the charts = the latest deploy inside
+  // the window (the design shows one ▼ flag).
+  const deploy = useMemo(() => {
+    const ds = (deploysQ.data ?? []).filter(d => d.timeUnixNs >= from && d.timeUnixNs <= to);
+    if (!ds.length) return null;
+    const latest = ds.reduce((a, b) => (b.timeUnixNs > a.timeUnixNs ? b : a));
+    return { sec: latest.timeUnixNs / 1e9, label: latest.version };
+  }, [deploysQ.data, from, to]);
 
   if (!info) return null;
   const rps = info.spanCount / windowSec;
@@ -163,9 +170,9 @@ export function ServiceOverview({ service, range, info, problems }: Props) {
       {/* RED charts row — response time / throughput / failure rate, each
           with the deploy markers from the service bundle. */}
       <div className="ov-grid ov-charts-3 ov-mb">
-        <ChartCard title="Response time" series={s?.p99 ?? []} color="var(--err)" label="P99" unit="ms" deploys={deployMarkers} />
-        <ChartCard title="Throughput" series={s?.rate ?? []} color="var(--accent)" label="req/s" unit="rps" deploys={deployMarkers} />
-        <ChartCard title="Failure rate" series={s?.error_rate ?? []} color="var(--err)" label="errors" unit="%" deploys={deployMarkers} />
+        <ChartCard title="Response time" series={s?.p99 ?? []} color="var(--orange)" label="P99" unit=" ms" mode="line" deploy={deploy} />
+        <ChartCard title="Throughput" series={s?.rate ?? []} color="var(--accent)" label="req/s" unit=" req/s" mode="area" deploy={deploy} />
+        <ChartCard title="Failure rate" series={s?.error_rate ?? []} color="var(--err)" label="errors" unit="%" mode="area" deploy={deploy} />
       </div>
 
       {/* Recent problems & events */}

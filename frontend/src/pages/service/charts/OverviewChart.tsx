@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
+import { useThemeTick } from '@/lib/useThemeTick';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
@@ -44,6 +45,10 @@ export function OverviewChart({
   const ttRef = useRef<HTMLDivElement>(null);
   const flagRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  // Re-resolve CSS-var stroke/grid colors when the theme flips (cssVar()
+  // bakes concrete hex at build time, so the canvas would otherwise stay
+  // stale on light↔dark toggle until remount).
+  const themeTick = useThemeTick();
 
   useEffect(() => {
     const el = hostRef.current;
@@ -170,7 +175,7 @@ export function OverviewChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [times, series, height, mode, unit, deployAtSec, deployLabel]);
+  }, [times, series, height, mode, unit, deployAtSec, deployLabel, themeTick]);
 
   return (
     <div className="ov-chart-wrap" style={{ position: 'relative' }}>

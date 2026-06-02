@@ -1,14 +1,19 @@
-import type { Service, Problem, TimeRange } from '@/lib/types';
+import { useId, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import type { Service, Problem, TimeRange, SpanMetricSeries } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
+import { api } from '@/lib/api';
+import { useServiceDeploys } from '@/lib/queries';
+import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
 
-// Service Overview (v0.7.92) — Dynatrace-style at-a-glance APM view, ported
-// from the design handoff. The new tab on /service?name=<svc> (will become
-// the default once complete). Reuses the service-bundle data Service.tsx
-// already fetched — no extra round-trip here.
+// Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
+// from the design handoff. The new tab on /service?name=<svc> (becomes the
+// default once complete). Reuses the service-bundle data Service.tsx already
+// fetched (info + problems); the RED series for the KPI sparklines + charts
+// come from one batched span-metric call here.
 //
-// Increment 1: KPI row + recent problems. Follow-up increments add the RED
-// charts row (uPlot), the service-flow map (SVG wires), the compact
-// operations + top-DB-statements row, and the instances + sub-tabs.
+// Done: KPI row (+ full-bleed sparklines), RED charts row, recent problems.
+// Next: service-flow map, compact ops + top-DB tables, instances, sub-tabs.
 
 interface Props {
   service: string;
@@ -17,21 +22,83 @@ interface Props {
   problems: Problem[];
 }
 
-function KpiTile({ lab, val, unit, accent }: {
-  lab: string; val: string; unit?: string; accent: string;
+function vals(s?: SpanMetricSeries[] | null): number[] {
+  return s && s[0] ? s[0].points.map(p => p.value) : [];
+}
+
+// Full-bleed gradient sparkline pinned to the bottom of a KPI tile. Inline
+// SVG (the existing Sparkline pattern), stretched to the tile width via
+// preserveAspectRatio="none"; gradient fill 28%→0% of the series colour.
+function OvSparkline({ data, color }: { data: number[]; color: string }) {
+  const gid = useId();
+  if (data.length < 2) return null;
+  const W = 120, H = 34, pad = 2;
+  const mn = Math.min(...data), mx = Math.max(...data), rng = mx - mn || 1;
+  const xs = (i: number) => pad + (i / (data.length - 1)) * (W - pad * 2);
+  const ys = (v: number) => H - pad - ((v - mn) / rng) * (H - pad * 2 - 2);
+  const line = data.map((v, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join(' ');
+  const area = `${line} L${xs(data.length - 1).toFixed(1)},${H} L${xs(0).toFixed(1)},${H} Z`;
+  return (
+    <svg className="ov-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gid})`} />
+      <path d={line} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke"
+        strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function KpiTile({ lab, val, unit, accent, spark }: {
+  lab: string; val: string; unit?: string; accent: string; spark?: number[];
 }) {
   return (
     <div className="card ov-kpi">
       <div className="ov-kpi-accent" style={{ background: accent }} />
       <div className="ov-lab">{lab}</div>
       <div className="ov-val">{val}{unit && <span className="ov-unit">{unit}</span>}</div>
+      {spark && spark.length > 1 && <OvSparkline data={spark} color={accent} />}
     </div>
   );
 }
 
-// Severity → callout icon glyph + colour. accent-soft tile bg keeps the
-// chip subtle; the glyph carries the status colour (meaning is not
-// colour-only — the glyph shape differs per severity).
+// One RED chart card: header (title + inline legend) + a compact uPlot chart.
+function ChartCard({ title, series, color, label, unit, deploys, height = 150 }: {
+  title: string; series: SpanMetricSeries[]; color: string; label: string;
+  unit: string; deploys?: DeployMarker[]; height?: number;
+}) {
+  // Label the (single) series so the chart legend/tooltip reads cleanly.
+  const labelled = useMemo(
+    () => series.map(s => ({ ...s, groupKey: [label] })),
+    [series, label],
+  );
+  return (
+    <div className="card">
+      <div className="ov-card-h">
+        <h3>{title}</h3>
+        <div className="ov-right">
+          <span className="ov-legend">
+            <span><i className="ov-sw" style={{ background: color }} />{label}</span>
+          </span>
+        </div>
+      </div>
+      <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
+        {labelled.length === 0 || labelled[0].points.length === 0 ? (
+          <div style={{ height, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
+            No data in this window
+          </div>
+        ) : (
+          <MultiLineChart series={labelled} unit={unit} height={height} deploys={deploys} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 const PROB_ICON: Record<string, { ic: string; fg: string }> = {
   critical: { ic: '▲', fg: 'var(--err)' },
   warning:  { ic: '◆', fg: 'var(--warn)' },
@@ -50,24 +117,55 @@ function relTime(ns: number): string {
 }
 
 export function ServiceOverview({ service, range, info, problems }: Props) {
-  if (!info) return null;
-  const { from, to } = timeRangeToNs(range);
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const windowSec = Math.max(1, (to - from) / 1e9);
+
+  // One batched span-metric call: rate + error_rate + p99 + p50 over the
+  // same WHERE (service.name = svc). Feeds the KPI sparklines + RED charts.
+  const seriesQ = useQuery({
+    queryKey: ['service-overview-red', service, from, to],
+    queryFn: () => api.spanMetricBatch({
+      from, to,
+      dsl: `service.name = "${service.replace(/"/g, '\\"')}"`,
+      aggs: [
+        { name: 'rate', agg: 'rate' },
+        { name: 'error_rate', agg: 'error_rate' },
+        { name: 'p99', agg: 'p99', field: 'duration_ms' },
+        { name: 'p50', agg: 'p50', field: 'duration_ms' },
+      ],
+    }),
+    enabled: !!service,
+    staleTime: 30_000,
+  });
+  const s = seriesQ.data;
+
+  const deploysQ = useServiceDeploys(service, from, to);
+  const deployMarkers: DeployMarker[] | undefined = useMemo(() => {
+    if (!deploysQ.data) return undefined;
+    return deploysQ.data.map(d => ({ timeUnixNs: d.timeUnixNs, label: d.version }));
+  }, [deploysQ.data]);
+
+  if (!info) return null;
   const rps = info.spanCount / windowSec;
   const open = problems.filter(p => p.status !== 'resolved');
 
   return (
     <div style={{ marginTop: 4 }}>
-      {/* KPI row — golden signals. Throughput is neutral/good when up;
-          failure-rate / latency are bad when up; Apdex bad when down.
-          (Delta lines + full-bleed sparklines land with the series fetch
-          in the charts increment.) */}
+      {/* KPI row — golden signals + full-bleed trend sparklines. */}
       <div className="ov-grid ov-kpis ov-mb">
-        <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" />
-        <KpiTile lab="Failure rate" val={`${info.errorRate.toFixed(2)}%`} accent="var(--err)" />
-        <KpiTile lab="Response time · P99" val={info.p99DurationMs.toFixed(0)} unit=" ms" accent="var(--orange)" />
-        <KpiTile lab="Response time · avg" val={info.avgDurationMs.toFixed(1)} unit=" ms" accent="var(--purple)" />
+        <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(s?.rate)} />
+        <KpiTile lab="Failure rate" val={`${info.errorRate.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} />
+        <KpiTile lab="Response time · P99" val={info.p99DurationMs.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(s?.p99)} />
+        <KpiTile lab="Response time · median" val={(vals(s?.p50).slice(-1)[0] ?? info.avgDurationMs).toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(s?.p50)} />
         <KpiTile lab="Apdex" val={(info.apdex ?? 0).toFixed(2)} accent="var(--ok)" />
+      </div>
+
+      {/* RED charts row — response time / throughput / failure rate, each
+          with the deploy markers from the service bundle. */}
+      <div className="ov-grid ov-charts-3 ov-mb">
+        <ChartCard title="Response time" series={s?.p99 ?? []} color="var(--err)" label="P99" unit="ms" deploys={deployMarkers} />
+        <ChartCard title="Throughput" series={s?.rate ?? []} color="var(--accent)" label="req/s" unit="rps" deploys={deployMarkers} />
+        <ChartCard title="Failure rate" series={s?.error_rate ?? []} color="var(--err)" label="errors" unit="%" deploys={deployMarkers} />
       </div>
 
       {/* Recent problems & events */}

@@ -30,6 +30,21 @@ function vals(s?: SpanMetricSeries[] | null): number[] {
   return s && s[0] ? s[0].points.map(p => p.value) : [];
 }
 
+// Trend delta vs the prior window — mean of the first third vs the last
+// third of the series (mirrors the design's data.js delta()/prior()). >0.5%
+// = up, <-0.5% = down, else flat. Returns null when the series is too short.
+type Delta = { pct: string; dir: 'up' | 'down' | 'flat' };
+function computeDelta(arr: number[]): Delta | null {
+  if (arr.length < 6) return null;
+  const third = Math.max(1, Math.floor(arr.length / 3));
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / (xs.length || 1);
+  const prev = mean(arr.slice(0, third));
+  const cur = mean(arr.slice(-third));
+  if (prev === 0) return null;
+  const d = ((cur - prev) / prev) * 100;
+  return { pct: Math.abs(d).toFixed(1), dir: d > 0.5 ? 'up' : d < -0.5 ? 'down' : 'flat' };
+}
+
 // Full-bleed gradient sparkline pinned to the bottom of a KPI tile. Inline
 // SVG (the existing Sparkline pattern), stretched to the tile width via
 // preserveAspectRatio="none"; gradient fill 28%→0% of the series colour.
@@ -57,14 +72,28 @@ function OvSparkline({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-function KpiTile({ lab, val, unit, accent, spark }: {
+function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
   lab: string; val: string; unit?: string; accent: string; spark?: number[];
+  delta?: Delta | null; goodWhenUp?: boolean;
 }) {
+  // Color by whether the move is GOOD for this metric (README §Status
+  // semantics): throughput/apdex up = good (green); failure/latency up =
+  // bad (red). The .ov-delta classes encode up=err/down=ok by default, with
+  // .up.good / .down.bad overrides for the goodWhenUp case.
+  const deltaCls = delta
+    ? `ov-delta ${delta.dir}${goodWhenUp && delta.dir === 'up' ? ' good' : ''}${goodWhenUp && delta.dir === 'down' ? ' bad' : ''}`
+    : '';
   return (
     <div className="card ov-kpi">
       <div className="ov-kpi-accent" style={{ background: accent }} />
       <div className="ov-lab">{lab}</div>
       <div className="ov-val">{val}{unit && <span className="ov-unit">{unit}</span>}</div>
+      {delta && (
+        <div className={deltaCls}>
+          {delta.dir === 'up' ? '▲' : delta.dir === 'down' ? '▼' : '—'} {delta.pct}%
+          <span style={{ color: 'var(--text3)', fontWeight: 500 }}>vs prior</span>
+        </div>
+      )}
       {spark && spark.length > 1 && <OvSparkline data={spark} color={accent} />}
     </div>
   );
@@ -172,10 +201,10 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
     <div style={{ marginTop: 4 }}>
       {/* KPI row — golden signals + full-bleed trend sparklines. */}
       <div className="ov-grid ov-kpis ov-mb">
-        <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(s?.rate)} />
-        <KpiTile lab="Failure rate" val={`${info.errorRate.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} />
-        <KpiTile lab="Response time · P99" val={info.p99DurationMs.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(s?.p99)} />
-        <KpiTile lab="Response time · median" val={(vals(s?.p50).slice(-1)[0] ?? info.avgDurationMs).toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(s?.p50)} />
+        <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(s?.rate)} delta={computeDelta(vals(s?.rate))} goodWhenUp />
+        <KpiTile lab="Failure rate" val={`${info.errorRate.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} delta={computeDelta(vals(s?.error_rate))} goodWhenUp={false} />
+        <KpiTile lab="Response time · P99" val={info.p99DurationMs.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(s?.p99)} delta={computeDelta(vals(s?.p99))} goodWhenUp={false} />
+        <KpiTile lab="Response time · median" val={(vals(s?.p50).slice(-1)[0] ?? info.avgDurationMs).toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(s?.p50)} delta={computeDelta(vals(s?.p50))} goodWhenUp={false} />
         <KpiTile lab="Apdex" val={(info.apdex ?? 0).toFixed(2)} accent="var(--ok)" />
       </div>
 

@@ -26,34 +26,99 @@ import (
 // returned in the hit's `sort` field — typically [<epoch_millis>,
 // <shard_doc>] given the (time desc, _shard_doc desc) sort. We
 // base64 the JSON so the token survives a URL query param cleanly.
-func encodeESCursor(sortVals []any) string {
+// esCursor is the decoded ES keyset token: the prior page's `sort`
+// values (fed to search_after) plus the Point-in-Time id the page was
+// read within. Pit is empty in the plain (no-PIT) fallback mode.
+type esCursor struct {
+	Pit  string `json:"p,omitempty"`
+	Sort []any  `json:"s"`
+}
+
+func encodeESCursor(pit string, sortVals []any) string {
 	if len(sortVals) == 0 {
 		return ""
 	}
-	b, err := json.Marshal(sortVals)
+	b, err := json.Marshal(esCursor{Pit: pit, Sort: sortVals})
 	if err != nil {
 		return ""
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// decodeESCursor parses a token from encodeESCursor back into the
-// sort-values array to feed `search_after`. Returns ok=false for an
-// empty / malformed token so the caller falls back to a first-page
-// read.
-func decodeESCursor(tok string) ([]any, bool) {
+// decodeESCursor parses a token from encodeESCursor back into the PIT
+// id + sort-values array to feed `search_after`. Returns ok=false for
+// an empty / malformed token (incl. the pre-v0.7.88 bare-array format)
+// so the caller falls back to a fresh first-page read.
+func decodeESCursor(tok string) (pit string, sortVals []any, ok bool) {
 	if tok == "" {
-		return nil, false
+		return "", nil, false
 	}
 	b, err := base64.RawURLEncoding.DecodeString(tok)
 	if err != nil {
-		return nil, false
+		return "", nil, false
 	}
-	var vals []any
-	if err := json.Unmarshal(b, &vals); err != nil || len(vals) == 0 {
-		return nil, false
+	var c esCursor
+	if err := json.Unmarshal(b, &c); err != nil || len(c.Sort) == 0 {
+		return "", nil, false
 	}
-	return vals, true
+	return c.Pit, c.Sort, true
+}
+
+// esPITKeepAlive bounds how long a Point-in-Time lives between paged
+// requests. Long enough for an operator to page interactively, short
+// enough that abandoned PITs (and the segment readers they pin) are
+// reclaimed quickly at billion-doc scale.
+const esPITKeepAlive = "2m"
+
+// openPIT opens a Point-in-Time over the log index. Paging within a PIT
+// is what lets the `_shard_doc` tiebreak give a stable, per-doc-unique
+// total order for search_after (plain `_doc` shifts on refresh/merge and
+// is not unique across shards → silent drop/dup at scale). Returns the
+// pit id; callers fall back to a plain `_doc` search if this errors
+// (older ES / missing perms) so /logs never hard-breaks.
+func (s *ESStore) openPIT(ctx context.Context, keepAlive string) (string, error) {
+	res, err := s.cli.OpenPointInTime(
+		[]string{s.cfg.Index}, keepAlive,
+		s.cli.OpenPointInTime.WithContext(ctx),
+		s.cli.OpenPointInTime.WithIgnoreUnavailable(true),
+	)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return "", fmt.Errorf("open PIT: %s", res.String())
+	}
+	var r struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
+		return "", err
+	}
+	if r.ID == "" {
+		return "", fmt.Errorf("open PIT: empty id")
+	}
+	return r.ID, nil
+}
+
+// closePIT best-effort releases a Point-in-Time when paging reaches the
+// last page, so the segment readers aren't pinned for the full
+// keep_alive. Errors are ignored — the PIT expires on its own.
+func (s *ESStore) closePIT(ctx context.Context, pitID string) {
+	if pitID == "" {
+		return
+	}
+	body, err := json.Marshal(map[string]any{"id": pitID})
+	if err != nil {
+		return
+	}
+	res, err := s.cli.ClosePointInTime(
+		s.cli.ClosePointInTime.WithContext(ctx),
+		s.cli.ClosePointInTime.WithBody(bytes.NewReader(body)),
+	)
+	if err == nil {
+		res.Body.Close()
+	}
 }
 
 // v0.5.424 — operator-tunable defaults for ES significant_text at
@@ -766,27 +831,46 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// 10× the requested page so paging still works while keeping
 	// the early-stop tight. Skip when no trace_id is set so
 	// general searches still return accurate total_hits.
-	// v0.7.22 (SAFE-CORE) — add a doc-id tiebreak so the sort is a
-	// total order. This is what makes `search_after` stable AND
-	// removes the 10k `from+size` deep-paging cap (search_after has
-	// no such ceiling). Without a tiebreak two docs sharing a
-	// millisecond timestamp could straddle a page boundary and be
-	// duped or dropped.
+	// v0.7.88 — page within a Point-in-Time using the `_shard_doc`
+	// tiebreak. This makes `search_after` a stable, per-doc-unique total
+	// order AND removes the 10k `from+size` deep-paging cap. Plain `_doc`
+	// (the prior tiebreak) is a Lucene segment-local ordinal: it is
+	// reassigned by the refresh/merge that runs continuously on a live
+	// index and is NOT unique across shards, so search_after on
+	// [timestamp,_doc] silently dropped or duplicated rows at a
+	// same-timestamp page boundary at billion-doc scale. `_shard_doc` is
+	// only valid inside a PIT, so we open one on the first page and carry
+	// its id on the cursor.
 	//
-	// We use `_doc` rather than `_shard_doc` because these searches
-	// run WITHOUT a Point-in-Time — `_shard_doc` is only a valid
-	// sort field inside a PIT context and ES rejects it otherwise.
-	// `_doc` (Lucene internal doc id) is a stable per-segment
-	// tiebreak that's valid on a plain search and gives search_after
-	// a deterministic boundary within a timestamp tie.
+	// FALLBACK: if a PIT can't be opened (older ES, missing perms), we run
+	// the previous plain `_doc` search instead so /logs never hard-breaks
+	// — it just loses the cross-request stability guarantee on that
+	// backend.
+	//
 	// Direction: newest-first by default. Ascending (oldest-first) is
-	// honoured only on a non-cursor read — the search_after cursor
-	// round-trips the prior page's DESC sort values, so flipping the
-	// order mid-paging would be incoherent. Used by the /logs Context
-	// "after" window (v0.7.83).
+	// honoured only on a non-cursor read — the cursor round-trips the
+	// prior page's DESC sort values, so flipping mid-paging is incoherent.
+	// Used by the /logs Context "after" window (v0.7.83).
 	sortDir := "desc"
 	if f.Ascending && f.Cursor == "" {
 		sortDir = "asc"
+	}
+
+	pitID, afterSort, hasCursor := decodeESCursor(f.Cursor)
+	if !hasCursor {
+		afterSort = nil
+		if pid, err := s.openPIT(ctx, esPITKeepAlive); err == nil {
+			pitID = pid
+		} else {
+			pitID = ""
+			log.Printf("[es] PIT open failed; falling back to plain _doc paging: %v", err)
+		}
+	}
+	usePIT := pitID != ""
+
+	tiebreak := "_doc"
+	if usePIT {
+		tiebreak = "_shard_doc"
 	}
 	searchBody := map[string]any{
 		"query": query,
@@ -797,18 +881,22 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 					"unmapped_type": "date",
 				},
 			},
-			map[string]any{"_doc": sortDir},
+			map[string]any{tiebreak: sortDir},
 		},
 		"size":             limit,
 		"track_total_hits": true,
 	}
-	// Keyset paging: when a cursor decodes, page AFTER the encoded
-	// sort values instead of `from`. Empty cursor → first page,
-	// where Offset is still honoured for back-compat with callers
-	// that page by offset.
-	if after, ok := decodeESCursor(f.Cursor); ok {
-		searchBody["search_after"] = after
-	} else {
+	if usePIT {
+		// The PIT carries the index + a frozen segment view, so the index
+		// must NOT also appear in the request URL (set below).
+		searchBody["pit"] = map[string]any{"id": pitID, "keep_alive": esPITKeepAlive}
+	}
+	// Keyset paging: when a cursor decodes, page AFTER its sort values.
+	// First page (no cursor): PIT mode starts at offset 0 (cursor paging
+	// only); plain mode still honours Offset for back-compat.
+	if afterSort != nil {
+		searchBody["search_after"] = afterSort
+	} else if !usePIT {
 		searchBody["from"] = from
 	}
 	if f.TraceID != "" && f.Cursor == "" && from == 0 {
@@ -833,19 +921,24 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		return nil, err
 	}
 
-	tru := true
 	req := esapi.SearchRequest{
-		Index: []string{s.cfg.Index},
-		Body:  bytes.NewReader(body),
-		// Treat "no matching index" / "one shard unavailable" as 0
-		// hits instead of 404. Without these, an operator pointing
-		// the read backend at a freshly-provisioned ES cluster
-		// (no logs shipped yet) sees a 404 in the UI and assumes
-		// Coremetry is broken — when really ES just has nothing
-		// to search. Kibana applies the same defaults for the
-		// Discover view.
-		AllowNoIndices:    &tru,
-		IgnoreUnavailable: &tru,
+		Body: bytes.NewReader(body),
+	}
+	if !usePIT {
+		// Plain (fallback) mode: the index lives in the request URL, plus
+		// the index-options below. PIT mode omits ALL of these — the `pit`
+		// in the body selects the index + a frozen view, and ES rejects a
+		// PIT search that ALSO carries an index in the path OR indicesOptions
+		// (`[indicesOptions] cannot be used with point in time`). The
+		// AllowNoIndices/IgnoreUnavailable defaults (treat "no index" /
+		// "shard unavailable" as 0 hits, not a 404, for a freshly-
+		// provisioned cluster) are only meaningful in plain mode anyway —
+		// in PIT mode openPIT already failed-over to plain if the index
+		// was absent.
+		tru := true
+		req.Index = []string{s.cfg.Index}
+		req.AllowNoIndices = &tru
+		req.IgnoreUnavailable = &tru
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
@@ -857,7 +950,8 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 
 	var raw struct {
-		Hits struct {
+		PitID string `json:"pit_id"`
+		Hits  struct {
 			Total struct {
 				Value int `json:"value"`
 			} `json:"total"`
@@ -878,12 +972,20 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		out = append(out, s.mapHit(h.ID, h.Source))
 		lastSort = h.Sort
 	}
-	// NextCursor only on a full page — a short page is the last
-	// page, so no cursor (the UI stops paging). Encodes the last
-	// hit's sort values for the next search_after.
+	// Carry the PIT id forward — ES may refresh it per request, and the
+	// pit_id in the response supersedes the one we sent.
+	if raw.PitID != "" {
+		pitID = raw.PitID
+	}
+	// NextCursor only on a full page — a short page is the last page, so
+	// no cursor (the UI stops paging). Encodes the PIT id + the last hit's
+	// sort values for the next search_after. On the last page in PIT mode,
+	// release the PIT now rather than waiting for keep_alive to expire.
 	next := ""
 	if len(out) == limit {
-		next = encodeESCursor(lastSort)
+		next = encodeESCursor(pitID, lastSort)
+	} else if usePIT {
+		s.closePIT(ctx, pitID)
 	}
 	// Diagnostic: when a trace/span ID search returns zero
 	// hits, log the exact request body + index hit. The

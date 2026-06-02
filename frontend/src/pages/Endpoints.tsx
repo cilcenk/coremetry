@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
 import { MultiLineChart } from '@/components/MultiLineChart';
@@ -242,7 +243,7 @@ export default function EndpointsPage() {
           </button>
         </div>
 
-        {rows === undefined && <Spinner />}
+        {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && (
           <Empty icon="⚠" title="Failed to load endpoints">
             The backend /api/endpoints request errored.

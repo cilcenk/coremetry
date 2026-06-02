@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { TableSkeleton } from '@/components/Skeleton';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -263,7 +264,7 @@ export default function InboxPage() {
             style={{ fontSize: 12, padding: '4px 8px', minWidth: 180 }} />
         </div>
 
-        {data === undefined && <Spinner />}
+        {data === undefined && <TableSkeleton cols={6} wideFirst />}
         {data === null && <Empty icon="!" title="Failed to load inbox" />}
         {filtered && filtered.length === 0 && (
           <Empty icon="✓" title="Inbox clear">

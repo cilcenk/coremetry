@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { TableSkeleton } from '@/components/Skeleton';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
@@ -124,7 +125,7 @@ export default function SlowQueriesPage() {
           </Link>
         </div>
 
-        {rows === undefined && <Spinner />}
+        {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && <Empty icon="✗" title="Failed to load slow queries" />}
         {rows && rows.length === 0 && (
           <Empty icon="◇" title="No DB spans in this window">

@@ -1,15 +1,20 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
 import { timeRangeToNs } from '@/lib/utils';
-import type { TimeRange } from '@/lib/types';
+import type { TimeRange, LogRow } from '@/lib/types';
 import { Spinner, Empty } from '@/components/Spinner';
-import { ServiceFlow } from './ServiceFlow';
+import { TableSkeleton } from '@/components/Skeleton';
+import { LogsHistogram } from '@/components/LogsHistogram';
+import { LogTable } from '@/components/LogTable';
+import { ServiceMapGraph } from '@/components/ServiceMapGraph';
 
-// Service-scoped Traces / Logs / Topology tabs (v0.7.98) — the design's
-// tab strip beyond Overview/Operations/Details. Read-only.
+// Service-scoped Traces / Logs / Topology tabs — the design's tab strip
+// beyond Overview/Operations/Details. All read-only, all reuse the
+// app-wide primitives (LogsHistogram / LogTable / ServiceMapGraph) so the
+// operator's eye builds the same scan pattern as the standalone surfaces.
 
 // ── Traces: slowest traces for this service ─────────────────────────────
 export function ServiceTracesTab({ service, range }: { service: string; range: TimeRange }) {
@@ -73,44 +78,185 @@ export function ServiceTracesTab({ service, range }: { service: string; range: T
   );
 }
 
-// ── Logs: CTA into the Logs workspace ───────────────────────────────────
+// ── Logs: full scoped log view (search + level facets + volume + table) ──
+type Lvl = 'error' | 'warn' | 'info' | 'debug';
+const LVL_ORDER: Lvl[] = ['error', 'warn', 'info', 'debug'];
+
+// Normalise a row to one of the four facet buckets — prefer the canonical
+// severityText, fall back to the OTel numeric severity (ERROR≥17, WARN≥13,
+// INFO≥9, else DEBUG/TRACE).
+function levelOf(r: LogRow): Lvl {
+  const t = (r.severityText || '').toUpperCase();
+  if (t.startsWith('ERR') || t.startsWith('FATAL') || t.startsWith('CRIT')) return 'error';
+  if (t.startsWith('WARN')) return 'warn';
+  if (t.startsWith('INFO')) return 'info';
+  if (t.startsWith('DEBUG') || t.startsWith('TRACE')) return 'debug';
+  const s = r.severity;
+  if (s >= 17) return 'error';
+  if (s >= 13) return 'warn';
+  if (s >= 9) return 'info';
+  return 'debug';
+}
+
+const LVL_BADGE: Record<Lvl, string> = { error: 'b-err', warn: 'b-warn', info: 'b-ok', debug: 'b-mut' };
+
 export function ServiceLogsTab({ service, range }: { service: string; range: TimeRange }) {
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const rangeParam = encodeRange(range);
+
+  // Search box → debounced into the query key (server-side substring
+  // search scales). Level facet filters the fetched page client-side
+  // (instant, mirrors the design); the histogram always shows full
+  // volume-by-level for the service so the facet doesn't hide the shape.
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [lvl, setLvl] = useState<'all' | Lvl>('all');
+  useEffect(() => { const t = setTimeout(() => setSearch(searchInput), 300); return () => clearTimeout(t); }, [searchInput]);
+
+  const filter = useMemo(
+    () => ({ service, search, severity: 0, traceId: '', spanId: '' }),
+    [service, search],
+  );
+
+  const q = useQuery({
+    queryKey: ['service-tab-logs', service, from, to, search],
+    queryFn: () => api.logs({ limit: 200, from, to, service, search: search || undefined }),
+    enabled: !!service,
+    staleTime: 15_000,
+  });
+  const logs = useMemo(() => q.data?.logs ?? [], [q.data]);
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: logs.length, error: 0, warn: 0, info: 0, debug: 0 };
+    for (const r of logs) c[levelOf(r)]++;
+    return c;
+  }, [logs]);
+  const rows = useMemo(() => (lvl === 'all' ? logs : logs.filter(r => levelOf(r) === lvl)), [logs, lvl]);
+
   return (
-    <div className="card" style={{ marginTop: 4 }}>
-      <div className="ov-card-b" style={{ display: 'grid', placeItems: 'center', textAlign: 'center', padding: '48px 16px', gap: 12 }}>
-        <div style={{ fontSize: 32 }}>≡</div>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>Logs stream</div>
-        <div style={{ color: 'var(--text2)', fontSize: 13, maxWidth: 460 }}>
-          Open the Logs workspace to query structured logs for <b style={{ color: 'var(--text)' }}>{service}</b> —
-          full KQL search, severity facets, patterns, and trace correlation.
+    <div style={{ marginTop: 4 }}>
+      {/* Filter bar — substring search + level facet chips with counts */}
+      <div className="ov-logbar">
+        <input className="field" placeholder="Filter logs (message, service)…" value={searchInput}
+          onChange={e => setSearchInput(e.target.value)} style={{ flex: '1 1 280px', maxWidth: 360 }} />
+        <span className={'ov-facet' + (lvl === 'all' ? ' on' : '')} onClick={() => setLvl('all')}>
+          All <span className="n">{counts.all}</span>
+        </span>
+        {LVL_ORDER.map(l => (
+          <span key={l} className={'ov-facet' + (lvl === l ? ' on' : '')} onClick={() => setLvl(l)}>
+            <span className={`badge ${LVL_BADGE[l]}`}>{l.toUpperCase()}</span>
+            <span className="n">{counts[l]}</span>
+          </span>
+        ))}
+        <Link className="ov-sub" style={{ marginLeft: 'auto' }}
+          to={`/logs?service=${encodeURIComponent(service)}&range=${rangeParam}`}>Open in Logs →</Link>
+      </div>
+
+      {/* Volume histogram — full service volume, stacked by level */}
+      <div className="card ov-mb">
+        <div className="ov-card-h"><h3>Log volume</h3><span className="ov-sub">by level</span></div>
+        <div className="ov-card-b" style={{ paddingTop: 8 }}>
+          <LogsHistogram range={{ from, to }} filter={filter} />
         </div>
-        <Link to={`/logs?service=${encodeURIComponent(service)}&range=${rangeParam}`}
-          style={{ marginTop: 4, padding: '7px 16px', borderRadius: 6, background: 'var(--accent)', color: '#fff', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
-          ≡ Open in Logs
-        </Link>
+      </div>
+
+      {/* Log table */}
+      <div className="card">
+        <div className="ov-card-h">
+          <h3>Logs</h3>
+          <span className="ov-sub">{rows.length} lines{lvl !== 'all' ? ` · ${lvl}` : ''}</span>
+        </div>
+        {q.isLoading ? (
+          <TableSkeleton rows={10} cols={4} />
+        ) : rows.length === 0 ? (
+          <div className="ov-card-b"><Empty icon="≡" title={`No logs for ${service} in this window`} /></div>
+        ) : (
+          <LogTable logs={rows} />
+        )}
       </div>
     </div>
   );
 }
 
-// ── Topology: the 1-hop flow + a link to the full graph ─────────────────
+// ── Topology: 2-hop node-link graph (reuses the real ServiceMapGraph) ────
 export function ServiceTopologyTab({ service, range }: { service: string; range: TimeRange }) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const rangeParam = encodeRange(range);
+  const navigate = useNavigate();
+  const [hover, setHover] = useState<string | null>(null);
+
+  // serviceMap returns the full sampled graph; we scope it to the focused
+  // service's 2-hop neighbourhood CLIENT-SIDE (BFS over the small payload —
+  // same posture as the /service-map page, which does 1-hop). `since` tracks
+  // the page range so the sample window matches the rest of the tabs.
+  const since = useMemo(() => {
+    const mins = Math.max(5, Math.round((to - from) / 60e9));
+    return mins >= 60 ? `${Math.round(mins / 60)}h` : `${mins}m`;
+  }, [from, to]);
+  const mapQ = useQuery({
+    queryKey: ['service-tab-topology', since],
+    queryFn: () => api.serviceMap(since, 200),
+    enabled: !!service,
+    staleTime: 30_000,
+  });
+
+  const data = useMemo(() => {
+    const full = mapQ.data;
+    if (!full) return full; // undefined while loading
+    if (!full.nodes.length) return full;
+    const keep = new Set<string>([service]);
+    let frontier = new Set<string>([service]);
+    for (let hop = 0; hop < 2; hop++) {
+      const next = new Set<string>();
+      for (const e of full.edges) {
+        if (frontier.has(e.caller) && !keep.has(e.callee)) next.add(e.callee);
+        if (frontier.has(e.callee) && !keep.has(e.caller)) next.add(e.caller);
+      }
+      next.forEach(n => keep.add(n));
+      frontier = next;
+    }
+    return {
+      ...full,
+      nodes: full.nodes.filter(n => keep.has(n.service)),
+      edges: full.edges.filter(e => keep.has(e.caller) && keep.has(e.callee)),
+    };
+  }, [mapQ.data, service]);
+
   return (
-    <div style={{ marginTop: 4 }}>
-      <ServiceFlow service={service} range={range} from={from} to={to} />
-      <div className="card">
-        <div className="ov-card-b" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <span style={{ color: 'var(--text2)', fontSize: 13 }}>
-            The map above is this service's direct (1-hop) callers + dependencies. Explore the full graph, multi-hop flows, and noise filtering in Topology.
+    <div className="card" style={{ marginTop: 4 }}>
+      <div className="ov-card-h">
+        <h3>Topology</h3>
+        <span className="ov-sub">{service} neighborhood · 2 hops</span>
+        <span className="ov-right" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <span className="ov-legend">
+            <span><i className="ov-dot green" />healthy</span>
+            <span><i className="ov-dot amber" />degraded</span>
           </span>
-          <Link to={`/topology?focus=${encodeURIComponent(service)}&preset=${encodeURIComponent(range.preset)}`}
-            style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: 6, background: 'var(--accent)', color: '#fff', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
-            ⋔ Open full Topology →
+          <Link className="ov-sub" to={`/topology?focus=${encodeURIComponent(service)}&preset=${encodeURIComponent(range.preset)}`}>
+            Open full Topology →
           </Link>
-        </div>
+        </span>
+      </div>
+      <div className="ov-card-b">
+        {mapQ.isLoading ? (
+          <div style={{ height: 480, display: 'grid', placeItems: 'center' }}><Spinner /></div>
+        ) : !data || data.nodes.length === 0 ? (
+          <Empty icon="⋔" title={`No topology data for ${service} in this window`} />
+        ) : (
+          <>
+            <ServiceMapGraph
+              data={data}
+              focus={service}
+              hoverNode={hover}
+              onHoverNode={setHover}
+              onSelectNode={(s) => navigate(`/service?name=${encodeURIComponent(s)}&range=${rangeParam}`)}
+              height={480}
+            />
+            <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 6 }}>
+              Hover a node to trace its dependencies · edge color flags degraded paths · click a node to focus it.
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

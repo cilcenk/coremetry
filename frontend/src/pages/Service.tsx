@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
+import { Button } from '@/components/ui/Button';
+import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServiceStructure } from '@/components/ServiceStructure';
 import { ServiceCharts } from '@/components/ServiceCharts';
@@ -44,6 +46,15 @@ function ServiceDetailInner() {
 
   const queryClient = useQueryClient();
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  const [pinned, setPinned] = useState(false);
+  // v0.7.89 — record this service in the recently-viewed MRU (powers
+  // the Cmd-K pivot rotation) and reflect its pinned state for the
+  // header toggle. Fires whenever the viewed service changes.
+  useEffect(() => {
+    if (!svc) return;
+    recordServiceVisit(svc);
+    setPinned(isServicePinned(svc));
+  }, [svc]);
   const [info, setInfo] = useState<Service | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
@@ -210,6 +221,11 @@ function ServiceDetailInner() {
               operator left off. Backtrace, traces, logs, problems,
               anomalies, profiles. */}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Button variant="secondary" size="sm"
+              title={pinned ? 'Unpin — remove from Cmd-K quick access' : 'Pin — keep this service one keystroke away in Cmd-K'}
+              onClick={() => setPinned(toggleServicePin(svc))}>
+              {pinned ? '★ Pinned' : '☆ Pin'}
+            </Button>
             <DrillButton to="/service/backtrace" params={{ name: svc }}
               title="Inbound callers — service / pod / IP backtrace"
               label="↩ Backtrace" />

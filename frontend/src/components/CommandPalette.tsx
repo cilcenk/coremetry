@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { getRecentServices, getPinnedServices } from '@/lib/recentServices';
 import { useShortcuts } from '@/lib/keyboard';
 import { useAuth } from '@/components/AuthProvider';
 import {
@@ -79,6 +80,9 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [services, setServices] = useState<Result[]>([]);
+  // v0.7.89 — pinned + recently-viewed services, refreshed each open,
+  // shown in the empty-query state as the pivot rotation.
+  const [pivotSvcs, setPivotSvcs] = useState<Result[]>([]);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   // Param-prompt sub-mode (v0.5.457). When activeAction is set,
@@ -173,6 +177,18 @@ export function CommandPalette() {
   useEffect(() => {
     if (!open) return;
     setTimeout(() => inputRef.current?.focus(), 10);
+    // v0.7.89 — refresh the pivot rotation each open: pinned (★) first,
+    // then recently-viewed (newest first), deduped. Each is a
+    // one-keystroke jump back to a service the operator is working.
+    const pinned = getPinnedServices();
+    const recents = getRecentServices().filter(n => !pinned.includes(n));
+    const mkSvc = (name: string, hint: string): Result => ({
+      kind: 'service', label: name, hint, to: `/service?name=${encodeURIComponent(name)}`,
+    });
+    setPivotSvcs([
+      ...pinned.map(n => mkSvc(n, '★ Pinned')),
+      ...recents.map(n => mkSvc(n, 'Recent')),
+    ]);
     if (SERVICES_CACHE) {
       setServices(SERVICES_CACHE);
       return;
@@ -200,7 +216,9 @@ export function CommandPalette() {
     const all = [...PAGES, ...services];
     let scored: Result[];
     if (!q) {
-      scored = PAGES; // empty query → just show pages
+      // empty query → pivot rotation (pinned ★ + recent services) first,
+      // then the page catalog (v0.7.89).
+      scored = [...pivotSvcs, ...PAGES];
     } else {
       scored = all
         .map(r => {
@@ -247,7 +265,7 @@ export function CommandPalette() {
       ];
     }
     return scored;
-  }, [query, services, user?.role]);
+  }, [query, services, pivotSvcs, user?.role]);
 
   // Reset cursor when results shrink/grow — otherwise the cursor
   // can point past the last row and Enter does nothing.

@@ -5,6 +5,7 @@ import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useServiceDeploys } from '@/lib/queries';
 import { OverviewChart, type OvChartSeries } from './charts/OverviewChart';
+import { ServiceFlow } from './ServiceFlow';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
 // from the design handoff. The new tab on /service?name=<svc> (becomes the
@@ -174,6 +175,9 @@ export function ServiceOverview({ service, range, info, problems }: Props) {
         <ChartCard title="Throughput" series={s?.rate ?? []} color="var(--accent)" label="req/s" unit=" req/s" mode="area" deploy={deploy} />
         <ChartCard title="Failure rate" series={s?.error_rate ?? []} color="var(--err)" label="errors" unit="%" mode="area" deploy={deploy} />
       </div>
+
+      {/* Service flow — 1-hop request-path map (callers → svc → deps) */}
+      <ServiceFlow service={service} range={range} from={from} to={to} />
 
       {/* Recent problems & events */}
       <div className="card">

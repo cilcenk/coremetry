@@ -62,31 +62,12 @@ spec:
     spec:
       serviceAccountName: {{ include "coremetry.serviceAccountName" $ }}
       {{- include "coremetry.imagePullSecrets" (dict "imageRoot" $.Values.image "global" $.Values.global) | nindent 6 }}
-      initContainers:
-        - name: wait-for-clickhouse
-          image: {{ include "coremetry.image" (dict "imageRoot" $.Values.image "global" $.Values.global "defaultTag" $.Chart.AppVersion) | quote }}
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
-          {{- with $.Values.securityContext }}
-          securityContext: {{ toYaml . | nindent 12 }}
-          {{- end }}
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -eu
-              addr="{{ include "coremetry.clickhouseAddr" $ }}"
-              host="${addr%:*}"
-              port="${addr##*:}"
-              echo "[init] waiting for clickhouse at $host:$port (up to 120s)"
-              for i in $(seq 1 60); do
-                if nc -z -w 2 "$host" "$port" 2>/dev/null; then
-                  echo "[init] clickhouse is reachable, proceeding"
-                  exit 0
-                fi
-                echo "[init] clickhouse not yet listening (poll $i/60), retrying in 2s"
-                sleep 2
-              done
-              echo "[init] gave up after 120s — clickhouse at $host:$port never became reachable" >&2
-              exit 1
+      # No wait-for-clickhouse init container: chstore.New() retries the CH
+      # connection for ~2 min at boot (24 attempts, internal/chstore/store.go),
+      # so each role handles a not-yet-ready ClickHouse itself. An init
+      # container shelling out to `nc` is redundant and a needless failure
+      # point on minimal / distroless images (busybox `nc -z` is not always
+      # present).
       {{- with $.Values.podSecurityContext }}
       securityContext: {{ toYaml . | nindent 8 }}
       {{- end }}

@@ -199,7 +199,7 @@ helm install coremetry charts/coremetry \
   --set clickhouse.external.addr="ch1:9000,ch2:9000,ch3:9000,ch4:9000" \
   --set clickhouse.database="coremetry_prod" \
   --set clickhouse.username="coremetry" \
-  --set secrets.clickhousePassword="<password>"
+  --set secrets.clickHousePassword="<password>"
 ```
 
 The driver round-robins / fails over across the seed list —
@@ -254,6 +254,70 @@ deployment:
 |---|---|
 | `monolithic` (default) | POC, SME installs, dev clusters. One pod, one container, every subsystem in-process. Matches every Coremetry release up to v0.5.x — no migration cost for existing users. |
 | `distributed` | Production at billion-spans/day scale. Three Deployments running the same image with `COREMETRY_MODE=ingest|api|worker`. Ingest scales horizontally for OTLP load; api scales for read HA; worker stays singleton (alert evaluator, anomaly detector, topology aggregator are leader-elected via Redis lock and a single replica avoids the lock-contention overhead). |
+
+### Distributed install — one command, all components
+
+A single `helm install` brings up the **entire** distributed stack —
+the four Coremetry roles plus the bundled ClickHouse, Redis, and OTel
+Collector. No external dependency is required: logs default to the
+ClickHouse read backend, so Elasticsearch is optional (see below).
+
+```bash
+helm install coremetry oci://ghcr.io/cilcenk/charts/coremetry \
+  --version 0.7.109 \
+  --namespace coremetry --create-namespace \
+  --set deployment.mode=distributed \
+  --set deployment.roles.ingest.replicas=3 \
+  --set deployment.roles.api.replicas=2 \
+  --set deployment.roles.worker.replicas=1 \
+  --set deployment.roles.agent.enabled=true \
+  --set secrets.jwtSecret="$(openssl rand -hex 32)" \
+  --set secrets.initialAdminPassword="<choose-a-password>"
+```
+
+That one command renders, in namespace `coremetry`:
+
+| Workload | Kind | Role (`COREMETRY_MODE`) |
+|---|---|---|
+| `coremetry-ingest` | Deployment ×3 | OTLP receivers + CH writers (`ingest`) |
+| `coremetry-api` | Deployment ×2 | Web UI + REST API + SSE + MCP (`api`) |
+| `coremetry-worker` | Deployment ×1 | evaluator + anomaly + topology agg + notifier — leader-elected, **keep at 1** (`worker`) |
+| `coremetry-agent` | Deployment ×1 | runbook automated-step executor (http/js/bash), Redis-locked |
+| `coremetry-clickhouse` | StatefulSet ×1 | bundled warm store (20Gi PVC) |
+| `coremetry-redis` | Deployment ×1 | cache + leader lock + cross-pod SSE bridge |
+| `coremetry-otelcol` | Deployment ×1 | OTLP collector → forwards to `coremetry-ingest:4317` |
+
+Fronted by seven Services: the stable **`coremetry`** (aliases the api
+role — point your Ingress/Route here), plus `coremetry-ingest`,
+`coremetry-api`, `coremetry-worker`, and the `coremetry-clickhouse` /
+`coremetry-redis` / `coremetry-otelcol` backends. With
+`autoscaling.enabled=true` the HPA targets the api role.
+
+> **Version pinning.** The chart's `appVersion` sets the default image
+> tag, and published image tags are **un-prefixed** (`0.7.109`, *not*
+> `v0.7.109`). To deploy a different build add `--set image.tag=<version>`.
+
+**Production: external ClickHouse + Redis.** At billion-span scale,
+disable the bundled single-node backends and point at your own cluster:
+
+```bash
+  --set clickhouse.enabled=false \
+  --set clickhouse.external.addr="ch1:9000,ch2:9000,ch3:9000" \
+  --set secrets.clickHousePassword="<password>" \
+  --set redis.enabled=false \
+  --set redis.external.url="redis://redis.internal:6379/0"
+```
+
+**Optional: Elasticsearch logs backend.** Coremetry always *writes*
+logs to ClickHouse; this switches only the *read* path to an existing
+ES pipeline. ES is **not bundled** — point at your cluster:
+
+```bash
+  --set logs.backend=elasticsearch \
+  --set 'logs.elasticsearch.addresses={https://es.internal:9200}' \
+  --set logs.elasticsearch.index="coremetry-logs" \
+  --set secrets.esApiKey="<base64 id:api_key>"
+```
 
 Distributed mode requires Redis (the lock + SSE pub/sub
 bridge for cross-pod event fan-out). Without it, worker-fired

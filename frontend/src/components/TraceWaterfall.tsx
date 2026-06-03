@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SpanRow } from '@/lib/types';
-import { fmtNs, hashColor, displaySpanName } from '@/lib/utils';
+import { fmtNs, displaySpanName } from '@/lib/utils';
 
 // HH:MM:SS.mmm wall-clock formatter for the waterfall ruler +
 // per-span tooltips. Locked to the browser's local timezone so
@@ -66,13 +66,25 @@ type SpanCategory = { tag: string; color: string };
 // weight regardless of which one is most common in a trace.
 function categoryOf(s: SpanRow): SpanCategory | null {
   const a = s.attributes ?? {};
-  if (a['db.system'])        return { tag: 'DB',   color: '#F59E0B' }; // amber-500
-  if (a['messaging.system']) return { tag: 'MQ',   color: '#06B6D4' }; // cyan-500
-  if (a['rpc.system'])       return { tag: 'RPC',  color: '#8B5CF6' }; // violet-500
+  if (a['db.system'])        return { tag: 'DB',   color: 'var(--warn)' };   // amber
+  if (a['messaging.system']) return { tag: 'MQ',   color: 'var(--teal)' };   // cyan/teal
+  if (a['rpc.system'])       return { tag: 'RPC',  color: 'var(--purple)' }; // violet
   if (a['http.method'] || a['http.request.method']) {
-    return { tag: 'HTTP', color: '#3B82F6' };                          // blue-500
+    return { tag: 'HTTP', color: 'var(--accent)' };                          // blue
   }
   return null;
+}
+
+// Stable per-service bar/stripe colour from the globals.css chart-token
+// palette (token-only, light+dark safe). Hash the service name so every span
+// from the same service shares a colour — the scan-handoffs convention. Five
+// well-separated hues (blue/purple/teal/orange/green); collisions across a
+// large service set are acceptable (the design's SVC_COLOR reuses hues too).
+const SVC_TOKENS = ['var(--accent)', 'var(--purple)', 'var(--teal)', 'var(--orange)', 'var(--ok)'];
+function svcColorToken(name: string): string {
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) + h) ^ name.charCodeAt(i);
+  return SVC_TOKENS[Math.abs(h) % SVC_TOKENS.length];
 }
 
 export function TraceWaterfall({
@@ -309,8 +321,15 @@ export function TraceWaterfall({
   // serviceName+name, which gave each operation in a service its
   // own colour and made traces look noisier than the topology
   // actually was.)
-  const colorFor = (s: SpanRow) =>
-    s.statusCode === 'error' ? '#EF4444' : hashColor(s.serviceName); // red-500
+  // Token-only service palette (the design's SVC_COLOR map, generalised to
+  // the dynamic service set via a name hash). Error spans keep their service
+  // colour and get a red inset outline on the bar (see the bar style below) —
+  // matching the mockup, where bars are coloured by service and the red edge
+  // marks the error/critical path.
+  const colorFor = (s: SpanRow) => svcColorToken(s.serviceName);
+  // Critical-path toggle is "on" exactly when the parent passes the id set;
+  // then non-critical bars drop to 0.62 opacity (design: critOn && !crit).
+  const criticalActive = criticalPathIds !== undefined;
 
   return (
     <div id="wf-outer" ref={containerRef}>
@@ -482,7 +501,11 @@ export function TraceWaterfall({
                   `end:   ${fmtClock(s.endTime)}\n` +
                   `dur:   ${fmtNs(dur)} (${durMs.toFixed(2)}ms)`
                 }
-                style={{ left: `${startPct}%`, width: `${widthPct}%`, background: color }}
+                style={{
+                  left: `${startPct}%`, width: `${widthPct}%`, background: color,
+                  opacity: criticalActive && !onCritical ? 0.62 : 1,
+                  boxShadow: s.statusCode === 'error' ? 'inset 0 0 0 1.6px var(--err)' : undefined,
+                }}
               >
                 {labelInside && <span className="wf-bar-label">{fmtNs(dur)}</span>}
               </div>

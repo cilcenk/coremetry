@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import { useHealth, useOpenProblemCount } from '@/lib/queries';
 import { useT } from '@/lib/i18n';
 import { TelescopeIcon } from './TelescopeIcon';
+import {
+  Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
+  MessageSquare, ListTree, ChartSpline, ScrollText, Flame, Compass, BookText,
+  LayoutDashboard, Bell, Gauge, Target, CalendarClock, CircleGauge, Search, Hash,
+  Server, Sparkles, LayoutGrid, FileClock, Terminal, Code, Globe, type LucideIcon,
+} from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
 
@@ -15,7 +21,7 @@ import { ChangePasswordModal } from './ChangePasswordModal';
 type NavItem = {
   href: string;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   adminOnly?: boolean;
 };
 
@@ -42,77 +48,77 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: '',
     items: [
-      { href: '/inbox',     label: 'nav.inbox',     icon: '▣' },
+      { href: '/inbox',     label: 'nav.inbox',     icon: Inbox },
     ],
   },
   {
     titleKey: 'navGroup.triage',
     items: [
-      { href: '/incidents', label: 'nav.incidents', icon: '⚠' },
-      { href: '/problems',  label: 'nav.problems',  icon: '!' },
-      { href: '/anomalies', label: 'nav.anomalies', icon: '⚠' },
+      { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
+      { href: '/problems',  label: 'nav.problems',  icon: CircleAlert },
+      { href: '/anomalies', label: 'nav.anomalies', icon: Activity },
     ],
   },
   {
     titleKey: 'navGroup.services',
     items: [
-      { href: '/services',    label: 'nav.services',   icon: '◈' },
-      { href: '/endpoints',   label: 'nav.endpoints',  icon: '⛬' },
-      { href: '/topology',    label: 'nav.topology',   icon: '⋔' },
-      { href: '/databases',   label: 'nav.databases',  icon: '⛁' },
-      { href: '/messaging',   label: 'nav.messaging',  icon: '⌬' },
+      { href: '/services',    label: 'nav.services',   icon: Boxes },
+      { href: '/endpoints',   label: 'nav.endpoints',  icon: Webhook },
+      { href: '/topology',    label: 'nav.topology',   icon: Workflow },
+      { href: '/databases',   label: 'nav.databases',  icon: Database },
+      { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
     ],
   },
   {
     titleKey: 'navGroup.signals',
     items: [
-      { href: '/traces',     label: 'nav.traces',    icon: '⋮' },
-      { href: '/metrics',    label: 'nav.metrics',   icon: '∿' },
-      { href: '/logs',       label: 'nav.logs',      icon: '≡' },
-      { href: '/profiling',  label: 'nav.profiling', icon: '⌬' },
+      { href: '/traces',     label: 'nav.traces',    icon: ListTree },
+      { href: '/metrics',    label: 'nav.metrics',   icon: ChartSpline },
+      { href: '/logs',       label: 'nav.logs',      icon: ScrollText },
+      { href: '/profiling',  label: 'nav.profiling', icon: Flame },
     ],
   },
   {
     titleKey: 'navGroup.workspaces',
     items: [
-      { href: '/explore',    label: 'nav.explore',    icon: '◎' },
-      { href: '/runbooks',   label: 'nav.runbooks',   icon: '▤' },
-      { href: '/dashboards', label: 'nav.dashboards', icon: '◫' },
+      { href: '/explore',    label: 'nav.explore',    icon: Compass },
+      { href: '/runbooks',   label: 'nav.runbooks',   icon: BookText },
+      { href: '/dashboards', label: 'nav.dashboards', icon: LayoutDashboard },
     ],
   },
   {
     titleKey: 'navGroup.alerting',
     items: [
-      { href: '/alerts',   label: 'nav.alerts',   icon: '◊' },
-      { href: '/monitors', label: 'nav.monitors', icon: '◉' },
-      { href: '/slos',     label: 'nav.slos',     icon: '◉' },
+      { href: '/alerts',   label: 'nav.alerts',   icon: Bell },
+      { href: '/monitors', label: 'nav.monitors', icon: Gauge },
+      { href: '/slos',     label: 'nav.slos',     icon: Target },
       // v0.6.15 — operator events (deploy / config / incident
       // markers). Editors create them via Cmd-K + manage from
       // this list. Lives in the alerts group because operationally
       // events are the timeline twin of alerts — both annotate
       // when something happened.
-      { href: '/events',   label: 'nav.events',   icon: '◆' },
+      { href: '/events',   label: 'nav.events',   icon: CalendarClock },
     ],
   },
   {
     titleKey: 'navGroup.system',
     items: [
-      { href: '/admin/stats',       label: 'nav.system',      icon: '◐' },
-      { href: '/admin/clickhouse',  label: 'nav.clickhouse',  icon: '◉', adminOnly: true },
-      { href: '/admin/elastic',     label: 'nav.elastic',     icon: '≡', adminOnly: true },
-      { href: '/admin/cardinality', label: 'nav.cardinality', icon: '◐', adminOnly: true },
-      { href: '/admin/cluster',     label: 'nav.cluster',     icon: '⌘', adminOnly: true },
-      { href: '/ai',                label: 'nav.ai',          icon: '✦', adminOnly: true },
+      { href: '/admin/stats',       label: 'nav.system',      icon: CircleGauge },
+      { href: '/admin/clickhouse',  label: 'nav.clickhouse',  icon: Database, adminOnly: true },
+      { href: '/admin/elastic',     label: 'nav.elastic',     icon: Search, adminOnly: true },
+      { href: '/admin/cardinality', label: 'nav.cardinality', icon: Hash, adminOnly: true },
+      { href: '/admin/cluster',     label: 'nav.cluster',     icon: Server, adminOnly: true },
+      { href: '/ai',                label: 'nav.ai',          icon: Sparkles, adminOnly: true },
     ],
   },
   {
     titleKey: 'navGroup.management',
     items: [
-      { href: '/admin/catalog',     label: 'nav.catalog',    icon: '◫', adminOnly: true },
-      { href: '/admin/audit',       label: 'nav.audit',      icon: '◇', adminOnly: true },
-      { href: '/admin/sql',         label: 'nav.sql',        icon: '⌘', adminOnly: true },
-      { href: '/admin/query',       label: 'nav.query',      icon: '⌁', adminOnly: true },
-      { href: '/admin/status-page', label: 'nav.statusPage', icon: '◫', adminOnly: true },
+      { href: '/admin/catalog',     label: 'nav.catalog',    icon: LayoutGrid, adminOnly: true },
+      { href: '/admin/audit',       label: 'nav.audit',      icon: FileClock, adminOnly: true },
+      { href: '/admin/sql',         label: 'nav.sql',        icon: Terminal, adminOnly: true },
+      { href: '/admin/query',       label: 'nav.query',      icon: Code, adminOnly: true },
+      { href: '/admin/status-page', label: 'nav.statusPage', icon: Globe, adminOnly: true },
     ],
   },
 ];
@@ -442,7 +448,7 @@ function NavGroupBlock({
             className={isActive(pathname, n.href) ? 'active' : ''}
             title={t(n.label)}
             style={{ justifyContent: 'center', padding: '10px 0' }}>
-            <span className="icon">{n.icon}</span>
+            <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
             {n.href === '/problems' && openProblems > 0 && (
               <span className="nav-dot" title={`${openProblems} open problems`} />
             )}
@@ -459,7 +465,7 @@ function NavGroupBlock({
         {items.map(n => (
           <Link key={n.href} to={n.href}
             className={isActive(pathname, n.href) ? 'active' : ''}>
-            <span className="icon">{n.icon}</span>
+            <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
             <span className="nav-label">{t(n.label)}</span>
             {n.href === '/problems' && openProblems > 0 && (
               <span className="nav-badge">{openProblems}</span>
@@ -502,7 +508,7 @@ function NavGroupBlock({
       {isOpen && items.map(n => (
         <Link key={n.href} to={n.href}
           className={isActive(pathname, n.href) ? 'active' : ''}>
-          <span className="icon">{n.icon}</span>
+          <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
           <span className="nav-label">{t(n.label)}</span>
           {n.href === '/problems' && openProblems > 0 && (
             <span className="nav-badge">{openProblems}</span>

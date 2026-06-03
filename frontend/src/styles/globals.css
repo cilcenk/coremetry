@@ -117,7 +117,7 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 }
 #nav a:hover { background: var(--bg2); color: var(--text); text-decoration: none; }
 #nav a.active { background: var(--bg2); color: var(--accent2); border-left-color: var(--accent); }
-#nav a .icon { width: 16px; text-align: center; font-size: 14px; flex-shrink: 0; }
+#nav a .icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: currentColor; }
 .nav-label { overflow: hidden; text-overflow: ellipsis; }
 .nav-badge {
   margin-left: auto; background: var(--err); color: #fff;

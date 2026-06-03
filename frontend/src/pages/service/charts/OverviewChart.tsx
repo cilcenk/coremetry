@@ -25,7 +25,7 @@ interface Props {
   times: number[];            // unix seconds, ascending — shared x axis
   series: OvChartSeries[];
   height?: number;            // default 150
-  mode?: 'line' | 'area';
+  mode?: 'line' | 'area' | 'stacked';
   unit?: string;              // " ms", "%", " req/s" …
   deployAtSec?: number | null; // deploy time (unix sec) → dashed vline + flag
   deployLabel?: string;       // e.g. "v1.0.0"
@@ -59,12 +59,28 @@ export function OverviewChart({
     const text3 = cssVar('var(--text3)');
     const purple = cssVar('var(--purple)');
 
+    // Stacked mode plots cumulative running sums (bottom-up) and fills the
+    // gap between adjacent cumulative lines as bands; the tooltip + legend
+    // still read the RAW per-series values (series prop stays raw).
+    const stacked = mode === 'stacked';
+    const cum: number[][] = [];
+    if (stacked) {
+      for (let i = 0; i < series.length; i++) {
+        const below = cum[i - 1];
+        cum[i] = series[i].data.map((v, j) => (below ? below[j] : 0) + (v ?? 0));
+      }
+    }
+
     // y-max for the 0 / 50 / 100% gridlines (a touch of headroom).
     let max = 0;
-    for (const s of series) for (const v of s.data) if (v > max) max = v;
+    if (stacked) {
+      for (const v of (cum[cum.length - 1] ?? [])) if (v > max) max = v;
+    } else {
+      for (const s of series) for (const v of s.data) if (v > max) max = v;
+    }
     max = max > 0 ? max * 1.1 : 1;
 
-    const data: uPlot.AlignedData = [times, ...series.map(s => s.data)] as uPlot.AlignedData;
+    const data: uPlot.AlignedData = [times, ...(stacked ? cum : series.map(s => s.data))] as uPlot.AlignedData;
 
     // Dashed-purple deploy marker, drawn under the series.
     const deployPlugin: uPlot.Plugin = {
@@ -111,6 +127,9 @@ export function OverviewChart({
           stroke: colors[i],
           width: 1.8,
           points: { show: false },
+          // area → gradient fill to baseline; stacked → only the BOTTOM
+          // series fills to baseline (flat translucent), the rest are filled
+          // by the bands between adjacent cumulative lines below.
           ...(mode === 'area'
             ? { fill: (u: uPlot, si: number) => {
                 const ctx = u.ctx;
@@ -119,9 +138,16 @@ export function OverviewChart({
                 g.addColorStop(1, colors[si - 1] + '00');
                 return g;
               } }
+            : stacked && i === 0
+            ? { fill: colors[0] + '47' }
             : {}),
         })),
       ],
+      // Stacked bands: fill between cumulative line k and k-1 in series k's
+      // colour (uPlot series are 1-based; data series i is uPlot series i+1).
+      bands: stacked
+        ? series.slice(1).map((_s, k) => ({ series: [k + 2, k + 1] as [number, number], fill: colors[k + 1] + '47' }))
+        : undefined,
       hooks: {
         setCursor: [
           u => {

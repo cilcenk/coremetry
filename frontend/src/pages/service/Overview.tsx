@@ -107,7 +107,7 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
 interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
 function ChartCard({ title, lines, unit, mode = 'line', deploy }: {
   title: string; lines: ChartLine[]; unit: string;
-  mode?: 'line' | 'area'; deploy?: { sec: number; label: string } | null;
+  mode?: 'line' | 'area' | 'stacked'; deploy?: { sec: number; label: string } | null;
 }) {
   const times = useMemo(() => {
     const base = lines.find(l => (l.series[0]?.points ?? []).length)?.series[0]?.points ?? [];
@@ -193,6 +193,22 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
     return { sec: latest.timeUnixNs / 1e9, label: latest.version };
   }, [deploysQ.data, from, to]);
 
+  // Throughput stacked-area bands (OK vs Errors) derived from the MV-backed
+  // rate + error_rate series — no extra query, no raw-spans scan (invariant
+  // #3). Error band = rate × err%, OK band = the remainder; they stack to the
+  // total rate. (A 4xx-vs-5xx split would need an HTTP-status MV dimension.)
+  const throughputBands = useMemo<ChartLine[]>(() => {
+    const ratePts = s?.rate?.[0]?.points ?? [];
+    const erPts = s?.error_rate?.[0]?.points ?? [];
+    if (ratePts.length < 2) return [{ series: s?.rate ?? [], color: 'var(--accent)', label: 'req/s' }];
+    const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
+    const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
+    return [
+      { series: [{ groupKey: [], points: okPts }], color: 'var(--ok)', label: 'OK' },
+      { series: [{ groupKey: [], points: errPts }], color: 'var(--err)', label: 'Errors' },
+    ];
+  }, [s]);
+
   if (!info) return null;
   const rps = info.spanCount / windowSec;
   const open = problems.filter(p => p.status !== 'resolved');
@@ -216,9 +232,7 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
           { series: s?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
           { series: s?.p99 ?? [], color: 'var(--err)', label: 'P99' },
         ]} />
-        <ChartCard title="Throughput" unit=" req/s" mode="area" deploy={deploy} lines={[
-          { series: s?.rate ?? [], color: 'var(--accent)', label: 'req/s' },
-        ]} />
+        <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} lines={throughputBands} />
         <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} lines={[
           { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
         ]} />

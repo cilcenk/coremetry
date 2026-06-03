@@ -7,7 +7,7 @@ import { useServiceDeploys } from '@/lib/queries';
 import { OverviewChart, type OvChartSeries } from './charts/OverviewChart';
 import { ServiceFlow } from './ServiceFlow';
 import { OpsCard, DbCard } from './OverviewTables';
-import { ServiceInfra } from '@/components/ServiceInfra';
+import { ServiceInstancesCard } from './ServiceInstancesCard';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
 // from the design handoff. The new tab on /service?name=<svc> (becomes the
@@ -249,7 +249,7 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
 
       {/* Instances (infra health) + Recent problems & events */}
       <div className="ov-grid ov-cols-2 ov-mb">
-        <ServiceInfra service={service} since={range.preset} />
+        <ServiceInstancesCard service={service} since={range.preset} />
         <div className="card">
           <div className="ov-card-h">
             <h3>Recent problems &amp; events</h3>

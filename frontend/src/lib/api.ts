@@ -181,6 +181,12 @@ export const api = {
     get<import('./types').InfraMetricSeries[]>(
       `/api/services/${encodeURIComponent(svc)}/infra?since=${since}`),
 
+  // Per-pod CPU/memory rows for the Overview "Instances" card — one row
+  // per host_name emitting metrics for the service. 30s server-side cache.
+  serviceInstances: (svc: string, since = '15m') =>
+    get<import('./types').ServiceInstance[] | null>(
+      `/api/services/${encodeURIComponent(svc)}/instances?since=${since}`),
+
   // Technology fingerprint — language, SDK version, runtime
   // name + version, host, OS. Server-cached 5 min; UI shows a
   // small "Java OpenJDK 21" / "Go 1.22" badge above the infra

@@ -1808,6 +1808,20 @@ export interface InfraMetricSeries {
   points: { t: number; v: number }[];
 }
 
+// ServiceInstance — one pod/host emitting metrics for a service, the
+// per-pod row in the Overview "Instances" card. cpuPct is 0-100; memPct is
+// 0-100 only when the runtime reports a memory limit (JVM), else 0 (the UI
+// gauges memory relative to the busiest pod).
+export interface ServiceInstance {
+  id: string;        // host_name (pod identity)
+  zone: string;      // availability zone, '' if absent
+  cpuPct: number;    // 0-100
+  memBytes: number;  // latest RSS / used bytes
+  memPct: number;    // 0-100, or 0 when no limit reported
+  up: boolean;       // saw a sample within the freshness window
+  lastSeen: number;  // unix ns
+}
+
 // AnomalySilence mutes a single anomaly fingerprint until UntilAt.
 // Driven by the Snooze buttons on /anomalies; queryable via the
 // page header "X muted" indicator.

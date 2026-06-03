@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+import { TweaksPanel } from './TweaksPanel';
 import { ShortcutsHelp } from './ShortcutsHelp';
 import { CommandPalette } from './CommandPalette';
 import { CopilotChat } from './CopilotChat';
@@ -155,6 +156,10 @@ export function AppShell() {
           toast.success/error/info from anywhere in the app lands
           here. Renders null when empty so no overhead. */}
       <Toaster />
+      {/* TweaksPanel (v0.7.117) — floating ⚙ appearance quick-controls
+          (theme / accent / density); persists to the same keys as the
+          Topbar toggles. */}
+      <TweaksPanel />
     </div>
   );
 }

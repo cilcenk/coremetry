@@ -588,6 +588,11 @@ function TabStrip({ tab, onChange, opCount }: {
     <div style={{
       display: 'flex', gap: 0, marginTop: 16, marginBottom: 12,
       borderBottom: '1px solid var(--border)',
+      // Sticky tab strip (design): stays pinned to the top of the #main
+      // scroll viewport while the body scrolls under it. Page bg masks the
+      // content; z-index keeps it above the scrolling panels.
+      position: 'sticky', top: 0, zIndex: 5,
+      background: 'var(--bg0)', paddingTop: 8,
     }}>
       {items.map(it => {
         const active = tab === it.key;

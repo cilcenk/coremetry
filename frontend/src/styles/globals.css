@@ -37,6 +37,7 @@
   --accent-soft:   rgba(56, 139, 253, .16);
   --border-strong: #484f58;
   --shadow-pop:    0 8px 24px rgba(0, 0, 0, .45);
+  --shadow-sm:     0 1px 2px rgba(0, 0, 0, .25);
 
   color-scheme: dark;
 }
@@ -75,6 +76,7 @@
   --accent-soft:   rgba(9, 105, 218, .10);
   --border-strong: #afb8c1;
   --shadow-pop:    0 8px 24px rgba(20, 30, 45, .14);
+  --shadow-sm:     0 1px 2px rgba(20, 30, 45, .05);
 
   color-scheme: light;
 }
@@ -213,6 +215,7 @@ button.lg { padding: 8px 18px; font-size: 14px; }
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px;
+  box-shadow: var(--shadow-sm);
 }
 .card-tight { padding: 10px; border-radius: 6px; background: var(--bg2); }
 
@@ -342,9 +345,9 @@ button.lg { padding: 8px 18px; font-size: 14px; }
   background: transparent;
 }
 .tab-strip > button.active {
-  color: var(--text);
+  color: var(--accent);
   font-weight: 600;
-  border-bottom-color: var(--accent2);
+  border-bottom-color: var(--accent);
 }
 .tab-strip > button:disabled {
   opacity: 0.45;
@@ -428,8 +431,10 @@ tbody td { padding: 7px 12px; max-width: 320px; white-space: nowrap; overflow: h
 /* Numeric columns — right-align + tabular figures so digits line up by place value. */
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Badges */
-.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+/* Badges — sized to the design handoff's .pill (2px8px / radius6 / 11px / 700).
+   inline-flex + gap so an icon/dot sits flush with the label; tabular-nums for
+   numeric badges (error %, counts). Density modes below shrink these. */
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .b-ok { background: rgba(63,185,80,.15); color: var(--ok); }
 .b-err { background: rgba(255,82,82,.15); color: var(--err); }
 .b-warn { background: rgba(210,153,34,.15); color: var(--warn); }

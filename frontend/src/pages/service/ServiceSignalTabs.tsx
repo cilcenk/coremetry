@@ -3,17 +3,17 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
-import { timeRangeToNs } from '@/lib/utils';
-import type { TimeRange, LogRow } from '@/lib/types';
+import { timeRangeToNs, fmtNum, isMessagingDep } from '@/lib/utils';
+import type { TimeRange, LogRow, ServiceMap } from '@/lib/types';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogTable } from '@/components/LogTable';
-import { ServiceMapGraph } from '@/components/ServiceMapGraph';
+import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from '@/components/TopologyPillGraph';
 
 // Service-scoped Traces / Logs / Topology tabs — the design's tab strip
 // beyond Overview/Operations/Details. All read-only, all reuse the
-// app-wide primitives (LogsHistogram / LogTable / ServiceMapGraph) so the
+// app-wide primitives (LogsHistogram / LogTable / TopologyPillGraph) so the
 // operator's eye builds the same scan pattern as the standalone surfaces.
 
 // ── Traces: slowest traces for this service ─────────────────────────────
@@ -178,12 +178,51 @@ export function ServiceLogsTab({ service, range }: { service: string; range: Tim
   );
 }
 
-// ── Topology: 2-hop node-link graph (reuses the real ServiceMapGraph) ────
+// buildPillTiers — project a (2-hop-scoped) ServiceMap onto the shared
+// pill renderer. Kafka/broker nodes are dropped (isMessagingDep — the same
+// exclusion the circle graph applied) so a broadcast topic can't explode
+// the layout; survivors lay out in tiers around the focus:
+// upstream callers | focus | direct deps | 2nd-hop backends.
+function buildPillTiers(map: ServiceMap, focus: string): {
+  nodes: PillNode[]; edges: PillEdge[]; columns: string[][];
+} {
+  const live = map.nodes.filter(n => !isMessagingDep(n.kind, n.subkind));
+  const byId = new Map(live.map(n => [n.service, n] as const));
+  const edges = map.edges.filter(e => byId.has(e.caller) && byId.has(e.callee));
+
+  const lvl = (er: number): PillLevel => (er > 0.05 ? 'red' : er > 0.01 ? 'amber' : 'green');
+  const nodes: PillNode[] = live.map(n => ({
+    id: n.service,
+    name: n.subkind || n.service.replace(/^(db|queue|ext):/, ''),
+    level: lvl(n.errorRate),
+    sub: `${(n.errorRate * 100).toFixed(2)}% · ${fmtNum(n.spanCount)}`,
+    title: `${n.service} · ${fmtNum(n.spanCount)} spans · ${(n.errorRate * 100).toFixed(2)}% err`,
+  }));
+  const pillEdges: PillEdge[] = edges.map(e => {
+    const er = Math.max(byId.get(e.caller)?.errorRate ?? 0, byId.get(e.callee)?.errorRate ?? 0);
+    return { from: e.caller, to: e.callee, level: er > 0.05 ? 'err' : er > 0.01 ? 'warn' : undefined };
+  });
+
+  // Tiers: callers | focus | direct deps | 2nd-hop. Each node placed once.
+  const placed = new Set<string>();
+  const callers: string[] = [];
+  for (const e of edges) if (e.callee === focus && e.caller !== focus && byId.has(e.caller) && !placed.has(e.caller)) { callers.push(e.caller); placed.add(e.caller); }
+  placed.add(focus);
+  const deps: string[] = [];
+  for (const e of edges) if (e.caller === focus && e.callee !== focus && byId.has(e.callee) && !placed.has(e.callee)) { deps.push(e.callee); placed.add(e.callee); }
+  const depSet = new Set(deps);
+  const second: string[] = [];
+  for (const e of edges) if (depSet.has(e.caller) && byId.has(e.callee) && !placed.has(e.callee)) { second.push(e.callee); placed.add(e.callee); }
+  for (const n of live) if (!placed.has(n.service)) { second.push(n.service); placed.add(n.service); }
+  const columns = [callers, [focus], deps, second].filter(c => c.length > 0);
+  return { nodes, edges: pillEdges, columns };
+}
+
+// ── Topology: tiered pill-card neighbourhood (shared TopologyPillGraph) ──
 export function ServiceTopologyTab({ service, range }: { service: string; range: TimeRange }) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const rangeParam = encodeRange(range);
   const navigate = useNavigate();
-  const [hover, setHover] = useState<string | null>(null);
 
   // serviceMap returns the full sampled graph; we scope it to the focused
   // service's 2-hop neighbourhood CLIENT-SIDE (BFS over the small payload —
@@ -222,6 +261,11 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
     };
   }, [mapQ.data, service]);
 
+  const pill = useMemo(
+    () => (data && data.nodes.length ? buildPillTiers(data, service) : null),
+    [data, service],
+  );
+
   return (
     <div className="card" style={{ marginTop: 4 }}>
       <div className="ov-card-h">
@@ -240,20 +284,20 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
       <div className="ov-card-b">
         {mapQ.isLoading ? (
           <div style={{ height: 480, display: 'grid', placeItems: 'center' }}><Spinner /></div>
-        ) : !data || data.nodes.length === 0 ? (
+        ) : !pill || pill.nodes.length === 0 ? (
           <Empty icon="⋔" title={`No topology data for ${service} in this window`} />
         ) : (
           <>
-            <ServiceMapGraph
-              data={data}
+            <TopologyPillGraph
+              nodes={pill.nodes}
+              edges={pill.edges}
+              columns={pill.columns}
               focus={service}
-              hoverNode={hover}
-              onHoverNode={setHover}
-              onSelectNode={(s) => navigate(`/service?name=${encodeURIComponent(s)}&range=${rangeParam}`)}
+              onSelect={(s) => navigate(`/service?name=${encodeURIComponent(s)}&range=${rangeParam}`)}
               height={480}
             />
             <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 6 }}>
-              Hover a node to trace its dependencies · edge color flags degraded paths · click a node to focus it.
+              Hover a card to trace its dependencies · edge color flags degraded paths · click a card to open the service.
             </div>
           </>
         )}

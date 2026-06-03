@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import type { AggSpanNode } from '@/lib/types';
 import { fmtNum, isMessagingDep } from '@/lib/utils';
+import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from './TopologyPillGraph';
 
 // Strip the topology node prefix ("db:h2" → "h2", "queue:orders" → "orders").
 function cleanName(raw: string): string {
@@ -44,38 +45,29 @@ type GraphService = {
 
 export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
   const graph = useMemo(() => buildGraph(roots), [roots]);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [W, setW] = useState(900);
-  const [hot, setHot] = useState<string | null>(null);
-  const H = 480;
   const focus = roots[0]?.service ?? '';
 
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(es => { for (const e of es) setW(Math.max(420, e.contentRect.width)); });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // Tiered positions in px: x from BFS-depth column (left→right), y evenly
-  // distributed within the column. Measured container width drives x.
-  const nCols = graph.columns.length;
-  const pos = useMemo(() => {
-    const p = new Map<string, { x: number; y: number }>();
-    graph.columns.forEach((col, ci) => {
-      const x = nCols <= 1 ? W / 2 : (0.09 + (ci / (nCols - 1)) * 0.82) * W;
-      col.forEach((s, ri) => p.set(s, { x, y: ((ri + 1) / (col.length + 1)) * H }));
+  // Project the service-level graph onto the shared pill renderer's
+  // shape. Status dot + degraded-edge colour both key off error rate.
+  const pill = useMemo(() => {
+    const errRate = (s?: GraphService) => (s && s.totalCalls > 0 ? (s.totalErrors / s.totalCalls) * 100 : 0);
+    const dotLevel = (er: number): PillLevel => (er > 5 ? 'red' : er > 1 ? 'amber' : 'green');
+    const svcOf = (n: string) => graph.services.find(s => s.name === n);
+    const nodes: PillNode[] = graph.services.map(s => {
+      const er = errRate(s);
+      return {
+        id: s.name,
+        name: cleanName(s.name),
+        level: dotLevel(er),
+        sub: `${er.toFixed(1)}% · ${fmtNum(s.totalCalls)} · ${kindTag(s.kind)}`,
+        title: `${s.name} · ${fmtNum(s.totalCalls)} calls · ${er.toFixed(1)}% err`,
+      };
     });
-    return p;
-  }, [graph, W, nCols]);
-
-  // Undirected adjacency for hover dimming.
-  const adj = useMemo(() => {
-    const m = new Map<string, Set<string>>();
-    for (const s of graph.services) m.set(s.name, new Set([s.name]));
-    for (const e of graph.edges) { m.get(e.from)?.add(e.to); m.get(e.to)?.add(e.from); }
-    return m;
+    const edges: PillEdge[] = graph.edges.map(e => {
+      const er = Math.max(errRate(svcOf(e.from)), errRate(svcOf(e.to)));
+      return { from: e.from, to: e.to, level: er > 5 ? 'err' : er > 1 ? 'warn' : undefined };
+    });
+    return { nodes, edges };
   }, [graph]);
 
   if (graph.services.length <= 1) {
@@ -87,10 +79,6 @@ export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
     );
   }
 
-  const svcOf = (n: string) => graph.services.find(s => s.name === n);
-  const errRate = (s?: GraphService) => (s && s.totalCalls > 0 ? (s.totalErrors / s.totalCalls) * 100 : 0);
-  const dotLevel = (er: number) => (er > 5 ? 'red' : er > 1 ? 'amber' : 'green');
-  const near = (name: string) => !hot || hot === name || (adj.get(hot)?.has(name) ?? false);
   const totalDeps = graph.services.length - (graph.columns[0]?.length ?? 0);
   const hops = Math.max(1, graph.columns.length - 1);
 
@@ -112,46 +100,7 @@ export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
           </Link>
         </span>
       </div>
-      <div className="topo" ref={wrapRef} style={{ height: H }}>
-        <svg className="topo-edges" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-          <defs>
-            <marker id="agg-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--border-strong)" /></marker>
-            <marker id="agg-arwH" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--accent)" /></marker>
-          </defs>
-          {graph.edges.map((e, i) => {
-            const a = pos.get(e.from), b = pos.get(e.to);
-            if (!a || !b) return null;
-            const hov = !!hot && (hot === e.from || hot === e.to);
-            const er = Math.max(errRate(svcOf(e.from)), errRate(svcOf(e.to)));
-            const deg = er > 5 ? 'var(--err)' : er > 1 ? 'var(--warn)' : null;
-            const mx = (a.x + b.x) / 2;
-            return (
-              <path key={i} d={`M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`} fill="none"
-                stroke={hov ? 'var(--accent)' : (deg ?? 'var(--border-strong)')}
-                strokeWidth={hov ? 2.2 : 1.4} opacity={hot && !hov ? 0.25 : (deg && !hov ? 0.8 : 1)}
-                markerEnd={hov ? 'url(#agg-arwH)' : 'url(#agg-arw)'} vectorEffect="non-scaling-stroke" />
-            );
-          })}
-        </svg>
-        {graph.services.map(s => {
-          const p = pos.get(s.name);
-          if (!p) return null;
-          const er = errRate(s);
-          return (
-            <div key={s.name}
-              className={'topo-node' + (s.name === focus ? ' focus' : '') + (!near(s.name) ? ' dim' : '')}
-              style={{ left: p.x, top: p.y }}
-              onMouseEnter={() => setHot(s.name)} onMouseLeave={() => setHot(null)}
-              title={`${s.name} · ${fmtNum(s.totalCalls)} calls · ${er.toFixed(1)}% err`}>
-              <span className={`topo-dot ${dotLevel(er)}`} />
-              <div style={{ minWidth: 0 }}>
-                <div className="topo-name">{cleanName(s.name)}</div>
-                <div className="topo-sub">{er.toFixed(1)}% · {fmtNum(s.totalCalls)} · {kindTag(s.kind)}</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <TopologyPillGraph nodes={pill.nodes} edges={pill.edges} columns={graph.columns} focus={focus} />
       {/* Footer stats — service / dep / edge counts + sample note. */}
       <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
         {graph.services.length} service{graph.services.length === 1 ? '' : 's'} · {totalDeps} dep{totalDeps === 1 ? '' : 's'} · {graph.edges.length} edge{graph.edges.length === 1 ? '' : 's'} · sampled traces

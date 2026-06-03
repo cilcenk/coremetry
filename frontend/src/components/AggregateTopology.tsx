@@ -1,6 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AggSpanNode } from '@/lib/types';
 import { fmtNum } from '@/lib/utils';
+
+// Strip the topology node prefix ("db:h2" → "h2", "queue:orders" → "orders").
+function cleanName(raw: string): string {
+  const i = raw.indexOf(':');
+  return i > 0 && i < 8 ? raw.slice(i + 1) : raw;
+}
+function kindTag(kind: GraphService['kind']): string {
+  return kind === 'db' ? 'database' : kind === 'queue' ? 'queue' : kind === 'cache' ? 'cache' : 'service';
+}
 
 // AggregateTopology — v0.5.222. Third view inside ServiceStructure
 // alongside Tree + Flame. Same input data (path-aggregated AggSpanNode
@@ -34,141 +43,104 @@ type GraphService = {
 
 export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
   const graph = useMemo(() => buildGraph(roots), [roots]);
-  const [hover, setHover] = useState<Edge | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(900);
+  const [hot, setHot] = useState<string | null>(null);
+  const H = 480;
+  const focus = roots[0]?.service ?? '';
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(es => { for (const e of es) setW(Math.max(420, e.contentRect.width)); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Tiered positions in px: x from BFS-depth column (left→right), y evenly
+  // distributed within the column. Measured container width drives x.
+  const nCols = graph.columns.length;
+  const pos = useMemo(() => {
+    const p = new Map<string, { x: number; y: number }>();
+    graph.columns.forEach((col, ci) => {
+      const x = nCols <= 1 ? W / 2 : (0.09 + (ci / (nCols - 1)) * 0.82) * W;
+      col.forEach((s, ri) => p.set(s, { x, y: ((ri + 1) / (col.length + 1)) * H }));
+    });
+    return p;
+  }, [graph, W, nCols]);
+
+  // Undirected adjacency for hover dimming.
+  const adj = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const s of graph.services) m.set(s.name, new Set([s.name]));
+    for (const e of graph.edges) { m.get(e.from)?.add(e.to); m.get(e.to)?.add(e.from); }
+    return m;
+  }, [graph]);
 
   if (graph.services.length <= 1) {
     return (
       <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic', padding: '20px 4px' }}>
-        Not enough cross-service spans in the sample to draw a topology.
-        Either this service runs everything in-process, or the sample
-        window is too short. Try Cross-service scope with a wider range.
+        Not enough cross-service spans in the sample to draw a topology. Either this
+        service runs everything in-process, or the sample window is too short.
       </div>
     );
   }
 
-  const NODE_W = 170;
-  const NODE_H = 44;
-  const COL_GAP = 80;
-  const ROW_GAP = 14;
-  const PAD = 16;
-
-  // Layered layout — columns indexed by BFS depth, rows packed
-  // vertically. Service order within a row is stable (alphabetical)
-  // so a re-render doesn't shuffle the diagram.
-  const cols = graph.columns;
-  const colH = cols.map(svcs =>
-    svcs.length * NODE_H + Math.max(0, svcs.length - 1) * ROW_GAP);
-  const maxColH = Math.max(...colH);
-  const W = PAD * 2 + cols.length * NODE_W + (cols.length - 1) * COL_GAP;
-  const H = PAD * 2 + maxColH;
-
-  // Positions
-  const pos = new Map<string, { x: number; y: number }>();
-  cols.forEach((svcs, ci) => {
-    const colOffset = (maxColH - colH[ci]) / 2;
-    svcs.forEach((svc, ri) => {
-      const x = PAD + ci * (NODE_W + COL_GAP);
-      const y = PAD + colOffset + ri * (NODE_H + ROW_GAP);
-      pos.set(svc, { x, y });
-    });
-  });
-
-  const maxCalls = Math.max(1, ...graph.edges.map(e => e.calls));
+  const svcOf = (n: string) => graph.services.find(s => s.name === n);
+  const errRate = (s?: GraphService) => (s && s.totalCalls > 0 ? (s.totalErrors / s.totalCalls) * 100 : 0);
+  const dotLevel = (er: number) => (er > 5 ? 'red' : er > 1 ? 'amber' : 'green');
+  const near = (name: string) => !hot || hot === name || (adj.get(hot)?.has(name) ?? false);
+  const totalDeps = graph.services.length - (graph.columns[0]?.length ?? 0);
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
-        Service-to-service projection of the sampled traces ·
-        {' '}{graph.services.length} services
-        {' · '}{graph.edges.length} edge{graph.edges.length === 1 ? '' : 's'}
-        {hover && (
-          <span style={{ marginLeft: 14, color: 'var(--text2)' }}>
-            <b>{hover.from}</b> → <b>{hover.to}</b>
-            {' · '}{fmtNum(hover.calls)} calls
-            {' · '}avg {hover.avgMs.toFixed(1)} ms
-            {hover.errorCount > 0 && <> · <span style={{ color: 'var(--err)' }}>{hover.errorCount} errors</span></>}
-          </span>
-        )}
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span>{graph.services.length} services · {totalDeps} dep{totalDeps === 1 ? '' : 's'} · {graph.edges.length} edge{graph.edges.length === 1 ? '' : 's'} · sampled traces</span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span className="topo-dot green" />healthy
+          <span className="topo-dot amber" style={{ marginLeft: 10 }} />degraded
+        </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={Math.max(160, H)}
-        style={{ display: 'block', background: 'var(--bg2)', borderRadius: 6 }}>
-        <defs>
-          <marker id="agg-topo-arrow" viewBox="0 0 10 10"
-            refX="8" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"
-            orient="auto">
-            <path d="M 0 2 L 10 5 L 0 8 z" fill="var(--text3)" />
-          </marker>
-        </defs>
-
-        {/* Edges first so nodes paint on top */}
-        {graph.edges.map((e, i) => {
-          const a = pos.get(e.from);
-          const b = pos.get(e.to);
-          if (!a || !b) return null;
-          const x1 = a.x + NODE_W, y1 = a.y + NODE_H / 2;
-          const x2 = b.x,         y2 = b.y + NODE_H / 2;
-          const mx = (x1 + x2) / 2;
-          // v0.6.49 — 0.5–2.25 px stroke scaled to log(calls).
-          // Thinner than the old 0.6–3.6 for a cleaner, modern
-          // wiring-diagram look matching the main topology views.
-          const sw = 0.5 + 1.75 * (Math.log10(e.calls + 1) / Math.log10(maxCalls + 1));
-          // Error-tinted edges get a red overlay so the eye lands
-          // there without reading the count.
-          const errored = e.errorCount > 0;
-          const colour = errored ? 'var(--err)' : 'var(--text3)';
-          return (
-            <g key={i}
-              onMouseEnter={() => setHover(e)}
-              onMouseLeave={() => setHover(null)}
-              style={{ cursor: 'pointer' }}>
-              <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-                stroke={colour} strokeWidth={sw} fill="none"
-                markerEnd="url(#agg-topo-arrow)" opacity={0.75}>
-                <title>{`${e.from} → ${e.to}\n${fmtNum(e.calls)} calls · avg ${e.avgMs.toFixed(1)}ms · ${e.errorCount} errors`}</title>
-              </path>
-              {/* Calls label, only when this edge has visual room */}
-              {sw > 1.2 && (
-                <text x={mx} y={(y1 + y2) / 2 - 4}
-                  fontSize={9} fill={colour} textAnchor="middle"
-                  style={{ pointerEvents: 'none' }}>
-                  {fmtNum(e.calls)}
-                </text>
-              )}
-            </g>
-          );
-        })}
-
-        {/* Nodes */}
-        {graph.services.map((svc, i) => {
-          const p = pos.get(svc.name);
+      <div className="topo" ref={wrapRef} style={{ height: H }}>
+        <svg className="topo-edges" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+          <defs>
+            <marker id="agg-arw" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--border-strong)" /></marker>
+            <marker id="agg-arwH" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--accent)" /></marker>
+          </defs>
+          {graph.edges.map((e, i) => {
+            const a = pos.get(e.from), b = pos.get(e.to);
+            if (!a || !b) return null;
+            const hov = !!hot && (hot === e.from || hot === e.to);
+            const er = Math.max(errRate(svcOf(e.from)), errRate(svcOf(e.to)));
+            const deg = er > 5 ? 'var(--err)' : er > 1 ? 'var(--warn)' : null;
+            const mx = (a.x + b.x) / 2;
+            return (
+              <path key={i} d={`M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`} fill="none"
+                stroke={hov ? 'var(--accent)' : (deg ?? 'var(--border-strong)')}
+                strokeWidth={hov ? 2.2 : 1.4} opacity={hot && !hov ? 0.25 : (deg && !hov ? 0.8 : 1)}
+                markerEnd={hov ? 'url(#agg-arwH)' : 'url(#agg-arw)'} vectorEffect="non-scaling-stroke" />
+            );
+          })}
+        </svg>
+        {graph.services.map(s => {
+          const p = pos.get(s.name);
           if (!p) return null;
-          const fill = svc.totalErrors > 0
-            ? 'rgba(239,68,68,0.10)'
-            : svc.kind === 'service' ? 'var(--bg1)'
-            : 'rgba(168,85,247,0.10)'; // infra
-          const stroke = svc.totalErrors > 0
-            ? 'var(--err)'
-            : svc.kind === 'service' ? 'var(--border)'
-            : 'rgba(168,85,247,0.45)';
+          const er = errRate(s);
           return (
-            <g key={i}>
-              <rect x={p.x} y={p.y} width={NODE_W} height={NODE_H} rx={5}
-                fill={fill} stroke={stroke} strokeWidth={1.4} />
-              <text x={p.x + 10} y={p.y + 17}
-                fontSize={12} fontWeight={600} fill="var(--text)">
-                {svc.name.length > 22 ? svc.name.slice(0, 20) + '…' : svc.name}
-              </text>
-              <text x={p.x + 10} y={p.y + 33}
-                fontSize={10} fill="var(--text3)" fontFamily="ui-monospace, monospace">
-                {fmtNum(svc.totalCalls)} call{svc.totalCalls === 1 ? '' : 's'}
-                {svc.totalErrors > 0 && (
-                  <tspan fill="var(--err)" dx={6}>{svc.totalErrors} err</tspan>
-                )}
-              </text>
-            </g>
+            <div key={s.name}
+              className={'topo-node' + (s.name === focus ? ' focus' : '') + (!near(s.name) ? ' dim' : '')}
+              style={{ left: p.x, top: p.y }}
+              onMouseEnter={() => setHot(s.name)} onMouseLeave={() => setHot(null)}
+              title={`${s.name} · ${fmtNum(s.totalCalls)} calls · ${er.toFixed(1)}% err`}>
+              <span className={`topo-dot ${dotLevel(er)}`} />
+              <div style={{ minWidth: 0 }}>
+                <div className="topo-name">{cleanName(s.name)}</div>
+                <div className="topo-sub">{er.toFixed(1)}% · {fmtNum(s.totalCalls)} · {kindTag(s.kind)}</div>
+              </div>
+            </div>
           );
         })}
-      </svg>
+      </div>
     </div>
   );
 }

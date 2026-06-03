@@ -1483,6 +1483,19 @@ canvas { max-width: 100%; }
 .ov-dot.amber { background: var(--warn); }
 .ov-dot.red { background: var(--err); }
 
+/* Aggregate topology — tiered pill-card node-link graph (prototype .topo-*) */
+.topo { position: relative; width: 100%; background: var(--bg2); border-radius: 8px; overflow: hidden; }
+.topo-edges { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+.topo-node { position: absolute; transform: translate(-50%, -50%); z-index: 2; display: flex; align-items: center; gap: 8px; max-width: 170px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg1); box-shadow: var(--shadow-sm); cursor: default; transition: opacity .12s ease, border-color .12s ease; }
+.topo-node.focus { border: 2px solid var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--bg1)); padding: 9px 12px; }
+.topo-node.dim { opacity: .32; }
+.topo-name { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-sub { font-size: 9.5px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.topo-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.topo-dot.green { background: var(--ok); }
+.topo-dot.amber { background: var(--warn); }
+.topo-dot.red { background: var(--err); }
+
 /* Service Logs tab — filter bar + level facet chips */
 .ov-logbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .ov-facet {

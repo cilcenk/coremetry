@@ -16,6 +16,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { decodeRange } from '@/lib/urlState';
 import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { MetricsExplorer } from './metrics/MetricsExplorer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, HistogramResult } from '@/lib/types';
 
@@ -79,6 +80,9 @@ export default function MetricsPage() {
   const [searchParams] = useSearchParams();
   const [range, setRange] = useState<TimeRange>(() =>
     decodeRange(searchParams.get('range'), { preset: '30m' }));
+  // Explorer (the design-handoff redesign) is the default surface; the
+  // advanced query-builder is one toggle away.
+  const [mode, setMode] = useState<'explorer' | 'builder'>('explorer');
   // v0.5.198 — `services` eager cache dropped. FilterBuilder
   // server-fetches service.name values via /api/attribute-values?q=
   // when the operator types in the value field; the ServicePicker
@@ -335,12 +339,21 @@ export default function MetricsPage() {
     <>
       <Topbar title="Metrics" range={range} onRangeChange={setRange} />
       <div id="content">
-        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 12, color: 'var(--text2)', flex: 1 }}>
-            Pick a metric, slice by service / host / instance, or split by any attribute.
+        {/* Explorer (default — the design-handoff redesign) vs the advanced
+            query-builder, kept one toggle away. */}
+        <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="segmented">
+            <button className={mode === 'explorer' ? 'active' : ''} onClick={() => setMode('explorer')}>Explorer</button>
+            <button className={mode === 'builder' ? 'active' : ''} onClick={() => setMode('builder')}>Query builder</button>
+          </div>
+          <span style={{ flex: 1, fontSize: 12, color: 'var(--text2)' }}>
+            {mode === 'builder' ? 'Pick a metric, slice by service / host / instance, or split by any attribute.' : ''}
           </span>
           <ShareButton />
         </div>
+        {mode === 'explorer' && <MetricsExplorer range={range} />}
+        {mode === 'builder' && (
+        <>
 
         {/* Metric + service + agg + step */}
         <div className="controls">
@@ -600,6 +613,8 @@ export default function MetricsPage() {
               </div>
             )}
           </>
+        )}
+        </>
         )}
       </div>
     </>

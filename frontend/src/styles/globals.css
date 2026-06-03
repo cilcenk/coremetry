@@ -1495,6 +1495,25 @@ canvas { max-width: 100%; }
 .ov-facet .n { font-variant-numeric: tabular-nums; color: var(--text3); font-weight: 600; }
 .ov-facet.on .n { color: var(--text2); }
 
+/* Metrics explorer (v0.7.115) — left catalog + focused chart + sparkline grid */
+.metrics-explorer { display: grid; grid-template-columns: 300px 1fr; gap: 16px; align-items: start; }
+.metric-catalog { padding: 0; overflow: hidden; position: sticky; top: 8px; }
+.metric-list { max-height: calc(100vh - 250px); overflow-y: auto; border-top: 1px solid var(--border); }
+.metric-row { display: block; width: 100%; text-align: left; padding: 8px 12px; border: none; border-bottom: 1px solid var(--border); background: transparent; cursor: pointer; }
+.metric-row:hover:not(:disabled) { background: var(--bg2); }
+.metric-row.active { background: var(--accent-soft); }
+.metric-row-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metric-row.active .metric-row-name { color: var(--accent); }
+.metric-row-meta { font-size: 10px; color: var(--text3); margin-top: 2px; }
+.metric-spark-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.metric-spark { display: block; text-align: left; padding: 12px; cursor: pointer; }
+.metric-spark:hover:not(:disabled) { background: var(--bg1); border-color: var(--accent); }
+.metric-spark-name { font-size: 11.5px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metric-spark-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.metric-spark-val { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+.metric-spark-unit { font-size: 10px; color: var(--text3); margin-left: 3px; font-weight: 500; }
+.metric-spark-chart { flex: none; }
+
 /* Overview chart hover tooltip (uPlot setCursor popover) — ported from the
    design .tt/.tt-r/.lbl with globals.css tokens. Referenced by OverviewChart. */
 .ov-tt {

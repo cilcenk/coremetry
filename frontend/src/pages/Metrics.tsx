@@ -18,6 +18,7 @@ import { storedRangeString } from '@/lib/useUrlRange';
 import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { MetricsExplorer } from './metrics/MetricsExplorer';
+import { MetricQueryEditor } from '@/components/viz/MetricQueryEditor';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, HistogramResult } from '@/lib/types';
 
@@ -83,7 +84,7 @@ export default function MetricsPage() {
     decodeRange(searchParams.get('range') ?? storedRangeString(), { preset: '30m' }));
   // Explorer (the design-handoff redesign) is the default surface; the
   // advanced query-builder is one toggle away.
-  const [mode, setMode] = useState<'explorer' | 'builder'>('explorer');
+  const [mode, setMode] = useState<'explorer' | 'editor' | 'builder'>('explorer');
   // v0.5.198 — `services` eager cache dropped. FilterBuilder
   // server-fetches service.name values via /api/attribute-values?q=
   // when the operator types in the value field; the ServicePicker
@@ -345,6 +346,7 @@ export default function MetricsPage() {
         <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
           <div className="segmented">
             <button className={mode === 'explorer' ? 'active' : ''} onClick={() => setMode('explorer')}>Explorer</button>
+            <button className={mode === 'editor' ? 'active' : ''} onClick={() => setMode('editor')}>Query editor</button>
             <button className={mode === 'builder' ? 'active' : ''} onClick={() => setMode('builder')}>Query builder</button>
           </div>
           <span style={{ flex: 1, fontSize: 12, color: 'var(--text2)' }}>
@@ -353,6 +355,7 @@ export default function MetricsPage() {
           <ShareButton />
         </div>
         {mode === 'explorer' && <MetricsExplorer range={range} />}
+        {mode === 'editor' && <MetricQueryEditor range={range} />}
         {mode === 'builder' && (
         <>
 

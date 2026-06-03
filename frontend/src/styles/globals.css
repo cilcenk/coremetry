@@ -1496,6 +1496,67 @@ canvas { max-width: 100%; }
 .topo-dot.amber { background: var(--warn); }
 .topo-dot.red { background: var(--err); }
 
+/* Metric query editor (v0.7.126) — Grafana-style ad-hoc builder. Tokens only. */
+.mqe { display: flex; flex-direction: column; gap: 10px; }
+.mqe-toolbar { display: flex; align-items: center; gap: 10px; }
+.mqe-spacer { flex: 1; }
+.mqe-topn { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text2); }
+.mqe-topn select { font-size: 12px; }
+.mqe-rows { display: flex; flex-direction: column; gap: 8px; }
+.mqe-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg1); }
+.mqe-row.off { opacity: .55; }
+.mqe-id { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--text2); cursor: pointer; }
+.mqe-id-letter { font-weight: 700; font-size: 12px; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mqe-eye { font-size: 11px; color: var(--text3); }
+.mqe-picker { position: relative; }
+.mqe-pickbtn { display: inline-flex; align-items: center; gap: 8px; min-width: 190px; max-width: 280px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--text); cursor: pointer; font-size: 12.5px; }
+.mqe-pickbtn:hover { border-color: var(--border-strong); }
+.mqe-pickname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.mqe-unit { font-size: 10px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
+.mqe-caret { color: var(--text3); font-size: 10px; }
+.mqe-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: 320px; max-width: 92vw; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-pop, 0 12px 32px rgba(0,0,0,.4)); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.mqe-search { width: 100%; }
+.mqe-facets { display: flex; gap: 4px; flex-wrap: wrap; }
+.mqe-facet { padding: 3px 8px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg2); color: var(--text2); font-size: 10.5px; font-weight: 600; cursor: pointer; }
+.mqe-facet.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.mqe-list { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.mqe-hint { padding: 12px; font-size: 11.5px; color: var(--text3); text-align: center; }
+.mqe-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: none; border-radius: 5px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+.mqe-opt:hover { background: var(--bg2); }
+.mqe-opt.on { background: var(--accent-soft); }
+.mqe-optname { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mqe-agg, .mqe-step { font-size: 12px; }
+.mqe-alias { width: 90px; font-size: 12px; }
+.mqe-filters { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.mqe-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg2); font-size: 11px; }
+.mqe-chip-k { color: var(--text2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mqe-chip-op { color: var(--text3); }
+.mqe-chip-v { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mqe-chip-x { all: unset; cursor: pointer; color: var(--text3); padding: 0 4px; border-radius: 50%; line-height: 1; }
+.mqe-chip-x:hover { color: var(--err); background: color-mix(in oklab, var(--err) 14%, transparent); }
+.mqe-chip-edit { gap: 5px; padding: 3px 6px; }
+.mqe-chip-edit select, .mqe-chip-edit input { font-size: 11px; }
+.mqe-chip-edit input { width: 96px; }
+.mqe-chip-add { all: unset; cursor: pointer; color: var(--accent); font-size: 11px; font-weight: 600; padding: 0 4px; }
+.mqe-addfilter { padding: 2px 8px; border: 1px dashed var(--border-strong); border-radius: 14px; background: transparent; color: var(--text3); font-size: 11px; cursor: pointer; }
+.mqe-addfilter:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.mqe-addfilter:disabled { opacity: .5; cursor: not-allowed; }
+.mqe-groupby { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.mqe-lbl { font-size: 11px; color: var(--text3); }
+.mqe-gchip { padding: 2px 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg2); color: var(--text2); font-size: 10.5px; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mqe-gchip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.mqe-rowact { display: inline-flex; gap: 2px; margin-left: auto; }
+.mqe-rowact button { all: unset; cursor: pointer; color: var(--text3); padding: 3px 6px; border-radius: 4px; font-size: 13px; }
+.mqe-rowact button:hover:not(:disabled) { color: var(--text); background: var(--bg2); }
+.mqe-rowact button:disabled { opacity: .4; cursor: not-allowed; }
+.mqe-addq { align-self: flex-start; padding: 6px 12px; border: 1px dashed var(--border-strong); border-radius: 6px; background: transparent; color: var(--text2); font-size: 12px; cursor: pointer; }
+.mqe-addq:hover { color: var(--accent); border-color: var(--accent); }
+.mqe-code { display: flex; flex-direction: column; gap: 4px; }
+.mqe-code textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg1); color: var(--text); resize: vertical; }
+.mqe-code-foot { font-size: 11px; }
+.mqe-code-err { color: var(--err); font-size: 11.5px; }
+.mqe-chart { padding: 12px; }
+
 /* Service Logs tab — filter bar + level facet chips */
 .ov-logbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .ov-facet {

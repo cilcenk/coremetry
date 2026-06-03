@@ -2,10 +2,23 @@ import {
   useCallback, useEffect, useMemo, useState,
   type MouseEvent as ReactMouseEvent, type ReactNode,
 } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   nextSort, sortRows,
   type DataTableColumn, type SortDir, type SortState,
 } from '@/lib/dataTable';
+
+// parseSortParam — decode the URL sort param "<colId>.<dir>" → SortState.
+// Returns null for a missing / malformed value so the caller falls back to
+// localStorage. colId may itself contain dots, so split on the LAST one.
+function parseSortParam(s: string | null): SortState | null {
+  if (!s) return null;
+  const i = s.lastIndexOf('.');
+  if (i <= 0) return null;
+  const dir = s.slice(i + 1);
+  if (dir !== 'asc' && dir !== 'desc') return null;
+  return { id: s.slice(0, i), dir: dir as SortDir };
+}
 
 // DataTable — Coremetry's shared sortable + column-resizable table
 // primitive (v0.7.53). Project principle: EVERY data table is
@@ -56,8 +69,17 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort }: {
 }): DataTable<T> {
   const sortLSKey = `dt.${storageKey}.sort`;
   const widthLSKey = `dt.${storageKey}.widths`;
-  const [sort, setSort] = useState<SortState>(() =>
-    loadJSON(sortLSKey, initialSort ?? { id: null, dir: 'desc' }));
+  // Sort is shareable (UX#3): the URL param `s_<storageKey>` wins so a copied
+  // link reproduces the exact sort; else the operator's personal localStorage
+  // default; else initialSort. Namespaced by storageKey so two tables on one
+  // page never collide. Writes hit BOTH the URL (replace — no history spam)
+  // and localStorage. Widths stay localStorage-only (per-browser ergonomics,
+  // not view state worth sharing).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlKey = `s_${storageKey}`;
+  const urlSort = searchParams.get(urlKey);
+  const [sort, setSortState] = useState<SortState>(() =>
+    parseSortParam(urlSort) ?? loadJSON(sortLSKey, initialSort ?? { id: null, dir: 'desc' }));
   const [colWidths, setColWidths] = useState<Record<string, number>>(() =>
     loadJSON(widthLSKey, {}));
 
@@ -68,11 +90,33 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort }: {
     try { localStorage.setItem(widthLSKey, JSON.stringify(colWidths)); } catch { /* private mode */ }
   }, [colWidths, widthLSKey]);
 
+  // Apply a sort to state + URL.
+  const setSort = useCallback((s: SortState) => {
+    setSortState(s);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (s.id) next.set(urlKey, `${s.id}.${s.dir}`);
+      else next.delete(urlKey);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams, urlKey]);
+
+  // Back/forward — or an inbound shared link — changes the URL sort: restore
+  // it into state. Guarded to fire only on a genuine difference, which also
+  // stops a loop with setSort's own write.
+  useEffect(() => {
+    const fromUrl = parseSortParam(urlSort);
+    if (fromUrl && (fromUrl.id !== sort.id || fromUrl.dir !== sort.dir)) {
+      setSortState(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlSort]);
+
   const toggleSort = useCallback((id: string) => {
     const col = columns.find(c => c.id === id);
     if (!col || !col.sortValue) return;
-    setSort(cur => nextSort(cur, col));
-  }, [columns]);
+    setSort(nextSort(sort, col));
+  }, [columns, sort, setSort]);
 
   const startResize = useCallback((id: string, e: ReactMouseEvent) => {
     e.preventDefault();

@@ -99,9 +99,17 @@ export function ServiceFlow({ service, range, from, to }: {
   }, [topoQ.data, service, rangeParam]);
 
   const center: FlowNode = useMemo(() => {
-    const totalCalls = [...callers].reduce((s, c) => s + c.calls, 0);
+    // Aggregate the inbound (caller) edges: total calls + call-weighted
+    // error rate AND latency, so the center node shows a real
+    // "N calls · X% err · Yms" stat instead of a hardcoded 0ms.
+    const totalCalls = callers.reduce((s, c) => s + c.calls, 0);
     const wErr = callers.reduce((s, c) => s + c.errRate * c.calls, 0);
-    return { name: service, kind: 'service', calls: totalCalls, avgMs: 0, errRate: totalCalls ? wErr / totalCalls : 0 };
+    const wAvg = callers.reduce((s, c) => s + c.avgMs * c.calls, 0);
+    return {
+      name: service, kind: 'service', calls: totalCalls,
+      avgMs: totalCalls ? wAvg / totalCalls : 0,
+      errRate: totalCalls ? wErr / totalCalls : 0,
+    };
   }, [callers, service]);
 
   // ── SVG wire measurement ──────────────────────────────────────────────

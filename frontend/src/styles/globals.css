@@ -1514,6 +1514,11 @@ canvas { max-width: 100%; }
 .metric-spark-unit { font-size: 10px; color: var(--text3); margin-left: 3px; font-weight: 500; }
 .metric-spark-chart { flex: none; }
 
+/* Service identity header (design handoff app.jsx .svc-head) */
+.svc-head { display: flex; align-items: flex-start; gap: 16px; padding: 2px 0 12px; }
+.svc-title { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
+.svc-title h1 { font-size: 23px; margin: 0; letter-spacing: -.4px; font-weight: 700; white-space: nowrap; color: var(--text); }
+
 /* Overview chart hover tooltip (uPlot setCursor popover) — ported from the
    design .tt/.tt-r/.lbl with globals.css tokens. Referenced by OverviewChart. */
 .ov-tt {

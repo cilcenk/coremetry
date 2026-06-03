@@ -28,7 +28,8 @@ import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -45,6 +46,8 @@ type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 't
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
   const svc = searchParams.get('name') ?? '';
+  // Runtime fingerprint (e.g. "Java OpenJDK 21") for the service-header badge.
+  const runtimeQ = useQuery({ queryKey: ['svc-runtime', svc], queryFn: () => api.serviceRuntime(svc), enabled: !!svc, staleTime: 300_000 });
 
   const queryClient = useQueryClient();
   const [range, setRange] = useState<TimeRange>({ preset: '30m' });
@@ -207,6 +210,20 @@ function ServiceDetailInner() {
     <>
       <Topbar title={`Service · ${svc}`} range={range} onRangeChange={setRange} />
       <div id="content">
+        {/* Service identity header (design handoff app.jsx .svc-head): big
+            status dot + bare service name + runtime badge + health pill. */}
+        {info && (
+          <div className="svc-head">
+            <div className="svc-title">
+              <span className={`ov-dot ${info.errorRate > 5 ? 'red' : info.errorRate > 1 ? 'amber' : 'green'}`} style={{ width: 12, height: 12 }} />
+              <h1>{svc}</h1>
+              {runtimeQ.data && <ServiceRuntimeBadge rt={runtimeQ.data} compact />}
+              <span className={`badge ${info.errorRate > 5 ? 'b-err' : info.errorRate > 1 ? 'b-warn' : 'b-ok'}`}>
+                {info.errorRate > 5 ? 'CRITICAL' : info.errorRate > 1 ? 'WARNING' : 'HEALTHY'}
+              </span>
+            </div>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
           <Link to="/services" className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)',

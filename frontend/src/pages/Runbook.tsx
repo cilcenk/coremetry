@@ -1,14 +1,20 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  Hand, Search, Globe, Code, SquareTerminal, Play, GripVertical, X,
+  TriangleAlert, ListChecks, type LucideIcon,
+} from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/Button';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useRunbook, useUpdateRunbook, useDeleteRunbook, useRunbookExecutions, useExecuteRunbook } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { Runbook, RunbookStep, RunbookStepKind, RunbookExecution } from '@/lib/types';
 
 // Runbook detail (v0.7.0) — Overview + the Steps editor (the OneUptime
@@ -16,12 +22,14 @@ import type { Runbook, RunbookStep, RunbookStepKind, RunbookExecution } from '@/
 // kind-specific fields). Executions + the runner + Audit Logs tabs land
 // in increment 4b. Editor+ authors; viewers see everything read-only.
 
-const KIND_META: { kind: RunbookStepKind; icon: string; label: string; desc: string }[] = [
-  { kind: 'manual',     icon: '☑',   label: 'Manual',     desc: 'Pause the run and wait for a responder to tick it off.' },
-  { kind: 'query',      icon: '◷',   label: 'Query',      desc: 'Run a Coremetry query inline and capture the result.' },
-  { kind: 'http',       icon: '⤴',   label: 'HTTP',       desc: 'Call an external API — PagerDuty, Slack, your own service.' },
-  { kind: 'javascript', icon: '⟨⟩',  label: 'JavaScript', desc: 'Run a sandboxed JS snippet on the agent. Capture output.' },
-  { kind: 'bash',       icon: '▣',   label: 'Bash',       desc: 'Run a shell command on the agent.' },
+// Step-kind glyphs are lucide components (rendered via <Icon size strokeWidth/>,
+// colour inherits currentColor) — same convention as the sidebar nav icons.
+const KIND_META: { kind: RunbookStepKind; icon: LucideIcon; label: string; desc: string }[] = [
+  { kind: 'manual',     icon: Hand,          label: 'Manual',     desc: 'Pause the run and wait for a responder to tick it off.' },
+  { kind: 'query',      icon: Search,        label: 'Query',      desc: 'Run a Coremetry query inline and capture the result.' },
+  { kind: 'http',       icon: Globe,         label: 'HTTP',       desc: 'Call an external API — PagerDuty, Slack, your own service.' },
+  { kind: 'javascript', icon: Code,          label: 'JavaScript', desc: 'Run a sandboxed JS snippet on the agent. Capture output.' },
+  { kind: 'bash',       icon: SquareTerminal, label: 'Bash',      desc: 'Run a shell command on the agent.' },
 ];
 
 const EXEC_BADGE: Record<string, string> = {
@@ -79,8 +87,8 @@ function Inner() {
             <Button variant="secondary" size="sm" onClick={() => navigate('/runbooks')}>← Runbooks</Button>
           </div>
           {!id
-            ? <Empty icon="⚠" title="No runbook selected">Pick a runbook from the list to view or edit it.</Empty>
-            : <Empty icon="⚠" title="Runbook not found">This runbook may have been deleted, or the link is stale. Head back to the Runbooks list.</Empty>}
+            ? <Empty icon={<TriangleAlert size={28} strokeWidth={1.5} />} title="No runbook selected">Pick a runbook from the list to view or edit it.</Empty>
+            : <Empty icon={<TriangleAlert size={28} strokeWidth={1.5} />} title="Runbook not found">This runbook may have been deleted, or the link is stale. Head back to the Runbooks list.</Empty>}
         </div>
       </>
     );
@@ -139,19 +147,20 @@ function Inner() {
             {err} <Button variant="secondary" size="sm" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</Button>
           </div>
         )}
-        <div className="controls" style={{ marginBottom: 8, alignItems: 'center' }}>
+        <div className="row" style={{ alignItems: 'center', gap: 12, marginBottom: 10 }}>
           <Button variant="secondary" size="sm" onClick={() => navigate('/runbooks')}>← Runbooks</Button>
-          <span className={`badge ${draft.enabled ? 'b-ok' : 'b-gray'}`} style={{ marginLeft: 4 }}>
+          <span className={`badge ${draft.enabled ? 'b-ok' : 'b-gray'}`}>
             {draft.enabled ? 'ENABLED' : 'DISABLED'}
           </span>
           {draft.createdBy && (
-            <span style={{ color: 'var(--text3)', fontSize: 11 }}>by {draft.createdBy}</span>
+            <span style={{ color: 'var(--text3)', fontSize: 12 }}>by {draft.createdBy}</span>
           )}
           <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {canEdit && (
               <Button variant="primary" size="sm" onClick={run} disabled={executeRb.isPending || draft.steps.length === 0 || !draft.enabled}
+                leftIcon={<Play size={14} strokeWidth={1.75} />}
                 title={!draft.enabled ? 'Runbook is disabled — enable it to run' : draft.steps.length === 0 ? 'Add steps before running' : 'Start an execution'}>
-                ▶ Run
+                Run
               </Button>
             )}
             {canEdit && dirty && (
@@ -182,30 +191,44 @@ function Inner() {
   );
 }
 
+const EXEC_COLS: DataTableColumn<RunbookExecution>[] = [
+  { id: 'id',        label: 'Run',        sortValue: e => e.id,                  naturalDir: 'asc', width: 150 },
+  { id: 'status',    label: 'Status',     sortValue: e => e.status,              naturalDir: 'asc', width: 130 },
+  { id: 'startedAt', label: 'Started',    sortValue: e => e.startedAt,           numeric: true, width: 180 },
+  { id: 'steps',     label: 'Steps',      sortValue: e => e.stepStates.length,   numeric: true, width: 90 },
+  { id: 'duration',  label: 'Duration',   sortValue: e => (e.completedAt ? e.completedAt - e.startedAt : 0), numeric: true, width: 110 },
+  { id: 'startedBy', label: 'Triggered by', sortValue: e => e.startedBy ?? '',   naturalDir: 'asc', width: 200 },
+  { id: 'open',      label: '',                                                  width: 80 },
+];
+
 function ExecutionsTab({ runbookId }: { runbookId: string }) {
   const navigate = useNavigate();
   const q = useRunbookExecutions({ runbookId });
   const execs = q.isLoading ? undefined : q.data ?? [];
+  const dt = useDataTable<RunbookExecution>({
+    storageKey: 'runbook-executions', columns: EXEC_COLS, rows: execs ?? [],
+    initialSort: { id: 'startedAt', dir: 'desc' },
+  });
   if (execs === undefined) return <Spinner />;
   if (execs.length === 0) {
-    return <Empty icon="▷" title="No runs yet">Click ▶ Run to execute this runbook. Every run is recorded here — who ran it, when, and which steps executed.</Empty>;
+    return <Empty icon="▷" title="No runs yet">Click Run to execute this runbook. Every run is recorded here — who ran it, when, and which steps executed.</Empty>;
   }
   return (
     <div className="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Status</th><th>Started by</th><th>Started</th><th className="num">Steps</th><th>Duration</th><th></th></tr>
-        </thead>
+      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+        <DataTableColgroup dt={dt} />
+        <DataTableHead dt={dt} />
         <tbody>
-          {execs.map((e: RunbookExecution) => {
+          {dt.sortedRows.map((e: RunbookExecution) => {
             const done = e.stepStates.filter(s => STEP_TERMINAL.includes(s.status)).length;
             return (
               <tr key={e.id}>
+                <td className="mono" style={{ color: 'var(--accent2)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.id}</td>
                 <td><span className={`badge ${EXEC_BADGE[e.status] ?? 'b-gray'}`}>{e.status.replace(/_/g, ' ')}</span></td>
-                <td className="mono">{e.startedBy || '—'}</td>
                 <td className="mono" style={{ fontSize: 11 }}>{tsLong(e.startedAt)}</td>
                 <td className="num mono">{done}/{e.stepStates.length}</td>
-                <td className="mono" style={{ fontSize: 11 }}>{e.completedAt ? fmtDur(e.completedAt - e.startedAt) : '—'}</td>
+                <td className="num mono" style={{ fontSize: 11 }}>{e.completedAt ? fmtDur(e.completedAt - e.startedAt) : '—'}</td>
+                <td className="mono" style={{ color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.startedBy || '—'}</td>
                 <td style={{ textAlign: 'right' }}>
                   <Button variant="secondary" size="sm" onClick={() => navigate(`/runbook-exec?id=${encodeURIComponent(e.id)}`)}>Open</Button>
                 </td>
@@ -265,25 +288,17 @@ function TabStrip({ tab, onChange, stepCount }: {
     { key: 'audit', label: 'Audit Logs' },
   ];
   return (
-    <div style={{ display: 'flex', gap: 0, marginTop: 8, marginBottom: 14, borderBottom: '1px solid var(--border)' }}>
-      {items.map(it => {
-        const active = tab === it.key;
-        return (
-          <button key={it.key} type="button" onClick={() => onChange(it.key)}
-            style={{
-              all: 'unset', cursor: 'pointer', padding: '8px 18px',
-              fontSize: 13, fontWeight: active ? 700 : 500,
-              color: active ? 'var(--text)' : 'var(--text2)',
-              borderBottom: active ? '2px solid var(--accent2)' : '2px solid transparent',
-              marginBottom: -1,
-            }}>
-            {it.label}
-            {it.hint && (
-              <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace' }}>{it.hint}</span>
-            )}
-          </button>
-        );
-      })}
+    <div className="tab-strip" style={{ marginBottom: 16 }}>
+      {items.map(it => (
+        <button key={it.key} type="button"
+          className={tab === it.key ? 'active' : undefined}
+          onClick={() => onChange(it.key)}>
+          {it.label}
+          {it.hint && (
+            <span className="badge b-gray" style={{ marginLeft: 6, padding: '0 6px' }}>{it.hint}</span>
+          )}
+        </button>
+      ))}
     </div>
   );
 }
@@ -323,6 +338,13 @@ function Overview({ draft, canEdit, patch }: {
           <input value={labelsText} disabled={!canEdit}
             onChange={e => patch({ labels: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
             placeholder="payments, sev1, db" />
+          {(draft.labels ?? []).length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+              {(draft.labels ?? []).map(l => (
+                <span key={l} className="badge b-gray">{l}</span>
+              ))}
+            </div>
+          )}
         </Field>
         {canEdit && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
@@ -435,26 +457,32 @@ function KindCards({ canEdit, onAdd, hero }: {
       border: '1px dashed var(--border)', borderRadius: 10, padding: 24,
     } : undefined}>
       {hero && (
-        <div style={{ textAlign: 'center', marginBottom: 18 }}>
-          <div style={{ fontSize: 28 }}>▤</div>
-          <h3 style={{ margin: '8px 0 2px' }}>Start your runbook</h3>
+        <div style={{ textAlign: 'center', marginBottom: 18, color: 'var(--text2)' }}>
+          <ListChecks size={28} strokeWidth={1.5} />
+          <h3 style={{ margin: '8px 0 2px', color: 'var(--text)' }}>Start your runbook</h3>
           <p style={{ color: 'var(--text2)', fontSize: 13, margin: 0 }}>
             Add the first step. You can reorder and edit at any time.
           </p>
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
-        {KIND_META.map(k => (
-          <button key={k.kind} type="button" onClick={() => onAdd(k.kind)}
-            style={{
-              all: 'unset', cursor: 'pointer', border: '1px solid var(--border)',
-              borderRadius: 8, padding: 12, background: 'var(--bg1)',
-            }}>
-            <div style={{ fontSize: 18 }}>{k.icon}</div>
-            <div style={{ fontWeight: 700, marginTop: 6 }}>{k.label}</div>
-            <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 4, lineHeight: 1.4 }}>{k.desc}</div>
-          </button>
-        ))}
+        {KIND_META.map(k => {
+          const Glyph = k.icon;
+          return (
+            <button key={k.kind} type="button" onClick={() => onAdd(k.kind)}
+              style={{
+                all: 'unset', cursor: 'pointer', border: '1px solid var(--border)',
+                borderRadius: 8, padding: 12, background: 'var(--bg1)',
+                transition: 'border-color .12s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}>
+              <span style={{ color: 'var(--text2)', display: 'inline-flex' }}><Glyph size={20} strokeWidth={1.75} /></span>
+              <div style={{ fontWeight: 700, marginTop: 8 }}>{k.label}</div>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 4, lineHeight: 1.4 }}>{k.desc}</div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -466,6 +494,7 @@ function StepRow({ step, index, canEdit, isDragging, onDragStart, onDragEnd, onD
   onChange: (p: Partial<RunbookStep>) => void; onRemove: () => void;
 }) {
   const meta = KIND_META.find(k => k.kind === step.kind);
+  const Glyph = meta?.icon;
   return (
     <div
       draggable={canEdit}
@@ -478,14 +507,23 @@ function StepRow({ step, index, canEdit, isDragging, onDragStart, onDragEnd, onD
         background: 'var(--bg1)', opacity: isDragging ? 0.5 : 1, cursor: canEdit ? 'grab' : 'default',
       }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        {canEdit && <span style={{ color: 'var(--text3)', cursor: 'grab' }} title="Drag to reorder">⠿</span>}
-        <span className="badge b-info" style={{ whiteSpace: 'nowrap' }}>{meta?.icon} {meta?.label ?? step.kind}</span>
+        {canEdit && (
+          <span style={{ color: 'var(--text3)', cursor: 'grab', display: 'inline-flex' }} title="Drag to reorder">
+            <GripVertical size={16} strokeWidth={1.75} />
+          </span>
+        )}
+        <span className="badge b-info" style={{ whiteSpace: 'nowrap' }}>
+          {Glyph && <Glyph size={12} strokeWidth={2} />}{meta?.label ?? step.kind}
+        </span>
         <input value={step.title} disabled={!canEdit}
           onChange={e => onChange({ title: e.target.value })}
           placeholder="Step title" style={{ flex: 1 }} />
         <span style={{ color: 'var(--text3)', fontSize: 11, fontFamily: 'ui-monospace, monospace' }}>#{index + 1}</span>
         {canEdit && (
-          <button className="sec" style={{ color: 'var(--err)' }} onClick={onRemove} title="Remove step">✕</button>
+          <Button variant="secondary" size="sm" onClick={onRemove} title="Remove step"
+            style={{ color: 'var(--err)', padding: '4px 8px' }}>
+            <X size={14} strokeWidth={2} />
+          </Button>
         )}
       </div>
 

@@ -25,7 +25,7 @@ import { toast } from '@/lib/toast';
 // catalog size (~30 pages + N services).
 
 type Result = {
-  kind: 'page' | 'service' | 'trace' | 'action';
+  kind: 'page' | 'service' | 'trace' | 'action' | 'endpoint';
   label: string;
   hint?: string;
   // navigate target — set for page/service/trace; absent for actions
@@ -80,6 +80,11 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [services, setServices] = useState<Result[]>([]);
+  // Endpoint (operation) matches — server-debounced search, NOT an eager
+  // catalogue (picker = server-side search; 10k+ operations can't ride a
+  // client list). Refreshed per keystroke; cleared when the query is too
+  // short or looks like a trace id. (UX pass #1.)
+  const [endpoints, setEndpoints] = useState<Result[]>([]);
   // v0.7.89 — pinned + recently-viewed services, refreshed each open,
   // shown in the empty-query state as the pivot rotation.
   const [pivotSvcs, setPivotSvcs] = useState<Result[]>([]);
@@ -207,6 +212,32 @@ export function CommandPalette() {
       .catch(() => { /* no services = page-only results */ });
   }, [open]);
 
+  // Endpoint search — server-debounced operation lookup so the palette can
+  // jump to an endpoint, not just pages/services, WITHOUT eager-loading the
+  // operation catalogue (10k+ ops; picker = server-side search constraint).
+  // Fires only for a real ≥2-char query that isn't a trace id; each hit
+  // jumps to that operation's traces. 200ms debounce + stale-guard mirror
+  // the OperationPicker. (UX pass #1.)
+  useEffect(() => {
+    const q = query.trim();
+    if (!open || q.length < 2 || TRACE_ID_RE.test(q)) { setEndpoints([]); return; }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      api.operationNames(undefined, q, 6)
+        .then(r => {
+          if (cancelled) return;
+          setEndpoints((r?.names ?? []).map(name => ({
+            kind: 'endpoint' as const,
+            label: name,
+            hint: 'Endpoint',
+            to: `/traces?operation=${encodeURIComponent(name)}`,
+          })));
+        })
+        .catch(() => { if (!cancelled) setEndpoints([]); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query, open]);
+
   // Score: pages with the query as a prefix beat substring beat
   // fuzzy. Exact matches sort to the top. Hand-rolled rather than
   // pulling in fuzzysort — at this catalog size the diff is in
@@ -264,8 +295,14 @@ export function CommandPalette() {
         ...scored,
       ];
     }
+    // Endpoint matches (already server-filtered by the query) appended after
+    // the page/service hits so they're visible without crowding out an exact
+    // page/service name match. (UX pass #1.)
+    if (q && endpoints.length > 0) {
+      scored = [...scored, ...endpoints];
+    }
     return scored;
-  }, [query, services, pivotSvcs, user?.role]);
+  }, [query, services, endpoints, pivotSvcs, user?.role]);
 
   // Reset cursor when results shrink/grow — otherwise the cursor
   // can point past the last row and Enter does nothing.
@@ -555,7 +592,7 @@ export function CommandPalette() {
         <input ref={inputRef}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search services, pages, run an action, or paste a trace id…"
+          placeholder="Search services, endpoints, pages, run an action, or paste a trace id…"
           style={{
             border: 'none', outline: 'none',
             background: 'transparent', color: 'var(--text)',
@@ -600,6 +637,7 @@ export function CommandPalette() {
               }}>
                 {r.kind === 'trace' ? 'trace'
                  : r.kind === 'service' ? 'service'
+                 : r.kind === 'endpoint' ? 'endpoint'
                  : r.kind === 'action' ? 'action'
                  : 'page'}
               </span>

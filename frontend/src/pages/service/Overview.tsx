@@ -212,9 +212,9 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
           with the deploy markers from the service bundle. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} lines={[
-          { series: s?.p50 ?? [], color: 'var(--accent)', label: 'P50' },
-          { series: s?.p95 ?? [], color: 'var(--purple)', label: 'P95' },
-          { series: s?.p99 ?? [], color: 'var(--orange)', label: 'P99' },
+          { series: s?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
+          { series: s?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
+          { series: s?.p99 ?? [], color: 'var(--err)', label: 'P99' },
         ]} />
         <ChartCard title="Throughput" unit=" req/s" mode="area" deploy={deploy} lines={[
           { series: s?.rate ?? [], color: 'var(--accent)', label: 'req/s' },

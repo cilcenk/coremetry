@@ -75,6 +75,18 @@ spec:
                   name: {{ include "coremetry.secretName" . }}
                   key: clickhouse-password
                   optional: true
+            {{- if .Values.clickhouse.clusterName }}
+            - name: COREMETRY_CH_CLUSTER_NAME
+              value: {{ .Values.clickhouse.clusterName | quote }}
+            {{- end }}
+            {{- if .Values.clickhouse.replicaPath }}
+            - name: COREMETRY_CH_REPLICA_PATH
+              value: {{ .Values.clickhouse.replicaPath | quote }}
+            {{- end }}
+            {{- if .Values.clickhouse.shardKey }}
+            - name: COREMETRY_CH_SHARD_KEY
+              value: {{ .Values.clickhouse.shardKey | quote }}
+            {{- end }}
             - name: COREMETRY_INITIAL_PASSWORD
               valueFrom:
                 secretKeyRef:

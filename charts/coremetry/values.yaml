@@ -266,6 +266,23 @@ clickhouse:
 
   maxOpenConns: 20
 
+  # ── Distributed / Replicated ClickHouse (multi-shard, multi-replica) ──
+  # Set these when `external.addr` points at a sharded+replicated CH cluster
+  # (Altinity Operator, self-managed Keeper/ZooKeeper). They flow to the app
+  # as env vars, so an env-only deploy can flip cluster mode without a
+  # config.yaml. Leave empty for single-node / bundled CH.
+  #   clusterName  → every DDL gets `ON CLUSTER <name>` so schema lands on all
+  #                  replicas (env COREMETRY_CH_CLUSTER_NAME).
+  #   replicaPath  → Keeper/ZooKeeper prefix for the ReplicatedMergeTree path
+  #                  argument; {shard}/{replica} macros expand per replica
+  #                  (env COREMETRY_CH_REPLICA_PATH), e.g.
+  #                  "/clickhouse/tables/{shard}/coremetry".
+  #   shardKey     → expression the Distributed engine shards on
+  #                  (env COREMETRY_CH_SHARD_KEY), e.g. "cityHash64(trace_id)".
+  clusterName: ""
+  replicaPath: ""
+  shardKey: ""
+
   # In-cluster StatefulSet options (consulted only when enabled: true).
   # The official ClickHouse image runs as USER 101 (clickhouse) with a
   # fixed UID — fine on vanilla k8s, but on OpenShift you'll need to bind

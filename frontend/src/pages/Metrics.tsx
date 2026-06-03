@@ -14,6 +14,7 @@ import { ShareButton } from '@/components/ShareButton';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { decodeRange } from '@/lib/urlState';
+import { storedRangeString } from '@/lib/useUrlRange';
 import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { MetricsExplorer } from './metrics/MetricsExplorer';
@@ -79,7 +80,7 @@ export default function MetricsPage() {
   // for the explicit "copy this state" affordance.
   const [searchParams] = useSearchParams();
   const [range, setRange] = useState<TimeRange>(() =>
-    decodeRange(searchParams.get('range'), { preset: '30m' }));
+    decodeRange(searchParams.get('range') ?? storedRangeString(), { preset: '30m' }));
   // Explorer (the design-handoff redesign) is the default surface; the
   // advanced query-builder is one toggle away.
   const [mode, setMode] = useState<'explorer' | 'builder'>('explorer');

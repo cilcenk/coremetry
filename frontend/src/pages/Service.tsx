@@ -5,6 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Button } from '@/components/ui/Button';
 import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { ServiceOverview } from './service/Overview';
 import { ServiceTracesTab, ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -50,7 +51,8 @@ function ServiceDetailInner() {
   const runtimeQ = useQuery({ queryKey: ['svc-runtime', svc], queryFn: () => api.serviceRuntime(svc), enabled: !!svc, staleTime: 300_000 });
 
   const queryClient = useQueryClient();
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  // Global time window (UX#2) — URL-persisted + carried across pages.
+  const [range, setRange] = useUrlRange('30m');
   const [pinned, setPinned] = useState(false);
   // v0.7.89 — record this service in the recently-viewed MRU (powers
   // the Cmd-K pivot rotation) and reflect its pinned state for the

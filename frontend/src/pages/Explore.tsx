@@ -22,6 +22,7 @@ import { api } from '@/lib/api';
 import { useExemplarFetcher, useServiceDeploys, useSLOs } from '@/lib/queries';
 import { timeRangeToNs, fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
+import { storedRangeString } from '@/lib/useUrlRange';
 import type { TimeRange, FilterExpr, SpanMetricSeries, SpanAgg, TraceRow, LatencyHeatmap as Heatmap } from '@/lib/types';
 
 type ResultMode = 'metric' | 'traces' | 'repeats';
@@ -214,7 +215,7 @@ function ExploreInner() {
 
   // ── State, hydrated from URL on first render ─────────────────────────────
   const [range, setRange] = useState<TimeRange>(
-    () => decodeRange(searchParams.get('range'), { preset: '30m' }));
+    () => decodeRange(searchParams.get('range') ?? storedRangeString(), { preset: '30m' }));
   const [filters, setFilters] = useState<FilterExpr[]>(
     () => decodeFilters(searchParams.get('filters')));
   const [agg, setAgg] = useState<SpanAgg>(

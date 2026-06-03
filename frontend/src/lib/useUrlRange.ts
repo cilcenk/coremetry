@@ -26,17 +26,43 @@ import { encodeRange, decodeRange } from './urlState';
 // Writes use { replace: true }: a range tweak refines the current view,
 // it shouldn't pile a history entry per click — browser-back returns to
 // the previous PAGE, while the current page's range still lives in its
-// shareable URL. The param is omitted when it equals the default so
-// clean URLs stay clean.
+// shareable URL.
+//
+// GLOBAL window (v0.7.124 — UX pass #2). A page that loads WITHOUT an
+// explicit `?range=` inherits the last range the operator picked anywhere,
+// persisted in localStorage, so switching pages keeps the window. Precedence:
+//   1. `?range=` in the URL  — wins (shareable links + browser back/forward)
+//   2. localStorage          — cross-page continuity
+//   3. defaultPreset         — first-ever load
+// A fresh pick writes BOTH the URL and localStorage. `effective` stays a
+// stable string so the memo identity only changes when the resolved range
+// actually changes (the v0.5.184 infinite-refetch trap).
+const RANGE_STORE_KEY = 'coremetry-range';
+function readStoredRange(): string | null {
+  try { return localStorage.getItem(RANGE_STORE_KEY); } catch { return null; }
+}
+function writeStoredRange(enc: string): void {
+  try { localStorage.setItem(RANGE_STORE_KEY, enc); } catch { /* private mode / quota */ }
+}
+
+// storedRangeString — public read of the persisted global range, for pages
+// that own a bespoke URL-range pipeline (Explore, Metrics) and only need to
+// INHERIT the cross-page window on first render without adopting the hook's
+// write path. Returns null when nothing's been picked yet. (UX pass #2.)
+export function storedRangeString(): string | null {
+  return readStoredRange();
+}
+
 export function useUrlRange(
   defaultPreset = '30m',
 ): [TimeRange, (r: TimeRange | ((prev: TimeRange) => TimeRange)) => void] {
   const [searchParams, setSearchParams] = useSearchParams();
   const raw = searchParams.get('range');
+  const effective = raw ?? readStoredRange() ?? defaultPreset;
 
   const range = useMemo(
-    () => decodeRange(raw, { preset: defaultPreset }),
-    [raw, defaultPreset],
+    () => decodeRange(effective, { preset: defaultPreset }),
+    [effective, defaultPreset],
   );
 
   const setRange = useCallback(
@@ -44,14 +70,11 @@ export function useUrlRange(
       setSearchParams(
         prev => {
           const next = new URLSearchParams(prev);
-          const curr = decodeRange(prev.get('range'), { preset: defaultPreset });
+          const curr = decodeRange(prev.get('range') ?? readStoredRange(), { preset: defaultPreset });
           const val = typeof r === 'function' ? r(curr) : r;
           const enc = encodeRange(val);
-          if (enc === defaultPreset) {
-            next.delete('range');
-          } else {
-            next.set('range', enc);
-          }
+          writeStoredRange(enc);   // persist globally → cross-page continuity
+          next.set('range', enc);  // reflect in the URL → shareable + back/forward
           return next;
         },
         { replace: true },

@@ -11,6 +11,7 @@ import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
@@ -61,7 +62,8 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
 
 export default function EndpointsPage() {
   const [params, setParams] = useSearchParams();
-  const [range, setRange] = useState<TimeRange>({ preset: '30m' });
+  // Global time window (UX#2) — URL-persisted + carried across pages.
+  const [range, setRange] = useUrlRange('30m');
   const [rows, setRows] = useState<EndpointRow[] | null | undefined>(undefined);
   const [search, setSearch] = useState(() => params.get('search') ?? '');
   const [clusterOptions, setClusterOptions] = useState<string[]>([]);

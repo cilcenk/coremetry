@@ -9,12 +9,14 @@ import type { ProfileFrameKind, ProfileCategoryBreakdown } from '@/lib/types';
 // IO    → blue    (syscall / network wait)
 // Sleep → grey    (intentional pause)
 // GC    → orange  (runtime overhead — JVM GC, Go gc, etc.)
+// Token-mapped (theme-adaptive): the raw values were an exact match for
+// these globals.css tokens, so the badge now flips correctly in light/dark.
 const COLORS: Record<ProfileFrameKind, string> = {
-  cpu:   '#3fb950',
-  lock:  '#E30613',
-  io:    '#4d96ff',
-  sleep: '#8b949e',
-  gc:    '#f0883e',
+  cpu:   'var(--ok)',
+  lock:  'var(--brand)',
+  io:    'var(--accent)',
+  sleep: 'var(--text2)',
+  gc:    'var(--orange)',
 };
 
 const LABELS: Record<ProfileFrameKind, string> = {

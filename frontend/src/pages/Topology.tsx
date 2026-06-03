@@ -1944,11 +1944,11 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const inCritPath = critPathEdges?.has(`${e.parentService}|${e.childNode}|${e.protocol}`) ?? false;
           let strokeOverride = color;
           const errRate = e.errorRate ?? 0;
-          if (inCritPath) strokeOverride = '#dc2626';
-          else if (errRate >= 5) strokeOverride = '#dc2626';
-          else if (errRate >= 1) strokeOverride = '#d97706';
-          else if (e.p99Ms > 1000) strokeOverride = '#dc2626';
-          else if (e.p99Ms > 250) strokeOverride = '#d97706';
+          if (inCritPath) strokeOverride = 'var(--err)';
+          else if (errRate >= 5) strokeOverride = 'var(--err)';
+          else if (errRate >= 1) strokeOverride = 'var(--warn)';
+          else if (e.p99Ms > 1000) strokeOverride = 'var(--err)';
+          else if (e.p99Ms > 250) strokeOverride = 'var(--warn)';
           const p99 = e.p99Ms > 0 ? ` · p99 ${e.p99Ms.toFixed(0)}ms` : '';
           const errSuffix = (e.errors ?? 0) > 0
             ? ` · ${fmtNum(e.errors)} err${errRate >= 0.01 ? ` (${errRate.toFixed(1)}%)` : ''}`
@@ -2050,7 +2050,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                 const h = n.health ?? (hasIncident ? 'red' : '');
                 if (!h || h === 'green') return null;
                 const isRed = h === 'red';
-                const color = isRed ? '#dc2626' : '#d97706';
+                const color = isRed ? 'var(--err)' : 'var(--warn)';
                 return (
                   <rect x={-3} y={-3} width={NODE_W + 6} height={NODE_H + 6}
                     rx={10} ry={10} fill="none"
@@ -2129,9 +2129,9 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                     onIncidentClick(n);
                   } : undefined}>
                   <circle cx={NODE_W - 30} cy={36} r={8}
-                    fill="#dc2626" fillOpacity={0.18} stroke="#dc2626" strokeWidth={1.2} />
+                    fill="var(--err)" fillOpacity={0.18} stroke="var(--err)" strokeWidth={1.2} />
                   <text x={NODE_W - 30} y={40} fontSize={10} fontWeight={700}
-                    fill="#dc2626" textAnchor="middle">!</text>
+                    fill="var(--err)" textAnchor="middle">!</text>
                 </g>
               )}
               {/* Runbook quick-jump (v0.5.155). Only services have
@@ -2454,8 +2454,8 @@ function EdgeDetailPanel({ edge, onClose, range, simplified }: {
                     <td style={{ textAlign: 'right' }}>{fmtNum(r.calls)}</td>
                     <td style={{ textAlign: 'right' }}>{r.avgMs.toFixed(1)}</td>
                     <td style={{ textAlign: 'right',
-                      color: r.p99Ms > 1000 ? '#dc2626'
-                        : r.p99Ms > 250 ? '#d97706'
+                      color: r.p99Ms > 1000 ? 'var(--err)'
+                        : r.p99Ms > 250 ? 'var(--warn)'
                         : undefined }}>
                       {r.p99Ms.toFixed(0)}
                     </td>
@@ -2674,7 +2674,7 @@ function IncidentDrawer({ service, onClose }: {
           padding: '14px 18px', borderBottom: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', gap: 10,
         }}>
-          <span style={{ color: '#dc2626', fontSize: 16 }}>●</span>
+          <span style={{ color: 'var(--err)', fontSize: 16 }}>●</span>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Open problems</div>
           <Link to={`/service?name=${encodeURIComponent(service)}`}
             style={{ fontSize: 12, color: 'var(--text2)' }}>

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { ServiceAttrRow, TimeRange } from '@/lib/types';
 
 // ServiceAttrsPanel — v0.5.381. Surfaces "what attrs is my
@@ -74,8 +76,8 @@ export function ServiceAttrsPanel({ service, range }: {
                    background: 'var(--bg)', color: 'var(--text)',
                    border: '1px solid var(--border)', borderRadius: 4 }} />
       </div>
-      <AttrSection title="Resource attrs (stable per-process)" rows={resAttrs} />
-      <AttrSection title="Span attrs (per-request)" rows={spanAttrs} />
+      <AttrSection title="Resource attrs (stable per-process)" rows={resAttrs} storageKey="svc-attrs-resource" />
+      <AttrSection title="Span attrs (per-request)" rows={spanAttrs} storageKey="svc-attrs-span" />
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
         Sampled across up to 5k recent spans. Sample values shown
         per key (max 5). Resource attrs make stable filter keys;
@@ -85,7 +87,19 @@ export function ServiceAttrsPanel({ service, range }: {
   );
 }
 
-function AttrSection({ title, rows }: { title: string; rows: ServiceAttrRow[] }) {
+// Sortable + resizable columns (shared useDataTable primitive). Sample
+// values omits sortValue → not sortable, but still column-resizable.
+const ATTR_COLS: DataTableColumn<ServiceAttrRow>[] = [
+  { id: 'key',          label: 'Key',          sortValue: r => r.key,         naturalDir: 'asc', width: 280 },
+  { id: 'occurrences',  label: 'Occurrences',  sortValue: r => r.occurrences, numeric: true,     width: 120 },
+  { id: 'sampleValues', label: 'Sample values' },
+];
+
+function AttrSection({ title, rows, storageKey }: { title: string; rows: ServiceAttrRow[]; storageKey: string }) {
+  const dt = useDataTable<ServiceAttrRow>({
+    storageKey, columns: ATTR_COLS, rows,
+    initialSort: { id: 'occurrences', dir: 'desc' },
+  });
   if (rows.length === 0) return null;
   return (
     <div style={{ marginTop: 6 }}>
@@ -94,16 +108,11 @@ function AttrSection({ title, rows }: { title: string; rows: ServiceAttrRow[] })
         {title}
       </div>
       <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th className="num" style={{ width: 100 }}>Occurrences</th>
-              <th>Sample values</th>
-            </tr>
-          </thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} />
+          <DataTableHead dt={dt} />
           <tbody>
-            {rows.map(r => (
+            {dt.sortedRows.map(r => (
               <tr key={`${r.scope}:${r.key}`}
                   style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
                 <td className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>{r.key}</td>

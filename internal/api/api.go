@@ -396,6 +396,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/messaging/detail", s.getMessagingDetail)
 	mux.HandleFunc("GET /api/services/{name}/backtrace", s.getServiceBacktrace)
 	mux.HandleFunc("GET /api/services/{name}/infra",     s.getServiceInfraMetrics)
+	mux.HandleFunc("GET /api/services/{name}/instances", s.getServiceInstances)
 	mux.HandleFunc("GET /api/services/{name}/runtime",   s.getServiceRuntime)
 	mux.HandleFunc("GET /api/services/{name}/db-queries", s.getServiceDBQueries)
 	mux.HandleFunc("GET /api/services/{name}/deploys", s.getServiceDeploys)
@@ -1526,6 +1527,25 @@ func (s *Server) getServiceInfraMetrics(w http.ResponseWriter, r *http.Request) 
 	key := fmt.Sprintf("infra-metrics:svc=%s:since=%s", name, since)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.GetInfraMetrics(r.Context(), name, since, 0)
+	})
+}
+
+// getServiceInstances returns one row per pod/host emitting metrics for the
+// service — latest CPU% / memory (and memory % when a limit is reported) per
+// host_name. Powers the per-pod "Instances" card on the Service Overview tab.
+// One bounded metric_points query (no raw-spans scan). 30s cache.
+func (s *Server) getServiceInstances(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+	since := parseDuration(r.URL.Query().Get("since"), 15*time.Minute)
+	to := time.Now()
+	from := to.Add(-since)
+	key := fmt.Sprintf("svc-instances:svc=%s:since=%s", name, since)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.ServiceInstances(r.Context(), name, from, to)
 	})
 }
 

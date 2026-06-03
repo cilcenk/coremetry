@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ServiceMap, ServiceMapNode } from '@/lib/types';
-import { hashColor } from '@/lib/utils';
+import { hashColor, isMessagingDep } from '@/lib/utils';
 
 // ServiceMapGraph renders {nodes, edges} as an SVG graph. Two
 // layout modes:
@@ -36,23 +36,26 @@ export function ServiceMapGraph({
 
   // Topology shows SYNCHRONOUS call edges only — service→service
   // (grpc / http / rest / soap), service→external, and service→db
-  // (redis / postgres / oracle …). Messaging nodes (kind:"queue" →
-  // kafka / rabbitmq / sqs) are excluded: a single broadcast topic
-  // fans in/out to dozens of unrelated producers + consumers, which
-  // the force sim can't separate, so the whole graph collapses into
-  // an unreadable hairball ("kafka message devreye girince topoloji
-  // saçmalıyor"). Messaging has its own /messaging surface. Drop the
-  // queue nodes AND every edge that touches one so no dangling stub
-  // arrows remain. No-op (returns the same identity) when the sample
-  // has no queue nodes — keeps the layout memo stable.
+  // (redis / postgres / oracle …). Messaging broker nodes are excluded:
+  // a single broadcast topic fans in/out to dozens of unrelated
+  // producers + consumers, which the force sim can't separate, so the
+  // whole graph collapses into an unreadable hairball ("kafka message
+  // devreye girince topoloji saçmalıyor"). The broker may arrive as a
+  // messaging.system node (kind:"queue") OR — as in the demo — as a
+  // peer.service'd external (`ext:kafka`, kind:"external"/subkind:
+  // "kafka"); isMessagingDep() catches both while keeping real external
+  // HTTP deps (ext:auth-service, ext:email-service). Drop the broker
+  // node AND every edge touching it so no dangling stub arrows remain.
+  // No-op (same identity) when the sample has no broker — memo stays
+  // stable. Messaging keeps its own /messaging surface.
   const data = useMemo<ServiceMap>(() => {
-    if (!rawData.nodes.some(n => n.kind === 'queue')) return rawData;
+    if (!rawData.nodes.some(n => isMessagingDep(n.kind, n.subkind))) return rawData;
     const drop = new Set(
-      rawData.nodes.filter(n => n.kind === 'queue').map(n => n.service),
+      rawData.nodes.filter(n => isMessagingDep(n.kind, n.subkind)).map(n => n.service),
     );
     return {
       ...rawData,
-      nodes: rawData.nodes.filter(n => n.kind !== 'queue'),
+      nodes: rawData.nodes.filter(n => !drop.has(n.service)),
       edges: rawData.edges.filter(e => !drop.has(e.caller) && !drop.has(e.callee)),
     };
   }, [rawData]);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { AggSpanNode } from '@/lib/types';
-import { fmtNum } from '@/lib/utils';
+import { fmtNum, isMessagingDep } from '@/lib/utils';
 
 // Strip the topology node prefix ("db:h2" → "h2", "queue:orders" → "orders").
 function cleanName(raw: string): string {
@@ -197,13 +197,17 @@ function buildGraph(roots: AggSpanNode[]): {
   };
   for (const r of roots) walk(r, null);
 
-  // Drop messaging nodes (kafka / rabbitmq / sqs — inferKind → "queue")
-  // and any edge that touches one. A broadcast topic links dozens of
-  // unrelated producers + consumers, which explodes the BFS-depth
-  // columns into noise ("topoloji saçmalıyor"). Topology stays
-  // synchronous-call only: service→service + service→db/redis.
+  // Drop messaging-broker nodes (kafka / rabbitmq / sqs …) and any edge
+  // touching one. A broadcast topic links dozens of unrelated producers
+  // + consumers, which explodes the BFS-depth columns into noise
+  // ("topoloji saçmalıyor"). The broker may be inferKind→"queue" or a
+  // peer.service'd node like "ext:kafka" (cleanName → "kafka"), so match
+  // both. Topology stays synchronous-call only: service→service +
+  // service→db/redis.
   const dropped = new Set(
-    Array.from(svcAgg.values()).filter(s => s.kind === 'queue').map(s => s.name),
+    Array.from(svcAgg.values())
+      .filter(s => s.kind === 'queue' || isMessagingDep(undefined, cleanName(s.name)))
+      .map(s => s.name),
   );
   const services = Array.from(svcAgg.values())
     .filter(s => !dropped.has(s.name))

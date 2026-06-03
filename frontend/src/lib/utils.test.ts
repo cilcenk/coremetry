@@ -6,6 +6,7 @@ import {
   fmtBytes,
   fmtNs,
   fmtNum,
+  isMessagingDep,
   substituteVars,
   timeRangeToNs,
 } from './utils';
@@ -176,5 +177,45 @@ describe('displaySpanName (OTel span-name enrichment)', () => {
 
   it('leaves an already-descriptive name untouched', () => {
     expect(displaySpanName({ name: 'SELECT users', attributes: {} })).toBe('SELECT users');
+  });
+});
+
+describe('isMessagingDep', () => {
+  // v0.7.120 shipped a topology kafka-exclusion filter keyed on kind==='queue'.
+  // The demo's kafka node is actually {kind:'external', subkind:'kafka'} (a
+  // peer.service'd broker), so the v0.7.120 filter matched nothing and kafka
+  // stayed on the graph — caught by runtime screenshot, fixed in v0.7.121.
+  // This pins the broker matcher: catch messaging brokers however the backend
+  // labels them, WITHOUT dropping real external HTTP deps or services that
+  // merely contain a broker substring.
+  it('matches the messaging.system queue kind regardless of subkind', () => {
+    expect(isMessagingDep('queue', 'orders')).toBe(true);
+    expect(isMessagingDep('queue', undefined)).toBe(true);
+  });
+
+  it('matches a peer.service external broker by subkind (the v0.7.120 miss)', () => {
+    expect(isMessagingDep('external', 'kafka')).toBe(true);
+    expect(isMessagingDep('external', 'kafka-broker-1')).toBe(true);
+    expect(isMessagingDep('external', 'RabbitMQ')).toBe(true);
+    expect(isMessagingDep('external', 'sqs')).toBe(true);
+  });
+
+  it('keeps real external HTTP deps (the ones the operator wants shown)', () => {
+    expect(isMessagingDep('external', 'auth-service')).toBe(false);
+    expect(isMessagingDep('external', 'email-service')).toBe(false);
+    expect(isMessagingDep('external', 'payments-api')).toBe(false);
+  });
+
+  it('keeps services and databases', () => {
+    expect(isMessagingDep(undefined, undefined)).toBe(false);
+    expect(isMessagingDep('', undefined)).toBe(false);
+    expect(isMessagingDep('db', 'redis')).toBe(false);
+    expect(isMessagingDep('db', 'oracle')).toBe(false);
+  });
+
+  it('is anchored — a service merely containing a broker substring is NOT messaging', () => {
+    // "payment-sqs-service" is a real HTTP service, not the SQS broker.
+    expect(isMessagingDep('external', 'payment-sqs-service')).toBe(false);
+    expect(isMessagingDep('external', 'my-kafka-proxy')).toBe(false);
   });
 });

@@ -191,6 +191,25 @@ export function hashColor(s: string): string {
   return COLORS[Math.abs(h) % COLORS.length];
 }
 
+// Known messaging brokers. A topology node is "messaging" when the
+// backend classified it as a messaging.system (kind:"queue") OR it
+// landed as a peer.service'd external whose name is a broker (e.g.
+// the demo's `ext:kafka` → kind:"external", subkind:"kafka"). Anchored
+// so "kafka-broker-1" matches but "payment-sqs-service" (a real HTTP
+// service that merely contains a broker substring) does not.
+const MESSAGING_BROKER = /^(kafka|rabbitmq|rabbit|amqp|sqs|sns|pubsub|nats|activemq|kinesis|eventhubs?|servicebus|mqtt|pulsar|rocketmq|jms|stomp)\b/i;
+
+// isMessagingDep — true for messaging-broker dependency nodes, however
+// the backend labelled them. Topology views exclude these: a broadcast
+// topic fans in/out to dozens of unrelated producers + consumers, which
+// the layout can't separate ("kafka message devreye girince topoloji
+// saçmalıyor"). Messaging keeps its own /messaging surface. Synchronous
+// call edges (service→service grpc/http/rest/soap, service→db) stay.
+export function isMessagingDep(kind?: string, subkind?: string): boolean {
+  if (kind === 'queue') return true;
+  return !!subkind && MESSAGING_BROKER.test(subkind.trim());
+}
+
 const SEV = ['', 'TRACE', 'TRACE2', 'TRACE3', 'TRACE4', 'DEBUG', 'DEBUG2', 'DEBUG3', 'DEBUG4',
              'INFO', 'INFO2', 'INFO3', 'INFO4', 'WARN', 'WARN2', 'WARN3', 'WARN4',
              'ERROR', 'ERROR2', 'ERROR3', 'ERROR4', 'FATAL', 'FATAL2', 'FATAL3', 'FATAL4'];

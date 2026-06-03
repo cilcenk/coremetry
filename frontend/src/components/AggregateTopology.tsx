@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { AggSpanNode } from '@/lib/types';
 import { fmtNum } from '@/lib/utils';
 
@@ -91,14 +92,24 @@ export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
   const dotLevel = (er: number) => (er > 5 ? 'red' : er > 1 ? 'amber' : 'green');
   const near = (name: string) => !hot || hot === name || (adj.get(hot)?.has(name) ?? false);
   const totalDeps = graph.services.length - (graph.columns[0]?.length ?? 0);
+  const hops = Math.max(1, graph.columns.length - 1);
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-        <span>{graph.services.length} services · {totalDeps} dep{totalDeps === 1 ? '' : 's'} · {graph.edges.length} edge{graph.edges.length === 1 ? '' : 's'} · sampled traces</span>
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <span className="topo-dot green" />healthy
-          <span className="topo-dot amber" style={{ marginLeft: 10 }} />degraded
+      {/* Header — mirrors the Service "Topology" tab chrome so the
+          operator's eye doesn't recalibrate between the two views. */}
+      <div style={{ fontSize: 12, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 600, color: 'var(--text)' }}>{cleanName(focus)}</span>
+        <span style={{ color: 'var(--text3)' }}>neighborhood · {hops} hop{hops === 1 ? '' : 's'}</span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 14 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+            <span className="topo-dot green" />healthy
+            <span className="topo-dot amber" style={{ marginLeft: 8 }} />degraded
+          </span>
+          <Link to={`/topology?focus=${encodeURIComponent(focus)}`}
+            style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            Open full Topology →
+          </Link>
         </span>
       </div>
       <div className="topo" ref={wrapRef} style={{ height: H }}>
@@ -141,6 +152,10 @@ export function AggregateTopology({ roots }: { roots: AggSpanNode[] }) {
           );
         })}
       </div>
+      {/* Footer stats — service / dep / edge counts + sample note. */}
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
+        {graph.services.length} service{graph.services.length === 1 ? '' : 's'} · {totalDeps} dep{totalDeps === 1 ? '' : 's'} · {graph.edges.length} edge{graph.edges.length === 1 ? '' : 's'} · sampled traces
+      </div>
     </div>
   );
 }
@@ -182,14 +197,25 @@ function buildGraph(roots: AggSpanNode[]): {
   };
   for (const r of roots) walk(r, null);
 
+  // Drop messaging nodes (kafka / rabbitmq / sqs — inferKind → "queue")
+  // and any edge that touches one. A broadcast topic links dozens of
+  // unrelated producers + consumers, which explodes the BFS-depth
+  // columns into noise ("topoloji saçmalıyor"). Topology stays
+  // synchronous-call only: service→service + service→db/redis.
+  const dropped = new Set(
+    Array.from(svcAgg.values()).filter(s => s.kind === 'queue').map(s => s.name),
+  );
   const services = Array.from(svcAgg.values())
+    .filter(s => !dropped.has(s.name))
     .sort((a, b) => a.name.localeCompare(b.name));
   const edges: Edge[] = [];
   for (const [k, v] of edgeAgg.entries()) {
     const sep = k.indexOf('→');
+    const from = k.slice(0, sep), to = k.slice(sep + 1);
+    if (dropped.has(from) || dropped.has(to)) continue;
     edges.push({
-      from: k.slice(0, sep),
-      to: k.slice(sep + 1),
+      from,
+      to,
       calls: v.calls,
       avgMs: v.calls > 0 ? v.sumMs / v.calls : 0,
       errorCount: v.errs,

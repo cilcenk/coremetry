@@ -22,7 +22,7 @@ import { hashColor } from '@/lib/utils';
 // Hover-highlight: hovering a node dims everything outside its
 // own 1-hop neighbourhood, mirroring Datadog / Honeycomb.
 export function ServiceMapGraph({
-  data, focus, hoverNode, onHoverNode, onSelectNode, height = 560,
+  data: rawData, focus, hoverNode, onHoverNode, onSelectNode, height = 560,
 }: {
   data: ServiceMap;
   focus: string | null;
@@ -33,6 +33,29 @@ export function ServiceMapGraph({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
+
+  // Topology shows SYNCHRONOUS call edges only — service→service
+  // (grpc / http / rest / soap), service→external, and service→db
+  // (redis / postgres / oracle …). Messaging nodes (kind:"queue" →
+  // kafka / rabbitmq / sqs) are excluded: a single broadcast topic
+  // fans in/out to dozens of unrelated producers + consumers, which
+  // the force sim can't separate, so the whole graph collapses into
+  // an unreadable hairball ("kafka message devreye girince topoloji
+  // saçmalıyor"). Messaging has its own /messaging surface. Drop the
+  // queue nodes AND every edge that touches one so no dangling stub
+  // arrows remain. No-op (returns the same identity) when the sample
+  // has no queue nodes — keeps the layout memo stable.
+  const data = useMemo<ServiceMap>(() => {
+    if (!rawData.nodes.some(n => n.kind === 'queue')) return rawData;
+    const drop = new Set(
+      rawData.nodes.filter(n => n.kind === 'queue').map(n => n.service),
+    );
+    return {
+      ...rawData,
+      nodes: rawData.nodes.filter(n => n.kind !== 'queue'),
+      edges: rawData.edges.filter(e => !drop.has(e.caller) && !drop.has(e.callee)),
+    };
+  }, [rawData]);
 
   useEffect(() => {
     const el = wrapRef.current;

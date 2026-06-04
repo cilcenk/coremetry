@@ -66,14 +66,20 @@ export function LivePatternsPanel({
         .then(d => { if (!cancelled) setData(d ?? null); })
         .catch(() => { if (!cancelled) setData(null); });
     };
+    // Always fetch once so a collapsed panel still shows a count.
     fetchOnce();
-    // 30s poll; the server caches the agg for 60s so half of
-    // these are no-ops at the ES layer. v0.5.248 — pause when
-    // the tab is hidden so we don't run significant_text on a
-    // backgrounded operator session.
+    // v0.8.3 (operator-reported ES incident) — significant_text is the
+    // single most expensive ES agg. Only keep the 30s poll running while
+    // the panel is EXPANDED; a collapsed panel holds its last value and
+    // stops hammering ES. Combined with the existing document.hidden
+    // pause (v0.5.248). The server caches the agg for 60s so even while
+    // expanded half the polls are ES request_cache no-ops.
+    if (collapsed) {
+      return () => { cancelled = true; };
+    }
     const id = setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [collapsed]);
 
   if (!data) return null;
   // v0.5.390 — render a "still computing" hint when the backend

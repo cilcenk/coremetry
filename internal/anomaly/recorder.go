@@ -92,7 +92,13 @@ func (r *Recorder) tick(ctx context.Context) {
 	now := time.Now()
 
 	// ── Log-pattern anomalies ─────────────────────────────────
-	logHits, err := DetectLogPatterns(ctx, r.logs, r.window)
+	// v0.8.3 — bound JUST the ES-backed pattern detection with its own
+	// deadline (the rest of the tick is CH work that self-caps). Stops a
+	// slow significant_text/_msearch on the worker pod hanging against
+	// the process-lifetime ctx and double-loading the ES cluster.
+	logCtx, logCancel := context.WithTimeout(ctx, 30*time.Second)
+	logHits, err := DetectLogPatterns(logCtx, r.logs, r.window)
+	logCancel()
 	if err != nil {
 		log.Printf("[anomaly-recorder] log patterns: %v", err)
 	}

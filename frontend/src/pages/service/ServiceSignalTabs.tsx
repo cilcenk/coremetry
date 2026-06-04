@@ -123,6 +123,10 @@ export function ServiceLogsTab({ service, range }: { service: string; range: Tim
     queryFn: () => api.logs({ limit: 200, from, to, service, search: search || undefined }),
     enabled: !!service,
     staleTime: 15_000,
+    // v0.8.3 (operator-reported ES incident) — /api/logs is uncached and
+    // opens an ES Point-in-Time per call; a tab focus/reconnect shouldn't
+    // re-open one. The filter/range/search change still refetches via the key.
+    refetchOnWindowFocus: false,
   });
   const logs = useMemo(() => q.data?.logs ?? [], [q.data]);
 

@@ -92,6 +92,13 @@ func (p *Puller) tick(ctx context.Context) {
 		return
 	}
 
+	// v0.8.3 — per-tick deadline so a slow/hung ES Search on the worker
+	// pod can't pile up against the process-lifetime ctx (no-op on CH,
+	// which self-terminates; bounds the ES hang that double-loads the
+	// cluster alongside api-side traffic).
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	now := time.Now()
 	page, err := p.logs.Search(ctx, logstore.Filter{
 		From:  now.Add(-p.interval),

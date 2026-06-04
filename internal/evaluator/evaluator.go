@@ -549,6 +549,11 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 	if window == 0 {
 		window = time.Minute
 	}
+	// v0.8.3 — per-evaluation deadline so a slow ES Search for a
+	// log_query alert rule can't hang the evaluator goroutine against
+	// the process-lifetime ctx (no-op on CH; bounds the ES hang).
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	now := time.Now()
 	page, err := e.logs.Search(ctx, logstore.Filter{
 		Search: r.LogQuery,

@@ -151,6 +151,20 @@ func esTimeoutFromEnv(def string) string {
 	return def
 }
 
+// esTimeseriesTimeoutFromEnv is the Histogram sibling of
+// esTimeoutFromEnv (v0.8.3). Kept on its OWN env knob so the
+// timeseries/histogram ES soft-timeout isn't silently coupled to the
+// significant_text (*_PATTERNS_*) knob. Operator-reported: on an
+// external ES backend the logs histogram (date_histogram × ≤50
+// severity terms) ran unbounded and piled up api-pod goroutines under
+// the redesign's increased call rate; this caps the ES-side cost.
+func esTimeseriesTimeoutFromEnv(def string) string {
+	if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_TIMESERIES_ES_TIMEOUT")); v != "" {
+		return v
+	}
+	return def
+}
+
 // ESConfig is the operator-supplied connection + field-mapping spec for
 // an external Elasticsearch cluster. Field paths default to OTel-spec
 // names — most ECS / OTel-shipped indices already use these.
@@ -868,6 +882,24 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 	usePIT := pitID != ""
 
+	// v0.8.3 — close the PIT on EVERY path that doesn't hand it to the
+	// caller via a NextCursor. Pre-v0.8.3 the three error/early returns
+	// below (req.Do error, res.IsError, decode error) leaked the PIT for
+	// the full esPITKeepAlive (2m), pinning ES segment readers — an
+	// operator-reported amplifier of the ES-backend CPU/restart incident
+	// because /api/logs is uncached and opens a fresh PIT per call.
+	// retainPIT is flipped true only when a full page encodes the PIT
+	// into `next` (more pages may follow); a short (last) page and all
+	// error paths fall through to the deferred close. Background ctx so
+	// the close still fires if the request ctx was cancelled. closePIT
+	// is a best-effort no-op on an empty id.
+	retainPIT := false
+	defer func() {
+		if usePIT && !retainPIT {
+			s.closePIT(context.Background(), pitID)
+		}
+	}()
+
 	tiebreak := "_doc"
 	if usePIT {
 		tiebreak = "_shard_doc"
@@ -984,9 +1016,12 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	next := ""
 	if len(out) == limit {
 		next = encodeESCursor(pitID, lastSort)
-	} else if usePIT {
-		s.closePIT(ctx, pitID)
+		// Handed to the caller — the next search_after page needs this
+		// PIT alive, so don't let the deferred close fire (v0.8.3).
+		retainPIT = true
 	}
+	// Short (last) page or no PIT: the deferred close releases it now
+	// rather than waiting out the keep_alive.
 	// Diagnostic: when a trace/span ID search returns zero
 	// hits, log the exact request body + index hit. The
 	// operator can grep server logs for "[es-debug]" to see
@@ -1008,23 +1043,49 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 // custom shipping pipelines (Vector, Filebeat, OTel ECS mode)
 // don't need the operator to re-index. Single round-trip; ES
 // handles bucketing server-side and we just stitch the response.
-func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error) {
-	if bucketSec <= 0 {
-		bucketSec = 30
-	}
-	groupField := ""
+// histogramGroupField maps a groupBy selector to the ES keyword field
+// it aggregates on. Empty string = no grouping (total-only histogram).
+func (s *ESStore) histogramGroupField(groupBy string) string {
 	switch groupBy {
 	case "service":
-		groupField = s.fields.Service + ".keyword"
+		return s.fields.Service + ".keyword"
 	case "severity":
-		groupField = s.fields.SeverityTx + ".keyword"
+		return s.fields.SeverityTx + ".keyword"
 	}
+	return ""
+}
 
+// buildHistogramBody constructs the ES _search body for the logs
+// timeseries histogram. Extracted as a PURE function (v0.8.3) so the
+// guards below are unit-testable without a live ES — see
+// elasticsearch_histogram_test.go.
+//
+// Operator-reported (v0.8.3): on an external ES backend the logs
+// histogram drove a continuous api-pod CPU climb to pod restart, while
+// the identical query on the bundled ClickHouse backend was fine. Root
+// cause was a 3-way divergence from the CH path (clickhouse.go Histogram
+// is sparse + group-capped + max_execution_time=30):
+//   - min_doc_count:0 forced ES to materialise EVERY interval in the
+//     window as a bucket, once per severity term (≤50) + the total
+//     band — a dense (window/bucket)×51 grid the api pod then parsed
+//     into a LogPoint each. CH only ever returns non-empty buckets.
+//   - No "timeout" (significant_text already has one) so a slow agg on
+//     a billion-doc index held the coordinator slot + pooled HTTP
+//     connection to the full caller deadline.
+//   - No track_total_hits:false / request_cache, so identical repeats
+//     (redundant volumeQ+LogsHistogram, refocus, polls) recomputed.
+// Fix: min_doc_count:1 (match CH sparseness — visually identical, the
+// stacked builders union present timestamps and fill 0), add the ES
+// soft-timeout, drop track_total_hits, enable request_cache.
+func buildHistogramBody(query any, timestampField, groupField string, bucketSec int, esTimeout string) map[string]any {
 	dateAgg := map[string]any{
 		"date_histogram": map[string]any{
-			"field":          s.fields.Timestamp,
+			"field":          timestampField,
 			"fixed_interval": fmt.Sprintf("%ds", bucketSec),
-			"min_doc_count":  0,
+			// v0.8.3 — was 0. 0 materialises every empty interval per
+			// severity term; the CH path never does this. 1 = parity
+			// with CH's sparse output (stacked builders fill gaps with 0).
+			"min_doc_count": 1,
 		},
 	}
 	var aggs map[string]any
@@ -1062,12 +1123,26 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	} else {
 		aggs = map[string]any{"buckets": dateAgg}
 	}
-
-	body, err := json.Marshal(map[string]any{
+	return map[string]any{
 		"size":  0,
-		"query": s.buildQuery(f),
+		"query": query,
 		"aggs":  aggs,
-	})
+		// v0.8.3 — match SignificantPatterns' ES-cost guards.
+		"track_total_hits": false,
+		"timeout":          esTimeout,
+	}
+}
+
+func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error) {
+	if bucketSec <= 0 {
+		bucketSec = 30
+	}
+	groupField := s.histogramGroupField(groupBy)
+
+	body, err := json.Marshal(buildHistogramBody(
+		s.buildQuery(f), s.fields.Timestamp, groupField, bucketSec,
+		esTimeseriesTimeoutFromEnv("10s"),
+	))
 	if err != nil {
 		return nil, err
 	}
@@ -1080,6 +1155,11 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		// "no data" instead of a scary error toast.
 		AllowNoIndices:    &tru,
 		IgnoreUnavailable: &tru,
+		// v0.8.3 — ES coordinator caches the agg output keyed by body
+		// shape, so identical follow-up hits (redundant panels,
+		// refocus, polls) return from ES's own cache instead of
+		// recomputing. Mirrors SignificantPatterns.
+		RequestCache: &tru,
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {

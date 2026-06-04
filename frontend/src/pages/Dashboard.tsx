@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { PanelRenderer, applyVarsToMetric, applyVarsToSpan, type PanelDataOverride } from '@/components/dashboard/PanelRenderer';
 import { PanelEditor, defaultConfig } from '@/components/dashboard/PanelEditor';
@@ -257,8 +258,8 @@ function Inner() {
                 style={{ width: 320 }} />
               <AddPanelMenu onAdd={addPanel} />
               <span style={{ marginLeft: 'auto' }} />
-              <button className="sec" onClick={cancel}>Cancel</button>
-              <button onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+              <Button variant="secondary" onClick={cancel}>Cancel</Button>
+              <Button onClick={save} loading={busy}>Save</Button>
             </>
           ) : (
             <>
@@ -268,13 +269,12 @@ function Inner() {
               <span style={{ marginLeft: 'auto' }} />
               {/* Export is read-only → available to every role so a
                   viewer can grab a board to share / version. */}
-              <button className="sec" onClick={exportDashboard}
-                title="Download this dashboard as a portable JSON file">↓ Export JSON</button>
+              <Button variant="secondary" onClick={exportDashboard}
+                title="Download this dashboard as a portable JSON file">↓ Export JSON</Button>
               {isAdmin && (
                 <>
-                  <button className="sec" onClick={removeDashboard}
-                    style={{ color: 'var(--err)' }}>Delete</button>
-                  <button onClick={() => setEditing(true)}>Edit</button>
+                  <Button variant="danger" onClick={removeDashboard}>Delete</Button>
+                  <Button onClick={() => setEditing(true)}>Edit</Button>
                 </>
               )}
             </>
@@ -337,30 +337,32 @@ function Inner() {
 
 function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
   const [open, setOpen] = useState(false);
+  const labels: Record<PanelType, string> = {
+    row: 'Row (section header)',
+    metric: 'Metric (line)',
+    spanmetric: 'Span aggregation (line)',
+    stat: 'Stat (single value)',
+    gauge: 'Gauge',
+    markdown: 'Markdown / notes',
+  };
   return (
     <div style={{ position: 'relative' }}>
-      <button onClick={() => setOpen(o => !o)}>+ Add panel</button>
+      <Button variant="secondary" onClick={() => setOpen(o => !o)}>+ Add panel</Button>
       {open && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, marginTop: 4,
-          background: 'var(--bg2)', border: '1px solid var(--border)',
+          background: 'var(--bg1)', border: '1px solid var(--border)',
           borderRadius: 6, padding: 4, zIndex: 50, minWidth: 180,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          boxShadow: 'var(--shadow-pop)',
         }}>
           {(['row', 'metric', 'spanmetric', 'stat', 'markdown'] as PanelType[]).map(t => (
-            <button key={t}
+            <button key={t} className="ghost"
               onClick={() => { onAdd(t); setOpen(false); }}
               style={{
                 display: 'block', width: '100%', textAlign: 'left',
-                padding: '6px 10px', background: 'transparent', border: 'none',
-                color: 'var(--text2)', fontSize: 13, cursor: 'pointer',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-              {t === 'metric' && 'Metric (line)'}
-              {t === 'spanmetric' && 'Span aggregation (line)'}
-              {t === 'stat' && 'Stat (single value)'}
-              {t === 'markdown' && 'Markdown / notes'}
+                borderRadius: 4, fontWeight: 400,
+              }}>
+              {labels[t]}
             </button>
           ))}
         </div>
@@ -474,11 +476,11 @@ function DashboardGrid({
                   {g.panels.length} panel{g.panels.length === 1 ? '' : 's'}
                 </span>
                 {editing && (
-                  <span style={{ marginLeft: 8, display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
-                    <button className="sec" onClick={() => g.rowPanel && onEditPanel(g.rowPanel.id)}
-                      style={{ padding: '2px 7px', fontSize: 11 }}>Edit</button>
-                    <button className="sec" onClick={() => g.rowPanel && onDeletePanel(g.rowPanel.id)}
-                      style={{ padding: '2px 7px', fontSize: 11, color: 'var(--err)' }}>×</button>
+                  <span className="row gap-1" style={{ marginLeft: 8 }} onClick={e => e.stopPropagation()}>
+                    <Button variant="secondary" size="sm"
+                      onClick={() => g.rowPanel && onEditPanel(g.rowPanel.id)}>Edit</Button>
+                    <Button variant="danger" size="sm" title="Delete row"
+                      onClick={() => g.rowPanel && onDeletePanel(g.rowPanel.id)}>×</Button>
                   </span>
                 )}
               </div>
@@ -525,43 +527,42 @@ function DashboardGrid({
                       opacity: 1,
                       transition: 'border-color 0.1s',
                     }}>
-                    <div style={{
-                      display: 'flex', alignItems: 'center', marginBottom: 6,
-                      fontSize: 12, color: 'var(--text2)',
+                    <div className="row-between" style={{
+                      marginBottom: 6, fontSize: 12, color: 'var(--text2)',
                     }}>
+                      <span className="row gap-2" style={{ minWidth: 0 }}>
+                        {editing && (
+                          <span title="Drag to reorder"
+                            style={{
+                              color: 'var(--text3)', fontSize: 14,
+                              cursor: 'grab', userSelect: 'none',
+                            }}>⋮⋮</span>
+                        )}
+                        <span style={{
+                          fontWeight: 600, color: 'var(--text)',
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>{p.title}</span>
+                        {/* v0.6.20 — range-override indicator. When
+                            a panel locks its own window, surface
+                            the preset next to the title so the
+                            operator doesn't wonder why the chart
+                            doesn't move with the Topbar picker.
+                            Empty when default (inherit dashboard
+                            range) — the page-level Topbar already
+                            shows that window. */}
+                        {p.rangeOverride?.preset && (
+                          <span className="badge b-info mono"
+                            title="This panel uses a fixed time range — overrides the dashboard Topbar">
+                            ↻ {p.rangeOverride.preset}
+                          </span>
+                        )}
+                      </span>
                       {editing && (
-                        <span title="Drag to reorder"
-                          style={{
-                            color: 'var(--text3)', fontSize: 14, marginRight: 6,
-                            cursor: 'grab', userSelect: 'none',
-                          }}>⋮⋮</span>
-                      )}
-                      <span style={{ fontWeight: 600, color: 'var(--text)' }}>{p.title}</span>
-                      {/* v0.6.20 — range-override indicator. When
-                          a panel locks its own window, surface
-                          the preset next to the title so the
-                          operator doesn't wonder why the chart
-                          doesn't move with the Topbar picker.
-                          Empty when default (inherit dashboard
-                          range) — the page-level Topbar already
-                          shows that window. */}
-                      {p.rangeOverride?.preset && (
-                        <span
-                          title="This panel uses a fixed time range — overrides the dashboard Topbar"
-                          style={{
-                            marginLeft: 8, fontSize: 10, padding: '1px 6px',
-                            borderRadius: 3, border: '1px solid var(--accent2)',
-                            color: 'var(--accent2)', fontFamily: 'ui-monospace, monospace',
-                          }}>
-                          ↻ {p.rangeOverride.preset}
-                        </span>
-                      )}
-                      {editing && (
-                        <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                          <button className="sec" onClick={() => onEditPanel(p.id)}
-                            style={{ padding: '2px 7px', fontSize: 11 }}>Edit</button>
-                          <button className="sec" onClick={() => onDeletePanel(p.id)}
-                            style={{ padding: '2px 7px', fontSize: 11, color: 'var(--err)' }}>×</button>
+                        <span className="row gap-1">
+                          <Button variant="secondary" size="sm"
+                            onClick={() => onEditPanel(p.id)}>Edit</Button>
+                          <Button variant="danger" size="sm" title="Delete panel"
+                            onClick={() => onDeletePanel(p.id)}>×</Button>
                         </span>
                       )}
                     </div>

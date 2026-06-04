@@ -47,9 +47,12 @@ export default function IncidentsPage() {
       : incidentsQ.data ?? [];
 
   // Shared sortable + resizable table (unconditional hook).
+  // onOpen wires the app-wide keyboard nav: j/k select a row,
+  // Enter/o open the incident detail.
   const dt = useDataTable<Incident>({
     storageKey: 'incidents', columns: INCIDENT_COLS,
     rows: items ?? [], initialSort: { id: 'started', dir: 'desc' },
+    onOpen: i => navigate(`/incident?id=${i.id}`),
   });
 
   const counts = { open: 0, acknowledged: 0, resolved: 0 };
@@ -90,8 +93,10 @@ export default function IncidentsPage() {
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />
               <tbody>
-                {dt.sortedRows.map(i => (
-                  <tr key={i.id} style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}
+                {dt.sortedRows.map((i, idx) => (
+                  <tr key={i.id} {...dt.rowProps(idx)}
+                      style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}
+                      onMouseEnter={() => dt.nav.setSelected(idx)}
                       onClick={() => navigate(`/incident?id=${i.id}`)}>
                     <td><StatusPill s={i.status} /></td>
                     <td><SeverityPill s={i.severity} /></td>

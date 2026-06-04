@@ -228,7 +228,7 @@ export function LogTable({
   const dt = useDataTable<LogRow>({ storageKey: 'logs', columns, rows: logs });
   return (
     <div className="table-wrap">
-      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+      <table className="logtbl-dense" style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} />
         <tbody>
@@ -305,7 +305,7 @@ function LogRow({
     <>
       <tr onClick={onClick}
           data-row-idx={idx}
-          className={selected ? 'row-selected' : ''}
+          className={`${selected ? 'row-selected ' : ''}${l.severity >= 17 ? 'log-error' : l.severity >= 13 ? 'log-warn' : ''}`.trim() || undefined}
           /* content-visibility lets the browser skip layout/paint of
              off-screen log rows — the table > 100 rows hard constraint.
              ~28px row; containIntrinsicSize reserves space so the

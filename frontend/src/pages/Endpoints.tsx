@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Zap } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -61,11 +62,14 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
 ];
 
 export default function EndpointsPage() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   // Global time window (UX#2) — URL-persisted + carried across pages.
   const [range, setRange] = useUrlRange('30m');
   const [rows, setRows] = useState<EndpointRow[] | null | undefined>(undefined);
   const [search, setSearch] = useState(() => params.get('search') ?? '');
+  // "/" focuses this filter via the shared table keyboard-nav.
+  const searchRef = useRef<HTMLInputElement>(null);
   const [clusterOptions, setClusterOptions] = useState<string[]>([]);
   const cluster = params.get('cluster') ?? '';
   const setCluster = (v: string) => setParams(prev => {
@@ -85,11 +89,15 @@ export default function EndpointsPage() {
     return next;
   }, { replace: true });
 
+  // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
+  // row, Enter/o open its service detail, "/" focuses the path filter.
   const dt = useDataTable<EndpointRow>({
     storageKey: 'endpoints',
     columns: ENDPOINT_COLS,
     rows: rows ?? [],
     initialSort: { id: 'calls', dir: 'desc' },
+    onOpen: r => navigate(`/service?name=${encodeURIComponent(r.service)}`),
+    searchRef,
   });
   // v0.5.389 — limit lifted to 2000 default, with an explicit
   // "load top 5000" toggle so the operator can pull the long
@@ -172,7 +180,7 @@ export default function EndpointsPage() {
         <div className="controls" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
           <ServicePicker value={service} onChange={setService}
             placeholder="All services…" width={200} />
-          <input value={search}
+          <input ref={searchRef} value={search}
             onChange={e => { setSearch(e.target.value); setSearchParam(e.target.value); }}
             placeholder="Filter by path (substring)…"
             style={{ width: 280, padding: '5px 10px', fontSize: 12,
@@ -236,12 +244,13 @@ export default function EndpointsPage() {
             title="Sort by composite impact (calls × p99 × (1+errorRate)) — fix-me-first list"
             style={{
               padding: '3px 8px', fontSize: 11, borderRadius: 4,
-              background: dt.sort.id === 'impact' ? 'rgba(56,139,253,0.15)' : 'var(--bg2)',
-              border: '1px solid ' + (dt.sort.id === 'impact' ? 'rgba(56,139,253,0.45)' : 'var(--border)'),
+              background: dt.sort.id === 'impact' ? 'var(--accent-soft)' : 'var(--bg2)',
+              border: '1px solid ' + (dt.sort.id === 'impact' ? 'var(--accent)' : 'var(--border)'),
               color: dt.sort.id === 'impact' ? 'var(--accent2)' : 'var(--text2)',
               cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: 5,
             }}>
-            ⚡ Worst by impact
+            <Zap size={12} strokeWidth={1.75} /> Worst by impact
           </button>
         </div>
 
@@ -283,7 +292,15 @@ export default function EndpointsPage() {
                     const isExpanded = expandedRows.has(rowKey);
                     return (
                       <React.Fragment key={rowKey}>
-                      <tr style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
+                      <tr {...dt.rowProps(i)}
+                        onMouseEnter={() => dt.nav.setSelected(i)}
+                        style={{
+                          contentVisibility: 'auto', containIntrinsicSize: 'auto 32px',
+                          // Subtle err tint on broken endpoints (prototype cue).
+                          background: r.errorRate >= 5
+                            ? 'color-mix(in srgb, var(--err) 7%, transparent)'
+                            : undefined,
+                        }}>
                         <td style={{ width: 22, textAlign: 'center' }}>
                           {/* v0.5.417 — dependency strip expander.
                               Click ▶ → fetches the service's
@@ -607,38 +624,18 @@ function StatusBreakdown({ r }: { r: EndpointRow }) {
     return <span style={{ color: 'var(--text3)', fontSize: 10 }}>—</span>;
   }
   return (
-    <span style={{ display: 'inline-flex', gap: 4, fontSize: 10, fontFamily: 'ui-monospace, monospace' }}>
+    <span style={{ display: 'inline-flex', gap: 4 }}>
       {s2 > 0 && (
-        <span title={`${s2.toLocaleString()} 2xx responses`}
-          style={{
-            padding: '1px 5px', borderRadius: 8,
-            background: 'rgba(34,197,94,0.10)', color: 'var(--ok)',
-            border: '1px solid rgba(34,197,94,0.30)',
-          }}>2xx {compactNum(s2)}</span>
+        <span className="badge b-ok" title={`${s2.toLocaleString()} 2xx responses`}>2xx {compactNum(s2)}</span>
       )}
       {s3 > 0 && (
-        <span title={`${s3.toLocaleString()} 3xx redirects`}
-          style={{
-            padding: '1px 5px', borderRadius: 8,
-            background: 'rgba(148,163,184,0.10)', color: 'var(--text2)',
-            border: '1px solid rgba(148,163,184,0.30)',
-          }}>3xx {compactNum(s3)}</span>
+        <span className="badge b-gray" title={`${s3.toLocaleString()} 3xx redirects`}>3xx {compactNum(s3)}</span>
       )}
       {s4 > 0 && (
-        <span title={`${s4.toLocaleString()} 4xx client errors`}
-          style={{
-            padding: '1px 5px', borderRadius: 8,
-            background: 'rgba(250,204,21,0.10)', color: 'var(--warn)',
-            border: '1px solid rgba(250,204,21,0.30)',
-          }}>4xx {compactNum(s4)}</span>
+        <span className="badge b-warn" title={`${s4.toLocaleString()} 4xx client errors`}>4xx {compactNum(s4)}</span>
       )}
       {s5 > 0 && (
-        <span title={`${s5.toLocaleString()} 5xx server errors`}
-          style={{
-            padding: '1px 5px', borderRadius: 8,
-            background: 'rgba(239,68,68,0.10)', color: 'var(--err)',
-            border: '1px solid rgba(239,68,68,0.30)',
-          }}>5xx {compactNum(s5)}</span>
+        <span className="badge b-err" title={`${s5.toLocaleString()} 5xx server errors`}>5xx {compactNum(s5)}</span>
       )}
     </span>
   );
@@ -729,11 +726,7 @@ function TrendDelta({ cur, prior, kind }: {
   if (prior === 0) {
     if (cur === 0) return null;
     return (
-      <span style={{
-        marginLeft: 4, fontSize: 9, padding: '0 4px',
-        borderRadius: 6, background: 'rgba(56,139,253,0.10)',
-        color: 'var(--accent2)',
-      }}>NEW</span>
+      <span className="badge b-info" style={{ marginLeft: 4, fontSize: 9 }}>NEW</span>
     );
   }
   const pct = ((cur - prior) / prior) * 100;

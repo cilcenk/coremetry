@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Users, Shield } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -63,6 +64,8 @@ export default function InboxPage() {
   const [serviceFilter, setServiceFilter] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
   const [sreFilter, setSreFilter] = useState('');
+  // "/" focuses this filter via the shared table keyboard-nav.
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const togglePrio = (p: string) => {
     setPrioSet(prev => {
@@ -111,9 +114,25 @@ export default function InboxPage() {
       kindSet.has(it.kind));
   }, [data, prioSet, kindSet]);
 
+  // Deep-link into the source surface with the specific row
+  // focused — Problems drawer for problems, expanded exception
+  // group, scrolled-to anomaly history row. Each destination
+  // page reads its respective query param on mount.
+  const goToSource = (it: InboxItem) => {
+    if (it.kind === 'problem' && it.problem) {
+      navigate(`/problems?problem=${encodeURIComponent(it.problem.id)}`);
+    } else if (it.kind === 'exception' && it.exception) {
+      navigate(`/problems?tab=open&exception=${encodeURIComponent(it.exception.fingerprint)}`);
+    } else if (it.kind === 'anomaly' && it.anomaly) {
+      navigate(`/anomalies?event=${encodeURIComponent(it.anomaly.id)}`);
+    }
+  };
+
   // Shared sortable + resizable table. Pre-sort by lastSeen desc so the
   // primitive's stable priority-desc sort reproduces the prior fixed
   // ordering (P1 first, newest within priority). Hook is unconditional.
+  // onOpen + searchRef wire the app-wide keyboard nav (j/k select,
+  // Enter/o open the source surface, "/" focuses the filter).
   const inboxRows = useMemo(
     () => (filtered ? [...filtered].sort((a, b) => b.lastSeen - a.lastSeen) : []),
     [filtered]);
@@ -122,6 +141,8 @@ export default function InboxPage() {
     columns: INBOX_COLS,
     rows: inboxRows,
     initialSort: { id: 'priority', dir: 'desc' },
+    onOpen: goToSource,
+    searchRef,
   });
 
   const counts = useMemo(() => {
@@ -151,20 +172,6 @@ export default function InboxPage() {
       sreOptions:   [...sres].sort(),
     };
   }, [data]);
-
-  // Deep-link into the source surface with the specific row
-  // focused — Problems drawer for problems, expanded exception
-  // group, scrolled-to anomaly history row. Each destination
-  // page reads its respective query param on mount.
-  const goToSource = (it: InboxItem) => {
-    if (it.kind === 'problem' && it.problem) {
-      navigate(`/problems?problem=${encodeURIComponent(it.problem.id)}`);
-    } else if (it.kind === 'exception' && it.exception) {
-      navigate(`/problems?tab=open&exception=${encodeURIComponent(it.exception.fingerprint)}`);
-    } else if (it.kind === 'anomaly' && it.anomaly) {
-      navigate(`/anomalies?event=${encodeURIComponent(it.anomaly.id)}`);
-    }
-  };
 
   return (
     <>
@@ -225,7 +232,7 @@ export default function InboxPage() {
                     all: 'unset', cursor: 'pointer',
                     fontSize: 11, padding: '2px 8px', borderRadius: 12,
                     border: `1px solid ${on ? 'var(--accent2)' : 'var(--border)'}`,
-                    background: on ? 'rgba(56,139,253,0.10)' : 'transparent',
+                    background: on ? 'var(--accent-soft)' : 'transparent',
                     color: on ? 'var(--accent2)' : 'var(--text3)',
                     fontWeight: on ? 600 : 400,
                   }}>
@@ -258,7 +265,7 @@ export default function InboxPage() {
             {sreOptions.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
 
-          <input value={serviceFilter}
+          <input ref={searchRef} value={serviceFilter}
             onChange={e => setServiceFilter(e.target.value)}
             placeholder="Filter by service…"
             style={{ fontSize: 12, padding: '4px 8px', minWidth: 180 }} />
@@ -279,9 +286,11 @@ export default function InboxPage() {
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />
               <tbody>
-                {dt.sortedRows.map(it => (
+                {dt.sortedRows.map((it, i) => (
                   <tr key={it.id}
+                    {...dt.rowProps(i)}
                     onClick={() => goToSource(it)}
+                    onMouseEnter={() => dt.nav.setSelected(i)}
                     style={{
                       cursor: 'pointer',
                       // content-visibility lets the browser skip
@@ -311,16 +320,10 @@ export default function InboxPage() {
                               title={ownerFilter === it.ownerTeam
                                 ? `Clear owner filter`
                                 : `Filter inbox to owner ${it.ownerTeam}`}
-                              style={{
-                                all: 'unset', cursor: 'pointer',
-                                fontSize: 10, padding: '1px 6px', borderRadius: 10,
-                                background: ownerFilter === it.ownerTeam
-                                  ? 'rgba(56,139,253,0.22)' : 'rgba(56,139,253,0.08)',
-                                border: '1px solid rgba(56,139,253,0.30)',
-                                color: 'var(--accent2)', whiteSpace: 'nowrap',
-                                fontWeight: ownerFilter === it.ownerTeam ? 600 : 400,
-                              }}>
-                              👥 {it.ownerTeam}
+                              style={{ all: 'unset', cursor: 'pointer' }}>
+                              <span className={`badge ${ownerFilter === it.ownerTeam ? 'b-info' : 'b-gray'}`}>
+                                <Users size={11} strokeWidth={1.75} /> {it.ownerTeam}
+                              </span>
                             </button>
                           )}
                           {it.sreTeam && (
@@ -332,16 +335,10 @@ export default function InboxPage() {
                               title={sreFilter === it.sreTeam
                                 ? `Clear SRE filter`
                                 : `Filter inbox to SRE ${it.sreTeam}`}
-                              style={{
-                                all: 'unset', cursor: 'pointer',
-                                fontSize: 10, padding: '1px 6px', borderRadius: 10,
-                                background: sreFilter === it.sreTeam
-                                  ? 'rgba(168,85,247,0.22)' : 'rgba(168,85,247,0.08)',
-                                border: '1px solid rgba(168,85,247,0.35)',
-                                color: 'var(--accent2)', whiteSpace: 'nowrap',
-                                fontWeight: sreFilter === it.sreTeam ? 600 : 400,
-                              }}>
-                              🛡 {it.sreTeam}
+                              style={{ all: 'unset', cursor: 'pointer' }}>
+                              <span className={`badge ${sreFilter === it.sreTeam ? 'b-info' : 'b-gray'}`}>
+                                <Shield size={11} strokeWidth={1.75} /> {it.sreTeam}
+                              </span>
                             </button>
                           )}
                         </div>
@@ -368,22 +365,12 @@ export default function InboxPage() {
   );
 }
 
-// PriorityBadge — same palette as the Problems-page badge so
-// operators don't have to relearn the colour code.
+// PriorityBadge — shared .badge tokens so operators read the same
+// colour code as the Problems page (P1 err / P2 warn / P3 gray).
 function PriorityBadge({ p, reason }: { p: 'P1' | 'P2' | 'P3'; reason?: string }) {
-  const palette = p === 'P1'
-    ? { bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.55)', color: 'var(--err)' }
-    : p === 'P2'
-      ? { bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.45)', color: 'var(--warn)' }
-      : { bg: 'rgba(148,163,184,0.10)', border: 'rgba(148,163,184,0.30)', color: 'var(--text3)' };
+  const cls = p === 'P1' ? 'b-err' : p === 'P2' ? 'b-warn' : 'b-gray';
   return (
-    <span title={reason ? `${p} — ${reason}` : p}
-      style={{
-        padding: '2px 8px', borderRadius: 12,
-        fontSize: 11, fontWeight: 700,
-        background: palette.bg, border: `1px solid ${palette.border}`,
-        color: palette.color, whiteSpace: 'nowrap',
-      }}>
+    <span className={`badge ${cls}`} title={reason ? `${p} — ${reason}` : p}>
       {p}
     </span>
   );
@@ -392,13 +379,8 @@ function PriorityBadge({ p, reason }: { p: 'P1' | 'P2' | 'P3'; reason?: string }
 function AssigneePill({ v }: { v: string }) {
   const isTeam = !v.includes('@');
   return (
-    <span style={{
-      fontSize: 11, padding: '2px 8px', borderRadius: 12,
-      background: isTeam ? 'rgba(56,139,253,0.10)' : 'rgba(168,85,247,0.10)',
-      border: `1px solid ${isTeam ? 'rgba(56,139,253,0.35)' : 'rgba(168,85,247,0.35)'}`,
-      color: 'var(--accent2)', whiteSpace: 'nowrap',
-    }}>
-      {isTeam ? '👥 ' : ''}{v}
+    <span className="badge b-info">
+      {isTeam && <Users size={11} strokeWidth={1.75} />}{v}
     </span>
   );
 }

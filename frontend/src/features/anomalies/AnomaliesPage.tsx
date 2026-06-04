@@ -9,6 +9,7 @@ import { CopilotExplain } from '@/components/CopilotExplain';
 import { ClusterChips } from '@/components/ClusterChips';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { RootCausePanel } from '@/components/RootCausePanel';
+import { ArrowDownToLine, Users } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, keys } from '@/lib/queries';
@@ -769,7 +770,13 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                       }}
                       tabIndex={0}
                       role="button"
-                      style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 44px' }}>
+                      style={{
+                        cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 44px',
+                        // Subtle err tint on open critical firings (prototype cue).
+                        background: p.status === 'open' && p.severity === 'critical'
+                          ? 'color-mix(in srgb, var(--err) 7%, transparent)'
+                          : undefined,
+                      }}>
                       <td onClick={e => e.stopPropagation()}>
                         <input type="checkbox"
                           checked={selectedIds.has(p.id)}
@@ -806,14 +813,8 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           <a href={p.runbookUrl} target="_blank" rel="noopener"
                             onClick={e => e.stopPropagation()}
                             title="Open team runbook"
-                            style={{
-                              marginLeft: 8, fontSize: 11,
-                              padding: '2px 8px', borderRadius: 12,
-                              background: 'rgba(56,139,253,0.10)',
-                              border: '1px solid rgba(56,139,253,0.35)',
-                              color: 'var(--accent2)', textDecoration: 'none',
-                              whiteSpace: 'nowrap',
-                            }}>
+                            className="badge b-info"
+                            style={{ marginLeft: 8, textDecoration: 'none' }}>
                             Runbook ↗
                           </a>
                         )}
@@ -824,18 +825,11 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           // "regression coincided with deploy" signal
                           // in a single chip. Amber so it visually
                           // codes as "warning, look here".
-                          <span
+                          <span className="badge b-warn"
                             onClick={e => e.stopPropagation()}
                             title={`service.version=${p.recentDeploy.version} first seen ${fmtAge(p.recentDeploy.ageSeconds)} before this problem opened`}
-                            style={{
-                              marginLeft: 8, fontSize: 11,
-                              padding: '2px 8px', borderRadius: 12,
-                              background: 'rgba(250,204,21,0.10)',
-                              border: '1px solid rgba(250,204,21,0.40)',
-                              color: 'var(--warn)',
-                              whiteSpace: 'nowrap',
-                            }}>
-                            ⬇ {p.recentDeploy.version} · {fmtAge(p.recentDeploy.ageSeconds)} before
+                            style={{ marginLeft: 8 }}>
+                            <ArrowDownToLine size={11} strokeWidth={1.75} /> {p.recentDeploy.version} · {fmtAge(p.recentDeploy.ageSeconds)} before
                           </span>
                         )}
                         {p.aiSummary && (
@@ -844,21 +838,14 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           // within ~30s of a critical fire; tooltip
                           // shows the full blurb so the operator
                           // gets first-look context without
-                          // clicking through. ✦ = "Copilot output"
-                          // visual anchor, matches the existing
-                          // operator-clicked Explain affordances.
-                          <span
+                          // clicking through. The IconSparkles glyph is
+                          // the "Copilot output" visual anchor, matching
+                          // the existing operator-clicked Explain affordances.
+                          <span className="badge b-info"
                             onClick={e => e.stopPropagation()}
                             title={p.aiSummary}
-                            style={{
-                              marginLeft: 8, fontSize: 11,
-                              padding: '2px 8px', borderRadius: 12,
-                              background: 'rgba(139,92,246,0.10)',
-                              border: '1px solid rgba(139,92,246,0.40)',
-                              color: 'var(--accent2, #a78bfa)',
-                              whiteSpace: 'nowrap', cursor: 'help',
-                            }}>
-                            ✦ AI insight
+                            style={{ marginLeft: 8, cursor: 'help' }}>
+                            <IconSparkles size={11} /> AI insight
                           </span>
                         )}
                         {/* v0.6.29 — blast radius chip for open
@@ -879,8 +866,8 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           <div style={{
                             fontSize: 11, color: 'var(--text2)', marginTop: 4,
                             padding: 6, borderRadius: 4,
-                            background: 'rgba(139,92,246,0.05)',
-                            borderLeft: '2px solid rgba(139,92,246,0.4)',
+                            background: 'var(--accent-soft)',
+                            borderLeft: '2px solid var(--accent)',
                             whiteSpace: 'pre-wrap',
                           }}>
                             {p.aiSummary}
@@ -1008,11 +995,13 @@ function TriageDrawer({ problem, onClose }: {
           {problem.recentDeploy && (
             <div style={{
               padding: '8px 12px', borderRadius: 6,
-              background: 'rgba(250,204,21,0.10)',
-              border: '1px solid rgba(250,204,21,0.40)',
+              background: 'color-mix(in srgb, var(--warn) 10%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--warn) 40%, transparent)',
               fontSize: 12, color: 'var(--text)',
             }}>
-              <div style={{ fontWeight: 600, marginBottom: 2 }}>⬇ Recent deploy correlation</div>
+              <div style={{ fontWeight: 600, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ArrowDownToLine size={13} strokeWidth={1.75} /> Recent deploy correlation
+              </div>
               <div>
                 service.version=<code>{problem.recentDeploy.version}</code> first seen{' '}
                 <b>{fmtAge(problem.recentDeploy.ageSeconds)}</b> before this problem opened.
@@ -1031,8 +1020,8 @@ function TriageDrawer({ problem, onClose }: {
               <a href={problem.runbookUrl} target="_blank" rel="noopener"
                 style={{
                   fontSize: 12, padding: '4px 12px', borderRadius: 4,
-                  background: 'rgba(56,139,253,0.10)',
-                  border: '1px solid rgba(56,139,253,0.35)',
+                  background: 'var(--accent-soft)',
+                  border: '1px solid var(--accent)',
                   color: 'var(--accent2)', textDecoration: 'none',
                 }}>
                 Runbook ↗
@@ -1089,20 +1078,9 @@ function SeverityBadge({ s }: { s: string }) {
 // 4m before") — the blend formula is transparent, not magic.
 function PriorityBadge({ p, reason }: { p?: 'P1' | 'P2' | 'P3'; reason?: string }) {
   if (!p) return <span style={{ color: 'var(--text3)' }}>—</span>;
-  const palette = p === 'P1'
-    ? { bg: 'rgba(239,68,68,0.15)', border: 'rgba(239,68,68,0.55)', color: 'var(--err)' }
-    : p === 'P2'
-      ? { bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.45)', color: 'var(--warn)' }
-      : { bg: 'rgba(148,163,184,0.10)', border: 'rgba(148,163,184,0.30)', color: 'var(--text3)' };
+  const cls = p === 'P1' ? 'b-err' : p === 'P2' ? 'b-warn' : 'b-gray';
   return (
-    <span
-      title={reason ? `${p} — ${reason}` : p}
-      style={{
-        padding: '2px 8px', borderRadius: 12,
-        fontSize: 11, fontWeight: 700,
-        background: palette.bg, border: `1px solid ${palette.border}`,
-        color: palette.color, whiteSpace: 'nowrap',
-      }}>
+    <span className={`badge ${cls}`} title={reason ? `${p} — ${reason}` : p}>
       {p}
     </span>
   );
@@ -1296,19 +1274,9 @@ function AssigneeCell({ problem, currentUserEmail, onChanged }: {
         ? (
           <span onClick={editPrompt}
             title="Click to reassign or clear"
-            style={{
-              padding: '2px 8px', borderRadius: 12,
-              background: isSelf ? 'rgba(34,197,94,0.12)'
-                       : isTeam ? 'rgba(56,139,253,0.10)'
-                       : 'rgba(168,85,247,0.10)',
-              border: '1px solid ' + (
-                isSelf ? 'rgba(34,197,94,0.45)'
-              : isTeam ? 'rgba(56,139,253,0.35)'
-              : 'rgba(168,85,247,0.35)'),
-              color: isSelf ? 'var(--ok)' : 'var(--accent2)',
-              cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>
-            {isTeam ? '👥 ' : ''}{assignee}
+            className={`badge ${isSelf ? 'b-ok' : 'b-info'}`}
+            style={{ cursor: 'pointer' }}>
+            {isTeam && <Users size={11} strokeWidth={1.75} />}{assignee}
           </span>
         )
         : <span style={{ color: 'var(--text3)' }}>—</span>}
@@ -1406,16 +1374,10 @@ function BlastRadiusChip({ service }: { service: string }) {
     <span
       title={tooltipLines}
       onClick={e => e.stopPropagation()}
-      style={{
-        marginLeft: 8, fontSize: 11,
-        padding: '2px 8px', borderRadius: 12,
-        background: cascading ? 'rgba(250,204,21,0.10)' : 'rgba(56,139,253,0.08)',
-        border: `1px solid ${cascading ? 'rgba(250,204,21,0.40)' : 'rgba(56,139,253,0.30)'}`,
-        color: cascading ? 'var(--warn)' : 'var(--accent2)',
-        whiteSpace: 'nowrap', cursor: 'help',
-      }}>
+      className={`badge ${cascading ? 'b-warn' : 'b-info'}`}
+      style={{ marginLeft: 8, cursor: 'help' }}>
       ↘ {data.totalCallers} svc{data.totalCallers === 1 ? '' : 's'} · {data.totalRps.toFixed(0)} rps
-      {cascading && <> · ⚠ {data.cascadingCallers}</>}
+      {cascading && <> · {data.cascadingCallers} cascading</>}
     </span>
   );
 }

@@ -11,6 +11,7 @@ import { HistogramHeatmap } from '@/components/HistogramHeatmap';
 import { EventMarkers } from '@/components/EventMarkers';
 import { DrillButton } from '@/components/DrillButton';
 import { ShareButton } from '@/components/ShareButton';
+import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { decodeRange } from '@/lib/urlState';
@@ -343,13 +344,13 @@ export default function MetricsPage() {
       <div id="content">
         {/* Explorer (default — the design-handoff redesign) vs the advanced
             query-builder, kept one toggle away. */}
-        <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div className="row gap-3" style={{ marginBottom: 12 }}>
           <div className="segmented">
             <button className={mode === 'explorer' ? 'active' : ''} onClick={() => setMode('explorer')}>Explorer</button>
             <button className={mode === 'editor' ? 'active' : ''} onClick={() => setMode('editor')}>Query editor</button>
             <button className={mode === 'builder' ? 'active' : ''} onClick={() => setMode('builder')}>Query builder</button>
           </div>
-          <span style={{ flex: 1, fontSize: 12, color: 'var(--text2)' }}>
+          <span className="field-label row-grow">
             {mode === 'builder' ? 'Pick a metric, slice by service / host / instance, or split by any attribute.' : ''}
           </span>
           <ShareButton />
@@ -361,10 +362,10 @@ export default function MetricsPage() {
 
         {/* Metric + service + agg + step */}
         <div className="controls">
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Service:</span>
+          <span className="field-label">Service:</span>
           <ServicePicker value={service} onChange={setService}
             placeholder="(all)" width={170} />
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Metric:</span>
+          <span className="field-label">Metric:</span>
           <MetricNamePicker service={service} value={metric}
             onChange={setMetric}
             onPick={onPickMetric}
@@ -383,16 +384,16 @@ export default function MetricsPage() {
                 aria-label="Clear template">✕</button>
             </span>
           )}
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Agg:</span>
+          <span className="field-label">Agg:</span>
           <select value={agg} onChange={e => setAgg(e.target.value)}>
             {AGG_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
           </select>
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Step:</span>
+          <span className="field-label">Step:</span>
           <select value={step} onChange={e => setStep(Number(e.target.value))}>
             {STEP_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
           </select>
           {meta && (
-            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+            <span className="field-hint" style={{ marginLeft: 'auto' }}>
               {meta.type}{meta.unit && ` · ${meta.unit}`}{meta.description && ` · ${meta.description}`}
             </span>
           )}
@@ -409,10 +410,10 @@ export default function MetricsPage() {
           }} />
 
         {/* Split by */}
-        <div className="controls" style={{ marginBottom: 14 }}>
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Split by:</span>
+        <div className="controls">
+          <span className="field-label">Split by:</span>
           {groupBy.length === 0 && (
-            <span style={{ color: 'var(--text3)', fontSize: 12, fontStyle: 'italic' }}>
+            <span className="field-hint" style={{ fontStyle: 'italic' }}>
               (single line — add attributes to break down)
             </span>
           )}
@@ -427,7 +428,7 @@ export default function MetricsPage() {
             options={SUGGESTED_GROUPBY.filter(k => !groupBy.includes(k))}
             placeholder="+ split key" width={200}
             onEnter={() => addGroupKey(groupDraft)} />
-          {groupDraft && <button className="sec" onClick={() => addGroupKey(groupDraft)}>Add</button>}
+          {groupDraft && <Button variant="secondary" size="sm" onClick={() => addGroupKey(groupDraft)}>Add</Button>}
         </div>
 
         {!metric && (
@@ -513,18 +514,16 @@ export default function MetricsPage() {
                   the row beneath the chart. */}
               {isHistogram ? (
                 <div style={{ position: 'relative' }}>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginBottom: 6 }}>
-                    {(['heatmap', 'volume', 'percentile'] as const).map(m => (
-                      <button key={m} type="button" onClick={() => setHistMode(m)}
-                        style={{
-                          fontSize: 11, padding: '2px 10px', borderRadius: 3, cursor: 'pointer',
-                          background: histMode === m ? 'var(--accent2)' : 'var(--bg3)',
-                          color: histMode === m ? '#fff' : 'var(--text2)',
-                          border: '1px solid var(--border)',
-                        }}>
-                        {m === 'heatmap' ? 'Heatmap' : m === 'volume' ? 'Volume' : 'Percentiles'}
-                      </button>
-                    ))}
+                  <div className="row row-end" style={{ marginBottom: 6 }}>
+                    <div className="segmented">
+                      {(['heatmap', 'volume', 'percentile'] as const).map(m => (
+                        <button key={m} type="button"
+                          className={histMode === m ? 'active' : ''}
+                          onClick={() => setHistMode(m)}>
+                          {m === 'heatmap' ? 'Heatmap' : m === 'volume' ? 'Volume' : 'Percentiles'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   {histData === undefined ? <Spinner />
                     : !histData || !histData.bounds || histData.bounds.length === 0 ? (
@@ -559,39 +558,32 @@ export default function MetricsPage() {
                   value (from the metric template) appears in
                   the input; the operator can override or clear.
                   Cleared state hides the line entirely. */}
-              <div style={{
-                display: 'flex', gap: 8, alignItems: 'center',
-                marginTop: 8, fontSize: 12, color: 'var(--text2)',
-              }}>
+              <div className="row row-wrap gap-2 field-label" style={{ marginTop: 8 }}>
                 <span>Threshold:</span>
                 <input
                   type="number"
+                  className="mono"
                   value={threshold ?? ''}
                   onChange={e => {
                     const v = e.target.value.trim();
                     setThreshold(v === '' ? null : parseFloat(v));
                   }}
                   placeholder="(none)"
-                  style={{
-                    width: 110, padding: '2px 8px',
-                    fontFamily: 'ui-monospace, monospace',
-                    fontSize: 12,
-                  }}
+                  style={{ width: 110 }}
                   title="Draw a horizontal SLO/alert line on the chart. Auto-populated from the OTel metric template when applicable."
                 />
                 {unit && <span style={{ color: 'var(--text3)' }}>{unit}</span>}
                 {appliedTemplate?.threshold && (
-                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  <span style={{ color: 'var(--text3)' }}>
                     · template suggests {appliedTemplate.threshold.cmp} {appliedTemplate.threshold.value}
                     ({appliedTemplate.threshold.reason})
                   </span>
                 )}
                 {threshold !== null && (
-                  <button className="sec" type="button"
-                    onClick={() => setThreshold(null)}
-                    style={{ fontSize: 11, padding: '2px 8px' }}>
+                  <Button variant="secondary" size="sm" type="button"
+                    onClick={() => setThreshold(null)}>
                     Clear
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -603,7 +595,7 @@ export default function MetricsPage() {
                   <DataTableHead dt={summaryDt} />
                   <tbody>
                     {summaryDt.sortedRows.map((row, i) => (
-                      <tr key={i}>
+                      <tr key={i} {...summaryDt.rowProps(i)}>
                         <td><b>{row.key.join(' / ') || '(all)'}</b></td>
                         <td className="mono" style={{ textAlign: 'right' }}>{row.last.toFixed(2)}{unit}</td>
                         <td className="mono" style={{ textAlign: 'right' }}>{row.min.toFixed(2)}{unit}</td>
@@ -666,10 +658,11 @@ function StatTile({ label, value, delta, compareLabel }: {
   const sign = hasDelta && Math.abs(delta!) >= 5
     ? (delta! > 0 ? 'up' : 'down')
     : 'flat';
+  // up is bad (latency / failure / apdex drift) → err red; down → ok green.
   const deltaColour =
     sign === 'flat' ? 'var(--text3)'
-    : sign === 'up'  ? 'rgb(220,38,38)'
-    : 'rgb(46,160,67)';
+    : sign === 'up'  ? 'var(--err)'
+    : 'var(--ok)';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 80 }}>
       <span style={{

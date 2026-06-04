@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, FormEvent } from 'react';
+import { Hourglass } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
+import { IconSparkles } from '@/components/icons';
 import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
 import { useSLOs, useCreateSLO, useDeleteSLO } from '@/lib/queries';
 import { api } from '@/lib/api';
@@ -78,7 +80,7 @@ export default function SLOsPage() {
               <Button variant="secondary" size="sm" onClick={() => setShowAuto(true)}
                 style={{ marginLeft: 'auto' }}
                 title="Scan recent telemetry and propose baseline-grounded availability + latency SLOs">
-                ✨ Auto-create
+                <IconSparkles size={13} /> Auto-create
               </Button>
               <Button variant="primary" size="sm" onClick={() => setShowNew(true)}>+ New SLO</Button>
             </>
@@ -199,7 +201,9 @@ function AutoSLOModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         maxHeight: '80vh', overflowY: 'auto',
       }}>
         <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>✨ Auto-create SLOs</span>
+          <span style={{ fontSize: 14, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <IconSparkles size={14} /> Auto-create SLOs
+          </span>
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
             Baseline window: last 7 days
           </span>
@@ -324,7 +328,7 @@ function ForecastChip({ sloId }: { sloId: string }) {
   return (
     <span className={`badge ${cls}`}
       title={`At burn rate ${data.burnRate.toFixed(2)}×, the error budget will be exhausted in ~${data.hoursToExhaust.toFixed(1)}h`}>
-      ⌛ {label}
+      <Hourglass size={11} strokeWidth={1.75} /> {label}
     </span>
   );
 }
@@ -478,8 +482,9 @@ function BurnExplainButton({ sloId }: { sloId: string }) {
     <>
       <button onClick={run} disabled={busy} className="sec"
         title="Ask copilot whether this SLO's budget is on track or burning fast"
-        style={{ fontSize: 12, padding: '4px 10px', color: 'var(--accent2)' }}>
-        ✨ Explain burn
+        style={{ fontSize: 12, padding: '4px 10px', color: 'var(--accent2)',
+                 display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+        <IconSparkles size={12} /> Explain burn
       </button>
       {open && (
         <Modal open={open} onClose={() => setOpen(false)} title="SLO burn analysis">

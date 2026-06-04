@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { Turtle } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner } from '@/components/Spinner';
 import { DependenciesTable } from '@/components/DependenciesTable';
@@ -78,9 +79,10 @@ export default function DatabasesPage() {
               fontSize: 12, padding: '5px 12px', borderRadius: 6,
               border: '1px solid var(--border)', background: 'var(--bg3)',
               color: 'var(--accent2)', textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
             title="Cross-service slow-query catalog — what's burning the most DB time globally">
-            🐢 Slow queries →
+            <Turtle size={14} strokeWidth={1.75} /> Slow queries →
           </Link>
         </div>
         {q.isPending && <Spinner />}

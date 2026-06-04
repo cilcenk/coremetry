@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, History, Paperclip, PenLine } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
@@ -77,7 +78,8 @@ function Inner() {
           <Link to="/incidents" className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)',
             borderRadius: 6, fontSize: 12, color: 'var(--text)', textDecoration: 'none',
-          }}>← All incidents</Link>
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}><ArrowLeft size={14} strokeWidth={1.75} /> All incidents</Link>
           <StatusPill s={inc.status} />
           <SeverityPill s={inc.severity} />
           {inc.service && (
@@ -118,7 +120,9 @@ function Inner() {
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
           {/* Timeline */}
           <div>
-            <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>⌃ Timeline</h3>
+            <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <History size={15} strokeWidth={1.75} /> Timeline
+            </h3>
             {timeline.length === 0 && (
               <div className="empty" style={{ padding: 20, fontSize: 12 }}>Empty timeline</div>
             )}
@@ -157,7 +161,9 @@ function Inner() {
 
           {/* Right column: attached problems + postmortem */}
           <div>
-            <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>⊠ Attached problems</h3>
+            <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Paperclip size={15} strokeWidth={1.75} /> Attached problems
+            </h3>
             {problems.length === 0 && (
               <div className="empty" style={{ padding: 16, fontSize: 12 }}>No problems attached</div>
             )}
@@ -168,8 +174,8 @@ function Inner() {
               }}>{pid}</div>
             ))}
 
-            <h3 style={{ fontSize: 13, fontWeight: 700, margin: '20px 0 8px' }}>
-              ✎ Postmortem
+            <h3 style={{ fontSize: 13, fontWeight: 700, margin: '20px 0 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <PenLine size={15} strokeWidth={1.75} /> Postmortem
               {isAdmin && !editingPM && (
                 <button className="sec" onClick={() => setEditingPM(true)}
                   style={{ marginLeft: 8, padding: '2px 8px', fontSize: 11 }}>

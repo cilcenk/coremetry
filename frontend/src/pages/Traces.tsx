@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
+import { useEffect, useMemo, useRef, useState, Suspense, Fragment } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTableNav } from '@/lib/useTableNav';
 import { reconcileColOrder, moveColumn } from '@/lib/tableColumns';
@@ -17,9 +17,42 @@ import { Button } from '@/components/ui/Button';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
 import { api } from '@/lib/api';
-import { tsDateTime, timeRangeToNs, fmtNum, rowClickHandlers } from '@/lib/utils';
+import { tsDateTime, tsShort, timeRangeToNs, fmtNum, rowClickHandlers } from '@/lib/utils';
+import { seriesColor } from '@/lib/chartFmt';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
-import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
+import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, SpanRow } from '@/lib/types';
+
+// Shared service-color map — same hash the topology graph + trace
+// waterfall use (chartFmt.seriesColor), so a service keeps ONE colour
+// across every surface. The badge / duration-bar / scatter-dot / mini-
+// waterfall all read this so the operator's eye doesn't recalibrate.
+const svcColor = (name: string) => seriesColor(name || 'unknown');
+// color-mix a service colour into a faint badge background that stays
+// legible in both themes (the prototype's `color-mix(... 14%, transparent)`).
+const svcBadgeBg = (name: string) => `color-mix(in srgb, ${svcColor(name)} 16%, transparent)`;
+
+// Duration → token colour. Errors always red; otherwise green/amber/red
+// by absolute latency. Mirrors the prototype's durColor() but on tokens.
+function durColor(ms: number, err: boolean): string {
+  if (err) return 'var(--err)';
+  if (ms > 1000) return 'var(--err)';
+  if (ms > 400)  return 'var(--warn)';
+  return 'var(--ok)';
+}
+
+// Attribute keys offered by the "+ Add filter" menu. Each appends a
+// FilterExpr to advFilters (which already narrows server-side + rides
+// the URL via encodeFilters), so the chip really filters and is shareable.
+const QUICK_ATTR_KEYS = [
+  'http.status_code', 'http.route', 'rpc.method', 'db.system',
+  'banking.account_id', 'k8s.pod.name', 'cloud.region',
+];
+// Sensible default value when an attribute chip is first added; the
+// operator edits it via the FilterBuilder chip below.
+const QUICK_ATTR_DEFAULT: Record<string, string> = {
+  'http.status_code': '500',
+  'db.system': 'oracle',
+};
 
 type View = 'list' | 'aggregate' | 'shapes';
 // Group-by dimensions match the server-side whitelist + a special
@@ -148,6 +181,25 @@ function TracesPageInner() {
     return {};
   });
   const dragColRef = useRef<string | null>(null);
+
+  // ── Power-explorer UI state (v0.7.112) ───────────────────────────────────────
+  // Header viz mode: 'volume' (the stacked-bar + p99-line histogram) or
+  // 'latency' (a duration-vs-time scatter built from the live trace rows).
+  // Rides the URL so a shared link restores the chosen visualisation.
+  const [viz, setViz] = useState<'volume' | 'latency'>(() =>
+    searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
+  // Quick-filter chip: 'err' | 'slow' | a service name. Narrows the
+  // CURRENTLY-fetched page client-side (cheap, instant) — the heavy
+  // filters stay in the server query.
+  const [quick, setQuick] = useState<string | null>(null);
+  // Inline-expanded trace row → mini-waterfall preview.
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // "+ Add filter" attribute menu open/close.
+  const [addFilterOpen, setAddFilterOpen] = useState(false);
+  const addFilterRef = useRef<HTMLDivElement>(null);
+  // Scatter brush narrows the page range to a sub-window; we stash the
+  // pre-brush range so the "clear selection" chip can restore it.
+  const [brushPrev, setBrushPrev] = useState<TimeRange | null>(null);
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
   const [agg, setAgg] = useState<AggregateRow[] | null | undefined>(undefined);
   // v0.7.90 — surface a failed/timed-out trace query instead of
@@ -176,6 +228,8 @@ function TracesPageInner() {
       // v0.7.37 — `list` is the default tab now; only emit ?view= when the
       // user switched to aggregate / shapes.
       ['view',     view !== 'list' ? view : ''],
+      // v0.7.112 — header viz (volume default); only emit when latency.
+      ['viz',      viz !== 'volume' ? viz : ''],
       ['sort',     sort !== 'time' ? sort : ''],
       ['order',    order !== 'desc' ? order : ''],
       ['page',     page > 0 ? page : ''],
@@ -200,7 +254,7 @@ function TracesPageInner() {
     if (typeof window !== 'undefined' && next !== window.location.search) {
       navigate(`/traces${next}`, { preventScrollReset: true, replace: true });
     }
-  }, [range, view, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, navigate]);
+  }, [range, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, navigate]);
 
   // Autocomplete option lists
   // v0.5.198 — removed the eager api.services() + api.operations()
@@ -310,6 +364,7 @@ function TracesPageInner() {
       hasError: false, rootOnly: true, requireServices: [] as string[],
     };
     setDraft(empty); setFilter(empty); setPage(0);
+    setAdvFilters([]); setQuick(null); setExpanded(null);
   };
   const toggleSort = (col: SortColumn) => {
     if (sort === col) setOrder(order === 'desc' ? 'asc' : 'desc');
@@ -358,13 +413,34 @@ function TracesPageInner() {
     if (d) setColOrder(o => moveColumn(o, d, targetId));
   };
 
+  // Close the "+ Add filter" attribute menu on an outside click.
+  useEffect(() => {
+    if (!addFilterOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!addFilterRef.current?.contains(e.target as Node)) setAddFilterOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [addFilterOpen]);
+
+  // Append an attribute filter to advFilters. advFilters already drives
+  // the server query AND rides the URL (encodeFilters), so the chip both
+  // narrows results and survives a refresh / share.
+  const addAttrFilter = (k: string) => {
+    if (advFilters.some(f => f.k === k)) { setAddFilterOpen(false); return; }
+    setAdvFilters([...advFilters, { k, op: '=', v: [QUICK_ATTR_DEFAULT[k] ?? ''] }]);
+    setAddFilterOpen(false);
+    setPage(0);
+  };
+
   // Per-column cell content for a trace row (rendered in colOrder).
-  const renderTraceCell = (id: string, t: TraceRow) => {
+  // visibleMax scales the Duration bar to the slowest row currently shown.
+  const renderTraceCell = (id: string, t: TraceRow, visibleMax: number) => {
     switch (id) {
       case 'time':      return <span className="mono">{tsDateTime(t.startTime)}</span>;
       case 'service':   return <SvcBadge name={t.serviceName} />;
       case 'operation': return <span title={t.rootName}>{t.rootName || '—'}</span>;
-      case 'duration':  return <span className="mono">{t.durationMs.toFixed(2)}ms</span>;
+      case 'duration':  return <DurationBar ms={t.durationMs} err={t.hasError} max={visibleMax} />;
       case 'spans':     return <>{t.spanCount}</>;
       case 'status':    return t.hasError
         ? <span className="badge b-err">ERROR</span>
@@ -384,16 +460,67 @@ function TracesPageInner() {
   const total = data?.total;             // undefined when count was skipped
   const hasMore = data?.hasMore ?? false;
 
+  // Quick-filter chips narrow the CURRENT page client-side (instant; the
+  // server query already applied the heavy filters). 'err' → errors only,
+  // 'slow' → >1s, anything else → that service name. Top services for the
+  // per-service chips come from the live rows so the colours match.
+  const topSvcs = useMemo(() => {
+    const seen: string[] = [];
+    for (const t of traces) {
+      if (t.serviceName && !seen.includes(t.serviceName)) seen.push(t.serviceName);
+      if (seen.length >= 4) break;
+    }
+    return seen;
+  }, [traces]);
+  const errCount = useMemo(() => traces.filter(t => t.hasError).length, [traces]);
+  const displayRows = useMemo(() => {
+    if (!quick) return traces;
+    if (quick === 'err')  return traces.filter(t => t.hasError);
+    if (quick === 'slow') return traces.filter(t => t.durationMs > 1000);
+    return traces.filter(t => t.serviceName === quick);
+  }, [traces, quick]);
+  // Slowest visible row → scales every Duration bar.
+  const visibleMax = useMemo(
+    () => displayRows.reduce((m, t) => Math.max(m, t.durationMs), 0),
+    [displayRows]);
+
   // j/k row navigation — Enter / o opens the trace detail
   // page. Only registers when we're in `view === 'list'`
-  // since aggregate view groups rows differently.
-  const tableNav = useTableNav<typeof traces[number]>(
-    view === 'list' ? traces : [],
+  // since aggregate view groups rows differently. Bound to the
+  // quick-filtered rows so j/k matches what's on screen.
+  const tableNav = useTableNav<typeof displayRows[number]>(
+    view === 'list' ? displayRows : [],
     {
       pageId: 'traces-list',
       onOpen: (t) => navigate(`/trace?id=${t.traceId}`),
     },
   );
+
+  // A fresh page / new query invalidates the inline preview (the
+  // expanded trace may no longer be present) and any stale quick chip
+  // selection that filtered the old result set.
+  useEffect(() => { setExpanded(null); }, [page, filter, advFilters, range, view]);
+  useEffect(() => { if (quick) setQuick(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, advFilters, range, view]);
+
+  // openTrace centralises navigation so the scatter, the mini-waterfall
+  // link, and j/k Enter all open the trace the same way.
+  const openTrace = (t: TraceRow) => navigate(`/trace?id=${t.traceId}`);
+
+  // Scatter drag-brush → narrow the page range to the brushed window.
+  // Same mechanism as the histogram's onZoom: real server-side filtering,
+  // already URL-reflected via encodeRange. We remember the prior range so
+  // the "clear selection" chip restores it.
+  const applyBrush = (fromMs: number, toMs: number) => {
+    if (toMs - fromMs < 1) return;
+    setBrushPrev(prev => prev ?? range);
+    setRange({ preset: 'custom', fromMs, toMs });
+    setPage(0);
+  };
+  const clearBrush = () => {
+    if (brushPrev) setRange(brushPrev);
+    setBrushPrev(null);
+    setPage(0);
+  };
 
   // Per-session hover-prefetch dedupe. Trace span data is
   // immutable once stored, so a hit during one operator
@@ -430,27 +557,65 @@ function TracesPageInner() {
 
   return (
     <>
-      <Topbar title="Traces" range={range} onRangeChange={setRange} />
+      <Topbar title="Traces"
+        range={range}
+        onRangeChange={(r) => { setBrushPrev(null); setRange(r); }} />
       <div id="content">
         <SavedViewsBar page="traces" />
-        {/* Span-volume histogram — Datadog/Honeycomb-style stacked
-            bars (ok in slate, errors in red) with total / errors /
-            error-rate KPI tiles on the right. Reflects the current
-            service + advanced-filter scope but ignores free-text
-            search and ms-range filters. */}
-        {/* v0.5.322 — drag-select on the histogram narrows the
-            page TimeRange to a custom (from, to). Same pattern
-            as ServiceCharts onZoom in /service detail. */}
-        <TraceVolumeHistogram range={range} dsl={histogramDSL} filters={histogramFilters}
-          search={filter.search?.trim() || undefined}
-          onZoom={(fromUnixSec, toUnixSec) => {
-            setRange({
-              preset: 'custom',
-              fromMs: Math.round(fromUnixSec * 1000),
-              toMs:   Math.round(toUnixSec   * 1000),
-            });
-            setPage(0);
-          }} />
+
+        {/* Header visualisation — Volume / Latency toggle (v0.7.112).
+            VOLUME reuses the production span-volume histogram (stacked
+            ok+error bars + p99 line + TOTAL/ERRORS/ERROR RATE/P99 MAX
+            stats). LATENCY is a duration-vs-time scatter built from the
+            live trace rows: hover→tooltip, click→open, drag→brush a time
+            window that narrows the table (clearable chip + URL state). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <div className="segmented">
+            <button className={viz === 'volume' ? 'active' : ''}
+              onClick={() => setViz('volume')}>Volume</button>
+            <button className={viz === 'latency' ? 'active' : ''}
+              onClick={() => setViz('latency')}>Latency</button>
+          </div>
+          {brushPrev && (
+            <button className="sec" style={{ fontSize: 11 }} onClick={clearBrush}
+              title="Restore the previous time range">
+              Clear selection ✕
+            </button>
+          )}
+        </div>
+
+        {viz === 'volume' ? (
+          // v0.5.322 — drag-select on the histogram narrows the page
+          // TimeRange to a custom (from, to). Same pattern as ServiceCharts
+          // onZoom in /service detail; stash prior range for the chip.
+          <TraceVolumeHistogram range={range} dsl={histogramDSL} filters={histogramFilters}
+            search={filter.search?.trim() || undefined}
+            onZoom={(fromUnixSec, toUnixSec) =>
+              applyBrush(Math.round(fromUnixSec * 1000), Math.round(toUnixSec * 1000))} />
+        ) : (
+          <div style={{
+            background: 'var(--bg2)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: 12, marginBottom: 10,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, padding: '0 2px' }}>
+              <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                Latency distribution
+              </span>
+              <span style={{ flex: 1 }} />
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text3)' }}>
+                <span style={{ width: 8, height: 8, background: 'var(--accent)', borderRadius: 8 }} /> ok
+                <span style={{ width: 8, height: 8, background: 'var(--err)', borderRadius: 8, marginLeft: 8 }} /> error
+                <span style={{ marginLeft: 8 }}>· drag to brush a time range · y = duration (log)</span>
+              </span>
+            </div>
+            {view === 'list' && data === undefined ? (
+              <div style={{ height: 168, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner /></div>
+            ) : (
+              <LatencyScatter rows={displayRows} onOpen={openTrace}
+                onBrush={applyBrush} />
+            )}
+          </div>
+        )}
 
         {/* View toggle + dedicated Trace ID lookup on the far right */}
         <div className="controls" style={{ marginBottom: 8, alignItems: 'center' }}>
@@ -568,7 +733,72 @@ function TracesPageInner() {
             }}>
             ⬇ CSV
           </a>
+
+          {/* "+ Add filter" — append a span/resource attribute predicate.
+              Each pick adds a FilterExpr to advFilters (server-narrowing +
+              URL-reflected), surfaced below as an editable / removable chip
+              in the FilterBuilder. */}
+          <div ref={addFilterRef} style={{ position: 'relative' }}>
+            <button type="button" className="sec"
+              style={{ borderStyle: 'dashed', fontSize: 11.5 }}
+              onClick={() => setAddFilterOpen(o => !o)}>+ Add filter</button>
+            {addFilterOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 60,
+                minWidth: 210, background: 'var(--bg2)', border: '1px solid var(--border)',
+                borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.30)', padding: 6,
+              }}>
+                <div style={{ fontSize: 10, color: 'var(--text3)', padding: '4px 8px', fontWeight: 700, letterSpacing: '0.4px' }}>
+                  ATTRIBUTE
+                </div>
+                {QUICK_ATTR_KEYS.map(k => {
+                  const already = advFilters.some(f => f.k === k);
+                  return (
+                    <div key={k}
+                      onClick={() => !already && addAttrFilter(k)}
+                      style={{
+                        padding: '6px 8px', fontSize: 11.5, borderRadius: 4,
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        cursor: already ? 'default' : 'pointer',
+                        color: already ? 'var(--text3)' : 'var(--text)',
+                      }}
+                      onMouseEnter={e => { if (!already) e.currentTarget.style.background = 'var(--bg3)'; }}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                      {k}{already ? ' ✓' : ''}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Row count — N of M on the current page (quick chip narrows N). */}
+          {view === 'list' && data && (
+            <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text3)' }}>
+              {displayRows.length} of {traces.length} traces
+            </span>
+          )}
         </div>
+
+        {/* Quick-filter chips — Errors / Slow / per-top-service (each
+            carrying that service's colour from the shared map). Narrow the
+            current page instantly; click again to clear. */}
+        {view === 'list' && traces.length > 0 && (
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+            <QuickChip active={quick === 'err'} onClick={() => setQuick(quick === 'err' ? null : 'err')} tone="err">
+              Errors {errCount}
+            </QuickChip>
+            <QuickChip active={quick === 'slow'} onClick={() => setQuick(quick === 'slow' ? null : 'slow')}>
+              Slow &gt;1s
+            </QuickChip>
+            {topSvcs.map(s => (
+              <QuickChip key={s} active={quick === s} dot={svcColor(s)}
+                onClick={() => setQuick(quick === s ? null : s)}>
+                {s}
+              </QuickChip>
+            ))}
+          </div>
+        )}
 
         {/* Trace-topology AND requirement: every listed service
             must appear in the trace. Driven by the backtrace
@@ -653,10 +883,12 @@ function TracesPageInner() {
                   columns keep their ✕ remove. */}
               <table style={{ tableLayout: 'fixed', width: '100%' }}>
                 <colgroup>
+                  <col style={{ width: 30 }} />{/* expand chevron */}
                   {colOrder.map(id => <col key={id} style={{ width: traceColWidth(id, colWidths) }} />)}
                   <col style={{ width: 110 }} />{/* +Column gutter */}
                 </colgroup>
                 <thead><tr>
+                  <th style={{ width: 30 }} />{/* expand chevron */}
                   {colOrder.map(id => {
                     const fixed = traceColIsFixed(id);
                     return (
@@ -697,10 +929,14 @@ function TracesPageInner() {
                   </th>
                 </tr></thead>
                 <tbody>
-                  {traces.map((t, i) => (
-                    <tr key={t.traceId}
+                  {displayRows.map((t, i) => {
+                    const isOpen = expanded === t.traceId;
+                    return (
+                    <Fragment key={t.traceId}>
+                    <tr
                         data-row-idx={i}
                         className={tableNav.selected === i ? 'row-selected' : undefined}
+                        style={t.hasError ? { background: 'color-mix(in srgb, var(--err) 8%, transparent)' } : undefined}
                         onMouseEnter={() => {
                           tableNav.setSelected(i);
                           // Hover-prefetch the trace's spans (server-cached 5m)
@@ -709,16 +945,35 @@ function TracesPageInner() {
                         }}
                         {...rowClickHandlers(`/trace?id=${t.traceId}`,
                                              () => navigate(`/trace?id=${t.traceId}`))}>
+                      {/* Expand chevron — toggles the inline mini-waterfall
+                          without navigating (full row click still opens the
+                          trace detail). */}
+                      <td onClick={(e) => { e.stopPropagation(); setExpanded(isOpen ? null : t.traceId); }}
+                          style={{ textAlign: 'center', cursor: 'pointer', color: 'var(--text3)', userSelect: 'none' }}
+                          title={isOpen ? 'Collapse preview' : 'Preview spans'}>
+                        {isOpen ? '▾' : '▸'}
+                      </td>
                       {colOrder.map(id => (
                         <td key={id}
                             style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {renderTraceCell(id, t)}
+                          {renderTraceCell(id, t, visibleMax)}
                         </td>
                       ))}
                       {/* Filler cell aligning with the "+ Column" header. */}
                       <td />
                     </tr>
-                  ))}
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={colOrder.length + 2} style={{ padding: 0 }}>
+                          <MiniWaterfall traceId={t.traceId}
+                            fallbackService={t.serviceName}
+                            onOpen={() => openTrace(t)} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -876,11 +1131,274 @@ function AggHeader({ col, label, sort, order, onSort, align }: {
   );
 }
 
-function SvcBadge({ name }: { name: string }) {
+// QuickChip — a clickable pill for the quick-filter row. `dot` paints a
+// leading service-colour swatch; `tone="err"` reads the error count red.
+function QuickChip({ active, onClick, children, dot, tone }: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  dot?: string;
+  tone?: 'err';
+}) {
   return (
-    <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--bg3)', borderRadius: 3, fontFamily: 'monospace' }}>
+    <button type="button" onClick={onClick}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '3px 10px', borderRadius: 20, fontSize: 11.5, cursor: 'pointer',
+        border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+        background: active ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'var(--bg2)',
+        color: active ? 'var(--accent2)' : tone === 'err' ? 'var(--err)' : 'var(--text2)',
+        fontWeight: 600, whiteSpace: 'nowrap',
+      }}>
+      {dot && <span style={{ width: 7, height: 7, borderRadius: 7, background: dot, flex: 'none' }} />}
+      {children}
+    </button>
+  );
+}
+
+function SvcBadge({ name }: { name: string }) {
+  // Service-coloured badge — same per-service hue as the topology graph
+  // + trace waterfall (svcColor), so the operator's eye keeps a stable
+  // colour→service mapping across every surface.
+  return (
+    <span style={{
+      fontSize: 11, padding: '1px 7px', borderRadius: 4,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      background: svcBadgeBg(name), color: svcColor(name),
+      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      maxWidth: '100%', display: 'inline-block', verticalAlign: 'bottom',
+    }} title={name || 'unknown'}>
       {name || 'unknown'}
     </span>
+  );
+}
+
+// DurationBar — value label + a track-bar scaled to the slowest visible
+// row, coloured green/amber/red by latency (red if the trace errored).
+// Reuses the .ov-minibar token track from globals.css.
+function DurationBar({ ms, err, max }: { ms: number; err: boolean; max: number }) {
+  const pct = max > 0 ? Math.max(2, Math.min(100, (ms / max) * 100)) : 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+      <span className="mono" style={{ minWidth: 58, color: err ? 'var(--err)' : 'var(--text)' }}>
+        {ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(2)}ms`}
+      </span>
+      <span className="ov-minibar" style={{ maxWidth: 110 }}>
+        <i style={{ width: `${pct}%`, background: durColor(ms, err) }} />
+      </span>
+    </div>
+  );
+}
+
+// LatencyScatter — duration-vs-time scatter built from the LIVE trace
+// rows (no fabricated data). x = start time, y = duration (log scale),
+// colour = status (ok = accent, error = red). Hover → tooltip; click →
+// open the trace; drag → brush a time window that narrows the page range.
+// Hand-rolled SVG on tokens (uPlot has no first-class per-point click /
+// brush-to-range affordance; the prototype's scatter is SVG too).
+function LatencyScatter({ rows, onOpen, onBrush }: {
+  rows: TraceRow[];
+  onOpen: (t: TraceRow) => void;
+  onBrush: (fromMs: number, toMs: number) => void;
+}) {
+  const SW = 1000, SH = 168;
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragRef = useRef<number | null>(null);
+  const [bx, setBx] = useState<{ a: number; b: number } | null>(null);
+  const [hover, setHover] = useState<{ t: TraceRow; x: number; y: number } | null>(null);
+
+  // Time + duration domains from the real rows. Guard the empty case.
+  const { t0, t1, maxDur } = useMemo(() => {
+    if (rows.length === 0) return { t0: 0, t1: 1, maxDur: 1 };
+    let lo = Infinity, hi = -Infinity, md = 0;
+    for (const r of rows) {
+      const tms = r.startTime / 1e6;
+      if (tms < lo) lo = tms;
+      if (tms > hi) hi = tms;
+      if (r.durationMs > md) md = r.durationMs;
+    }
+    if (hi === lo) hi = lo + 1;
+    return { t0: lo, t1: hi, maxDur: Math.max(md, 1) };
+  }, [rows]);
+
+  const sx = (tms: number) => 10 + ((tms - t0) / (t1 - t0)) * (SW - 20);
+  const sy = (d: number) => {
+    const lv = Math.log10(d + 1), mx = Math.log10(maxDur + 1) || 1;
+    return SH - 16 - (lv / mx) * (SH - 26);
+  };
+  const pxToView = (clientX: number) => {
+    const r = svgRef.current?.getBoundingClientRect();
+    if (!r) return 0;
+    return ((clientX - r.left) / r.width) * SW;
+  };
+
+  const onDown = (e: React.MouseEvent) => {
+    const x = pxToView(e.clientX);
+    dragRef.current = x;
+    setBx({ a: x, b: x });
+  };
+  const onMove = (e: React.MouseEvent) => {
+    if (dragRef.current == null) return;
+    setBx(b => (b ? { ...b, b: pxToView(e.clientX) } : b));
+  };
+  const onUp = (e: React.MouseEvent) => {
+    if (dragRef.current == null) return;
+    const a = dragRef.current, b = pxToView(e.clientX);
+    dragRef.current = null;
+    setBx(null);
+    if (Math.abs(b - a) > 6) {
+      // Convert the two view-space x's back to time (unix ms).
+      const lo = t0 + ((Math.min(a, b) - 10) / (SW - 20)) * (t1 - t0);
+      const hi = t0 + ((Math.max(a, b) - 10) / (SW - 20)) * (t1 - t0);
+      onBrush(Math.round(lo), Math.round(hi));
+    }
+  };
+
+  if (rows.length === 0) {
+    return (
+      <div style={{ height: SH, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text3)', fontSize: 12 }}>
+        No traces in view to plot.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative', height: SH }}>
+      <svg ref={svgRef} viewBox={`0 0 ${SW} ${SH}`} width="100%" height={SH}
+        preserveAspectRatio="none"
+        style={{ display: 'block', cursor: 'crosshair' }}
+        onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp}
+        onMouseLeave={(e) => { onUp(e); setHover(null); }}>
+        {/* log-scale gridlines at 25/50/75/100% of max duration */}
+        {[0.25, 0.5, 0.75, 1].map((f, i) => (
+          <line key={i} x1="10" x2={SW - 10} y1={sy(maxDur * f)} y2={sy(maxDur * f)}
+            stroke="var(--border)" strokeWidth="1" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
+        ))}
+        {rows.map((r) => (
+          <circle key={r.traceId}
+            cx={sx(r.startTime / 1e6)} cy={sy(r.durationMs)}
+            r={r.hasError ? 3.6 : 2.8}
+            fill={r.hasError ? 'var(--err)' : 'var(--accent)'}
+            opacity={r.hasError ? 0.95 : 0.55}
+            style={{ cursor: 'pointer' }}
+            onMouseEnter={() => setHover({ t: r, x: sx(r.startTime / 1e6), y: sy(r.durationMs) })}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onOpen(r); }} />
+        ))}
+        {bx && (
+          <rect x={Math.min(bx.a, bx.b)} y="0" width={Math.abs(bx.b - bx.a)} height={SH}
+            fill="var(--accent)" opacity="0.12" stroke="var(--accent)" strokeWidth="1"
+            vectorEffect="non-scaling-stroke" />
+        )}
+      </svg>
+      {/* y-axis duration ticks (log scale) */}
+      {[1000, 100, 10].filter(v => v <= maxDur * 1.4).map((v, i) => (
+        <div key={i} className="mono" style={{
+          position: 'absolute', right: 4, top: `${(sy(v) / SH) * 100}%`,
+          transform: 'translateY(-50%)', fontSize: 9, color: 'var(--text3)',
+          background: 'var(--bg2)', padding: '0 3px',
+        }}>{v >= 1000 ? '1s' : `${v}ms`}</div>
+      ))}
+      {hover && (
+        <div style={{
+          position: 'absolute', pointerEvents: 'none', zIndex: 5,
+          left: `min(${(hover.x / SW) * 100}%, calc(100% - 220px))`,
+          top: `${(hover.y / SH) * 100}%`, transform: 'translate(10px, -50%)',
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 4, padding: '6px 9px', fontSize: 11, color: 'var(--text)',
+          whiteSpace: 'nowrap', boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>{hover.t.rootName || '—'}</div>
+          <div style={{ color: 'var(--text2)' }}>{hover.t.serviceName}</div>
+          <div className="mono">{hover.t.durationMs >= 1000 ? `${(hover.t.durationMs / 1000).toFixed(2)}s` : `${hover.t.durationMs.toFixed(2)}ms`} · {tsShort(hover.t.startTime)}</div>
+          <div style={{ marginTop: 2 }}>
+            <span className={`badge ${hover.t.hasError ? 'b-err' : 'b-ok'}`} style={{ fontSize: 9 }}>
+              {hover.t.hasError ? 'ERROR' : 'OK'}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// MiniWaterfall — inline preview of a trace's top spans on row-expand.
+// Fetches the real /api/traces/{id} (server-cached 5m; usually already
+// warmed by the hover-prefetch), then renders up to 8 spans as service-
+// coloured bars positioned by start/duration within the root span.
+function MiniWaterfall({ traceId, fallbackService, onOpen }: {
+  traceId: string;
+  fallbackService: string;
+  onOpen: () => void;
+}) {
+  const [spans, setSpans] = useState<SpanRow[] | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setSpans(undefined);
+    api.trace(traceId)
+      .then(d => { if (!cancelled) setSpans(d?.spans ?? []); })
+      .catch(() => { if (!cancelled) setSpans(null); });
+    return () => { cancelled = true; };
+  }, [traceId]);
+
+  // Derive a compact view: sort by start, take the root window, show the
+  // top-N longest spans (so the preview isn't dominated by tiny leaves).
+  const view = useMemo(() => {
+    if (!spans || spans.length === 0) return null;
+    let t0 = Infinity, t1 = -Infinity;
+    for (const s of spans) {
+      if (s.startTime < t0) t0 = s.startTime;
+      if (s.endTime > t1) t1 = s.endTime;
+    }
+    const total = Math.max(1, t1 - t0);
+    const top = [...spans].sort((a, b) => b.durationMs - a.durationMs).slice(0, 8)
+      .sort((a, b) => a.startTime - b.startTime);
+    return { t0, total, top };
+  }, [spans]);
+
+  return (
+    <div style={{ padding: '8px 14px 12px 40px', background: 'var(--bg1)' }}>
+      {spans === undefined && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 0' }}>Loading spans…</div>
+      )}
+      {spans === null && (
+        <div style={{ fontSize: 11, color: 'var(--err)', padding: '4px 0' }}>Could not load spans for this trace.</div>
+      )}
+      {spans && spans.length === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 0' }}>
+          No span detail (trace may have aged out of raw retention).
+        </div>
+      )}
+      {view && view.top.map((s, i) => {
+        const left = ((s.startTime - view.t0) / view.total) * 100;
+        const width = Math.max(1.5, (Math.max(0, s.endTime - s.startTime) / view.total) * 100);
+        const err = s.statusCode === 'error';
+        return (
+          <div key={s.spanId || i} style={{ display: 'grid', gridTemplateColumns: '220px 1fr', alignItems: 'center', height: 22, gap: 10 }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', overflow: 'hidden' }}>
+              <span style={{ width: 6, height: 6, borderRadius: 6, background: svcColor(s.serviceName || fallbackService), flex: 'none' }} />
+              <span className="mono" style={{ fontSize: 10.5, color: 'var(--text2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {(s.serviceName || fallbackService)} · {s.name}
+              </span>
+            </div>
+            <div style={{ position: 'relative', height: 12 }}>
+              <div style={{
+                position: 'absolute', left: `${left}%`, width: `${width}%`, height: 12,
+                borderRadius: 3, background: err ? 'var(--err)' : svcColor(s.serviceName || fallbackService),
+                opacity: 0.85,
+              }} title={`${s.serviceName} · ${s.name} · ${s.durationMs.toFixed(2)}ms`} />
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ marginTop: 6 }}>
+        <a href={`/trace?id=${traceId}`}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpen(); }}
+          style={{ color: 'var(--accent2)', fontSize: 11.5, fontWeight: 600, textDecoration: 'none' }}>
+          Open trace →
+        </a>
+      </div>
+    </div>
   );
 }
 

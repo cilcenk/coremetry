@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -30,11 +30,19 @@ export function OpsCard({ service, range, operations }: {
   service: string; range: TimeRange; operations: OperationSummary[];
 }) {
   const rangeParam = encodeRange(range);
+  const navigate = useNavigate();
+  // Drill an operation into /traces (service + name pre-filtered), the same
+  // destination the full Operations tab uses. onOpen also lights up j/k/Enter
+  // keyboard nav (UX#4); no searchRef here — the compact card has no filter
+  // input of its own.
+  const opHref = (op: string) =>
+    `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${rangeParam}&view=list&rootOnly=false`;
   const dt = useDataTable<OperationSummary>({
     storageKey: 'svc-ov-ops',
     columns: OP_COLS,
     rows: operations,
     initialSort: { id: 'calls', dir: 'desc' },
+    onOpen: (op) => navigate(opHref(op.name)),
   });
   return (
     <div className="card">
@@ -51,8 +59,9 @@ export function OpsCard({ service, range, operations }: {
           <DataTableColgroup dt={dt} />
           <DataTableHead dt={dt} />
           <tbody>
-            {dt.sortedRows.slice(0, 8).map(r => (
-              <tr key={r.name}>
+            {dt.sortedRows.slice(0, 8).map((r, i) => (
+              <tr key={r.name} {...dt.rowProps(i)} style={{ cursor: 'pointer' }}
+                  onClick={() => navigate(opHref(r.name))}>
                 <td><span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={r.name}>{r.name}</span></td>
                 <td className="num">{r.spanCount >= 1000 ? `${(r.spanCount / 1000).toFixed(1)}K` : r.spanCount}</td>
                 <td className="num"><span className={errBadge(r.errorRate)}>{r.errorRate.toFixed(2)}%</span></td>

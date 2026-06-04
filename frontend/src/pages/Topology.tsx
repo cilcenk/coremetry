@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -1733,6 +1733,38 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   critPathOn?: boolean;
   nsOutlines?: boolean;  // v0.7.19 — draw the dashed per-namespace cluster frames (off by default)
 }) {
+  // ── v0.7.112 — focus-reveal labels ────────────────────────────
+  // Spaghetti fix: edge metric labels are HIDDEN by default and
+  // revealed only when the operator hovers (or focuses) a node.
+  // `hotNode` is the transient hover target; the anchor (sticky
+  // focus from the BFS) also reveals its neighbourhood so the
+  // chosen service's edges read clearly without a hover.
+  // Datadog / Honeycomb map convention — a dense fabric stays
+  // legible because labels appear on demand, not all at once.
+  const [hotNode, setHotNode] = useState<string | null>(null);
+  // Undirected adjacency: node id → set of directly-connected
+  // node ids. Drives the neighbour-dim + edge-reveal logic.
+  const adjacency = useMemo(() => {
+    const a = new Map<string, Set<string>>();
+    const link = (x: string, y: string) => {
+      let s = a.get(x);
+      if (!s) { s = new Set(); a.set(x, s); }
+      s.add(y);
+    };
+    for (const e of edges) {
+      link(e.parentService, e.childNode);
+      link(e.childNode, e.parentService);
+    }
+    return a;
+  }, [edges]);
+  // Active focus target: live hover wins, else the sticky anchor.
+  const active = hotNode || anchor || null;
+  const neighbors = active ? adjacency.get(active) : undefined;
+  const isNear = (id: string) =>
+    !active || id === active || (!!neighbors && neighbors.has(id));
+  const edgeTouchesActive = (e: ServiceTopologyEdge) =>
+    !!active && (e.parentService === active || e.childNode === active);
+
   // maxCalls is computed below near the layout block; we reuse it
   // for the live-flow per-edge animation-duration mapping.
   // v0.5.415 — pre-compute the critical-path edge set. DFS from
@@ -1818,33 +1850,125 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
     layered[h].push(n);
   });
   layered.forEach(col => col.sort((a, b) => a.name.localeCompare(b.name)));
-  const pos = new Map<string, { x: number; y: number }>();
-  layered.forEach((col, hop) => col.forEach((n, i) => pos.set(n.id, { x: hop * COL_W, y: i * ROW_H })));
   const maxRows = Math.max(1, ...layered.map(c => c.length));
+  // v0.7.112 — centre each tier vertically (was top-aligned, which
+  // read as "top-heavy on the entry column"). Same colYOffset trick
+  // OpTopologySVG already uses, so service + operation views match.
+  const colYOffset = layered.map(col =>
+    Math.floor((maxRows - col.length) * ROW_H / 2));
+  const pos = new Map<string, { x: number; y: number }>();
+  layered.forEach((col, hop) => col.forEach((n, i) =>
+    pos.set(n.id, { x: hop * COL_W, y: colYOffset[hop] + i * ROW_H })));
   const width = Math.max(1, layered.length) * COL_W;
   const height = maxRows * ROW_H + 40;
   const maxCalls = Math.max(1, ...edges.map(e => Number(e.calls) || 0));
   const truncate = (s: string, n: number) => s.length > n ? s.slice(0, n - 1) + '…' : s;
-  const sorted = [...edges].map(e => e.calls).sort((a, b) => b - a);
-  const callThreshold = sorted[Math.floor(sorted.length / 3)] ?? 0;
+  // v0.7.112 — edge labels are no longer volume-gated (the prior
+  // top-third callThreshold). Labels now reveal on node focus only,
+  // so the at-rest graph is label-free regardless of edge volume.
+
+  // ── v0.7.112 — pan / zoom via a stateful SVG viewBox ─────────
+  // The world spans (-10,-10) → (width+30, height+30) — the 10px
+  // halo plus content. `view` is the visible window into that
+  // world; wheel zooms around the cursor, drag pans, Fit frames
+  // the whole graph. Replaces the prior scroll-only container so
+  // a thousand-node fabric is navigable.
+  const worldX = -10, worldY = -10, worldW = width + 40, worldH = height + 40;
+  const VP_H = Math.round(window.innerHeight * 0.62); // viewport px height
+  const svgWrapRef = useRef<HTMLDivElement | null>(null);
+  const [view, setView] = useState<{ x: number; y: number; w: number; h: number }>(
+    { x: worldX, y: worldY, w: worldW, h: worldH });
+  const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  // Fit = frame the entire world into the viewport, preserving the
+  // viewport's aspect ratio so nodes never stretch.
+  const fit = useCallback(() => {
+    const el = svgWrapRef.current;
+    const cw = el?.clientWidth || worldW;
+    const ch = el?.clientHeight || VP_H;
+    const aspect = cw / ch;
+    let w = worldW, h = worldH;
+    if (worldW / worldH > aspect) h = worldW / aspect; else w = worldH * aspect;
+    // Centre the world inside the (possibly larger) framed window.
+    setView({ x: worldX - (w - worldW) / 2, y: worldY - (h - worldH) / 2, w, h });
+  }, [worldW, worldH, worldX, worldY, VP_H]);
+
+  // Re-fit whenever the graph shape changes (node/edge count or
+  // span). Keeps a freshly-loaded or filtered graph framed.
+  useEffect(() => { fit(); }, [fit]);
+
+  const onWheel = (ev: React.WheelEvent<HTMLDivElement>) => {
+    ev.preventDefault();
+    const el = svgWrapRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const fx = (ev.clientX - r.left) / r.width;   // cursor frac across viewport
+    const fy = (ev.clientY - r.top) / r.height;
+    setView(v => {
+      const factor = ev.deltaY < 0 ? 0.9 : 1.1;   // wheel-up = zoom in
+      const nw = Math.max(worldW * 0.15, Math.min(worldW * 4, v.w * factor));
+      const nh = nw * (v.h / v.w);
+      // Keep the world point under the cursor stationary.
+      const wx = v.x + fx * v.w, wy = v.y + fy * v.h;
+      return { x: wx - fx * nw, y: wy - fy * nh, w: nw, h: nh };
+    });
+  };
+  const onPointerDown = (ev: React.MouseEvent<HTMLDivElement>) => {
+    // Don't start a pan when the press lands on an interactive node
+    // / edge — those keep their click navigation.
+    if ((ev.target as Element).closest('[data-topo-hit]')) return;
+    drag.current = { px: ev.clientX, py: ev.clientY, vx: view.x, vy: view.y };
+    setDragging(true);
+  };
+  const onPointerMove = (ev: React.MouseEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const el = svgWrapRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // px→world: a viewport pixel maps to (view.w / clientWidth) world units.
+    setView(v => ({
+      ...v,
+      x: d.vx - (ev.clientX - d.px) * (v.w / r.width),
+      y: d.vy - (ev.clientY - d.py) * (v.h / r.height),
+    }));
+  };
+  const endDrag = () => { drag.current = null; setDragging(false); };
+  const zoomBy = (factor: number) => setView(v => {
+    const nw = Math.max(worldW * 0.15, Math.min(worldW * 4, v.w * factor));
+    const nh = nw * (v.h / v.w);
+    // Zoom around the viewport centre.
+    const cx = v.x + v.w / 2, cy = v.y + v.h / 2;
+    return { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
+  });
+
   return (
     <div style={{
-      overflow: 'auto', maxHeight: '65vh',
+      position: 'relative',
       border: '1px solid var(--border)', borderRadius: 6,
-      background: 'var(--bg2)', padding: 12, marginBottom: 16,
+      background: 'var(--bg2)', marginBottom: 16, overflow: 'hidden',
     }}>
-      {/* v0.5.282 — width/height MUST match the viewBox area
-          (width+40 × height+40, since the viewBox starts at
-          -10,-10 to allow a 10px halo around the leftmost +
-          topmost boxes). Earlier `width={width}` paired with
-          `width+40` viewBox produced a `width/(width+40)` scale
-          factor, so a 1-column diagram (width=280) rendered
-          boxes at ~87% intrinsic size while a 6-column diagram
-          (width=1680) rendered at ~98% — operator saw "some
-          service boxes smaller than others". Now 1 viewBox
-          unit = 1 CSS pixel regardless of column count. */}
-      <svg width={width + 40} height={height + 40}
-        viewBox={`-10 -10 ${width + 40} ${height + 40}`}
+      {/* v0.7.112 — pan/zoom viewport. Wheel zooms around the
+          cursor, drag pans (except when the press lands on a node
+          / edge — those keep their click), Fit reframes. */}
+      <div ref={svgWrapRef}
+        onWheel={onWheel}
+        onMouseDown={onPointerDown}
+        onMouseMove={onPointerMove}
+        onMouseUp={endDrag}
+        onMouseLeave={() => { endDrag(); setHotNode(null); }}
+        style={{
+          height: VP_H, width: '100%',
+          cursor: dragging ? 'grabbing' : 'grab',
+          touchAction: 'none', userSelect: 'none',
+        }}>
+      {/* v0.5.282 — 1 viewBox unit = 1 CSS pixel regardless of
+          column count; the world is (-10,-10)→(width+30,height+30)
+          and `view` is the pannable/zoomable window into it. */}
+      <svg width="100%" height="100%"
+        viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+        preserveAspectRatio="xMidYMid meet"
         xmlns="http://www.w3.org/2000/svg" style={{ display: 'block' }}>
         <defs>
           {(['http', 'rpc', 'db', 'kafka', 'internal'] as const).map(p => (
@@ -1922,7 +2046,6 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           const inCritPathSw = critPathEdges?.has(`${e.parentService}|${e.childNode}|${e.protocol}`) ?? false;
           const sw = inCritPathSw ? swBase * 1.8 : swBase;
           const color = protoColor(e.protocol);
-          const showLabel = e.calls >= callThreshold;
           const proto = e.protocol.toUpperCase();
           const top = e.topLabels[0] || '';
           const more = e.distinctLabels > 1 ? ` (+${e.distinctLabels - 1})` : '';
@@ -1954,10 +2077,31 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
             ? ` · ${fmtNum(e.errors)} err${errRate >= 0.01 ? ` (${errRate.toFixed(1)}%)` : ''}`
             : '';
           const inColor = isEdgeInColorFilter(e);
+          // ── v0.7.112 — focus-reveal opacity + label gating ─────
+          // DEFAULT (nothing focused): every edge is FAINT and
+          // label-less, so a dense fabric reads as faint wiring,
+          // not spaghetti. Degraded edges stay a touch brighter so
+          // breakage is visible at a glance even at rest.
+          //   healthy  → .16   ≥1% err → .35   ≥5% err → .50
+          // ON FOCUS: the active node's edges snap to full opacity
+          // with their metric labels; all others drop to ~.05.
+          const touches = edgeTouchesActive(e);
+          let edgeOpacity: number;
+          if (active) {
+            edgeOpacity = touches ? 1 : 0.05;
+          } else {
+            edgeOpacity = errRate >= 5 ? 0.5 : errRate >= 1 ? 0.35 : 0.16;
+          }
+          // Search + color-filter still hard-dim out-of-scope edges.
+          if (!(match && inColor)) edgeOpacity = Math.min(edgeOpacity, 0.18);
+          // Labels appear ONLY for the focused node's edges — the
+          // spaghetti-killer. Reveal is hover-gated, not volume-gated.
+          const showLabel = !!active && touches && match && inColor;
           return (
-            <g key={i} style={{
+            <g key={i} data-topo-hit style={{
                  cursor: 'pointer',
-                 opacity: match && inColor ? 1 : 0.18,
+                 opacity: edgeOpacity,
+                 transition: 'opacity .12s',
                }}
                onClick={() => onEdgeClick(e)}>
               {/* v0.5.411 — async messaging edges (Kafka /
@@ -1972,8 +2116,8 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                   flow animation; .async kicks in for kafka so
                   the existing async cue stays distinct). */}
               <path d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
-                stroke={strokeOverride} strokeWidth={sw} fill="none"
-                markerEnd={`url(#arrow-${e.protocol})`} opacity={0.7}
+                stroke={strokeOverride} strokeWidth={touches ? sw + 0.5 : sw} fill="none"
+                markerEnd={`url(#arrow-${e.protocol})`} opacity={1}
                 className={flowOn
                   ? 'topo-edge-flow' + (e.protocol === 'kafka' ? ' async' : '')
                   : undefined}
@@ -1992,29 +2136,35 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                 strokeDasharray={flowOn ? undefined : (e.protocol === 'kafka' ? '6 4' : undefined)}>
                 <title>{`${e.parentService} → ${e.childNode}\n${proto} · ${fmtNum(e.calls)} calls${errSuffix} · avg ${e.avgMs.toFixed(1)}ms · p99 ${e.p99Ms.toFixed(0)}ms · ${e.distinctLabels} endpoint(s)\n\n${e.topLabels.join('\n')}`}</title>
               </path>
-              {showLabel && (
-                <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4}
-                  fontSize={10} fill={strokeOverride} textAnchor="middle"
-                  style={{ pointerEvents: 'none' }}>
-                  {focused
-                    ? `${proto} · ${fmtNum(Number(e.calls))}`
-                    : `${proto} ${truncate(top, 28)}${more}`}
-                </text>
-              )}
-              {showLabel && (
-                <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 9}
-                  fontSize={9} fill="var(--text3)" textAnchor="middle"
-                  style={{ pointerEvents: 'none' }}>
-                  {fmtNum(e.calls)} calls{p99}
-                </text>
-              )}
-              {showLabel && errRate >= 1 && (
-                <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 20}
-                  fontSize={9} fill={strokeOverride} textAnchor="middle"
-                  style={{ pointerEvents: 'none', fontWeight: 600 }}>
-                  {fmtNum(e.errors)} err ({errRate.toFixed(1)}%)
-                </text>
-              )}
+              {/* v0.7.112 — compact focus-revealed metric pill.
+                  Replaces the prior 3-text stack (the spaghetti
+                  source); shown only for the hovered/anchored
+                  node's edges. Line 1 = proto + endpoint context
+                  (or proto·calls in focus mode), line 2 (mono) =
+                  calls · p99 · err%. A backing card keeps it
+                  readable over crossing edges. */}
+              {showLabel && (() => {
+                const lx = (x1 + x2) / 2, ly = (y1 + y2) / 2;
+                const l1 = focused
+                  ? `${proto} · ${fmtNum(Number(e.calls))}`
+                  : `${proto} ${truncate(top, 22)}${more}`;
+                const l2 = `${fmtNum(e.calls)} calls${p99}`
+                  + (errRate >= 1 ? ` · ${errRate.toFixed(1)}% err` : '');
+                const w = Math.max(l1.length, l2.length) * 5.6 + 14;
+                return (
+                  <g transform={`translate(${lx - w / 2}, ${ly - 17})`}
+                     style={{ pointerEvents: 'none' }}>
+                    <rect width={w} height={32} rx={6} ry={6}
+                      fill="var(--bg1)" stroke="var(--border)" strokeWidth={1} />
+                    <text x={w / 2} y={13} fontSize={10} fontWeight={600}
+                      fill={strokeOverride} textAnchor="middle">{l1}</text>
+                    <text x={w / 2} y={25} fontSize={9}
+                      fill={errRate >= 1 ? strokeOverride : 'var(--text2)'}
+                      textAnchor="middle"
+                      fontFamily="ui-monospace, SFMono-Regular, monospace">{l2}</text>
+                  </g>
+                );
+              })()}
             </g>
           );
         })}
@@ -2031,12 +2181,24 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           // there's nothing past the outbound boundary.
           const clickable = !!onNodeClick && n.kind !== 'external';
           const inColor = isNodeInColorFilter(n);
+          // ── v0.7.112 — focus-reveal node opacity ──────────────
+          // Search / color-filter still hard-dim to .18. When a
+          // node is focused, non-neighbours fade to .3 (readable
+          // context, clearly secondary); the active node + its
+          // direct neighbours stay full. Active wins ties so the
+          // hovered node never dims itself.
+          let nodeOpacity = match && inColor ? 1 : 0.18;
+          if (nodeOpacity === 1 && active && !isNear(n.id)) nodeOpacity = 0.3;
           return (
             <g key={n.id} transform={`translate(${p.x}, ${p.y})`}
+               data-topo-hit
                style={{
-                 opacity: match && inColor ? 1 : 0.18,
+                 opacity: nodeOpacity,
                  cursor: clickable ? 'pointer' : 'default',
+                 transition: 'opacity .12s',
                }}
+               onMouseEnter={() => setHotNode(n.id)}
+               onMouseLeave={() => setHotNode(null)}
                onClick={clickable ? () => onNodeClick(n) : undefined}>
               {/* v0.5.312 — three-state health ring (red /
                   yellow / faint green). Replaces the binary
@@ -2086,7 +2248,14 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                       strokeWidth={strokeW}>
                       <title>{tip}</title>
                     </rect>
-                    <text x={10} y={22} fontSize={13} fontWeight={600} fill="var(--text)">
+                    {/* v0.7.112 — left 3px accent stripe by kind so
+                        the operator reads service / db / queue /
+                        external at a glance without parsing the
+                        sub-label. Inset + rounded so it tucks inside
+                        the card's left edge. */}
+                    <rect x={2} y={6} width={3} height={NODE_H - 12} rx={1.5} ry={1.5}
+                      fill={stroke} style={{ pointerEvents: 'none' }} />
+                    <text x={14} y={22} fontSize={13} fontWeight={600} fill="var(--text)">
                       {/* v0.5.409 — external nodes recognised as
                           known SaaS / cloud vendors show their
                           display name ("Stripe") instead of the
@@ -2096,7 +2265,7 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
                         ? truncate(n.extDisplay, 24)
                         : truncate(infraNodeLabel(n.name), 24)}
                     </text>
-                    <text x={10} y={40} fontSize={10} fill="var(--text3)">
+                    <text x={14} y={40} fontSize={10} fill="var(--text3)">
                       {n.kind === 'external' && n.extKind
                         ? n.extKind.toUpperCase()
                         : n.kind.toUpperCase()}
@@ -2165,6 +2334,28 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           );
         })}
       </svg>
+      </div>
+      {/* v0.7.112 — zoom / fit controls + reveal hint, pinned over
+          the viewport. Don't propagate the press to the pan layer. */}
+      <div style={{
+        position: 'absolute', right: 10, bottom: 10, zIndex: 2,
+        display: 'flex', flexDirection: 'column', gap: 6,
+      }} onMouseDown={ev => ev.stopPropagation()}>
+        <Button variant="secondary" size="sm" title="Zoom in"
+          onClick={() => zoomBy(0.83)}>＋</Button>
+        <Button variant="secondary" size="sm" title="Zoom out"
+          onClick={() => zoomBy(1.2)}>－</Button>
+        <Button variant="secondary" size="sm" title="Fit to view"
+          onClick={fit}>Fit</Button>
+      </div>
+      <div style={{
+        position: 'absolute', left: 12, top: 10, zIndex: 2,
+        fontSize: 11, color: 'var(--text2)', pointerEvents: 'none',
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        borderRadius: 5, padding: '3px 7px',
+      }}>
+        Hover a node to reveal its edges · scroll = zoom · drag = pan
+      </div>
     </div>
   );
 }

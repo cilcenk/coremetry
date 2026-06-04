@@ -321,9 +321,9 @@ function TraceDetailInner() {
                         fontSize: 12, padding: '4px 12px',
                         display: 'inline-flex', alignItems: 'center', gap: 6,
                         textDecoration: 'none', fontWeight: 600,
-                        background: 'rgba(56,139,253,0.15)',
+                        background: 'var(--accent-soft)',
                         color: 'var(--accent2)',
-                        border: '1px solid rgba(56,139,253,0.45)',
+                        border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
                         borderRadius: 6,
                       }}>
                   ↔ Compare trace
@@ -605,15 +605,15 @@ function CompareTracesButton({ aId }: { aId: string }) {
       {error && (
         <div style={{
           padding: 10, borderRadius: 6, fontSize: 12,
-          background: 'rgba(255,82,82,.10)', color: 'var(--err)',
-          border: '1px solid rgba(255,82,82,.25)', maxWidth: 720,
+          background: 'color-mix(in oklab, var(--err) 10%, transparent)', color: 'var(--err)',
+          border: '1px solid color-mix(in oklab, var(--err) 25%, transparent)', maxWidth: 720,
         }}>{error}</div>
       )}
       {text && (
         <div style={{
           padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
-          background: 'rgba(56,139,253,.08)',
-          border: '1px solid rgba(56,139,253,.25)',
+          background: 'var(--accent-soft)',
+          border: '1px solid color-mix(in oklab, var(--accent) 25%, transparent)',
           color: 'var(--text)', whiteSpace: 'pre-wrap', maxWidth: 720,
         }}>
           <div style={{ fontSize: 10, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',

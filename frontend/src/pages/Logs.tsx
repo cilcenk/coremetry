@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -28,14 +29,76 @@ import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass } from '@/lib/utils';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
 
-const SEV_OPTIONS = [
-  { v: 0, label: 'All severities' },
-  { v: 5, label: 'DEBUG+' },
-  { v: 9, label: 'INFO+' },
-  { v: 13, label: 'WARN+' },
-  { v: 17, label: 'ERROR+' },
-  { v: 21, label: 'FATAL' },
+// Level facet chips (prototype LogsView .facet/.lvl) — each chip
+// drives the EXISTING min-severity filter (filter.severity). The
+// `min` is the OTel severity-number floor that the severity <select>
+// used: All=0, DEBUG=5, INFO=9, WARN=13, ERROR=17. Clicking a chip
+// sets that floor; clicking the active chip again returns to All.
+// `bucket` is the canonical severity-band name (matches the names
+// the /api/logs/timeseries?groupBy=severity backend returns, see
+// LogsHistogram) that we sum counts into for this chip's badge.
+const LVL_FACETS: Array<{ key: string; label: string; min: number }> = [
+  { key: 'error', label: 'ERROR', min: 17 },
+  { key: 'warn',  label: 'WARN',  min: 13 },
+  { key: 'info',  label: 'INFO',  min: 9  },
+  { key: 'debug', label: 'DEBUG', min: 5  },
 ];
+
+// Map a backend severity-band name (ERROR / FATAL / WARN / INFO /
+// DEBUG / TRACE / OTHER, any casing) to one of the four chip
+// buckets. FATAL folds into ERROR; TRACE + OTHER fold into DEBUG —
+// so the four chips always sum to the grand total.
+function bandToFacet(name: string): 'error' | 'warn' | 'info' | 'debug' {
+  const u = name.toUpperCase();
+  if (u.startsWith('FATAL') || u.startsWith('ERROR')) return 'error';
+  if (u.startsWith('WARN')) return 'warn';
+  if (u.startsWith('INFO')) return 'info';
+  return 'debug'; // DEBUG / TRACE / OTHER / unknown
+}
+
+type SevSeries = { name: string; points: { t: number; v: number }[] };
+
+// pickVolumeBucket — same window→bucket heuristic LogsHistogram
+// uses, so the Logs-local stacked-bar volume row and the shared
+// histogram below it agree on resolution. Returns seconds.
+function pickVolumeBucket(from?: number, to?: number): number {
+  if (!from || !to) return 30;
+  const spanSec = (to - from) / 1_000_000_000;
+  if (spanSec < 60 * 15)      return 5;      // <15min → 5s
+  if (spanSec < 60 * 60)      return 30;     // <1h    → 30s
+  if (spanSec < 60 * 60 * 6)  return 60;     // <6h    → 1m
+  if (spanSec < 60 * 60 * 24) return 5 * 60; // <24h   → 5m
+  return 15 * 60;                            // ≥24h   → 15m
+}
+
+// fmtBucket — render a bucket width in seconds as a human label
+// for the volume card subtitle ("per 30s", "per 5m", "per 15m").
+function fmtBucket(sec: number): string {
+  if (sec % 3600 === 0) return `${sec / 3600}h`;
+  if (sec % 60 === 0)   return `${sec / 60}m`;
+  return `${sec}s`;
+}
+
+// foldVolume — collapse the per-severity timeseries into one
+// stacked bar per time bucket: { info, warn, error } counts (info
+// = INFO+DEBUG+TRACE+OTHER baseline, warn = WARN, error =
+// ERROR+FATAL). Mirrors the prototype's 3-band stack, but the
+// total is faithful — every band counts toward exactly one slot.
+function foldVolume(series: SevSeries[]): { info: number; warn: number; error: number }[] {
+  const byTime = new Map<number, { info: number; warn: number; error: number }>();
+  for (const s of series) {
+    const facet = bandToFacet(s.name);
+    const slot = facet === 'error' ? 'error' : facet === 'warn' ? 'warn' : 'info';
+    for (const p of s.points) {
+      const cur = byTime.get(p.t) ?? { info: 0, warn: 0, error: 0 };
+      cur[slot] += p.v;
+      byTime.set(p.t, cur);
+    }
+  }
+  return Array.from(byTime.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([, v]) => v);
+}
 
 // Compose a KQL clause from the current filter state so the
 // Kibana deep-link lands on the same slice. service / trace_id
@@ -160,6 +223,50 @@ function LogsInner() {
     traceId: filter.traceId || undefined,
     spanId:  filter.spanId  || undefined,
   });
+
+  // Level-facet counts + stacked volume bars (prototype LogsView).
+  // ONE per-severity timeseries query feeds BOTH the toolbar facet
+  // chip badges and the Logs-local stacked-bar volume row. Scoped
+  // to the current applied filter (service / search / trace) and
+  // the active window, but deliberately WITHOUT severity — the
+  // chips must show counts for every level, otherwise selecting
+  // ERROR would zero out the other chips (Kibana/Datadog facet
+  // behaviour). `from`/`to` come from the already-memoised window
+  // (no bare timeRangeToNs — v0.5.184). Needs a bounded window OR a
+  // trace pin; the query key carries from/to so a preset's Date.now
+  // drift doesn't thrash it (the parent memo already froze them).
+  const volumeEnabled = (from !== undefined && to !== undefined) || !!filter.traceId;
+  const volumeBucket = useMemo(() => pickVolumeBucket(from, to), [from, to]);
+  const volumeQ = useQuery({
+    queryKey: ['logs', 'sev-volume', from, to, filter.service, filter.search, filter.traceId, volumeBucket],
+    queryFn: () => api.logsTimeseries({
+      from, to,
+      service: filter.service || undefined,
+      search:  filter.search  || undefined,
+      traceId: filter.traceId || undefined,
+      groupBy: 'severity',
+      bucketSec: volumeBucket,
+    }),
+    enabled: volumeEnabled,
+    staleTime: 30_000,
+  });
+  const sevSeries: SevSeries[] = volumeQ.data ?? [];
+  // Per-chip counts (summed across all buckets), keyed by facet.
+  const facetCounts = useMemo(() => {
+    const c: Record<string, number> = { all: 0, error: 0, warn: 0, info: 0, debug: 0 };
+    for (const s of sevSeries) {
+      const facet = bandToFacet(s.name);
+      const sum = s.points.reduce((a, p) => a + p.v, 0);
+      c[facet] += sum;
+      c.all += sum;
+    }
+    return c;
+  }, [sevSeries]);
+  const volBars = useMemo(() => foldVolume(sevSeries), [sevSeries]);
+  const volMax = useMemo(
+    () => Math.max(1, ...volBars.map(b => b.info + b.warn + b.error)),
+    [volBars],
+  );
 
   // Live-tail query — separate hook with refetchInterval so
   // RQ owns the polling loop. The query key includes the
@@ -404,9 +511,6 @@ function LogsInner() {
             title="Filter logs to a single trace. Time range is ignored when this is set — searches across full retention."
             className="mono"
             style={{ width: 180, fontSize: 12 }} />
-          <select value={draft.severity} aria-label="Minimum log severity" onChange={e => setDraft({ ...draft, severity: Number(e.target.value) })}>
-            {SEV_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
-          </select>
           <button onClick={apply}>Search</button>
           <button className="sec" onClick={reset}>Reset</button>
           {/* Create watcher (v0.5.252 — was: 🔔 Save as alert).
@@ -462,6 +566,149 @@ function LogsInner() {
             );
           })()}
         </div>
+
+        {/* Level facet chips (prototype LogsView .logbar/.facet/.lvl).
+            Each chip drives the EXISTING min-severity filter
+            (filter.severity) and carries a live count from the
+            per-severity timeseries query. Clicking a chip commits
+            its severity floor immediately + resets paging (facet =
+            a filter action, Kibana-style); clicking the active chip
+            (or All) returns to All severities. Active chip = accent
+            ring. The level label renders as the canonical severity
+            badge so the operator's colour memory carries over from
+            the table + histogram. (Replaces the old severity
+            <select> in the toolbar.) */}
+        {(() => {
+          // The active chip = the highest-severity chip whose floor
+          // is ≤ the current severity floor, so e.g. severity=17
+          // lights ERROR, severity=9 lights INFO. 0 = All.
+          const activeKey = filter.severity <= 0 ? 'all'
+            : (LVL_FACETS.find(f => filter.severity >= f.min)?.key ?? 'all');
+          const setSeverity = (min: number) => {
+            const next = min === filter.severity ? 0 : min; // toggle off → All
+            setFilter(f => ({ ...f, severity: next }));
+            setDraft(d => ({ ...d, severity: next }));
+            resetPaging();
+          };
+          const chipBase: CSSProperties = {
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '5px 10px', borderRadius: 20, fontSize: 11.5,
+            fontWeight: 600, cursor: 'pointer', userSelect: 'none',
+            border: '1px solid var(--border)', background: 'var(--bg1)',
+            color: 'var(--text2)', lineHeight: 1.4,
+          };
+          const onStyle: CSSProperties = {
+            borderColor: 'var(--accent)', color: 'var(--accent2)',
+            background: 'var(--accent-soft)',
+          };
+          const Chip = ({
+            keyName, children, count, title,
+          }: { keyName: string; children: ReactNode; count: number; title: string }) => {
+            const on = activeKey === keyName;
+            return (
+              <span role="button" tabIndex={0}
+                aria-pressed={on}
+                title={title}
+                onClick={() => setSeverity(keyName === 'all' ? 0 : LVL_FACETS.find(f => f.key === keyName)!.min)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSeverity(keyName === 'all' ? 0 : LVL_FACETS.find(f => f.key === keyName)!.min); } }}
+                style={{ ...chipBase, ...(on ? onStyle : {}) }}>
+                {children}
+                <span style={{
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fontSize: 10.5, color: on ? 'var(--accent2)' : 'var(--text3)',
+                }}>
+                  {volumeQ.isLoading ? '·' : count.toLocaleString()}
+                </span>
+              </span>
+            );
+          };
+          return (
+            <div role="group" aria-label="Filter by log level"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                flexWrap: 'wrap', marginBottom: 12,
+              }}>
+              <Chip keyName="all" count={facetCounts.all}
+                title="Show all severities">
+                <span style={{ color: activeKey === 'all' ? 'var(--accent2)' : 'var(--text2)' }}>All</span>
+              </Chip>
+              {LVL_FACETS.map(f => (
+                <Chip key={f.key} keyName={f.key} count={facetCounts[f.key] ?? 0}
+                  title={`Show ${f.label} and above (min severity ${f.min})`}>
+                  <span className={`badge ${
+                    f.key === 'error' ? 'b-err'
+                    : f.key === 'warn' ? 'b-warn'
+                    : f.key === 'info' ? 'b-info'
+                    : 'b-gray'}`}>{f.label}</span>
+                </Chip>
+              ))}
+              {!volumeEnabled && (
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  counts need a bounded time range
+                </span>
+              )}
+              {volumeQ.isError && (
+                <span style={{ fontSize: 11, color: 'var(--err)' }}>
+                  level counts unavailable
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Log-volume stacked bars (prototype LogsView .volbars) —
+            one thin bar per time bucket, stacked error (top, --err)
+            / warn (--warn) / info (--accent). Reuses the SAME
+            per-severity timeseries query as the facet counts above
+            (no extra fetch). Sits above the shared severity-area
+            LogsHistogram, which we keep. Hidden until there's a
+            bounded window; renders skeleton/empty inline. */}
+        {volumeEnabled && (
+          <div className="card" style={{ marginBottom: 10, padding: 0 }}>
+            <div className="ov-card-h">
+              <h3>Log volume</h3>
+              <span className="ov-sub">per {fmtBucket(volumeBucket)} · by level</span>
+              <div className="ov-right" style={{ fontSize: 11 }}>
+                {(['error', 'warn', 'info'] as const).map(k => (
+                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--text2)' }}>
+                    <span style={{
+                      width: 9, height: 9, borderRadius: 2, display: 'inline-block',
+                      background: k === 'error' ? 'var(--err)' : k === 'warn' ? 'var(--warn)' : 'var(--accent)',
+                    }} />
+                    {k}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="ov-card-b">
+              {volumeQ.isLoading ? (
+                <div style={{ height: 40 }} />
+              ) : volBars.length === 0 ? (
+                <div style={{ height: 40, display: 'flex', alignItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
+                  No log volume in this window.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 40 }}>
+                  {volBars.map((b, i) => {
+                    const tot = b.info + b.warn + b.error;
+                    return (
+                      <div key={i}
+                        title={`${tot.toLocaleString()} logs — ${b.error.toLocaleString()} error · ${b.warn.toLocaleString()} warn · ${b.info.toLocaleString()} info`}
+                        style={{
+                          flex: 1, minWidth: 0, display: 'flex',
+                          flexDirection: 'column-reverse',
+                        }}>
+                        <span style={{ display: 'block', height: (b.error / volMax) * 40, background: 'var(--err)' }} />
+                        <span style={{ display: 'block', height: (b.warn / volMax) * 40, background: 'var(--warn)' }} />
+                        <span style={{ display: 'block', height: (b.info / volMax) * 40, background: 'var(--accent)' }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* EQL Sequence Detection (v0.5.468) — only on ES
             backend, collapsed by default so it doesn't crowd

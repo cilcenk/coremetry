@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
@@ -320,9 +320,15 @@ function ServiceDetailInner() {
         )}
 
         {openProbs.length > 0 && (
+          // Red PROBLEM CALLOUT (design handoff app.jsx .prob-callout) —
+          // token-only: a soft red-tinted panel (color-mix keeps it derived
+          // from --err, no raw hex) with a 3px red left accent. One card per
+          // open problem: severity badge + rule name + the anomaly metric
+          // line + description + since-stamp, and a "View all" deep-link.
           <div style={{
-            border: '1px solid rgba(255,82,82,.4)',
-            background: 'rgba(255,82,82,.06)',
+            border: '1px solid var(--border)',
+            borderLeft: '3px solid var(--err)',
+            background: 'color-mix(in oklab, var(--err) 7%, var(--bg1))',
             borderRadius: 6, padding: 12, marginBottom: 14,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -657,6 +663,10 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   // monolith service the scroll-then-eyeball loop fails;
   // typing narrows live with no server round-trip.
   const [filter, setFilter] = useState('');
+  const navigate = useNavigate();
+  // Filter input ref — wired into useDataTable's searchRef so the
+  // app-wide "/" shortcut focuses it (UX#4 keyboard nav).
+  const searchRef = useRef<HTMLInputElement>(null);
   // v0.5.392 — per-row metric drill-in. Clicking the sparkline
   // opens a Modal with three synced uPlot charts (calls, errors,
   // p99) for the same (service, op) tuple. Same pattern the
@@ -736,11 +746,18 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   // FILTERED rows so sorting acts on what's visible; default sort
   // preserved as impact desc. Hook is unconditional + above the
   // empty-state early return (rules-of-hooks).
+  // v0.7.x — app-wide keyboard nav (UX#4). onOpen drills the selected
+  // operation into /traces (service + name pre-filtered, same as the row
+  // Link's opHref); searchRef binds "/" to focus the filter input; j/k move
+  // the row selection and Enter/o open. dt.rowProps(i) on each <tr> paints
+  // the .row-selected accent + the data-row-idx the auto-scroll needs.
   const dt = useDataTable<OperationSummary>({
     storageKey: 'service-operations',
     columns: OP_COLS,
     rows: filtered,
     initialSort: { id: 'impact', dir: 'desc' },
+    onOpen: (op) => navigate(opHref(op.name)),
+    searchRef,
   });
 
   if (rows.length === 0) {
@@ -787,9 +804,9 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
             ? `${dt.sortedRows.length} / ${rows.length} matching`
             : `${rows.length} distinct span name${rows.length === 1 ? '' : 's'} in ${service}`}
         </span>
-        <input value={filter} onChange={e => setFilter(e.target.value)}
-          placeholder="Filter by name…"
-          style={{ marginLeft: 'auto', width: 240, padding: '4px 10px', fontSize: 12,
+        <input ref={searchRef} value={filter} onChange={e => setFilter(e.target.value)}
+          placeholder="Filter by name…  ( / to focus, j/k to move, Enter to open )"
+          style={{ marginLeft: 'auto', width: 320, padding: '4px 10px', fontSize: 12,
                    background: 'var(--bg)', color: 'var(--text)',
                    border: '1px solid var(--border)', borderRadius: 4 }} />
       </div>
@@ -846,7 +863,7 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                 </td>
               </tr>
             )}
-            {dt.sortedRows.map(op => {
+            {dt.sortedRows.map((op, i) => {
               const errCls = op.errorRate > 5 ? 'err' : op.errorRate > 0 ? 'warn' : 'ok';
               // Tone the per-row sparkline with the same severity
               // colour as the err-rate badge so the eye reads "this
@@ -855,8 +872,12 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
               const sparkColor = errCls === 'err' ? 'var(--err)'
                               : errCls === 'warn' ? 'var(--warn)'
                               : undefined;
+              // dt.rowProps(i) → data-row-idx (auto-scroll target) +
+              // .row-selected accent when j/k lands here. Index tracks
+              // dt.sortedRows (the agg "All" row above is NOT counted).
+              const rp = dt.rowProps(i);
               return (
-                <tr key={op.name}
+                <tr key={op.name} {...rp}
                     style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                   <td>
                     <Link
@@ -1044,7 +1065,7 @@ function ImpactBar({ value, max }: { value: number; max: number }) {
     <div style={{ position: 'relative', minWidth: 90, display: 'inline-block' }}>
       <div style={{
         position: 'absolute', inset: 0, width: `${pct}%`,
-        background: 'rgba(56,139,253,0.12)',
+        background: 'color-mix(in oklab, var(--accent) 12%, transparent)',
         borderRadius: 3,
       }} />
       <span style={{ position: 'relative', paddingRight: 4 }}>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Star } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { passesLocalDisplayFilters } from '@/lib/serviceFilters';
@@ -590,12 +591,13 @@ export default function ServicesPage() {
                               : 'Pin — float to top of the list'}
                             style={{
                               all: 'unset', cursor: 'pointer',
-                              fontSize: 13, marginRight: 6,
+                              marginRight: 6, verticalAlign: 'middle',
                               color: pinned.has(s.name) ? 'var(--warn)' : 'var(--text3)',
                               opacity: pinned.has(s.name) ? 1 : 0.4,
                               transition: 'opacity .15s, color .15s',
                             }}>
-                            {pinned.has(s.name) ? '★' : '☆'}
+                            <Star size={14} strokeWidth={1.75}
+                              fill={pinned.has(s.name) ? 'currentColor' : 'none'} />
                           </button>
                           {/* v0.5.274 — auto-scored health dot.
                               Red/yellow/green from errorRate +

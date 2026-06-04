@@ -1,8 +1,10 @@
 import {
   useCallback, useEffect, useMemo, useState,
-  type MouseEvent as ReactMouseEvent, type ReactNode,
+  type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useTableNav, type TableNav } from '@/lib/useTableNav';
+import { useShortcuts } from '@/lib/keyboard';
 import {
   nextSort, sortRows,
   type DataTableColumn, type SortDir, type SortState,
@@ -50,6 +52,11 @@ export interface DataTable<T> {
   colWidths: Record<string, number>;
   startResize: (id: string, e: ReactMouseEvent) => void;
   resetLayout: () => void;
+  // Keyboard nav (UX#4). Always present; inert (selected = -1, no key
+  // bindings) unless the caller supplied onOpen. Spread `rowProps(i)` on each
+  // <tr> for data-row-idx + the .row-selected accent.
+  nav: TableNav<T>;
+  rowProps: (index: number) => { 'data-row-idx': number; className?: string };
 }
 
 function loadJSON<T>(key: string, fallback: T): T {
@@ -61,11 +68,16 @@ function loadJSON<T>(key: string, fallback: T): T {
   }
 }
 
-export function useDataTable<T>({ storageKey, columns, rows, initialSort }: {
+export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen, searchRef }: {
   storageKey: string;
   columns: DataTableColumn<T>[];
   rows: T[];
   initialSort?: SortState;
+  // When provided, the table gains app-wide keyboard nav: j/k move row
+  // selection, Enter/o open the row (calls onOpen), gg/G jump, Esc clears,
+  // and "/" focuses searchRef. Omit for a plain display table. (UX#4)
+  onOpen?: (row: T, index: number) => void;
+  searchRef?: RefObject<HTMLInputElement | null>;
 }): DataTable<T> {
   const sortLSKey = `dt.${storageKey}.sort`;
   const widthLSKey = `dt.${storageKey}.widths`;
@@ -144,7 +156,26 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort }: {
     return sortRows(rows, col, sort.dir);
   }, [rows, sort, columns]);
 
-  return { columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout };
+  // App-wide keyboard nav (UX#4). useTableNav owns the selected index + j/k/
+  // gg/G/Enter/o/Esc bindings + auto-scroll; inert when onOpen is absent (no
+  // bindings) so a plain display table doesn't capture the keys. "/" focuses
+  // the page filter when both onOpen + searchRef are supplied.
+  const nav = useTableNav<T>(sortedRows, { onOpen, enabled: !!onOpen, pageId: storageKey });
+  useShortcuts(
+    onOpen && searchRef
+      ? [{ keys: '/', label: 'Focus filter', group: 'Lists', handler: () => searchRef.current?.focus() }]
+      : [],
+    [onOpen, searchRef, storageKey],
+  );
+  const rowProps = useCallback(
+    (index: number) => ({
+      'data-row-idx': index,
+      className: nav.selected === index ? 'row-selected' : undefined,
+    }),
+    [nav],
+  );
+
+  return { columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };
 }
 
 // ColResizeHandle — drop-in resize grip for tables that keep their OWN

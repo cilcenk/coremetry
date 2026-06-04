@@ -36,9 +36,14 @@ export function useTableNav<T>(
     // list pages mounted simultaneously (a future side-by-side
     // layout) don't fight over j/k.
     pageId?: string;
+    // enabled=false registers NO key bindings (used when a table
+    // opts out, or when useDataTable wires nav only because an
+    // onOpen was supplied). Default true. (v0.7.129)
+    enabled?: boolean;
   } = {},
 ): TableNav<T> {
   const [selected, setSelected] = useState(-1);
+  const enabled = options.enabled !== false;
 
   // Clamp the selection when the items shrink. Don't reset on
   // identity change — refresh that returns the same data
@@ -62,7 +67,7 @@ export function useTableNav<T>(
 
   const open = options.onOpen;
   useShortcuts(
-    [
+    !enabled ? [] : [
       {
         keys: 'j',
         label: 'Move selection down',

@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { encodeFilters } from '@/lib/urlState';
 import { timeRangeToNs } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
+import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
@@ -61,6 +62,7 @@ const GROUP_FACETS: { key: 'all' | MGroup; label: string }[] = [
 
 interface MQQuery {
   id: string;            // 'A', 'B', 'C', …
+  kind: 'metric' | 'formula'; // formula = derived from other queries (v0.7.128)
   enabled: boolean;
   metric: string;
   unit: string;          // from MetricInfo.unit, for the y-axis + display
@@ -69,8 +71,13 @@ interface MQQuery {
   groupBy: string[];     // label keys → fan-out
   step: number;          // 0 = auto
   alias: string;         // optional legend alias
+  color: string;         // optional per-query colour override ('' = palette)
+  expr: string;          // formula expression over other ids, e.g. "A / B * 100"
 }
-interface MQModel { queries: MQQuery[]; topN: number; }
+// Panel options (v0.7.128 step 2). logScale + unit feed MultiLineChart props;
+// viz toggles the line fill. Heavier viz (bars/stacked) + legend-table are a
+// follow-up.
+interface MQModel { queries: MQQuery[]; topN: number; logScale: boolean; unit: string; }
 
 const TOPN_DEFAULT = 12;
 const ID_LETTERS = 'ABCDEFGHIJ';
@@ -80,16 +87,20 @@ function nextId(queries: MQQuery[]): string {
   return `Q${queries.length + 1}`;
 }
 function blankQuery(id: string): MQQuery {
-  return { id, enabled: true, metric: '', unit: '', agg: 'avg', filters: [], groupBy: [], step: 0, alias: '' };
+  return { id, kind: 'metric', enabled: true, metric: '', unit: '', agg: 'avg', filters: [], groupBy: [], step: 0, alias: '', color: '', expr: '' };
 }
+function blankFormula(id: string): MQQuery {
+  return { ...blankQuery(id), kind: 'formula', expr: '', alias: '' };
+}
+const EMPTY_MODEL = (): MQModel => ({ queries: [blankQuery('A')], topN: TOPN_DEFAULT, logScale: false, unit: '' });
 
 // ── URL (de)serialisation — the whole model rides one ?mq= param ──────────
 function encodeModel(m: MQModel): string {
   return JSON.stringify({
-    n: m.topN,
+    n: m.topN, ls: m.logScale ? 1 : 0, un: m.unit,
     q: m.queries.map(q => ({
-      i: q.id, e: q.enabled ? 1 : 0, m: q.metric, u: q.unit, a: q.agg,
-      f: q.filters, g: q.groupBy, s: q.step, l: q.alias,
+      i: q.id, k: q.kind === 'formula' ? 'f' : 'm', e: q.enabled ? 1 : 0, m: q.metric, u: q.unit, a: q.agg,
+      f: q.filters, g: q.groupBy, s: q.step, l: q.alias, c: q.color, x: q.expr,
     })),
   });
 }
@@ -100,6 +111,7 @@ function decodeModel(s: string | null): MQModel | null {
     if (!o || !Array.isArray(o.q)) return null;
     const queries: MQQuery[] = o.q.map((q: Record<string, unknown>) => ({
       id: String(q.i ?? 'A'),
+      kind: q.k === 'f' ? 'formula' : 'metric',
       enabled: q.e !== 0,
       metric: String(q.m ?? ''),
       unit: String(q.u ?? ''),
@@ -108,11 +120,15 @@ function decodeModel(s: string | null): MQModel | null {
       groupBy: Array.isArray(q.g) ? (q.g as string[]) : [],
       step: typeof q.s === 'number' ? q.s : 0,
       alias: String(q.l ?? ''),
+      color: String(q.c ?? ''),
+      expr: String(q.x ?? ''),
     }));
     if (!queries.length) return null;
-    return { queries, topN: typeof o.n === 'number' ? o.n : TOPN_DEFAULT };
+    return { queries, topN: typeof o.n === 'number' ? o.n : TOPN_DEFAULT, logScale: o.ls === 1, unit: String(o.un ?? '') };
   } catch { return null; }
 }
+
+// Formula evaluator + ref-extraction live in lib/metricFormula (pure, tested).
 
 // ── Code DSL (Builder/Code toggle) ───────────────────────────────────────
 // One line per query: "A: <metric> | agg=p99 | by=a,b | where=k=v;k2=v2 |
@@ -148,12 +164,14 @@ function parseFilterTok(tok: string): FilterExpr | null {
 }
 function generateDSL(m: MQModel): string {
   return m.queries.map(q => {
+    const dis = q.enabled ? '' : '#';
+    const alias = q.alias ? ` | alias=${q.alias.replace(/[|\n]/g, ' ')}` : ''; // | / newline break segment parsing
+    if (q.kind === 'formula') return `${q.id}${dis}: =${q.expr || '<expr>'}${alias}`;
     const parts = [`agg=${q.agg}`];
     if (q.groupBy.length) parts.push(`by=${q.groupBy.join(',')}`);
     if (q.filters.length) parts.push(`where=${q.filters.map(fmtFilter).join(';')}`);
     if (q.step) parts.push(`step=${fmtStep(q.step)}`);
-    if (q.alias) parts.push(`alias=${q.alias.replace(/[|\n]/g, ' ')}`); // | / newline would break segment parsing
-    return `${q.id}${q.enabled ? '' : '#'}: ${q.metric || '<metric>'} | ${parts.join(' | ')}`;
+    return `${q.id}${dis}: ${q.metric || '<metric>'} | ${parts.join(' | ')}${alias}`;
   }).join('\n');
 }
 function parseDSL(text: string, prev: MQModel): { model?: MQModel; error?: string } {
@@ -167,6 +185,18 @@ function parseDSL(text: string, prev: MQModel): { model?: MQModel; error?: strin
     const id = m[1], enabled = m[2] !== '#';
     const segs = m[3].split('|').map(s => s.trim());
     const metric = segs[0] ?? '';
+    // Formula line — first segment is "=<expression>".
+    if (metric.startsWith('=')) {
+      const fq = blankFormula(id);
+      fq.enabled = enabled;
+      fq.expr = metric.slice(1).replace('<expr>', '').trim();
+      for (const seg of segs.slice(1)) {
+        const eq = seg.indexOf('='); if (eq < 0) continue;
+        if (seg.slice(0, eq).trim() === 'alias') fq.alias = seg.slice(eq + 1).trim();
+      }
+      queries.push(fq);
+      continue;
+    }
     const q = blankQuery(id);
     q.enabled = enabled;
     q.metric = metric === '<metric>' ? '' : metric;
@@ -191,7 +221,7 @@ function parseDSL(text: string, prev: MQModel): { model?: MQModel; error?: strin
     }
     queries.push(q);
   }
-  return { model: { queries, topN: prev.topN }, error: warn.length ? warn.join('; ') : undefined };
+  return { model: { queries, topN: prev.topN, logScale: prev.logScale, unit: prev.unit }, error: warn.length ? warn.join('; ') : undefined };
 }
 
 // ── Grouped metric picker (searchable + faceted, unit shown) ──────────────
@@ -328,25 +358,40 @@ function QueryRow({ q, canRemove, onChange, onDuplicate, onRemove }: {
   q: MQQuery; canRemove: boolean;
   onChange: (q: MQQuery) => void; onDuplicate: () => void; onRemove: () => void;
 }) {
+  const isFormula = q.kind === 'formula';
   return (
-    <div className={'mqe-row' + (q.enabled ? '' : ' off')}>
+    <div className={'mqe-row' + (q.enabled ? '' : ' off') + (isFormula ? ' formula' : '')}>
       <button type="button" className="mqe-id" title={q.enabled ? 'Disable query' : 'Enable query'}
         onClick={() => onChange({ ...q, enabled: !q.enabled })}>
         <span className="mqe-id-letter">{q.id}</span>
         <span className="mqe-eye">{q.enabled ? '◉' : '○'}</span>
       </button>
-      <GroupedMetricPicker value={q.metric} unit={q.unit}
-        onPick={m => onChange({ ...q, metric: m.name, unit: m.unit })} />
-      <select className="mqe-agg" value={q.agg} onChange={e => onChange({ ...q, agg: e.target.value as Agg })} aria-label="Aggregation">
-        {AGGS.map(a => <option key={a} value={a}>{a}</option>)}
-      </select>
-      <FilterEditor metric={q.metric} filters={q.filters} onChange={f => onChange({ ...q, filters: f })} />
-      <GroupByEditor value={q.groupBy} onChange={g => onChange({ ...q, groupBy: g })} />
-      <select className="mqe-step" value={q.step} onChange={e => onChange({ ...q, step: Number(e.target.value) })} aria-label="Step">
-        {STEPS.map(s => <option key={s.v} value={s.v}>{s.label}</option>)}
-      </select>
-      <input className="mqe-alias" placeholder="alias" value={q.alias}
+      {isFormula ? (
+        <input className="mqe-expr" value={q.expr} aria-label="Formula expression"
+          placeholder="formula over other queries, e.g.  A / B * 100"
+          onChange={e => onChange({ ...q, expr: e.target.value })} />
+      ) : (
+        <>
+          <GroupedMetricPicker value={q.metric} unit={q.unit}
+            onPick={m => onChange({ ...q, metric: m.name, unit: m.unit })} />
+          <select className="mqe-agg" value={q.agg} onChange={e => onChange({ ...q, agg: e.target.value as Agg })} aria-label="Aggregation">
+            {AGGS.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <FilterEditor metric={q.metric} filters={q.filters} onChange={f => onChange({ ...q, filters: f })} />
+          <GroupByEditor value={q.groupBy} onChange={g => onChange({ ...q, groupBy: g })} />
+          <select className="mqe-step" value={q.step} onChange={e => onChange({ ...q, step: Number(e.target.value) })} aria-label="Step">
+            {STEPS.map(s => <option key={s.v} value={s.v}>{s.label}</option>)}
+          </select>
+        </>
+      )}
+      <input className="mqe-alias" placeholder={isFormula ? 'alias' : 'alias'} value={q.alias}
         onChange={e => onChange({ ...q, alias: e.target.value })} title="Legend alias (optional)" />
+      <label className={'mqe-color' + (q.color ? ' set' : '')} title="Series colour override (blank = auto palette)">
+        <input type="color" value={q.color || '#7d8590'} aria-label="Series colour"
+          onChange={e => onChange({ ...q, color: e.target.value })} />
+        {q.color && <button type="button" className="mqe-color-x" aria-label="Clear colour"
+          onClick={e => { e.preventDefault(); onChange({ ...q, color: '' }); }}>×</button>}
+      </label>
       <div className="mqe-rowact">
         <button type="button" title="Duplicate" aria-label="Duplicate query" onClick={onDuplicate}>⧉</button>
         <button type="button" title="Remove" aria-label="Remove query" onClick={onRemove} disabled={!canRemove}>×</button>
@@ -361,7 +406,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
   const [model, setModel] = useState<MQModel>(() =>
-    decodeModel(searchParams.get('mq')) ?? { queries: [blankQuery('A')], topN: TOPN_DEFAULT });
+    decodeModel(searchParams.get('mq')) ?? EMPTY_MODEL());
   const [view, setView] = useState<'builder' | 'code'>('builder');
   const [codeText, setCodeText] = useState('');
   const [codeErr, setCodeErr] = useState<string | null>(null);
@@ -413,34 +458,65 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   // a query's data actually changes, so the series array stays referentially
   // stable between unrelated renders. (review-confirmed perf fix)
   const dataSig = results.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|');
-  const { series, hidden, unit } = useMemo(() => {
-    const enabledQs = debounced.queries.filter(q => q.enabled && q.metric);
-    const multi = enabledQs.length > 1;
+  const { series, hidden, unit, colorOverride } = useMemo(() => {
+    const metricQs = debounced.queries.filter(q => q.enabled && q.kind === 'metric' && q.metric);
+    const producing = debounced.queries.filter(q => q.enabled && (q.kind === 'metric' ? !!q.metric : !!q.expr.trim()));
+    const multi = producing.length > 1;
+    const colorOverride: Record<string, string> = {};
     const all: SpanMetricSeries[] = [];
+    // First series of each metric query — what a formula references by id.
+    const repById: Record<string, SpanMetricSeries> = {};
     debounced.queries.forEach((q, qi) => {
-      if (!q.enabled || !q.metric) return;
+      if (!q.enabled || q.kind !== 'metric' || !q.metric) return;
       const data = results[qi]?.data;
-      if (!data) return;
+      if (!data || !data.length) return;
+      repById[q.id] = data[0];
       for (const s of data) {
         const labeled = s.groupKey.map((val, gi) => `${(q.groupBy[gi] ?? 'g').replace(/^.*\./, '')}=${val}`);
         const grp = labeled.join(', ');
         const base = grp || q.alias || q.metric;
-        const label = q.alias
-          ? (grp ? `${q.alias} · ${grp}` : q.alias)
-          : (multi ? `${q.id}: ${base}` : base);
+        const label = q.alias ? (grp ? `${q.alias} · ${grp}` : q.alias) : (multi ? `${q.id}: ${base}` : base);
+        if (q.color) colorOverride[label] = q.color;
         all.push({ groupKey: [label], points: s.points });
       }
     });
+    // Formula queries — evaluate the expression per shared time bucket over the
+    // referenced metric queries' representative series. Buckets missing any
+    // referenced value (or a non-finite result, e.g. /0) become a gap.
+    for (const q of debounced.queries) {
+      if (!q.enabled || q.kind !== 'formula' || !q.expr.trim()) continue;
+      const refs = exprRefs(q.expr).filter(id => id in repById);
+      if (!refs.length) continue;
+      const valAt: Record<string, Map<number, number>> = {};
+      const times = new Set<number>();
+      for (const id of refs) { valAt[id] = new Map(repById[id].points.map(p => [p.time, p.value])); for (const p of repById[id].points) times.add(p.time); }
+      const pts: { time: number; value: number }[] = [];
+      for (const t of [...times].sort((a, b) => a - b)) {
+        const vars: Record<string, number> = {};
+        let ok = true;
+        for (const id of refs) { const v = valAt[id].get(t); if (v === undefined) { ok = false; break; } vars[id] = v; }
+        if (!ok) continue;
+        const r = evalExpr(q.expr, vars);
+        if (r !== null) pts.push({ time: t, value: r });
+      }
+      if (!pts.length) continue;
+      const label = q.alias || `${q.id}: ${q.expr}`;
+      if (q.color) colorOverride[label] = q.color;
+      all.push({ groupKey: [label], points: pts });
+    }
     const ranked = all
       .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value), 0) }))
       .sort((a, b) => b.area - a.area);
     const top = ranked.slice(0, debounced.topN).map(x => x.s);
-    // Only label the y-axis with a unit when every enabled query shares it —
-    // otherwise a ms series + a % series would both render as ms. (review fix)
-    const units = new Set(enabledQs.map(q => q.unit).filter(Boolean));
-    return { series: top, hidden: Math.max(0, ranked.length - top.length), unit: units.size === 1 ? [...units][0] : '' };
+    // y-unit: an explicit panel override wins; else the shared metric unit
+    // (dropped when overlaid metrics disagree, so ms + % don't both read ms).
+    const units = new Set(metricQs.map(q => q.unit).filter(Boolean));
+    const u = debounced.unit || (units.size === 1 ? [...units][0] : '');
+    return { series: top, hidden: Math.max(0, ranked.length - top.length), unit: u, colorOverride };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, debounced]);
+  // Stable per-series colour resolver for MultiLineChart (per-query overrides).
+  const colorFn = useMemo(() => (label: string): string | undefined => colorOverride[label], [colorOverride]);
 
   // Deploy markers — when a single service is pinned via a service.name="x"
   // filter on any enabled query, paint its deploys on the chart (the same
@@ -468,11 +544,12 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
 
   const anyLoading = results.some((r, i) => debounced.queries[i]?.enabled && debounced.queries[i]?.metric && r.isLoading);
   const anyError = results.find((r, i) => debounced.queries[i]?.enabled && debounced.queries[i]?.metric && r.isError);
-  const noMetric = debounced.queries.every(q => !q.enabled || !q.metric);
+  const noMetric = debounced.queries.every(q => !q.enabled || (q.kind === 'metric' ? !q.metric : !q.expr.trim()));
 
   // ── mutators ──
   const setQuery = (i: number, q: MQQuery) => setModel(m => ({ ...m, queries: m.queries.map((x, j) => j === i ? q : x) }));
   const addQuery = () => setModel(m => ({ ...m, queries: [...m.queries, blankQuery(nextId(m.queries))] }));
+  const addFormula = () => setModel(m => ({ ...m, queries: [...m.queries, blankFormula(nextId(m.queries))] }));
   const dupQuery = (i: number) => setModel(m => {
     const src = m.queries[i];
     const copy = { ...src, id: nextId(m.queries), filters: src.filters.map(f => ({ ...f })), groupBy: [...src.groupBy] };
@@ -499,6 +576,15 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
           <button className={view === 'code' ? 'active' : ''} onClick={openCode}>Code</button>
         </div>
         <span className="mqe-spacer" />
+        <label className="mqe-topn" title="Override the y-axis unit (e.g. % for a ratio formula)">
+          unit
+          <input className="mqe-unitin" value={model.unit} placeholder="auto"
+            onChange={e => setModel(m => ({ ...m, unit: e.target.value }))} />
+        </label>
+        <label className="mqe-topn" title="Log-scale the y-axis (multi-order-of-magnitude metrics)">
+          <input type="checkbox" checked={model.logScale} onChange={e => setModel(m => ({ ...m, logScale: e.target.checked }))} />
+          log
+        </label>
         <label className="mqe-topn" title="Cap the overlay to the top-N series by area">
           top
           <select value={model.topN} onChange={e => setModel(m => ({ ...m, topN: Number(e.target.value) }))}>
@@ -513,7 +599,10 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             <QueryRow key={q.id + i} q={q} canRemove={model.queries.length > 1}
               onChange={nq => setQuery(i, nq)} onDuplicate={() => dupQuery(i)} onRemove={() => removeQuery(i)} />
           ))}
-          <button type="button" className="mqe-addq" onClick={addQuery}>+ Add query</button>
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" className="mqe-addq" onClick={addQuery}>+ Add query</button>
+            <button type="button" className="mqe-addq" onClick={addFormula}>+ Add formula</button>
+          </div>
         </div>
       ) : (
         <div className="mqe-code">
@@ -555,7 +644,8 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             <p>The query returned no series. Widen the time range or relax the filters.</p>
           </Empty>
         ) : (
-          <MultiLineChart series={series} unit={unit} height={340} deploys={deploys} syncKey="mqe-preview" />
+          <MultiLineChart series={series} unit={unit} height={340} deploys={deploys}
+            logScale={model.logScale} colorOf={colorFn} syncKey="mqe-preview" />
         )}
       </div>
     </div>

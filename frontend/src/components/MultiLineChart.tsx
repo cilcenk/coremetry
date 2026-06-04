@@ -90,11 +90,16 @@ export function placeTooltip(
 
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
-  compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick,
+  compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
   height?: number;
+  // Optional per-series colour override keyed by the joined label. Returns a
+  // CSS colour (e.g. var(--accent) or #rrggbb) to win over the default stable
+  // seriesColor palette, or undefined to fall through to it. Lets a caller
+  // (the metric query editor) pin a query's colour. (v0.7.128)
+  colorOf?: (label: string) => string | undefined;
   // Optional dashed vertical lines painted at the given times.
   // Hovering near a marker shows label + description in the
   // chart's tooltip panel.
@@ -242,7 +247,7 @@ export function MultiLineChart({
           // period twin (same label → same hash → same stop)
           // so the eye reads "ghost of THAT line" not "a new
           // unknown line".
-          const color = seriesColor(label);
+          const color = colorOf?.(label) ?? seriesColor(label);
           if (isCompare) {
             return {
               // Suffix the label so the legend disambiguates
@@ -631,7 +636,7 @@ export function MultiLineChart({
     // doesn't churn a chart rebuild. Toggling the affordance
     // on/off (prop added/removed) does rebuild, which is correct
     // because the click listener + cursor style flip with it.
-  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel, logScale, !!onBucketClick]);
+  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel, logScale, !!onBucketClick, colorOf]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling

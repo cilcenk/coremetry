@@ -5,15 +5,23 @@ import type { LogsResponse } from '@/lib/types';
 
 // /api/logs query — keyed on the full filter object so a
 // pagination click or filter change caches separately.
-// staleTime is 0 so a re-mount of the page (back-nav) re-runs
-// the query immediately rather than showing 30s-stale rows.
-// Live-tail mode is handled by the page directly because it
-// needs custom from/to that move every poll tick — that's
-// orthogonal to the "view a window" behaviour cached here.
+//
+// v0.8.3 (operator-reported ES incident) — /api/logs is UNCACHED on
+// the backend and the Elasticsearch path opens a fresh Point-in-Time
+// per call. staleTime:0 + the default refetchOnWindowFocus meant every
+// tab focus / reconnect re-fired the list query → another PIT opened
+// (and leaked for 2m if the operator didn't page to the end). At ES
+// scale this was a measurable amplifier of the api-pod CPU climb.
+// staleTime 15s keeps back-nav freshness "good enough" while collapsing
+// focus refires; an explicit Next / filter change still refetches
+// because the queryKey (params incl. cursor) changes. refetchOnWindowFocus
+// off stops the tab-focus PIT churn outright. (No effect on CH backend
+// correctness — it just fetches less.)
 export function useLogs(params: LogsParams) {
   return useQuery<LogsResponse>({
     queryKey: ['logs', 'list', params],
     queryFn: () => api.logs(params),
-    staleTime: 0,
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
   });
 }

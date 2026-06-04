@@ -483,6 +483,13 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 		f.Service, f.SeverityMin, f.TraceID, q.Get("from"), q.Get("to"),
 		bucketSec, groupBy, q.Get("search"))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.logs.Histogram(r.Context(), f, bucketSec, groupBy)
+		// v0.8.3 — bound the Go goroutine on BOTH backends. CH already
+		// self-caps at 30s (max_execution_time); this gives the ES path
+		// the same ceiling so the api pod releases the goroutine +
+		// response buffers even if the cluster keeps churning (the ES
+		// soft-timeout in the query body is the tighter inner bound).
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		return s.logs.Histogram(ctx, f, bucketSec, groupBy)
 	})
 }

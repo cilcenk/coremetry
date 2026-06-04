@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeFilters } from '@/lib/urlState';
 import { timeRangeToNs } from '@/lib/utils';
@@ -9,7 +9,9 @@ import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
-import type { MetricInfo, SpanMetricSeries, FilterExpr, TimeRange } from '@/lib/types';
+import { Modal } from '@/components/ui';
+import { toast } from '@/lib/toast';
+import type { MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, Panel, DashboardSummary } from '@/lib/types';
 
 // MetricQueryEditor (v0.7.126 — UX query editor, step 1) — a thin Grafana-
 // style builder over the REAL metric query API. Multiple queries (A/B/C…)
@@ -405,11 +407,18 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
+  const navigate = useNavigate();
   const [model, setModel] = useState<MQModel>(() =>
     decodeModel(searchParams.get('mq')) ?? EMPTY_MODEL());
   const [view, setView] = useState<'builder' | 'code'>('builder');
   const [codeText, setCodeText] = useState('');
   const [codeErr, setCodeErr] = useState<string | null>(null);
+  // "Add to dashboard" (step 3) — picker modal state.
+  const [dashOpen, setDashOpen] = useState(false);
+  const [dashList, setDashList] = useState<DashboardSummary[] | null>(null);
+  const [dashTarget, setDashTarget] = useState<string>('new'); // dashboard id | 'new'
+  const [newDashName, setNewDashName] = useState('');
+  const [savingDash, setSavingDash] = useState(false);
 
   // Debounced copy of the model that actually drives the fetch + URL write,
   // so typing/clicking doesn't fire a query per keystroke (v0.5.184 posture).
@@ -568,6 +577,51 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
 
   const retry = () => results.forEach(r => r.refetch());
 
+  // ── Add to dashboard (step 3) — one metric Panel per enabled metric query,
+  // saved to a chosen (or new) dashboard via the real updateDashboard model.
+  // Formula queries have no panel type yet, so they're skipped (flagged below).
+  const buildPanels = (): Panel[] => model.queries
+    .filter(q => q.enabled && q.kind === 'metric' && q.metric)
+    .map((q): Panel => ({
+      id: Math.random().toString(36).slice(2, 10),
+      type: 'metric',
+      title: q.alias || q.metric,
+      width: 2,
+      config: {
+        metricName: q.metric,
+        agg: q.agg,
+        groupBy: q.groupBy.length ? q.groupBy.join(',') : undefined,
+        step: q.step || undefined,
+        filters: q.filters.length ? encodeFilters(q.filters) : undefined,
+      },
+    }));
+  const openDash = () => {
+    setDashTarget('new'); setNewDashName(''); setDashOpen(true);
+    api.listDashboards().then(d => setDashList(d ?? [])).catch(() => setDashList([]));
+  };
+  const saveToDash = async () => {
+    const panels = buildPanels();
+    if (!panels.length) { toast.error('Add at least one metric query — formulas can’t be saved as a panel yet.'); return; }
+    setSavingDash(true);
+    try {
+      let id: string;
+      if (dashTarget === 'new') {
+        id = (await api.createDashboard({ name: newDashName.trim() || 'New dashboard', description: '', panels, variables: [] })).id;
+      } else {
+        const dash = await api.getDashboard(dashTarget);
+        await api.updateDashboard(dashTarget, { name: dash.name, description: dash.description, panels: [...(dash.panels ?? []), ...panels], variables: dash.variables ?? [] });
+        id = dashTarget;
+      }
+      toast.success(`Added ${panels.length} panel${panels.length === 1 ? '' : 's'} to the dashboard`);
+      setDashOpen(false);
+      navigate(`/dashboard?id=${encodeURIComponent(id)}`);
+    } catch (e) {
+      toast.error(`Couldn’t save: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingDash(false);
+    }
+  };
+
   return (
     <div className="mqe">
       <div className="mqe-toolbar">
@@ -591,6 +645,9 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             {[5, 8, 12, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
+        <Button variant="secondary" size="sm" onClick={openDash} title="Save these queries as panels on a dashboard">
+          + Add to dashboard
+        </Button>
       </div>
 
       {view === 'builder' ? (
@@ -648,6 +705,37 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             logScale={model.logScale} colorOf={colorFn} syncKey="mqe-preview" />
         )}
       </div>
+
+      <Modal open={dashOpen} onClose={() => setDashOpen(false)} title="Add to dashboard" size="sm"
+        footer={
+          <div className="row row-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setDashOpen(false)}>Cancel</Button>
+            <Button variant="primary" size="sm" loading={savingDash} onClick={saveToDash}>Add</Button>
+          </div>
+        }>
+        <div className="stack gap-2" style={{ fontSize: 13 }}>
+          <p className="ov-sub" style={{ margin: 0 }}>
+            Each enabled <b>metric</b> query becomes a panel. Formula queries are skipped (no panel type yet).
+          </p>
+          <label className="mqe-dash-opt">
+            <input type="radio" name="mqe-dash" checked={dashTarget === 'new'} onChange={() => setDashTarget('new')} />
+            <span>New dashboard</span>
+          </label>
+          {dashTarget === 'new' && (
+            <input autoFocus value={newDashName} placeholder="Dashboard name"
+              onChange={e => setNewDashName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') saveToDash(); }} style={{ marginLeft: 22 }} />
+          )}
+          {dashList === null
+            ? <div className="ov-sub"><Spinner /></div>
+            : dashList.map(d => (
+              <label key={d.id} className="mqe-dash-opt">
+                <input type="radio" name="mqe-dash" checked={dashTarget === d.id} onChange={() => setDashTarget(d.id)} />
+                <span>{d.name}</span>
+              </label>
+            ))}
+        </div>
+      </Modal>
     </div>
   );
 }

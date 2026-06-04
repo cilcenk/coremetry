@@ -1898,22 +1898,30 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
   // span). Keeps a freshly-loaded or filtered graph framed.
   useEffect(() => { fit(); }, [fit]);
 
-  const onWheel = (ev: React.WheelEvent<HTMLDivElement>) => {
-    ev.preventDefault();
+  // Wheel-zoom via a NATIVE non-passive listener (v0.8.2). React attaches
+  // onWheel as PASSIVE, so ev.preventDefault() warns + the page scrolls
+  // underneath the zoom. A manual { passive: false } listener on the viewport
+  // ref prevents that. Functional setView keeps the closure minimal (only
+  // worldW for the clamp); re-attach when it changes.
+  useEffect(() => {
     const el = svgWrapRef.current;
     if (!el) return;
-    const r = el.getBoundingClientRect();
-    const fx = (ev.clientX - r.left) / r.width;   // cursor frac across viewport
-    const fy = (ev.clientY - r.top) / r.height;
-    setView(v => {
-      const factor = ev.deltaY < 0 ? 0.9 : 1.1;   // wheel-up = zoom in
-      const nw = Math.max(worldW * 0.15, Math.min(worldW * 4, v.w * factor));
-      const nh = nw * (v.h / v.w);
-      // Keep the world point under the cursor stationary.
-      const wx = v.x + fx * v.w, wy = v.y + fy * v.h;
-      return { x: wx - fx * nw, y: wy - fy * nh, w: nw, h: nh };
-    });
-  };
+    const onWheel = (ev: WheelEvent) => {
+      ev.preventDefault();
+      const r = el.getBoundingClientRect();
+      const fx = (ev.clientX - r.left) / r.width;   // cursor frac across viewport
+      const fy = (ev.clientY - r.top) / r.height;
+      setView(v => {
+        const factor = ev.deltaY < 0 ? 0.9 : 1.1;   // wheel-up = zoom in
+        const nw = Math.max(worldW * 0.15, Math.min(worldW * 4, v.w * factor));
+        const nh = nw * (v.h / v.w);
+        const wx = v.x + fx * v.w, wy = v.y + fy * v.h;   // keep cursor point fixed
+        return { x: wx - fx * nw, y: wy - fy * nh, w: nw, h: nh };
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [worldW]);
   const onPointerDown = (ev: React.MouseEvent<HTMLDivElement>) => {
     // Don't start a pan when the press lands on an interactive node
     // / edge — those keep their click navigation.
@@ -1953,7 +1961,6 @@ function ServiceTopologySVG({ nodes, edges, layout, onEdgeClick, search, inciden
           cursor, drag pans (except when the press lands on a node
           / edge — those keep their click), Fit reframes. */}
       <div ref={svgWrapRef}
-        onWheel={onWheel}
         onMouseDown={onPointerDown}
         onMouseMove={onPointerMove}
         onMouseUp={endDrag}

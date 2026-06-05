@@ -28,6 +28,8 @@
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "@tanstack/react-query": "^5.100.14",
     "@tanstack/react-virtual": "^3.13.26",
+    "@types/dagre": "^0.7.54",
+    "dagre": "^0.8.5",
     "lucide-react": "^1.17.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",

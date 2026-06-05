@@ -18,6 +18,8 @@ const Services          = lazy(() => import('./pages/Services'));
 const Service           = lazy(() => import('./pages/Service'));
 const ServiceBacktrace  = lazy(() => import('./pages/ServiceBacktrace'));
 const Topology          = lazy(() => import('./pages/Topology'));
+// v0.8.12 — topology rebuild Stage 2 scratch route (removed in Stage 4).
+const ServiceGraphPreview = lazy(() => import('./pages/ServiceGraphPreview'));
 const Traces            = lazy(() => import('./pages/Traces'));
 const Trace             = lazy(() => import('./pages/Trace'));
 const TraceCompare      = lazy(() => import('./pages/TraceCompare'));
@@ -90,6 +92,7 @@ export default function App() {
             <Route path="/service/backtrace" element={<ServiceBacktrace />} />
             <Route path="/service-map"    element={<Topology />} />
             <Route path="/topology"       element={<Topology />} />
+            <Route path="/servicegraph-preview" element={<ServiceGraphPreview />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />
             <Route path="/trace/compare"  element={<TraceCompare />} />

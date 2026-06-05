@@ -18,7 +18,7 @@ import './styles/globals.css';
 // missed — acceptable for self-observability. Still a no-op when
 // VITE_OTEL_DISABLE=1 (checked inside initOtel).
 function bootOtel() {
-  void import('./lib/otel').then(m => m.initOtel()).catch(() => {});
+  void import('./lib/browserOtel').then(m => m.initOtel()).catch(() => {});
 }
 if ('requestIdleCallback' in window) {
   window.requestIdleCallback(bootOtel, { timeout: 3000 });

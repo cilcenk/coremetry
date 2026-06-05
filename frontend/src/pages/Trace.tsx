@@ -3,9 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Spinner, Empty } from '@/components/Spinner';
-import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { computeCriticalPath } from '@/lib/criticalPath';
-import { SpanDetail } from '@/components/SpanDetail';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
 import { CopilotExplain } from '@/components/CopilotExplain';
@@ -15,8 +13,12 @@ import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useCorrelatedLogs, spanHasError } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
+import { WaterfallCanvas } from '@/components/traces/WaterfallCanvas';
+import { SpanPanel } from '@/components/traces/SpanPanel';
+import { TraceHonesty } from '@/components/traces/TraceHonesty';
 
 function TraceDetailInner() {
   const navigate = useNavigate();
@@ -46,21 +48,20 @@ function TraceDetailInner() {
   // never need them.
   const [tab, setTab] = useState<'trace' | 'logs'>(
     () => (searchParams.get('tab') === 'logs' ? 'logs' : 'trace'));
-  const [logs, setLogs] = useState<LogRow[] | null | undefined>(undefined);
+
+  // Correlated logs ride the shared OTel hook — every log line sharing this
+  // trace_id, react-query-cached. Enabled lazily (only when the Logs tab is
+  // open) so the trace page stays fast for operators who never need them.
+  const logsQuery = useCorrelatedLogs(tab === 'logs' ? id : undefined, undefined, { limit: 500 });
+  const logs: LogRow[] | null | undefined =
+    tab !== 'logs' ? undefined
+    : logsQuery.isLoading ? undefined
+    : logsQuery.isError ? null
+    : (logsQuery.data ?? []);
 
   useEffect(() => {
     if (!id) return;
     setSpans(undefined);
-    // Reset logs too so the next Logs-tab open re-fetches.
-    // Without this, navigating from one trace to another
-    // (React Router preserves component state across
-    // searchParams changes) kept the previous trace's logs
-    // result — including a stale empty array, which fooled
-    // the `logs !== undefined` guard in the next effect
-    // into skipping the fetch entirely. The operator saw
-    // "no logs for this trace" even when the log was
-    // exactly the one they'd clicked from /logs to get here.
-    setLogs(undefined);
     setSource(undefined);
     setStub(undefined);
     api.trace(id)
@@ -71,43 +72,6 @@ function TraceDetailInner() {
       })
       .catch(() => setSpans(null));
   }, [id]);
-
-  useEffect(() => {
-    if (tab !== 'logs' || !id || logs !== undefined) return;
-    // Wait for spans to load — they give us the trace's time
-    // bounds, which we send to the logs backend as a narrow
-    // range filter. Without this the ES query has to scan the
-    // full retention; with it ES prunes partitions to the few
-    // minutes around the trace, dropping query time from
-    // seconds to tens of ms (the trick Grafana's "trace to
-    // logs" datasource uses for sub-second speed).
-    //
-    // spans === undefined means still loading; null means
-    // load failed and we should fall through with no time
-    // bound (best-effort instead of blocking on a sibling
-    // signal).
-    if (spans === undefined) return;
-    let from: number | undefined;
-    let to: number | undefined;
-    if (spans && spans.length > 0) {
-      let minTs = Infinity, maxTs = -Infinity;
-      for (const sp of spans) {
-        if (sp.startTime < minTs) minTs = sp.startTime;
-        const end = sp.endTime || sp.startTime;
-        if (end > maxTs) maxTs = end;
-      }
-      // ±5 min buffer absorbs clock skew between the app
-      // emitting the trace and the log shipper writing to
-      // ES, plus end-of-trace logs that fire after the root
-      // span returned.
-      const bufferNs = 5 * 60 * 1_000_000_000;
-      from = minTs - bufferNs;
-      to   = maxTs + bufferNs;
-    }
-    api.logs({ traceId: id, from, to, limit: 500 })
-      .then(r => setLogs(r.logs ?? []))
-      .catch(() => setLogs(null));
-  }, [tab, id, logs, spans]);
 
   // Mirror selectedId + tab to the URL via replaceState so the Share
   // button captures the current view exactly. We don't push history
@@ -275,7 +239,9 @@ function TraceDetailInner() {
   const maxT = spans && spans.length ? Math.max(...spans.map(s => s.endTime)) : 0;
   const criticalPathIds = (showCritical && criticalPath) ? criticalPath.ids : undefined;
   const totalNs = maxT - minT;
-  const hasErr = spans?.some(s => s.statusCode === 'error') ?? false;
+  // spanHasError is the honest "is this a failure" — error status OR a recorded
+  // exception event (matches the waterfall tint + the trace-level badge).
+  const hasErr = spans?.some(s => spanHasError(s)) ?? false;
 
 
   return (
@@ -424,16 +390,20 @@ function TraceDetailInner() {
             </div>
 
             {tab === 'trace' && (
-              <div id="td-outer">
-                <div id="td-wf">
-                  <SpanFilterBar spans={spans} value={spanFilter}
-                    onChange={setSpanFilter} />
-                  <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
-                                  criticalPathIds={criticalPathIds}
-                                  matchIds={spanMatchIds} />
+              <>
+                {/* Honest OTel provenance: W3C tracecontext linkage + sampling +
+                    dropped-span counts so the operator never mistakes a partial
+                    trace for a complete one. */}
+                <TraceHonesty spans={spans} source={source} />
+                <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, minHeight: 240 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter} />
+                    <WaterfallCanvas spans={spans} selectedId={selectedId} onSelect={setSelectedId}
+                      criticalPathIds={criticalPathIds} matchIds={spanMatchIds} />
+                  </div>
+                  {sel && <SpanPanel span={sel} onClose={() => setSelectedId(null)} />}
                 </div>
-                {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
-              </div>
+              </>
             )}
 
             {tab === 'logs' && (

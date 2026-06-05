@@ -232,10 +232,28 @@ function GroupedMetricPicker({ value, unit, onPick }: {
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [dq, setDq] = useState('');
   const [facet, setFacet] = useState<'all' | MGroup>('all');
   const ref = useRef<HTMLDivElement>(null);
-  const catalogQ = useQuery({ queryKey: ['metric-catalog'], queryFn: () => api.metricNames(''), staleTime: 60_000 });
-  const catalog = catalogQ.data ?? [];
+  // v0.8.5 (scale-audit) — server-side search, NOT an eager full-catalogue
+  // load. Pre-v0.8.5 this did api.metricNames('') (no q/limit) on mount,
+  // pulling the entire metric_names catalogue to the client — the exact
+  // eager-load v0.5.198 removed, fatal at 10k+ distinct metric names.
+  // Now: only fetch while the dropdown is open, keyed on the debounced
+  // query, bounded to 200 server-side; the facet filter applies to the
+  // bounded result.
+  useEffect(() => {
+    const t = window.setTimeout(() => setDq(q.trim()), 150);
+    return () => clearTimeout(t);
+  }, [q]);
+  const catalogQ = useQuery({
+    queryKey: ['metric-search', dq],
+    queryFn: () => api.metricNamesSearch('', dq || undefined, 200, 0),
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const catalog = catalogQ.data?.names ?? [];
+  const hasMore = catalogQ.data?.hasMore ?? false;
 
   useEffect(() => {
     if (!open) return;
@@ -244,6 +262,8 @@ function GroupedMetricPicker({ value, unit, onPick }: {
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
+  // Facet narrows the server-bounded result; the substring is already
+  // applied server-side via dq, kept here only for mid-debounce snappiness.
   const filtered = useMemo(() => {
     const ql = q.trim().toLowerCase();
     return catalog.filter(m =>
@@ -272,13 +292,16 @@ function GroupedMetricPicker({ value, unit, onPick }: {
           <div className="mqe-list">
             {catalogQ.isLoading ? <div className="mqe-hint"><Spinner /></div>
               : filtered.length === 0 ? <div className="mqe-hint">No metrics match.</div>
-              : filtered.slice(0, 300).map(m => (
-                <button key={m.name} type="button" className={'mqe-opt' + (m.name === value ? ' on' : '')}
-                  onClick={() => { onPick(m); setOpen(false); }}>
-                  <span className="mqe-optname">{m.name}</span>
-                  {m.unit && <span className="mqe-unit">{m.unit}</span>}
-                </button>
-              ))}
+              : <>
+                {filtered.map(m => (
+                  <button key={m.name} type="button" className={'mqe-opt' + (m.name === value ? ' on' : '')}
+                    onClick={() => { onPick(m); setOpen(false); }}>
+                    <span className="mqe-optname">{m.name}</span>
+                    {m.unit && <span className="mqe-unit">{m.unit}</span>}
+                  </button>
+                ))}
+                {hasMore && <div className="mqe-hint">More results — refine your search…</div>}
+              </>}
           </div>
         </div>
       )}

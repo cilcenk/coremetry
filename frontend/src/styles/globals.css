@@ -731,6 +731,20 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .u-legend tr.u-series.u-off {
   opacity: 0.45;
 }
+/* ── By-operation RED legends → Grafana stats table ──────────────────────
+   MultiLineChart renders Last/Min/Max/Avg (over the visible range) via
+   uPlot's multi-value `series.values`. Scope to .mlc-chart so other uPlot
+   surfaces (heatmap, histograms) keep their single-column legend. The
+   swatch + name column stays left; the numeric stat columns right-align
+   with tabular figures so they read as a column of numbers. */
+.mlc-chart .u-legend { width: 100%; }
+.mlc-chart .u-legend th { text-align: left; }
+.mlc-chart .u-legend td.u-value {
+  text-align: right;
+  min-width: 52px;
+  color: var(--text);
+}
+.mlc-chart .u-legend tr.u-series.u-off td.u-value { color: var(--text3); }
 
 /* ── Dashboard row header (Grafana-style collapsible groups) ──────────── */
 .dash-row-header {

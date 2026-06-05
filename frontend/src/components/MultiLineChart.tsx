@@ -88,9 +88,45 @@ export function placeTooltip(
   return { x: hx.p, y: hy.p };
 }
 
+// foldTopN — when more than N series would render, keep the N with
+// the largest area (Σ|value|) and fold the long tail into a single
+// muted "others" line so the legend + palette stay legible. Additive
+// units (rps / counts / bytes) SUM the tail; rate / latency units
+// (%, ms, s) AVERAGE it — summing percentages or percentiles is
+// meaningless. Same input → same kept set → stable colours.
+const OTHERS_KEY = 'others';
+function foldTopN(series: SpanMetricSeries[], unit: string | undefined, n = 8): SpanMetricSeries[] {
+  if (series.length <= n) return series;
+  const u = (unit || '').trim().toLowerCase();
+  const mean = u === '%' || u === 'ms' || u === 's';
+  const ranked = series
+    .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value ?? 0), 0) }))
+    .sort((a, b) => b.area - a.area);
+  const keep = ranked.slice(0, n).map(r => r.s);
+  const tail = ranked.slice(n).map(r => r.s);
+  const sumByTime = new Map<number, number>();
+  const cntByTime = new Map<number, number>();
+  for (const s of tail) {
+    for (const p of s.points) {
+      if (p.value == null) continue;
+      sumByTime.set(p.time, (sumByTime.get(p.time) ?? 0) + p.value);
+      cntByTime.set(p.time, (cntByTime.get(p.time) ?? 0) + 1);
+    }
+  }
+  const others: SpanMetricSeries = {
+    ...tail[0],
+    groupKey: [OTHERS_KEY],
+    points: [...sumByTime.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([time, sum]) => ({ time, value: mean ? sum / (cntByTime.get(time) || 1) : sum })),
+  };
+  return [...keep, others];
+}
+
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
   compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
+  selectedOps, onLegendClick,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -148,6 +184,13 @@ export function MultiLineChart({
   // depths, percentile latencies that move from 5ms to 5s).
   // Linear by default; toggleable from the parent.
   logScale?: boolean;
+  // Controlled legend selection shared across sibling charts (the 3
+  // by-operation panels). null/undefined = all visible; a Set lists
+  // the ONLY operations to show (isolate). When provided, legend clicks
+  // call onLegendClick instead of mutating this chart locally, so the
+  // parent can sync every sibling chart to one selection.
+  selectedOps?: Set<string> | null;
+  onLegendClick?: (label: string, additive: boolean) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -159,6 +202,16 @@ export function MultiLineChart({
   // all when onBucketClick is provided (opt-in).
   const bucketClickRef = useRef(onBucketClick);
   bucketClickRef.current = onBucketClick;
+  // Legend labels per data-series index (current eff + compare),
+  // refreshed on each build so the click handler can resolve a clicked
+  // legend row to its operation name. onLegendClick held in a ref so the
+  // once-per-build click listener always calls the latest callback.
+  const labelsRef = useRef<string[]>([]);
+  const onLegendClickRef = useRef(onLegendClick);
+  onLegendClickRef.current = onLegendClick;
+  // Latest controlled selection, read by the apply-effect below.
+  const selectedRef = useRef<Set<string> | null | undefined>(selectedOps);
+  selectedRef.current = selectedOps;
 
   // Mirror of the live "this index is currently visible" set.
   // Kept in a ref instead of useState so the click handler can
@@ -175,8 +228,10 @@ export function MultiLineChart({
     // legend toggle still works on either set. Compare lines
     // sit after current lines in the series array.
     const compareEnabled = (compareSeries?.length ?? 0) > 0 && (compareOffsetNs ?? 0) > 0;
-    visibleRef.current = [...series.map(() => true), ...(compareSeries ?? []).map(() => true)];
-    if (series.length === 0 && !compareEnabled) return;
+    // Fold the long tail into "others" so >8-series charts stay legible.
+    const eff = foldTopN(series, unit);
+    visibleRef.current = [...eff.map(() => true), ...(compareSeries ?? []).map(() => true)];
+    if (eff.length === 0 && !compareEnabled) return;
 
     // Shift compare-series timestamps forward by the offset so
     // a point from "24h ago" lands at the same X position as
@@ -194,14 +249,16 @@ export function MultiLineChart({
     // every series, including the shifted compare set). uPlot
     // consumes this as a single x array shared by all y arrays.
     const allTimes = new Set<number>();
-    series.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
+    eff.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
     shiftedCompare.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
     const times = [...allTimes].sort((a, b) => a - b);
     const xs = times.map(t => t / 1e9); // ns → unix seconds
 
     // Per-series y values aligned to the union x axis. Missing
     // points become null → uPlot draws a gap.
-    const allSeries = [...series, ...shiftedCompare];
+    const allSeries = [...eff, ...shiftedCompare];
+    // Row-index → operation label, for the legend click handler.
+    labelsRef.current = allSeries.map(s => (s.groupKey.length ? s.groupKey.join(' / ') : 'value'));
     const ySeries: (number | null)[][] = allSeries.map(s => {
       const valByTime = new Map(s.points.map(p => [p.time, p.value]));
       return times.map(t => valByTime.get(t) ?? null);
@@ -210,6 +267,37 @@ export function MultiLineChart({
     const css = getComputedStyle(document.documentElement);
     const text3 = css.getPropertyValue('--text3').trim() || '#484f58';
     const grid  = css.getPropertyValue('--bg2').trim()   || '#21262d';
+    const mutedGray = css.getPropertyValue('--text3').trim() || '#8b9299';
+    // Stable colour per series name; the folded "others" tail is always muted grey.
+    const colorFor = (label: string) =>
+      label === OTHERS_KEY ? mutedGray : (colorOf?.(label) ?? seriesColor(label));
+    // Controlled visibility (isolate). null/undefined selection = all
+    // visible; otherwise only the listed operations show.
+    const isVis = (label: string) => selectedOps == null || selectedOps.has(label);
+    // Grafana-style legend columns: Last / Min / Max / Avg over the
+    // CURRENTLY VISIBLE x-range. uPlot re-invokes this on every redraw
+    // (incl. after a zoom), so the stats track the zoomed window. The
+    // cursor dataIdx is ignored on purpose — the floating tooltip owns
+    // the live cursor readout; this table is the range summary.
+    const fmt1 = (v: number) => fmtSmart(v, unit);
+    const mkValues = (u: uPlot, sidx: number): Record<string, string> => {
+      const xa = u.data[0] as number[];
+      const ya = u.data[sidx] as (number | null)[];
+      const xmin = u.scales.x.min ?? -Infinity;
+      const xmax = u.scales.x.max ?? Infinity;
+      let mn = Infinity, mx = -Infinity, sum = 0, cnt = 0;
+      let last: number | null = null;
+      for (let i = 0; i < xa.length; i++) {
+        if (xa[i] < xmin || xa[i] > xmax) continue;
+        const v = ya[i];
+        if (v == null) continue;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+        sum += v; cnt++; last = v;
+      }
+      if (cnt === 0) return { Last: '—', Min: '—', Max: '—', Avg: '—' };
+      return { Last: fmt1(last as number), Min: fmt1(mn), Max: fmt1(mx), Avg: fmt1(sum / cnt) };
+    };
 
     const data: uPlot.AlignedData = [xs, ...ySeries] as uPlot.AlignedData;
 
@@ -233,6 +321,10 @@ export function MultiLineChart({
         x: { time: true },
         y: logScale ? { distr: 3, log: 10 } : {},
       },
+      // Hovering a legend row focuses that series and dims the others
+      // to 0.3 alpha (Grafana / Datadog legend-hover behaviour). Works
+      // with the native legend + cursor.focus.prox set below.
+      focus: { alpha: 0.3 },
       series: [
         {},
         ...allSeries.map((s, idx) => {
@@ -247,7 +339,7 @@ export function MultiLineChart({
           // period twin (same label → same hash → same stop)
           // so the eye reads "ghost of THAT line" not "a new
           // unknown line".
-          const color = colorOf?.(label) ?? seriesColor(label);
+          const color = colorFor(label);
           if (isCompare) {
             return {
               // Suffix the label so the legend disambiguates
@@ -261,27 +353,25 @@ export function MultiLineChart({
               width: 1.5,
               dash: [4, 4],
               points: { show: false },
+              show: isVis(label),
               value: (_u: uPlot, v: number | null) => fmtSmart(v, unit) +
                 (v != null ? ` (${compareLabel ?? 'past'})` : ''),
+              values: mkValues,
             } satisfies uPlot.Series;
           }
           return {
             label,
             stroke: color,
-            fill: color + '22',
-            width: 2,
-            // Point markers (v0.5.257 — was: ≤100 only). Bumped
-            // ceiling to ≤500 so denser charts still surface
-            // individual datapoints — operator can hover any
-            // bucket to read the exact value without squinting
-            // at the smoothed line. Auto-tunes size down past
-            // 200 so we don't end up with a continuous "fat
-            // sausage" look on busy charts.
-            points: {
-              show: times.length <= 500,
-              size: times.length <= 100 ? 5 : times.length <= 200 ? 3.5 : 2.5,
-            },
+            // Multi-series RED charts read cleaner with NO band fill;
+            // a lone series keeps a faint ≤8% tint for shape (Grafana).
+            fill: eff.length > 1 ? undefined : color + '14',
+            width: 1.5,
+            // No always-on markers — uPlot paints a point on the
+            // focused series at the cursor, so dots appear on hover only.
+            points: { show: false },
+            show: isVis(label),
             value: (_u: uPlot, v: number | null) => fmtSmart(v, unit),
+            values: mkValues,
           } satisfies uPlot.Series;
         }),
       ],
@@ -334,7 +424,11 @@ export function MultiLineChart({
         // Datadog dashboard pattern.
         sync: syncKey ? { key: syncKey } : undefined,
       },
-      legend: { show: true, live: true, markers: { width: 2 } },
+      // live:false — the columns are range stats (Last/Min/Max/Avg via
+      // series.values), not the cursor value; the floating tooltip is the
+      // live readout. The legend re-renders on zoom so stats stay scoped
+      // to the visible window.
+      legend: { show: true, live: false, markers: { width: 2 } },
       hooks: {
         // Drag-zoom callback — fires when the operator
         // releases a horizontal selection. Convert from uPlot
@@ -541,14 +635,14 @@ export function MultiLineChart({
             // in the Chart.js tooltip.
             type Row = { label: string; color: string; v: number };
             const rows: Row[] = [];
-            for (let i = 0; i < series.length; i++) {
+            for (let i = 0; i < eff.length; i++) {
               const yArr = u.data[i + 1];
               if (!yArr) continue;
               const v = yArr[idx];
               if (v == null) continue;
-              const s = series[i];
+              const s = eff[i];
               const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';
-              rows.push({ label, color: seriesColor(label), v: v as number });
+              rows.push({ label, color: colorFor(label), v: v as number });
             }
             if (rows.length === 0) {
               tip.style.opacity = '0';
@@ -586,12 +680,24 @@ export function MultiLineChart({
                   `</div>`;
               }
             }
+            // Bold the series nearest the cursor's Y so the operator can
+            // tell which line they're tracking among many.
+            const yAtCursor = u.posToVal(u.cursor.top ?? -1, 'y');
+            let boldLabel = '';
+            if (isFinite(yAtCursor) && rows.length) {
+              let best = Infinity;
+              for (const r of rows) {
+                const dy = Math.abs(r.v - yAtCursor);
+                if (dy < best) { best = dy; boldLabel = r.label; }
+              }
+            }
             tip.innerHTML =
               `<div style="font-weight:600;margin-bottom:4px">${hh}:${mm}:${ss}</div>` +
               deployRow +
               rows.map(r => {
                 const lbl = escapeHTML(r.label);
-                return `<div style="display:flex;gap:8px;align-items:center;line-height:1.5">` +
+                const wt = r.label === boldLabel ? 'font-weight:700;' : '';
+                return `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;${wt}">` +
                   `<span style="display:inline-block;width:8px;height:8px;background:${r.color};border-radius:2px;flex-shrink:0"></span>` +
                   `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="${lbl}">${lbl}</span>` +
                   `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${fmt(r.v)}</span>` +
@@ -652,10 +758,29 @@ export function MultiLineChart({
       // The first <tr> in the legend is the x-axis row; data
       // series start at index 1. Subtract 1 to land on a real
       // series.
-      const dataIdx = Array.from(li.parentElement?.children ?? []).indexOf(li) - 1;
+      // Map the clicked legend row → data-series index ROBUSTLY. The
+      // multi-value (Last/Min/Max/Avg) legend inserts a value-header row,
+      // and uPlot may or may not render the x-series row depending on
+      // version/live mode — both shift naive child-index math and would
+      // isolate the WRONG operation. So index among ONLY tr.u-series
+      // rows and derive the leading offset (1 if the x-row is present,
+      // else 0) from the known data-series count.
+      const seriesRows = Array.from(li.parentElement?.querySelectorAll('tr.u-series') ?? []);
+      const offset = Math.max(0, seriesRows.length - labelsRef.current.length); // x-row present → 1
+      const dataIdx = seriesRows.indexOf(li) - offset;
       if (dataIdx < 0) return;
       e.stopPropagation();
       e.preventDefault();
+
+      // Controlled mode (sibling-synced legend): hand the click to the
+      // parent, which recomputes the shared selection; every sibling
+      // chart then re-applies it via the selectedOps effect below.
+      // Mutating this plot locally would let the three charts drift.
+      if (onLegendClickRef.current) {
+        const label = labelsRef.current[dataIdx];
+        if (label != null) onLegendClickRef.current(label, e.ctrlKey || e.metaKey);
+        return;
+      }
 
       const u = plotRef.current;
       const visible = visibleRef.current;
@@ -704,6 +829,20 @@ export function MultiLineChart({
     // appended compare rows.
   }, [series.length, compareSeries?.length]);
 
+  // Apply the controlled selection to the live plot WITHOUT a rebuild
+  // (zoom + cursor survive). Matches by operation label so sibling
+  // charts with different folded top-8 sets still sync by name.
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    const labels = labelsRef.current;
+    for (let i = 0; i < labels.length; i++) {
+      const vis = selectedOps == null || selectedOps.has(labels[i]);
+      u.setSeries(i + 1, { show: vis });
+      if (visibleRef.current[i] != null) visibleRef.current[i] = vis;
+    }
+  }, [selectedOps]);
+
   // Container does NOT pin its height — uPlot creates a canvas
   // of `height` pixels plus a legend table beneath it, and we
   // want the component to take whatever total vertical space
@@ -714,7 +853,7 @@ export function MultiLineChart({
   // default; the hook flips it on when the cursor enters the
   // chart and updates content + position on every move.
   return (
-    <div ref={containerRef} style={{
+    <div ref={containerRef} className="mlc-chart" style={{
       position: 'relative', width: '100%',
       // Subtle "this chart is clickable" affordance — only when
       // the spike→exemplar hook is wired (opt-in). Absent the

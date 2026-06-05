@@ -10,17 +10,14 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/logstore"
-	"github.com/cilcenk/coremetry/internal/templater"
 )
 
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
@@ -198,104 +195,6 @@ func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getLogsSignificantPatterns runs the ES `significant_text`
-// aggregation over (curStart, now) using the (baseStart, curStart)
-// window as the baseline — surfaces tokens that just got rare-
-// vs-usual. CH backend returns an empty list (no native
-// equivalent at billion-row scale). 60s server cache fronts the
-// expensive agg so a /logs reload hits Redis, not ES.
-func (s *Server) getLogsSignificantPatterns(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	curWindow := parseDuration(q.Get("window"), 15*time.Minute)
-	if curWindow > time.Hour {
-		curWindow = time.Hour
-	}
-	baseline := parseDuration(q.Get("baseline"), 24*time.Hour)
-	if baseline > 24*time.Hour {
-		baseline = 24 * time.Hour
-	}
-	if baseline <= curWindow {
-		// Baseline must outweigh the cur window or the rare-vs-
-		// baseline math is degenerate. Floor at 4x the cur
-		// window so a 15min cur sees at least an hour of
-		// background.
-		baseline = 4 * curWindow
-	}
-	topN := parseInt(q.Get("topN"), 25)
-	if topN <= 0 || topN > 100 {
-		topN = 25
-	}
-	now := time.Now()
-	curStart := now.Add(-curWindow)
-	baseStart := curStart.Add(-baseline)
-
-	key := fmt.Sprintf("logs-significant:cur=%s:bg=%s:topN=%d",
-		curWindow, baseline, topN)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		// v0.5.390 — handler-level deadline. The ES backend now
-		// soft-timeouts at 10s on its own (body timeout param),
-		// so this 15s bound is defence in depth — covers the CH
-		// backend (no native timeout knob) and any network
-		// stall on the ES coordinator round-trip. Without it,
-		// a wedged ES would keep the request open until the
-		// frontend's 60s fetch budget cancels it, surfacing as
-		// "context deadline exceeded" from the operator's view.
-		// v0.5.424 — env-tunable handler deadline. Default 15s
-		// works for most installs; billion-doc production can
-		// bump to 25-45s. Should be < the frontend's 60s fetch
-		// budget so the browser doesn't time out first.
-		hd := 15 * time.Second
-		if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_PATTERNS_DEADLINE")); v != "" {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				hd = d
-			}
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), hd)
-		defer cancel()
-		hits, err := s.logs.SignificantPatterns(ctx, curStart, baseStart, now, topN)
-		// Graceful timeout: serve empty patterns + a hint flag
-		// so the panel can render "still computing" rather than
-		// the red error state. The 60s server cache means the
-		// next poll lands on a fresh attempt, not the same
-		// stuck call.
-		if err != nil && (errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded")) {
-			return map[string]any{
-				"backend":  s.logs.Backend(),
-				"window":   curWindow.String(),
-				"baseline": baseline.String(),
-				"patterns": []logstore.SignificantPattern{},
-				"timedOut": true,
-			}, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		if hits == nil {
-			hits = []logstore.SignificantPattern{}
-		}
-		// v0.5.336 — drop opaque per-request ids from the live
-		// patterns panel. JWT fragments and long base64 session
-		// ids score statistically high (they appear in many
-		// docs that share a request boundary) but tell the
-		// operator nothing readable. Filter once at the API
-		// layer so both ES + CH backends benefit.
-		filtered := hits[:0]
-		for _, h := range hits {
-			if templater.LooksLikeOpaqueID(h.Token) {
-				continue
-			}
-			filtered = append(filtered, h)
-		}
-		hits = filtered
-		return map[string]any{
-			"backend":  s.logs.Backend(),
-			"window":   curWindow.String(),
-			"baseline": baseline.String(),
-			"patterns": hits,
-		}, nil
-	})
-}
-
 // getLogsTemplates surfaces the Drain-extracted log templates
 // persisted by the templater puller. Sortable by first_seen
 // (newest templates land first → "what just started firing?"),
@@ -331,45 +230,6 @@ func (s *Server) getLogsTemplates(w http.ResponseWriter, r *http.Request) {
 		}
 		return rows, nil
 	})
-}
-
-// getLogsSimilarTraces bucket-counts trace IDs whose logs are
-// pattern-similar to a seed text (more_like_this on the body
-// field). POST body shape: {"text":"...","limit":50}. Returns
-// {traces:[{traceId,count}]} sorted descending by count.
-// Read-only against Elasticsearch; ClickHouse backend gets a
-// clean 400 (no similar-text support).
-func (s *Server) getLogsSimilarTraces(w http.ResponseWriter, r *http.Request) {
-	type similarRunner interface {
-		SimilarTraces(ctx context.Context, seed string, limit int) ([]logstore.SimilarTrace, error)
-	}
-	runner, ok := s.logs.(similarRunner)
-	if !ok {
-		http.Error(w, `{"error":"similar-logs lookup requires the Elasticsearch backend"}`, http.StatusBadRequest)
-		return
-	}
-	var body struct {
-		Text  string `json:"text"`
-		Limit int    `json:"limit"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	body.Text = strings.TrimSpace(body.Text)
-	if body.Text == "" {
-		http.Error(w, "text required", http.StatusBadRequest)
-		return
-	}
-	traces, err := runner.SimilarTraces(r.Context(), body.Text, body.Limit)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if traces == nil {
-		traces = []logstore.SimilarTrace{}
-	}
-	writeJSON(w, map[string]any{"traces": traces})
 }
 
 // getLogsContext returns ±N logs around a pivot timestamp, scoped

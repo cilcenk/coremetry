@@ -164,19 +164,6 @@ type PatternServiceHit struct {
 	Count   uint64 `json:"count"`
 }
 
-// SignificantPattern is one statistically-anomalous token surfaced
-// by an unsupervised pass over recent logs (v0.5.243). DocCount is
-// how often the token appeared in the current window; BgCount is
-// the baseline window. Score is the backend's "rare-vs-baseline"
-// signal (ES uses a chi-square-like measure; CH backend returns
-// 0 because it has no native significant_text agg).
-type SignificantPattern struct {
-	Token    string  `json:"token"`
-	DocCount uint64  `json:"docCount"`
-	BgCount  uint64  `json:"bgCount"`
-	Score    float64 `json:"score"`
-}
-
 // Store is the read interface every backend implements.
 type Store interface {
 	Search(ctx context.Context, f Filter) (*Page, error)
@@ -191,16 +178,6 @@ type Store interface {
 	// input slice index; empty PatternStats indicates "no match
 	// in current window" (detector ignores these).
 	CountPatterns(ctx context.Context, pats []PatternSpec, curStart, baseStart, now time.Time) ([]PatternStats, error)
-
-	// SignificantPatterns runs an unsupervised "what tokens are
-	// statistically rare in the current window vs the baseline"
-	// pass. ES backend uses the native significant_text
-	// aggregation; CH backend returns nil (no native equivalent
-	// at billion-row scale — operators on CH rely on the
-	// curated detector + saved-search alerts instead). Cur =
-	// (curStart, now); Base = (baseStart, curStart). topN caps
-	// the returned bucket count.
-	SignificantPatterns(ctx context.Context, curStart, baseStart, now time.Time, topN int) ([]SignificantPattern, error)
 
 	// Histogram returns one bucketed timeseries per group_value for
 	// the requested filter. Powers the Logs source in /explore — the

@@ -512,37 +512,11 @@ export const api = {
       before: import('./types').LogRow[];
       after:  import('./types').LogRow[];
     }>(`/api/logs/context?${qs(params)}`),
-  // ES significant_text — tokens that just got rare-vs-usual.
-  // 60s server cache. CH backend returns empty patterns list;
-  // UI hides the panel in that case.
-  logsSignificantPatterns: (params: { window?: string; baseline?: string; topN?: number } = {}) =>
-    get<{
-      backend: string;
-      window: string;
-      baseline: string;
-      patterns: Array<{ token: string; docCount: number; bgCount: number; score: number }>;
-      // v0.5.390 — set when the backend bailed at the 15s
-      // handler deadline (ES soft-timeout fired or the network
-      // round-trip didn't return in time). Panel renders a
-      // "still computing" state instead of the red error
-      // banner so the operator knows polling will recover.
-      timedOut?: boolean;
-    }>(`/api/logs/patterns?${qs(params)}`),
   // Drain-extracted log templates (v0.5.244). Backed by the
   // templater puller goroutine; first_seen sticky across
   // restarts so the "what's new since X" sort is meaningful.
   logsTemplates: (params: { sort?: 'first_seen' | 'last_seen' | 'count'; since?: string; limit?: number } = {}) =>
     get<import('./types').LogTemplate[]>(`/api/logs/templates?${qs(params)}`),
-  // Similar-traces lookup (v0.5.141). more_like_this on the
-  // configured body field + trace.id terms aggregation. ES-only;
-  // CH backend returns 400.
-  logsSimilarTraces: (text: string, limit = 50) =>
-    request<{ traces: Array<{ traceId: string; count: number }> }>(
-      `/api/logs/similar`,
-      {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, limit }),
-      }),
 
   // Topology exclude list (v0.5.176) — services muted from
   // diagrams to keep hub-like infra (config server, identity,

@@ -15,7 +15,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -40,7 +39,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/profileconv"
-	"github.com/cilcenk/coremetry/internal/templater"
 	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/sse"
@@ -459,15 +457,10 @@ func (s *Server) Start() error {
 	// calls (before / after) so the operator sees what was emitted
 	// either side of the log they're investigating.
 	mux.HandleFunc("GET /api/logs/context",    s.getLogsContext)
-	// v0.5.243 — unsupervised "what tokens are statistically
-	// rare in the current window vs baseline" pass. ES-only
-	// (CH returns empty); 60s cache fronts the expensive agg.
-	mux.HandleFunc("GET /api/logs/patterns",   s.getLogsSignificantPatterns)
 	// v0.5.244 — Drain-extracted log template ledger. Persistent
 	// templates with sticky first_seen so the operator can ask
 	// "what shape just started appearing?".
 	mux.HandleFunc("GET /api/logs/templates",  s.getLogsTemplates)
-	mux.HandleFunc("POST /api/logs/similar",   s.getLogsSimilarTraces)
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
@@ -932,16 +925,6 @@ func (s *Server) warmDependenciesCache() {
 		}
 		s.storeCached(ctx, key, body, useTTL)
 	}
-	// Logs-patterns warmer budget. Same env override as the
-	// handler, slightly higher default (25s vs 15s) so a single
-	// cold-tick still has room before the live read inherits a
-	// cold cache.
-	logsPatternsBudget := 25 * time.Second
-	if v := strings.TrimSpace(os.Getenv("COREMETRY_LOGS_PATTERNS_DEADLINE")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			logsPatternsBudget = d
-		}
-	}
 	for {
 		to := time.Now()
 		from := to.Add(-warmWin)
@@ -989,58 +972,6 @@ func (s *Server) warmDependenciesCache() {
 					"offset":   0,
 				}, nil
 			})
-		// v0.5.375 — pre-warm /api/logs/patterns. The
-		// LivePatternsPanel polls every 30s with fixed params
-		// (window=15m, baseline=24h, topN=25). Cold ES
-		// significant_text is the slowest call in the panel
-		// at billion-doc indices (often 1-2s p99); warming
-		// keeps the first /logs visit on a HIT-L1 path. CH
-		// backend's equivalent (sample-based foreground vs
-		// baseline scoring) is also non-trivial — same cache
-		// key serves both, this warmer transparently primes
-		// whichever backend is wired.
-		const (
-			logsCurWindow = 15 * time.Minute
-			logsBaseline  = 24 * time.Hour
-			logsTopN      = 25
-			// 60s matches the live serveCached soft TTL on
-			// the handler. Warmer ticks at 25s so the entry
-			// stays in the fresh window between ticks.
-			logsTTL = 60 * time.Second
-		)
-		nowLogs := time.Now()
-		curStart := nowLogs.Add(-logsCurWindow)
-		baseStart := curStart.Add(-logsBaseline)
-		logsKey := fmt.Sprintf("logs-significant:cur=%s:bg=%s:topN=%d",
-			logsCurWindow, logsBaseline, logsTopN)
-		warm("logs-patterns", logsKey, logsTTL,
-			func(ctx context.Context) (any, error) {
-				hits, err := s.logs.SignificantPatterns(ctx, curStart, baseStart, nowLogs, logsTopN)
-				if err != nil {
-					return nil, err
-				}
-				if hits == nil {
-					hits = []logstore.SignificantPattern{}
-				}
-				// Same opaque-id filter as the live handler;
-				// keep the warmed payload byte-identical so
-				// the next live read can serve directly
-				// without re-marshaling.
-				filtered := hits[:0]
-				for _, h := range hits {
-					if templater.LooksLikeOpaqueID(h.Token) {
-						continue
-					}
-					filtered = append(filtered, h)
-				}
-				hits = filtered
-				return map[string]any{
-					"backend":  s.logs.Backend(),
-					"window":   logsCurWindow.String(),
-					"baseline": logsBaseline.String(),
-					"patterns": hits,
-				}, nil
-			}, logsPatternsBudget)
 		time.Sleep(tick)
 	}
 }
@@ -6606,18 +6537,6 @@ func (s *Server) problemCorrelationContext(ctx context.Context, p *chstore.Probl
 		}
 	}
 
-	// 3) Significant log patterns in the window. Unsupervised
-	// significant_text is index-global (not service-scoped), so we
-	// label it honestly — it still surfaces "what tokens spiked
-	// during this problem's window" which the model can weigh.
-	if s.logs != nil {
-		if pats, lerr := s.logs.SignificantPatterns(ctx, from, from.Add(-6*time.Hour), to, 5); lerr == nil && len(pats) > 0 {
-			b.WriteString("\n\nSignificant log patterns in the window (across services):")
-			for _, pt := range pats {
-				b.WriteString(fmt.Sprintf("\n  %q (%d in window vs %d baseline)", pt.Token, pt.DocCount, pt.BgCount))
-			}
-		}
-	}
 	return b.String()
 }
 

@@ -148,8 +148,17 @@ export function ServiceGraph({
     setView({ scale, tx, ty });
   }, [layout, height]);
 
-  // fit whenever a new layout lands.
-  useEffect(() => { fit(); }, [fit]);
+  // Fit when a new layout lands. rAF so the canvas/container has settled its
+  // width first (fixing the first-paint off-center), + a ResizeObserver so the
+  // graph re-frames when the panel resizes (v0.8.14).
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const raf = requestAnimationFrame(fit);
+    const ro = new ResizeObserver(() => fit());
+    ro.observe(el);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [fit]);
 
   // ── draw ───────────────────────────────────────────────────────────────────
   useEffect(() => {

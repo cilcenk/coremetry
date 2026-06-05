@@ -10,6 +10,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogTable } from '@/components/LogTable';
 import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from '@/components/TopologyPillGraph';
+import { ServiceGraph } from '@/components/ServiceGraph';
 
 // Service-scoped Traces / Logs / Topology tabs — the design's tab strip
 // beyond Overview/Operations/Details. All read-only, all reuse the
@@ -224,87 +225,29 @@ function buildPillTiers(map: ServiceMap, focus: string): {
 
 // ── Topology: tiered pill-card neighbourhood (shared TopologyPillGraph) ──
 export function ServiceTopologyTab({ service, range }: { service: string; range: TimeRange }) {
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
-  const rangeParam = encodeRange(range);
   const navigate = useNavigate();
-
-  // serviceMap returns the full sampled graph; we scope it to the focused
-  // service's 2-hop neighbourhood CLIENT-SIDE (BFS over the small payload —
-  // same posture as the /service-map page, which does 1-hop). `since` tracks
-  // the page range so the sample window matches the rest of the tabs.
-  const since = useMemo(() => {
-    const mins = Math.max(5, Math.round((to - from) / 60e9));
-    return mins >= 60 ? `${Math.round(mins / 60)}h` : `${mins}m`;
-  }, [from, to]);
-  const mapQ = useQuery({
-    queryKey: ['service-tab-topology', since],
-    queryFn: () => api.serviceMap(since, 200),
-    enabled: !!service,
-    staleTime: 30_000,
-  });
-
-  const data = useMemo(() => {
-    const full = mapQ.data;
-    if (!full) return full; // undefined while loading
-    if (!full.nodes.length) return full;
-    const keep = new Set<string>([service]);
-    let frontier = new Set<string>([service]);
-    for (let hop = 0; hop < 2; hop++) {
-      const next = new Set<string>();
-      for (const e of full.edges) {
-        if (frontier.has(e.caller) && !keep.has(e.callee)) next.add(e.callee);
-        if (frontier.has(e.callee) && !keep.has(e.caller)) next.add(e.caller);
-      }
-      next.forEach(n => keep.add(n));
-      frontier = next;
-    }
-    return {
-      ...full,
-      nodes: full.nodes.filter(n => keep.has(n.service)),
-      edges: full.edges.filter(e => keep.has(e.caller) && keep.has(e.callee)),
-    };
-  }, [mapQ.data, service]);
-
-  const pill = useMemo(
-    () => (data && data.nodes.length ? buildPillTiers(data, service) : null),
-    [data, service],
-  );
-
+  const rangeParam = encodeRange(range);
+  // v0.8.14 — topology rebuild Stage 3: the canonical OTel-native ServiceGraph
+  // (neighborhood scope) replaces the bespoke serviceMap BFS + pill tiers.
   return (
     <div className="card" style={{ marginTop: 4 }}>
       <div className="ov-card-h">
         <h3>Topology</h3>
-        <span className="ov-sub">{service} neighborhood · 2 hops</span>
-        <span className="ov-right" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span className="ov-legend">
-            <span><i className="ov-dot green" />healthy</span>
-            <span><i className="ov-dot amber" />degraded</span>
-          </span>
-          <Link className="ov-sub" to={`/topology?focus=${encodeURIComponent(service)}&preset=${encodeURIComponent(range.preset)}`}>
+        <span className="ov-sub">{service} neighborhood</span>
+        <span className="ov-right">
+          <Link className="ov-sub" to={`/topology?focus=${encodeURIComponent(service)}&range=${rangeParam}`}>
             Open full Topology →
           </Link>
         </span>
       </div>
       <div className="ov-card-b">
-        {mapQ.isLoading ? (
-          <div style={{ height: 480, display: 'grid', placeItems: 'center' }}><Spinner /></div>
-        ) : !pill || pill.nodes.length === 0 ? (
-          <Empty icon="⋔" title={`No topology data for ${service} in this window`} />
-        ) : (
-          <>
-            <TopologyPillGraph
-              nodes={pill.nodes}
-              edges={pill.edges}
-              columns={pill.columns}
-              focus={service}
-              onSelect={(s) => navigate(`/service?name=${encodeURIComponent(s)}&range=${rangeParam}`)}
-              height={480}
-            />
-            <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 6 }}>
-              Hover a card to trace its dependencies · edge color flags degraded paths · click a card to open the service.
-            </div>
-          </>
-        )}
+        <ServiceGraph
+          scope="neighborhood"
+          focus={service}
+          range={range}
+          height={480}
+          onSelectService={(s) => navigate(`/service?service=${encodeURIComponent(s)}&range=${rangeParam}`)}
+        />
       </div>
     </div>
   );

@@ -8,6 +8,8 @@ import { useAuth } from '@/components/AuthProvider';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { ServiceGraph } from '@/components/ServiceGraph';
+import { useUrlRange } from '@/lib/useUrlRange';
 import type {
   ServiceTopologyResponse, ServiceTopologyNode, ServiceTopologyEdge,
   TopologyResponse, TopologyNode,
@@ -39,7 +41,28 @@ type TopologyView = {
   local: boolean;
 };
 
+// v0.8.14 — topology rebuild Stage 3: /topology now renders the ONE canonical
+// OTel-native ServiceGraph (global scope). The previous multi-view page
+// (OldTopologyPage, below) is kept but unreachable until Stage 4 deletes it.
 export default function TopologyPage() {
+  const [range, setRange] = useUrlRange('24h');
+  const nav = useNavigate();
+  return (
+    <>
+      <Topbar title="Topology" range={range} onRangeChange={setRange} />
+      <div id="content">
+        <ServiceGraph
+          scope="global"
+          range={range}
+          height={Math.round(window.innerHeight * 0.76)}
+          onSelectService={svc => nav(`/service?service=${encodeURIComponent(svc)}`)}
+        />
+      </div>
+    </>
+  );
+}
+
+function OldTopologyPage() {
   const [params, setParams] = useSearchParams();
   const view = (params.get('view') as View) || 'service';
   // Default 24h so rarely-triggered interactions (cron jobs,

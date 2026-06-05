@@ -90,7 +90,8 @@ export default function App() {
             <Route path="/services"       element={<Services />} />
             <Route path="/service"        element={<Service />} />
             <Route path="/service/backtrace" element={<ServiceBacktrace />} />
-            <Route path="/service-map"    element={<Topology />} />
+            {/* v0.8.14 — topology rebuild Stage 3: /service-map folds into /topology. */}
+            <Route path="/service-map"    element={<Navigate to="/topology" replace />} />
             <Route path="/topology"       element={<Topology />} />
             <Route path="/servicegraph-preview" element={<ServiceGraphPreview />} />
             <Route path="/traces"         element={<Traces />} />

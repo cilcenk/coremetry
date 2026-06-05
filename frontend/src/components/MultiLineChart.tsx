@@ -448,7 +448,7 @@ export function MultiLineChart({
             // band sticks around until the next click.
             u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
           },
-        ] : undefined,
+        ] : [],
         // Spike → exemplar click hook (v0.7.22). OPT-IN: only
         // registered when onBucketClick is set, so non-exemplar
         // callers are untouched. Attaches a plain-click listener
@@ -499,7 +499,7 @@ export function MultiLineChart({
               bucketClickRef.current?.(fromNs, toNs);
             });
           },
-        ] : undefined,
+        ] : [],
         // Overlay draw hooks — paint deploy markers (dashed
         // vertical lines) AND threshold lines (dashed horizontal
         // lines + tinted breach band) after uPlot's own series
@@ -577,7 +577,7 @@ export function MultiLineChart({
 
             ctx.restore();
           },
-        ] : undefined,
+        ] : [],
         // Grafana-style hover tooltip — the floating panel
         // matches what Datadog / Honeycomb / Grafana all do
         // (hover anywhere on the chart and see all series'

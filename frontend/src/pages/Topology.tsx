@@ -55,7 +55,7 @@ export default function TopologyPage() {
           scope="global"
           range={range}
           height={Math.round(window.innerHeight * 0.76)}
-          onSelectService={svc => nav(`/service?service=${encodeURIComponent(svc)}`)}
+          onSelectService={svc => nav(`/service?name=${encodeURIComponent(svc)}`)}
         />
       </div>
     </>

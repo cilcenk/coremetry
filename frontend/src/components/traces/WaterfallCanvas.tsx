@@ -24,6 +24,7 @@ import type { SpanRow } from '@/lib/types';
 import { svcColor } from './shared';
 
 const ROW_H = 26;
+const RULER_H = 20;           // top time-ruler strip (px)
 const LABEL_W = 300;          // left label gutter (px)
 const MINIMAP_W = 88;
 const MINIMAP_THRESHOLD = 60; // show the minimap past this many spans
@@ -71,6 +72,7 @@ export function WaterfallCanvas({
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const minimapRef = useRef<HTMLCanvasElement>(null);
+  const rulerRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(900);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(480);
@@ -130,6 +132,20 @@ export function WaterfallCanvas({
     const cAccent = cs.getPropertyValue('--accent').trim() || '#3b82f6';
     const cBorder = cs.getPropertyValue('--border').trim() || '#3338';
 
+    // vertical time gridlines at 0/25/50/75/100% of the bar area, aligned
+    // with the top ruler's ticks; faint so bars read over them.
+    ctx.strokeStyle = cBorder;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.45;
+    for (let g = 0; g <= 4; g++) {
+      const gx = Math.round(barAreaX + (g / 4) * barAreaW) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(gx, 0);
+      ctx.lineTo(gx, viewportH);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
     const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 2);
     const last = Math.min(laid.length, Math.ceil((scrollTop + viewportH) / ROW_H) + 2);
 
@@ -154,6 +170,27 @@ export function WaterfallCanvas({
         ctx.fillRect(0, y, 2, ROW_H);
       }
 
+      // depth connector guides — faint tree lines in the gutter so the
+      // call hierarchy reads at a glance: a continuous vertical per indent
+      // level, plus a short elbow into this row's label.
+      const dCap = Math.min(depth, 8);
+      if (dCap > 0) {
+        ctx.globalAlpha = dimmed ? 0.22 : 0.4;
+        ctx.strokeStyle = cBorder;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let d = 0; d < dCap; d++) {
+          const gx = 8 + d * 10 + 4.5;
+          ctx.moveTo(gx, y);
+          ctx.lineTo(gx, y + ROW_H);
+        }
+        const px = 8 + (dCap - 1) * 10 + 4.5;
+        ctx.moveTo(px, rowMid);
+        ctx.lineTo(px + 6, rowMid);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
       // label (depth-indented, service · name)
       const svc = span.serviceName || 'unknown';
       const label = `${svc} · ${displaySpanName(span)}`;
@@ -163,29 +200,36 @@ export function WaterfallCanvas({
       const maxLabel = LABEL_W - labelX - 8;
       ctx.fillText(truncate(ctx, label, maxLabel), labelX, rowMid);
 
-      // bar
+      // bar — critical-path spans keep full colour + opacity; non-critical
+      // (and search non-matches) dim to 0.5 so the eye follows the path.
+      // No red inset border (v0.8.x) — opacity contrast alone carries it.
       const x = barX(span);
       const w = barW(span);
       const err = spanHasError(span);
-      ctx.globalAlpha = dimmed ? 0.62 : 0.92;
+      ctx.globalAlpha = dimmed ? 0.5 : (onCritical ? 1 : 0.92);
       ctx.fillStyle = err ? cErr : svcColor(svc);
       roundRect(ctx, x, y + 6, w, ROW_H - 12, 3);
       ctx.fill();
+      ctx.globalAlpha = 1;
 
-      // critical-path inset (2px red inset border)
-      if (onCritical) {
-        ctx.globalAlpha = 1;
-        ctx.strokeStyle = cErr;
-        ctx.lineWidth = 2;
-        roundRect(ctx, x + 1, y + 7, Math.max(1, w - 2), ROW_H - 14, 2);
-        ctx.stroke();
-      }
-
-      // duration label to the right of the bar
-      ctx.globalAlpha = dimmed ? 0.5 : 0.85;
-      ctx.fillStyle = cText3;
+      // duration label — OUTSIDE the bar, just past its right end. If that
+      // would spill past the bar area, draw it inside-right in white so it
+      // stays legible over the fill; never overlap the fill mid-bar.
+      const durText = fmtNs(span.endTime - span.startTime);
       ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
-      ctx.fillText(fmtNs(span.endTime - span.startTime), Math.min(x + w + 5, width - 50), rowMid);
+      const durW = ctx.measureText(durText).width;
+      const rightLimit = barAreaX + barAreaW;
+      ctx.globalAlpha = dimmed ? 0.5 : 0.9;
+      if (x + w + 5 + durW <= rightLimit) {
+        ctx.fillStyle = cText3;
+        ctx.textAlign = 'left';
+        ctx.fillText(durText, x + w + 5, rowMid);
+      } else {
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'right';
+        ctx.fillText(durText, Math.min(x + w, rightLimit) - 4, rowMid);
+      }
+      ctx.textAlign = 'left';
       ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
       ctx.globalAlpha = 1;
     }
@@ -198,6 +242,46 @@ export function WaterfallCanvas({
     ctx.lineTo(LABEL_W + 0.5, viewportH);
     ctx.stroke();
   }, [laid, scrollTop, viewportH, width, selectedId, criticalPathIds, matchIds, minT, totalNs, barAreaW]);
+
+  // Time ruler — fixed strip above the rows: ticks + time labels at
+  // 0/25/50/75/100% of the trace duration, x-aligned with the bar-area
+  // gridlines the main canvas draws.
+  useEffect(() => {
+    const canvas = rulerRef.current;
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(RULER_H * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, RULER_H);
+    const cs = getComputedStyle(canvas);
+    const cText3 = cs.getPropertyValue('--text3').trim() || '#888';
+    const cBorder = cs.getPropertyValue('--border').trim() || '#3338';
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textBaseline = 'middle';
+    for (let g = 0; g <= 4; g++) {
+      const frac = g / 4;
+      const gx = barAreaX + frac * barAreaW;
+      ctx.strokeStyle = cBorder;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(Math.round(gx) + 0.5, RULER_H - 5);
+      ctx.lineTo(Math.round(gx) + 0.5, RULER_H);
+      ctx.stroke();
+      ctx.fillStyle = cText3;
+      ctx.textAlign = g === 0 ? 'left' : g === 4 ? 'right' : 'center';
+      ctx.fillText(fmtNs(Math.round(frac * totalNs)), gx, RULER_H / 2 - 1);
+    }
+    ctx.textAlign = 'left';
+    ctx.strokeStyle = cBorder;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, RULER_H - 0.5);
+    ctx.lineTo(width, RULER_H - 0.5);
+    ctx.stroke();
+  }, [width, totalNs, barAreaX, barAreaW]);
 
   // Minimap — full-trace overview with a draggable viewport box.
   useEffect(() => {
@@ -265,6 +349,10 @@ export function WaterfallCanvas({
 
   return (
     <div ref={wrapRef} style={{ position: 'relative', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg1)' }}>
+      <canvas
+        ref={rulerRef}
+        style={{ width: '100%', height: RULER_H, display: 'block', background: 'var(--bg2)' }}
+      />
       <div
         ref={scrollRef}
         onScroll={e => setScrollTop((e.target as HTMLDivElement).scrollTop)}
@@ -285,7 +373,7 @@ export function WaterfallCanvas({
           onMouseMove={e => { if (e.buttons === 1) jumpFromMinimap(e); }}
           title="Trace minimap — click or drag to jump"
           style={{
-            position: 'absolute', top: 0, right: 0, width: MINIMAP_W, height: viewportH,
+            position: 'absolute', top: RULER_H, right: 0, width: MINIMAP_W, height: viewportH,
             borderLeft: '1px solid var(--border)', background: 'var(--bg2)', cursor: 'ns-resize',
           }}
         />

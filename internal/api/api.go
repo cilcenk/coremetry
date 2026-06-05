@@ -406,6 +406,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services-metadata", s.listServiceMetadata)
 	mux.HandleFunc("GET /api/services-runtimes",         s.getAllServiceRuntimes)
 	mux.HandleFunc("GET /api/services/graph", s.getServiceGraph)
+	// v0.8.10 — OTel-native service graph (topology rebuild Stage 1). Compact
+	// {nodes,edges} from topology_edges_5m MV; ?focus=&scope=neighborhood|global.
+	mux.HandleFunc("GET /api/servicegraph", s.getOtelServiceGraph)
 	mux.HandleFunc("GET /api/services/sparklines", s.getServiceSparklines)
 	mux.HandleFunc("GET /api/service-names",       s.getServiceNames)
 	mux.HandleFunc("GET /api/operation-names",     s.getOperationNames)

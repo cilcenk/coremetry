@@ -119,6 +119,39 @@ export interface ServiceTopologyResponse {
   broadcastCollapsed?: number;
 }
 
+// OTel-native service graph (v0.8.10 — topology rebuild). One compact
+// {nodes,edges} payload from /api/servicegraph, built server-side off the
+// topology_edges_5m MV (no raw-span scan). Node kind is decoded from the MV's
+// structured node_kind (db.system/messaging.system origin) — the client never
+// does the old "db:h2" prefix-strip. Consumed by the canonical ServiceGraph.
+export type GraphNodeKind = 'service' | 'database' | 'queue' | 'external' | 'internal';
+export interface GraphNode {
+  id: string;          // canonical id (raw MV name, e.g. "payments" / "db:h2")
+  name: string;        // display name, prefix-decoded
+  kind: GraphNodeKind;
+  system?: string;     // db.system / messaging.system
+  env?: string;
+  calls: number;
+  errors: number;
+  errorRate: number;   // (errors/calls)*100 — health color
+}
+export interface GraphEdge {
+  source: string;
+  target: string;
+  calls: number;
+  errors: number;
+  errorRate: number;
+  avgMs: number;
+  p99Ms: number;
+  protocol?: string;   // http | grpc | db | kafka — SpanKind proxy
+}
+export interface ServiceGraphResponse {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  scope: string;       // 'global' | 'neighborhood'
+  focus?: string;
+}
+
 // Root-anchored business flows (v0.5.103) — top entry points by
 // trace volume; clicking a flow shows its restricted subgraph.
 export interface RootFlow {

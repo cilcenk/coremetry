@@ -766,7 +766,7 @@ function HealthDot({ health, reason, openProblems }: {
   if (!health) return null;
   const color = health === 'red' ? 'var(--err)'
               : health === 'yellow' ? 'var(--warn)'
-              : 'var(--ok, #22c55e)';
+              : 'var(--ok)';
   const title = reason
     ? `${health.toUpperCase()} · ${reason}${openProblems ? ` · ${openProblems} open problem${openProblems === 1 ? '' : 's'}` : ''}`
     : `${health.toUpperCase()} · healthy${openProblems ? ` · ${openProblems} open` : ''}`;
@@ -777,9 +777,9 @@ function HealthDot({ health, reason, openProblems }: {
         borderRadius: '50%', background: color,
         marginRight: 8, verticalAlign: 'middle',
         boxShadow: health === 'red'
-          ? '0 0 0 2px rgba(220,38,38,0.20)'
+          ? '0 0 0 2px color-mix(in srgb, var(--err) 20%, transparent)'
           : health === 'yellow'
-          ? '0 0 0 2px rgba(250,204,21,0.18)'
+          ? '0 0 0 2px color-mix(in srgb, var(--warn) 18%, transparent)'
           : 'none',
       }} />
   );

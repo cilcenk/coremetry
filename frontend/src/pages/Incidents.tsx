@@ -88,6 +88,10 @@ export default function IncidentsPage() {
           </Empty>
         )}
         {items && items.length > 0 && (
+          // NOT VirtualTable: the Title column wraps long incident titles and
+          // ClusterChips can wrap, so rows are variable-height — incompatible
+          // with VirtualTable's uniform-row assumption. content-visibility
+          // keeps the paint cheap on the (limit 200) list.
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />

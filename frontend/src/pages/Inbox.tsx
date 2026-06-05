@@ -281,6 +281,10 @@ export default function InboxPage() {
           </Empty>
         )}
         {filtered && filtered.length > 0 && (
+          // NOT VirtualTable: rows are variable-height (DetailLine renders a
+          // multi-line exception message + team chips), which breaks the
+          // VirtualTable uniform-row assumption. content-visibility keeps the
+          // >100-row paint cheap while letting each row size to its content.
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
@@ -293,9 +297,6 @@ export default function InboxPage() {
                     onMouseEnter={() => dt.nav.setSelected(i)}
                     style={{
                       cursor: 'pointer',
-                      // content-visibility lets the browser skip
-                      // off-screen rows on initial paint — fits
-                      // the "1000+ services, busy inbox" path.
                       contentVisibility: 'auto',
                       containIntrinsicSize: 'auto 44px',
                     }}>

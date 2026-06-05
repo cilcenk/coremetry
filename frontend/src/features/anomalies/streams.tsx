@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
 import { Card, Badge, Row } from '@/components/ui';
 import { ClusterChips } from '@/components/ClusterChips';
 import { CopilotExplain } from '@/components/CopilotExplain';
@@ -323,11 +324,12 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
       {active.length === 0 && (
         <div style={{
           padding: '12px 14px', fontSize: 12, color: 'var(--text2)',
-          background: 'rgba(34,197,94,0.05)',
-          border: '1px solid rgba(34,197,94,0.20)',
+          background: 'color-mix(in srgb, var(--ok) 6%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--ok) 24%, transparent)',
           borderRadius: 4, marginBottom: 12,
+          display: 'flex', alignItems: 'center', gap: 6,
         }}>
-          <span style={{ color: 'var(--ok, #22c55e)', marginRight: 6 }}>✓</span>
+          <Check size={13} strokeWidth={2} style={{ color: 'var(--ok)', flexShrink: 0 }} />
           No active anomalies in the last 24h.
           {cleared.length > 0 && ` ${cleared.length} cleared event${cleared.length === 1 ? '' : 's'} below.`}
         </div>
@@ -341,9 +343,9 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
               fontSize: 12, fontWeight: 600, color: 'var(--text2)',
               padding: '6px 0', display: 'inline-flex', alignItems: 'center', gap: 6,
             }}>
-            <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
-              {expanded ? '▼' : '▶'}
-            </span>
+            {expanded
+              ? <ChevronDown size={13} strokeWidth={1.75} />
+              : <ChevronRight size={13} strokeWidth={1.75} />}
             Cleared ({cleared.length})
             <span style={{ color: 'var(--text3)', fontWeight: 400, marginLeft: 4 }}>
               — resolved anomalies, kept for forensics
@@ -395,10 +397,20 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
             {rows.map(e => (
               <tr key={e.id}
                 ref={el => { rowRefs.current[e.id] = el; }}
+                // content-visibility skips off-screen rows on paint — the
+                // 24h history can run long. Not virtualized: the ?event=<id>
+                // deep-link scrolls a specific row into view, which needs the
+                // target row's DOM node mounted (a windowed table wouldn't
+                // have it). containIntrinsicSize keeps the scrollbar honest.
                 style={highlight === e.id ? {
-                  background: 'rgba(56,139,253,0.10)',
+                  background: 'var(--accent-soft)',
                   outline: '1px solid var(--accent2)',
-                } : undefined}>
+                  contentVisibility: 'auto',
+                  containIntrinsicSize: 'auto 36px',
+                } : {
+                  contentVisibility: 'auto',
+                  containIntrinsicSize: 'auto 36px',
+                }}>
                 <td>
                   <span className={`badge ${e.status === 'active' ? 'b-err' : 'b-ok'}`} style={{ fontSize: 10 }}>
                     {e.status === 'active' ? 'ACTIVE' : 'CLEARED'}
@@ -551,8 +563,16 @@ function DeployChip({ d, service }: {
     : `${ageMin}m before`;
   const hot = d.ageSeconds <= 5 * 60;
   const palette = hot
-    ? { bg: 'rgba(239,68,68,0.14)', border: 'rgba(239,68,68,0.50)', color: 'var(--err)' }
-    : { bg: 'rgba(212,165,55,0.10)', border: 'rgba(212,165,55,0.35)', color: 'var(--warn, #d4a537)' };
+    ? {
+        bg: 'color-mix(in srgb, var(--err) 14%, transparent)',
+        border: 'color-mix(in srgb, var(--err) 50%, transparent)',
+        color: 'var(--err)',
+      }
+    : {
+        bg: 'color-mix(in srgb, var(--warn) 12%, transparent)',
+        border: 'color-mix(in srgb, var(--warn) 38%, transparent)',
+        color: 'var(--warn)',
+      };
   return (
     <Link to={`/service?name=${encodeURIComponent(service)}#deploys`}
       title={`Service ${service} deployed v${d.version} at ${tsLong(d.timeUnixNs)} — ${ageLabel}. Likely-cause window: ≤ 5 min.`}
@@ -565,7 +585,8 @@ function DeployChip({ d, service }: {
         fontFamily: 'ui-monospace, SFMono-Regular, monospace',
         verticalAlign: 'middle',
       }}>
-      <span style={{ fontWeight: 700 }}>↑ deploy</span>
+      <ArrowDownToLine size={10} strokeWidth={2} />
+      <span style={{ fontWeight: 700 }}>deploy</span>
       <span>{d.version}</span>
       <span style={{ opacity: 0.75 }}>· {ageLabel}</span>
     </Link>

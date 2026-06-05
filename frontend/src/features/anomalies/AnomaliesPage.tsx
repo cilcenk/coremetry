@@ -9,7 +9,7 @@ import { CopilotExplain } from '@/components/CopilotExplain';
 import { ClusterChips } from '@/components/ClusterChips';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { RootCausePanel } from '@/components/RootCausePanel';
-import { ArrowDownToLine, Users } from 'lucide-react';
+import { ArrowDownToLine, Users, ChevronRight, ChevronDown, CornerDownRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, keys } from '@/lib/queries';
@@ -51,26 +51,28 @@ const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
 const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
 
 // v0.5.469 — modern tinted-chip palette for severity + priority
-// filter chips. Active chips render as `rgba(c,c,c,0.16)` bg +
-// `rgb(c,c,c)` fg + `rgba(c,c,c,0.55)` border instead of the
-// old white-on-saturated-fill — Linear / Vercel / shadcn shape.
-// Foreground hues are slightly darker than --err / --warn /
-// --accent2 so they read legibly on the tinted background in
-// light theme; dark theme inherits the same hue but the bg
-// alpha provides enough contrast either way.
+// filter chips. Active chips render as a token-tinted bg +
+// full-token fg + token border instead of the old white-on-
+// saturated-fill — Linear / Vercel / shadcn shape. Built from
+// the semantic CSS-var tokens via color-mix so both themes track
+// the same hue and the bg alpha provides contrast either way.
 interface ChipPalette { fg: string; bg: string; border: string; }
+const tintChip = (token: string): ChipPalette => ({
+  fg: `var(${token})`,
+  bg: `color-mix(in srgb, var(${token}) 16%, transparent)`,
+  border: `color-mix(in srgb, var(${token}) 55%, transparent)`,
+});
 const SEV_PALETTE: Record<'critical' | 'warning' | 'info', ChipPalette> = {
-  critical: { fg: 'rgb(220,38,38)',  bg: 'rgba(220,38,38,0.16)', border: 'rgba(220,38,38,0.55)' },
-  warning:  { fg: 'rgb(217,119,6)',  bg: 'rgba(234,179,8,0.20)', border: 'rgba(217,119,6,0.55)' },
-  info:     { fg: 'rgb(56,139,253)', bg: 'rgba(56,139,253,0.14)', border: 'rgba(56,139,253,0.45)' },
+  critical: tintChip('--err'),
+  warning:  tintChip('--warn'),
+  info:     tintChip('--accent2'),
 };
 const PRIO_PALETTE: Record<'P1' | 'P2' | 'P3', ChipPalette> = {
-  P1: { fg: 'rgb(220,38,38)',   bg: 'rgba(220,38,38,0.16)',   border: 'rgba(220,38,38,0.55)' },
-  P2: { fg: 'rgb(217,119,6)',   bg: 'rgba(234,179,8,0.20)',   border: 'rgba(217,119,6,0.55)' },
-  // P3 used --text3 (gray) when "on" — visually disconnected
-  // from the warm scale. Use a cool slate that reads as "lower
-  // priority" without being invisible like text3.
-  P3: { fg: 'rgb(100,116,139)', bg: 'rgba(100,116,139,0.14)', border: 'rgba(100,116,139,0.45)' },
+  P1: tintChip('--err'),
+  P2: tintChip('--warn'),
+  // P3 is "lower priority" — a cool gray that reads as quieter
+  // than the warm P1/P2 scale without disappearing like text3.
+  P3: tintChip('--text3'),
 };
 const P_NATURAL_DIR: Record<PSortKey, SortDir> = {
   priority: 'desc', severity: 'desc', service: 'asc', metric: 'asc',
@@ -308,7 +310,9 @@ export default function ProblemsPage() {
                         aria-expanded={open}
                         style={{ cursor: 'pointer' }}>
                         <td style={{ color: 'var(--text3)', textAlign: 'center' }}>
-                          {open ? '▾' : '▸'}
+                          {open
+                            ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
+                            : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}
                         </td>
                         <td><StateBadge s={g.state} /></td>
                         <td>
@@ -1169,7 +1173,9 @@ function SampleCard({ sample, index }: { sample: ExceptionSample; index: number 
         <>
           <Button variant="secondary" size="sm" style={{ marginTop: 8 }}
             onClick={() => setShowTrace(t => !t)}>
-            {showTrace ? '▾ Hide stacktrace' : '▸ Show stacktrace'}
+            {showTrace
+              ? <><ChevronDown size={12} strokeWidth={1.75} /> Hide stacktrace</>
+              : <><ChevronRight size={12} strokeWidth={1.75} /> Show stacktrace</>}
           </Button>
           {showTrace && (
             <pre style={{
@@ -1376,7 +1382,8 @@ function BlastRadiusChip({ service }: { service: string }) {
       onClick={e => e.stopPropagation()}
       className={`badge ${cascading ? 'b-warn' : 'b-info'}`}
       style={{ marginLeft: 8, cursor: 'help' }}>
-      ↘ {data.totalCallers} svc{data.totalCallers === 1 ? '' : 's'} · {data.totalRps.toFixed(0)} rps
+      <CornerDownRight size={11} strokeWidth={1.75} />
+      {data.totalCallers} svc{data.totalCallers === 1 ? '' : 's'} · {data.totalRps.toFixed(0)} rps
       {cascading && <> · {data.cascadingCallers} cascading</>}
     </span>
   );

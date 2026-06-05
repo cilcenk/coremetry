@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Zap } from 'lucide-react';
+import { Zap, ChevronRight, ChevronDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -311,13 +311,16 @@ export default function EndpointsPage() {
                             onClick={() => onToggleExpand(rowKey, r.service)}
                             style={{
                               all: 'unset', cursor: 'pointer',
-                              fontSize: 10, color: 'var(--text3)',
+                              color: 'var(--text3)',
                               padding: '0 4px',
+                              display: 'inline-flex', alignItems: 'center',
                             }}
                             title={isExpanded
                               ? 'Hide downstream dependencies'
                               : 'Show services / dbs this endpoint\'s service typically calls'}>
-                            {isExpanded ? '▼' : '▶'}
+                            {isExpanded
+                              ? <ChevronDown size={13} strokeWidth={1.75} />
+                              : <ChevronRight size={13} strokeWidth={1.75} />}
                           </button>
                         </td>
                         <td>
@@ -737,7 +740,6 @@ function TrendDelta({ cur, prior, kind }: {
     );
   }
   const up = pct > 0;
-  const arrow = up ? '▲' : '▼';
   let color = 'var(--text3)';
   if (kind === 'lowerBetter') {
     color = up ? 'var(--err)' : 'var(--ok)';
@@ -745,9 +747,14 @@ function TrendDelta({ cur, prior, kind }: {
     color = up ? 'var(--accent2)' : 'var(--text3)';
   }
   return (
-    <span style={{ marginLeft: 4, fontSize: 9, color, fontFamily: 'ui-monospace, monospace' }}
+    <span style={{
+      marginLeft: 4, fontSize: 9, color,
+      fontFamily: 'ui-monospace, monospace',
+      display: 'inline-flex', alignItems: 'center', gap: 1,
+    }}
       title={`Prior window: ${prior.toLocaleString(undefined, { maximumFractionDigits: 1 })}`}>
-      {arrow}{abs.toFixed(0)}%
+      {up ? <ArrowUp size={9} strokeWidth={2.5} /> : <ArrowDown size={9} strokeWidth={2.5} />}
+      {abs.toFixed(0)}%
     </span>
   );
 }

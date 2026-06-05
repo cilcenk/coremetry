@@ -342,12 +342,13 @@ export default function MetricsPage() {
     <>
       <Topbar title="Metrics" range={range} onRangeChange={setRange} />
       <div id="content">
-        {/* Explorer (default — the design-handoff redesign) vs the advanced
-            query-builder, kept one toggle away. */}
+        {/* Explorer (default — the design-handoff redesign: left catalog +
+            focused Grafana-grade chart + sparkline grid) is the primary
+            surface. The advanced query editor / builder sit one toggle away. */}
         <div className="row gap-3" style={{ marginBottom: 12 }}>
           <div className="segmented">
             <button className={mode === 'explorer' ? 'active' : ''} onClick={() => setMode('explorer')}>Explorer</button>
-            <button className={mode === 'editor' ? 'active' : ''} onClick={() => setMode('editor')}>Query editor</button>
+            <button className={mode === 'editor' ? 'active' : ''} onClick={() => setMode('editor')}>Advanced query</button>
             <button className={mode === 'builder' ? 'active' : ''} onClick={() => setMode('builder')}>Query builder</button>
           </div>
           <span className="field-label row-grow">

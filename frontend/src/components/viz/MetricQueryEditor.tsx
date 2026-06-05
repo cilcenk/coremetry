@@ -4,12 +4,13 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeFilters } from '@/lib/urlState';
 import { timeRangeToNs } from '@/lib/utils';
-import { fmtSmart } from '@/lib/chartFmt';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
-import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
+import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
+import { seriesColor } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui';
+import { useAuth } from '@/components/AuthProvider';
 import { toast } from '@/lib/toast';
 import type { MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, Panel, DashboardSummary } from '@/lib/types';
 
@@ -76,10 +77,11 @@ interface MQQuery {
   color: string;         // optional per-query colour override ('' = palette)
   expr: string;          // formula expression over other ids, e.g. "A / B * 100"
 }
-// Panel options (v0.7.128 step 2). logScale + unit feed MultiLineChart props;
-// viz toggles the line fill. Heavier viz (bars/stacked) + legend-table are a
-// follow-up.
-interface MQModel { queries: MQQuery[]; topN: number; logScale: boolean; unit: string; }
+// Panel options (v0.7.128 step 2 → v0.8 Phase 1A). logScale + unit + viz feed
+// the TimeSeriesPanel. viz selects the render mode (line / area / bars /
+// stacked); the panel's own interactive legend table replaces the bolt-on.
+const VIZ_MODES: TSMode[] = ['line', 'area', 'bars', 'stacked'];
+interface MQModel { queries: MQQuery[]; topN: number; logScale: boolean; unit: string; viz: TSMode; }
 
 const TOPN_DEFAULT = 12;
 const ID_LETTERS = 'ABCDEFGHIJ';
@@ -94,12 +96,12 @@ function blankQuery(id: string): MQQuery {
 function blankFormula(id: string): MQQuery {
   return { ...blankQuery(id), kind: 'formula', expr: '', alias: '' };
 }
-const EMPTY_MODEL = (): MQModel => ({ queries: [blankQuery('A')], topN: TOPN_DEFAULT, logScale: false, unit: '' });
+const EMPTY_MODEL = (): MQModel => ({ queries: [blankQuery('A')], topN: TOPN_DEFAULT, logScale: false, unit: '', viz: 'line' });
 
 // ── URL (de)serialisation — the whole model rides one ?mq= param ──────────
 function encodeModel(m: MQModel): string {
   return JSON.stringify({
-    n: m.topN, ls: m.logScale ? 1 : 0, un: m.unit,
+    n: m.topN, ls: m.logScale ? 1 : 0, un: m.unit, vz: m.viz,
     q: m.queries.map(q => ({
       i: q.id, k: q.kind === 'formula' ? 'f' : 'm', e: q.enabled ? 1 : 0, m: q.metric, u: q.unit, a: q.agg,
       f: q.filters, g: q.groupBy, s: q.step, l: q.alias, c: q.color, x: q.expr,
@@ -126,7 +128,8 @@ function decodeModel(s: string | null): MQModel | null {
       expr: String(q.x ?? ''),
     }));
     if (!queries.length) return null;
-    return { queries, topN: typeof o.n === 'number' ? o.n : TOPN_DEFAULT, logScale: o.ls === 1, unit: String(o.un ?? '') };
+    const viz: TSMode = VIZ_MODES.includes(o.vz as TSMode) ? (o.vz as TSMode) : 'line';
+    return { queries, topN: typeof o.n === 'number' ? o.n : TOPN_DEFAULT, logScale: o.ls === 1, unit: String(o.un ?? ''), viz };
   } catch { return null; }
 }
 
@@ -223,7 +226,7 @@ function parseDSL(text: string, prev: MQModel): { model?: MQModel; error?: strin
     }
     queries.push(q);
   }
-  return { model: { queries, topN: prev.topN, logScale: prev.logScale, unit: prev.unit }, error: warn.length ? warn.join('; ') : undefined };
+  return { model: { queries, topN: prev.topN, logScale: prev.logScale, unit: prev.unit, viz: prev.viz }, error: warn.length ? warn.join('; ') : undefined };
 }
 
 // ── Grouped metric picker (searchable + faceted, unit shown) ──────────────
@@ -430,6 +433,12 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
+  // Role gate — "Add to dashboard" writes a saved dashboard, so it's an
+  // editor/admin action. viewers still see + share the query, just can't
+  // persist it as a panel.
+  const { user } = useAuth();
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
+
   const navigate = useNavigate();
   const [model, setModel] = useState<MQModel>(() =>
     decodeModel(searchParams.get('mq')) ?? EMPTY_MODEL());
@@ -490,12 +499,15 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   // a query's data actually changes, so the series array stays referentially
   // stable between unrelated renders. (review-confirmed perf fix)
   const dataSig = results.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|');
-  const { series, hidden, unit, colorOverride } = useMemo(() => {
+  const { series, hidden, unit } = useMemo(() => {
     const metricQs = debounced.queries.filter(q => q.enabled && q.kind === 'metric' && q.metric);
     const producing = debounced.queries.filter(q => q.enabled && (q.kind === 'metric' ? !!q.metric : !!q.expr.trim()));
     const multi = producing.length > 1;
-    const colorOverride: Record<string, string> = {};
-    const all: SpanMetricSeries[] = [];
+    // Build TSSeries directly. Per-group colour = the per-query override when
+    // set, else the STABLE categorical palette (seriesColor(label)) so the same
+    // group value keeps its hue across every re-run and across panels — group
+    // fan-out reads as one consistent legend.
+    const all: TSSeries[] = [];
     // First series of each metric query — what a formula references by id.
     const repById: Record<string, SpanMetricSeries> = {};
     debounced.queries.forEach((q, qi) => {
@@ -508,8 +520,12 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
         const grp = labeled.join(', ');
         const base = grp || q.alias || q.metric;
         const label = q.alias ? (grp ? `${q.alias} · ${grp}` : q.alias) : (multi ? `${q.id}: ${base}` : base);
-        if (q.color) colorOverride[label] = q.color;
-        all.push({ groupKey: [label], points: s.points });
+        all.push({
+          label,
+          color: q.color || seriesColor(label),
+          unit: q.unit || undefined,
+          points: s.points.map(p => ({ time: p.time, value: p.value })),
+        });
       }
     });
     // Formula queries — evaluate the expression per shared time bucket over the
@@ -522,7 +538,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
       const valAt: Record<string, Map<number, number>> = {};
       const times = new Set<number>();
       for (const id of refs) { valAt[id] = new Map(repById[id].points.map(p => [p.time, p.value])); for (const p of repById[id].points) times.add(p.time); }
-      const pts: { time: number; value: number }[] = [];
+      const pts: { time: number; value: number | null }[] = [];
       for (const t of [...times].sort((a, b) => a - b)) {
         const vars: Record<string, number> = {};
         let ok = true;
@@ -533,22 +549,24 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
       }
       if (!pts.length) continue;
       const label = q.alias || `${q.id}: ${q.expr}`;
-      if (q.color) colorOverride[label] = q.color;
-      all.push({ groupKey: [label], points: pts });
+      all.push({ label, color: q.color || seriesColor(label), points: pts });
     }
+    // Top-N BY AREA cap — biggest series win; the rest collapse into a "+N more"
+    // note so a 200-group fan-out doesn't drown the chart.
     const ranked = all
-      .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value), 0) }))
+      .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value ?? 0), 0) }))
       .sort((a, b) => b.area - a.area);
     const top = ranked.slice(0, debounced.topN).map(x => x.s);
     // y-unit: an explicit panel override wins; else the shared metric unit
     // (dropped when overlaid metrics disagree, so ms + % don't both read ms).
     const units = new Set(metricQs.map(q => q.unit).filter(Boolean));
     const u = debounced.unit || (units.size === 1 ? [...units][0] : '');
-    return { series: top, hidden: Math.max(0, ranked.length - top.length), unit: u, colorOverride };
+    // Stamp the resolved panel unit onto any series that didn't carry its own,
+    // so the TimeSeriesPanel axis + legend format consistently.
+    const stamped = top.map(s => (s.unit ? s : { ...s, unit: u || undefined }));
+    return { series: stamped, hidden: Math.max(0, ranked.length - top.length), unit: u };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, debounced]);
-  // Stable per-series colour resolver for MultiLineChart (per-query overrides).
-  const colorFn = useMemo(() => (label: string): string | undefined => colorOverride[label], [colorOverride]);
 
   // Deploy markers — when a single service is pinned via a service.name="x"
   // filter on any enabled query, paint its deploys on the chart (the same
@@ -567,11 +585,12 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
     enabled: !!deployService && from > 0,
     staleTime: 60_000,
   });
-  const deploys: DeployMarker[] | undefined = useMemo(() => {
+  // TimeSeriesPanel consumes deploys as bare unix-ns timestamps (it draws the
+  // dashed vline + ▼ flag itself). Memoised so the chart isn't rebuilt by a
+  // fresh array identity each render.
+  const deploys: number[] | undefined = useMemo(() => {
     const d = deploysQ.data;
-    return d && d.length
-      ? d.map(x => ({ timeUnixNs: x.timeUnixNs, label: x.version, description: `${x.spanCount} spans since` }))
-      : undefined;
+    return d && d.length ? d.map(x => x.timeUnixNs) : undefined;
   }, [deploysQ.data]);
 
   const anyLoading = results.some((r, i) => debounced.queries[i]?.enabled && debounced.queries[i]?.metric && r.isLoading);
@@ -662,15 +681,23 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
           <input type="checkbox" checked={model.logScale} onChange={e => setModel(m => ({ ...m, logScale: e.target.checked }))} />
           log
         </label>
+        <label className="mqe-topn" title="Chart render mode">
+          viz
+          <select value={model.viz} onChange={e => setModel(m => ({ ...m, viz: e.target.value as TSMode }))}>
+            {VIZ_MODES.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </label>
         <label className="mqe-topn" title="Cap the overlay to the top-N series by area">
           top
           <select value={model.topN} onChange={e => setModel(m => ({ ...m, topN: Number(e.target.value) }))}>
             {[5, 8, 12, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
-        <Button variant="secondary" size="sm" onClick={openDash} title="Save these queries as panels on a dashboard">
-          + Add to dashboard
-        </Button>
+        {canEdit && (
+          <Button variant="secondary" size="sm" onClick={openDash} title="Save these queries as panels on a dashboard">
+            + Add to dashboard
+          </Button>
+        )}
       </div>
 
       {view === 'builder' ? (
@@ -724,8 +751,8 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             <p>The query returned no series. Widen the time range or relax the filters.</p>
           </Empty>
         ) : (
-          <MultiLineChart series={series} unit={unit} height={340} deploys={deploys}
-            logScale={model.logScale} colorOf={colorFn} syncKey="mqe-preview" />
+          <TimeSeriesPanel series={series} height={340} deploys={deploys}
+            mode={model.viz} logScale={model.logScale} syncKey="mqe-preview" />
         )}
       </div>
 

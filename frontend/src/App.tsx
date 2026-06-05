@@ -121,7 +121,9 @@ export default function App() {
             <Route path="/profiling"      element={<Profiling />} />
             <Route path="/ai"             element={<AIObservability />} />
             <Route path="/profile"        element={<Profile />} />
-            <Route path="/settings"       element={<Settings />} />
+            {/* v0.8.13 — Settings decomposed into a /settings/:section area. */}
+            <Route path="/settings"          element={<Navigate to="/settings/smtp" replace />} />
+            <Route path="/settings/:section" element={<Settings />} />
             <Route path="/users"          element={<Users />} />
             <Route path="/errors"         element={<ErrorsPage />} />
             <Route path="/status"         element={<Status />} />

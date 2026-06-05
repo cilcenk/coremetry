@@ -4,16 +4,17 @@
 // looking at. Here we derive it from the live, filtered rows on the page so the
 // chart and the table tell the same story — no second query, no drift. Three
 // series on a shared bucket grid: requests/min, errors/min, and p99 duration
-// (ms). We feed them to the shared uPlot MultiLineChart.
+// (ms).
 //
-// NOTE: this is the fall-back wiring. Task A's <TimeSeriesPanel> doesn't exist
-// in the tree yet (only components/viz/MetricQueryEditor.tsx is present), so we
-// import the production MultiLineChart so the file type-checks against what
-// ships today. When TimeSeriesPanel lands, swap the <MultiLineChart> below for
-// it (see SHARED CHANGE REQUESTS in the task report).
+// v0.8.x — rendered as a COMPACT strip (a thin Sparkline + the last value +
+// min/max/avg), NOT a second big bar histogram: the brush/time-select overview
+// above already owns that shape, so two giant histograms read as noise. The
+// tabs (Rate / Errors / Duration p99) pick which series the strip summarises;
+// everything still derives from the same filtered rows.
 
-import { useMemo, useState } from 'react';
-import { MultiLineChart } from '@/components/MultiLineChart';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Sparkline } from '@/components/Sparkline';
+import { fmtSmart } from '@/lib/chartFmt';
 import { aggregateBuckets } from '@/lib/perf/transforms';
 import type { SpanMetricSeries, TraceRow } from '@/lib/types';
 
@@ -83,17 +84,45 @@ export function RedFromTraces({ rows }: { rows: TraceRow[] }) {
 
   const active = metric === 'rate' ? rate : metric === 'errors' ? errors : duration;
   const unit = METRICS.find(m => m.id === metric)!.unit;
-  // Errors are red, duration is the warn ramp, rate is the accent — pin the
-  // colour so the series reads correctly regardless of the label hash.
-  const colorOf = (): string | undefined =>
-    metric === 'errors' ? 'var(--err)' : metric === 'duration' ? 'var(--warn)' : 'var(--accent)';
+  // Errors red, duration the warn ramp, rate the accent.
+  const color = metric === 'errors' ? 'var(--err)' : metric === 'duration' ? 'var(--warn)' : 'var(--accent)';
+
+  // Compact RED strip: this bottom panel used to be a big bar histogram,
+  // which duplicated the overview's shape above. It's now a thin sparkline
+  // + last value + min/max/avg over the SAME filtered rows — no info lost,
+  // no second giant histogram. The brush/time-select overview stays the
+  // chart up top.
+  const values = active[0]?.points.map(p => p.value) ?? [];
+  const has = values.length > 0;
+  const last = has ? values[values.length - 1] : 0;
+  const min = has ? Math.min(...values) : 0;
+  const max = has ? Math.max(...values) : 0;
+  const avg = has ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+
+  const sparkRef = useRef<HTMLDivElement>(null);
+  const [sparkW, setSparkW] = useState(240);
+  useEffect(() => {
+    const el = sparkRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setSparkW(Math.max(80, el.clientWidth)));
+    ro.observe(el);
+    setSparkW(Math.max(80, el.clientWidth || 240));
+    return () => ro.disconnect();
+  }, []);
+
+  const stat = (k: string, v: number) => (
+    <div key={k} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{fmtSmart(v, unit)}</span>
+      <span style={{ fontSize: 9.5, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{k}</span>
+    </div>
+  );
 
   return (
     <div style={{
       background: 'var(--bg2)', border: '1px solid var(--border)',
       borderRadius: 8, padding: 12, marginBottom: 10,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
           RED · current filter
         </span>
@@ -105,15 +134,32 @@ export function RedFromTraces({ rows }: { rows: TraceRow[] }) {
           ))}
         </div>
       </div>
-      {active.length > 0 && active[0].points.length > 0 ? (
-        <MultiLineChart series={active} unit={unit} height={180}
-          logScale={metric === 'duration'} colorOf={colorOf} />
+      {has ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* big current/last value */}
+          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 92 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
+              {fmtSmart(last, unit)}
+            </span>
+            <span style={{ fontSize: 9.5, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>last</span>
+          </div>
+          {/* thin sparkline fills the middle */}
+          <div ref={sparkRef} style={{ flex: 1, minWidth: 0, height: 40, display: 'flex', alignItems: 'center' }}>
+            <Sparkline values={values} width={sparkW} height={40} color={color} unit={unit} />
+          </div>
+          {/* min / max / avg */}
+          <div style={{ display: 'flex', gap: 14 }}>
+            {stat('min', min)}
+            {stat('max', max)}
+            {stat('avg', avg)}
+          </div>
+        </div>
       ) : (
-        <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text3)', fontSize: 12 }}>
+        <div style={{ height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text3)', fontSize: 12 }}>
           No data to derive RED from on the current page.
         </div>
       )}
-      <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--text3)' }}>
+      <div style={{ marginTop: 8, fontSize: 10.5, color: 'var(--text3)' }}>
         Derived from the {rows.length} trace{rows.length === 1 ? '' : 's'} on this page — matches the table's filter exactly.
       </div>
     </div>

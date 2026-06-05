@@ -421,7 +421,9 @@ function TracesPageInner() {
                 <Spinner />
               </div>
             ) : viz === 'volume' ? (
-              <VolumeChart rows={displayRows} />
+              // slimmer + recedes — it's the brush/overview "tool", not the
+              // headline chart; the RED strip below carries the filtered numbers.
+              <VolumeChart rows={displayRows} height={120} />
             ) : (
               <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, padding: '0 2px' }}>

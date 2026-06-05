@@ -1651,3 +1651,28 @@ canvas { max-width: 100%; }
 .vt-scroll thead { position: sticky; top: 0; z-index: 2; }
 .vt-scroll thead th { background: var(--bg2); }
 .vt-scroll td.vt-empty { text-align: center; color: var(--text3); padding: 28px 12px; }
+
+/* System area (v0.8.9) — the consolidated admin shell: a left vertical
+   sub-nav + the active sub-page. Tokens only; light+dark via the vars. */
+.sys-layout { display: flex; gap: 18px; align-items: flex-start; }
+.sys-subnav {
+  flex: 0 0 188px; position: sticky; top: 12px;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px; background: var(--bg1);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.sys-subnav-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text3); padding: 4px 8px 8px;
+}
+.sys-subnav-item {
+  display: block; padding: 7px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--text2); text-decoration: none;
+  border-left: 2px solid transparent;
+}
+.sys-subnav-item:hover { background: var(--bg2); color: var(--text); }
+.sys-subnav-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent); border-left-color: var(--accent); font-weight: 600;
+}
+.sys-content { flex: 1 1 auto; min-width: 0; }

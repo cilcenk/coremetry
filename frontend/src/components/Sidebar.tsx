@@ -103,22 +103,12 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: 'navGroup.system',
     items: [
-      { href: '/admin/stats',       label: 'nav.system',      icon: CircleGauge },
-      { href: '/admin/clickhouse',  label: 'nav.clickhouse',  icon: Database, adminOnly: true },
-      { href: '/admin/elastic',     label: 'nav.elastic',     icon: Search, adminOnly: true },
-      { href: '/admin/cardinality', label: 'nav.cardinality', icon: Hash, adminOnly: true },
-      { href: '/admin/cluster',     label: 'nav.cluster',     icon: Server, adminOnly: true },
-      { href: '/ai',                label: 'nav.ai',          icon: Sparkles, adminOnly: true },
-    ],
-  },
-  {
-    titleKey: 'navGroup.management',
-    items: [
-      { href: '/admin/catalog',     label: 'nav.catalog',    icon: LayoutGrid, adminOnly: true },
-      { href: '/admin/audit',       label: 'nav.audit',      icon: FileClock, adminOnly: true },
-      { href: '/admin/sql',         label: 'nav.sql',        icon: Terminal, adminOnly: true },
-      { href: '/admin/query',       label: 'nav.query',      icon: Code, adminOnly: true },
-      { href: '/admin/status-page', label: 'nav.statusPage', icon: Globe, adminOnly: true },
+      // v0.8.9 — the ten former /admin/* pages (stats, clickhouse, elastic,
+      // cluster, cardinality, catalog, audit, sql, query, status-page) are
+      // consolidated into the System area's own left sub-nav, so the global
+      // sidebar carries ONE "System" entry. AI stays a sibling (not a System tab).
+      { href: '/system', label: 'nav.system', icon: CircleGauge },
+      { href: '/ai',     label: 'nav.ai',     icon: Sparkles, adminOnly: true },
     ],
   },
 ];
@@ -537,5 +527,7 @@ function isActive(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
   if (href === '/traces'     && pathname.startsWith('/trace'))     return true;
   if (href === '/dashboards' && pathname.startsWith('/dashboard')) return true;
+  // v0.8.9 — the System entry stays active across all its sub-nav tabs.
+  if (href === '/system'     && pathname.startsWith('/system'))    return true;
   return pathname === href || pathname === href + '/';
 }

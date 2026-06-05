@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -55,22 +55,23 @@ const ErrorsPage        = lazy(() => import('./pages/Errors'));
 const Status            = lazy(() => import('./pages/Status'));
 const PublicStatus      = lazy(() => import('./pages/PublicStatus'));
 const PublicTrace       = lazy(() => import('./pages/PublicTrace'));
-const AdminAudit        = lazy(() => import('./pages/AdminAudit'));
-const AdminCardinality  = lazy(() => import('./pages/AdminCardinality'));
-const AdminCatalog      = lazy(() => import('./pages/AdminCatalog'));
-const AdminSql          = lazy(() => import('./pages/AdminSql'));
-const AdminStats        = lazy(() => import('./pages/AdminStats'));
-const AdminClickhouse   = lazy(() => import('./pages/AdminClickhouse'));
-const AdminElastic      = lazy(() => import('./pages/AdminElastic'));
-const AdminStatusPage   = lazy(() => import('./pages/AdminStatusPage'));
-const AdminCluster      = lazy(() => import('./pages/AdminCluster'));
-const AdminQuery        = lazy(() => import('./pages/AdminQuery'));
+// v0.8.9 — the ten /admin/* pages are consolidated into one System area
+// (lazy-loaded per-tab inside pages/System.tsx, not routed individually here).
+const System            = lazy(() => import('./pages/System'));
 
 // Each lazy module's default export is the page component.
 // React Router doesn't enforce any naming convention beyond
 // "default export is a React component", so the convention is
 // preserved verbatim from the Next.js app router structure —
 // just the file paths changed.
+// AdminRedirect bounces an old /admin/<slug> deep link to its new
+// /system/<slug> home so nothing 404s after the v0.8.9 consolidation. The
+// slug is 1:1 (clickhouse, stats, audit, status-page, …).
+function AdminRedirect() {
+  const { tab } = useParams<{ tab: string }>();
+  return <Navigate to={`/system/${tab ?? 'stats'}`} replace />;
+}
+
 export default function App() {
   // Intent-prefetch: warm a route's code-split chunk when the operator hovers
   // any internal link (one delegated listener; no nav markup touched). v0.8.6.
@@ -123,16 +124,11 @@ export default function App() {
             <Route path="/status"         element={<Status />} />
             <Route path="/public-status"  element={<PublicStatus />} />
             <Route path="/public/trace"   element={<PublicTrace />} />
-            <Route path="/admin/audit"        element={<AdminAudit />} />
-            <Route path="/admin/cardinality"  element={<AdminCardinality />} />
-            <Route path="/admin/catalog"      element={<AdminCatalog />} />
-            <Route path="/admin/sql"          element={<AdminSql />} />
-            <Route path="/admin/stats"        element={<AdminStats />} />
-            <Route path="/admin/clickhouse"   element={<AdminClickhouse />} />
-            <Route path="/admin/elastic"      element={<AdminElastic />} />
-            <Route path="/admin/status-page"  element={<AdminStatusPage />} />
-            <Route path="/admin/cluster"      element={<AdminCluster />} />
-            <Route path="/admin/query"        element={<AdminQuery />} />
+            {/* Consolidated System area (v0.8.9). Ten former /admin/*
+                pages are now tabs inside <System>; old links redirect. */}
+            <Route path="/system"      element={<Navigate to="/system/stats" replace />} />
+            <Route path="/system/:tab" element={<System />} />
+            <Route path="/admin/:tab"  element={<AdminRedirect />} />
             {/* Unknown path → bounce to Home so navigate() never
                 hits a dead route. The AuthProvider gates whether
                 the user actually sees Home or gets redirected to

@@ -83,6 +83,32 @@ func TestBuildServiceGraph_GlobalDecodesOTelKinds(t *testing.T) {
 	}
 }
 
+func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
+	edges := []chstore.ServiceTopologyEdge{
+		sgEdge("gateway", "payments", "service", "http", 500, 0, 50),     // payments is a real service
+		sgEdge("mobile", "ext:payments", "external", "http", 100, 5, 80), // same service, seen via peer.service
+		sgEdge("orders", "ext:stripe.com", "external", "http", 60, 6, 400), // true 3rd party
+	}
+	g := buildServiceGraph(edges, "", "global")
+	byID := map[string]GraphNode{}
+	for _, n := range g.Nodes {
+		byID[n.ID] = n
+	}
+	if _, dup := byID["ext:payments"]; dup {
+		t.Error("ext:payments must merge into the payments service node, not stay a duplicate")
+	}
+	p, ok := byID["payments"]
+	if !ok || p.Kind != "service" {
+		t.Fatalf("payments node missing or wrong kind: %+v", p)
+	}
+	if p.Calls != 600 || p.Errors != 5 { // 500 + merged 100, errors 0 + 5
+		t.Errorf("merged payments health = {calls:%d errors:%d}, want {600 5}", p.Calls, p.Errors)
+	}
+	if s := byID["ext:stripe.com"]; s.Kind != "external" {
+		t.Errorf("a true third party (stripe.com) must stay external, got %q", s.Kind)
+	}
+}
+
 func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
 	g := buildServiceGraph(sampleEdges(), "payments", "neighborhood")
 	if g.Scope != "neighborhood" || g.Focus != "payments" {

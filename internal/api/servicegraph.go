@@ -116,6 +116,28 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 // buildServiceGraph is the pure transform from MV edge rows to the OTel-native
 // {nodes, edges} model. Extracted so it's unit-testable without ClickHouse.
 func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string) ServiceGraphResponse {
+	// v0.8.11 — merge ext:<name> peers into the real service node when <name>
+	// is a known service.name. A service referenced via peer.service (and seen
+	// as ext:<name>) otherwise splits into a duplicate service + external node.
+	// After the merge "external" means only true third parties (stripe, s3,
+	// sendgrid, twilio).
+	known := map[string]bool{}
+	for _, e := range edges {
+		known[e.ParentService] = true
+		if e.NodeKind == "service" {
+			known[e.ChildNode] = true
+		}
+	}
+	merged := make([]chstore.ServiceTopologyEdge, len(edges))
+	copy(merged, edges)
+	for i := range merged {
+		if name, ok := strings.CutPrefix(merged[i].ChildNode, "ext:"); ok && known[name] {
+			merged[i].ChildNode = name
+			merged[i].NodeKind = "service"
+		}
+	}
+	edges = merged
+
 	// Neighborhood scope: keep only edges whose BOTH endpoints are the focus or
 	// a direct neighbor of the focus (callers + callees + the links among them).
 	if scope == "neighborhood" && focus != "" {

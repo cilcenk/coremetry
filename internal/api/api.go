@@ -2970,22 +2970,38 @@ func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
 
 // ── Metric query (multi-series, attribute filters, group-by) ─────────────────
 
+// queryMetric backs the Grafana-style MetricQueryEditor / MetricsExplorer
+// (one fetch per enabled query row, on every debounced keystroke + poll).
+// Cached 30s (v0.8.4 — was an uncached raw metric_points GROUP BY scan per
+// viewer/keystroke/tab, breaking the /api/* p99 budget under fan-out). Key
+// carries every result-affecting input; the window is bucketed to the minute
+// so concurrent polls + Dashboards MQE panels share a round-trip, and the raw
+// groupBy + filter strings go in verbatim (no length-only collapse, cf.
+// v0.5.187). Mirrors getMetricHistogram.
 func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	step, _ := strconv.Atoi(q.Get("step"))
-	groupBy := splitNonEmpty(q.Get("groupBy"), ',')
-	series, err := s.store.QueryMetric(r.Context(), chstore.MetricQueryFilter{
-		Name:        q.Get("name"),
-		Service:     q.Get("service"),
-		Filters:     parseFilters(q.Get("filters")),
-		GroupBy:     groupBy,
-		Aggregation: q.Get("agg"),
-		From:        parseTime(q.Get("from")),
-		To:          parseTime(q.Get("to")),
-		StepSeconds: step,
+	name := q.Get("name")
+	svc := q.Get("service")
+	agg := q.Get("agg")
+	groupByRaw := q.Get("groupBy")
+	filtersRaw := q.Get("filters")
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
+	key := fmt.Sprintf("metric-query:name=%s:svc=%s:agg=%s:step=%d:gb=%s:f=%s:from=%d:to=%d",
+		name, svc, agg, step, groupByRaw, filtersRaw, from.Unix()/60, to.Unix()/60)
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.QueryMetric(r.Context(), chstore.MetricQueryFilter{
+			Name:        name,
+			Service:     svc,
+			Filters:     parseFilters(filtersRaw),
+			GroupBy:     splitNonEmpty(groupByRaw, ','),
+			Aggregation: agg,
+			From:        from,
+			To:          to,
+			StepSeconds: step,
+		})
 	})
-	if err != nil { writeErr(w, err); return }
-	writeJSON(w, series)
 }
 
 // getMetricHistogram renders an explicit-histogram metric as a time×bucket

@@ -19,11 +19,26 @@ type MetricQueryFilter struct {
 	StepSeconds int
 }
 
-// QueryMetric runs a multi-series time-bucketed query against metric_points.
-// Returns the same SpanMetricSeries shape so the UI can reuse MultiLineChart.
-func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMetricSeries, error) {
-	if f.Name == "" {
-		return nil, fmt.Errorf("metric name required")
+// buildMetricQuerySQL builds the metric_points query SQL + bound args for a
+// MetricQueryFilter. Extracted as a pure function (v0.8.4) so the CH-bounds
+// guards are unit-testable without a live ClickHouse — see metricquery_test.go.
+//
+// Scale-hardening (v0.8.4, scale-audit): the metric_points GROUP BY scan
+// behind the Grafana-style MetricQueryEditor MUST satisfy the CLAUDE.md
+// CH-bounds constraint — LIMIT (had it), a time-bounded WHERE that prunes
+// partitions (was CONDITIONAL — absent when from/to were zero), and
+// SETTINGS max_execution_time (was MISSING, unlike the QueryMetricHistogram
+// twin). A degenerate call with no window scanned every partition unbounded.
+// Now the window always defaults to the last 24h and max_execution_time caps
+// wall-clock at 30s, mirroring metrichist.go.
+func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, error) {
+	// Always time-bound: default the window so `time >= ?` / `time <= ?`
+	// below can prune partitions even on a from/to-less call.
+	if f.To.IsZero() {
+		f.To = now
+	}
+	if f.From.IsZero() {
+		f.From = f.To.Add(-24 * time.Hour)
 	}
 
 	var wc whereClause
@@ -31,12 +46,8 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
 	}
-	if !f.From.IsZero() {
-		wc.add("time >= ?", f.From)
-	}
-	if !f.To.IsZero() {
-		wc.add("time <= ?", f.To)
-	}
+	wc.add("time >= ?", f.From)
+	wc.add("time <= ?", f.To)
 	ApplyFilters(&wc, f.Filters)
 
 	step := f.StepSeconds
@@ -62,7 +73,7 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 
 	aggExpr, err := metricAggToSQL(f.Aggregation)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
 	groupSelect := "[]::Array(String)"
@@ -87,9 +98,24 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		%s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
-		LIMIT 50000`, step, groupSelect, aggExpr, wc.sql())
+		LIMIT 50000
+		SETTINGS max_execution_time = 30`, step, groupSelect, aggExpr, wc.sql())
+	return sql, wc.args, nil
+}
 
-	rows, err := s.conn.Query(ctx, sql, wc.args...)
+// QueryMetric runs a multi-series time-bucketed query against metric_points.
+// Returns the same SpanMetricSeries shape so the UI can reuse MultiLineChart.
+func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMetricSeries, error) {
+	if f.Name == "" {
+		return nil, fmt.Errorf("metric name required")
+	}
+
+	sql, args, err := buildMetricQuerySQL(f, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("metric query: %w", err)
 	}

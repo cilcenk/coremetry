@@ -3,7 +3,9 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { PageLoader } from './components/Spinner';
+import { RouteSkeleton } from './components/ui/RouteSkeleton';
+import { PerfMeter } from './components/perf/PerfMeter';
+import { usePrefetchOnHover } from './lib/perf/routePrefetch';
 
 // All route components are code-split via React.lazy so the
 // initial bundle stays small. The loader fallback is the
@@ -70,10 +72,14 @@ const AdminQuery        = lazy(() => import('./pages/AdminQuery'));
 // preserved verbatim from the Next.js app router structure —
 // just the file paths changed.
 export default function App() {
+  // Intent-prefetch: warm a route's code-split chunk when the operator hovers
+  // any internal link (one delegated listener; no nav markup touched). v0.8.6.
+  usePrefetchOnHover();
   return (
     <ErrorBoundary>
     <AuthProvider>
-      <Suspense fallback={<PageLoader />}>
+      <PerfMeter />
+      <Suspense fallback={<RouteSkeleton />}>
         <Routes>
           <Route element={<AppShell />}>
             <Route path="/"               element={<Home />} />

@@ -1642,3 +1642,12 @@ canvas { max-width: 100%; }
 .ov-tt .ov-tt-r { display: flex; align-items: center; gap: 7px; justify-content: space-between; }
 .ov-tt .ov-tt-r .ov-lbl { display: flex; align-items: center; gap: 6px; color: var(--text2); }
 .ov-tt .ov-tt-r b { font-variant-numeric: tabular-nums; }
+
+/* VirtualTable (v0.8.6 Phase 0) — windowed <table> scroller. The header is a
+   real <thead> rendered by DataTableHead; pin it while the body scrolls. The
+   scroll container owns the height, so the header sticks to its top edge. */
+.vt-scroll { border: 1px solid var(--border); border-radius: 8px; }
+.vt-scroll > table { border-collapse: collapse; }
+.vt-scroll thead { position: sticky; top: 0; z-index: 2; }
+.vt-scroll thead th { background: var(--bg2); }
+.vt-scroll td.vt-empty { text-align: center; color: var(--text3); padding: 28px 12px; }

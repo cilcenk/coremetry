@@ -39,10 +39,9 @@ import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, Aggreg
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
-import { RedFromTraces } from '@/components/traces/RedFromTraces';
 import { MiniWaterfall } from '@/components/traces/MiniWaterfall';
 import { ShapesView } from '@/components/traces/ShapesView';
-import { SvcBadge, DurationBar, QuickChip, svcColor } from '@/components/traces/shared';
+import { SvcBadge, DurationBar, QuickChip, svcColor, fmtDur } from '@/components/traces/shared';
 
 // Attribute keys offered by the "+ Add filter" menu. Each appends a FilterExpr
 // to advFilters (server-narrowing + URL-reflected). Mirrors the OTel semconv
@@ -117,6 +116,22 @@ function sortAccessor(col: SortColumn): (r: TraceRow) => number | string {
     case 'status':    return r => (r.hasError ? 1 : 0);
     default:          return r => r.startTime;
   }
+}
+
+// HeaderStat — one mono stat in the header group right of the Volume|Latency
+// toggle (TOTAL · ERRORS · ERR RATE · P99 MAX). Replaces the deleted standalone
+// RED panel; `tone` colours the value (err → red, warn → amber).
+function HeaderStat({ label, value, tone }: { label: string; value: string; tone?: 'err' | 'warn' }) {
+  const color = tone === 'err' ? 'var(--err)' : tone === 'warn' ? 'var(--warn)' : 'var(--text)';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 44 }}>
+      <span style={{
+        fontSize: 14, fontWeight: 700, color, lineHeight: 1.1,
+        fontVariantNumeric: 'tabular-nums', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      }}>{value}</span>
+      <span style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
+    </div>
+  );
 }
 
 function TracesPageInner() {
@@ -318,6 +333,19 @@ function TracesPageInner() {
   }, [traces, quick]);
   const visibleMax = useMemo(() => displayRows.reduce((m, t) => Math.max(m, t.durationMs), 0), [displayRows]);
 
+  // Header RED stats over the live filtered rows (the stat group right of the
+  // Volume|Latency toggle). Replaces the deleted standalone RED panel — the
+  // filtered Rate/Errors/Duration numbers ride here + in the table.
+  const headerStats = useMemo(() => {
+    const total = displayRows.length;
+    let err = 0, p99Max = 0;
+    for (const t of displayRows) {
+      if (t.hasError) err++;
+      if (t.durationMs > p99Max) p99Max = t.durationMs;
+    }
+    return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, p99Max };
+  }, [displayRows]);
+
   // Reset transient state on a new query / page.
   useEffect(() => { setExpanded(null); }, [page, filter, advFilters, range, view]);
   useEffect(() => { if (quick) setQuick(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, advFilters, range, view]);
@@ -404,16 +432,26 @@ function TracesPageInner() {
             from the live, filtered list rows). */}
         {view === 'list' && (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
               <div className="segmented">
                 <button className={viz === 'volume' ? 'active' : ''} onClick={() => setViz('volume')}>Volume</button>
                 <button className={viz === 'latency' ? 'active' : ''} onClick={() => setViz('latency')}>Latency</button>
               </div>
+              <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                {viz === 'volume' ? 'Span volume' : 'Latency distribution'}
+              </span>
               {brushPrev && (
                 <Button variant="secondary" size="sm" onClick={clearBrush} title="Restore the previous time range">
                   Clear selection ✕
                 </Button>
               )}
+              {/* RED stat group — mono, right-aligned, over the filtered rows. */}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+                <HeaderStat label="TOTAL" value={fmtNum(headerStats.total)} />
+                <HeaderStat label="ERRORS" value={fmtNum(headerStats.err)} tone={headerStats.err > 0 ? 'err' : undefined} />
+                <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
+                <HeaderStat label="P99 MAX" value={headerStats.p99Max ? fmtDur(headerStats.p99Max) : '—'} tone="warn" />
+              </div>
             </div>
 
             {data === undefined ? (
@@ -440,9 +478,6 @@ function TracesPageInner() {
                 <LatencyScatter rows={displayRows} onOpen={openTrace} onBrush={applyBrush} />
               </div>
             )}
-
-            {/* RED-from-traces (current filtered set). */}
-            {data && traces.length > 0 && <RedFromTraces rows={displayRows} />}
           </>
         )}
 

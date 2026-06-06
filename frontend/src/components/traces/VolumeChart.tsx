@@ -1,47 +1,39 @@
-// VolumeChart.tsx — time-bucketed throughput histogram (Tempo/Datadog-grade).
+// VolumeChart.tsx — time-bucketed span-volume histogram (Tempo/Datadog-grade).
 //
-// Per time bucket: a STACKED bar of ok (grey, var(--text3)) + error (red,
-// var(--err)), with a p99 duration LINE overlaid (orange, var(--warn)) on a
-// secondary axis. Error-heavy buckets get a red tint so a burst of failures is
-// obvious without reading the legend. Header stats: TOTAL / ERRORS / ERROR RATE
-// / P99 MAX.
+// ~30 equal time buckets across the visible window. Each bucket is ONE vertical
+// bar whose total height ∝ (bucket total count / max bucket count). The bar is
+// vertically STACKED: the bottom slice is ERRORS (solid var(--err)), the top
+// slice is OK (var(--text3) @~0.5). Hot buckets (errRate > ~3%) get a red-tinted
+// column background AND a redder OK slice so error-heavy ranges read red at a
+// glance while healthy ranges stay grey. A P99 duration line (var(--warn)) rides
+// across the bucket centers with a "p99 <max>ms" / "0" axis label on the right.
 //
-// Buckets are derived from the CURRENTLY-fetched + filtered trace rows via the
-// Phase-0 `aggregate` transform (count per bucket; p99 per bucket) — so the
-// chart always matches the table. Canvas (not uPlot) because we need the
-// stacked-bar + dual-axis line + per-bar red tint in one paint; uPlot's bars
-// plugin doesn't compose those cleanly.
+// Buckets derive from the CURRENTLY-fetched + filtered trace rows (count + p99
+// per bucket) — so the chart always matches the table. Canvas (not uPlot)
+// because the stacked bar + per-bucket hot tint + overlaid p99 line compose in a
+// single paint that uPlot's bars plugin doesn't express cleanly.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { aggregateBuckets } from '@/lib/perf/transforms';
-import { fmtNum } from '@/lib/utils';
 import type { TraceRow } from '@/lib/types';
 import { fmtDur } from './shared';
 
-const PAD = { l: 8, r: 8, t: 10, b: 18 };
+const PAD = { l: 8, r: 8, t: 14, b: 6 };
+const BUCKETS = 30;          // ~30 equal time buckets across the window
+const HOT_RATE = 0.03;       // errRate above this tints the whole bar red
+const GAP = 3;               // px gap between bars
+const TOP_RADIUS = 3;        // rounded top corners only
 
 interface Bucket {
   t: number;       // bucket start (ms)
   ok: number;
   err: number;
+  total: number;
   p99: number;     // ms
-}
-
-// chooseBucketMs picks a bucket width that yields ~40-60 bars across the span.
-function chooseBucketMs(spanMs: number): number {
-  const target = 48;
-  const raw = spanMs / target;
-  const steps = [
-    1000, 2000, 5000, 10_000, 15_000, 30_000,
-    60_000, 120_000, 300_000, 600_000, 900_000,
-    1_800_000, 3_600_000, 7_200_000, 21_600_000, 43_200_000, 86_400_000,
-  ];
-  for (const s of steps) if (s >= raw) return s;
-  return steps[steps.length - 1];
+  errRate: number; // 0..1
 }
 
 export function VolumeChart({
-  rows, height = 168,
+  rows, height = 120,
 }: {
   rows: TraceRow[];
   height?: number;
@@ -50,7 +42,7 @@ export function VolumeChart({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(900);
   const [hover, setHover] = useState<{ b: Bucket; x: number } | null>(null);
-  const bucketsRef = useRef<{ b: Bucket; x0: number; x1: number }[]>([]);
+  const barsRef = useRef<{ b: Bucket; x0: number; x1: number }[]>([]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -61,9 +53,10 @@ export function VolumeChart({
     return () => ro.disconnect();
   }, []);
 
-  // Bucket the live rows. We run the pure aggregate transform inline (the row
-  // count per page is small — a few hundred — well under the worker threshold)
-  // for ok-count, err-count and p99(duration) on a shared bucket grid.
+  // Bucket the live rows into a DENSE 30-cell grid over [lo, hi]. Empty cells
+  // are kept (rendered as gaps) so the time axis is uniform and the p99 line
+  // spans real bucket centers. p99 per bucket is computed from each bucket's own
+  // duration samples.
   const { buckets, totals } = useMemo(() => {
     if (rows.length === 0) {
       return { buckets: [] as Bucket[], totals: { total: 0, err: 0, p99Max: 0, maxCount: 0, maxP99: 0 } };
@@ -74,41 +67,40 @@ export function VolumeChart({
       if (t < lo) lo = t;
       if (t > hi) hi = t;
     }
-    const bucketMs = chooseBucketMs(Math.max(1, hi - lo));
+    if (hi <= lo) hi = lo + 1;
+    const span = hi - lo;
+    const bucketMs = span / BUCKETS;
 
-    const times: number[] = [];
-    const okVals: number[] = [];
-    const errTimes: number[] = [];
-    const errVals: number[] = [];
-    const durTimes: number[] = [];
-    const durVals: number[] = [];
+    const cells: { ok: number; err: number; durs: number[] }[] =
+      Array.from({ length: BUCKETS }, () => ({ ok: 0, err: 0, durs: [] }));
     for (const r of rows) {
       const t = r.startTime / 1e6;
-      times.push(t); okVals.push(1);
-      durTimes.push(t); durVals.push(r.durationMs);
-      if (r.hasError) { errTimes.push(t); errVals.push(1); }
+      let idx = Math.floor((t - lo) / bucketMs);
+      if (idx < 0) idx = 0;
+      if (idx >= BUCKETS) idx = BUCKETS - 1;
+      const c = cells[idx];
+      if (r.hasError) c.err++; else c.ok++;
+      c.durs.push(r.durationMs);
     }
-    const okAgg = aggregateBuckets(times, okVals, bucketMs, 'count');
-    const errAgg = aggregateBuckets(errTimes, errVals, bucketMs, 'count');
-    const p99Agg = aggregateBuckets(durTimes, durVals, bucketMs, 'p99');
 
-    const errByT = new Map<number, number>();
-    errAgg.x.forEach((t, i) => errByT.set(t, errAgg.y[i]));
-    const p99ByT = new Map<number, number>();
-    p99Agg.x.forEach((t, i) => p99ByT.set(t, p99Agg.y[i]));
-
-    const out: Bucket[] = okAgg.x.map((t, i) => {
-      const totalCount = okAgg.y[i];
-      const err = errByT.get(t) ?? 0;
-      return { t, ok: Math.max(0, totalCount - err), err, p99: p99ByT.get(t) ?? 0 };
+    const out: Bucket[] = cells.map((c, i) => {
+      const total = c.ok + c.err;
+      let p99 = 0;
+      if (c.durs.length) {
+        c.durs.sort((a, b) => a - b);
+        const rank = 0.99 * (c.durs.length - 1);
+        const loI = Math.floor(rank), hiI = Math.ceil(rank);
+        p99 = c.durs[loI] + (c.durs[hiI] - c.durs[loI]) * (rank - loI);
+      }
+      return { t: lo + i * bucketMs, ok: c.ok, err: c.err, total, p99, errRate: total ? c.err / total : 0 };
     });
 
     let total = 0, err = 0, p99Max = 0, maxCount = 0, maxP99 = 0;
     for (const b of out) {
-      total += b.ok + b.err;
+      total += b.total;
       err += b.err;
       p99Max = Math.max(p99Max, b.p99);
-      maxCount = Math.max(maxCount, b.ok + b.err);
+      maxCount = Math.max(maxCount, b.total);
       maxP99 = Math.max(maxP99, b.p99);
     }
     return { buckets: out, totals: { total, err, p99Max, maxCount, maxP99 } };
@@ -125,115 +117,162 @@ export function VolumeChart({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    bucketsRef.current = [];
+    barsRef.current = [];
     if (buckets.length === 0) return;
 
     const cs = getComputedStyle(canvas);
     const cOk = cs.getPropertyValue('--text3').trim() || '#888';
     const cErr = cs.getPropertyValue('--err').trim() || '#dc2626';
     const cP99 = cs.getPropertyValue('--warn').trim() || '#d97706';
-    const cBorder = cs.getPropertyValue('--border').trim() || '#3338';
+    const cBg3 = cs.getPropertyValue('--bg3').trim() || '#222';
+
+    // Tints derived from tokens via color-mix (theme-safe, no new hex).
+    const hotBg = `color-mix(in srgb, ${cErr} 20%, ${cBg3})`;
+    const hotOk = `color-mix(in srgb, ${cErr} 55%, ${cOk})`;
 
     const plotW = width - PAD.l - PAD.r;
     const plotH = height - PAD.t - PAD.b;
     const n = buckets.length;
     const slot = plotW / n;
-    const barW = Math.max(1, Math.min(slot - 1.5, slot * 0.82));
+    const barW = Math.max(1, slot - GAP);
     const maxCount = totals.maxCount || 1;
     const maxP99 = totals.maxP99 || 1;
+    const baseY = PAD.t + plotH;
 
-    // baseline
-    ctx.strokeStyle = cBorder;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(PAD.l, PAD.t + plotH + 0.5);
-    ctx.lineTo(width - PAD.r, PAD.t + plotH + 0.5);
-    ctx.stroke();
+    const roundedTopRect = (x: number, y: number, w: number, h: number, r: number) => {
+      const rr = Math.min(r, w / 2, h);
+      ctx.beginPath();
+      ctx.moveTo(x, y + h);
+      ctx.lineTo(x, y + rr);
+      ctx.arcTo(x, y, x + rr, y, rr);
+      ctx.lineTo(x + w - rr, y);
+      ctx.arcTo(x + w, y, x + w, y + rr, rr);
+      ctx.lineTo(x + w, y + h);
+      ctx.closePath();
+      ctx.fill();
+    };
 
-    // stacked bars
     buckets.forEach((b, i) => {
-      const total = b.ok + b.err;
-      const x = PAD.l + i * slot + (slot - barW) / 2;
+      const x = PAD.l + i * slot + GAP / 2;
       const x1 = x + barW;
-      bucketsRef.current.push({ b, x0: x, x1 });
-      const errHeavy = total > 0 && b.err / total >= 0.25;
-      if (errHeavy) {
-        // tint the bucket column red to flag a failure burst
+      barsRef.current.push({ b, x0: x, x1 });
+      const hot = b.errRate > HOT_RATE;
+
+      // Hot bucket: tint the WHOLE bar background column red.
+      if (hot) {
+        ctx.fillStyle = hotBg;
+        ctx.globalAlpha = 1;
+        ctx.fillRect(x, PAD.t, barW, plotH);
+      }
+
+      if (b.total <= 0) return;
+      const barH = (b.total / maxCount) * plotH;
+      const errH = barH * b.errRate;       // bottom slice ∝ error share
+      const okH = barH - errH;             // top slice = remainder
+      const top = baseY - barH;
+
+      // Bottom slice: ERRORS, solid var(--err).
+      if (errH > 0) {
         ctx.fillStyle = cErr;
-        ctx.globalAlpha = 0.08;
-        ctx.fillRect(PAD.l + i * slot, PAD.t, slot, plotH);
+        ctx.globalAlpha = 1;
+        // square-bottom rect (no rounding on the baseline)
+        if (okH <= 0.5) {
+          // error-only bar: round its top
+          roundedTopRect(x, top, barW, barH, TOP_RADIUS);
+        } else {
+          ctx.fillRect(x, baseY - errH, barW, errH);
+        }
+      }
+      // Top slice: OK. Healthy → grey @0.5; hot → redder grey @0.85.
+      if (okH > 0.5) {
+        ctx.fillStyle = hot ? hotOk : cOk;
+        ctx.globalAlpha = hot ? 0.85 : 0.5;
+        roundedTopRect(x, top, barW, okH, TOP_RADIUS);
         ctx.globalAlpha = 1;
       }
-      const okH = (b.ok / maxCount) * plotH;
-      const errH = (b.err / maxCount) * plotH;
-      // ok (grey) on the bottom, error (red) stacked above
-      ctx.fillStyle = cOk;
-      ctx.globalAlpha = 0.55;
-      ctx.fillRect(x, PAD.t + plotH - okH, barW, okH);
-      ctx.fillStyle = cErr;
-      ctx.globalAlpha = 0.9;
-      ctx.fillRect(x, PAD.t + plotH - okH - errH, barW, errH);
-      ctx.globalAlpha = 1;
     });
+    ctx.globalAlpha = 1;
 
-    // p99 line overlay (secondary axis, orange)
+    // p99 line overlay across bucket centers (warn, 2px) + small circles.
     ctx.strokeStyle = cP99;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    let started = false;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    const pts: { cx: number; cy: number }[] = [];
     buckets.forEach((b, i) => {
+      if (b.p99 <= 0) return;
       const cx = PAD.l + i * slot + slot / 2;
-      const cy = PAD.t + plotH - (b.p99 / maxP99) * plotH;
-      if (b.p99 <= 0) { started = false; return; }
-      if (!started) { ctx.moveTo(cx, cy); started = true; }
-      else ctx.lineTo(cx, cy);
+      const cy = baseY - (b.p99 / maxP99) * plotH;
+      pts.push({ cx, cy });
     });
-    ctx.stroke();
+    if (pts.length) {
+      ctx.beginPath();
+      pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.cx, p.cy) : ctx.lineTo(p.cx, p.cy)));
+      ctx.stroke();
+      ctx.fillStyle = cP99;
+      for (const p of pts) {
+        ctx.beginPath();
+        ctx.arc(p.cx, p.cy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }, [buckets, totals, width, height]);
 
   const onMove = (e: React.MouseEvent) => {
     const r = canvasRef.current?.getBoundingClientRect();
     if (!r) return;
     const x = e.clientX - r.left;
-    const hit = bucketsRef.current.find(bk => x >= bk.x0 - 2 && x <= bk.x1 + 2);
+    const hit = barsRef.current.find(bk => x >= bk.x0 - 1 && x <= bk.x1 + 1 && bk.b.total > 0);
     setHover(hit ? { b: hit.b, x: (hit.x0 + hit.x1) / 2 } : null);
   };
-
-  const errRate = totals.total > 0 ? (totals.err / totals.total) * 100 : 0;
 
   return (
     <div style={{
       background: 'var(--bg2)', border: '1px solid var(--border)',
       borderRadius: 8, padding: 12, marginBottom: 10,
     }}>
-      {/* Header stats */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginBottom: 8, flexWrap: 'wrap' }}>
-        <Stat label="TOTAL" value={fmtNum(totals.total)} />
-        <Stat label="ERRORS" value={fmtNum(totals.err)} tone={totals.err > 0 ? 'err' : undefined} />
-        <Stat label="ERROR RATE" value={`${errRate.toFixed(2)}%`} tone={errRate > 1 ? 'err' : undefined} />
-        <Stat label="P99 MAX" value={totals.p99Max ? fmtDur(totals.p99Max) : '—'} tone="warn" />
-        <span style={{ flex: 1 }} />
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text3)' }}>
-          <span style={{ width: 8, height: 8, background: 'var(--text3)', borderRadius: 2, opacity: 0.55 }} /> ok
-          <span style={{ width: 8, height: 8, background: 'var(--err)', borderRadius: 2, marginLeft: 8 }} /> error
-          <span style={{ width: 12, height: 2, background: 'var(--warn)', marginLeft: 8 }} /> p99
-        </span>
-      </div>
       <div ref={wrapRef} style={{ position: 'relative', height }}>
         {buckets.length === 0 ? (
           <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text3)', fontSize: 12 }}>
             No traces in view to bucket.
           </div>
         ) : (
-          <canvas ref={canvasRef}
-            style={{ width: '100%', height, display: 'block' }}
-            onMouseMove={onMove}
-            onMouseLeave={() => setHover(null)} />
+          <>
+            <canvas ref={canvasRef}
+              style={{ width: '100%', height, display: 'block' }}
+              onMouseMove={onMove}
+              onMouseLeave={() => setHover(null)} />
+
+            {/* Legend top-left of the plot. */}
+            <div style={{
+              position: 'absolute', top: 0, left: 0, display: 'inline-flex',
+              alignItems: 'center', gap: 5, fontSize: 10, color: 'var(--text3)',
+              pointerEvents: 'none',
+            }}>
+              <span style={{ width: 8, height: 8, background: 'var(--text3)', borderRadius: 2, opacity: 0.5 }} /> ok
+              <span style={{ width: 8, height: 8, background: 'var(--err)', borderRadius: 2, marginLeft: 6 }} /> error
+              <span style={{ width: 12, height: 2, background: 'var(--warn)', marginLeft: 6 }} /> p99
+            </div>
+
+            {/* Right-edge p99 axis labels: max at top, 0 at bottom. */}
+            <div className="mono" style={{
+              position: 'absolute', top: 0, right: 0, fontSize: 9,
+              color: 'var(--warn)', pointerEvents: 'none',
+            }}>
+              p99 {totals.p99Max ? fmtDur(totals.p99Max) : '—'}
+            </div>
+            <div className="mono" style={{
+              position: 'absolute', bottom: 0, right: 0, fontSize: 9,
+              color: 'var(--text3)', pointerEvents: 'none',
+            }}>
+              0
+            </div>
+          </>
         )}
+
         {hover && (
           <div style={{
-            position: 'absolute', pointerEvents: 'none', zIndex: 5, top: 4,
-            left: `min(${hover.x}px, calc(100% - 150px))`, transform: 'translateX(8px)',
+            position: 'absolute', pointerEvents: 'none', zIndex: 5, top: 14,
+            left: `min(${hover.x}px, calc(100% - 200px))`, transform: 'translateX(8px)',
             background: 'var(--bg2)', border: '1px solid var(--border)',
             borderRadius: 4, padding: '6px 9px', fontSize: 11, color: 'var(--text)',
             whiteSpace: 'nowrap', boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
@@ -241,21 +280,13 @@ export function VolumeChart({
             <div className="mono" style={{ color: 'var(--text2)', marginBottom: 2 }}>
               {new Date(hover.b.t).toLocaleTimeString()}
             </div>
-            <div>ok <b>{hover.b.ok}</b> · err <b style={{ color: 'var(--err)' }}>{hover.b.err}</b></div>
-            <div style={{ color: 'var(--warn)' }}>p99 {hover.b.p99 ? fmtDur(hover.b.p99) : '—'}</div>
+            <div>
+              <b>{hover.b.total}</b> spans · <b style={{ color: 'var(--err)' }}>{(hover.b.errRate * 100).toFixed(1)}%</b> err · {' '}
+              <span style={{ color: 'var(--warn)' }}>p99 {hover.b.p99 ? fmtDur(hover.b.p99) : '—'}</span>
+            </div>
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'err' | 'warn' }) {
-  const color = tone === 'err' ? 'var(--err)' : tone === 'warn' ? 'var(--warn)' : 'var(--text)';
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-      <span style={{ fontSize: 9.5, color: 'var(--text3)', fontWeight: 700, letterSpacing: '0.5px' }}>{label}</span>
-      <span className="mono" style={{ fontSize: 15, fontWeight: 700, color }}>{value}</span>
     </div>
   );
 }

@@ -518,11 +518,6 @@ export const api = {
       before: import('./types').LogRow[];
       after:  import('./types').LogRow[];
     }>(`/api/logs/context?${qs(params)}`),
-  // Drain-extracted log templates (v0.5.244). Backed by the
-  // templater puller goroutine; first_seen sticky across
-  // restarts so the "what's new since X" sort is meaningful.
-  logsTemplates: (params: { sort?: 'first_seen' | 'last_seen' | 'count'; since?: string; limit?: number } = {}) =>
-    get<import('./types').LogTemplate[]>(`/api/logs/templates?${qs(params)}`),
 
 
   // Recent deploys + impact deltas for a service (v0.5.189).

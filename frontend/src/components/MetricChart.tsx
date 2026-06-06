@@ -4,6 +4,7 @@ import 'uplot/dist/uPlot.min.css';
 import type { MetricPoint } from '@/lib/types';
 import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 import { escapeHTML } from '@/lib/utils';
+import { placeTooltip } from '@/components/MultiLineChart';
 
 // uPlot single-series chart. Replaces Chart.js for the metric
 // drill-down view. Three load-bearing options:
@@ -167,15 +168,17 @@ export function MetricChart({
                 `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${valStr}</span>` +
               `</div>`;
             tip.style.opacity = '1';
-            const cw = el.clientWidth;
-            const tw = tip.offsetWidth;
-            const th = tip.offsetHeight;
-            const left = u.cursor.left ?? 0;
-            const top  = u.cursor.top  ?? 0;
-            const x = left + 12 + tw > cw ? left - tw - 12 : left + 12;
-            const y = top + 12 + th > height ? top - th - 12 : top + 12;
-            tip.style.left = `${Math.max(0, x)}px`;
-            tip.style.top  = `${Math.max(0, y)}px`;
+            // Place BESIDE the cursor (never under it). placeTooltip
+            // (v0.7.11) replaces the old `Math.max(0, …)` clamp that, on a
+            // narrow chart, pulled a flipped panel back over the pointer —
+            // the exact value-hidden-under-cursor the operator reported.
+            const { x, y } = placeTooltip(
+              u.cursor.left ?? 0, u.cursor.top ?? 0,
+              tip.offsetWidth, tip.offsetHeight,
+              el.clientWidth, height,
+            );
+            tip.style.left = `${x}px`;
+            tip.style.top  = `${y}px`;
           },
         ],
       },

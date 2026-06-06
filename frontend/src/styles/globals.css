@@ -406,6 +406,31 @@ button.lg { padding: 8px 18px; font-size: 14px; }
   font-weight: 600;
 }
 
+/* Facet filter bar (v0.8.38) — one grouped row of compact filter chips,
+   the repo equivalent of the design's .logbar / .facet / .facet.on. Used
+   where a page consolidates several independent toggles (status pivot +
+   priority + kind) into a single cohesive bar instead of separate button
+   groups. Active chip = accent-filled via --accent-bg / --accent (the
+   "active chip" token added in v0.8.33); inactive = subtle outline. Tokens
+   resolve in both light + dark. */
+.facetbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.facet {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border: 1px solid var(--border); border-radius: 20px;
+  background: var(--bg2); color: var(--text2);
+  font-size: 11.5px; font-weight: 600; line-height: 1.4;
+  cursor: pointer; user-select: none;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.facet:hover { background: var(--bg3); color: var(--text); }
+.facet.on { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent2); }
+.facet .n { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--text3); font-weight: 600; }
+.facet.on .n { color: var(--accent2); }
+/* Severity-tinted inactive priority chips — keep the P1=err / P2=warn cue
+   even when the chip is off, so the operator's eye reads urgency at rest. */
+.facet.f-err:not(.on) { color: var(--err); }
+.facet.f-warn:not(.on) { color: var(--warn); }
+
 /* Cards */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 .card {

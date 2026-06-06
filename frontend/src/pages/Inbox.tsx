@@ -183,66 +183,46 @@ export default function InboxPage() {
           across all kinds. Click any row to drill into the source surface.
         </p>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-          {/* Status pivot */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {(['open', 'all'] as const).map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                className={statusFilter === s ? '' : 'sec'}
-                style={{ fontSize: 11, padding: '4px 10px' }}>
-                {s === 'open' ? 'Open / Active' : 'All'}
-              </button>
-            ))}
-          </div>
+        {/* One grouped facet bar (v0.8.38) — status pivot + priority + kind
+            chips share the shared .facet primitive (repo equivalent of the
+            design's .logbar/.facet). Handlers + state are unchanged: status
+            pivot single-select via setStatusFilter, priority/kind multi-
+            select via togglePrio/toggleKind. Team selects + service filter
+            stay pushed right with margin-left:auto. */}
+        <div className="facetbar">
+          {/* Status pivot — single-select */}
+          {(['open', 'all'] as const).map(s => (
+            <span key={s} onClick={() => setStatusFilter(s)}
+              className={`facet${statusFilter === s ? ' on' : ''}`}>
+              {s === 'open' ? 'Open / Active' : 'All'}
+            </span>
+          ))}
 
-          {/* Priority chips */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {(['P1', 'P2', 'P3'] as const).map(pp => {
-              const on = prioSet.has(pp);
-              const colour = pp === 'P1' ? 'var(--err)'
-                          : pp === 'P2' ? 'var(--warn)'
-                          : 'var(--text3)';
-              return (
-                <button key={pp} onClick={() => togglePrio(pp)}
-                  style={{
-                    all: 'unset', cursor: 'pointer',
-                    fontSize: 11, padding: '2px 8px', borderRadius: 12,
-                    fontFamily: 'ui-monospace, monospace',
-                    border: `1px solid ${on ? colour : 'var(--border)'}`,
-                    background: on ? colour : 'transparent',
-                    color: on ? 'var(--bg)' : 'var(--text3)',
-                    fontWeight: on ? 700 : 400,
-                  }}>
-                  {pp} ({counts[pp] ?? 0})
-                </button>
-              );
-            })}
-          </div>
+          {/* Priority chips — multi-select */}
+          {(['P1', 'P2', 'P3'] as const).map(pp => {
+            const tint = pp === 'P1' ? ' f-err' : pp === 'P2' ? ' f-warn' : '';
+            return (
+              <span key={pp} onClick={() => togglePrio(pp)}
+                className={`facet${tint}${prioSet.has(pp) ? ' on' : ''}`}>
+                {pp} <span className="n">{counts[pp] ?? 0}</span>
+              </span>
+            );
+          })}
 
-          {/* Kind chips */}
-          <div style={{ display: 'flex', gap: 4 }}>
-            {(['problem', 'exception', 'anomaly'] as const).map(k => {
-              const on = kindSet.has(k);
-              const label = k === 'problem' ? 'Problems'
-                         : k === 'exception' ? 'Exceptions'
-                         : 'Anomalies';
-              return (
-                <button key={k} onClick={() => toggleKind(k)}
-                  style={{
-                    all: 'unset', cursor: 'pointer',
-                    fontSize: 11, padding: '2px 8px', borderRadius: 12,
-                    border: `1px solid ${on ? 'var(--accent2)' : 'var(--border)'}`,
-                    background: on ? 'var(--accent-soft)' : 'transparent',
-                    color: on ? 'var(--accent2)' : 'var(--text3)',
-                    fontWeight: on ? 600 : 400,
-                  }}>
-                  {label} ({counts[k] ?? 0})
-                </button>
-              );
-            })}
-          </div>
+          {/* Kind chips — multi-select */}
+          {(['problem', 'exception', 'anomaly'] as const).map(k => {
+            const label = k === 'problem' ? 'Problems'
+                       : k === 'exception' ? 'Exceptions'
+                       : 'Anomalies';
+            return (
+              <span key={k} onClick={() => toggleKind(k)}
+                className={`facet${kindSet.has(k) ? ' on' : ''}`}>
+                {label} <span className="n">{counts[k] ?? 0}</span>
+              </span>
+            );
+          })}
 
-          <span style={{ flex: 1 }} />
+          <span style={{ marginLeft: 'auto' }} />
 
           {/* Team filters (v0.5.234). Distinct values come from
               the current result set so an operator can stack

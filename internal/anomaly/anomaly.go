@@ -33,14 +33,94 @@ const (
 	historyHours  = 24             // window used to learn the baseline
 	openZ         = 3.0            // |z| above this opens an anomaly
 	resolveZ      = 1.5            // and below this clears it
+	criticalZ     = 5.0            // |z| above this escalates warning → critical
 	minSamples    = 12             // need at least this many baseline buckets
-	minMagnitude  = 0.5            // ignore micro-deltas (units depend on metric)
 	madScale      = 0.6745         // scales MAD to a normal-dist stdev (modified z-score)
+	magnitudeEps  = 1e-9           // denominator guard for the relative-change floor
 )
 
 // trackedMetrics is intentionally small: cardinality stays bounded
 // (services × len(trackedMetrics) checks per tick).
 var trackedMetrics = []string{"error_rate", "p99_ms", "request_rate"}
+
+// metricPolicy makes detection metric-aware: which DIRECTION of deviation
+// matters, and the relative-change floor that filters statistically-
+// significant-but-tiny moves. A symmetric |z| would open a "critical"
+// anomaly on a 3σ p99 DROP (good news), and one absolute magnitude floor
+// can't fit error_rate(%), p99(ms) and rps at once.
+type metricPolicy struct {
+	direction string  // "up" | "down" | "both" — which side opens an anomaly
+	floorPct  float64 // relative-change floor: |current-median|/max(|median|,eps)
+}
+
+var metricPolicies = map[string]metricPolicy{
+	"error_rate":   {direction: "up", floorPct: 0.10},   // only rising errors matter
+	"p99_ms":       {direction: "up", floorPct: 0.10},   // only rising latency matters
+	"request_rate": {direction: "both", floorPct: 0.15}, // drop AND spike both matter
+}
+
+// policyFor returns a metric's policy, defaulting to a symmetric 10% floor.
+func policyFor(metric string) metricPolicy {
+	if p, ok := metricPolicies[metric]; ok {
+		return p
+	}
+	return metricPolicy{direction: "both", floorPct: 0.10}
+}
+
+// anomalyDecision is the pure open/severity/direction verdict for one sample.
+type anomalyDecision struct {
+	open      bool
+	severity  string // "warning" | "critical" (meaningful when open)
+	direction string // "spiked" | "dropped"
+}
+
+// decideAnomaly applies the metric's directional gate + relative-change floor
+// + direction-aware severity to a single (z, current, median) sample. Pure +
+// store-free so the policy is unit-testable without a Detector. A 3σ p99 DROP
+// returns open=false ("up" only); a request_rate DROP escalates to critical
+// (traffic loss is worse than a spike).
+func decideAnomaly(metric string, z, current, median float64) anomalyDecision {
+	pol := policyFor(metric)
+	dirOpen := false
+	switch pol.direction {
+	case "up":
+		dirOpen = z >= openZ
+	case "down":
+		dirOpen = z <= -openZ
+	default: // "both"
+		dirOpen = math.Abs(z) >= openZ
+	}
+	relChange := math.Abs(current-median) / math.Max(math.Abs(median), magnitudeEps)
+	if !dirOpen || relChange < pol.floorPct {
+		return anomalyDecision{}
+	}
+	dropped := z < 0
+	dir := "spiked"
+	if dropped {
+		dir = "dropped"
+	}
+	severity := "warning"
+	if math.Abs(z) >= criticalZ {
+		severity = "critical"
+	}
+	if metric == "request_rate" && dropped {
+		severity = "critical" // traffic loss is more serious than a spike
+	}
+	return anomalyDecision{open: true, severity: severity, direction: dir}
+}
+
+// resolvedFor reports whether the metric has returned inside the resolve band
+// for its policy direction (the directional counterpart of |z| <= resolveZ).
+func resolvedFor(metric string, z float64) bool {
+	switch policyFor(metric).direction {
+	case "up":
+		return z <= resolveZ
+	case "down":
+		return z >= -resolveZ
+	default:
+		return math.Abs(z) <= resolveZ
+	}
+}
 
 type Detector struct {
 	store    *chstore.Store
@@ -124,19 +204,16 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 		return // flat baseline → modified z-score undefined; skip
 	}
 	z := madScale * (current - median) / mad
-	abs := math.Abs(z)
 
 	ruleID := "anomaly:" + service + ":" + metric
 	open, _ := d.store.FindOpenProblem(ctx, ruleID, service)
 	hasOpen := open != nil && open.ID != ""
 
-	if abs >= openZ && math.Abs(current-median) >= minMagnitude {
-		severity := "warning"
-		if abs >= 5 {
-			severity = "critical"
-		}
-		desc := fmt.Sprintf("%s anomaly on %s — current %.2f%s vs baseline %.2f%s (%.1fσ).",
-			displayMetric(metric), service, current, unitOf(metric), median, unitOf(metric), z)
+	dec := decideAnomaly(metric, z, current, median)
+	if dec.open {
+		severity := dec.severity
+		desc := fmt.Sprintf("%s %s on %s — current %.2f%s vs baseline %.2f%s (%.1fσ).",
+			displayMetric(metric), dec.direction, service, current, unitOf(metric), median, unitOf(metric), z)
 		if hasOpen {
 			open.Value = current
 			open.Description = desc
@@ -172,7 +249,7 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 		if d.notifier != nil {
 			go d.notifier.SendProblemAlert(context.Background(), p)
 		}
-	} else if abs <= resolveZ && hasOpen {
+	} else if hasOpen && resolvedFor(metric, z) {
 		now := time.Now().UnixNano()
 		open.Status = "resolved"
 		open.ResolvedAt = &now

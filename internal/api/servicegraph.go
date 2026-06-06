@@ -25,6 +25,7 @@ type GraphNode struct {
 	Name      string  `json:"name"`             // display name, prefix-decoded ("payments", "h2")
 	Kind      string  `json:"kind"`             // service | database | queue | external | internal
 	System    string  `json:"system,omitempty"` // db.system / messaging.system when applicable
+	DbName    string  `json:"dbName,omitempty"` // db.name (schema/instance) — database nodes only
 	Env       string  `json:"env,omitempty"`    // deployment.environment
 	Calls     uint64  `json:"calls"`            // node throughput (inbound preferred, else outbound)
 	Errors    uint64  `json:"errors"`
@@ -109,13 +110,16 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		return buildServiceGraph(edges, focus, scope), nil
+		// Best-effort db.name enrichment for database nodes; a lookup failure
+		// leaves nodes unannotated rather than failing the whole graph.
+		dbNames, _ := s.store.DbNamesBySystem(r.Context(), from, to)
+		return buildServiceGraph(edges, focus, scope, dbNames), nil
 	})
 }
 
 // buildServiceGraph is the pure transform from MV edge rows to the OTel-native
 // {nodes, edges} model. Extracted so it's unit-testable without ClickHouse.
-func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string) ServiceGraphResponse {
+func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string, dbNames map[string]string) ServiceGraphResponse {
 	// v0.8.11 — merge ext:<name> peers into the real service node when <name>
 	// is a known service.name. A service referenced via peer.service (and seen
 	// as ext:<name>) otherwise splits into a duplicate service + external node.
@@ -207,6 +211,11 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string)
 		}
 		if n.Calls > 0 {
 			n.ErrorRate = float64(n.Errors) / float64(n.Calls) * 100
+		}
+		// Enrich a database node with the dominant db.name for its db.system
+		// (db_summary_5m). A nil/empty map or unknown system is a no-op.
+		if dn := dbNames[n.System]; dn != "" && n.System != "" {
+			n.DbName = dn
 		}
 		out = append(out, *n)
 	}

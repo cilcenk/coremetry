@@ -304,7 +304,9 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
                 <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={n.name}>{n.name}</span>
                   <span style={{ fontSize: 9.5, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', whiteSpace: 'nowrap' }}>
-                    {fmtNum(n.calls)} · p99 {fmtMs(nb.p99Of(n.id))} · {n.errorRate.toFixed(1)}%
+                    {n.kind === 'database' && n.dbName
+                      ? `db.name ${n.dbName} · p99 ${fmtMs(nb.p99Of(n.id))}`
+                      : `${fmtNum(n.calls)} · p99 ${fmtMs(nb.p99Of(n.id))} · ${n.errorRate.toFixed(1)}%`}
                   </span>
                 </span>
               </div>
@@ -323,6 +325,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           </div>
           <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', marginBottom: 6 }}>
             {kindLabel(hoverNode)} · {hoverNode.kind === 'service' ? 'service.name' : hoverNode.system ? (hoverNode.kind === 'database' ? 'db.system' : 'messaging.system') : hoverNode.kind}
+            {hoverNode.kind === 'database' && hoverNode.dbName ? ` · db.name=${hoverNode.dbName}` : ''}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginBottom: 8 }}>
             <Stat l="CALLS" v={fmtNum(hoverNode.calls)} />

@@ -37,7 +37,7 @@ func sampleEdges() []chstore.ServiceTopologyEdge {
 }
 
 func TestBuildServiceGraph_GlobalDecodesOTelKinds(t *testing.T) {
-	g := buildServiceGraph(sampleEdges(), "", "global")
+	g := buildServiceGraph(sampleEdges(), "", "global", nil)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -89,7 +89,7 @@ func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
 		sgEdge("mobile", "ext:payments", "external", "http", 100, 5, 80), // same service, seen via peer.service
 		sgEdge("orders", "ext:stripe.com", "external", "http", 60, 6, 400), // true 3rd party
 	}
-	g := buildServiceGraph(edges, "", "global")
+	g := buildServiceGraph(edges, "", "global", nil)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -110,7 +110,7 @@ func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
 }
 
 func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
-	g := buildServiceGraph(sampleEdges(), "payments", "neighborhood")
+	g := buildServiceGraph(sampleEdges(), "payments", "neighborhood", nil)
 	if g.Scope != "neighborhood" || g.Focus != "payments" {
 		t.Fatalf("scope/focus = %q/%q", g.Scope, g.Focus)
 	}
@@ -127,5 +127,31 @@ func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
 	// orders/stripe are NOT in payments' neighborhood.
 	if ids["ext:stripe.com"] || ids["orders"] {
 		t.Errorf("neighborhood leaked an unrelated node: %v", ids)
+	}
+}
+
+// v0.8.37 (topology renewed delta 2) — database nodes (keyed on db.system)
+// are enriched with the dominant db.name from db_summary_5m. The map is
+// looked up by GraphNode.System; a nil map or unknown system is a no-op, and
+// only database nodes (which carry a System) pick one up.
+func TestBuildServiceGraph_DbNameEnrichment(t *testing.T) {
+	dbNames := map[string]string{"postgresql": "core_txn"}
+	g := buildServiceGraph(sampleEdges(), "", "global", dbNames)
+	byID := map[string]GraphNode{}
+	for _, n := range g.Nodes {
+		byID[n.ID] = n
+	}
+	if db := byID["db:postgresql"]; db.DbName != "core_txn" {
+		t.Errorf("db:postgresql DbName = %q, want %q", db.DbName, "core_txn")
+	}
+	// A service node (System == "") never gets a db.name.
+	if p := byID["payments"]; p.DbName != "" {
+		t.Errorf("service node payments must not carry db.name, got %q", p.DbName)
+	}
+	// nil map → no enrichment, no panic.
+	for _, n := range buildServiceGraph(sampleEdges(), "", "global", nil).Nodes {
+		if n.DbName != "" {
+			t.Errorf("nil dbNames must leave DbName empty, %s got %q", n.ID, n.DbName)
+		}
 	}
 }

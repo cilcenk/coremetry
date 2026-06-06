@@ -158,3 +158,47 @@ func (s *Store) GetDBTrends(ctx context.Context, from, to time.Time) ([]DBTrend,
 	}
 	return out, nil
 }
+
+// DbNamesBySystem returns the dominant db.name (schema / instance) per
+// db.system over [from,to], ranked by call volume, read from db_summary_5m
+// (the db.name dimension added in v0.5.327). The service-graph endpoint uses
+// it to enrich database nodes — which are keyed on db.system — with the OTel
+// db.name on their card. MV-only (never raw spans); the MV coalesces a missing
+// db.name to 'default', which we skip so only a real schema/instance shows.
+func (s *Store) DbNamesBySystem(ctx context.Context, from, to time.Time) (map[string]string, error) {
+	if from.IsZero() {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	bucketStart := from.Truncate(5 * time.Minute)
+	rows, err := s.conn.Query(ctx, `
+		SELECT db_system, db_name, countMerge(span_count_state) AS calls
+		FROM db_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		  AND db_name != '' AND db_name != 'default'
+		GROUP BY db_system, db_name
+		ORDER BY db_system, calls DESC
+		LIMIT 5000
+		SETTINGS max_execution_time = 10`, bucketStart, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// ORDER BY db_system, calls DESC → the first row seen for a db_system is
+	// its busiest db.name; keep that one.
+	out := map[string]string{}
+	for rows.Next() {
+		var system, dbName string
+		var calls uint64
+		if err := rows.Scan(&system, &dbName, &calls); err != nil {
+			return nil, err
+		}
+		if _, seen := out[system]; !seen {
+			out[system] = dbName
+		}
+	}
+	return out, rows.Err()
+}

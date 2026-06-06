@@ -130,6 +130,7 @@ export interface GraphNode {
   name: string;        // display name, prefix-decoded
   kind: GraphNodeKind;
   system?: string;     // db.system / messaging.system
+  dbName?: string;     // db.name (schema/instance) — database nodes only
   env?: string;
   calls: number;
   errors: number;

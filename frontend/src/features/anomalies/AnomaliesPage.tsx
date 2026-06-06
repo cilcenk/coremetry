@@ -50,30 +50,11 @@ const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
 // P1 ranks above P2 ranks above P3 (lower number = more urgent).
 const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
 
-// v0.5.469 — modern tinted-chip palette for severity + priority
-// filter chips. Active chips render as a token-tinted bg +
-// full-token fg + token border instead of the old white-on-
-// saturated-fill — Linear / Vercel / shadcn shape. Built from
-// the semantic CSS-var tokens via color-mix so both themes track
-// the same hue and the bg alpha provides contrast either way.
-interface ChipPalette { fg: string; bg: string; border: string; }
-const tintChip = (token: string): ChipPalette => ({
-  fg: `var(${token})`,
-  bg: `color-mix(in srgb, var(${token}) 16%, transparent)`,
-  border: `color-mix(in srgb, var(${token}) 55%, transparent)`,
-});
-const SEV_PALETTE: Record<'critical' | 'warning' | 'info', ChipPalette> = {
-  critical: tintChip('--err'),
-  warning:  tintChip('--warn'),
-  info:     tintChip('--accent2'),
-};
-const PRIO_PALETTE: Record<'P1' | 'P2' | 'P3', ChipPalette> = {
-  P1: tintChip('--err'),
-  P2: tintChip('--warn'),
-  // P3 is "lower priority" — a cool gray that reads as quieter
-  // than the warm P1/P2 scale without disappearing like text3.
-  P3: tintChip('--text3'),
-};
+// Severity + priority filter chips render via the shared .facet
+// primitive (globals.css, v0.8.38) — active = --accent-bg/--accent-
+// border; the f-err/f-warn tints keep the urgency cue at rest. The
+// old per-chip color-mix palette (v0.5.469) was replaced when these
+// moved onto the shared facetbar in v0.8.39.
 const P_NATURAL_DIR: Record<PSortKey, SortDir> = {
   priority: 'desc', severity: 'desc', service: 'asc', metric: 'asc',
   value: 'desc', rule: 'asc', started: 'desc', status: 'asc',
@@ -316,7 +297,7 @@ export default function ProblemsPage() {
                         </td>
                         <td><StateBadge s={g.state} /></td>
                         <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--err)' }}>
+                          <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 11.5, color: 'var(--err)' }}>
                             {g.type}
                             {/* "NEW" badge: first observed in the
                                 last hour. Highest-signal column
@@ -329,7 +310,7 @@ export default function ProblemsPage() {
                               </span>
                             )}
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--text2)',
+                          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text3)',
                                         maxWidth: 480, overflow: 'hidden',
                                         textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                title={g.message}>
@@ -343,11 +324,11 @@ export default function ProblemsPage() {
                             {g.service}
                           </Link>
                         </td>
-                        <td className="mono" style={{ textAlign: 'right' }}>
-                          <span className="badge b-err">{fmtNum(Number(g.occurrences))}</span>
+                        <td className="mono" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--err)' }}>
+                          {fmtNum(Number(g.occurrences))}
                         </td>
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.firstSeen)}</td>
-                        <td className="mono" style={{ fontSize: 11 }}>{tsLong(g.lastSeen)}</td>
+                        <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.lastSeen)}</td>
                         <td onClick={e => e.stopPropagation()}>
                           {isAdmin ? (
                             <select value={g.assignee} onChange={e => setAssignee(g, e.target.value)}
@@ -606,83 +587,59 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   return (
     <div style={{ marginTop: 22, marginBottom: 12 }}>
       <SectionHeader title="Alert rules" subtitle="Threshold + SLO burn detectors" />
-      <div className="controls" style={{ marginBottom: 14 }}>
-        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-          {(['open', 'resolved', 'all'] as const).map(s => (
-            <button key={s} onClick={() => setStatusFilter(s)}
-              className={statusFilter === s ? '' : 'sec'}
-              style={{ borderRadius: 0, borderRight: '1px solid var(--border)' }}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </button>
-          ))}
-        </div>
-        <span style={{ color: 'var(--text2)', fontSize: 12 }}>
+      {/* One grouped facet bar (v0.8.39) — status pivot + severity +
+          priority chips share the shared .facet primitive (the repo
+          equivalent of the design's filter bar), replacing the old
+          per-row ad-hoc inline-styled chips so the Alert-rules filters
+          read with the same visual language as the rest of the app.
+          Handlers + state are unchanged: status pivot single-select via
+          setStatusFilter; severity/priority multi-select via toggleSev/
+          togglePrio. Count + manage-rules link stay pushed right. */}
+      <div className="facetbar" style={{ marginBottom: 14 }}>
+        {/* Status pivot — single-select */}
+        {(['open', 'resolved', 'all'] as const).map(s => (
+          <span key={s} onClick={() => setStatusFilter(s)}
+            className={`facet${statusFilter === s ? ' on' : ''}`}>
+            {s.charAt(0).toUpperCase() + s.slice(1)}
+          </span>
+        ))}
+        {/* Severity chip filter — multi-select toggle. Counts reflect
+            the unfiltered status-tab result so the operator sees how
+            many would land if they toggle a chip back on. At least one
+            chip stays on at all times (toggleSev guard) — empty table
+            looks broken. Severity tint (f-err/f-warn) keeps the urgency
+            cue even when the chip is off. */}
+        {(['critical', 'warning', 'info'] as const).map(s => {
+          const on = sevSet.has(s);
+          const tint = s === 'critical' ? ' f-err' : s === 'warning' ? ' f-warn' : '';
+          return (
+            <span key={s} onClick={() => toggleSev(s)}
+              title={on ? `Hide ${s}` : `Show ${s} only — click again to add`}
+              className={`facet${tint}${on ? ' on' : ''}`}>
+              {s} <span className="n">{sevCounts[s] ?? 0}</span>
+            </span>
+          );
+        })}
+        {/* Priority chip filter (v0.5.210) — defaults to P1+P2 so the
+            operator's first paint is signal, not noise. Click P3 to
+            widen. Counts reflect the unfiltered set. */}
+        {(['P1', 'P2', 'P3'] as const).map(pp => {
+          const on = prioSet.has(pp);
+          const tint = pp === 'P1' ? ' f-err' : pp === 'P2' ? ' f-warn' : '';
+          const count = data?.filter(d => (d.priority ?? 'P3') === pp).length ?? 0;
+          return (
+            <span key={pp} onClick={() => togglePrio(pp)}
+              title={on ? `Hide ${pp}` : `Show ${pp}`}
+              className={`facet${tint}${on ? ' on' : ''}`}>
+              {pp} <span className="n">{count}</span>
+            </span>
+          );
+        })}
+        <span style={{ marginLeft: 'auto', color: 'var(--text3)', fontSize: 12 }}>
           {open} open · {resolved} resolved
         </span>
-        {/* Severity chip filter — multi-select toggle. Counts
-            reflect the unfiltered status-tab result so the
-            operator sees how many would land if they toggle a
-            chip back on. At least one chip stays on at all
-            times (toggleSev guard) — empty table looks
-            broken. */}
-        <div style={{ display: 'flex', gap: 5 }}>
-          {(['critical', 'warning', 'info'] as const).map(s => {
-            const on = sevSet.has(s);
-            // v0.5.469 — modern tinted-chip palette. Active chips
-            // use rgba bg + full-colour foreground (Linear/Vercel
-            // pattern) instead of the old white-on-colour fill.
-            // Foreground colours are slightly darker than the
-            // backend's var(--err)/--warn/--accent2 so they read
-            // legibly on the tinted background in light theme.
-            const pal = SEV_PALETTE[s];
-            return (
-              <button key={s} onClick={() => toggleSev(s)}
-                title={on ? `Hide ${s}` : `Show ${s} only — click again to add`}
-                style={{
-                  all: 'unset', cursor: 'pointer',
-                  fontSize: 11, padding: '3px 10px', borderRadius: 12,
-                  fontFamily: 'ui-monospace, monospace',
-                  border: `1px solid ${on ? pal.border : 'var(--border)'}`,
-                  background: on ? pal.bg : 'transparent',
-                  color: on ? pal.fg : 'var(--text3)',
-                  fontWeight: on ? 700 : 500,
-                  textTransform: 'uppercase', letterSpacing: 0.4,
-                  transition: 'background 80ms ease, color 80ms ease, border-color 80ms ease',
-                }}>
-                {s} ({sevCounts[s] ?? 0})
-              </button>
-            );
-          })}
-        </div>
-        {/* Priority chip filter (v0.5.210) — defaults to P1+P2
-            so the operator's first paint is signal, not noise.
-            Click P3 to widen. Counts reflect the unfiltered set. */}
-        <div style={{ display: 'flex', gap: 5 }}>
-          {(['P1', 'P2', 'P3'] as const).map(pp => {
-            const on = prioSet.has(pp);
-            const count = data?.filter(d => (d.priority ?? 'P3') === pp).length ?? 0;
-            const pal = PRIO_PALETTE[pp];
-            return (
-              <button key={pp} onClick={() => togglePrio(pp)}
-                title={on ? `Hide ${pp}` : `Show ${pp}`}
-                style={{
-                  all: 'unset', cursor: 'pointer',
-                  fontSize: 11, padding: '3px 10px', borderRadius: 12,
-                  fontFamily: 'ui-monospace, monospace',
-                  border: `1px solid ${on ? pal.border : 'var(--border)'}`,
-                  background: on ? pal.bg : 'transparent',
-                  color: on ? pal.fg : 'var(--text3)',
-                  fontWeight: on ? 700 : 500,
-                  letterSpacing: 0.4,
-                  transition: 'background 80ms ease, color 80ms ease, border-color 80ms ease',
-                }}>
-                {pp} ({count})
-              </button>
-            );
-          })}
-        </div>
         <Link to="/alerts" className="sec" style={{
-          marginLeft: 'auto', textDecoration: 'none', padding: '5px 12px',
+          textDecoration: 'none', padding: '5px 12px',
           border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text)',
           display: 'inline-flex', alignItems: 'center', gap: 6,
         }}><IconBell /> <span>Manage alert rules</span></Link>

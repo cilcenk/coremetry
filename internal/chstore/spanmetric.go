@@ -145,7 +145,8 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		%s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
-		LIMIT 50000`, step, groupSelect, aggExpr, wc.sql())
+		LIMIT 50000
+		SETTINGS max_execution_time = 30`, step, groupSelect, aggExpr, wc.sql())
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {
@@ -831,7 +832,8 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		%s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
-		LIMIT 50000`,
+		LIMIT 50000
+		SETTINGS max_execution_time = 30`,
 		strings.Join(selectParts, ", "),
 		wc.sql())
 
@@ -959,16 +961,23 @@ func aggToSQL(agg, field string, stepSec int) (string, error) {
 		return wrap("minOrNull(" + field + ")"), nil
 	case "max":
 		return wrap("maxOrNull(" + field + ")"), nil
+	// Percentiles use quantileTDigest, not exact quantile(): the raw-spans
+	// span-metric path runs over up to LIMIT 50000 buckets' worth of rows
+	// and at billion-row scale exact quantile() holds every value in memory
+	// (the CLAUDE.md anti-pattern). TDigest is ≤2% error at a fraction of the
+	// RAM and matches the approximate quantilesMerge the MV fast-paths already
+	// serve, so the operator's p99 stays consistent across surfaces.
+	// Accuracy tradeoff is intentional (speed/memory > exactness on a chart).
 	case "p50":
-		return wrap("quantile(0.50)(" + field + ")"), nil
+		return wrap("quantileTDigest(0.50)(" + field + ")"), nil
 	case "p90":
-		return wrap("quantile(0.90)(" + field + ")"), nil
+		return wrap("quantileTDigest(0.90)(" + field + ")"), nil
 	case "p95":
-		return wrap("quantile(0.95)(" + field + ")"), nil
+		return wrap("quantileTDigest(0.95)(" + field + ")"), nil
 	case "p99":
-		return wrap("quantile(0.99)(" + field + ")"), nil
+		return wrap("quantileTDigest(0.99)(" + field + ")"), nil
 	case "p999":
-		return wrap("quantile(0.999)(" + field + ")"), nil
+		return wrap("quantileTDigest(0.999)(" + field + ")"), nil
 	}
 	return "", fmt.Errorf("unknown aggregation %q", agg)
 }

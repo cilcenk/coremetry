@@ -3567,12 +3567,18 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 		StepSeconds: step,
 		Search:      q.Get("search"), // v0.6.32 — push search down to histogram
 	}
-	series, err := s.store.QuerySpanMetric(r.Context(), f)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, series)
+	// v0.8.32 (Phase-2 #1) — 30s cache. Explore's default latency/rate chart
+	// re-fires this on every keystroke + range nudge, and the compare-period
+	// overlay fires a second call per render. When a filter/DSL/sub-5min step
+	// disqualifies the MV fast-path, QuerySpanMetric scans raw spans — the
+	// heaviest uncached read in the app. Key = full query string so distinct
+	// callers with the same predicate share the warm entry (same shape as
+	// the traces-agg cache key); from/to are frontend-memoised so they don't
+	// tick now() and poison the key (v0.5.184 class).
+	key := "span-metric:" + r.URL.RawQuery
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		return s.store.QuerySpanMetric(r.Context(), f)
+	})
 }
 
 // spanMetricBatch runs N aggregations over the same span

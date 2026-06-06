@@ -108,6 +108,11 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 		return
 	}
 	filled := 0
+	// Phase 7 — fetch the cross-signal evidence inputs ONCE per tick (shared
+	// across the batch), lazily on the first real candidate so an all-cached
+	// tick costs nothing extra.
+	var inputs evidenceInputs
+	gathered := false
 	for _, p := range problems {
 		if filled >= e.batch {
 			break
@@ -115,7 +120,11 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 		if strings.TrimSpace(p.AISummary) != "" {
 			continue
 		}
-		summary, err := e.explain(ctx, p)
+		if !gathered {
+			inputs = gatherEvidenceInputs(ctx, e.store)
+			gathered = true
+		}
+		summary, err := e.explain(ctx, p, buildEvidenceBundle(p, inputs))
 		if err != nil {
 			log.Printf("[problem-explainer] %s: %v", p.ID, err)
 			continue
@@ -138,7 +147,7 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 // the Copilot with surface "problem-auto-explain". Same system
 // prompt as the operator-clicked /api/copilot/explain-problem
 // endpoint — keeps the AI's tone consistent across surfaces.
-func (e *ProblemExplainer) explain(ctx context.Context, p chstore.Problem) (string, error) {
+func (e *ProblemExplainer) explain(ctx context.Context, p chstore.Problem, bundle EvidenceBundle) (string, error) {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Rule: %s\n", p.RuleName)
 	fmt.Fprintf(&sb, "Service: %s\n", p.Service)
@@ -149,6 +158,10 @@ func (e *ProblemExplainer) explain(ctx context.Context, p chstore.Problem) (stri
 	if p.Description != "" {
 		fmt.Fprintf(&sb, "Description: %s\n", p.Description)
 	}
+	// Phase 7 — cross-signal fusion: hand the Copilot the corroborating
+	// evidence so the summary reads as one incident with a likely root cause,
+	// not an isolated metric blip. Empty bundle → nothing added (unchanged).
+	renderEvidence(&sb, bundle)
 	// Background context — surface = "problem-auto-explain" so the
 	// /ai page can break out the auto-explain volume from operator-
 	// clicked Explains.

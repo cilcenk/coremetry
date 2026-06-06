@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -24,6 +24,7 @@ import { useExemplarFetcher, useServiceDeploys, useSLOs } from '@/lib/queries';
 import { timeRangeToNs, fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
+import { decodeMetricQuery, type MetricQuery, type MetricViz } from '@/lib/metricQuery';
 import type { TimeRange, FilterExpr, SpanMetricSeries, SpanAgg, TraceRow, LatencyHeatmap as Heatmap } from '@/lib/types';
 
 type ResultMode = 'metric' | 'traces' | 'repeats';
@@ -192,9 +193,71 @@ const SUMMARY_COLS: DataTableColumn<SummaryRow>[] = [
 // label is dynamic (tracks the active split-by) so the column set
 // is built per-render via useMemo inside the component.
 
+// ── "Every metric is a doorway" — ?m= descriptor seeding (Phase B) ──────────
+// A MetricQuery descriptor riding ?m= takes precedence over the individual
+// params: the panel that drew the chart hands its exact descriptor to the
+// explorer, which decodes it back into this very builder. The mapping below is
+// the descriptor → Explore-state projection; Explore's spans workspace is the
+// only first-class metric surface today, so the spanmetrics/tracemetrics
+// sources both land on source='spans' + resultMode='metric'. (A first-class
+// `tracemetrics` source — distinct CH pipeline — is a later phase.)
+interface ExploreSeed {
+  resultMode: ResultMode;       // always 'metric' for a descriptor
+  agg: SpanAgg;
+  field: string;
+  groupBy: string[];
+  dsl: string;
+  mode: 'builder' | 'advanced'; // 'advanced' so the synthesised DSL applies
+  viz: Viz;
+  step: number;
+  range?: TimeRange;
+}
+
+function seedFromMetricQuery(mq: MetricQuery): ExploreSeed {
+  // agg names line up 1:1 with Explore's SpanAgg / aggToSQL set
+  // (rate/count/sum/avg/p50/p90/p95/p99/error_rate all exist there).
+  const agg = mq.agg as SpanAgg;
+  // field: latency-shaped aggs (or a duration-named metric) measure duration_ms;
+  // count-like aggs (rate/count/sum) carry no field.
+  const latencyAgg = agg === 'avg' || agg === 'p50' || agg === 'p90' || agg === 'p95' || agg === 'p99';
+  const field = (mq.metric.includes('duration') || latencyAgg) ? 'duration_ms' : '';
+  // filters Record → AND-joined DSL (`k = "v"`), mode=advanced so it applies.
+  const dsl = Object.entries(mq.filters ?? {})
+    .filter(([, v]) => v !== '' && v != null)
+    .map(([k, v]) => `${k} = "${v}"`)
+    .join(' AND ');
+  const vizMap: Record<MetricViz, Viz> = {
+    line: 'line', area: 'line', bar: 'bar',
+    stat: 'kpi', heatmap: 'heatmap', topN: 'topN',
+  };
+  return {
+    resultMode: 'metric',
+    agg,
+    field,
+    groupBy: mq.groupBy ?? [],
+    dsl,
+    mode: 'advanced',
+    viz: vizMap[mq.viz] ?? 'line',
+    step: mq.step ? (parseInt(mq.step, 10) || 0) : 0,
+    range: mq.range,
+  };
+}
+
 function ExploreInner() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  // Decode ?m= ONCE. When present, its projection (seed) takes precedence over
+  // the individual params in every state initializer below; when absent, every
+  // initializer falls back to its original param-based path unchanged.
+  const seedRef = useRef<ExploreSeed | null>(null);
+  if (seedRef.current === null) {
+    const mq = decodeMetricQuery(searchParams.get('m'));
+    seedRef.current = mq ? seedFromMetricQuery(mq) : ({} as ExploreSeed & { __none?: true });
+    if (!mq) (seedRef.current as { __none?: true }).__none = true;
+  }
+  const seedRaw = seedRef.current as ExploreSeed & { __none?: true };
+  const seed: ExploreSeed | null = seedRaw.__none ? null : seedRaw;
 
   // Data source tab — Spans is the rich legacy workspace
   // (filters / aggregation / split-by / traces table). Metrics
@@ -203,12 +266,15 @@ function ExploreInner() {
   // without retyping. Persisted in the URL as ?source=… so a
   // saved view restores the chosen source.
   const [source, setSource] = useState<Source>(() => {
+    // A descriptor always lands on the spans workspace (the metric surface).
+    if (seed) return 'spans';
     const v = searchParams.get('source');
     return v === 'metrics' || v === 'logs' ? v : 'spans';
   });
   // Visualization picker — applies to the current source's
   // result. Spans source ignores it for the traces result mode.
   const [viz, setViz] = useState<Viz>(() => {
+    if (seed) return seed.viz;
     const v = searchParams.get('viz') as Viz;
     return ['line', 'bar', 'topN', 'kpi', 'heatmap', 'red'].includes(v) ? v : 'line';
   });
@@ -216,16 +282,16 @@ function ExploreInner() {
 
   // ── State, hydrated from URL on first render ─────────────────────────────
   const [range, setRange] = useState<TimeRange>(
-    () => decodeRange(searchParams.get('range') ?? storedRangeString(), { preset: '30m' }));
+    () => seed?.range ?? decodeRange(searchParams.get('range') ?? storedRangeString(), { preset: '30m' }));
   const [filters, setFilters] = useState<FilterExpr[]>(
     () => decodeFilters(searchParams.get('filters')));
   const [agg, setAgg] = useState<SpanAgg>(
-    () => (searchParams.get('agg') as SpanAgg) || 'count');
-  const [field, setField] = useState(searchParams.get('field') ?? 'duration_ms');
+    () => seed ? seed.agg : ((searchParams.get('agg') as SpanAgg) || 'count'));
+  const [field, setField] = useState(() => seed ? seed.field : (searchParams.get('field') ?? 'duration_ms'));
   const [groupBy, setGroupBy] = useState<string[]>(
-    () => (searchParams.get('groupBy') ?? '').split(',').filter(Boolean));
+    () => seed?.groupBy ?? (searchParams.get('groupBy') ?? '').split(',').filter(Boolean));
   const [groupDraft, setGroupDraft] = useState('');
-  const [step, setStep] = useState(parseInt(searchParams.get('step') ?? '0', 10) || 0);
+  const [step, setStep] = useState(() => seed ? seed.step : (parseInt(searchParams.get('step') ?? '0', 10) || 0));
   // Top-N: cap the number of split-by series rendered. 0 means "all".
   // Persists in the URL so a saved Explore view restores the cap.
   const [topN, setTopN] = useState(
@@ -270,6 +336,7 @@ function ExploreInner() {
   // Same filter/DSL drives both — different backend endpoint per mode.
   const [resultMode, setResultMode] = useState<ResultMode>(
     () => {
+      if (seed) return seed.resultMode;
       const r = searchParams.get('result');
       if (r === 'traces' || r === 'repeats') return r;
       return 'metric';
@@ -299,8 +366,8 @@ function ExploreInner() {
 
   // Advanced query mode + DSL textarea
   const [mode, setMode] = useState<'builder' | 'advanced'>(
-    () => (searchParams.get('mode') === 'advanced' ? 'advanced' : 'builder'));
-  const [dsl, setDsl] = useState(searchParams.get('dsl') ?? '');
+    () => seed ? seed.mode : (searchParams.get('mode') === 'advanced' ? 'advanced' : 'builder'));
+  const [dsl, setDsl] = useState(() => seed ? seed.dsl : (searchParams.get('dsl') ?? ''));
   const [queryError, setQueryError] = useState<string | null>(null);
 
   // Exemplar lookup — picks a representative trace for the

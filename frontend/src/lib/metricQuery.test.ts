@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   metricQuery,
   defaultUnit,
+  describeMetricQuery,
   encodeMetricQuery,
   decodeMetricQuery,
   metricExploreHref,
@@ -36,6 +37,34 @@ describe('defaultUnit', () => {
     expect(defaultUnit('avg')).toBe('ms');
     expect(defaultUnit('count')).toBe('count');
     expect(defaultUnit('sum')).toBe('count');
+  });
+});
+
+// v0.8.48 ("every metric is a doorway" Phase B) — describeMetricQuery renders
+// the human-legible PromQL-style projection shown in the panel's "View query"
+// affordance. Display-only (not a parser input); filters render sorted so the
+// string is stable for two panels carrying the same matcher set.
+describe('describeMetricQuery', () => {
+  it('renders agg(metric{filters}) by (groupBy)', () => {
+    const mq = metricQuery({
+      metric: 'calls_total',
+      agg: 'rate',
+      filters: { 'service.name': 'checkout', status: 'ERROR' },
+      groupBy: ['service.name'],
+    });
+    expect(describeMetricQuery(mq)).toBe(
+      'rate(calls_total{service.name="checkout", status="ERROR"}) by (service.name)',
+    );
+  });
+  it('omits the matcher when there are no filters and the by-clause when no groupBy', () => {
+    const mq = metricQuery({ metric: 'calls_total', agg: 'count' });
+    expect(describeMetricQuery(mq)).toBe('count(calls_total)');
+  });
+  it('sorts filter keys for a stable string regardless of insertion order', () => {
+    const a = metricQuery({ metric: 'm', agg: 'sum', filters: { b: '2', a: '1' } });
+    const b = metricQuery({ metric: 'm', agg: 'sum', filters: { a: '1', b: '2' } });
+    expect(describeMetricQuery(a)).toBe('sum(m{a="1", b="2"})');
+    expect(describeMetricQuery(a)).toBe(describeMetricQuery(b));
   });
 });
 

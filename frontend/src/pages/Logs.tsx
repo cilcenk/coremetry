@@ -16,8 +16,6 @@ import { LogTable } from '@/components/LogTable';
 import { TracePeekDrawer } from '@/components/TracePeekDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
-import { LogPatternStrip } from '@/components/LogPatternStrip';
-import { LogTemplatesPanel } from '@/components/LogTemplatesPanel';
 import { Button } from '@/components/ui/Button';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
@@ -752,38 +750,6 @@ function LogsInner() {
             </div>
           </div>
         )}
-
-        {/* Log anomaly strip (v0.5.239) — curated patterns
-            (OOMKilled / panic / NPE / deadlock / TLS / etc.)
-            that are NEW or 2×+ over baseline. Click a chip →
-            narrow the table to that pattern + its firing
-            service. Renders nothing when there's no signal. */}
-        <LogPatternStrip onSelect={({ search: s, service: sv }) => {
-          const next = {
-            ...filter,
-            search: s,
-            service: sv || filter.service,
-          };
-          setDraft(d => ({ ...d, search: s, service: sv || d.service }));
-          setFilter(next);
-          resetPaging();
-        }} />
-
-        {/* Drain-extracted templates (v0.5.244) — persistent
-            log-shape ledger. Default sort: first_seen desc so
-            new shapes land first. Click a template → search
-            box gets the two most distinctive tokens from that
-            shape (Java class names + logger paths rank
-            highest in the scorer). */}
-        <LogTemplatesPanel onSelectTemplate={substring => {
-          // Substring search is body-field bound; the backend
-          // shorthand expander rewrites "body:" to the right
-          // field for the configured ES mapping.
-          const next = { ...filter, search: substring };
-          setDraft(d => ({ ...d, search: substring }));
-          setFilter(next);
-          resetPaging();
-        }} />
 
         {/* Severity-stacked histogram (v0.5.235) — spike of errors
             stands out against the background INFO traffic without

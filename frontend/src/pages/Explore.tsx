@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
@@ -689,240 +690,292 @@ function ExploreInner() {
     initialSort: { id: 'count', dir: 'desc' },
   });
 
+  // ── Query-console zone styling ───────────────────────────────────────────
+  // The spans workspace controls live in ONE bordered card whose
+  // internal rows are "zones": a fixed-width uppercase micro-label
+  // on the left + the relevant controls, separated by a 1px divider.
+  // Purely presentational — no logic lives here.
+  const ZONE: CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+    padding: '9px 12px', borderTop: '1px solid var(--border)',
+  };
+  const ZONE_FIRST: CSSProperties = { ...ZONE, borderTop: 'none' };
+  const ZONE_LABEL: CSSProperties = {
+    width: 64, flexShrink: 0, fontSize: 10.5, fontWeight: 700,
+    letterSpacing: '.5px', color: 'var(--text3)', textTransform: 'uppercase',
+  };
+  const VDIV: CSSProperties = {
+    width: 1, alignSelf: 'stretch', background: 'var(--border)', margin: '0 2px',
+  };
+
   return (
     <>
       <Topbar title="Explore" range={range} onRangeChange={setRange} />
       <div id="content">
-        {/* v0.5.275 — Saved views bar. Same component /traces +
-            /logs + /problems + /anomalies use. Operator builds a
-            useful filter+DSL+viz combo, hits "Save", picks a
-            name → URL search-string persists in saved_views;
-            recall via the dropdown or 1-9 keyboard shortcut. */}
-        <SavedViewsBar page="explore" />
+        {/* ── Query console — ONE bordered card; internal rows are
+            "zones" (fixed micro-label + controls), divided by 1px
+            hairlines. Layout/grouping only; every control keeps its
+            original handler + state wiring (v0.8.19). */}
+        <div style={{
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', marginBottom: 12,
+        }}>
 
-        {/* Source tabs — Spans (rich legacy workspace), Metrics
-            (raw OTel metric_points + label split-by), Logs
-            (timeseries from CH or external ES). All three share
-            the page's range + viz picker. */}
-        <div className="controls" style={{ marginBottom: 6 }}>
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Source:</span>
-          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-            {(['spans', 'metrics', 'logs'] as Source[]).map(s => (
-              <button key={s} onClick={() => setSource(s)}
-                className={source === s ? '' : 'sec'}
-                style={{
-                  borderRadius: 0,
-                  borderRight: s !== 'logs' ? '1px solid var(--border)' : 'none',
-                  textTransform: 'capitalize',
-                }}>
-                {s}
-              </button>
-            ))}
-          </div>
-          <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 8 }}>Viz:</span>
-          <select value={viz} onChange={e => setViz(e.target.value as Viz)}>
-            <option value="line">Line</option>
-            <option value="bar">Bar</option>
-            <option value="topN">Top-N</option>
-            <option value="kpi">KPI</option>
-            <option value="heatmap">Heatmap</option>
-            <option value="red">RED panel</option>
-          </select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 5,
-                          color: 'var(--text2)', cursor: 'pointer', fontSize: 12, marginLeft: 8 }}
-            title="Overlay the previous window of the same length as faded twin series">
-            <input type="checkbox" checked={compare}
-              onChange={e => setCompare(e.target.checked)} />
-            Compare to previous period
-          </label>
-          <span style={{ flex: 1 }} />
-          <ShareButton />
-        </div>
-
-        {/* Metrics + Logs source panels render their own
-            workspace + viz; Spans keeps its full legacy UI
-            below this fork. */}
-        {/* Heatmap is a spans-source-only mode (per-span latency
-            distribution); the metrics + logs explorers fall back
-            to line when "heatmap" is selected at the top. */}
-        {source === 'metrics' && (
-          <MetricsExplorer range={range}
-            viz={viz === 'heatmap' || viz === 'red' ? 'line' : viz}
-            compare={compare}
-            initialService={searchParams.get('service') ?? ''}
-            initialMetric={searchParams.get('metric') ?? ''} />
-        )}
-        {source === 'logs' && (
-          <LogsExplorer range={range}
-            viz={viz === 'heatmap' || viz === 'red' ? 'line' : viz}
-            compare={compare} />
-        )}
-        {source !== 'spans' && null}
-
-        {source === 'spans' && (<>
-
-        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 12, color: 'var(--text2)', flex: 1 }}>
-            {resultMode === 'metric'
-              ? 'Build span metrics on the fly — filter spans, pick an aggregation, optionally split by attributes.'
-              : 'Search raw traces with the same filter / DSL — click a row to open the waterfall.'}
-          </span>
-          {/* Facets toggle — surfaces the trace tag explorer
-              panel below this row. Hidden by default would
-              defeat the discovery purpose; visible by default
-              with a one-click hide for operators who already
-              know their filter set. Persisted to localStorage. */}
-          <button className="sec" onClick={() => setShowFacets(v => !v)}
-            style={{ fontSize: 11, padding: '3px 10px' }}
-            title="Toggle the trace tag explorer (discover common values per facet)">
-            {showFacets ? '× Facets' : '◫ Facets'}
-          </button>
-        </div>
-
-        {showFacets && (
-          <div style={{ marginBottom: 12 }}>
-            <FacetsPanel range={range}
-              dsl={mode === 'advanced' ? dsl : undefined}
-              filters={filters.length > 0 ? encodeFilters(filters) : undefined}
-              onPickValue={(f) => {
-                if (filters.some(x => x.k === f.k && x.op === f.op &&
-                                      (x.v?.[0] ?? '') === (f.v?.[0] ?? ''))) {
-                  return;
-                }
-                setFilters([...filters, f]);
-              }} />
-          </div>
-        )}
-
-        {/* Result mode toggle: Metric chart / Trace list / Repeats
-            finder (all driven by the same filter + window).
-            Repeats mode answers "which traces have the same span
-            shape happening >= N times" — N+1 detector + chatty-
-            RPC finder. */}
-        <div className="controls" style={{ marginBottom: 6 }}>
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Show:</span>
-          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-            <button onClick={() => setResultMode('traces')}
-              className={resultMode === 'traces' ? '' : 'sec'}
-              style={{ borderRadius: 0, borderRight: '1px solid var(--border)' }}>
-              ⋮ Traces
-            </button>
-            <button onClick={() => setResultMode('metric')}
-              className={resultMode === 'metric' ? '' : 'sec'}
-              style={{ borderRadius: 0, borderRight: '1px solid var(--border)' }}>
-              ∿ Metric
-            </button>
-            <button onClick={() => setResultMode('repeats')}
-              className={resultMode === 'repeats' ? '' : 'sec'}
-              title="Find traces where the same span shape repeats N+ times (N+1 / chatty-RPC detector)"
-              style={{ borderRadius: 0 }}>
-              ⟳ Repeats
-            </button>
-          </div>
-        </div>
-
-        {/* Quick metric presets — Dynatrace's "key metric" picker.
-            One click swaps (agg + field + viz) to a question-shaped
-            preset: rps, error rate, p99, etc. The active preset
-            is highlighted; "Custom" lights up when the current
-            triplet doesn't match any preset (operator hand-tuned). */}
-        {resultMode === 'metric' && (
-          <div className="controls" style={{ marginBottom: 6, flexWrap: 'wrap' }}>
-            <span style={{ color: 'var(--text2)', fontSize: 12 }}>Metric:</span>
-            {METRIC_PRESETS.map(p => {
-              const isActive = p.agg === agg && p.field === field && p.viz === viz;
-              return (
-                <button key={p.key} type="button"
-                  onClick={() => applyPreset(p)}
-                  title={p.hint}
-                  className={isActive ? '' : 'sec'}
-                  style={{ fontSize: 11, padding: '4px 10px' }}>
-                  {p.label}
+          {/* SOURCE zone — source segmented left; saved views +
+              share pushed right. (Time range lives in the Topbar.) */}
+          <div style={ZONE_FIRST}>
+            <span style={ZONE_LABEL}>Source</span>
+            <div className="segmented">
+              {(['spans', 'metrics', 'logs'] as Source[]).map(s => (
+                <button key={s} type="button" onClick={() => setSource(s)}
+                  className={source === s ? 'active' : ''}
+                  style={{ textTransform: 'capitalize' }}>
+                  {s}
                 </button>
-              );
-            })}
-            {!METRIC_PRESETS.some(p => p.agg === agg && p.field === field && p.viz === viz) && (
-              <span style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic',
-                              padding: '4px 10px',
-                              border: '1px dashed var(--border)', borderRadius: 6 }}>
-                Custom
-              </span>
-            )}
+              ))}
+            </div>
+            <span style={{ flex: 1 }} />
+            {/* v0.5.275 — Saved views bar. Same component /traces +
+                /logs + /problems + /anomalies use; recall via the
+                dropdown or 1-9 keyboard shortcut. */}
+            <SavedViewsBar page="explore" />
+            <ShareButton />
           </div>
-        )}
 
-        {/* Aggregation + field row — only in metric mode */}
-        {resultMode === 'metric' && (
-          <div className="controls">
-            <span style={{ color: 'var(--text2)', fontSize: 12 }}>Aggregation:</span>
-            <select value={agg} onChange={e => setAgg(e.target.value as SpanAgg)}>
-              {AGG_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+          {source === 'spans' && (<>
+
+          {/* ASK zone — natural-language query box (v0.5.255). */}
+          <div style={ZONE}>
+            <span style={ZONE_LABEL}>Ask</span>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <NLQueryBox
+                onApply={(nlFilters, preset) => {
+                  setFilters(nlFilters as typeof filters);
+                  setRange({ preset });
+                }} />
+            </div>
+          </div>
+
+          {/* FILTER zone — Builder⇄Advanced toggle + the chips
+              (or the DSL textarea in advanced mode) inline. */}
+          <div style={{ ...ZONE, alignItems: 'flex-start' }}>
+            <span style={{ ...ZONE_LABEL, marginTop: 5 }}>Filter</span>
+            <div className="segmented" style={{ marginTop: 1 }}>
+              <button type="button" onClick={() => setMode('builder')}
+                className={mode === 'builder' ? 'active' : ''}>
+                Builder
+              </button>
+              <button type="button" onClick={() => setMode('advanced')}
+                className={mode === 'advanced' ? 'active' : ''}>
+                Advanced
+              </button>
+            </div>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              {mode === 'builder' && (
+                <FilterBuilder value={filters} onChange={setFilters}
+                  suggestedValues={{
+                    'service.name': services,
+                    'resource.service.name': services,
+                    'kind': ['internal', 'server', 'client', 'producer', 'consumer'],
+                    'status_code': ['ok', 'error', 'unset'],
+                    'http.method': ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+                    'db.system': ['postgresql', 'mysql', 'redis', 'mongodb', 'elasticsearch'],
+                  }} />
+              )}
+              {mode === 'advanced' && (
+                <div className="adv-query">
+                  <textarea value={dsl}
+                    onChange={e => setDsl(e.target.value)}
+                    spellCheck={false}
+                    placeholder={`# Examples — one condition per line
+duration > 500ms
+service.name = "frontend"
+http.status_code >= 500
+status_code = error
+peer.service = "payment-service"
+db.system in [postgresql, redis]
+exception.type exists
+name ~ checkout`}
+                    rows={Math.max(4, dsl.split('\n').length + 1)} />
+                  {queryError && <div className="trp-error" style={{ marginTop: 6 }}>{queryError}</div>}
+                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text3)' }}
+                    title="One condition per line · operators: = != > >= < <= ~ !~ in [a,b] exists · prefix resource./span. to scope · duration accepts 500ms, 1.5s, 2m">
+                    Conditions are AND-joined · prefix with <code>resource.</code> or <code>span.</code> to scope ·
+                    <code>duration</code> accepts <code>500ms</code>, <code>1.5s</code>, <code>2m</code>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* SHOW zone — result-mode segmented + viz + compare;
+              Facets toggle pushed right. ONE compare checkbox lives
+              here (the old duplicate in the aggregation row removed). */}
+          <div style={ZONE}>
+            <span style={ZONE_LABEL}>Show</span>
+            <div className="segmented">
+              <button type="button" onClick={() => setResultMode('traces')}
+                className={resultMode === 'traces' ? 'active' : ''}>
+                ⋮ Traces
+              </button>
+              <button type="button" onClick={() => setResultMode('metric')}
+                className={resultMode === 'metric' ? 'active' : ''}>
+                ∿ Metric
+              </button>
+              <button type="button" onClick={() => setResultMode('repeats')}
+                className={resultMode === 'repeats' ? 'active' : ''}
+                title="Find traces where the same span shape repeats N+ times (N+1 / chatty-RPC detector)">
+                ⟳ Repeats
+              </button>
+            </div>
+            <span style={VDIV} />
+            <span style={{ color: 'var(--text2)', fontSize: 12 }}>Viz:</span>
+            <select value={viz} onChange={e => setViz(e.target.value as Viz)}>
+              <option value="line">Line</option>
+              <option value="bar">Bar</option>
+              <option value="topN">Top-N</option>
+              <option value="kpi">KPI</option>
+              <option value="heatmap">Heatmap</option>
+              <option value="red">RED panel</option>
             </select>
-            {needsField(agg) && (
-              <>
-                <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>of:</span>
-                <Combobox value={field} onChange={setField}
-                  options={['duration_ms', 'duration_s', 'http.status_code', '1']}
-                  placeholder="duration_ms" width={170} />
-              </>
-            )}
-            <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>Step:</span>
-            <select value={step} onChange={e => setStep(Number(e.target.value))}>
-              {STEP_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
-            </select>
-            {/* Compare-to-previous overlay toggle. When on, a second
-                fetch pulls the SAME metric over the equal-width
-                window ending at `from`; the chart draws both with
-                the previous period in dashed translucent. */}
-            <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>Compare:</span>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 5,
+                            color: 'var(--text2)', cursor: 'pointer', fontSize: 12, marginLeft: 8 }}
+              title="Overlay the previous window of the same length as faded twin series">
               <input type="checkbox" checked={compare}
                 onChange={e => setCompare(e.target.checked)} />
-              prev period
+              Compare to previous
             </label>
+            <span style={{ flex: 1 }} />
+            {/* Facets toggle — surfaces the trace tag explorer as a
+                collapsible left sidebar below the card. */}
+            <button className="sec" type="button" onClick={() => setShowFacets(v => !v)}
+              style={{ fontSize: 11, padding: '3px 10px' }}
+              title="Toggle the trace tag explorer (discover common values per facet)">
+              {showFacets ? '× Facets' : '◫ Facets'}
+            </button>
           </div>
-        )}
 
-        {resultMode === 'traces' && (
-          <div className="controls">
-            <span style={{ color: 'var(--text2)', fontSize: 12 }}>Limit:</span>
-            <select value={traceLimit} onChange={e => setTraceLimit(Number(e.target.value))}>
-              {/* v0.5.314 — raised cap to 5000. At billion-span
-                  scale a busy 24h window can have 10k+ matching
-                  traces; the old 500 ceiling silently dropped
-                  the long tail. */}
-              {[20, 50, 100, 200, 500, 1000, 2000, 5000].map(n => <option key={n} value={n}>{n} traces</option>)}
-            </select>
-            {/* v0.5.314 — surface the approx total from the
-                response so the operator can SEE there are more
-                rows than the current limit shows. Red when
-                limit-bound (operator should raise it). */}
-            {traces && traceTotal > 0 && (
-              <span style={{
-                color: traces.length >= traceLimit && traceTotal > traces.length
-                  ? 'var(--err)' : 'var(--text2)',
-                fontSize: 12, fontWeight: 600,
-              }}>
-                Showing {fmtNum(traces.length)} of ~{fmtNum(traceTotal)}
-                {traces.length >= traceLimit && traceTotal > traces.length && (
-                  <> — raise limit to see more</>
-                )}
+          {/* METRIC zone — quick preset chips (Dynatrace key-metric
+              picker). One click swaps (agg + field + viz). */}
+          {resultMode === 'metric' && (
+            <div style={ZONE}>
+              <span style={ZONE_LABEL}>Metric</span>
+              {METRIC_PRESETS.map(p => {
+                const isActive = p.agg === agg && p.field === field && p.viz === viz;
+                return (
+                  <button key={p.key} type="button"
+                    onClick={() => applyPreset(p)}
+                    title={p.hint}
+                    className={isActive ? '' : 'sec'}
+                    style={{ fontSize: 11, padding: '4px 10px' }}>
+                    {p.label}
+                  </button>
+                );
+              })}
+              {!METRIC_PRESETS.some(p => p.agg === agg && p.field === field && p.viz === viz) && (
+                <span style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic',
+                                padding: '4px 10px',
+                                border: '1px dashed var(--border)', borderRadius: 'var(--radius-sm)' }}>
+                  Custom
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* BUILD zone — aggregation + field + step + split-by + Top-N,
+              one wrapping line. (Compare checkbox now lives in SHOW.) */}
+          {resultMode === 'metric' && (
+            <div style={ZONE}>
+              <span style={ZONE_LABEL}>Build</span>
+              <span style={{ color: 'var(--text2)', fontSize: 12 }}>Agg:</span>
+              <select value={agg} onChange={e => setAgg(e.target.value as SpanAgg)}>
+                {AGG_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+              {needsField(agg) && (
+                <>
+                  <span style={{ color: 'var(--text2)', fontSize: 12 }}>of</span>
+                  <Combobox value={field} onChange={setField}
+                    options={['duration_ms', 'duration_s', 'http.status_code', '1']}
+                    placeholder="duration_ms" width={170} />
+                </>
+              )}
+              <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>Step:</span>
+              <select value={step} onChange={e => setStep(Number(e.target.value))}>
+                {STEP_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+              <span style={VDIV} />
+              <span style={{ color: 'var(--text2)', fontSize: 12 }}>Split:</span>
+              {groupBy.length === 0 && (
+                <span style={{ color: 'var(--text3)', fontSize: 12, fontStyle: 'italic' }}>
+                  (single line)
+                </span>
+              )}
+              {groupBy.map(k => (
+                <span key={k} className="fb-chip">
+                  <b>{k}</b>
+                  <button className="fb-chip-x" type="button"
+                    onClick={() => removeGroupKey(k)} aria-label="Remove">✕</button>
+                </span>
+              ))}
+              <Combobox value={groupDraft} onChange={setGroupDraft}
+                options={SUGGESTED_GROUPBY.filter(k => !groupBy.includes(k))}
+                placeholder="+ split key" width={170}
+                onEnter={() => addGroupKey(groupDraft)} />
+              {groupDraft && (
+                <button className="sec" onClick={() => addGroupKey(groupDraft)}>Add</button>
+              )}
+              {groupBy.length > 0 && (
+                <>
+                  <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 8 }}>Top:</span>
+                  <select value={topN} onChange={e => setTopN(Number(e.target.value))}>
+                    {TOPN_OPTIONS.map(n => (
+                      <option key={n} value={n}>Top {n}</option>
+                    ))}
+                    <option value={0}>All series</option>
+                  </select>
+                  {series && topN > 0 && series.length > topN && (
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                      {topN} of {series.length}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* RESULT zone — traces mode: limit + "showing N of M". */}
+          {resultMode === 'traces' && (
+            <div style={ZONE}>
+              <span style={ZONE_LABEL}>Result</span>
+              <span style={{ color: 'var(--text2)', fontSize: 12 }}>Limit:</span>
+              <select value={traceLimit} onChange={e => setTraceLimit(Number(e.target.value))}>
+                {/* v0.5.314 — raised cap to 5000 (busy 24h windows
+                    can have 10k+ matching traces). */}
+                {[20, 50, 100, 200, 500, 1000, 2000, 5000].map(n => <option key={n} value={n}>{n} traces</option>)}
+              </select>
+              {/* v0.5.314 — surface the approx total; red when limit-bound. */}
+              {traces && traceTotal > 0 && (
+                <span style={{
+                  color: traces.length >= traceLimit && traceTotal > traces.length
+                    ? 'var(--err)' : 'var(--text2)',
+                  fontSize: 12, fontWeight: 600,
+                }}>
+                  Showing {fmtNum(traces.length)} of ~{fmtNum(traceTotal)}
+                  {traces.length >= traceLimit && traceTotal > traces.length && (
+                    <> — raise limit to see more</>
+                  )}
+                </span>
+              )}
+              <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 'auto' }}>
+                Sorted by start time desc
               </span>
-            )}
-            <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 'auto' }}>
-              Sorted by start time desc
-            </span>
-          </div>
-        )}
+            </div>
+          )}
 
-        {resultMode === 'repeats' && (
-          <>
-            {/* Preset row — one-click pick of (groupBy,
-                minRepeats) that turns the mode into a question
-                shape. Sample: "3 calls to the same gRPC
-                operation in one trace" = Chatty RPC. */}
-            <div className="controls" style={{ marginBottom: 6, flexWrap: 'wrap' }}>
-              <span style={{ color: 'var(--text2)', fontSize: 12 }}>Preset:</span>
+          {/* REPEATS zone — presets + Min repeats. */}
+          {resultMode === 'repeats' && (
+            <div style={ZONE}>
+              <span style={ZONE_LABEL}>Repeats</span>
               {REPEAT_PRESETS.map(p => {
                 const active = p.minRepeats === repeatMin
                   && p.groupBy.length === groupBy.length
@@ -933,10 +986,8 @@ function ExploreInner() {
                     onClick={() => {
                       setGroupBy(p.groupBy);
                       setRepeatMin(p.minRepeats);
-                      // Append preset's filter chips de-duped
-                      // against existing operator filters so
-                      // clicking the preset twice doesn't pile
-                      // up identical chips.
+                      // Append preset's filter chips de-duped against
+                      // existing operator filters.
                       if (p.filters && p.filters.length > 0) {
                         const extra = p.filters.filter(pf =>
                           !filters.some(x => x.k === pf.k && x.op === pf.op &&
@@ -956,136 +1007,64 @@ function ExploreInner() {
                 <span style={{
                   fontSize: 11, color: 'var(--text3)', fontStyle: 'italic',
                   padding: '4px 10px',
-                  border: '1px dashed var(--border)', borderRadius: 6,
+                  border: '1px dashed var(--border)', borderRadius: 'var(--radius-sm)',
                 }}>Custom</span>
               )}
-            </div>
-            <div className="controls">
+              <span style={VDIV} />
               <span style={{ color: 'var(--text2)', fontSize: 12 }}>Min repeats:</span>
               <select value={repeatMin} onChange={e => setRepeatMin(Number(e.target.value))}>
                 {[2, 3, 5, 10, 20, 50, 100].map(n => <option key={n} value={n}>≥ {n}</option>)}
               </select>
-              <span style={{ color: 'var(--text2)', fontSize: 11, marginLeft: 'auto' }}>
-                Split-by below sets the "same shape" key. Pick a preset above for one-click defaults.
+              <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 'auto' }}
+                title='Split-by below sets the "same shape" key. Pick a preset for one-click defaults.'>
+                split-by sets the shape key
               </span>
             </div>
-          </>
-        )}
-
-        {/* Natural-language → filters (v0.5.255). The operator types
-            "yesterday's slow checkouts" / "5xx from auth-service last
-            hour" / "kafka producer errors today" and the Copilot
-            converts the description to a strict-JSON FilterExpr + time
-            range we apply directly to the page state. Server-side
-            validates ops + presets so a hallucinated key can't leak
-            through. Silent on hosts where AI Copilot isn't configured
-            — the operator just doesn't see the box. */}
-        <NLQueryBox
-          onApply={(nlFilters, preset) => {
-            setFilters(nlFilters as typeof filters);
-            setRange({ preset });
-          }} />
-
-        {/* Mode toggle: Builder ⇄ Advanced */}
-        <div className="controls" style={{ marginBottom: 6 }}>
-          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-            <button onClick={() => setMode('builder')}
-              className={mode === 'builder' ? '' : 'sec'}
-              style={{ borderRadius: 0, borderRight: '1px solid var(--border)' }}>
-              Builder
-            </button>
-            <button onClick={() => setMode('advanced')}
-              className={mode === 'advanced' ? '' : 'sec'}
-              style={{ borderRadius: 0 }}>
-              Advanced query
-            </button>
-          </div>
-          {mode === 'advanced' && (
-            <span style={{ color: 'var(--text2)', fontSize: 11 }}>
-              One condition per line · operators: <code>=</code> <code>!=</code> <code>&gt;</code> <code>&gt;=</code> <code>&lt;</code> <code>&lt;=</code> <code>~</code> <code>!~</code> <code>in [a,b]</code> <code>exists</code>
-            </span>
           )}
+
+          </>)}
         </div>
 
-        {mode === 'builder' && (
-          <FilterBuilder value={filters} onChange={setFilters}
-            suggestedValues={{
-              'service.name': services,
-              'resource.service.name': services,
-              'kind': ['internal', 'server', 'client', 'producer', 'consumer'],
-              'status_code': ['ok', 'error', 'unset'],
-              'http.method': ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-              'db.system': ['postgresql', 'mysql', 'redis', 'mongodb', 'elasticsearch'],
-            }} />
+        {/* Metrics + Logs source panels render their own
+            workspace + viz; Spans keeps its full legacy UI below.
+            Heatmap is a spans-source-only mode; the metrics + logs
+            explorers fall back to line when "heatmap" is selected. */}
+        {source === 'metrics' && (
+          <MetricsExplorer range={range}
+            viz={viz === 'heatmap' || viz === 'red' ? 'line' : viz}
+            compare={compare}
+            initialService={searchParams.get('service') ?? ''}
+            initialMetric={searchParams.get('metric') ?? ''} />
         )}
+        {source === 'logs' && (
+          <LogsExplorer range={range}
+            viz={viz === 'heatmap' || viz === 'red' ? 'line' : viz}
+            compare={compare} />
+        )}
+        {source !== 'spans' && null}
 
-        {mode === 'advanced' && (
-          <div className="adv-query">
-            <textarea value={dsl}
-              onChange={e => setDsl(e.target.value)}
-              spellCheck={false}
-              placeholder={`# Examples — one condition per line
-duration > 500ms
-service.name = "frontend"
-http.status_code >= 500
-status_code = error
-peer.service = "payment-service"
-db.system in [postgresql, redis]
-exception.type exists
-name ~ checkout`}
-              rows={Math.max(6, dsl.split('\n').length + 1)} />
-            {queryError && <div className="trp-error" style={{ marginTop: 6 }}>{queryError}</div>}
-            <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text3)' }}>
-              Conditions are AND-joined · prefix with <code>resource.</code> or <code>span.</code> to scope ·
-              <code>duration</code> accepts <code>500ms</code>, <code>1.5s</code>, <code>2m</code>
-            </div>
-          </div>
-        )}
-
-        {/* Group by — only meaningful for metric mode */}
-        {resultMode === 'metric' && (
-        <div className="controls" style={{ marginBottom: 14 }}>
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>Split by:</span>
-          {groupBy.length === 0 && (
-            <span style={{ color: 'var(--text3)', fontSize: 12, fontStyle: 'italic' }}>
-              (single line — add attributes to break down)
-            </span>
-          )}
-          {groupBy.map(k => (
-            <span key={k} className="fb-chip">
-              <b>{k}</b>
-              <button className="fb-chip-x" type="button"
-                onClick={() => removeGroupKey(k)} aria-label="Remove">✕</button>
-            </span>
-          ))}
-          <Combobox value={groupDraft} onChange={setGroupDraft}
-            options={SUGGESTED_GROUPBY.filter(k => !groupBy.includes(k))}
-            placeholder="+ split key" width={200}
-            onEnter={() => addGroupKey(groupDraft)} />
-          {groupDraft && (
-            <button className="sec" onClick={() => addGroupKey(groupDraft)}>Add</button>
-          )}
-          {/* Top-N cap when split is set. Avoids drowning the chart
-              under 200 services after a fresh deploy; renders the
-              busiest N by total value across the window. */}
-          {groupBy.length > 0 && (
-            <>
-              <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 12 }}>Top:</span>
-              <select value={topN} onChange={e => setTopN(Number(e.target.value))}>
-                {TOPN_OPTIONS.map(n => (
-                  <option key={n} value={n}>Top {n}</option>
-                ))}
-                <option value={0}>All series</option>
-              </select>
-              {series && topN > 0 && series.length > topN && (
-                <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                  showing {topN} of {series.length} series
-                </span>
-              )}
-            </>
-          )}
-        </div>
-        )}
+        {source === 'spans' && (
+          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+            {/* FacetsPanel — collapsible LEFT sidebar (toggled by the
+                SHOW-row Facets button; open/closed persisted to
+                localStorage). Was a stacked full-width strip before. */}
+            {showFacets && (
+              <div style={{ width: 260, flexShrink: 0 }}>
+                <FacetsPanel range={range}
+                  dsl={mode === 'advanced' ? dsl : undefined}
+                  filters={filters.length > 0 ? encodeFilters(filters) : undefined}
+                  onPickValue={(f) => {
+                    if (filters.some(x => x.k === f.k && x.op === f.op &&
+                                          (x.v?.[0] ?? '') === (f.v?.[0] ?? ''))) {
+                      return;
+                    }
+                    setFilters([...filters, f]);
+                  }} />
+              </div>
+            )}
+            {/* Right column — chart + per-series summary / traces /
+                repeats, exactly as before. */}
+            <div style={{ flex: 1, minWidth: 0 }}>
 
         {/* ── Metric mode · heatmap viz ───────────────────────────────────────── */}
         {resultMode === 'metric' && viz === 'heatmap' && (
@@ -1463,7 +1442,9 @@ name ~ checkout`}
             </div>
           </>
         )}
-        </>)}
+            </div>
+          </div>
+        )}
 
         {/* v0.5.260 — Heatmap cell-click exemplars modal. Renders
             globally at the end of the page so its z-index sits

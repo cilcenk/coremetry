@@ -343,3 +343,215 @@ func (s *Store) GetServiceDeploys(
 	}
 	return out, rows.Err()
 }
+
+// instanceIdExpr picks a stable per-pod identity from a span's
+// resource attributes: k8s.pod.name (the rollout-tracking gold
+// standard) → service.instance.id → the host_name column. Empty
+// when none are present — the service emits no pod identity, so we
+// can't detect pod churn, which is the honest answer (the UI then
+// shows nothing rather than a misleading empty rollout list).
+const instanceIdExpr = `
+  multiIf(
+    res_values[indexOf(res_keys, 'k8s.pod.name')] != '',       res_values[indexOf(res_keys, 'k8s.pod.name')],
+    res_values[indexOf(res_keys, 'service.instance.id')] != '', res_values[indexOf(res_keys, 'service.instance.id')],
+    host_name != '',                                            host_name,
+    ''
+  )`
+
+// Rollout is one detected pod-churn event — a 5-minute bucket where
+// the service's active instance set materially turned over (old pods
+// gone + new pods in), i.e. a rollout / restart. Replaces the
+// version-bump deploy marker in environments where service.version
+// is constant (the common case when the build pipeline doesn't set
+// it). v0.8.x — operator-reported: constant service.version made the
+// version-based markers pure noise.
+type Rollout struct {
+	TimeUnixNs    int64         `json:"timeUnixNs"`
+	PodsAdded     int           `json:"podsAdded"`
+	PodsRemoved   int           `json:"podsRemoved"`
+	ActivePods    int           `json:"activePods"` // active set size after the rollout
+	AddedPods     []string      `json:"addedPods,omitempty"`   // up to 5 sample ids
+	RemovedPods   []string      `json:"removedPods,omitempty"` // up to 5 sample ids
+	VersionBefore string        `json:"versionBefore,omitempty"`
+	VersionAfter  string        `json:"versionAfter,omitempty"`
+	Impact        *DeployImpact `json:"impact,omitempty"` // before/after RED, filled by the API layer
+}
+
+// RolloutsResult is the GetServiceRollouts payload.
+type RolloutsResult struct {
+	Service  string    `json:"service"`
+	Rollouts []Rollout `json:"rollouts"`
+	// VersionConstant is true when the effective service.version never
+	// changes across the window — the UI uses it to HIDE the version
+	// chip/column so "1.0.0" isn't rendered on every surface.
+	VersionConstant bool `json:"versionConstant"`
+	// InstancesTracked is false when no pod identity (k8s.pod.name /
+	// service.instance.id / host_name) is present, so churn can't be
+	// computed — the UI shows nothing rather than a misleading empty.
+	InstancesTracked bool `json:"instancesTracked"`
+}
+
+// GetServiceRollouts detects pod-churn rollouts for a service by
+// reading the DISTINCT active instance set per 5-minute bucket from
+// raw spans and diffing consecutive buckets: a rollout is a bucket
+// where ≥50% of the previous active pods disappeared AND ≥1 new pod
+// appeared (full turnover, not autoscaling jitter). Adjacent churn
+// buckets coalesce into one event (a staggered rollout spans a few
+// buckets). Also reports whether the effective service.version is
+// constant across the window.
+//
+// CH posture: single-service + time-bound WHERE prunes by the
+// (service_name, time) primary key; groupUniqArray over a bucket is
+// bounded by pod count (tens), not span count. LIMIT on buckets +
+// max_execution_time cap it. At billions-of-spans/day a per-bucket
+// distinct-instance scan over a WIDE window could get hot — add a
+// service_instances_5m MV if system.query_log flags it; bounded raw
+// is fine for the service-detail windows this serves.
+func (s *Store) GetServiceRollouts(
+	ctx context.Context, service string, from, to time.Time,
+) (*RolloutsResult, error) {
+	sql := `
+		SELECT bucket, groupUniqArrayIf(iid, iid != '') AS pods, argMax(ver, t) AS version
+		FROM (
+			SELECT
+				toStartOfInterval(time, INTERVAL 5 MINUTE) AS bucket,
+				time                                       AS t,
+				` + instanceIdExpr + `                     AS iid,
+				` + effectiveVersionExpr + `               AS ver
+			FROM spans
+			WHERE service_name = ? AND time >= ? AND time <= ?
+		)
+		GROUP BY bucket
+		ORDER BY bucket ASC
+		LIMIT 2000
+		SETTINGS max_execution_time = 15,
+		         optimize_skip_unused_shards = 1`
+	rows, err := s.conn.Query(ctx, sql, service, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("query rollouts: %w", err)
+	}
+	defer rows.Close()
+
+	var buckets []rolloutBucket
+	for rows.Next() {
+		var b rolloutBucket
+		if err := rows.Scan(&b.t, &b.pods, &b.version); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return analyzeRollouts(service, buckets), nil
+}
+
+// rolloutBucket is one 5-minute slice of a service's active pod set +
+// its dominant effective version — the input to analyzeRollouts.
+type rolloutBucket struct {
+	t       time.Time
+	pods    []string
+	version string
+}
+
+// analyzeRollouts is the PURE pod-churn detection over the per-bucket
+// active sets (no I/O), split out so the subtle instant-cutover
+// windowing is table-testable. See deploys_test.go. v0.8.x.
+func analyzeRollouts(service string, buckets []rolloutBucket) *RolloutsResult {
+	res := &RolloutsResult{Service: service, Rollouts: []Rollout{}}
+
+	// Version-constancy + instance-availability across the window.
+	seenVer := ""
+	res.VersionConstant = true
+	for _, b := range buckets {
+		if len(b.pods) > 0 {
+			res.InstancesTracked = true
+		}
+		if b.version != "" {
+			if seenVer == "" {
+				seenVer = b.version
+			} else if b.version != seenVer {
+				res.VersionConstant = false
+			}
+		}
+	}
+
+	// Churn detection. Compare each bucket's active pod set to the set
+	// `lookback` buckets EARLIER — not just i-1. An instant cutover
+	// (all old pods stop + all new pods start at the same moment, e.g.
+	// a process restart) puts the new pods in one single-bucket diff
+	// and the gone pods in the NEXT one, so neither adjacent diff alone
+	// shows both add + remove. The wider baseline straddles the whole
+	// transition. A rollout = ≥50% of the baseline pods gone AND ≥1 new
+	// pod present. Detections within `lookback` of the last are the
+	// same (staggered) rollout, not a fresh one.
+	const lookback = 2 // 2 × 5-min buckets ≈ a 10-minute rollout window
+	lastRolloutIdx := -100
+	for i := 1; i < len(buckets); i++ {
+		cur := podSet(buckets[i].pods)
+		if len(cur) == 0 {
+			continue
+		}
+		j := i - lookback
+		if j < 0 {
+			j = 0
+		}
+		base := podSet(buckets[j].pods)
+		if len(base) == 0 {
+			continue
+		}
+		added := podDiff(cur, base)   // in cur, not in baseline
+		removed := podDiff(base, cur) // in baseline, not in cur
+		threshold := (len(base) + 1) / 2 // ceil(0.5 * len(base))
+		if len(added) < 1 || len(removed) < threshold {
+			continue
+		}
+		if i-lastRolloutIdx <= lookback {
+			lastRolloutIdx = i // same (staggered) rollout, already recorded
+			continue
+		}
+		r := Rollout{
+			TimeUnixNs:  buckets[i].t.UnixNano(),
+			PodsAdded:   len(added),
+			PodsRemoved: len(removed),
+			ActivePods:  len(cur),
+			AddedPods:   podSample(added, 5),
+			RemovedPods: podSample(removed, 5),
+		}
+		if buckets[i].version != "" && buckets[j].version != "" && buckets[i].version != buckets[j].version {
+			r.VersionBefore = buckets[j].version
+			r.VersionAfter = buckets[i].version
+		}
+		res.Rollouts = append(res.Rollouts, r)
+		lastRolloutIdx = i
+	}
+	return res
+}
+
+func podSet(xs []string) map[string]struct{} {
+	m := make(map[string]struct{}, len(xs))
+	for _, x := range xs {
+		if x != "" {
+			m[x] = struct{}{}
+		}
+	}
+	return m
+}
+
+// podDiff returns keys in a that are absent from b.
+func podDiff(a, b map[string]struct{}) []string {
+	var out []string
+	for k := range a {
+		if _, ok := b[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+func podSample(xs []string, n int) []string {
+	if len(xs) <= n {
+		return xs
+	}
+	return xs[:n]
+}

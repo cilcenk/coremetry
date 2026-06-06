@@ -1,58 +1,56 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
-import type { DeployHistoryRow } from '@/lib/types';
+import type { Rollout, DeployImpact } from '@/lib/types';
 
-// Per-row Copilot explain state (v0.5.192). Keyed by deploy
-// version+time inside the panel so each row remembers its own
-// answer + loading flag without all rows sharing state.
+// Per-row Copilot explain state (v0.5.192). Keyed by rollout
+// timestamp so each row remembers its own answer + loading flag
+// without all rows sharing state.
 type ExplainState =
   | { kind: 'idle' }
   | { kind: 'busy' }
   | { kind: 'ok'; text: string }
   | { kind: 'err'; msg: string };
 
-// DeployHistoryPanel — "Recent deploys" panel on the service
-// detail page (v0.5.189). Continuous benchmarking: for each of
-// the last N deploys, show the before/after RED diff so an
-// operator can read "the last release regressed p99 by 12%"
-// at a glance — no chart-shoulder eyeballing, no AI Copilot
-// round-trip needed.
-//
-// Layout: vertical timeline (newest first). Each row =
-// version + age + 3 delta chips (p99 / error rate / avg).
-// Colour: red >5% worse, amber 1-5% worse, green if better
-// or stable. Click expands to show absolute before/after.
-//
-// Empty state: many services don't emit service.version (no
-// SDK env var). Show a one-line hint instead of breaking the
-// service page layout.
+// DeployHistoryPanel — "Recent rollouts" panel on the service detail
+// page. v0.8.x: a "deploy" is now detected as POD/INSTANCE-SET
+// TURNOVER (k8s.pod.name / service.instance.id / host_name churn),
+// not a service.version bump — many environments keep service.version
+// constant, so the version-based markers were pure noise. For each
+// rollout: pods replaced + age + the before/after RED diff so the
+// operator reads "the rollout regressed p99 by 12%" at a glance. A
+// version is shown ONLY when it actually changed across the rollout.
 export function DeployHistoryPanel({ service }: { service: string }) {
-  const [rows, setRows] = useState<DeployHistoryRow[] | null | undefined>(undefined);
+  const [rows, setRows] = useState<Rollout[] | null | undefined>(undefined);
+  const [tracked, setTracked] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
-  // Per-deploy explain state, keyed by version+time so the
-  // map stays correct even if the deploy list re-fetches.
+  // Per-rollout explain state, keyed by timestamp so the map stays
+  // correct even if the rollout list re-fetches.
   const [explains, setExplains] = useState<Record<string, ExplainState>>({});
   const [copilotEnabled, setCopilotEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    api.deployHistory(service, 5, 600)
-      .then(r => setRows(r ?? []))
+    // Compute the window INSIDE the effect (not in render) so Date.now()
+    // doesn't churn the dep set every render (v0.5.184). 7-day lookback
+    // matches the 2000-bucket cap at 5-min granularity.
+    const to = Date.now() * 1e6;
+    const from = to - 7 * 24 * 3600 * 1e9;
+    api.serviceRollouts(service, { from, to })
+      .then(r => { setRows(r?.rollouts ?? []); setTracked(r?.instancesTracked ?? false); })
       .catch(() => setRows(null));
-    // Probe the copilot once — if it's not configured, hide
-    // the Explain button rather than show a button that always
-    // 503's. Same gate other CopilotExplain surfaces use.
+    // Probe the copilot once — if it's not configured, hide the
+    // Explain button rather than show one that always 503's.
     api.copilotConfig().then(c => setCopilotEnabled(c.enabled)).catch(() => setCopilotEnabled(false));
   }, [service]);
 
-  const askCopilot = async (row: DeployHistoryRow) => {
-    const key = `${row.deploy.version}-${row.deploy.timeUnixNs}`;
+  const askCopilot = async (row: Rollout) => {
+    const key = `${row.timeUnixNs}`;
     setExplains(s => ({ ...s, [key]: { kind: 'busy' } }));
     try {
       const r = await api.copilotDeployImpact({
         service,
-        version: row.deploy.version,
-        deployTimeNs: row.deploy.timeUnixNs,
+        version: row.versionAfter || `rollout (${row.podsRemoved} pods)`,
+        deployTimeNs: row.timeUnixNs,
         windowSec: 600,
       });
       setExplains(s => ({ ...s, [key]: { kind: 'ok', text: r.explanation } }));
@@ -62,17 +60,14 @@ export function DeployHistoryPanel({ service }: { service: string }) {
     }
   };
 
-  // Don't render anything while loading — keeps the service
-  // page layout stable rather than flashing a spinner.
+  // Don't render anything while loading — keeps the service page
+  // layout stable rather than flashing a spinner.
   if (rows === undefined) return null;
   if (rows === null) return null;
   if (rows.length === 0) {
-    // v0.5.308 — Operator-reported: clicking "history →" from
-    // /deploys lands here with no visible panel, which looks
-    // broken. Render a soft hint instead of silent-hiding so
-    // the operator knows the panel WAS rendered + the data
-    // just isn't in the lookback. Same rationale as the
-    // empty-ops CTA on the Operations tab.
+    // Soft hint rather than silent-hiding, so the operator knows the
+    // panel WAS rendered and the data just isn't there. Two honest
+    // reasons: stable instances (no churn) vs no pod identity at all.
     return (
       <div style={{
         background: 'var(--bg2)', border: '1px solid var(--border)',
@@ -80,13 +75,11 @@ export function DeployHistoryPanel({ service }: { service: string }) {
         fontSize: 12, color: 'var(--text3)',
       }}>
         <div style={{ fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>
-          ↑ Deploy history
+          ↻ Recent rollouts
         </div>
-        No deploys observed in the last 30 days. Either this service
-        doesn't emit a recognised version attribute
-        (service.version / container.image.tag /
-        app.kubernetes.io/version label / helm.chart.version), or
-        its last release predates the lookback window.
+        {tracked
+          ? 'No rollouts (pod-set turnover) in the last 7 days — the service’s instances have been stable.'
+          : 'This service emits no pod identity (k8s.pod.name / service.instance.id / host.name), so rollouts can’t be detected.'}
       </div>
     );
   }
@@ -102,16 +95,16 @@ export function DeployHistoryPanel({ service }: { service: string }) {
         textTransform: 'uppercase', marginBottom: 8,
         display: 'flex', alignItems: 'baseline', gap: 8,
       }}>
-        <span>↗ Recent deploys</span>
+        <span>↻ Recent rollouts</span>
         <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-          ±10 min window
+          pod-set turnover · ±10 min impact
         </span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {rows.map((r, i) => {
           const open = expanded === i;
           return (
-            <div key={`${r.deploy.version}-${r.deploy.timeUnixNs}`}
+            <div key={r.timeUnixNs}
               style={{
                 padding: '8px 0',
                 borderTop: i > 0 ? '1px solid var(--border)' : 'none',
@@ -124,12 +117,21 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                 <span style={{ fontSize: 10, color: 'var(--text3)', width: 14 }}>
                   {r.impact ? (open ? '▼' : '▶') : ''}
                 </span>
-                <span style={{
-                  fontFamily: 'ui-monospace, monospace',
-                  fontSize: 12, fontWeight: 600,
-                }}>{r.deploy.version || '(no version)'}</span>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>
+                  ↻ {r.podsRemoved} pod{r.podsRemoved === 1 ? '' : 's'} replaced
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace' }}
+                  title={`${r.podsAdded} new · ${r.podsRemoved} retired · ${r.activePods} now active`}>
+                  +{r.podsAdded}/−{r.podsRemoved}
+                </span>
+                {r.versionAfter && (
+                  <span style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace' }}
+                    title="service.version changed at this rollout">
+                    {(r.versionBefore || '?')}→{r.versionAfter}
+                  </span>
+                )}
                 <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                  {fmtAgo(r.deploy.timeUnixNs)}
+                  {fmtAgo(r.timeUnixNs)}
                 </span>
                 <span style={{ flex: 1 }} />
                 {r.impact ? <DeltaChips imp={r.impact} /> : (
@@ -141,13 +143,13 @@ export function DeployHistoryPanel({ service }: { service: string }) {
               {open && r.impact && (
                 <>
                   <ExpandedDiff imp={r.impact} />
-                  {/* Inline Copilot explain — opt-in per row.
-                      Hidden when the copilot isn't configured
-                      so we don't render a button that just
-                      503's. Stop click propagation so the
-                      row's expand toggle doesn't also fire. */}
+                  {/* Inline Copilot explain — opt-in per row. Hidden
+                      when the copilot isn't configured so we don't
+                      render a button that just 503's. Stop click
+                      propagation so the row's expand toggle doesn't
+                      also fire. */}
                   {copilotEnabled && (() => {
-                    const key = `${r.deploy.version}-${r.deploy.timeUnixNs}`;
+                    const key = `${r.timeUnixNs}`;
                     const st = explains[key] ?? { kind: 'idle' as const };
                     return (
                       <div style={{ marginTop: 10 }}
@@ -164,8 +166,8 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                               fontSize: 11, padding: '4px 10px',
                               color: 'var(--accent2)',
                             }}
-                            title="Ask Copilot whether this deploy looks clean, regressed, or rollback-worthy">
-                            ✨ {st.kind === 'err' ? 'Re-ask' : 'Explain'} deploy
+                            title="Ask Copilot whether this rollout looks clean, regressed, or rollback-worthy">
+                            ✨ {st.kind === 'err' ? 'Re-ask' : 'Explain'} rollout
                           </button>
                         )}
                         {st.kind === 'err' && (
@@ -203,11 +205,11 @@ export function DeployHistoryPanel({ service }: { service: string }) {
   );
 }
 
-function DeltaChips({ imp }: { imp: DeployHistoryRow['impact'] }) {
+function DeltaChips({ imp }: { imp: DeployImpact | null }) {
   if (!imp) return null;
-  // Pre-deploy with zero samples isn't a real "regression" —
-  // it's just first traffic. Render a neutral chip rather than
-  // a misleading 100% red flag.
+  // Pre-rollout with zero samples isn't a real "regression" — it's
+  // just first traffic. Render a neutral chip rather than a
+  // misleading 100% red flag.
   const p99Stable = imp.before.p99Ms === 0;
   const errStable = imp.before.errorRate === 0 && imp.after.errorRate === 0;
   return (
@@ -248,7 +250,7 @@ function DeltaChip({ label, pct, suffix }: { label: string; pct: number | null; 
   );
 }
 
-function ExpandedDiff({ imp }: { imp: NonNullable<DeployHistoryRow['impact']> }) {
+function ExpandedDiff({ imp }: { imp: DeployImpact }) {
   return (
     <div style={{
       marginTop: 8, padding: 10, borderRadius: 4,

@@ -6,7 +6,7 @@ import { CopilotExplain } from './CopilotExplain';
 import { TracePeekDrawer } from './TracePeekDrawer';
 import { IconSparkles } from './icons';
 import { api } from '@/lib/api';
-import { useServiceDeploys, useSLOs } from '@/lib/queries';
+import { useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
 import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 
@@ -138,15 +138,21 @@ export function ServiceCharts({ service, range, onZoom }: {
   }, [service, from, to, compare, compareOffsetNs]);
 
   // Deploy markers for this service in the visible window.
+  // deploysQ stays for DeployImpactButton (version-based AI explain;
+  // auto-hidden when service.version is constant). v0.8.x — the chart
+  // deploy MARKERS are now POD-CHURN rollouts, not version bumps.
   const deploysQ = useServiceDeploys(service, from, to);
+  const rolloutsQ = useServiceRollouts(service, from, to);
   const deployMarkers: DeployMarker[] | undefined = useMemo(() => {
-    if (!deploysQ.data) return undefined;
-    return deploysQ.data.map(d => ({
-      timeUnixNs: d.timeUnixNs,
-      label: d.version,
-      description: `${d.spanCount.toLocaleString()} spans since first seen`,
+    const rollouts = rolloutsQ.data?.rollouts;
+    if (!rollouts) return undefined;
+    return rollouts.map(r => ({
+      timeUnixNs: r.timeUnixNs,
+      label: `↻ ${r.podsRemoved}p`,
+      description: `rollout · ${r.podsRemoved} pod${r.podsRemoved === 1 ? '' : 's'} replaced (+${r.podsAdded})`
+        + (r.versionAfter ? ` · ${r.versionBefore || '?'}→${r.versionAfter}` : ''),
     }));
-  }, [deploysQ.data]);
+  }, [rolloutsQ.data]);
 
   // SLO-derived thresholds for this service. Latency SLOs
   // surface on the P99 panel; availability SLOs surface on

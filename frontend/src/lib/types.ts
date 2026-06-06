@@ -2377,6 +2377,35 @@ export interface DeployHistoryRow {
   impact: DeployImpact | null;
 }
 
+// Rollout (v0.8.x) — one detected pod-churn event: a time bucket
+// where the service's active instance set turned over (old pods
+// gone + new in) = a rollout / restart. Replaces version-bump deploy
+// markers when service.version is constant. `impact` reuses the same
+// before/after RED shape as a version deploy.
+export interface Rollout {
+  timeUnixNs: number;
+  podsAdded: number;
+  podsRemoved: number;
+  activePods: number;
+  addedPods?: string[];
+  removedPods?: string[];
+  versionBefore?: string;
+  versionAfter?: string;
+  impact?: DeployImpact | null;
+}
+export interface RolloutsResult {
+  service: string;
+  rollouts: Rollout[];
+  // versionConstant — the effective service.version never changed
+  // across the window; the UI hides the version chip so "1.0.0"
+  // isn't rendered on every surface.
+  versionConstant: boolean;
+  // instancesTracked — false when the service emits no pod identity
+  // (k8s.pod.name / service.instance.id / host.name), so churn
+  // can't be computed.
+  instancesTracked: boolean;
+}
+
 // SlowQueryRow — same as DBQueryStat plus the originating
 // service. Drives the global slow-query catalog (v0.5.165) on
 // /databases/slow-queries — operator-facing answer to "what

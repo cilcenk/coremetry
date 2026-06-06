@@ -401,6 +401,9 @@ func (s *Server) Start() error {
 	// Deploy history with impact deltas — drives the Service
 	// detail page's "Recent deploys" panel (v0.5.189).
 	mux.HandleFunc("GET /api/services/{name}/deploy-history", s.getDeployHistory)
+	// Pod-churn rollouts — instance-set turnover events (replaces
+	// version-bump markers when service.version is constant). v0.8.x.
+	mux.HandleFunc("GET /api/services/{name}/rollouts", s.getServiceRollouts)
 	mux.HandleFunc("GET /api/services/{name}/metadata", s.getServiceMetadata)
 	mux.HandleFunc("PUT /api/services/{name}/metadata", auth.RequireAnyRole(editorRoles, s.putServiceMetadata))
 	mux.HandleFunc("GET /api/services-metadata", s.listServiceMetadata)
@@ -1692,6 +1695,52 @@ func (s *Server) getDeployHistory(w http.ResponseWriter, r *http.Request) {
 			out = append(out, historyRow{Deploy: d, Impact: imp})
 		}
 		return out, nil
+	})
+}
+
+// getServiceRollouts returns pod-churn rollout events for a service
+// (instance-set turnover, v0.8.x) with per-rollout before/after RED
+// impact. Replaces version-bump deploy markers when service.version
+// is constant; the response's versionConstant flag lets the UI hide
+// the version chip everywhere it would otherwise render "1.0.0".
+func (s *Server) getServiceRollouts(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
+	if from.IsZero() || to.IsZero() {
+		to = time.Now()
+		from = to.Add(-1 * time.Hour)
+	}
+	key := fmt.Sprintf("service-rollouts:svc=%s:from=%d:to=%d",
+		name, from.UnixNano(), to.UnixNano())
+	s.serveCached(w, r, key, time.Minute, func() (any, error) {
+		res, err := s.store.GetServiceRollouts(r.Context(), name, from, to)
+		if err != nil {
+			return nil, err
+		}
+		// Fill before/after RED impact per rollout (cap to bound cost,
+		// like deploy-history). Best-effort — a failed compute leaves
+		// impact nil and the UI shows "—" deltas.
+		const maxImpact = 8
+		for i := range res.Rollouts {
+			if i >= maxImpact {
+				break
+			}
+			imp, err := s.store.ComputeDeployImpact(
+				r.Context(), name, res.Rollouts[i].VersionAfter,
+				res.Rollouts[i].TimeUnixNs, 600)
+			if err != nil {
+				log.Printf("[rollouts] impact %s @%d: %v", name, res.Rollouts[i].TimeUnixNs, err)
+				continue
+			}
+			res.Rollouts[i].Impact = imp
+		}
+		return res, nil
 	})
 }
 

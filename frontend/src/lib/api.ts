@@ -1129,6 +1129,14 @@ export const api = {
     get<import('./types').Deploy[] | null>(
       `/api/services/${encodeURIComponent(svc)}/deploys?${qs(params)}`),
 
+  // /api/services/{name}/rollouts (v0.8.x) — pod-churn rollout
+  // events (instance-set turnover) + per-rollout RED impact, plus
+  // versionConstant/instancesTracked flags. Replaces the version-
+  // based deploy markers when service.version is constant.
+  serviceRollouts: (svc: string, params: { from?: number; to?: number }) =>
+    get<import('./types').RolloutsResult>(
+      `/api/services/${encodeURIComponent(svc)}/rollouts?${qs(params)}`),
+
   // Service catalog — per-service owner / oncall / runbook /
   // repo metadata. Empty rows return as `{ service }` only
   // (no special 404 path — the UI renders an "Add metadata"

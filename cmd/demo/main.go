@@ -212,6 +212,30 @@ func (t *Trace) pickPod(svc string) string {
 	return t.podOf[svc]
 }
 
+// rollPodGeneration gives THIS process's pods a fresh generation
+// suffix, so every (re)deploy of the demo rolls the entire pod set —
+// a deploy IS a pod rollout. Coremetry's pod-churn detector then
+// marks the restart moment on every service's charts. Between deploys
+// the pods are stable, so there are no false rollouts. Added so the
+// rollout feature has REAL churn to detect in the synthetic env,
+// where service.version stays constant (which is exactly why the old
+// version-based deploy markers were noise). v0.8.x.
+func rollPodGeneration() {
+	gen := fmt.Sprintf("r%d", 1000+mrand.IntN(9000)) // distinct per process start
+	for name, s := range services {
+		if len(s.Pods) == 0 {
+			continue
+		}
+		np := make([]string, len(s.Pods))
+		for i, p := range s.Pods {
+			np[i] = p + "-" + gen
+		}
+		s.Pods = np
+		services[name] = s
+	}
+	log.Printf("  pod generation:   %s (each redeploy rolls all pods → a rollout marker)", gen)
+}
+
 // Add inserts a span and returns its ID for use as a parent.
 // startOffset/duration are relative to the trace start (t0).
 func (t *Trace) Add(service, name string, kind tracepb.Span_SpanKind,
@@ -1570,6 +1594,7 @@ func main() {
 	log.Printf("  endpoint:         %s (traces/logs/metrics)", *endpoint)
 	log.Printf("  profile endpoint: %s", *profileEndpoint)
 	log.Printf("  rate:             %.1f scenarios/sec", *rps)
+	rollPodGeneration()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

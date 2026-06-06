@@ -90,6 +90,18 @@ export function useServiceDeploys(svc: string, from: number, to: number) {
   });
 }
 
+// useServiceRollouts (v0.8.x) — pod-churn rollout events for the
+// chart deploy-marker overlay + the "Recent rollouts" panel. Same
+// cache posture as useServiceDeploys.
+export function useServiceRollouts(svc: string, from: number, to: number) {
+  return useQuery({
+    queryKey: ['service-rollouts', svc, from, to],
+    queryFn: () => api.serviceRollouts(svc, { from, to }),
+    enabled: !!svc && !!from && !!to,
+    staleTime: 30_000,
+  });
+}
+
 export function useServiceNeighbors(svc: string, since: string, samples: number) {
   return useQuery({
     queryKey: keys.services.neighbors(svc, since, samples),

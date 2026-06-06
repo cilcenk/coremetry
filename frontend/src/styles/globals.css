@@ -1712,3 +1712,9 @@ canvas { max-width: 100%; }
   color: var(--accent); border-left-color: var(--accent); font-weight: 600;
 }
 .sys-content { flex: 1 1 auto; min-width: 0; }
+
+/* Topology focused-graph — animated traffic flow on the highlighted edge
+   (v0.8.36). Reduced-motion users get a static dashed line, no animation. */
+@keyframes tf-edge-flow { to { stroke-dashoffset: -26; } }
+.tf-edge-hl { stroke-dasharray: 7 6; animation: tf-edge-flow .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .tf-edge-hl { animation: none; stroke-dasharray: none; } }

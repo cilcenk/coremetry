@@ -232,17 +232,16 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           {/* edges */}
           <svg width={width + NODE_W} height={height + NODE_H} style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}>
             <defs>
-              {/* markerUnits=userSpaceOnUse → a constant ~9px arrowhead
-                  regardless of the edge stroke width (the SVG default
-                  "strokeWidth" units ballooned heads on busy edges). */}
-              <marker id="fn-arrow" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="9" markerHeight="9" orient="auto">
-                <path d="M0,0 L10,5 L0,10 z" fill="context-stroke" />
+              {/* Open-chevron arrowhead, constant ~12px via
+                  markerUnits=userSpaceOnUse — busy edges no longer grow giant
+                  heads. context-stroke inherits the per-edge colour. */}
+              <marker id="fn-arrow" viewBox="0 0 12 12" refX="8.5" refY="6" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto">
+                <path d="M2.5,2.5 L8.5,6 L2.5,9.5" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </marker>
-              {/* highlighted edges switch their stroke to --accent, so their
-                  head needs a matching accent fill (context-stroke would
-                  follow the base colour). */}
-              <marker id="fn-arrow-hl" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="9" markerHeight="9" orient="auto">
-                <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)" />
+              {/* highlighted edges switch their stroke to --accent — the
+                  chevron matches with an accent stroke. */}
+              <marker id="fn-arrow-hl" viewBox="0 0 12 12" refX="8.5" refY="6" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" orient="auto">
+                <path d="M2.5,2.5 L8.5,6 L2.5,9.5" fill="none" stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
               </marker>
             </defs>
             {nb.edges.map((e, i) => {
@@ -254,6 +253,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
               const x1 = src.x + NODE_W, y1 = src.y + NODE_H / 2;
               const x2 = dst.x, y2 = dst.y + NODE_H / 2;
               const dx = Math.max(28, Math.abs(x2 - x1) / 2);
+              const d = `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
               const isHl = hl?.edges.has(e);
               const dim = hl && !isHl;
               const stroke = isHl ? 'var(--accent)' : edgeToken(e.errorRate);
@@ -261,9 +261,17 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
               // hover bump), independent of the now-constant arrowhead.
               const w = Math.min(3.4, Math.max(1, Math.log10(e.calls + 1) * 0.95)) * (isHl ? 1.5 : 1);
               return (
-                <g key={i} opacity={dim ? 0.28 : 1}>
-                  <path d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`}
-                    fill="none" stroke={stroke} strokeWidth={w} markerEnd={`url(#${isHl ? 'fn-arrow-hl' : 'fn-arrow'})`} />
+                <g key={i} opacity={dim ? 0.16 : 1}>
+                  {/* soft accent glow underlay beneath the highlighted edge */}
+                  {isHl && (
+                    <path d={d} fill="none" stroke="var(--accent)" strokeWidth={w + 6}
+                      strokeLinecap="round" opacity={0.13} />
+                  )}
+                  {/* main path — round caps; highlighted edge runs an animated
+                      dashed traffic flow (.tf-edge-hl, reduced-motion safe) */}
+                  <path className={isHl ? 'tf-edge-hl' : undefined}
+                    d={d} fill="none" stroke={stroke} strokeWidth={w} strokeLinecap="round"
+                    markerEnd={`url(#${isHl ? 'fn-arrow-hl' : 'fn-arrow'})`} />
                   {isHl && (
                     <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4} textAnchor="middle"
                       style={{ fontSize: 9, fill: 'var(--text2)', fontFamily: 'ui-monospace, monospace' }}>

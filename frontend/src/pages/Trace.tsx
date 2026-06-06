@@ -16,7 +16,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useCorrelatedLogs, spanHasError } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
-import { WaterfallCanvas } from '@/components/traces/WaterfallCanvas';
+import { WaterfallRows } from '@/components/traces/WaterfallRows';
 import { SpanPanel } from '@/components/traces/SpanPanel';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
 
@@ -398,7 +398,7 @@ function TraceDetailInner() {
                 <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, minHeight: 240 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter} />
-                    <WaterfallCanvas spans={spans} selectedId={selectedId} onSelect={setSelectedId}
+                    <WaterfallRows spans={spans} selectedId={selectedId} onSelect={setSelectedId}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds} />
                   </div>
                   {sel && <SpanPanel span={sel} onClose={() => setSelectedId(null)} />}

@@ -1232,6 +1232,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		// IF NOT EXISTS makes this a no-op on fresh installs (already in the
 		// CREATE) and re-runs.
 		`ALTER TABLE metric_points ADD COLUMN IF NOT EXISTS temporality LowCardinality(String) DEFAULT ''`,
+		// v0.8.20 — drop the dead topology-mute setting. The
+		// "Mute on topology" chip was removed from the service detail
+		// page in v0.8.19; this migration removes the now-orphaned
+		// system_settings row so a stale exclude list can't silently
+		// keep filtering topology edges. Pure data cleanup — there is
+		// no schema column / table / MV for the feature, only this
+		// settings key. ALTER ... DELETE is a lightweight mutation on
+		// the small system_settings ReplacingMergeTree; a no-op when
+		// the key was never set. execDDL → adaptDDL injects ON CLUSTER
+		// in distributed mode (system_settings is not high-volume, so
+		// it stays at its bare name — no _local rewrite).
+		`ALTER TABLE system_settings DELETE WHERE key = 'topology.exclude'`,
 	}
 	for _, q := range alters {
 		if err := s.execDDL(ctx, q); err != nil {

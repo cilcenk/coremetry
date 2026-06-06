@@ -524,17 +524,6 @@ export const api = {
   logsTemplates: (params: { sort?: 'first_seen' | 'last_seen' | 'count'; since?: string; limit?: number } = {}) =>
     get<import('./types').LogTemplate[]>(`/api/logs/templates?${qs(params)}`),
 
-  // Topology exclude list (v0.5.176) — services muted from
-  // diagrams to keep hub-like infra (config server, identity,
-  // service mesh) from cluttering every render.
-  topologyExclude: () =>
-    get<{ services: string[] }>(`/api/topology/exclude`),
-  putTopologyExclude: (services: string[]) =>
-    request<{ services: string[] }>(`/api/topology/exclude`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ services }),
-    }),
-
 
   // Recent deploys + impact deltas for a service (v0.5.189).
   // One round-trip; backend computes before/after RED for each

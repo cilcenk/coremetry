@@ -38,6 +38,10 @@ const (
 	minSamples    = 12             // need at least this many baseline buckets
 	madScale      = 0.6745         // scales MAD to a normal-dist stdev (modified z-score)
 	magnitudeEps  = 1e-9           // denominator guard for the relative-change floor
+
+	seasonalBaseline   = true // baseline from same-time-of-day history, not a flat 24h window
+	seasonalDays       = 7    // days of same-slot history for the seasonal baseline
+	seasonalMinSamples = 4    // min same-slot samples before the seasonal baseline is trusted
 )
 
 // trackedMetrics is intentionally small: cardinality stays bounded
@@ -224,15 +228,28 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 	// closed around the z threshold. The window is derived entirely from the
 	// fetched series → stateless, so a leader handoff loses no streak counter.
 	split := len(buckets) - dwellBuckets
-	baseline := buckets[:split]
 	window := buckets[split:]
 	current := buckets[len(buckets)-1]
 
+	// Baseline = same-time-of-day history (seasonal) when available, else the
+	// 24h-consecutive window. Seasonal kills the diurnal false positives — the
+	// morning ramp looks normal against the same slot on prior days — and
+	// surfaces real off-peak dips. Best-effort: a seasonal read error or too
+	// few same-slot samples falls back to the consecutive window.
+	consecutive := buckets[:split]
+	var seasonal []float64
+	if seasonalBaseline {
+		if s, err := d.fetchSeasonalBaseline(ctx, service, metric, time.Now()); err == nil {
+			seasonal = s
+		}
+	}
+	baseline := chooseBaseline(seasonal, consecutive)
+
 	// Modified z-score (median + MAD) instead of mean + population stdev:
 	// both are dragged by their OWN outliers, so a single contaminated
-	// baseline bucket (yesterday's spike) inflates the stdev and masks
-	// today's spike. Median + MAD are outlier-robust; madScale rescales MAD
-	// to a normal-dist sigma so openZ / resolveZ keep their σ meaning.
+	// baseline bucket inflates the stdev and masks today's spike. Median +
+	// MAD are outlier-robust; madScale rescales MAD to a normal-dist sigma so
+	// openZ / resolveZ keep their σ meaning.
 	median, mad := medianMAD(baseline)
 	if mad < 1e-9 {
 		return // flat baseline → modified z-score undefined; skip
@@ -298,6 +315,22 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 	}
 }
 
+// metricValueExpr returns the service_summary_5m SELECT expression that
+// derives one tracked metric from the MV's aggregate states. Shared by the
+// consecutive (fetchBuckets) and seasonal (fetchSeasonalBaseline) reads so
+// both baselines are computed identically.
+func metricValueExpr(metric string) (string, error) {
+	switch metric {
+	case "error_rate":
+		return "countMerge(error_count_state) / nullIf(countMerge(span_count_state), 0) * 100", nil
+	case "request_rate":
+		return "countMerge(span_count_state) / 300.0", nil
+	case "p99_ms":
+		return "quantilesMerge(0.5, 0.95, 0.99)(duration_q_state)[3] / 1e6", nil
+	}
+	return "", fmt.Errorf("unknown metric %q", metric)
+}
+
 // fetchBuckets returns the requested metric in 5-minute buckets over the
 // configured history window, ascending in time. The most recent bucket is
 // the "current" sample.
@@ -313,45 +346,20 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 // belt-and-braces in case the MV grows past our expectations.
 func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]float64, error) {
 	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
-	conn := d.store.Conn()
-
-	var sql string
-	switch metric {
-	case "error_rate":
-		sql = `
-			SELECT toUnixTimestamp(time_bucket)                                              AS t,
-			       countMerge(error_count_state) / nullIf(countMerge(span_count_state), 0) * 100 AS v
-			FROM service_summary_5m
-			WHERE service_name = ? AND time_bucket >= ?
-			GROUP BY t
-			ORDER BY t
-			LIMIT 1000
-			SETTINGS max_execution_time = 10`
-	case "request_rate":
-		sql = `
-			SELECT toUnixTimestamp(time_bucket)            AS t,
-			       countMerge(span_count_state) / 300.0    AS v
-			FROM service_summary_5m
-			WHERE service_name = ? AND time_bucket >= ?
-			GROUP BY t
-			ORDER BY t
-			LIMIT 1000
-			SETTINGS max_execution_time = 10`
-	case "p99_ms":
-		sql = `
-			SELECT toUnixTimestamp(time_bucket)                              AS t,
-			       quantilesMerge(0.5, 0.95, 0.99)(duration_q_state)[3] / 1e6 AS v
-			FROM service_summary_5m
-			WHERE service_name = ? AND time_bucket >= ?
-			GROUP BY t
-			ORDER BY t
-			LIMIT 1000
-			SETTINGS max_execution_time = 10`
-	default:
-		return nil, fmt.Errorf("unknown metric %q", metric)
+	vexpr, err := metricValueExpr(metric)
+	if err != nil {
+		return nil, err
 	}
+	sql := fmt.Sprintf(`
+		SELECT toUnixTimestamp(time_bucket) AS t, %s AS v
+		FROM service_summary_5m
+		WHERE service_name = ? AND time_bucket >= ?
+		GROUP BY t
+		ORDER BY t
+		LIMIT 1000
+		SETTINGS max_execution_time = 10`, vexpr)
 
-	rows, err := conn.Query(ctx, sql, service, cutoff)
+	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -366,6 +374,67 @@ func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// fetchSeasonalBaseline returns the metric's value at the SAME time-of-day
+// slot as `at` across the last seasonalDays days, weekday/weekend-matched —
+// so a diurnal/weekly traffic pattern is the baseline instead of a flat 24h
+// window (which makes every morning ramp a false positive and hides real
+// off-peak dips). The slot is the bucket's (hour, 5-min minute); weekend is
+// grouped separately because traffic profiles differ. Reads service_summary_5m
+// (MV) with time-bound WHERE + LIMIT + max_execution_time. Returns fewer than
+// seasonalDays samples for new/sparse services; the caller falls back.
+func (d *Detector) fetchSeasonalBaseline(ctx context.Context, service, metric string, at time.Time) ([]float64, error) {
+	vexpr, err := metricValueExpr(metric)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := at.Add(-time.Duration(seasonalDays) * 24 * time.Hour)
+	hour := at.Hour()
+	minute := (at.Minute() / 5) * 5 // align to the 5-min bucket grid
+	weekend := 0
+	if wd := at.Weekday(); wd == time.Saturday || wd == time.Sunday {
+		weekend = 1
+	}
+	// toDayOfWeek: 1=Mon … 7=Sun in ClickHouse; weekend = (dow >= 6).
+	sql := fmt.Sprintf(`
+		SELECT toUnixTimestamp(time_bucket) AS t, %s AS v
+		FROM service_summary_5m
+		WHERE service_name = ?
+		  AND time_bucket >= ?
+		  AND toHour(time_bucket) = ?
+		  AND toMinute(time_bucket) = ?
+		  AND if(toDayOfWeek(time_bucket) >= 6, 1, 0) = ?
+		GROUP BY t
+		ORDER BY t
+		LIMIT 100
+		SETTINGS max_execution_time = 10`, vexpr)
+
+	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff, hour, minute, weekend)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []float64
+	for rows.Next() {
+		var t uint32
+		var v float64
+		if err := rows.Scan(&t, &v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// chooseBaseline prefers the seasonal same-slot samples when seasonal mode is
+// on AND there are enough of them; otherwise it falls back to the 24h
+// consecutive baseline (new / sparse service, or seasonal disabled).
+func chooseBaseline(seasonal, consecutive []float64) []float64 {
+	if seasonalBaseline && len(seasonal) >= seasonalMinSamples {
+		return seasonal
+	}
+	return consecutive
 }
 
 // medianMAD returns the median and the Median Absolute Deviation

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ const (
 	resolveZ      = 1.5            // and below this clears it
 	minSamples    = 12             // need at least this many baseline buckets
 	minMagnitude  = 0.5            // ignore micro-deltas (units depend on metric)
+	madScale      = 0.6745         // scales MAD to a normal-dist stdev (modified z-score)
 )
 
 // trackedMetrics is intentionally small: cardinality stays bounded
@@ -110,24 +112,31 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 	current := buckets[len(buckets)-1]
 	baseline := buckets[:len(buckets)-1]
 
-	mean, stdev := meanStdev(baseline)
-	if stdev < 1e-9 {
-		return // flat baseline → z-score undefined; skip
+	// Modified z-score (median + MAD) instead of mean + population stdev:
+	// both the mean and the population stdev are dragged by their OWN
+	// outliers, so a single contaminated baseline bucket (e.g. yesterday's
+	// spike) inflates the stdev and masks today's spike (z shrinks). Median
+	// + MAD are outlier-robust, so the baseline isn't poisoned by its own
+	// anomalies. madScale rescales MAD to a normal-dist sigma so openZ /
+	// resolveZ keep their σ meaning.
+	median, mad := medianMAD(baseline)
+	if mad < 1e-9 {
+		return // flat baseline → modified z-score undefined; skip
 	}
-	z := (current - mean) / stdev
+	z := madScale * (current - median) / mad
 	abs := math.Abs(z)
 
 	ruleID := "anomaly:" + service + ":" + metric
 	open, _ := d.store.FindOpenProblem(ctx, ruleID, service)
 	hasOpen := open != nil && open.ID != ""
 
-	if abs >= openZ && math.Abs(current-mean) >= minMagnitude {
+	if abs >= openZ && math.Abs(current-median) >= minMagnitude {
 		severity := "warning"
 		if abs >= 5 {
 			severity = "critical"
 		}
 		desc := fmt.Sprintf("%s anomaly on %s — current %.2f%s vs baseline %.2f%s (%.1fσ).",
-			displayMetric(metric), service, current, unitOf(metric), mean, unitOf(metric), z)
+			displayMetric(metric), service, current, unitOf(metric), median, unitOf(metric), z)
 		if hasOpen {
 			open.Value = current
 			open.Description = desc
@@ -144,7 +153,7 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 			Service:     service,
 			Metric:      metric,
 			Value:       current,
-			Threshold:   mean,
+			Threshold:   median,
 			Status:      "open",
 			Description: desc,
 			StartedAt:   time.Now().UnixNano(),
@@ -153,8 +162,8 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 			log.Printf("[anomaly] open %s: %v", ruleID, err)
 			return
 		}
-		log.Printf("[anomaly] OPENED %s · %s = %.2f%s (μ=%.2f σ=%.2f z=%.1f)",
-			service, metric, current, unitOf(metric), mean, stdev, z)
+		log.Printf("[anomaly] OPENED %s · %s = %.2f%s (med=%.2f mad=%.2f z=%.1f)",
+			service, metric, current, unitOf(metric), median, mad, z)
 		// Auto-attach to the active incident for this service+severity
 		// (same convention as evaluator-opened problems).
 		if _, err := d.store.AttachProblemToIncident(ctx, p); err != nil {
@@ -246,7 +255,38 @@ func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]
 	return out, rows.Err()
 }
 
+// medianMAD returns the median and the Median Absolute Deviation
+// (median of |x_i - median|) of xs — the outlier-robust analogue of
+// mean+stdev that the modified z-score in checkOne uses. MAD=0 when the
+// sample is empty or (near-)constant, mirroring meanStdev's stdev=0 case.
+func medianMAD(xs []float64) (median, mad float64) {
+	if len(xs) == 0 {
+		return 0, 0
+	}
+	median = medianOf(xs)
+	dev := make([]float64, len(xs))
+	for i, v := range xs {
+		dev[i] = math.Abs(v - median)
+	}
+	return median, medianOf(dev)
+}
+
+// medianOf returns the median of xs without mutating the caller's slice.
+func medianOf(xs []float64) float64 {
+	n := len(xs)
+	if n == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	if n%2 == 1 {
+		return s[n/2]
+	}
+	return (s[n/2-1] + s[n/2]) / 2
+}
+
 // meanStdev — population standard deviation. Stdev=0 when n<2.
+// Retained for callers other than checkOne (which now uses medianMAD).
 func meanStdev(xs []float64) (mean, stdev float64) {
 	if len(xs) == 0 {
 		return 0, 0

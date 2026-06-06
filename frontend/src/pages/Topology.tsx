@@ -8,7 +8,8 @@ import { useAuth } from '@/components/AuthProvider';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
-import { ServiceGraph } from '@/components/ServiceGraph';
+import { ServicePicker as TopoServicePicker } from '@/components/topology/ServicePicker';
+import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
 import { useUrlRange } from '@/lib/useUrlRange';
 import type {
   ServiceTopologyResponse, ServiceTopologyNode, ServiceTopologyEdge,
@@ -44,19 +45,36 @@ type TopologyView = {
 // v0.8.14 — topology rebuild Stage 3: /topology now renders the ONE canonical
 // OTel-native ServiceGraph (global scope). The previous multi-view page
 // (OldTopologyPage, below) is kept but unreachable until Stage 4 deletes it.
+// v0.8.x — PICKER-FIRST topology. At thousands of services the global graph is
+// an unreadable hairball; /topology now lands on a service PICKER (table) and
+// renders only the chosen service's focused neighborhood (callers + deps),
+// expandable by hops. focus/hops/errorsOnly ride the URL so views are shareable.
 export default function TopologyPage() {
   const [range, setRange] = useUrlRange('24h');
-  const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const focus = params.get('focus') ?? '';
+  const hops = params.get('hops') === '2' ? 2 : 1;
+  const errorsOnly = params.get('err') === '1';
+  const merge = (patch: Record<string, string | null>) => {
+    const next = new URLSearchParams(params);
+    for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
+    setParams(next);
+  };
   return (
     <>
       <Topbar title="Topology" range={range} onRangeChange={setRange} />
       <div id="content">
-        <ServiceGraph
-          scope="global"
-          range={range}
-          height={Math.round(window.innerHeight * 0.76)}
-          onSelectService={svc => nav(`/service?name=${encodeURIComponent(svc)}`)}
-        />
+        {focus ? (
+          <FocusedNeighborhood
+            range={range} focus={focus} hops={hops} errorsOnly={errorsOnly}
+            onHops={h => merge({ hops: String(h) })}
+            onErrorsOnly={v => merge({ err: v ? '1' : null })}
+            onRecenter={svc => merge({ focus: svc })}
+            onClear={() => merge({ focus: null, hops: null, err: null })}
+          />
+        ) : (
+          <TopoServicePicker range={range} onPick={svc => merge({ focus: svc })} />
+        )}
       </div>
     </>
   );

@@ -34,6 +34,7 @@ const (
 	openZ         = 3.0            // |z| above this opens an anomaly
 	resolveZ      = 1.5            // and below this clears it
 	criticalZ     = 5.0            // |z| above this escalates warning → critical
+	dwellBuckets  = 2              // consecutive buckets that must all fire to open (anti-flap)
 	minSamples    = 12             // need at least this many baseline buckets
 	madScale      = 0.6745         // scales MAD to a normal-dist stdev (modified z-score)
 	magnitudeEps  = 1e-9           // denominator guard for the relative-change floor
@@ -122,6 +123,36 @@ func resolvedFor(metric string, z float64) bool {
 	}
 }
 
+// evalWindow scores every bucket in the dwell window against the baseline's
+// median/MAD. It reports allOpen (every bucket fires AND in the SAME
+// direction — so a flapping spike→drop doesn't open), allResolved (every
+// bucket back inside the resolve band), and cur (the most-recent bucket's
+// verdict, which drives the reported severity/direction). Pure + store-free
+// so the dwell/M-of-N policy is unit-testable, and stateless so a leader
+// handoff loses no in-memory streak counter.
+func evalWindow(metric string, median, mad float64, window []float64) (allOpen, allResolved bool, cur anomalyDecision) {
+	if len(window) == 0 {
+		return false, false, anomalyDecision{}
+	}
+	allOpen, allResolved = true, true
+	dir := ""
+	for i, v := range window {
+		zv := madScale * (v - median) / mad
+		dv := decideAnomaly(metric, zv, v, median)
+		cur = dv
+		if i == 0 {
+			dir = dv.direction
+		}
+		if !dv.open || dv.direction != dir {
+			allOpen = false
+		}
+		if !resolvedFor(metric, zv) {
+			allResolved = false
+		}
+	}
+	return allOpen, allResolved, cur
+}
+
 type Detector struct {
 	store    *chstore.Store
 	interval time.Duration
@@ -185,20 +216,23 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 		log.Printf("[anomaly] %s/%s fetch: %v", service, metric, err)
 		return
 	}
-	if len(buckets) < minSamples+1 {
-		return // not enough history yet
+	if len(buckets) < minSamples+dwellBuckets {
+		return // not enough history + a full dwell window yet
 	}
-	// Last bucket is the "current"; everything before it is the baseline.
+	// Dwell / M-of-N anti-flap: judge the LAST dwellBuckets, not just the most
+	// recent one, so a single transient bucket can't flap a problem open/
+	// closed around the z threshold. The window is derived entirely from the
+	// fetched series → stateless, so a leader handoff loses no streak counter.
+	split := len(buckets) - dwellBuckets
+	baseline := buckets[:split]
+	window := buckets[split:]
 	current := buckets[len(buckets)-1]
-	baseline := buckets[:len(buckets)-1]
 
 	// Modified z-score (median + MAD) instead of mean + population stdev:
-	// both the mean and the population stdev are dragged by their OWN
-	// outliers, so a single contaminated baseline bucket (e.g. yesterday's
-	// spike) inflates the stdev and masks today's spike (z shrinks). Median
-	// + MAD are outlier-robust, so the baseline isn't poisoned by its own
-	// anomalies. madScale rescales MAD to a normal-dist sigma so openZ /
-	// resolveZ keep their σ meaning.
+	// both are dragged by their OWN outliers, so a single contaminated
+	// baseline bucket (yesterday's spike) inflates the stdev and masks
+	// today's spike. Median + MAD are outlier-robust; madScale rescales MAD
+	// to a normal-dist sigma so openZ / resolveZ keep their σ meaning.
 	median, mad := medianMAD(baseline)
 	if mad < 1e-9 {
 		return // flat baseline → modified z-score undefined; skip
@@ -209,11 +243,13 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 	open, _ := d.store.FindOpenProblem(ctx, ruleID, service)
 	hasOpen := open != nil && open.ID != ""
 
-	dec := decideAnomaly(metric, z, current, median)
-	if dec.open {
-		severity := dec.severity
-		desc := fmt.Sprintf("%s %s on %s — current %.2f%s vs baseline %.2f%s (%.1fσ).",
-			displayMetric(metric), dec.direction, service, current, unitOf(metric), median, unitOf(metric), z)
+	// Open only when ALL dwell buckets fire (same direction); resolve only
+	// when ALL are back inside the band. cur is the most-recent verdict.
+	allOpen, allResolved, cur := evalWindow(metric, median, mad, window)
+	if allOpen {
+		severity := cur.severity
+		desc := fmt.Sprintf("%s %s on %s — current %.2f%s vs baseline %.2f%s (%.1fσ, sustained %d buckets).",
+			displayMetric(metric), cur.direction, service, current, unitOf(metric), median, unitOf(metric), z, dwellBuckets)
 		if hasOpen {
 			open.Value = current
 			open.Description = desc
@@ -249,7 +285,7 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 		if d.notifier != nil {
 			go d.notifier.SendProblemAlert(context.Background(), p)
 		}
-	} else if hasOpen && resolvedFor(metric, z) {
+	} else if hasOpen && allResolved {
 		now := time.Now().UnixNano()
 		open.Status = "resolved"
 		open.ResolvedAt = &now

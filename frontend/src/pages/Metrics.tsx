@@ -12,6 +12,8 @@ import { EventMarkers } from '@/components/EventMarkers';
 import { DrillButton } from '@/components/DrillButton';
 import { ShareButton } from '@/components/ShareButton';
 import { Button } from '@/components/ui/Button';
+import { MetricPanel } from '@/components/MetricPanel';
+import { metricQuery, type MetricAgg, type MetricViz } from '@/lib/metricQuery';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { decodeRange } from '@/lib/urlState';
@@ -338,6 +340,35 @@ export default function MetricsPage() {
     toMs:   Math.floor(to / 1_000_000),
   }), [from, to]);
 
+  // "Every metric is a doorway" (Phase B demo) — the live builder state as a
+  // MetricQuery descriptor. This is the SAME object the MetricPanel turns into
+  // a deep link, so clicking the chart / picking Explore round-trips this exact
+  // query into the Explorer. The builder's agg set is a superset of the
+  // descriptor's; last/min/max have no spanmetrics analogue, so they project to
+  // avg for the doorway (the closest centre-of-mass agg the Explorer supports).
+  const panelMq = useMemo(() => {
+    const aggMap: Record<string, MetricAgg> = {
+      avg: 'avg', sum: 'sum', last: 'avg', min: 'avg', max: 'avg',
+      p50: 'p50', p95: 'p95', p99: 'p99',
+    };
+    const filterRecord: Record<string, string> = {};
+    if (service) filterRecord['service.name'] = service;
+    for (const f of filters) {
+      const v = f.v?.[0];
+      if (f.k && v != null && v !== '') filterRecord[f.k] = v;
+    }
+    return metricQuery({
+      source: 'spanmetrics',
+      metric: metric || 'metric',
+      agg: aggMap[agg] ?? 'avg',
+      filters: filterRecord,
+      groupBy: groupBy.length ? groupBy : undefined,
+      viz: 'line' as MetricViz,
+      step: step ? String(step) : undefined,
+      range,
+    });
+  }, [metric, agg, service, filters, groupBy, step, range]);
+
   return (
     <>
       <Topbar title="Metrics" range={range} onRangeChange={setRange} />
@@ -445,6 +476,12 @@ export default function MetricsPage() {
         )}
         {metric && series && series.length > 0 && (
           <>
+            {/* "Every metric is a doorway" Phase B demo — the chart card is
+                wrapped in the reusable MetricPanel affordance: title click /
+                body click / `e` → Explore, ⋮ menu for Explore/Edit/View
+                query/Copy link/Add to dashboard/Create alert. Same descriptor
+                draws here and re-opens in the Explorer. */}
+            <MetricPanel title={`${agg} of ${metric}`} metricQuery={panelMq}>
             <div style={{
               background: 'var(--bg1)', border: '1px solid var(--border)',
               borderRadius: 8, padding: 14,
@@ -588,6 +625,7 @@ export default function MetricsPage() {
                 )}
               </div>
             </div>
+            </MetricPanel>
 
             {groupBy.length > 0 && summary.length > 1 && (
               <div className="table-wrap" style={{ marginTop: 14 }}>

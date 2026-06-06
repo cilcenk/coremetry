@@ -93,6 +93,27 @@ export function decodeMetricQuery(s: string | null | undefined): MetricQuery | n
   }
 }
 
+// describeMetricQuery renders a read-only PromQL-style expression for the
+// descriptor — `agg(metric{filters}) [by (groupBy)]`. Display-only: the "View
+// query" affordance shows it so the operator can read/copy what a panel maps to
+// without learning Coremetry's internal DSL. NOT a parser input (the URL codec
+// is the lossless round-trip); this is the human-legible projection.
+export function describeMetricQuery(mq: MetricQuery): string {
+  // filters render as a `{k="v", …}` matcher block, keys sorted for a stable
+  // string (two panels with the same filter set read identically).
+  const filterEntries = Object.entries(mq.filters ?? {})
+    .filter(([, v]) => v !== '' && v != null)
+    .sort(([a], [b]) => a.localeCompare(b));
+  const matcher = filterEntries.length
+    ? `{${filterEntries.map(([k, v]) => `${k}="${v}"`).join(', ')}}`
+    : '';
+  const expr = `${mq.agg}(${mq.metric}${matcher})`;
+  const by = mq.groupBy && mq.groupBy.length
+    ? ` by (${mq.groupBy.join(', ')})`
+    : '';
+  return expr + by;
+}
+
 // metricExploreHref is the canonical "open this metric in the explorer" link.
 // The reusable panel affordance + every click-to-explore uses it; the Explorer
 // route decodes ?m= back into its builder.

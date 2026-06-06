@@ -232,8 +232,17 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           {/* edges */}
           <svg width={width + NODE_W} height={height + NODE_H} style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}>
             <defs>
-              <marker id="fn-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
-                <path d="M0,0 L8,4 L0,8 z" fill="context-stroke" />
+              {/* markerUnits=userSpaceOnUse → a constant ~9px arrowhead
+                  regardless of the edge stroke width (the SVG default
+                  "strokeWidth" units ballooned heads on busy edges). */}
+              <marker id="fn-arrow" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="context-stroke" />
+              </marker>
+              {/* highlighted edges switch their stroke to --accent, so their
+                  head needs a matching accent fill (context-stroke would
+                  follow the base colour). */}
+              <marker id="fn-arrow-hl" markerUnits="userSpaceOnUse" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+                <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)" />
               </marker>
             </defs>
             {nb.edges.map((e, i) => {
@@ -248,11 +257,13 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
               const isHl = hl?.edges.has(e);
               const dim = hl && !isHl;
               const stroke = isHl ? 'var(--accent)' : edgeToken(e.errorRate);
-              const w = Math.max(1, Math.log10(e.calls + 1)) * (isHl ? 1.8 : 1.2);
+              // Cap heavy edges so they stay readable (~3.4px before the
+              // hover bump), independent of the now-constant arrowhead.
+              const w = Math.min(3.4, Math.max(1, Math.log10(e.calls + 1) * 0.95)) * (isHl ? 1.5 : 1);
               return (
                 <g key={i} opacity={dim ? 0.28 : 1}>
                   <path d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`}
-                    fill="none" stroke={stroke} strokeWidth={w} markerEnd="url(#fn-arrow)" />
+                    fill="none" stroke={stroke} strokeWidth={w} markerEnd={`url(#${isHl ? 'fn-arrow-hl' : 'fn-arrow'})`} />
                   {isHl && (
                     <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4} textAnchor="middle"
                       style={{ fontSize: 9, fill: 'var(--text2)', fontFamily: 'ui-monospace, monospace' }}>

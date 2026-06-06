@@ -39,6 +39,22 @@
   --shadow-pop:    0 8px 24px rgba(0, 0, 0, .45);
   --shadow-sm:     0 1px 2px rgba(0, 0, 0, .25);
 
+  /* ── Design-system reconciliation (full-parity program, v0.8.33) ──────────
+     Additive tokens the design reference (design_handoff_coremetry_full/
+     src/coremetry.css) needs that the repo lacked. Repo naming is kept — we do
+     NOT fork in the design's Primer names; they map onto existing repo tokens:
+       --surface→--bg1  --surface-2→--bg1  --surface-3/--hover→--bg2  --bg→--bg0
+       --green→--ok  --amber→--warn  --red→--err  --primary→--accent
+       --text-2→--text2  --text-3→--text3 (faintest → --text-faint below)
+     Only the genuinely-missing levels are defined here, in both themes. */
+  --accent-bg:     #15243b;  /* soft solid accent fill — focus ring, selected-row rail, active chip (design --primary-bg) */
+  --accent-border: #1f3a5e;  /* accent hairline — selected-row / active border (design --primary-border) */
+  --text-faint:    #484f58;  /* 4th text level below --text3 — micro labels, disabled hints (design --text-faint) */
+  --shadow-md:     0 6px 20px rgba(0, 0, 0, .45);  /* drawers / popovers, between --shadow-sm and --shadow-pop */
+  --radius-sm: 6px;
+  --radius:    8px;
+  --radius-lg: 12px;
+
   color-scheme: dark;
 }
 
@@ -77,6 +93,12 @@
   --border-strong: #afb8c1;
   --shadow-pop:    0 8px 24px rgba(20, 30, 45, .14);
   --shadow-sm:     0 1px 2px rgba(20, 30, 45, .05);
+
+  /* design-system reconciliation (light) — see :root block for the mapping. */
+  --accent-bg:     #ddf4ff;  /* design --primary-bg (light) */
+  --accent-border: #b6e3ff;  /* design --primary-border (light) */
+  --text-faint:    #a9b1ba;  /* design --text-faint (light) */
+  --shadow-md:     0 4px 16px rgba(20, 30, 45, .08);
 
   color-scheme: light;
 }

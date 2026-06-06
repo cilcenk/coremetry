@@ -31,12 +31,20 @@ export interface MetricPanelProps {
   // inside a grid without MetricPanel imposing layout.
   className?: string;
   style?: React.CSSProperties;
+  // compact (v0.8.19, Phase C) — the affordance for panels that ALREADY own a
+  // title (a KPI tile's .ov-lab, a RED chart's .ov-card-h). Instead of the
+  // stacked title-header row, the ⋮ floats top-right over the panel
+  // (hover-revealed) and the body stays byte-identical — no extra label, no
+  // pushed-down layout. Body-click / `e` / the ⋮ menu still open Explore from
+  // the same descriptor. Default (false) keeps the full header used by
+  // Metrics.tsx.
+  compact?: boolean;
 }
 
 type MenuAction =
   | 'explore' | 'edit' | 'view' | 'copy' | 'dashboard' | 'alert';
 
-export function MetricPanel({ title, metricQuery: mq, children, className, style }: MetricPanelProps) {
+export function MetricPanel({ title, metricQuery: mq, children, className, style, compact = false }: MetricPanelProps) {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
@@ -127,6 +135,53 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
     explore();
   };
 
+  // The ⋮ overflow button + its dropdown. Shared by both layouts (header vs
+  // compact overlay) so the menu reads identically; only the positioning of the
+  // enclosing wrapper differs.
+  const overflow = (
+    <div ref={menuRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        aria-label="Panel menu"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onClick={() => setMenuOpen(o => !o)}
+        className="sec"
+        style={{
+          // Reveal on hover / focus-within / when open — Grafana-style.
+          opacity: hovered || menuOpen ? 1 : 0,
+          transition: 'opacity .12s ease',
+          width: 26, height: 24, padding: 0, lineHeight: '20px',
+          fontSize: 15, borderRadius: 'var(--radius-sm)',
+        }}
+        title="Panel actions"
+      >
+        ⋮
+      </button>
+
+      {menuOpen && (
+        <div
+          role="menu"
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: '100%', right: 0, marginTop: 4,
+            minWidth: 188, background: 'var(--bg2)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+            boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 60,
+          }}
+        >
+          <PanelMenuItem onClick={() => runAction('explore')}>⤢ Explore</PanelMenuItem>
+          <PanelMenuItem onClick={() => runAction('edit')}>✎ Edit</PanelMenuItem>
+          <PanelMenuItem onClick={() => runAction('view')}>⟨⟩ View query</PanelMenuItem>
+          <PanelMenuItem onClick={() => runAction('copy')}>⧉ Copy link</PanelMenuItem>
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 2px' }} />
+          <PanelMenuItem onClick={() => runAction('dashboard')}>▦ Add to dashboard</PanelMenuItem>
+          <PanelMenuItem onClick={() => runAction('alert')}>◔ Create alert</PanelMenuItem>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       ref={rootRef}
@@ -142,68 +197,43 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
       }}
       onKeyDown={onKeyDown}
     >
-      {/* Header row — title (click → Explore) + ⋮ overflow (hover-revealed). */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <button
-          type="button"
-          onClick={explore}
-          title={`Explore — ${describeMetricQuery(mq)} (press e)`}
-          style={{
-            background: 'transparent', border: 'none', padding: 0,
-            font: 'inherit', color: 'var(--text)', fontWeight: 600,
-            fontSize: 13, cursor: 'pointer', textAlign: 'left',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}
-          className="metric-panel-title"
-        >
-          {title}
-        </button>
-        <span style={{ flex: 1 }} />
-        {linkCopied && (
-          <span style={{ fontSize: 11, color: 'var(--ok)' }}>Copied</span>
-        )}
-        <div ref={menuRef} style={{ position: 'relative' }}>
+      {/* Header row — title (click → Explore) + ⋮ overflow (hover-revealed).
+          Suppressed in compact mode: the wrapped panel already owns its title,
+          so the doorway is just the floating ⋮ below + the body click. */}
+      {!compact && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <button
             type="button"
-            aria-label="Panel menu"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen(o => !o)}
-            className="sec"
+            onClick={explore}
+            title={`Explore — ${describeMetricQuery(mq)} (press e)`}
             style={{
-              // Reveal on hover / focus-within / when open — Grafana-style.
-              opacity: hovered || menuOpen ? 1 : 0,
-              transition: 'opacity .12s ease',
-              width: 26, height: 24, padding: 0, lineHeight: '20px',
-              fontSize: 15, borderRadius: 'var(--radius-sm)',
+              background: 'transparent', border: 'none', padding: 0,
+              font: 'inherit', color: 'var(--text)', fontWeight: 600,
+              fontSize: 13, cursor: 'pointer', textAlign: 'left',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
             }}
-            title="Panel actions"
+            className="metric-panel-title"
           >
-            ⋮
+            {title}
           </button>
-
-          {menuOpen && (
-            <div
-              role="menu"
-              onClick={e => e.stopPropagation()}
-              style={{
-                position: 'absolute', top: '100%', right: 0, marginTop: 4,
-                minWidth: 188, background: 'var(--bg2)',
-                border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-                boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 60,
-              }}
-            >
-              <PanelMenuItem onClick={() => runAction('explore')}>⤢ Explore</PanelMenuItem>
-              <PanelMenuItem onClick={() => runAction('edit')}>✎ Edit</PanelMenuItem>
-              <PanelMenuItem onClick={() => runAction('view')}>⟨⟩ View query</PanelMenuItem>
-              <PanelMenuItem onClick={() => runAction('copy')}>⧉ Copy link</PanelMenuItem>
-              <div style={{ height: 1, background: 'var(--border)', margin: '4px 2px' }} />
-              <PanelMenuItem onClick={() => runAction('dashboard')}>▦ Add to dashboard</PanelMenuItem>
-              <PanelMenuItem onClick={() => runAction('alert')}>◔ Create alert</PanelMenuItem>
-            </div>
+          <span style={{ flex: 1 }} />
+          {linkCopied && (
+            <span style={{ fontSize: 11, color: 'var(--ok)' }}>Copied</span>
           )}
+          {overflow}
         </div>
-      </div>
+      )}
+
+      {/* Compact overlay ⋮ — floats top-right OVER the panel so the wrapped
+          tile/chart keeps its own layout (no title row pushes it down). */}
+      {compact && (
+        <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+          {linkCopied && (
+            <span style={{ fontSize: 11, color: 'var(--ok)' }}>Copied</span>
+          )}
+          {overflow}
+        </div>
+      )}
 
       {/* Body — the chart/stat, rendered verbatim. Clicking it also Explores;
           children stop propagation themselves if they have own click targets. */}

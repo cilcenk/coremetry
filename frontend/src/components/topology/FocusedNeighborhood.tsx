@@ -50,6 +50,52 @@ function edgeToken(errRate: number): string {
   return errRate > 5 ? 'var(--err)' : errRate > 1 ? 'var(--warn)' : 'var(--text3)';
 }
 
+// assignFocusColumns — the signed-column assignment for the focused graph.
+// Returns id → column where 0 = focus, NEGATIVE = callers (upstream, reached
+// by walking IN edges) and POSITIVE = dependencies (downstream, OUT edges).
+//
+// The two directions are walked SEPARATELY and each step keeps its sign. A
+// single bidirectional BFS (the pre-v0.8.39 code) summed the ±1 steps along
+// the path, so a node reached as caller(-1) → that caller's OTHER dependency
+// (+1) landed at column 0 — piling every "sibling" of the focus into the
+// focus's own column. Against real data a 2-hop view dumped ~26 nodes at 0
+// (operator-reported "the graph won't branch at 2 hops"). Walking upstream
+// via IN-only and downstream via OUT-only keeps the fan: callers strictly
+// left, deps strictly right, and nothing but the focus at 0. A node reachable
+// both ways (a cycle) takes the side with the smaller hop distance.
+export function assignFocusColumns(edges: GraphEdge[], focus: string, hops: number): Map<string, number> {
+  const out = new Map<string, GraphEdge[]>(); // source → edges (downstream)
+  const inc = new Map<string, GraphEdge[]>(); // target → edges (upstream)
+  for (const e of edges) {
+    (out.get(e.source) ?? out.set(e.source, []).get(e.source)!).push(e);
+    (inc.get(e.target) ?? inc.set(e.target, []).get(e.target)!).push(e);
+  }
+  const col = new Map<string, number>([[focus, 0]]);
+  const setCloser = (id: string, v: number) => {
+    const c = col.get(id);
+    if (c === undefined || Math.abs(v) < Math.abs(c)) col.set(id, v);
+  };
+  // dir 0 = downstream (OUT edges, +hop); dir 1 = upstream (IN edges, -hop).
+  for (let dir = 0; dir < 2; dir++) {
+    const adj = dir === 0 ? out : inc;
+    const sign = dir === 0 ? 1 : -1;
+    const neighbour = dir === 0 ? (e: GraphEdge) => e.target : (e: GraphEdge) => e.source;
+    let frontier = [focus];
+    const seen = new Set([focus]); // per-direction so a cycle can reach both sides
+    for (let h = 1; h <= hops; h++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const e of adj.get(id) ?? []) {
+          const nb = neighbour(e);
+          if (!seen.has(nb)) { seen.add(nb); setCloser(nb, sign * h); next.push(nb); }
+        }
+      }
+      frontier = next;
+    }
+  }
+  return col;
+}
+
 interface Placed { node: GraphNode; col: number; x: number; y: number; }
 
 export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, onErrorsOnly, onRecenter, onClear }: {
@@ -74,23 +120,11 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
     const allNodes = new Map<string, GraphNode>();
     for (const n of graph.data?.nodes ?? []) allNodes.set(n.id, n);
     const edges = (graph.data?.edges ?? []).filter(e => !errorsOnly || e.errorRate > 1);
-    const out = new Map<string, GraphEdge[]>();   // source → edges
-    const inc = new Map<string, GraphEdge[]>();    // target → edges
-    for (const e of edges) {
-      (out.get(e.source) ?? out.set(e.source, []).get(e.source)!).push(e);
-      (inc.get(e.target) ?? inc.set(e.target, []).get(e.target)!).push(e);
-    }
-    // signed column: 0 = focus, negative = callers (upstream), positive = deps.
-    const col = new Map<string, number>([[focus, 0]]);
-    let frontier = [focus];
-    for (let h = 1; h <= hops; h++) {
-      const next: string[] = [];
-      for (const id of frontier) {
-        for (const e of out.get(id) ?? []) if (!col.has(e.target)) { col.set(e.target, (col.get(id) ?? 0) + 1); next.push(e.target); }
-        for (const e of inc.get(id) ?? []) if (!col.has(e.source)) { col.set(e.source, (col.get(id) ?? 0) - 1); next.push(e.source); }
-      }
-      frontier = next;
-    }
+    // Signed-column assignment — extracted + unit-tested (assignFocusColumns
+    // above). Walks callers (upstream) and deps (downstream) as SEPARATE
+    // directional BFS so a caller's other dependency no longer collapses onto
+    // the focus column (the pre-v0.8.39 "won't branch at 2 hops" bug).
+    const col = assignFocusColumns(edges, focus, hops);
     // cap: keep the nearest CAP nodes (lowest |col|, focus always kept).
     let ids = [...col.keys()];
     let collapsed = 0;
@@ -116,7 +150,15 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
   const { placed, posOf, width, height } = useMemo(() => {
     const cols = new Map<number, GraphNode[]>();
     for (const n of nb.nodes) {
-      const c = nb.col.get(n.id) ?? 0;
+      const c = nb.col.get(n.id);
+      if (c === undefined) {
+        // Invariant: every kept node was assigned a column by the directional
+        // BFS (nb.nodes derive from col.keys()). A miss means an id key-space
+        // regression — focus / edge.source / edge.target / node.id must all
+        // share ONE key space, else this silently piled nodes at column 0.
+        if (import.meta.env.DEV) console.error(`[topology] node "${n.id}" has no column — id key-space mismatch`);
+        continue;
+      }
       (cols.get(c) ?? cols.set(c, []).get(c)!).push(n);
     }
     const colKeys = [...cols.keys()].sort((a, b) => a - b);

@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
-import { Card, Badge, Row } from '@/components/ui';
+import { Card, Badge, Row, Button } from '@/components/ui';
 import { ClusterChips } from '@/components/ClusterChips';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { useAuth } from '@/components/AuthProvider';
@@ -127,11 +127,11 @@ function TraceOpsSection({ items, onMute, canEdit }: {
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
               <Link to={`/service?name=${encodeURIComponent(a.service)}`}
-                    style={{ fontFamily: 'monospace', color: 'var(--text)', textDecoration: 'none' }}>
+                    className="mono" style={{ color: 'var(--text)', textDecoration: 'none' }}>
                 {a.service}
               </Link>
-              {' · '}{fmtNum(a.currentErrors)} errors now
-              {a.baselineErrors > 0 && <> · {fmtNum(a.baselineErrors)} prev</>}
+              {' · '}<span className="mono">{fmtNum(a.currentErrors)}</span> errors now
+              {a.baselineErrors > 0 && <> · <span className="mono">{fmtNum(a.baselineErrors)}</span> prev</>}
             </div>
           </Card>
         ))}
@@ -149,17 +149,12 @@ function SnoozeButton({ onMute }: { onMute: (durationSec: number) => void }) {
     { label: '7 days', sec: 7 * 24 * 3600 },
   ];
   return (
-    <span style={{ position: 'relative' }}>
-      <button type="button"
+    <span style={{ position: 'relative', flexShrink: 0 }}>
+      <Button variant="ghost" size="sm"
         onClick={() => setOpen(o => !o)}
-        title="Mute this anomaly"
-        style={{
-          fontSize: 10, padding: '2px 8px', borderRadius: 3,
-          background: 'var(--bg3)', border: '1px solid var(--border)',
-          color: 'var(--text2)', cursor: 'pointer',
-        }}>
+        title="Mute this anomaly">
         Mute
-      </button>
+      </Button>
       {open && (
         <div style={{
           position: 'absolute', top: '100%', right: 0,
@@ -206,7 +201,7 @@ function MetricSection({ items }: { items: Problem[] | undefined }) {
               </Link>
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
-              {p.description || `value ${p.value.toFixed(2)} vs threshold ${p.threshold.toFixed(2)}`}
+              {p.description || <>value <span className="mono">{p.value.toFixed(2)}</span> vs threshold <span className="mono">{p.threshold.toFixed(2)}</span></>}
             </div>
           </Card>
         ))}
@@ -225,27 +220,26 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
   return (
     <div style={{
       background: 'var(--bg2)', border: '1px solid var(--border)',
-      borderRadius: 6, padding: '8px 12px', marginTop: 4, marginBottom: 12,
+      borderRadius: 8, padding: '10px 12px', marginTop: 4, marginBottom: 16,
       display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
     }}>
-      <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 600 }}>
-        Muted ({items.length})
+      <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700,
+                     textTransform: 'uppercase', letterSpacing: '.06em' }}>
+        Muted
+        <span className="mono" style={{ marginLeft: 6, color: 'var(--text3)', fontWeight: 600 }}>
+          {items.length}
+        </span>
       </span>
       {canEdit && items.length > 1 && (
-        <button type="button"
+        <Button variant="ghost" size="sm"
           onClick={() => {
             if (window.confirm(`Unmute all ${items.length} silences?`)) {
               onUnmuteAll(items.map(s => s.id));
             }
           }}
-          title="Unmute every active silence"
-          style={{
-            fontSize: 10, padding: '2px 6px',
-            background: 'transparent', border: '1px solid var(--border)',
-            borderRadius: 3, color: 'var(--text2)', cursor: 'pointer',
-          }}>
+          title="Unmute every active silence">
           Unmute all
-        </button>
+        </Button>
       )}
       {items.map(s => {
         const remaining = Math.max(0, s.untilAt / 1e6 - Date.now());
@@ -255,12 +249,7 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
             ? `${Math.floor(remaining / (3600 * 1000))}h`
             : `${Math.floor(remaining / 60000)}m`;
         return (
-          <span key={s.id} style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '2px 8px', borderRadius: 3, fontSize: 11,
-            background: 'var(--bg3)', border: '1px solid var(--border)',
-            fontFamily: 'monospace',
-          }}>
+          <span key={s.id} className="badge b-gray mono" style={{ fontWeight: 600 }}>
             <span title={`${s.kind} · ${s.pattern}`}>
               {s.pattern}
               {s.service && <span style={{ color: 'var(--text3)' }}> @ {s.service}</span>}
@@ -271,7 +260,7 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
                 title="Unmute now"
                 style={{
                   background: 'transparent', border: 'none', color: 'var(--text3)',
-                  cursor: 'pointer', padding: 0, fontSize: 11, lineHeight: 1,
+                  cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1,
                 }}>×</button>
             )}
           </span>
@@ -377,21 +366,35 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
     <div>
       {title && (
         <div style={{
-          fontSize: 12, fontWeight: 700, color: 'var(--err)',
+          fontSize: 11, fontWeight: 700, color: 'var(--err)',
+          textTransform: 'uppercase', letterSpacing: '.06em',
           marginBottom: 6,
         }}>{title}</div>
       )}
       <div className="table-wrap">
-        <table>
+        {/* table-layout:fixed + colgroup keeps the 8-column history table
+            inside the card (no horizontal scroll) while letting Pattern /
+            Service flex; numerics + timestamps get fixed mono columns. */}
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            <col style={{ width: 76 }} />
+            <col style={{ width: '24%' }} />
+            <col />
+            <col style={{ width: 80 }} />
+            <col style={{ width: 56 }} />
+            <col style={{ width: 134 }} />
+            <col style={{ width: 134 }} />
+            <col style={{ width: 44 }} />
+          </colgroup>
           <thead><tr>
-            <th style={{ width: 70 }}>Status</th>
+            <th>Status</th>
             <th>Pattern</th>
             <th>Service</th>
             <th>Kind</th>
-            <th className="num">Peak ×</th>
+            <th className="num">Peak&nbsp;×</th>
             <th>Started</th>
             <th>Last seen</th>
-            <th style={{ width: 70 }}>AI</th>
+            <th>AI</th>
           </tr></thead>
           <tbody>
             {rows.map(e => (
@@ -412,14 +415,15 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
                   containIntrinsicSize: 'auto 36px',
                 }}>
                 <td>
-                  <span className={`badge ${e.status === 'active' ? 'b-err' : 'b-ok'}`} style={{ fontSize: 10 }}>
+                  <span className={`badge ${e.status === 'active' ? 'b-err' : 'b-ok'}`}>
                     {e.status === 'active' ? 'ACTIVE' : 'CLEARED'}
                   </span>
                 </td>
-                <td style={{ fontWeight: 600 }}>{e.pattern}</td>
+                <td style={{ fontWeight: 600 }} title={e.pattern}>{e.pattern}</td>
                 <td>
                   <Link to={`/service?name=${encodeURIComponent(e.service)}`}
-                        style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                        className="mono" style={{ fontSize: 11.5 }}
+                        title={e.service || '—'}>
                     {e.service || '—'}
                   </Link>
                   <ClusterChips clusters={e.clusters} />
@@ -427,15 +431,17 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
                     <DeployChip d={e.recentDeploy} service={e.service} />
                   )}
                 </td>
-                <td style={{ fontSize: 11, color: 'var(--text2)' }}>
-                  {e.kind === 'log_pattern' ? 'log'
-                    : e.kind === 'elastic_ml' ? 'Elastic ML'
-                    : e.kind === 'log_template_new' ? 'new log shape'
-                    : 'trace op'}
+                <td>
+                  <span className="badge b-gray" style={{ fontSize: 10 }}>
+                    {e.kind === 'log_pattern' ? 'LOG'
+                      : e.kind === 'elastic_ml' ? 'ELASTIC ML'
+                      : e.kind === 'log_template_new' ? 'NEW SHAPE'
+                      : 'TRACE OP'}
+                  </span>
                 </td>
-                <td className="num mono">{e.peakRatio.toFixed(1)}</td>
+                <td className="num mono" style={{ fontWeight: 700 }}>{e.peakRatio.toFixed(1)}</td>
                 <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(e.startedAt)}</td>
-                <td className="mono" style={{ fontSize: 11 }}>{tsLong(e.lastSeen)}</td>
+                <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(e.lastSeen)}</td>
                 <td>
                   <CopilotExplain kind="anomaly" id={e.id} label="AI" />
                 </td>
@@ -495,10 +501,10 @@ function LogPatternsSection({ items, onMute, canEdit }: {
               {canEdit && <SnoozeButton onMute={d => onMute('log_pattern', a.pattern, a.service, d)} />}
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
-              <span style={{ fontFamily: 'monospace' }}>{a.service || 'unknown'}</span>
+              <span className="mono">{a.service || 'unknown'}</span>
               {' · '}
-              {fmtNum(a.currentCount)} now
-              {a.baselineCount > 0 && <> · {fmtNum(a.baselineCount)} prev</>}
+              <span className="mono">{fmtNum(a.currentCount)}</span> now
+              {a.baselineCount > 0 && <> · <span className="mono">{fmtNum(a.baselineCount)}</span> prev</>}
             </div>
             {a.sample && (
               <div style={{

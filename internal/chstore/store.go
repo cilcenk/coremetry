@@ -1336,6 +1336,74 @@ func (s *Store) migrate(ctx context.Context) error {
 		 FROM spans
 		 GROUP BY service_name, name, time_bucket`, apdexT, apdexT, apdex4T),
 
+		// spanmetrics_{1m,10s,1s}: "every metric is a doorway" multi-grain
+		// span-metrics rollups (v0.8.50, doorway Phase D). A SUPERSET of
+		// operation_summary_5m's dims — adds kind / status_code / http_route so
+		// the Metric Explorer can filter/group on any of them, at finer grains
+		// (the resolver reads the coarsest tier that satisfies the range/step).
+		// Native latency histogram via quantilesState; exemplars via
+		// argMax(State)/argMaxIfState(trace_id,…) so a bucket hands back a slow /
+		// errored trace_id ("click metric → see the trace"). Forward-only
+		// (combined MV+target): only spans inserted after creation roll in; the
+		// resolver falls back to operation_summary_5m / raw for older windows
+		// during cutover. 1s DROPS http_route to bound cardinality (route
+		// filters fall to the 10s tier). 1s TTL is ROW-LEVEL
+		// (time_bucket + INTERVAL 6 HOUR) — never toDate()+INTERVAL hours, the
+		// v0.6.36 unit-mixing trap.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_1m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, name, kind, status_code, http_route, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 30 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name, name, kind, status_code, http_route,
+		   toStartOfInterval(time, INTERVAL 1 MINUTE)      AS time_bucket,
+		   countState()                                    AS calls_state,
+		   countIfState(status_code = 'error')             AS error_state,
+		   sumState(duration)                              AS duration_sum_state,
+		   quantilesState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
+		 FROM spans
+		 GROUP BY service_name, name, kind, status_code, http_route, time_bucket`,
+
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_10s
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, name, kind, status_code, http_route, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 2 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name, name, kind, status_code, http_route,
+		   toStartOfInterval(time, INTERVAL 10 SECOND)     AS time_bucket,
+		   countState()                                    AS calls_state,
+		   countIfState(status_code = 'error')             AS error_state,
+		   sumState(duration)                              AS duration_sum_state,
+		   quantilesState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
+		 FROM spans
+		 GROUP BY service_name, name, kind, status_code, http_route, time_bucket`,
+
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS spanmetrics_1s
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, name, kind, status_code, time_bucket)
+		 TTL time_bucket + INTERVAL 6 HOUR
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name, name, kind, status_code,
+		   toStartOfInterval(time, INTERVAL 1 SECOND)      AS time_bucket,
+		   countState()                                    AS calls_state,
+		   countIfState(status_code = 'error')             AS error_state,
+		   sumState(duration)                              AS duration_sum_state,
+		   quantilesState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
+		 FROM spans
+		 GROUP BY service_name, name, kind, status_code, time_bucket`,
+
 		// trace_summary_1d: per-day distinct trace count via HLL.
 		// Lets /admin/stats history show traces-per-day without a
 		// uniqExact pass over billions of rows. uniqState writes a

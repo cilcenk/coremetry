@@ -253,6 +253,10 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 		step = metricAutoStep(q.From, q.To)
 	}
 
+	if q.Source == "tracemetrics" {
+		return s.resolveTraceMetric(ctx, q, step)
+	}
+
 	tier, useFine := selectMetricTier(q.From, q.To, step, s.spanmetricsCoverageStart(ctx), time.Now(), q.Filters, q.GroupBy)
 	if !useFine {
 		series, err := s.QuerySpanMetric(ctx, q.toSpanMetricFilter(step))

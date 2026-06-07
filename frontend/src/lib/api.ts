@@ -2,6 +2,7 @@ import type {
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
   LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, HistogramResult,
+  MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
   AlertRule, Problem, ServiceEdgeStats, Exception,
   Runbook, RunbookExecution,
@@ -19,6 +20,7 @@ import type {
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
 } from './types';
+import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
 // In dev, Next.js rewrites /api/* to http://localhost:8088 (see next.config.mjs).
@@ -1017,6 +1019,23 @@ export const api = {
 
   spanMetric: (params: SpanMetricParams) =>
     get<SpanMetricSeries[] | null>(`/api/spans/metric?${qs(params)}`),
+
+  // resolveMetric — "every metric is a doorway" D4. Resolves a MetricQuery
+  // descriptor server-side: the descriptor rides as ?m=<base64url(JSON)> (the
+  // SAME codec metricExploreHref uses for deep links) and the backend picks
+  // the spanmetrics tier / tracemetrics path. from/to are unix nanoseconds
+  // (RangeParams convention). Pass exemplars to get per-bucket slow/error
+  // trace_ids for "click a bucket → open the trace".
+  resolveMetric: (
+    mq: MetricQuery,
+    r: RangeParams,
+    opts?: { step?: number; exemplars?: boolean },
+  ) =>
+    get<MetricResolveResult | null>(
+      `/api/metrics/resolve?m=${encodeMetricQuery(mq)}&from=${r.from}&to=${r.to}` +
+        (opts?.step ? `&step=${opts.step}` : '') +
+        (opts?.exemplars ? `&exemplars=1` : ''),
+    ),
 
   // dashboardData — N panel requests in one HTTP round trip.
   // Server fans out to CH in parallel goroutines and returns

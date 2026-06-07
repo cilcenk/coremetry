@@ -1122,6 +1122,24 @@ export interface SpanMetricSeries {
   points: { time: number; value: number }[]; // time = unix nanoseconds
 }
 
+// v0.8.53 ("every metric is a doorway" D4) — result of server-side descriptor
+// resolution (/api/metrics/resolve). `tier` reports which store served it
+// (1s|10s|1m for spanmetrics, trace_summary_5m for tracemetrics, spans for the
+// dual-read fallback) so the UI can surface the resolution if it wants.
+export interface MetricExemplar {
+  time: number;                        // bucket start, unix nanoseconds
+  groupKey: string[];                  // matches the series it annotates
+  slowTraceId?: string;
+  errorTraceId?: string;
+}
+
+export interface MetricResolveResult {
+  series: SpanMetricSeries[];
+  tier: string;
+  stepSeconds: number;
+  exemplars?: MetricExemplar[];
+}
+
 // v0.6.56 — explicit OTel histogram over a window: shared bucket bounds,
 // one summed bucket-count vector per time bucket, and p50/p95/p99 estimated
 // from those vectors at read time. Drives the /metrics histogram heatmap

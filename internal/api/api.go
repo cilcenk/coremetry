@@ -464,6 +464,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
+	// v0.8.53 (doorway D4) — server-side descriptor resolution. A
+	// MetricQuery descriptor rides as ?m=<base64url(JSON)> (the same
+	// codec the frontend deep links use) and the resolver picks the
+	// spanmetrics tier / tracemetrics path, applies the formula, and
+	// returns series + optional exemplars. ONE place descriptor→CH.
+	mux.HandleFunc("GET /api/metrics/resolve", s.resolveMetric)
 	mux.HandleFunc("GET /api/metrics/histogram", s.getMetricHistogram)
 	// v0.5.350 — span-metrics-derived per-service RED. Lets
 	// operators whose collectors emit spanmetrics (traces.

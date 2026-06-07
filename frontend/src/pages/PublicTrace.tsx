@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
-import { TraceWaterfall } from '@/components/TraceWaterfall';
+import { WaterfallRows } from '@/components/traces/WaterfallRows';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { fmtNs, tsLong } from '@/lib/utils';
@@ -109,7 +109,7 @@ function PublicTraceInner() {
       ) : (
         <div id="td-outer">
           <div id="td-wf">
-            <TraceWaterfall spans={data.spans} selectedId={selectedId} onSelect={setSelectedId} />
+            <WaterfallRows spans={data.spans} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
           {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
         </div>

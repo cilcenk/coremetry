@@ -251,6 +251,29 @@ func (s *Store) ConnectedHosts() []string { return s.cfg.Hosts() }
 // own Ping so we don't expose the driver type to callers.
 func (s *Store) Ping(ctx context.Context) error { return s.conn.Ping(ctx) }
 
+// mvDDLByName returns the `CREATE MATERIALIZED VIEW IF NOT EXISTS <name>`
+// statement for `name` from a slice of DDL strings, matching the name exactly:
+// the character after the name must be whitespace or end-of-string so a query
+// for "spanmetrics_1" never matches "spanmetrics_1m"/"spanmetrics_1s". Returns
+// "" when absent. The drop+recreate upgrade migrations in migrate() use this
+// to reference MVs by name rather than positional index — immune to slice
+// reordering (v0.8.52 — doorway D1 shifted indices and silently broke the
+// db_summary_5m migration; name lookup removes the whole class of bug).
+func mvDDLByName(mvs []string, name string) string {
+	needle := "CREATE MATERIALIZED VIEW IF NOT EXISTS " + name
+	for _, q := range mvs {
+		i := strings.Index(q, needle)
+		if i < 0 {
+			continue
+		}
+		rest := q[i+len(needle):]
+		if rest == "" || rest[0] == ' ' || rest[0] == '\n' || rest[0] == '\t' || rest[0] == '\r' {
+			return q
+		}
+	}
+	return ""
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	sd, ld, md := s.ret.SpansDays, s.ret.LogsDays, s.ret.MetricsDays
 	if sd == 0 { sd = 30 }
@@ -1744,6 +1767,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		// Traces with no root span (orphans / Tempo-style
 		// partials) still get a service name from this fallback
 		// instead of rendering as "(unknown)".
+		//
+		// entry_route_state (v0.8.52, doorway D3) carries the root
+		// span's http.route — the trace's entry endpoint — via the
+		// same root-span argMaxIf predicate. It's the one field the
+		// §6 trace-level metrics table was missing: the tracemetrics
+		// source (D4) re-aggregates these per-trace rows by
+		// (root_service, entry_route) at read time for trace-level
+		// RED-by-endpoint without a second rollup.
 		`CREATE MATERIALIZED VIEW IF NOT EXISTS trace_summary_5m
 		 ENGINE = AggregatingMergeTree
 		 PARTITION BY toDate(time_bucket)
@@ -1760,7 +1791,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		   minState(time)                            AS trace_start_state,
 		   maxState(toUnixTimestamp64Nano(time) + duration) AS trace_end_state,
 		   countState()                              AS span_count_state,
-		   countIfState(status_code = 'error')       AS error_count_state
+		   countIfState(status_code = 'error')       AS error_count_state,
+		   argMaxIfState(http_route, time,
+		     (parent_id = '' OR parent_id = '0000000000000000') AND name != '') AS entry_route_state
 		 FROM spans
 		 GROUP BY trace_id, time_bucket`,
 
@@ -1828,6 +1861,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("create MV: %w", err)
 		}
 	}
+
+	// The drop+recreate upgrade migrations below reference MVs BY NAME (via
+	// mvDDLByName), not by positional index. v0.8.52: doorway D1 inserted three
+	// spanmetrics tiers near the top of mvs, which silently shifted the
+	// hardcoded db_summary_5m/db_caller_summary_5m indices (3/4 → 6/7) — a
+	// pre-v0.5.327 upgrade would have recreated the wrong MV. Name lookup
+	// removes the whole class of index-shift bug.
+	findMV := func(name string) string { return mvDDLByName(mvs, name) }
 	// Forward-compat: ClickHouse doesn't support ADD COLUMN on
 	// MaterializedView storage, so on an upgrade from a pre-apdex MV we
 	// detect the missing column and drop+recreate. The raw `spans` table
@@ -1859,8 +1900,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
 			return fmt.Errorf("drop old MV for upgrade: %w", err)
 		}
-		// Re-run the create (mvs[0] from above) now that the old one is gone.
-		if err := s.execDDL(ctx, mvs[0]); err != nil {
+		// Re-run the create now that the old one is gone.
+		if err := s.execDDL(ctx, findMV("service_summary_5m")); err != nil {
 			return fmt.Errorf("recreate MV with apdex: %w", err)
 		}
 	}
@@ -1873,31 +1914,61 @@ func (s *Store) migrate(ctx context.Context) error {
 	// definitions. Past 5-min buckets are dropped but only
 	// recent windows are operator-visible so the cost is hidden
 	// behind the next merge cycle (~5 min).
-	dbMigrations := []struct{ table string; mvIdx int }{
-		{"db_summary_5m", 3},
-		{"db_caller_summary_5m", 4},
-	}
-	for _, mig := range dbMigrations {
+	dbMigrations := []string{"db_summary_5m", "db_caller_summary_5m"}
+	for _, table := range dbMigrations {
 		var hasDBName uint8
 		probe := fmt.Sprintf(`
 			SELECT count() > 0
 			FROM system.columns
 			WHERE database = currentDatabase()
 			  AND table    = '%s'
-			  AND name     = 'db_name'`, mig.table)
+			  AND name     = 'db_name'`, table)
 		if err := s.conn.QueryRow(ctx, probe).Scan(&hasDBName); err == nil && hasDBName == 0 {
-			log.Printf("[chstore] upgrading %s MV (adding db_name dim) — past 5-min buckets will be dropped", mig.table)
-			dropTarget := mig.table
+			log.Printf("[chstore] upgrading %s MV (adding db_name dim) — past 5-min buckets will be dropped", table)
+			dropTarget := table
 			if s.clusterMode() {
-				dropTarget = mig.table + "_local"
+				dropTarget = table + "_local"
 			}
 			// v0.5.436 — SYNC; see apdex upgrade above.
 			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
-				return fmt.Errorf("drop old %s for upgrade: %w", mig.table, err)
+				return fmt.Errorf("drop old %s for upgrade: %w", table, err)
 			}
-			if err := s.execDDL(ctx, mvs[mig.mvIdx]); err != nil {
-				return fmt.Errorf("recreate %s with db_name: %w", mig.table, err)
+			if err := s.execDDL(ctx, findMV(table)); err != nil {
+				return fmt.Errorf("recreate %s with db_name: %w", table, err)
 			}
+		}
+	}
+
+	// v0.8.52 (doorway D3) — trace_summary_5m gained entry_route_state (the
+	// root span's http.route) so the tracemetrics source can break trace-level
+	// RED down by entry endpoint. Same drop+recreate shape as apdex/db_name
+	// above (CH can't ADD COLUMN to MaterializedView storage). NOTE: on a
+	// running install the column can be added non-destructively in-place —
+	// ALTER the .inner_id.<uuid> storage table then `ALTER TABLE
+	// trace_summary_5m MODIFY QUERY ...` — which preserves the 90d of per-trace
+	// history; this codified path is the robust, cluster-safe (_local +
+	// ON CLUSTER + SYNC) fallback that repopulates forward from raw spans. The
+	// guard no-ops when the column is already present, so an install migrated
+	// in-place keeps its history.
+	var hasEntryRoute uint8
+	entryRouteProbe := `
+		SELECT count() > 0
+		FROM system.columns
+		WHERE database = currentDatabase()
+		  AND table    = 'trace_summary_5m'
+		  AND name     = 'entry_route_state'`
+	if err := s.conn.QueryRow(ctx, entryRouteProbe).Scan(&hasEntryRoute); err == nil && hasEntryRoute == 0 {
+		log.Println("[chstore] upgrading trace_summary_5m MV (adding entry_route_state) — past 5-min buckets will be dropped")
+		dropTarget := "trace_summary_5m"
+		if s.clusterMode() {
+			dropTarget = "trace_summary_5m_local"
+		}
+		// v0.5.436 — SYNC; see apdex upgrade above.
+		if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
+			return fmt.Errorf("drop old trace_summary_5m for upgrade: %w", err)
+		}
+		if err := s.execDDL(ctx, findMV("trace_summary_5m")); err != nil {
+			return fmt.Errorf("recreate trace_summary_5m with entry_route: %w", err)
 		}
 	}
 

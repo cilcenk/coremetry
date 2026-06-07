@@ -383,11 +383,16 @@ export function MultiLineChart({
           // v0.5.366 — operator-reported: picking a multi-day
           // range made uPlot drop to month-only labels on the
           // x-axis, hiding the time-of-day signal. Force a
-          // single explicit formatter that always shows both
-          // date and time so the operator never loses the
-          // intra-day shape. Narrow windows still read cleanly
-          // because the same MM-DD HH:MM works at any zoom.
+          // single explicit formatter that always shows the
+          // time (+ the date on day boundaries) so the operator
+          // never loses the intra-day shape at any zoom.
           values: (_u, splits) => fmtXTicks(splits),
+          // v0.8.58 — min px between ticks so uPlot thins the
+          // tick COUNT to the chart width. Without it, uPlot's
+          // ~50px default packed the wide date+time labels so
+          // tightly they overlapped on multi-day ranges
+          // (operator-reported: "zamanlar üst üste biniyor").
+          space: 70,
         },
         {
           stroke: text3,

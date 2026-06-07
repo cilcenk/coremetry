@@ -19,6 +19,11 @@
 #   - javaDemo on, so there's live traffic to look at.
 #   - logs.backend=clickhouse (chart default) — no Elasticsearch pod.
 
+# Local HA: 3 monolithic replicas (leader-locked workers via Redis). Requires a
+# SHARED jwtSecret below — otherwise each pod mints an ephemeral key and auth
+# flaps across the load balancer (see memory feedback-multipod-needs-shared-jwtsecret).
+replicaCount: 3
+
 image:
   registry: "ghcr.io"
   repository: "cilcenk/coremetry"
@@ -57,7 +62,7 @@ resources:
 
 secrets:
   initialAdminPassword: "admin"   # matches the compose dev creds
-  jwtSecret: ""                   # ephemeral key — fine for local
+  jwtSecret: "5b2f9c1e8a47d3066f1b4e9c2a7d50e3c8916b4af20d7e35198ca6b0f4d2371e"   # LOCAL DEV ONLY — fixed so all replicas share one signing key (multi-pod auth). Use secrets.existingSecret in prod.
 
 clickhouse:
   enabled: true

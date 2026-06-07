@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -27,6 +28,19 @@ type Store struct {
 	// (evaluator, anomaly, monitor) don't need to thread it
 	// through their constructors.
 	neighborProvider NeighborProvider
+
+	// smCov caches the earliest available time_bucket across the
+	// spanmetrics_{1s,10s,1m} rollups (v0.8.51, doorway D2). This is
+	// the forward-only "cutover floor" — the MVs only roll spans
+	// inserted after their creation — and also the TTL floor as old
+	// partitions drop. ResolveMetricQuery consults it to decide
+	// whether a window is fully covered by the fine-grain tiers or
+	// must dual-read the operation_summary_5m / raw fallback for the
+	// portion predating cutover. Probed at most once per smCovTTL so
+	// a chart render doesn't run min(time_bucket) every time.
+	smCovMu  sync.RWMutex
+	smCovAt  time.Time // when smCovVal was last probed
+	smCovVal time.Time // earliest available spanmetrics bucket
 }
 
 func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {

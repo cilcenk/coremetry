@@ -42,6 +42,7 @@ import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { MiniWaterfall } from '@/components/traces/MiniWaterfall';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, QuickChip, svcColor, fmtDur } from '@/components/traces/shared';
+import { Sparkline } from '@/components/Sparkline';
 
 // Attribute keys offered by the "+ Add filter" menu. Each appends a FilterExpr
 // to advFilters (server-narrowing + URL-reflected). Mirrors the OTel semconv
@@ -130,6 +131,57 @@ function HeaderStat({ label, value, tone }: { label: string; value: string; tone
         fontVariantNumeric: 'tabular-nums', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       }}>{value}</span>
       <span style={{ fontSize: 9, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
+    </div>
+  );
+}
+
+// FilteredRed — the compact "RED · CURRENT FILTER" strip (prototype dual-
+// histogram final decision). Scoped to the FILTERED rows (matches the table
+// exactly); a Rate / Errors / Duration-p99 toggle drives a small sparkline +
+// the current value + min/max/avg. Demoted from a 2nd tall histogram to this
+// ~64px strip so it reads as a number, not a hero chart (the Volume/Latency
+// card above owns the time axis + brush).
+function FilteredRed({ rows }: { rows: TraceRow[] }) {
+  const [metric, setMetric] = useState<'rate' | 'errors' | 'p99'>('rate');
+  const { series, cur, lo, hi, avg, color } = useMemo(() => {
+    const N = 40;
+    if (rows.length === 0) return { series: [] as number[], cur: 0, lo: 0, hi: 0, avg: 0, color: 'var(--accent)' };
+    let minT = Infinity, maxT = -Infinity;
+    for (const r of rows) { if (r.startTime < minT) minT = r.startTime; if (r.startTime > maxT) maxT = r.startTime; }
+    const span = Math.max(1, maxT - minT);
+    const bucketSec = (span / N) / 1e9;
+    const buckets = Array.from({ length: N }, () => ({ count: 0, err: 0, durs: [] as number[] }));
+    for (const r of rows) {
+      let b = Math.floor(((r.startTime - minT) / span) * N);
+      if (b < 0) b = 0; if (b >= N) b = N - 1;
+      buckets[b].count++; if (r.hasError) buckets[b].err++; buckets[b].durs.push(r.durationMs);
+    }
+    const q99 = (xs: number[]) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * 0.99))]; };
+    const s = metric === 'rate' ? buckets.map(b => bucketSec > 0 ? b.count / bucketSec : b.count)
+      : metric === 'errors' ? buckets.map(b => b.err)
+        : buckets.map(b => q99(b.durs));
+    const nz = s.filter(v => v > 0);
+    return {
+      series: s, color: metric === 'rate' ? 'var(--accent)' : metric === 'errors' ? 'var(--err)' : 'var(--orange)',
+      cur: s.length ? s[s.length - 1] : 0,
+      lo: nz.length ? Math.min(...nz) : 0,
+      hi: s.length ? Math.max(...s) : 0,
+      avg: s.length ? s.reduce((a, b) => a + b, 0) / s.length : 0,
+    };
+  }, [rows, metric]);
+  const fmt = (v: number) => metric === 'p99' ? fmtDur(v) : metric === 'rate' ? v.toFixed(1) + '/s' : fmtNum(Math.round(v));
+  return (
+    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 12px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>RED · current filter</span>
+      <div className="segmented">
+        <button className={metric === 'rate' ? 'active' : ''} onClick={() => setMetric('rate')}>Rate</button>
+        <button className={metric === 'errors' ? 'active' : ''} onClick={() => setMetric('errors')}>Errors</button>
+        <button className={metric === 'p99' ? 'active' : ''} onClick={() => setMetric('p99')}>Duration p99</button>
+      </div>
+      <span className="mono" style={{ fontSize: 18, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums' }}>{fmt(cur)}</span>
+      <Sparkline values={series} width={170} height={38} color={color} unit={metric === 'p99' ? 'ms' : undefined} />
+      <span className="mono" style={{ fontSize: 10.5, color: 'var(--text3)' }}>min {fmt(lo)} · max {fmt(hi)} · avg {fmt(avg)}</span>
+      <span style={{ marginLeft: 'auto', fontSize: 10.5, color: 'var(--text3)' }}>matches the table's filter exactly</span>
     </div>
   );
 }
@@ -478,6 +530,7 @@ function TracesPageInner() {
                 <LatencyScatter rows={displayRows} onOpen={openTrace} onBrush={applyBrush} />
               </div>
             )}
+            {data !== undefined && <FilteredRed rows={displayRows} />}
           </>
         )}
 

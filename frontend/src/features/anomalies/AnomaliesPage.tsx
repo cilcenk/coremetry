@@ -19,6 +19,7 @@ import { fmtNum, tsLong } from '@/lib/utils';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
 } from '@/lib/types';
+import { ProblemDetail } from './ProblemDetail';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -104,6 +105,8 @@ export default function ProblemsPage() {
     const fp = searchParams.get('exception');
     return new Set(fp ? [fp] : []);
   });
+  // Selected group for the full in-page detail view (null = list).
+  const [detail, setDetail] = useState<ExceptionGroup | null>(null);
 
   // Exception groups inbox — separate query because it depends
   // on tab + service filter; couldn't be folded into the shared
@@ -195,6 +198,23 @@ export default function ProblemsPage() {
     });
   };
 
+  // Full in-page exception-group detail (prototype design-parity). Clicking a
+  // row opens it; back returns to this list. Caret still toggles the inline
+  // quick-peek (SamplesPanel) so both affordances coexist.
+  if (detail) {
+    return (
+      <>
+        <Topbar title="Problems" />
+        <ProblemDetail
+          group={detail}
+          isAdmin={isAdmin}
+          onBack={() => setDetail(null)}
+          onChanged={() => { refreshExceptionGroups(); qc.invalidateQueries({ queryKey: keys.anomalies.all }); }}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <Topbar title="Problems" />
@@ -275,22 +295,23 @@ export default function ProblemsPage() {
                   const open = expanded.has(g.fingerprint);
                   return (
                     <Fragment key={g.fingerprint}>
-                      <tr onClick={() => toggleExpand(g.fingerprint)}
+                      <tr onClick={() => setDetail(g)}
                         onKeyDown={(e) => {
-                          // Keyboard accessibility — pre-v0.4.79 the row
-                          // was mouse-only. Screen-reader + keyboard
-                          // users couldn't expand a group. Enter/Space
-                          // now toggles the same way as a click.
+                          // Enter/Space opens the full detail (keyboard parity
+                          // with the click). The caret cell handles the inline
+                          // quick-peek separately.
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            toggleExpand(g.fingerprint);
+                            setDetail(g);
                           }
                         }}
                         tabIndex={0}
                         role="button"
                         aria-expanded={open}
                         style={{ cursor: 'pointer' }}>
-                        <td style={{ color: 'var(--text3)', textAlign: 'center' }}>
+                        <td style={{ color: 'var(--text3)', textAlign: 'center', cursor: 'pointer' }}
+                          title={open ? 'Hide occurrences' : 'Peek occurrences'}
+                          onClick={e => { e.stopPropagation(); toggleExpand(g.fingerprint); }}>
                           {open
                             ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
                             : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}

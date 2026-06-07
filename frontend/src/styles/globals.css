@@ -1552,6 +1552,12 @@ canvas { max-width: 100%; }
 .ud-pill { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg0); font-size: 12.5px; font-weight: 600; text-decoration: none; color: inherit; }
 .ud-pill:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .ud-pill .mult { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--text3); font-weight: 500; }
+/* .volbars — compact occurrence/volume histogram (Problem detail occurrences
+   over time). Bars align to the bottom; each column's <i> height is set inline
+   ∝ count, tinted by token (spike vs baseline). */
+.volbars { display: flex; align-items: flex-end; gap: 2px; }
+.volbars .col { flex: 1; display: flex; flex-direction: column-reverse; min-width: 0; }
+.volbars .col i { display: block; border-radius: 1px 1px 0 0; }
 
 /* Instances */
 .ov-inst { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); }

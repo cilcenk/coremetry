@@ -139,10 +139,11 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         </div>
       </div>
 
-      {/* Stack trace (left) · Sample traces (right) */}
+      {/* Stack trace (left) · Sample traces (right). minWidth:0 on the columns
+          so the long Java stack frames don't force the left column past 1.4fr. */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16 }}>
         {/* Stack trace */}
-        <div className="card">
+        <div className="card" style={{ minWidth: 0 }}>
           <div className="ov-card-h">
             <h3>Stack trace</h3>
             <span className="ov-sub">representative sample</span>
@@ -158,7 +159,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
                 {samplesQ.isLoading ? 'Loading…' : 'No stack trace on the sampled occurrences.'}
               </div>
             ) : (
-              <pre className="mono" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+              <pre className="mono" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.7, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                 {stackLines.map((l, i) => (
                   <div key={i} style={{ color: i === 0 ? 'var(--err)' : 'var(--text2)' }}>{l}</div>
                 ))}
@@ -168,7 +169,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         </div>
 
         {/* Sample traces */}
-        <div className="card">
+        <div className="card" style={{ minWidth: 0 }}>
           <div className="ov-card-h"><h3>Sample traces</h3>{samples.length > 0 && <span className="ov-sub">{samples.length}</span>}</div>
           <div className="table-wrap">
             <table>

@@ -27,8 +27,8 @@ const CAP = 40;
 // per-service hue; infra kinds map to existing tokens (no new hex).
 function kindStripe(n: GraphNode): string {
   switch (n.kind) {
-    case 'database': return 'var(--info)';
-    case 'queue':    return 'var(--accent2)';
+    case 'database': return 'var(--teal)';
+    case 'queue':    return 'var(--purple)';
     case 'external': return 'var(--text3)';
     case 'internal': return 'var(--text3)';
     default:         return svcColor(n.name);
@@ -47,7 +47,7 @@ function fmtMs(ms: number): string {
 }
 // edge colour by error rate — faint healthy, amber >1%, red >5%.
 function edgeToken(errRate: number): string {
-  return errRate > 5 ? 'var(--err)' : errRate > 1 ? 'var(--warn)' : 'var(--text3)';
+  return errRate > 5 ? 'var(--err)' : errRate > 1 ? 'var(--warn)' : 'var(--border-strong)';
 }
 
 // assignFocusColumns — the signed-column assignment for the focused graph.
@@ -256,7 +256,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
         </span>
         <span style={{ marginLeft: 'auto', pointerEvents: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10, fontSize: 11, color: 'var(--text3)' }}>
           <span style={{ display: 'inline-flex', gap: 6 }}>
-            <Kind c={svcColor(focus)} l="service" /><Kind c="var(--info)" l="db" /><Kind c="var(--accent2)" l="queue" />
+            <Kind c={svcColor(focus)} l="service" /><Kind c="var(--teal)" l="db" /><Kind c="var(--purple)" l="queue" />
           </span>
           <span className="seg">
             <button onClick={() => zoomBy(1 / 1.2)}>−</button>

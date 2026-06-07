@@ -12,7 +12,7 @@ export type MetricSource = 'spanmetrics' | 'tracemetrics';
 export type MetricAgg =
   | 'rate' | 'count' | 'sum' | 'avg'
   | 'p50' | 'p90' | 'p95' | 'p99'
-  | 'error_rate';
+  | 'error_rate' | 'errors';
 export type MetricUnit = 'rps' | 'ms' | '%' | 'count';
 export type MetricViz = 'line' | 'area' | 'bar' | 'stat' | 'heatmap' | 'topN';
 

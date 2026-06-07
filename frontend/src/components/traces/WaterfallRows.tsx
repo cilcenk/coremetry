@@ -35,22 +35,24 @@ function spanType(s: SpanRow): SpanType | null {
   return null;
 }
 
-// Per-type tint, built from existing tokens via color-mix (no new hex).
+// Per-type colour — exact prototype mapping (trace.jsx .wf-cat): HTTP=accent,
+// RPC=muted text, DB=teal, MQ=purple. Token-only; no new hex.
 const TYPE_TOKEN: Record<SpanType, string> = {
-  HTTP: '--info',
-  RPC: '--accent',
-  DB: '--warn',
-  MQ: '--ok',
+  HTTP: '--accent',
+  RPC: '--text3',
+  DB: '--teal',
+  MQ: '--purple',
 };
 
 function TypeTag({ t }: { t: SpanType }) {
   const tok = `var(${TYPE_TOKEN[t]})`;
   return (
     <span style={{
-      fontSize: 10, fontWeight: 700, letterSpacing: '0.3px',
+      fontSize: 9, fontWeight: 700, letterSpacing: '0.6px',
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      textTransform: 'uppercase', padding: '0 5px', borderRadius: 4, lineHeight: 1.5,
-      background: `color-mix(in srgb, ${tok} 16%, transparent)`,
+      textTransform: 'uppercase', padding: '0 5px', borderRadius: 3, lineHeight: 1.6,
+      background: 'transparent',
+      border: `1px solid color-mix(in srgb, ${tok} 45%, var(--border))`,
       color: tok, flexShrink: 0,
     }}>{t}</span>
   );
@@ -182,15 +184,16 @@ export function WaterfallRows({ spans, selectedId, onSelect, criticalPathIds, ma
                   {span.serviceName || 'unknown'}
                 </span>
                 {t && <TypeTag t={t} />}
-                <span className="mono" style={{ color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                <span className="mono" style={{ color: err ? 'var(--err)' : 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
                   title={displaySpanName(span)}>{displaySpanName(span)}</span>
+                {err && <span style={{ color: 'var(--err)', fontSize: 11, flexShrink: 0, lineHeight: 1 }}>●</span>}
               </div>
 
               {/* time track */}
               <div style={{ position: 'relative', height: ROW_H }}>
                 <div style={{
                   position: 'absolute', top: '50%', transform: 'translateY(-50%)',
-                  left: `${left}%`, width: `${width}%`, height: 12, borderRadius: 3,
+                  left: `${left}%`, width: `${width}%`, height: 12, borderRadius: 2,
                   background: color,
                   opacity: critOn && !onCrit ? 0.62 : 1,
                   // critical path → 2px red inset on the bar's left edge;
@@ -231,7 +234,7 @@ export function WaterfallRows({ spans, selectedId, onSelect, criticalPathIds, ma
         fontSize: 10, color: 'var(--text3)', flexWrap: 'wrap',
       }}>
         {(['HTTP', 'RPC', 'DB', 'MQ'] as SpanType[]).map(t => <TypeTag key={t} t={t} />)}
-        <span style={{ marginLeft: 4 }}>Bars colored by service · the red edge marks the critical path.</span>
+        <span style={{ marginLeft: 4 }}>Service-colored bars · red left edge = critical path · click a span for detail.</span>
       </div>
     </div>
   );

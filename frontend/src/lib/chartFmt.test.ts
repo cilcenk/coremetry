@@ -1,5 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { fmtSmart, niceTickValues } from './chartFmt';
+import { fmtSmart, niceTickValues, fmtXTicks } from './chartFmt';
+
+// v0.8.58 — fmtXTicks regression (operator-reported: multi-day metric x-axis
+// labels overlapped). Same-day ranges stay HH:MM; multi-day ranges keep HH:MM
+// on every tick and add the MM-DD prefix ONLY where the day changes — so the
+// wide label appears once per day boundary instead of on every tick.
+describe('fmtXTicks — compact time-axis labels', () => {
+  const at = (iso: string) => Math.floor(Date.parse(iso) / 1000); // unix seconds
+
+  it('same-day range → HH:MM on every tick (no date)', () => {
+    const splits = [at('2026-06-07T09:00:00'), at('2026-06-07T09:30:00'), at('2026-06-07T10:00:00')];
+    const out = fmtXTicks(splits);
+    expect(out.every(s => /^\d{2}:\d{2}$/.test(s))).toBe(true);
+  });
+
+  it('multi-day range → MM-DD prefix ONLY on the first tick of each day', () => {
+    const splits = [
+      at('2026-06-06T22:00:00'), // day boundary (first tick) → dated
+      at('2026-06-06T23:00:00'), // same day → HH:MM
+      at('2026-06-07T00:00:00'), // new day → dated
+      at('2026-06-07T01:00:00'), // same day → HH:MM
+    ];
+    const out = fmtXTicks(splits);
+    const dated = out.filter(s => /^\d{2}-\d{2} /.test(s));
+    expect(dated.length).toBe(2);               // exactly the two day-boundary ticks
+    expect(/^\d{2}:\d{2}$/.test(out[1])).toBe(true); // intra-day stays narrow
+    expect(/^\d{2}:\d{2}$/.test(out[3])).toBe(true);
+    expect(out[2].startsWith('06-07')).toBe(true);    // the new-day tick is dated
+  });
+
+  it('empty splits → empty', () => {
+    expect(fmtXTicks([])).toEqual([]);
+  });
+});
 
 // v0.7.25 — fmtSmart is the single unit-aware formatter every axis tick,
 // tooltip and KPI tile shares. It branches on unit (ms/s/%/B/throughput/count)

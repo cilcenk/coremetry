@@ -134,15 +134,17 @@ export function seriesColor(label: string): string {
   return PALETTE[Math.abs(h) % PALETTE.length];
 }
 
-// fmtXTicks — shared time-axis label formatter for uPlot
-// charts. v0.5.380 fix: take the SPLITS array (full list of
-// tick timestamps uPlot picked) and choose a label format
-// scaled to the window:
-//   • single-day spans → HH:MM only (no calendar redundancy)
-//   • multi-day spans  → MM-DD HH:MM
-// Pre-fix used a fixed MM-DD HH:MM per label, which collided
-// horizontally on narrow charts where uPlot expected shorter
-// labels (operator-reported: "tarihler üst üste").
+// fmtXTicks — shared time-axis label formatter for uPlot charts. Takes the
+// SPLITS array (the tick timestamps uPlot picked) and formats them compactly:
+//   • single-day spans → HH:MM on every tick
+//   • multi-day spans  → HH:MM, with the MM-DD prefix ONLY on the first tick
+//     of each new day
+// v0.8.58 refines the v0.5.380 fix: that one stamped MM-DD HH:MM on EVERY
+// multi-day label, so on a 2-day+ range the wide labels still collided
+// horizontally (operator-reported: "metriklerin zamanları üst üste biniyor").
+// Showing the date only when the day changes keeps every label narrow (mostly
+// HH:MM) while still marking day boundaries — pair it with a min `space` on the
+// axis so uPlot also thins the tick count to the available width.
 export function fmtXTicks(splits: number[]): string[] {
   if (splits.length === 0) return [];
   const first = splits[0];
@@ -150,11 +152,15 @@ export function fmtXTicks(splits: number[]): string[] {
   const sameDay = splits.length > 1
     ? new Date(first * 1000).toDateString() === new Date(last * 1000).toDateString()
     : true;
-  return splits.map(s => {
+  return splits.map((s, i) => {
     const d = new Date(s * 1000);
     const hh = String(d.getHours()).padStart(2, '0');
     const mi = String(d.getMinutes()).padStart(2, '0');
-    if (sameDay) return `${hh}:${mi}`;
+    const hm = `${hh}:${mi}`;
+    if (sameDay) return hm;
+    const prev = i > 0 ? new Date(splits[i - 1] * 1000) : null;
+    const dayChanged = !prev || prev.toDateString() !== d.toDateString();
+    if (!dayChanged) return hm;
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${mm}-${dd} ${hh}:${mi}`;

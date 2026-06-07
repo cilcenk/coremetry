@@ -1516,6 +1516,23 @@ canvas { max-width: 100%; }
 .ov-node .ov-edge-stat { margin-left: auto; text-align: right; font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text3); line-height: 1.3; }
 .ov-flow svg.ov-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
 
+/* Upstream / downstream neighbors card (prototype design-parity) — the flat
+   two-column list that replaced the in-page service-flow map on the Overview.
+   No wires, no center node; pure-CSS hover ring. Values mapped 1:1 from the
+   prototype's coremetry.css .nbr-* rules onto the real tokens. */
+.nbr-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+@media (max-width: 760px) { .nbr-cols { grid-template-columns: 1fr; } }
+.nbr-col { display: flex; flex-direction: column; gap: 9px; }
+.nbr-col-lab { font-size: 11px; letter-spacing: .6px; color: var(--text2); font-weight: 700; text-transform: uppercase; }
+.nbr-col-sub { font-size: 11px; color: var(--text3); margin: -5px 0 4px; }
+.nbr-node { border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); padding: 10px 12px; display: flex; align-items: center; gap: 10px; transition: border-color .12s, box-shadow .12s; }
+.nbr-node:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.nbr-node .nbr-id { min-width: 0; }
+.nbr-node .nbr-nm { font-weight: 600; font-size: 12.5px; }
+.nbr-node .nbr-st { font-size: 10.5px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.nbr-node .nbr-edge { margin-left: auto; text-align: right; font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text3); line-height: 1.3; flex: none; }
+.nbr-empty { font-size: 11.5px; color: var(--text3); padding: 6px 2px; }
+
 /* Instances */
 .ov-inst { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); }
 .ov-inst + .ov-inst { margin-top: 9px; }

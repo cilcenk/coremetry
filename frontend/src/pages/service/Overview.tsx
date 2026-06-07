@@ -9,6 +9,7 @@ import { ServiceFlow } from './ServiceFlow';
 import { OpsCard, DbCard } from './OverviewTables';
 import { ServiceInstancesCard } from './ServiceInstancesCard';
 import { MetricPanel } from '@/components/MetricPanel';
+import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
 import { metricQuery, type MetricQuery } from '@/lib/metricQuery';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
@@ -194,6 +195,33 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
     const latest = ds.reduce((a, b) => (b.timeUnixNs > a.timeUnixNs ? b : a));
     return { sec: latest.timeUnixNs / 1e9, label: latest.version };
   }, [deploysQ.data, from, to]);
+  const deployMarkers = useMemo<DeployMarker[]>(() =>
+    (deploysQ.data ?? [])
+      .filter(d => d.timeUnixNs >= from && d.timeUnixNs <= to)
+      .map(d => ({ timeUnixNs: d.timeUnixNs, label: d.version })),
+  [deploysQ.data, from, to]);
+
+  // Trace-level RED by entry endpoint — the FIRST consumer of the server-side
+  // resolver (doorway D5, v0.8.54). Unlike the span p99 above (per-span), this
+  // is END-TO-END trace duration, resolved from trace_summary_5m's
+  // entry_route_state and split by entry http.route. The descriptor IS the
+  // doorway: the panel carries it to the Explorer like the RED charts do.
+  const entryTraceMq = useMemo(() => metricQuery({
+    source: 'tracemetrics', metric: 'traces_total', agg: 'p99', unit: 'ms',
+    filters: { 'service.name': service }, groupBy: ['http.route'], viz: 'line', range,
+  }), [service, range]);
+  const entryTraceQ = useQuery({
+    queryKey: ['service-entry-trace-p99', service, from, to],
+    queryFn: () => api.resolveMetric(entryTraceMq, { from, to }),
+    enabled: !!service,
+    staleTime: 30_000,
+  });
+  // Only series with an actual entry route + data — a pure backend service (no
+  // HTTP roots) yields none, and the whole panel is hidden rather than showing
+  // an empty box.
+  const entryTraceSeries = useMemo<SpanMetricSeries[]>(() =>
+    (entryTraceQ.data?.series ?? []).filter(s => (s.groupKey[0] ?? '') !== '' && (s.points?.length ?? 0) > 0),
+  [entryTraceQ.data]);
 
   // Throughput stacked-area bands (OK vs Errors) derived from the MV-backed
   // rate + error_rate series — no extra query, no raw-spans scan (invariant
@@ -273,6 +301,27 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
           ]} />
         </MetricPanel>
       </div>
+
+      {/* Trace latency by entry endpoint (doorway D5) — trace-level p99 split
+          by entry http.route, resolved server-side from trace_summary_5m.
+          Hidden for pure backend services (no HTTP entry routes). */}
+      {entryTraceSeries.length > 0 && (
+        <div className="ov-mb">
+          <MetricPanel compact title="Trace latency by entry endpoint · P99" metricQuery={entryTraceMq}>
+            <div className="card">
+              <div className="ov-card-h">
+                <h3>Trace latency by entry endpoint · P99</h3>
+                {entryTraceQ.data?.tier && (
+                  <span className="ov-sub">end-to-end · via {entryTraceQ.data.tier}</span>
+                )}
+              </div>
+              <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
+                <MultiLineChart series={entryTraceSeries} unit="ms" height={180} deploys={deployMarkers} />
+              </div>
+            </div>
+          </MetricPanel>
+        </div>
+      )}
 
       {/* Service flow — 1-hop request-path map (callers → svc → deps) */}
       <ServiceFlow service={service} range={range} from={from} to={to} />

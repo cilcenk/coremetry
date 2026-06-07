@@ -34,10 +34,28 @@ public class LoadGenerator {
     @Value("${demo.self-base-url:http://localhost:8080}")
     private String baseUrl;
 
-    public LoadGenerator(RestTemplate http) { this.http = http; }
+    private final DemoLoad load;
 
+    public LoadGenerator(RestTemplate http, DemoLoad load) {
+        this.http = http;
+        this.load = load;
+    }
+
+    /**
+     * Fires every base tick, but how MANY scenarios it drives is governed by
+     * the load model's burst count — so the traffic genuinely thins out
+     * overnight, ramps to the mid-morning peak, and bursts during incidents
+     * instead of running at a flat fixed delay.
+     */
     @Scheduled(fixedDelayString = "${demo.scenario-delay-ms:300}")
     public void runScenario() {
+        int burst = load.burstCount();
+        for (int i = 0; i < burst; i++) {
+            fireOne();
+        }
+    }
+
+    private void fireOne() {
         int pick = ThreadLocalRandom.current().nextInt(100);
         try {
             if (pick < 50)        balanceInquiry();   // 50% — most common

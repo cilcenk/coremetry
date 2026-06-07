@@ -1,6 +1,7 @@
 package com.coremetry.demo.controller;
 
 import com.coremetry.demo.exception.CoreBankingException;
+import com.coremetry.demo.service.DemoLoad;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -24,6 +25,12 @@ import java.util.concurrent.ThreadLocalRandom;
 public class FraudController {
     private static final Logger log = LoggerFactory.getLogger(FraudController.class);
 
+    private final DemoLoad load;
+
+    public FraudController(DemoLoad load) {
+        this.load = load;
+    }
+
     @PostMapping("/score")
     public Map<String, Object> score(@RequestBody Map<String, Object> body)
             throws InterruptedException {
@@ -32,15 +39,17 @@ public class FraudController {
                 ? 0.0 : ((Number) body.get("amount")).doubleValue();
         String channel = String.valueOf(body.getOrDefault("channel", "TRANSFER"));
 
-        // Scoring "model" latency.
-        Thread.sleep(ThreadLocalRandom.current().nextInt(8, 45));
+        // Right-skewed model-scoring latency (~15ms median), stretched under
+        // load so the fraud hop slows with everything else during an incident.
+        Thread.sleep(load.sampleMs(15, 45));
 
         // Heuristic score: large amounts + card channel skew higher.
         int score = baseScore(amount, channel);
         MDC.put("fraud.score", Integer.toString(score));
         try {
-            // ~3% the rules engine times out talking to its Oracle feature store.
-            if (ThreadLocalRandom.current().nextInt(100) < 3) {
+            // ~3% the rules engine times out talking to its Oracle feature
+            // store — more often during a degradation incident.
+            if (load.roll(3)) {
                 CoreBankingException ex = new CoreBankingException("ORA-12170",
                         "TNS:Connect timeout reading fraud feature store");
                 log.error("fraud feature-store unavailable from={} amount={}",

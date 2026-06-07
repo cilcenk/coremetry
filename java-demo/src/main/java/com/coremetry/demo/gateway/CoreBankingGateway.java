@@ -5,6 +5,7 @@ import com.coremetry.demo.model.Account;
 import com.coremetry.demo.model.Transaction;
 import com.coremetry.demo.repository.AccountRepository;
 import com.coremetry.demo.repository.TransactionRepository;
+import com.coremetry.demo.service.DemoLoad;
 
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
@@ -74,11 +75,14 @@ public class CoreBankingGateway {
 
     private final AccountRepository accounts;
     private final TransactionRepository transactions;
+    private final DemoLoad load;
     private final Tracer tracer;
 
-    public CoreBankingGateway(AccountRepository accounts, TransactionRepository transactions) {
+    public CoreBankingGateway(AccountRepository accounts, TransactionRepository transactions,
+                              DemoLoad load) {
         this.accounts = accounts;
         this.transactions = transactions;
+        this.load = load;
         // Resolves to the javaagent-installed TracerProvider at runtime.
         this.tracer = GlobalOpenTelemetry.getTracer("com.coremetry.demo.corebank", "1.0.0");
     }
@@ -181,12 +185,10 @@ public class CoreBankingGateway {
     }
 
     private void simulateRoundTripLatency() {
-        try {
-            // 4–22ms — a warm Oracle on the same DC LAN.
-            Thread.sleep(ThreadLocalRandom.current().nextInt(4, 22));
-        } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt();
-        }
+        // Right-skewed (log-normal) round-trip — a warm Oracle on the same DC
+        // LAN sits around ~6ms with a tail to ~40ms, and the whole curve
+        // stretches under load / during a contention incident.
+        load.sleepLogNormal(6, 22);
     }
 
     /**
@@ -196,14 +198,17 @@ public class CoreBankingGateway {
      */
     private void maybeInjectOracleFault(Span span, String table) {
         int roll = ThreadLocalRandom.current().nextInt(1000);
-        if (roll < 20) {
+        // Base ~2% deadlock / ~1% TNS timeout, lifted during an incident so
+        // Oracle faults cluster with the latency rise instead of trickling.
+        int bump = (int) (load.errorBump() * 400); // up to ~+100 per-mille
+        if (roll < 20 + bump) {
             CoreBankingException ex = new CoreBankingException("ORA-00060",
                     "deadlock detected while waiting for resource on " + table);
             span.recordException(ex);
             span.setStatus(StatusCode.ERROR, "ORA-00060 deadlock");
             log.error("core-banking deadlock table={} host={}", table, CB_HOST, ex);
             throw ex;
-        } else if (roll < 30) {
+        } else if (roll < 30 + bump) {
             CoreBankingException ex = new CoreBankingException("ORA-12170",
                     "TNS:Connect timeout occurred talking to " + CB_HOST + ":" + CB_PORT);
             span.recordException(ex);

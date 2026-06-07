@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	mrand "math/rand/v2"
 	"net/http"
 	"os"
@@ -461,7 +462,7 @@ func scenarioBalanceInquiry() *Trace {
 func scenarioLogin() *Trace {
 	t := NewTrace()
 	totalDur := dur(80, 220)
-	authFail := mrand.IntN(100) < 8 // 8% bad credential
+	authFail := rollFail(8) // ~8% bad credential, more during incidents
 	status := iff(authFail, 401, 200)
 	cust := custID()
 	M.RecordHTTP("api-gateway", "POST", "/api/v1/auth/login", status, ms(totalDur))
@@ -540,10 +541,10 @@ func scenarioTransfer() *Trace {
 	amt := amount(10, 5000)
 	currency := ccy()
 
-	// Failure mode: ~3% insufficient funds, ~2% fraud blocked.
-	roll := mrand.IntN(100)
-	insufficient := roll < 3
-	fraudBlocked := roll >= 3 && roll < 5
+	// Failure mode: ~3% insufficient funds, ~2% fraud blocked — both rise
+	// during an incident via the load model's error bump.
+	insufficient := rollFail(3)
+	fraudBlocked := !insufficient && rollFail(2)
 	failed := insufficient || fraudBlocked
 	httpStatus := iff(failed, 422, 201)
 
@@ -720,9 +721,8 @@ func scenarioCardPayment() *Trace {
 	merchant := pick("AMZ MKTPLACE", "TESCO STORES 4471", "SHELL OIL 9921",
 		"UBER *TRIP", "NETFLIX.COM", "STEAM GAMES")
 
-	roll := mrand.IntN(100)
-	insufficient := roll < 4
-	fraudBlocked := roll >= 4 && roll < 7
+	insufficient := rollFail(4)
+	fraudBlocked := !insufficient && rollFail(3)
 	declined := insufficient || fraudBlocked
 	authStatus := iff(declined, 402, 200)
 
@@ -819,7 +819,7 @@ func scenarioBillPay() *Trace {
 	biller := pick("BRITISH GAS", "THAMES WATER", "VODAFONE UK", "COUNCIL TAX LBTH",
 		"SKY BROADBAND", "TV LICENSING")
 
-	insufficient := mrand.IntN(100) < 5
+	insufficient := rollFail(5)
 	httpStatus := iff(insufficient, 422, 201)
 	M.RecordHTTP("api-gateway", "POST", "/api/v1/billpay", httpStatus, ms(totalDur))
 	M.RecordDB("billpay-service", "oracle", "SELECT", ms(totalDur)*0.3)
@@ -1076,7 +1076,7 @@ func scenarioTransferEvent() *Trace {
 			"http.status_code", 202, "peer.service", "sendgrid"), true, "")
 
 	// SMS branch (parallel)
-	smsFail := mrand.IntN(100) < 4
+	smsFail := rollFail(4)
 	smsDur := dur(50, 140)
 	t.Add("notification-service", "sms-service/Send", tracepb.Span_SPAN_KIND_CLIENT,
 		notifSpan, 8*time.Millisecond, smsDur,
@@ -1188,10 +1188,11 @@ type metricsState struct {
 }
 
 type histogramAgg struct {
-	count uint64
-	sum   float64
-	min   float64
-	max   float64
+	count   uint64
+	sum     float64
+	min     float64
+	max     float64
+	buckets []uint64 // per-bucket counts over latencyBounds (len+1)
 }
 
 func (h *histogramAgg) record(v float64) {
@@ -1203,6 +1204,19 @@ func (h *histogramAgg) record(v float64) {
 	}
 	h.count++
 	h.sum += v
+	if h.buckets == nil {
+		h.buckets = make([]uint64, len(latencyBounds)+1)
+	}
+	h.buckets[bucketIndex(v)]++
+}
+
+// bucketsOrZero returns the bucket counts, allocating an all-zero slice if
+// the aggregate never recorded a value (keeps the OTLP point well-formed).
+func (h *histogramAgg) bucketsOrZero() []uint64 {
+	if h.buckets == nil {
+		return make([]uint64, len(latencyBounds)+1)
+	}
+	return h.buckets
 }
 
 var M = &metricsState{
@@ -1283,6 +1297,8 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		httpDurByService[k.service] = append(httpDurByService[k.service], &metricspb.HistogramDataPoint{
 			StartTimeUnixNano: startNs, TimeUnixNano: nowNs,
 			Count: h.count, Sum: &sum, Min: &mn, Max: &mx,
+			BucketCounts:   h.bucketsOrZero(),
+			ExplicitBounds: latencyBounds,
 			Attributes: []*commonpb.KeyValue{
 				kvStr("http.method", k.method),
 				kvStr("http.route", k.route),
@@ -1325,7 +1341,9 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		dbDurByService[k.service] = append(dbDurByService[k.service], &metricspb.HistogramDataPoint{
 			StartTimeUnixNano: startNs, TimeUnixNano: nowNs,
 			Count: h.count, Sum: &sum, Min: &mn, Max: &mx,
-			Attributes: []*commonpb.KeyValue{kvStr("db.system", k.system), kvStr("db.operation", k.op)},
+			BucketCounts:   h.bucketsOrZero(),
+			ExplicitBounds: latencyBounds,
+			Attributes:     []*commonpb.KeyValue{kvStr("db.system", k.system), kvStr("db.operation", k.op)},
 		})
 	}
 	for svc, dps := range dbReqByService {
@@ -1390,47 +1408,100 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		})
 	}
 
-	// ── System / runtime gauges (per backend service) ─────────────────────────
+	// ── System / runtime + saturation gauges (per backend service) ────────────
+	// Everything here is correlated with the live load factor so that, at the
+	// morning peak or during an incident, CPU, memory, in-flight + queued
+	// requests, connection-pool usage, GC pauses and Kafka consumer lag all
+	// climb together — the saturation signature an operator expects — while
+	// cache hit-ratio dips. Factors are read once per flush.
+	lf := L.latencyFactor()
+	rf := L.rateFactor()
+
+	gaugeI := func(svc, name, unit, desc string, v int64) {
+		addMetric(svc, &metricspb.Metric{
+			Name: name, Unit: unit, Description: desc,
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
+				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
+					Value: &metricspb.NumberDataPoint_AsInt{AsInt: v}}},
+			}},
+		})
+	}
+	gaugeD := func(svc, name, unit, desc string, v float64) {
+		addMetric(svc, &metricspb.Metric{
+			Name: name, Unit: unit, Description: desc,
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
+				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
+					Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: v}}},
+			}},
+		})
+	}
+	clamp := func(v, lo, hi float64) float64 {
+		if v < lo {
+			return lo
+		}
+		if v > hi {
+			return hi
+		}
+		return v
+	}
+
 	for svcKey := range services {
 		if svcKey == "mobile-bff" {
 			continue
 		}
-		addMetric(svcKey, &metricspb.Metric{
-			Name: "process.runtime.memory.rss", Unit: "By",
-			Description: "Process resident memory size",
-			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
-				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
-					Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: float64(280_000_000 + mrand.IntN(180_000_000))},
-				}},
-			}},
-		})
-		addMetric(svcKey, &metricspb.Metric{
-			Name: "process.runtime.cpu.utilization", Unit: "1",
-			Description: "Process CPU utilization",
-			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
-				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
-					Value: &metricspb.NumberDataPoint_AsDouble{AsDouble: 0.05 + mrand.Float64()*0.45},
-				}},
-			}},
-		})
-		addMetric(svcKey, &metricspb.Metric{
-			Name: "process.runtime.goroutines", Unit: "1",
-			Description: "Number of goroutines",
-			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
-				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
-					Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(20 + mrand.IntN(180))},
-				}},
-			}},
-		})
-		addMetric(svcKey, &metricspb.Metric{
-			Name: "http.server.active_requests", Unit: "1",
-			Description: "Currently active HTTP server requests",
-			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
-				DataPoints: []*metricspb.NumberDataPoint{{TimeUnixNano: nowNs,
-					Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(2 + mrand.IntN(40))},
-				}},
-			}},
-		})
+		s := services[svcKey]
+
+		// Resident memory: per-service baseline that grows with load and
+		// balloons under a GC / contention incident (lf).
+		rss := (300_000_000.0 + 140_000_000.0*rf) * (0.85 + 0.35*lf) * (0.9 + 0.2*mrand.Float64())
+		gaugeD(svcKey, "process.runtime.memory.rss", "By", "Process resident memory size", rss)
+
+		// Process + host CPU utilisation track load and incident pressure.
+		cpu := clamp((0.08+0.30*rf)*(0.7+0.6*lf)*(0.85+0.3*mrand.Float64()), 0.02, 0.99)
+		gaugeD(svcKey, "process.runtime.cpu.utilization", "1", "Process CPU utilization", cpu)
+		gaugeD(svcKey, "system.cpu.utilization", "1", "Host CPU utilization",
+			clamp(cpu*(0.8+0.3*mrand.Float64())+0.05, 0.02, 0.99))
+		gaugeD(svcKey, "system.memory.utilization", "1", "Host memory utilization",
+			clamp(0.45+0.25*rf+0.1*mrand.Float64(), 0.1, 0.97))
+
+		// Goroutines / worker threads in flight scale with concurrency.
+		gaugeI(svcKey, "process.runtime.goroutines", "1", "Number of goroutines / worker threads",
+			int64(clamp(24+160*rf*(0.6+0.5*lf), 4, 4000)))
+
+		// Active + queued requests: the queue builds when latency (lf) rises
+		// faster than capacity — the classic saturation tell.
+		active := int64(clamp(2+34*rf, 0, 500))
+		gaugeI(svcKey, "http.server.active_requests", "1", "Currently active HTTP server requests", active)
+		gaugeI(svcKey, "http.server.queued_requests", "1", "Requests waiting for a worker",
+			int64(clamp(float64(active)*(lf-1)*1.5, 0, 800)))
+
+		// DB connection pool: usage approaches the cap under load, so the
+		// pool-saturation panel actually moves.
+		poolUse := clamp(6+34*rf*(0.7+0.5*lf), 0, 50)
+		gaugeI(svcKey, "db.client.connections.usage", "{connection}", "Connections in use from the pool", int64(poolUse))
+		gaugeI(svcKey, "db.client.connections.max", "{connection}", "Max pool size", 50)
+		gaugeD(svcKey, "db.client.connections.utilization", "1", "Pool utilization (usage/max)", poolUse/50.0)
+
+		// GC pause: small in steady state, large during a gc-pause-storm
+		// incident (lf high). Emitted only for GC-managed runtimes.
+		if gcManaged(s.Lang) {
+			gaugeD(svcKey, "process.runtime.gc.pause", "ms", "Most recent GC pause duration",
+				(1.5+3.5*mrand.Float64())*lf*lf)
+		}
+
+		// Cache hit-ratio for Redis-backed services: ~0.97 normally, dips
+		// when a dependency-degraded incident cold-starts the cache.
+		if redisBackedServices[svcKey] {
+			gaugeD(svcKey, "cache.hit_ratio", "1", "Cache hit ratio",
+				clamp(0.97-0.12*(lf-1)-0.02*mrand.Float64(), 0.4, 0.999))
+		}
+
+		// Kafka consumer lag for consumer services: backs up under load and
+		// during incidents, drains otherwise.
+		if kafkaConsumerServices[svcKey] {
+			gaugeI(svcKey, "messaging.kafka.consumer.lag", "{message}", "Consumer group lag",
+				int64(clamp(20+400*(rf-0.5)+1500*(lf-1), 0, 50000)))
+		}
 	}
 
 	// ── Banking domain metrics ────────────────────────────────────────────────
@@ -1469,7 +1540,7 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 
 	// payment latency histogram — folds the transfer + card-payment
 	// HTTP server durations into a single payment-path distribution.
-	payLat := &histogramAgg{}
+	payLat := &histogramAgg{buckets: make([]uint64, len(latencyBounds)+1)}
 	for k, h := range m.httpDuration {
 		if k.service != "transfer-service" && k.service != "card-service" {
 			continue
@@ -1482,6 +1553,9 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		}
 		payLat.count += h.count
 		payLat.sum += h.sum
+		for i, b := range h.bucketsOrZero() {
+			payLat.buckets[i] += b
+		}
 	}
 	if payLat.count > 0 {
 		psum, pmn, pmx := payLat.sum, payLat.min, payLat.max
@@ -1493,6 +1567,8 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 				DataPoints: []*metricspb.HistogramDataPoint{{
 					StartTimeUnixNano: startNs, TimeUnixNano: nowNs,
 					Count: payLat.count, Sum: &psum, Min: &pmn, Max: &pmx,
+					BucketCounts:   payLat.buckets,
+					ExplicitBounds: latencyBounds,
 				}},
 			}},
 		})
@@ -1601,27 +1677,40 @@ func main() {
 
 	var wg sync.WaitGroup
 
+	// ── Load / incident model ────────────────────────────────────────────────
+	// Drives the diurnal traffic curve, organic micro-spikes, and the
+	// transient incidents that make latency + error rate move together.
+	go L.run(ctx)
+
 	// ── Continuous CPU profiling ─────────────────────────────────────────────
 	// Capture a 5-second CPU profile every 10 seconds and push it.
 	wg.Add(1)
 	go runProfileLoop(ctx, &wg)
 
-	// Trace generator
+	// Trace generator — the inter-arrival gap is recomputed every iteration
+	// from the configured -rps scaled by the live diurnal/spike rate factor,
+	// with exponential jitter so arrivals look Poisson-ish rather than
+	// metronomic. The demo therefore genuinely slows overnight, surges at
+	// the morning peak, and bursts during incidents.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		interval := time.Duration(float64(time.Second) / *rps)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
 		count := 0
 		var mu sync.Mutex
 
-		// counter logger
+		// counter logger — also surfaces the live rate factor + any active
+		// incident so the console narrates what the data is doing.
 		go func() {
 			for range time.Tick(10 * time.Second) {
 				mu.Lock()
-				log.Printf("[stats] sent %d traces", count)
+				c := count
 				mu.Unlock()
+				inc := L.incidentLabel()
+				if inc == "" {
+					inc = "none"
+				}
+				log.Printf("[stats] sent %d traces | rate x%.2f | latency x%.2f | incident: %s",
+					c, L.rateFactor(), L.latencyFactor(), inc)
 			}
 		}()
 
@@ -1629,20 +1718,40 @@ func main() {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
-				name, fn := pickScenario()
-				t := fn()
-				if err := t.Send(); err != nil {
-					log.Printf("[trace] send error: %v", err)
-					continue
-				}
-				// Send a log for some traces
+			default:
+			}
+
+			name, fn := pickScenario()
+			t := fn()
+			if err := t.Send(); err == nil {
 				if mrand.IntN(3) == 0 {
 					sendScenarioLog(name, t)
 				}
 				mu.Lock()
 				count++
 				mu.Unlock()
+			} else {
+				log.Printf("[trace] send error: %v", err)
+			}
+
+			// Effective scenarios/sec = configured rps × live load factor.
+			rate := *rps * L.rateFactor()
+			if rate < 0.05 {
+				rate = 0.05
+			}
+			// Exponential inter-arrival (Poisson process) around the mean gap.
+			mean := float64(time.Second) / rate
+			u := mrand.Float64()
+			if u < 1e-9 {
+				u = 1e-9
+			}
+			gap := time.Duration(-math.Log(u) * mean)
+			timer := time.NewTimer(gap)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
 			}
 		}
 	}()
@@ -1695,12 +1804,21 @@ func sendScenarioLog(scenarioName string, t *Trace) {
 		// the /anomalies log-pattern section within a minute or
 		// two — too low and the section stays empty during a
 		// walkthrough; too high and patterns blur together.
+		threshold := 40
+		extra := kv("error.type", "OperationFailed")
+		// During an active incident, error logs both spike in density and
+		// carry the incident label so the log patterns line up with the
+		// latency/error-rate anomaly the operator is staring at.
+		if inc := L.incidentLabel(); inc != "" {
+			threshold = 80
+			extra["incident"] = inc
+		}
 		body := fmt.Sprintf("%s failed: %s", scenarioName, target.span.Status.Message)
-		if mrand.IntN(100) < 40 {
+		if mrand.IntN(100) < threshold {
 			body = pickAnomalyLine(target.service)
 		}
 		sendLog(target.service, 17, "ERROR", body,
-			t.traceID, target.span.SpanId, kv("error.type", "OperationFailed"))
+			t.traceID, target.span.SpanId, extra)
 	case mrand.IntN(4) == 0:
 		sendLog(target.service, 13, "WARN",
 			fmt.Sprintf("Slow %s: took longer than threshold", scenarioName),
@@ -1861,8 +1979,38 @@ func randID(n int) []byte {
 	return b
 }
 
+// dur returns a realistic, right-skewed latency derived from [minMs,maxMs].
+//
+// Real service latencies are log-normal: a dense body just above the floor
+// and a long tail toward (and occasionally past) the nominal ceiling — not
+// the flat uniform band the demo used to emit. We sample a standard normal
+// (Box–Muller) and exponentiate it so the median lands ~30% into the band
+// while the p99 stretches out. The whole distribution is then scaled by the
+// current load/incident factor, so saturation shows up as a coordinated
+// latency rise across every hop in the mesh (and therefore across the
+// duration histograms) rather than as isolated random blips.
 func dur(minMs, maxMs int) time.Duration {
-	return time.Duration(minMs+mrand.IntN(maxMs-minMs)) * time.Millisecond
+	lo := float64(minMs)
+	span := float64(maxMs - minMs)
+	if span < 1 {
+		span = 1
+	}
+	u1 := mrand.Float64()
+	if u1 < 1e-9 {
+		u1 = 1e-9
+	}
+	u2 := mrand.Float64()
+	z := math.Sqrt(-2*math.Log(u1)) * math.Cos(2*math.Pi*u2)
+	const sigma = 0.55 // heavy but bounded tail
+	frac := 0.30 * math.Exp(sigma*z)
+	if frac > 2.5 { // clamp pathological tail to 2.5x the band
+		frac = 2.5
+	}
+	msv := (lo + frac*span) * L.latencyFactor()
+	if msv < 1 {
+		msv = 1
+	}
+	return time.Duration(msv * float64(time.Millisecond))
 }
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }

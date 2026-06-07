@@ -114,6 +114,16 @@ docker-up: .env-version
 docker-up-demo: .env-version
 	docker compose --profile demo up -d --build
 
+# Live demo health check — runs against a RUNNING stack (after
+# `make docker-up-demo`). Verifies ingest is flowing and the demo
+# services report realistic RED metrics with a computable p99 (the
+# explicit-bucket histograms). Override COREMETRY_URL / COREMETRY_EMAIL
+# / COREMETRY_PASSWORD as needed. Exits non-zero if unhealthy, so it
+# drops straight into cron or CI.
+.PHONY: demo-health
+demo-health:
+	./scripts/demo-health.sh
+
 docker-down:
 	# Bring down everything — including any opt-in demo profile
 	# containers that an operator may have started via
@@ -161,6 +171,35 @@ minikube-up:
 	@echo "[make] Coremetry distributed on minikube — all roles up."
 	@echo "[make]   UI:        kubectl port-forward -n coremetry svc/coremetry 8090:8088  → http://localhost:8090"
 	@echo "[make]   Dashboard: minikube dashboard --url"
+
+# Rebuild + reload ONLY the demo images on a running minikube, after you've
+# improved cmd/demo (go-demo) or java-demo. Mirrors minikube-up's unique-tag
+# discipline: a fresh DEMO_TAG per run sidesteps minikube's stale-image cache
+# (reloading a fixed :local tag silently keeps the old binary on the node).
+# Uses --reuse-values so ONLY the two demo Deployments roll — the coremetry
+# pods are left untouched. Requires `make minikube-up` to have run once.
+#
+#   make minikube-demo
+# Recursive ?= would re-run $(shell date) on every $(DEMO_TAG) reference, so
+# the build / load / helm lines could land on different seconds and the tag
+# helm deploys would not be the one we loaded. Snapshot it once with := so all
+# references share a single timestamp (env/CLI override still wins).
+DEMO_TAG ?= $(VERSION)-$(shell date +%H%M%S)
+DEMO_TAG := $(DEMO_TAG)
+.PHONY: minikube-demo
+minikube-demo:
+	@minikube status >/dev/null 2>&1 || { echo "[make] minikube not running — run 'make minikube-up' first"; exit 1; }
+	@helm status coremetry -n coremetry >/dev/null 2>&1 || { echo "[make] release 'coremetry' not found — run 'make minikube-up' first"; exit 1; }
+	docker build --build-arg VERSION=$(DEMO_TAG) -f cmd/demo/Dockerfile  -t ghcr.io/cilcenk/coremetry-go-demo:$(DEMO_TAG)   .
+	docker build                                  -f java-demo/Dockerfile -t ghcr.io/cilcenk/coremetry-java-demo:$(DEMO_TAG) java-demo
+	minikube image load ghcr.io/cilcenk/coremetry-go-demo:$(DEMO_TAG)
+	minikube image load ghcr.io/cilcenk/coremetry-java-demo:$(DEMO_TAG)
+	helm upgrade coremetry charts/coremetry -n coremetry --reuse-values \
+	  --set goDemo.enabled=true   --set goDemo.image.tag=$(DEMO_TAG)   --set goDemo.image.pullPolicy=Never \
+	  --set javaDemo.enabled=true --set javaDemo.image.tag=$(DEMO_TAG) --set javaDemo.image.pullPolicy=Never \
+	  --wait --timeout 8m
+	@echo "[make] demos updated on minikube → tag $(DEMO_TAG)"
+	@echo "[make]   verify: COREMETRY_URL=http://localhost:8090 make demo-health (after a port-forward)"
 
 minikube-down:
 	-helm uninstall coremetry -n coremetry

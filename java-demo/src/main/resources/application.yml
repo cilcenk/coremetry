@@ -24,7 +24,16 @@ management:
     web:
       exposure:
         include: health,info,metrics
+  metrics:
+    distribution:
+      # Percentile histogram for HTTP server timings so p50/p95/p99 are
+      # available from the actuator side too, not just the OTLP export.
+      percentiles-histogram:
+        http.server.requests: true
 
 demo:
   self-base-url: http://localhost:8080
+  # Base generator tick. How MANY scenarios each tick fires is governed by
+  # the DemoLoad burst count (diurnal curve + spikes + incidents), so the
+  # effective rate breathes with the business day instead of staying flat.
   scenario-delay-ms: 300

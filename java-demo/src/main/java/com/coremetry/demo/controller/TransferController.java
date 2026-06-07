@@ -37,13 +37,16 @@ public class TransferController {
 
     private final CoreBankingGateway core;
     private final RestTemplate http;
+    private final com.coremetry.demo.service.DemoMetrics metrics;
 
     @Value("${demo.self-base-url:http://localhost:8080}")
     private String baseUrl;
 
-    public TransferController(CoreBankingGateway core, RestTemplate http) {
+    public TransferController(CoreBankingGateway core, RestTemplate http,
+                             com.coremetry.demo.service.DemoMetrics metrics) {
         this.core = core;
         this.http = http;
+        this.metrics = metrics;
     }
 
     @PostMapping
@@ -96,6 +99,7 @@ public class TransferController {
                 log.warn("transfer blocked ref={} from={} score={}", ref, fromNo, fraudScore);
                 recordDeclined(ref, fromNo, toNo, amount, from.getCurrency(),
                         "FRAUD_BLOCK_" + fraudScore);
+                metrics.fraudBlock("TRANSFER");
                 throw ex;
             }
 
@@ -112,6 +116,7 @@ public class TransferController {
             txn.setStatus("POSTED");
             txn.setReason("OK");
             Transaction saved = core.postLedger(txn);
+            metrics.transferCompleted();
             log.info("transfer posted ref={} from={} to={} amount={} {}",
                     ref, fromNo, toNo, amount, from.getCurrency());
             return saved;
@@ -135,6 +140,7 @@ public class TransferController {
     /** Persist a DECLINED ledger row for audit/statement visibility. */
     private void recordDeclined(String ref, String from, String to, double amount,
                                 String ccy, String reason) {
+        metrics.transferFailed();
         try {
             Transaction t = new Transaction();
             t.setReference(ref);

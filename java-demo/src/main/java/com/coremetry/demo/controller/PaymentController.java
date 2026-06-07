@@ -36,16 +36,19 @@ public class PaymentController {
     private final CardRepository cards;
     private final PayeeRepository payees;
     private final RestTemplate http;
+    private final com.coremetry.demo.service.DemoMetrics metrics;
 
     @Value("${demo.self-base-url:http://localhost:8080}")
     private String baseUrl;
 
     public PaymentController(CoreBankingGateway core, CardRepository cards,
-                             PayeeRepository payees, RestTemplate http) {
+                             PayeeRepository payees, RestTemplate http,
+                             com.coremetry.demo.service.DemoMetrics metrics) {
         this.core = core;
         this.cards = cards;
         this.payees = payees;
         this.http = http;
+        this.metrics = metrics;
     }
 
     /** Card purchase — POST /api/payments/card. */
@@ -70,9 +73,11 @@ public class PaymentController {
                 AccountFrozenException ex = new AccountFrozenException(
                         "no active card on account " + accountNo);
                 log.warn("card payment rejected ref={} reason=no_active_card", ref);
+                metrics.cardDeclined();
                 throw ex;
             }
             if (!"ACTIVE".equals(acct.getStatus())) {
+                metrics.cardDeclined();
                 throw new AccountFrozenException(
                         "account " + accountNo + " is " + acct.getStatus());
             }
@@ -83,6 +88,7 @@ public class PaymentController {
                                 "available=" + acct.getBalance() + " requested=" + amount));
                 log.warn("card payment declined ref={} amount={} balance={}",
                         ref, amount, acct.getBalance());
+                metrics.cardDeclined();
                 throw ex;
             }
 
@@ -93,6 +99,8 @@ public class PaymentController {
                         "card payment blocked by fraud engine (score=" + fraudScore + ")");
                 log.warn("card payment blocked ref={} card=****{} score={}",
                         ref, card.getLast4(), fraudScore);
+                metrics.cardDeclined();
+                metrics.fraudBlock("CARD_PAYMENT");
                 throw ex;
             }
 
@@ -107,6 +115,7 @@ public class PaymentController {
             txn.setStatus("POSTED");
             txn.setReason("OK");
             Transaction saved = core.postLedger(txn);
+            metrics.cardApproved();
             log.info("card payment posted ref={} card=****{} {} merchant={} amount={}",
                     ref, card.getLast4(), card.getNetwork(), merchant, amount);
             return saved;
@@ -144,6 +153,7 @@ public class PaymentController {
             int fraudScore = callFraud(accountNo, amount, "BILL_PAYMENT");
             MDC.put("fraud.score", Integer.toString(fraudScore));
             if (fraudScore >= 80) {
+                metrics.fraudBlock("BILL_PAYMENT");
                 throw new FraudBlockedException(
                         "bill payment blocked by fraud engine (score=" + fraudScore + ")");
             }
@@ -159,6 +169,7 @@ public class PaymentController {
             txn.setStatus("POSTED");
             txn.setReason("OK");
             Transaction saved = core.postLedger(txn);
+            metrics.billPaid();
             log.info("bill payment posted ref={} account={} payee={} amount={}",
                     ref, accountNo, payeeName, amount);
             return saved;

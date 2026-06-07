@@ -171,7 +171,7 @@ func scenarioLoanApplication() *Trace {
 	amt := amount(2000, 75000)
 	cur := ccy()
 
-	declined := mrand.IntN(100) < 12
+	declined := rollFail(12)
 	httpStatus := iff(declined, 422, 201)
 	M.RecordHTTP("api-gateway", "POST", "/api/v1/loans/apply", httpStatus, ms(total))
 	M.RecordDB("loan-service", "oracle", "INSERT", ms(total)*0.2)
@@ -249,7 +249,7 @@ func scenarioOnboarding() *Trace {
 	t := NewTrace()
 	total := dur(500, 1100)
 	cust := custID()
-	rejected := mrand.IntN(100) < 9
+	rejected := rollFail(9)
 	httpStatus := iff(rejected, 409, 201)
 	M.RecordHTTP("api-gateway", "POST", "/api/v1/onboarding", httpStatus, ms(total))
 	M.RecordDB("onboarding-service", "oracle", "INSERT", ms(total)*0.2)
@@ -308,7 +308,7 @@ func scenarioOpenBanking() *Trace {
 	total := dur(200, 520)
 	cust := custID()
 	isPISP := mrand.IntN(100) < 40
-	revoked := mrand.IntN(100) < 6
+	revoked := rollFail(6)
 	httpStatus := iff(revoked, 403, 200)
 	M.RecordHTTP("openbanking-gateway", "GET", "/open-banking/v3.1/accounts", httpStatus, ms(total))
 	M.RecordDB("consent-service", "oracle", "SELECT", ms(total)*0.2)
@@ -364,7 +364,7 @@ func scenarioSepaPayment() *Trace {
 	ref := txnRef()
 	amt := amount(50, 25000)
 	crossBorder := mrand.IntN(100) < 45
-	blocked := mrand.IntN(100) < 4
+	blocked := rollFail(4)
 	httpStatus := iff(blocked, 451, 201)
 	M.RecordHTTP("api-gateway", "POST", "/api/v1/payments/sepa", httpStatus, ms(total))
 	M.RecordDB("settlement-service", "oracle", "INSERT", ms(total)*0.2)
@@ -428,9 +428,8 @@ func scenarioAtmWithdrawal() *Trace {
 	total := dur(300, 700)
 	acct := acctID()
 	amt := float64((mrand.IntN(40) + 1) * 10)
-	roll := mrand.IntN(100)
-	nsf := roll < 4
-	dispenseFault := roll >= 4 && roll < 6
+	nsf := rollFail(4)
+	dispenseFault := !nsf && rollFail(2)
 	failed := nsf || dispenseFault
 	M.RecordHTTP("api-gateway", "POST", "/api/v1/atm/withdraw", iff(failed, 422, 200), ms(total))
 	M.RecordDB("ledger-service", "oracle", "UPDATE", ms(total)*0.3)

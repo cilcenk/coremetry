@@ -1533,6 +1533,26 @@ canvas { max-width: 100%; }
 .nbr-node .nbr-edge { margin-left: auto; text-align: right; font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text3); line-height: 1.3; flex: none; }
 .nbr-empty { font-size: 11.5px; color: var(--text3); padding: 6px 2px; }
 
+/* Detail-view primitives (prototype design-parity) — shared by the Incident and
+   Problem drill-in pages: the action/back bar, meta-chip row, timeline event
+   row, and the "linked" pill. Values mapped 1:1 from the prototype's
+   coremetry.css onto real tokens. */
+.rb-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.rb-bar .spacer { flex: 1; }
+.meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 20px; font-size: 11.5px; color: var(--text2); background: var(--bg0); }
+.chip .k { color: var(--text3); }
+.chip b { color: var(--text); font-weight: 600; }
+.prob { display: flex; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.prob:last-child { border-bottom: none; }
+.prob .ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.prob .ti { font-weight: 600; font-size: 13px; }
+.prob .de { color: var(--text2); font-size: 12px; margin-top: 2px; }
+.prob .tm { margin-left: auto; color: var(--text3); font-size: 11px; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ud-pill { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg0); font-size: 12.5px; font-weight: 600; text-decoration: none; color: inherit; }
+.ud-pill:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ud-pill .mult { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--text3); font-weight: 500; }
+
 /* Instances */
 .ov-inst { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); }
 .ov-inst + .ov-inst { margin-top: 9px; }

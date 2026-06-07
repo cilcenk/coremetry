@@ -1,16 +1,18 @@
-import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Link } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, History, Paperclip, PenLine } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, AlertTriangle, Bell, Check, MessageSquare, Zap, Paperclip, PenLine } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { CopilotExplain } from '@/components/CopilotExplain';
+import { OverviewChart } from '@/pages/service/charts/OverviewChart';
 import {
-  useIncident, useIncidentEvents, useIncidentProblems, keys,
+  useIncident, useIncidentEvents, useIncidentProblems, useServiceDeploys, keys,
 } from '@/lib/queries';
 import { api } from '@/lib/api';
+import { metricQuery } from '@/lib/metricQuery';
 import { tsLong } from '@/lib/utils';
 import type { Incident } from '@/lib/types';
 
@@ -20,15 +22,12 @@ export default function IncidentPage() {
 
 function Inner() {
   const [sp] = useSearchParams();
-  const navigate = useNavigate();
   const { user } = useAuth();
   const id = sp.get('id') ?? '';
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
   const qc = useQueryClient();
 
-  // Three parallel queries — incident detail, timeline, attached
-  // problems. Each its own cache key so a timeline-only refresh
-  // (after an addNote) doesn't refetch the postmortem text.
+  // Three parallel queries — incident detail, timeline, attached problems.
   const incQ = useIncident(id);
   const timelineQ = useIncidentEvents(id);
   const problemsQ = useIncidentProblems(id);
@@ -40,12 +39,32 @@ function Inner() {
   const [postmortemDraft, setPostmortemDraft] = useState('');
   const [editingPM, setEditingPM] = useState(false);
 
-  // Sync the postmortem draft with the loaded incident — only
-  // when not actively editing, so a save-in-progress doesn't
-  // get clobbered by a refetch.
   useEffect(() => {
     if (inc && !editingPM) setPostmortemDraft(inc.postmortem ?? '');
   }, [inc, editingPM]);
+
+  // Impact window: incident start → resolved (or "now" captured ONCE so an
+  // ongoing incident's window doesn't tick every render → infinite refetch,
+  // the timeRangeToNs(range)-in-JSX pitfall). Hooks run unconditionally (before
+  // the early returns) per the rules of hooks; they no-op until the service is
+  // known via `enabled`.
+  const svc = incQ.data?.service ?? '';
+  const win = useMemo(() => {
+    const from = incQ.data?.startedAt ?? 0;
+    const to = incQ.data?.resolvedAt ?? Date.now() * 1_000_000;
+    return { from, to };
+  }, [incQ.data?.startedAt, incQ.data?.resolvedAt, incQ.data?.id]);
+  const impactMq = useMemo(() => metricQuery({
+    source: 'spanmetrics', metric: 'calls_total', agg: 'error_rate', unit: '%',
+    filters: { 'service.name': svc },
+  }), [svc]);
+  const impactQ = useQuery({
+    queryKey: ['incident-impact', svc, win.from, win.to],
+    queryFn: () => api.resolveMetric(impactMq, { from: win.from, to: win.to }),
+    enabled: !!svc && win.from > 0,
+    staleTime: 30_000,
+  });
+  const deploysQ = useServiceDeploys(svc, win.from, win.to);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: keys.incidents.one(id) });
@@ -53,9 +72,9 @@ function Inner() {
     qc.invalidateQueries({ queryKey: keys.incidents.problems(id) });
   };
 
-  if (!id)             return <Empty icon="⚠" title="No incident selected" />;
+  if (!id)               return <Empty icon="⚠" title="No incident selected" />;
   if (inc === undefined) return <Spinner />;
-  if (inc === null)    return <Empty icon="⚠" title="Incident not found" />;
+  if (inc === null)      return <Empty icon="⚠" title="Incident not found" />;
 
   const ack     = async () => { await api.ackIncident(id); refresh(); };
   const resolve = async () => { await api.resolveIncident(id); refresh(); };
@@ -68,140 +87,173 @@ function Inner() {
     setEditingPM(false); refresh();
   };
 
-  const elapsed = (inc.resolvedAt ?? Date.now() * 1_000_000) - inc.startedAt;
+  const elapsedNs = (inc.resolvedAt ?? Date.now() * 1_000_000) - inc.startedAt;
+
+  // Impact chart series (error-rate over the incident window) → OverviewChart
+  // shape: times in unix seconds, one red area series. Deploy marker = the
+  // latest deploy inside the window (the design's ▼ vX flag).
+  const impactSeries = impactQ.data?.series?.[0]?.points ?? [];
+  const impactTimes = impactSeries.map(p => p.time / 1e9);
+  const impactData = impactSeries.map(p => p.value);
+  const deploy = (() => {
+    const ds = (deploysQ.data ?? []).filter(d => d.timeUnixNs >= win.from && d.timeUnixNs <= win.to);
+    if (!ds.length) return null;
+    const latest = ds.reduce((a, b) => (b.timeUnixNs > a.timeUnixNs ? b : a));
+    return { sec: latest.timeUnixNs / 1e9, label: latest.version };
+  })();
 
   return (
     <>
       <Topbar title={`Incident · ${inc.title}`} />
       <div id="content">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+        {/* Detail bar — back · status · severity · (spacer) · actions */}
+        <div className="rb-bar">
           <Link to="/incidents" className="sec" style={{
-            padding: '5px 12px', border: '1px solid var(--border)',
-            borderRadius: 6, fontSize: 12, color: 'var(--text)', textDecoration: 'none',
+            padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 6,
+            fontSize: 12, color: 'var(--text)', textDecoration: 'none',
             display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}><ArrowLeft size={14} strokeWidth={1.75} /> All incidents</Link>
+          }}><ArrowLeft size={14} strokeWidth={1.75} /> Incidents</Link>
           <StatusPill s={inc.status} />
           <SeverityPill s={inc.severity} />
-          {inc.service && (
-            <Link to={`/service?name=${encodeURIComponent(inc.service)}`} style={{ fontSize: 12 }}>
-              Service: {inc.service}
-            </Link>
-          )}
-          <span style={{ color: 'var(--text3)', fontSize: 12 }}>
-            Started {tsLong(inc.startedAt)} · {fmtDuration(elapsed)} {inc.resolvedAt ? '(resolved)' : '(ongoing)'}
-          </span>
-          {inc.assignee && (
-            <span style={{ color: 'var(--text3)', fontSize: 12 }}>· {inc.assignee}</span>
-          )}
-          <span style={{ marginLeft: 'auto' }} />
-          {/* Davis-style triage summary on demand — feeds the
-              incident title + service + attached problems to
-              the LLM, returns "what's happening / blast
-              radius / first three actions / escalate?" in
-              one bullet block. Self-hides when the copilot
-              isn't configured. */}
+          <span className="spacer" />
           <CopilotExplain kind="incident" id={inc.id} />
-          {isAdmin && inc.status === 'open' && (
-            <button onClick={ack}>Acknowledge</button>
-          )}
-          {isAdmin && inc.status !== 'resolved' && (
-            <button onClick={resolve}>Resolve</button>
-          )}
+          {isAdmin && inc.status === 'open' && <button className="sec" onClick={ack}>Acknowledge</button>}
+          {isAdmin && inc.status !== 'resolved' && <button onClick={resolve}>Resolve</button>}
+        </div>
+
+        {/* Title + meta chips */}
+        <h1 style={{ fontSize: 20, margin: '0 0 4px' }}>{inc.title}</h1>
+        <div className="meta-row" style={{ marginBottom: 18 }}>
+          {inc.service && <span className="chip"><span className="k">service</span><b className="mono">{inc.service}</b></span>}
+          <span className="chip"><span className="k">started</span><b className="mono">{tsLong(inc.startedAt)}</b></span>
+          <span className="chip"><span className="k">duration</span><b>{fmtDuration(elapsedNs)}{inc.resolvedAt ? '' : ' (ongoing)'}</b></span>
+          {inc.assignee && <span className="chip"><span className="k">assignee</span><b>{inc.assignee}</b></span>}
         </div>
 
         {inc.summary && (
-          <div style={{
-            background: 'var(--bg2)', border: '1px solid var(--border)',
-            borderRadius: 6, padding: 12, marginBottom: 14, fontSize: 13,
-            color: 'var(--text)',
-          }}>{inc.summary}</div>
+          <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 13, color: 'var(--text)' }}>
+            {inc.summary}
+          </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-          {/* Timeline */}
-          <div>
-            <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <History size={15} strokeWidth={1.75} /> Timeline
-            </h3>
-            {timeline.length === 0 && (
-              <div className="empty" style={{ padding: 20, fontSize: 12 }}>Empty timeline</div>
-            )}
-            {timeline.length > 0 && (
-              <div style={{ borderLeft: '2px solid var(--border)', paddingLeft: 14 }}>
-                {timeline.map((e, i) => (
-                  <div key={i} style={{ position: 'relative', marginBottom: 14 }}>
-                    <span style={{
-                      position: 'absolute', left: -20, top: 4, width: 8, height: 8,
-                      borderRadius: '50%', background: kindColor(e.kind),
-                    }} />
-                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                      <b style={{ color: 'var(--text2)' }}>{kindLabel(e.kind)}</b>
-                      {e.actor && <> · {e.actor}</>}
-                      <> · {tsLong(e.time)}</>
-                    </div>
-                    {e.body && (
-                      <div style={{ fontSize: 13, color: 'var(--text)', marginTop: 2, whiteSpace: 'pre-wrap' }}>
-                        {e.body}
+        {/* Timeline (left) · Impact + Linked + Problems + Postmortem (right) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16 }}>
+          {/* LEFT — Timeline */}
+          <div className="card">
+            <div className="ov-card-h"><h3>Timeline</h3><span className="ov-sub">{timeline.length} events</span></div>
+            {timeline.length === 0 ? (
+              <div className="ov-card-b" style={{ color: 'var(--text3)', fontSize: 12 }}>No events yet.</div>
+            ) : (
+              <div>
+                {timeline.map((e, i) => {
+                  const st = eventStyle(e.kind, inc.severity);
+                  return (
+                    <div className="prob" key={i}>
+                      <div className="ic" style={{ background: `color-mix(in srgb, var(${st.token}) 14%, transparent)`, color: `var(${st.token})` }}>
+                        {st.icon}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <div style={{ minWidth: 0 }}>
+                        <div className="ti">{kindLabel(e.kind)}</div>
+                        <div className="de">{e.body || e.actor || '—'}{e.actor && e.body ? ` · ${e.actor}` : ''}</div>
+                      </div>
+                      <div className="tm">{tsLong(e.time)}</div>
+                    </div>
+                  );
+                })}
               </div>
             )}
             {isAdmin && (
-              <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+              <div className="ov-card-b" style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--border)' }}>
                 <input value={note} onChange={e => setNote(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && submitNote()}
-                  placeholder="Add a note (e.g. mitigation tried, hypothesis, who's on it)…"
+                  placeholder="Add a note (mitigation tried, hypothesis, who's on it)…"
                   style={{ flex: 1 }} />
                 <button onClick={submitNote} disabled={!note.trim()}>Add note</button>
               </div>
             )}
           </div>
 
-          {/* Right column: attached problems + postmortem */}
-          <div>
-            <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Paperclip size={15} strokeWidth={1.75} /> Attached problems
-            </h3>
-            {problems.length === 0 && (
-              <div className="empty" style={{ padding: 16, fontSize: 12 }}>No problems attached</div>
-            )}
-            {problems.map(pid => (
-              <div key={pid} style={{
-                fontSize: 11, fontFamily: 'monospace', padding: '4px 8px',
-                background: 'var(--bg3)', borderRadius: 4, marginBottom: 4,
-              }}>{pid}</div>
-            ))}
-
-            <h3 style={{ fontSize: 13, fontWeight: 700, margin: '20px 0 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <PenLine size={15} strokeWidth={1.75} /> Postmortem
-              {isAdmin && !editingPM && (
-                <button className="sec" onClick={() => setEditingPM(true)}
-                  style={{ marginLeft: 8, padding: '2px 8px', fontSize: 11 }}>
-                  {inc.postmortem ? 'Edit' : 'Write'}
-                </button>
-              )}
-            </h3>
-            {editingPM ? (
-              <div>
-                <textarea value={postmortemDraft} onChange={e => setPostmortemDraft(e.target.value)}
-                  rows={12} style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
-                  placeholder={POSTMORTEM_TEMPLATE} />
-                <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
-                  <button className="sec" onClick={() => { setEditingPM(false); setPostmortemDraft(inc.postmortem ?? ''); }}>Cancel</button>
-                  <button onClick={savePM}>Save</button>
+          {/* RIGHT — Impact, Linked, Attached problems, Postmortem (stacked) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Impact */}
+            {svc && (
+              <div className="card">
+                <div className="ov-card-h"><h3>Impact</h3><span className="ov-sub">{svc} · error rate</span></div>
+                <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
+                  {impactTimes.length < 2 ? (
+                    <div style={{ height: 110, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
+                      {impactQ.isLoading ? 'Loading…' : 'No data in this window'}
+                    </div>
+                  ) : (
+                    <OverviewChart times={impactTimes} height={110} mode="area" unit="%"
+                      series={[{ label: 'error rate', color: 'var(--err)', data: impactData }]}
+                      deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} />
+                  )}
                 </div>
               </div>
-            ) : inc.postmortem ? (
-              <pre style={{ fontSize: 12, whiteSpace: 'pre-wrap', background: 'var(--bg2)', padding: 10, borderRadius: 4 }}>
-                {inc.postmortem}
-              </pre>
-            ) : (
-              <div className="empty" style={{ padding: 16, fontSize: 12 }}>
-                {isAdmin ? 'Once resolved, write a blameless postmortem here.' : 'No postmortem yet.'}
-              </div>
             )}
+
+            {/* Linked */}
+            <div className="card">
+              <div className="ov-card-h"><h3>Linked</h3></div>
+              <div className="ov-card-b" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {inc.service ? (
+                  <Link className="ud-pill" to={`/service?name=${encodeURIComponent(inc.service)}`}>
+                    <Paperclip size={15} strokeWidth={1.75} /><span>Service</span>
+                    <span className="mult">{inc.service} →</span>
+                  </Link>
+                ) : (
+                  <div style={{ color: 'var(--text3)', fontSize: 12 }}>No linked service.</div>
+                )}
+                <Link className="ud-pill" to="/alerts">
+                  <Bell size={15} strokeWidth={1.75} /><span>Alert rules</span>
+                  <span className="mult">view firing →</span>
+                </Link>
+              </div>
+            </div>
+
+            {/* Attached problems (preserved feature) */}
+            <div className="card">
+              <div className="ov-card-h"><h3>Attached problems</h3>{problems.length > 0 && <span className="ov-sub">{problems.length}</span>}</div>
+              <div className="ov-card-b">
+                {problems.length === 0
+                  ? <div style={{ color: 'var(--text3)', fontSize: 12 }}>No problems attached.</div>
+                  : problems.map(pid => (
+                      <div key={pid} className="mono" style={{ fontSize: 11, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4, marginBottom: 4 }}>{pid}</div>
+                    ))}
+              </div>
+            </div>
+
+            {/* Postmortem (preserved feature) */}
+            <div className="card">
+              <div className="ov-card-h">
+                <h3><PenLine size={14} strokeWidth={1.75} style={{ verticalAlign: '-2px', marginRight: 4 }} />Postmortem</h3>
+                {isAdmin && !editingPM && (
+                  <button className="sec" onClick={() => setEditingPM(true)} style={{ marginLeft: 'auto', padding: '2px 8px', fontSize: 11 }}>
+                    {inc.postmortem ? 'Edit' : 'Write'}
+                  </button>
+                )}
+              </div>
+              <div className="ov-card-b">
+                {editingPM ? (
+                  <div>
+                    <textarea value={postmortemDraft} onChange={e => setPostmortemDraft(e.target.value)}
+                      rows={12} style={{ width: '100%', resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
+                      placeholder={POSTMORTEM_TEMPLATE} />
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
+                      <button className="sec" onClick={() => { setEditingPM(false); setPostmortemDraft(inc.postmortem ?? ''); }}>Cancel</button>
+                      <button onClick={savePM}>Save</button>
+                    </div>
+                  </div>
+                ) : inc.postmortem ? (
+                  <pre className="mono" style={{ fontSize: 12, whiteSpace: 'pre-wrap', margin: 0 }}>{inc.postmortem}</pre>
+                ) : (
+                  <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+                    {isAdmin ? 'Once resolved, write a blameless postmortem here.' : 'No postmortem yet.'}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -221,21 +273,14 @@ The actual technical cause (be specific).
 ## Resolution
 What we did to mitigate and fix.
 
-## Timeline
-- HH:MM — first signal observed
-- HH:MM — paged
-- HH:MM — mitigation deployed
-- HH:MM — confirmed resolved
-
 ## Action items
 - [ ] Owner — concrete change to prevent recurrence
-- [ ] Owner — monitor / alert / runbook gap
 `;
 
 function StatusPill({ s }: { s: Incident['status'] }) {
-  const cls = s === 'open' ? 'outage' : s === 'acknowledged' ? 'degraded' : 'operational';
+  const cls = s === 'open' ? 'b-err' : s === 'acknowledged' ? 'b-warn' : 'b-ok';
   const label = s === 'open' ? 'OPEN' : s === 'acknowledged' ? 'ACK' : 'RESOLVED';
-  return <span className={`status-pill status-pill-${cls}`}>{label}</span>;
+  return <span className={`badge ${cls}`}>{label}</span>;
 }
 function SeverityPill({ s }: { s: string }) {
   const cls = s === 'critical' ? 'b-err' : s === 'warning' ? 'b-warn' : 'b-info';
@@ -243,30 +288,32 @@ function SeverityPill({ s }: { s: string }) {
 }
 function fmtDuration(ns: number): string {
   const sec = Math.floor(ns / 1e9);
-  if (sec < 60)   return sec + 's';
-  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  if (sec < 60)    return sec + 's';
+  if (sec < 3600)  return Math.floor(sec / 60) + 'm';
   if (sec < 86400) return (sec / 3600).toFixed(1) + 'h';
   return Math.floor(sec / 86400) + 'd';
 }
 function kindLabel(k: string): string {
   switch (k) {
-    case 'created':           return 'Created';
-    case 'ack':               return 'Acknowledged';
-    case 'resolved':          return 'Resolved';
-    case 'note':              return 'Note';
-    case 'problem_attached':  return 'Problem attached';
-    case 'problem_resolved':  return 'Problem resolved';
-    default:                  return k;
+    case 'created':          return 'Incident opened';
+    case 'ack':              return 'Acknowledged';
+    case 'resolved':         return 'Resolved';
+    case 'note':             return 'Note';
+    case 'problem_attached': return 'Problem attached';
+    case 'problem_resolved': return 'Problem resolved';
+    default:                 return k;
   }
 }
-function kindColor(k: string): string {
-  switch (k) {
-    case 'created':           return 'var(--accent2)';
-    case 'ack':               return 'var(--warn)';
-    case 'resolved':          return 'var(--ok)';
-    case 'note':              return 'var(--accent)';
-    case 'problem_attached':  return 'var(--err)';
-    case 'problem_resolved':  return 'var(--ok)';
-    default:                  return 'var(--text3)';
+// eventStyle — the .prob icon chip glyph + token tint per event kind, matching
+// the prototype's level→color map (red/amber/green/accent).
+function eventStyle(kind: string, severity: string): { icon: ReactNode; token: string } {
+  switch (kind) {
+    case 'created':          return { icon: <AlertTriangle size={16} />, token: severity === 'critical' ? '--err' : '--warn' };
+    case 'ack':              return { icon: <Bell size={16} />, token: '--warn' };
+    case 'resolved':         return { icon: <Check size={16} />, token: '--ok' };
+    case 'note':             return { icon: <MessageSquare size={16} />, token: '--accent' };
+    case 'problem_attached': return { icon: <AlertTriangle size={16} />, token: '--err' };
+    case 'problem_resolved': return { icon: <Check size={16} />, token: '--ok' };
+    default:                 return { icon: <Zap size={16} />, token: '--text3' };
   }
 }

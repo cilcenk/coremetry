@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
+import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import type { ExceptionGroup, ExceptionGroupState } from '@/lib/types';
 
 // ProblemDetail — full in-page exception-group detail (prototype design-parity,
@@ -115,6 +116,10 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         <span className="chip"><span className="k">first seen</span><b className="mono">{tsLong(group.firstSeen)}</b></span>
         <span className="chip"><span className="k">last seen</span><b className="mono">{tsLong(group.lastSeen)}</b></span>
       </div>
+
+      {/* AI Analizi — auto-sends this group's service context (v0.8.89). */}
+      <AIAnalysisPanel service={group.service} />
+
 
       {/* Occurrences over time */}
       <div className="card ov-mb">

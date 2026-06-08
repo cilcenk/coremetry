@@ -70,7 +70,15 @@ func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName strin
 
 	kind := kindStr(sp.Kind)
 
-	events, _ := json.Marshal(convertEvents(sp.Events))
+	// Phase-2 #3 — only build + marshal the events JSON when the span actually
+	// carries events. The empty-events majority stored "[]" at the cost of a
+	// convertEvents slice alloc + a reflect-based json.Marshal per span; skip it
+	// and store "" (the read sites tolerate empty — chstore aggregate.go /
+	// repo.go guard the Unmarshal on a non-empty string).
+	var events []byte
+	if len(sp.Events) > 0 {
+		events, _ = json.Marshal(convertEvents(sp.Events))
+	}
 
 	dur := int64(sp.EndTimeUnixNano) - int64(sp.StartTimeUnixNano)
 	if dur < 0 {

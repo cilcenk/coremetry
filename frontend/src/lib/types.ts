@@ -1146,6 +1146,38 @@ export interface SystemAnalysis {
   guven: 'yuksek' | 'orta' | 'dusuk';
 }
 
+// AI per-service analysis (POST /api/copilot/analyze-service, v0.8.85+). The
+// server summarises the service's signals; the operator-configured model returns
+// this strict-JSON verdict. Turkish field names match the prompt contract.
+export interface ServiceAnalysisVerdict {
+  ozet: string;
+  olasi_neden: string;
+  kanit: string[];
+  oneriler: string[];
+  guven: 'yuksek' | 'orta' | 'dusuk';
+}
+export interface AiRED {
+  spans: number; rate: number; errorRate: number; errorCount: number;
+  avgMs: number; p50Ms: number; p95Ms: number; p99Ms: number;
+}
+export interface AiErrCount { type: string; message: string; service: string; count: number; sampleTraceId: string; }
+export interface AiDeploy { version: string; timeUnixNs: number; }
+export interface AiServiceContext {
+  service: string; rangeS: number;
+  current: AiRED; baseline: AiRED;
+  topErrors: AiErrCount[]; deploys: AiDeploy[];
+  upstream: string[]; downstream: string[];
+}
+export interface AiPostCheck { verified: boolean; unknownServices: string[]; note: string; }
+export interface ServiceAnalysisResponse {
+  analysis: ServiceAnalysisVerdict | null;
+  context: AiServiceContext | null;
+  raw: string;
+  parsed: boolean;
+  postCheck: AiPostCheck | null;
+  cached: boolean;
+}
+
 export interface MetricResolveResult {
   series: SpanMetricSeries[];
   tier: string;

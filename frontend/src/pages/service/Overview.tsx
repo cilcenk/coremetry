@@ -9,6 +9,7 @@ import { Neighbors } from './Neighbors';
 import { OpsCard, DbCard } from './OverviewTables';
 import { ServiceInstancesCard } from './ServiceInstancesCard';
 import { MetricPanel } from '@/components/MetricPanel';
+import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import { metricQuery, type MetricQuery } from '@/lib/metricQuery';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
@@ -278,6 +279,9 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
           two-column list of inbound callers + outbound dependencies. Replaced
           the old in-page service-flow map; the full graph lives on /topology. */}
       <Neighbors service={service} range={range} from={from} to={to} />
+
+      {/* AI Analizi — auto-sends this service + selected window (v0.8.89). */}
+      <AIAnalysisPanel service={service} rangeS={Math.round((to - from) / 1e9)} />
 
       {/* Operations (compact) + Top DB statements */}
       <div className="ov-grid ov-cols-2 ov-mb">

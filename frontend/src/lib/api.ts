@@ -891,6 +891,16 @@ export const api = {
       { method: 'POST' },
     ),
 
+  // analyzeService (v0.8.85) — per-service single-shot AI analysis. The server
+  // summarises RED + baseline + top errors + deploys + neighbours and the
+  // operator-configured model returns the {ozet, olasi_neden, kanit, oneriler,
+  // guven} verdict. refresh bypasses the 5-min Redis cache.
+  analyzeService: (service: string, rangeS?: number, refresh?: boolean) =>
+    request<import('./types').ServiceAnalysisResponse>(
+      `/api/copilot/analyze-service?service=${encodeURIComponent(service)}${rangeS ? `&rangeS=${rangeS}` : ''}${refresh ? '&refresh=1' : ''}`,
+      { method: 'POST' },
+    ),
+
   copilotExplainTrace:   (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-trace/${id}`, { method: 'POST' }),
   // Per-span explain (v0.5.144). Backend pulls target span +

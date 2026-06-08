@@ -1146,6 +1146,16 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 	return wc
 }
 
+// tracesSpillSettings spills the raw trace-list GROUP BY trace_id + ORDER BY to
+// disk instead of OOM-ing the node. Operator-reported (v0.8.70): a
+// /api/traces?range=12h&search=…&sort=duration query over a large spans table
+// failed with CH code 241 ("Memory limit exceeded … AggregatingTransform") —
+// the search filter disqualifies the trace_summary MV, so it fell back to the
+// raw GROUP BY trace_id and built a multi-GB aggregation state. Spilling at
+// 512 MiB keeps the query completing (trades disk + time for memory) on
+// memory-constrained nodes; nodes with ample RAM rarely reach the threshold.
+const tracesSpillSettings = "max_bytes_before_external_group_by = 536870912, max_bytes_before_external_sort = 536870912"
+
 func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	// MV fast-path. Activates when:
 	//   • Window is ≥ 5 minutes (MVs are 5-min bucketed)
@@ -1296,9 +1306,9 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// extra cost is negligible.
 		var settings string
 		if !f.From.IsZero() && !f.To.IsZero() && f.To.Sub(f.From) > 24*time.Hour {
-			settings = "SETTINGS max_execution_time = 30, count_distinct_implementation = 'uniq'"
+			settings = "SETTINGS max_execution_time = 30, count_distinct_implementation = 'uniq', " + tracesSpillSettings
 		} else {
-			settings = "SETTINGS max_execution_time = 30"
+			settings = "SETTINGS max_execution_time = 30, " + tracesSpillSettings
 		}
 		var countSQL string
 		var countArgs []any
@@ -1404,7 +1414,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		  max_execution_time = 60,
 		  optimize_read_in_order = 1,
 		  optimize_aggregation_in_order = 1,
-		  distributed_product_mode = 'global'`
+		  distributed_product_mode = 'global',
+		  ` + tracesSpillSettings
 
 	// Argument order matches placeholder order in the SQL:
 	//   1. SELECT projections (extra attribute columns)

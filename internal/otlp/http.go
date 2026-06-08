@@ -14,6 +14,7 @@ import (
 	metricscollpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracecollpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 
+	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/pipeline"
@@ -33,7 +34,17 @@ type Ingester struct {
 	// (the engine is a no-op-on-empty, so passing it through is fine too).
 	pipeline     *pipeline.Engine
 	spansDropped atomic.Uint64
+
+	// autocomplete (v0.8.80) — Redis-backed picker-facet cache. nil-safe:
+	// ObserveSpan short-circuits on a nil/disabled store, so pods without
+	// Redis pay nothing.
+	autocomplete *acache.Store
 }
+
+// SetAutocomplete wires the Redis autocomplete cache so every accepted span
+// also populates the service/operation/attribute picker facets. Called from
+// main(); nil keeps the old behaviour (no autocomplete cache).
+func (ing *Ingester) SetAutocomplete(a *acache.Store) { ing.autocomplete = a }
 
 // SetPipeline wires the ingest-time policy engine. Always called
 // from main(); nil keeps the old behaviour (every span flows
@@ -65,6 +76,11 @@ func (ing *Ingester) addSpan(sp *chstore.Span) bool {
 		ing.spansDropped.Add(1)
 		return true
 	}
+	// Autocomplete cache (v0.8.80) — fire-and-forget, non-blocking (folds the
+	// span into an in-memory delta map; a nil/disabled receiver returns at
+	// once). Runs after the pipeline drop so discarded spans never pollute the
+	// picker facets.
+	ing.autocomplete.ObserveSpan(sp)
 	return ing.Spans.Add(sp)
 }
 

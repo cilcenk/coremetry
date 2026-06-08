@@ -29,6 +29,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
+	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/cluster"
 	"github.com/cilcenk/coremetry/internal/copilot"
@@ -93,6 +94,12 @@ type Server struct {
 	// SetPipeline is called from main(); admin handlers nil-check
 	// and return 503.
 	pipeline    *pipeline.Engine
+
+	// autocomplete — Redis-backed picker-facet cache (v0.8.80). The
+	// service/operation/attribute-value pickers try it first and fall
+	// back to ClickHouse on a miss. nil-safe: every accessor on the
+	// store short-circuits to a miss when the receiver is nil/disabled.
+	autocomplete *acache.Store
 
 	// mcp — Model Context Protocol server (v0.6.4). Exposes
 	// Coremetry's tools / resources / prompts to external LLM
@@ -195,6 +202,13 @@ func (s *Server) SetTempo(t *tempo.Service) {
 // don't need to nil-check before calling Members.
 func (s *Server) SetCluster(c *cluster.Service) {
 	s.cluster = c
+}
+
+// SetAutocomplete wires the Redis autocomplete cache (v0.8.80). Called once
+// from main() after the api.Server is constructed. nil-safe — the picker
+// handlers fall back to ClickHouse when it's absent or cold.
+func (s *Server) SetAutocomplete(a *acache.Store) {
+	s.autocomplete = a
 }
 
 // SetMCP wires the Model Context Protocol server (v0.6.4). Called
@@ -2154,6 +2168,17 @@ func (s *Server) getOperationNames(w http.ResponseWriter, r *http.Request) {
 		limit = 1000
 	}
 	offset := parseInt(q.Get("offset"), 0)
+
+	// acache fast path (v0.8.80) — keyed by service, so cross-service search
+	// (no service) and deeper paging fall through to the CH path below.
+	if service != "" && offset == 0 {
+		if names, total, hit := s.autocomplete.GetOperations(r.Context(), service, pattern, limit); hit {
+			w.Header().Set("X-Cache", "HIT-ACACHE")
+			writeJSON(w, map[string]any{"names": names, "total": total, "hasMore": len(names) < total})
+			return
+		}
+	}
+
 	key := fmt.Sprintf("op-names:svc=%s:q=%s:limit=%d:offset=%d", service, pattern, limit, offset)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		names, total, err := s.store.ListOperationNames(r.Context(), service, pattern, limit, offset)
@@ -2176,6 +2201,17 @@ func (s *Server) getServiceNames(w http.ResponseWriter, r *http.Request) {
 		limit = 1000
 	}
 	offset := parseInt(q.Get("offset"), 0)
+
+	// acache fast path (v0.8.80) — frequency-ranked, served from Redis in
+	// microseconds. Only the first page (offset 0) comes from the cache; deeper
+	// paging and a cold cache fall through to the CH-backed path below.
+	if offset == 0 {
+		if names, total, hit := s.autocomplete.GetServices(r.Context(), pattern, limit); hit {
+			w.Header().Set("X-Cache", "HIT-ACACHE")
+			writeJSON(w, map[string]any{"names": names, "total": total, "hasMore": len(names) < total})
+			return
+		}
+	}
 
 	key := fmt.Sprintf("svc-names:q=%s:limit=%d:offset=%d", pattern, limit, offset)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
@@ -2345,6 +2381,21 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 			like = "%" + like + "%"
 		}
 		likeFilter = like
+	}
+
+	// acache fast path (v0.8.80) — low-cardinality keys only. High-cardinality
+	// keys come back freeText (HLL count, no values); those fall through to the
+	// CH value-search so the operator can still reach long-tail values. A cold
+	// cache falls through too. The bare key (scope prefix stripped) matches how
+	// the cache stores keys.
+	bareKey := strings.TrimPrefix(strings.TrimPrefix(rawKey, "resource."), "span.")
+	if vals, _, freeText, hit := s.autocomplete.GetAttributeValues(r.Context(), bareKey, pattern, limit); hit && !freeText {
+		if vals == nil {
+			vals = []acache.ValueCount{}
+		}
+		w.Header().Set("X-Cache", "HIT-ACACHE")
+		writeJSON(w, vals)
+		return
 	}
 
 	cacheKey := fmt.Sprintf("attr-values:%s:since=%s:limit=%d:q=%s", rawKey, q.Get("since"), limit, pattern)

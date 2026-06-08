@@ -72,7 +72,12 @@ export function ColumnManager({ cols, onAdd }: {
       </button>
       {open && (
         <div style={{
-          position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 60,
+          // v0.8.76 — operator-reported: the picker "didn't appear" on /traces.
+          // It rendered but anchored right:0 (opening LEFTWARD), and since the
+          // "+ Column" button sits near the left of the toolbar, the panel body
+          // extended under the sidebar — whose stacking context painted over it.
+          // Anchor left:0 so it opens rightward into the content area instead.
+          position: 'absolute', left: 0, top: 'calc(100% + 4px)', zIndex: 60,
           minWidth: 280, maxWidth: 360,
           background: 'var(--bg2)', border: '1px solid var(--border)',
           borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.30)',

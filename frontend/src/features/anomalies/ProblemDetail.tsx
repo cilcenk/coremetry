@@ -128,13 +128,68 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
               {samplesQ.isLoading ? 'Loading…' : 'Not enough sampled occurrences to chart.'}
             </div>
           ) : (
-            <div className="volbars" style={{ height: 70 }}>
-              {buckets.map((v, i) => (
-                <div className="col" key={i}>
-                  <i style={{ height: Math.max(2, (v / maxB) * 70), background: v >= maxB * 0.66 ? 'var(--err)' : 'var(--warn)' }} />
+            // Datadog/Dynatrace-style: left occurrence-count Y axis + gridlines
+            // (0 opaque, rest faint), bottom HH:MM time ticks over the real
+            // firstSeen→lastSeen window, a deploy marker at the spike onset, and
+            // bars coloured red after the onset / amber before. Zero baseline.
+            (() => {
+              const N = buckets.length;
+              const plotH = 96, PADL = 36, PADB = 16;
+              const span = group.lastSeen - group.firstSeen;
+              const tAt = (i: number) => group.firstSeen + ((i + 0.5) / N) * span;
+              const hhmm = (ns: number) => {
+                const d = new Date(ns / 1e6);
+                return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+              };
+              // Spike onset = first bucket reaching the high band; the "deploy"
+              // marker + the red/amber split anchor here (no deploy API to join).
+              const deployIdx = buckets.findIndex(v => v >= maxB * 0.66);
+              const ticks = [0, 0.25, 0.5, 0.75, 1];
+              const cpx = (i: number) => `${((i + 0.5) / N) * 100}%`;
+              return (
+                <div style={{ position: 'relative', height: plotH + PADB }}>
+                  {/* Y axis — occurrence-count scale + horizontal gridlines */}
+                  {ticks.map((g, i) => {
+                    const top = (1 - g) * plotH;
+                    return (
+                      <div key={`y${i}`}>
+                        <div className="mono" style={{ position: 'absolute', left: 0, top, width: PADL - 6, textAlign: 'right', transform: 'translateY(-50%)', fontSize: 9, color: 'var(--text-faint)', pointerEvents: 'none' }}>{Math.round(maxB * g)}</div>
+                        <div style={{ position: 'absolute', left: PADL, right: 0, top, height: 1, background: 'var(--border)', opacity: g === 0 ? 1 : 0.4, pointerEvents: 'none' }} />
+                      </div>
+                    );
+                  })}
+
+                  {/* Bars — zero baseline; red after the onset, amber before */}
+                  <div style={{ position: 'absolute', left: PADL, right: 0, top: 0, height: plotH, display: 'flex', alignItems: 'flex-end', gap: 2 }}>
+                    {buckets.map((v, i) => {
+                      const post = deployIdx >= 0 ? i >= deployIdx : v >= maxB * 0.66;
+                      return (
+                        <div key={i} title={`${hhmm(tAt(i))} · ${v} occurrence${v === 1 ? '' : 's'}`} style={{ flex: 1, height: '100%', display: 'flex', alignItems: 'flex-end' }}>
+                          <div style={{ width: '100%', height: `${(v / maxB) * 100}%`, minHeight: v > 0 ? 2 : 0, background: post ? 'var(--err)' : 'var(--warn)', borderRadius: '2px 2px 0 0' }} />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Deploy marker — dashed red line + label at the onset bucket */}
+                  {deployIdx >= 0 && (
+                    <div style={{ position: 'absolute', left: PADL, right: 0, top: 0, height: plotH, pointerEvents: 'none' }}>
+                      <div style={{ position: 'absolute', left: cpx(deployIdx), top: -4, bottom: 0, borderLeft: '1.5px dashed var(--err)', opacity: 0.85 }}>
+                        <span className="mono" style={{ position: 'absolute', top: -3, left: 4, fontSize: 9, color: 'var(--err)', background: 'var(--bg1)', padding: '0 3px', borderRadius: 3 }}>deploy</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* X axis — 5 HH:MM ticks, first left- / last right-aligned */}
+                  <div style={{ position: 'absolute', left: PADL, right: 0, top: plotH + 3, height: PADB, pointerEvents: 'none' }}>
+                    {ticks.map((f, i) => {
+                      const idx = Math.min(N - 1, Math.round(f * (N - 1)));
+                      return <div key={`x${i}`} className="mono" style={{ position: 'absolute', left: cpx(idx), transform: i === 0 ? 'none' : i === ticks.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)', fontSize: 9, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>{hhmm(tAt(idx))}</div>;
+                    })}
+                  </div>
                 </div>
-              ))}
-            </div>
+              );
+            })()
           )}
         </div>
       </div>

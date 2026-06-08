@@ -1,0 +1,49 @@
+# redis-acache.conf — Redis as a PURE CACHE for Coremetry's Traces
+# autocomplete (internal/acache). Data loss is acceptable: every key can be
+# rebuilt from the span stream, and on a cold/empty cache the read API falls
+# back to ClickHouse. Optimise for memory + speed, NOT durability.
+#
+#   redis-server /etc/redis/redis-acache.conf
+#
+# Or run the values inline (docker):
+#   redis-server --save "" --appendonly no \
+#     --maxmemory 2gb --maxmemory-policy allkeys-lru
+
+# ── Durability OFF (it's a cache) ────────────────────────────────────────────
+# No RDB snapshots: an empty `save` directive disables all snapshot points.
+save ""
+# No AOF: don't journal writes.
+appendonly no
+# Don't refuse writes just because the last (disabled) bgsave "failed".
+stop-writes-on-bgsave-error no
+# Pure-cache convenience: lazy-free evictions so eviction never stalls the loop.
+lazyfree-lazy-eviction yes
+lazyfree-lazy-expire yes
+
+# ── Memory bound + eviction ──────────────────────────────────────────────────
+# Cap memory and evict the least-recently-used key when full. allkeys-lru is
+# correct here: the cache is rebuildable, so evicting cold services/ops/values
+# is harmless — they repopulate on the next matching span (or fall back to CH).
+maxmemory 2gb
+maxmemory-policy allkeys-lru
+# LRU sampling precision (higher = closer to true LRU, more CPU). 10 is plenty.
+maxmemory-samples 10
+
+# ── Networking / safety (tune to your deployment) ────────────────────────────
+# bind 127.0.0.1 -::1
+# protected-mode yes
+# requirepass <set in prod; reflect it in the redis:// URL>
+tcp-keepalive 60
+timeout 0
+
+# ── Notes ────────────────────────────────────────────────────────────────────
+# * If acache shares this Redis instance with Coremetry's response cache
+#   (internal/cache), allkeys-lru still fits — that layer is also rebuildable.
+#   If you ever co-locate durable state, switch to a dedicated DB index or a
+#   separate instance instead of relaxing the policy here.
+# * The acache write path EXPIREs every touched key to TTL (default 24h), so
+#   stale services/ops/values drop out even before LRU pressure. WindowMode
+#   trades that for per-member time windows (see Options.WindowMode).
+# * Sizing: ~thousands of services + ~10k ops + a few low-card attr keys ×
+#   top-1000 values each is a few tens of MB. 2gb is generous headroom that
+#   also absorbs the response cache if shared.

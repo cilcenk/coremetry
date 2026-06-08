@@ -1184,20 +1184,37 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// When all conditions hold we bypass the GROUP BY trace_id
 	// over raw spans (~10-100M rows on a 7-day window) and
 	// read pre-aggregated state instead.
+	// v0.8.77 — extra attribute columns NO LONGER disqualify the MV fast path.
+	// Operator-reported: adding a "+ Column" on a huge spans window was very
+	// slow because requesting any ExtraAttrs forced the raw GROUP BY trace_id
+	// scan over the whole window. Instead we keep the fast MV list and fill the
+	// requested columns with a SECOND, bounded query that fetches the attrs for
+	// ONLY the page's ~50 trace_ids via the idx_trace bloom skip index — so a
+	// column add stays sub-second regardless of total span volume.
 	if !f.From.IsZero() && !f.To.IsZero() &&
 		f.To.Sub(f.From) >= 5*time.Minute &&
 		f.Search == "" && f.TraceID == "" &&
-		len(f.ExtraAttrs) == 0 && len(f.Filters) == 0 &&
+		len(f.Filters) == 0 &&
 		len(f.RequireServices) == 0 &&
 		(f.CountMode == "skip" || f.CountMode == "") {
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
 		if err == nil {
-			return out, total, hasMore, nil
+			if len(f.ExtraAttrs) > 0 {
+				if ferr := s.fillTraceExtras(ctx, out, f.ExtraAttrs); ferr != nil {
+					// Non-fatal: fall through to the raw path (which projects the
+					// attrs inline) rather than return rows missing their columns.
+					log.Printf("[chstore] trace extras fill failed, falling back to raw: %v", ferr)
+				} else {
+					return out, total, hasMore, nil
+				}
+			} else {
+				return out, total, hasMore, nil
+			}
+		} else {
+			// On error fall through to raw path — log it so a regression in the
+			// MV pipeline doesn't silently leave us on the slow path forever.
+			log.Printf("[chstore] trace_summary fast path failed, falling back to raw: %v", err)
 		}
-		// On error fall through to raw path — log it so a
-		// regression in the MV pipeline doesn't silently leave
-		// us on the slow path forever.
-		log.Printf("[chstore] trace_summary fast path failed, falling back to raw: %v", err)
 	}
 
 	wc := buildGetTracesWhere(f)
@@ -1489,6 +1506,80 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 // scale; if an operator needs an exact ordering across the
 // full window they can drop the service filter or narrow
 // the time range.
+// fillTraceExtras fetches the user-selected attribute columns for a page of
+// trace rows and writes them into each row's Extras map. Bounded by the page
+// size — WHERE trace_id IN (page ids) rides the idx_trace bloom skip index — so
+// it stays cheap regardless of total span volume. Attribute resolution mirrors
+// the raw path's extraSelect (well-known semconv key → structured column;
+// otherwise attr_values/res_values array lookup). (v0.8.77)
+func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []string) error {
+	if len(rows) == 0 || len(attrs) == 0 {
+		return nil
+	}
+	sel := ""
+	projArgs := []any{}
+	for i, key := range attrs {
+		if col, ok := WellKnownTraceCol[key]; ok {
+			sel += fmt.Sprintf(", any(%s) AS extra_%d", col, i)
+			continue
+		}
+		sel += fmt.Sprintf(
+			", anyIf(coalesce("+
+				"nullIf(attr_values[indexOf(attr_keys, ?)], ''),"+
+				"nullIf(res_values[indexOf(res_keys, ?)], '')"+
+				"), has(attr_keys, ?) OR has(res_keys, ?)) AS extra_%d", i)
+		projArgs = append(projArgs, key, key, key, key)
+	}
+	holders := make([]string, len(rows))
+	idArgs := make([]any, len(rows))
+	for i, r := range rows {
+		holders[i] = "?"
+		idArgs[i] = r.TraceID
+	}
+	sql := "SELECT trace_id" + sel +
+		" FROM spans WHERE trace_id IN (" + strings.Join(holders, ",") + ")" +
+		" GROUP BY trace_id SETTINGS max_execution_time = 15"
+	args := append(append([]any{}, projArgs...), idArgs...)
+
+	qrows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	defer qrows.Close()
+	byID := make(map[string][]string, len(rows))
+	for qrows.Next() {
+		var id string
+		extras := make([]string, len(attrs))
+		dest := make([]any, 0, len(attrs)+1)
+		dest = append(dest, &id)
+		for i := range extras {
+			dest = append(dest, &extras[i])
+		}
+		if err := qrows.Scan(dest...); err != nil {
+			return err
+		}
+		byID[id] = extras
+	}
+	if err := qrows.Err(); err != nil {
+		return err
+	}
+	for i := range rows {
+		ex, ok := byID[rows[i].TraceID]
+		if !ok {
+			continue
+		}
+		if rows[i].Extras == nil {
+			rows[i].Extras = make(map[string]string, len(attrs))
+		}
+		for j, key := range attrs {
+			if j < len(ex) {
+				rows[i].Extras[key] = ex[j]
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	if f.Limit == 0 {
 		f.Limit = 50

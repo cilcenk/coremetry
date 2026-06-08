@@ -39,16 +39,21 @@ function hhmm(ms: number): string {
 }
 
 export function VolumeChart({
-  count, errors, p50, height = 140,
+  count, errors, p50, height = 140, onBrush,
 }: {
   count: SpanMetricSeries[] | null;
   errors: SpanMetricSeries[] | null;
   p50: SpanMetricSeries[] | null;
   height?: number;
+  // Drag across the bars to select a time window. The volume chart is the
+  // page's brush/overview tool — dragging narrows the range to the brushed
+  // buckets (restored in v0.8.86; lost in the v0.8.78 canvas→DOM rewrite).
+  onBrush?: (fromMs: number, toMs: number) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
   const [hover, setHover] = useState<number | null>(null);
+  const [drag, setDrag] = useState<{ a: number; b: number } | null>(null);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -88,6 +93,29 @@ export function VolumeChart({
 
   const hb = hover != null ? buckets[hover] : null;
 
+  // Commit the brush on mouseup anywhere (so releasing outside the chart still
+  // works). Refs keep the listener reading the latest buckets/onBrush without
+  // re-subscribing on every drag tick.
+  const onBrushRef = useRef(onBrush); onBrushRef.current = onBrush;
+  const bucketsRef = useRef(buckets); bucketsRef.current = buckets;
+  const bucketMinRef = useRef(bucketMin); bucketMinRef.current = bucketMin;
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    const up = () => {
+      setDrag(d => {
+        const bs = bucketsRef.current;
+        if (d && onBrushRef.current && bs.length) {
+          const lo = Math.min(d.a, d.b), hi = Math.max(d.a, d.b);
+          if (bs[lo] && bs[hi]) onBrushRef.current(bs[lo].t, bs[hi].t + bucketMinRef.current * 60000);
+        }
+        return null;
+      });
+    };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, [dragging]);
+
   return (
     <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
       {/* Legend — ABOVE the bars, outside the plot. */}
@@ -96,7 +124,7 @@ export function VolumeChart({
           <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--accent)' }} /> ok spans
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--red)' }} /> errors
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--err)' }} /> errors
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span style={{ width: 14, height: 2, background: 'var(--orange)' }} /> p50 latency
@@ -142,19 +170,33 @@ export function VolumeChart({
                 const on = hover === i;
                 return (
                   <div key={i}
-                    onMouseEnter={() => setHover(i)}
+                    onMouseDown={onBrush ? (e) => { e.preventDefault(); setDrag({ a: i, b: i }); } : undefined}
+                    onMouseEnter={() => { setHover(i); setDrag(d => (d ? { ...d, b: i } : d)); }}
                     style={{
                       flex: 1, height: h, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
-                      borderRadius: '2px 2px 0 0', overflow: 'hidden', cursor: 'default',
-                      outline: on ? '1px solid var(--accent)' : 'none',
-                      background: hot ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'transparent',
+                      borderRadius: '2px 2px 0 0', overflow: 'hidden', cursor: onBrush ? 'crosshair' : 'default',
+                      outline: on && !drag ? '1px solid var(--accent)' : 'none',
+                      background: hot ? 'color-mix(in srgb, var(--err) 14%, transparent)' : 'transparent',
                     }}>
                     <div style={{ height: Math.max(0, h - errH), background: 'var(--accent)', opacity: on ? 0.95 : 0.7 }} />
-                    {errH > 0 && <div style={{ height: errH, background: 'var(--red)' }} />}
+                    {errH > 0 && <div style={{ height: errH, background: 'var(--err)' }} />}
                   </div>
                 );
               })}
             </div>
+
+            {/* Brush selection band — full plot height across the dragged buckets. */}
+            {drag && (() => {
+              const lo = Math.min(drag.a, drag.b), hi = Math.max(drag.a, drag.b);
+              return (
+                <div style={{
+                  position: 'absolute', left: PAD.l + (lo / n) * plotW, top: PAD.t,
+                  width: ((hi - lo + 1) / n) * plotW, height: plotH, pointerEvents: 'none',
+                  background: 'color-mix(in srgb, var(--accent) 14%, transparent)',
+                  border: '1px solid var(--accent)', borderRadius: 2,
+                }} />
+              );
+            })()}
 
             {/* p50 latency line — own ms scale, drawn as an SVG overlay. */}
             <svg width={width} height={height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' }}>
@@ -202,7 +244,7 @@ export function VolumeChart({
                   boxShadow: '0 4px 14px rgba(0,0,0,0.25)', padding: '6px 9px', fontSize: 11, whiteSpace: 'nowrap',
                 }}>
                   <div style={{ color: 'var(--text-faint)', fontFamily: 'var(--font-mono, ui-monospace)', marginBottom: 2 }}>{hhmm(hb.t)}</div>
-                  <div><b>{kfmt(hb.total)}</b> spans · <b style={{ color: 'var(--red)' }}>{(hb.errRate * 100).toFixed(1)}%</b> err
+                  <div><b>{kfmt(hb.total)}</b> spans · <b style={{ color: 'var(--err)' }}>{(hb.errRate * 100).toFixed(1)}%</b> err
                     {' · '}<span style={{ color: 'var(--orange)' }}>p50 {hb.p50 ? fmtDur(hb.p50) : '—'}</span>
                   </div>
                 </div>

@@ -39,7 +39,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/profileconv"
-	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
@@ -74,7 +73,6 @@ type Server struct {
 	stats       *cacheStats
 	notify      *notify.Notifier
 	copilot     *copilot.Service  // nil when AI key not configured
-	sampler     *sampling.Sampler // always set; Snapshot() reports current ratios
 	bus         *sse.Broker       // in-process SSE pub/sub for live UI updates
 	// tempo is the external Tempo backend (v0.5.208). When
 	// configured, getTrace falls back to Tempo on a CH miss so
@@ -211,11 +209,11 @@ type rateSample struct {
 	count int64
 }
 
-func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, ldapSvc *ldap.Service, c cache.Cache, n *notify.Notifier, cop *copilot.Service, smp *sampling.Sampler, bus *sse.Broker) *Server {
+func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, ldapSvc *ldap.Service, c cache.Cache, n *notify.Notifier, cop *copilot.Service, bus *sse.Broker) *Server {
 	return &Server{
 		addr: addr, store: store, logs: logs, ing: ing, webFS: webFS,
 		auth: authSvc, oidc: oidcSvc, ldap: ldapSvc, cache: c, notify: n, copilot: cop,
-		sampler: smp, bus: bus,
+		bus: bus,
 		rateSamples: map[string]rateSample{},
 		l1:          newL1Cache(1024),
 		stats:       newCacheStats(),
@@ -767,15 +765,6 @@ func (s *Server) Start() error {
 	// the URL query string).
 	mux.HandleFunc("POST   /api/channels/zoom/list-channels",
 		auth.RequireRole(auth.RoleAdmin, s.listZoomChannels))
-	// v0.5.316 — Operator-reported: viewers/editors were
-	// getting auto-logged out because the SamplingChip on
-	// /service called this read-only endpoint speculatively
-	// and the admin-only gate returned 401 → frontend
-	// onUnauthorized → forced logout. GET is now any
-	// authenticated role (read-only chip surfaces for everyone);
-	// PUT stays admin-only.
-	mux.HandleFunc("GET    /api/settings/sampling",   auth.RequireAnyRole([]string{auth.RoleAdmin, auth.RoleEditor, auth.RoleViewer}, s.getSamplingSettings))
-	mux.HandleFunc("PUT    /api/settings/sampling",   auth.RequireRole(auth.RoleAdmin, s.putSamplingSettings))
 
 	// User management (admin only)
 	mux.HandleFunc("GET    /api/users",                  auth.RequireRole(auth.RoleAdmin, s.listUsers))
@@ -4899,98 +4888,6 @@ func maskedSMTP(s notify.SMTPSettings) map[string]any {
 	}
 }
 
-// getSamplingSettings returns the live in-memory sampler config —
-// what the ingester is actually applying right now (post-Reload),
-// not just whatever was persisted last. Includes both stages
-// (head ratios + tail buffer counters) so the admin can see the
-// policy is taking effect without watching ingest rates.
-func (s *Server) getSamplingSettings(w http.ResponseWriter, r *http.Request) {
-	if s.sampler == nil {
-		writeJSON(w, map[string]any{"default": 1.0, "services": map[string]float64{}})
-		return
-	}
-	snap := s.sampler.Snapshot()
-	body := map[string]any{
-		"default":          snap.Default,
-		"services":         snap.Services,
-		"alwaysKeepErrors": snap.AlwaysKeepErrors != nil && *snap.AlwaysKeepErrors,
-		"alwaysKeepRoots":  snap.AlwaysKeepRoots != nil && *snap.AlwaysKeepRoots,
-		"droppedSinceBoot": s.ing.SpansSampledOut(),
-	}
-	body["tail"] = snap.Tail
-	if t := s.sampler.Tail(); t != nil {
-		body["tailStats"] = t.Stats()
-	}
-	writeJSON(w, body)
-}
-
-// putSamplingSettings persists the new policy and hot-reloads the
-// in-memory sampler so the next span is judged against it. No
-// process restart needed; great for trying low ratios while
-// watching ingest cost in real time.
-func (s *Server) putSamplingSettings(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Default          float64            `json:"default"`
-		Services         map[string]float64 `json:"services"`
-		AlwaysKeepErrors *bool              `json:"alwaysKeepErrors"`
-		AlwaysKeepRoots  *bool              `json:"alwaysKeepRoots"`
-		Tail             *struct {
-			Enabled   bool `json:"enabled"`
-			WindowSec int  `json:"windowSec"`
-			SlowMs    int  `json:"slowMs"`
-			MaxTraces int  `json:"maxTraces"`
-		} `json:"tail"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
-		return
-	}
-	cfg := samplingConfigFromBody(body.Default, body.Services, body.AlwaysKeepErrors, body.AlwaysKeepRoots)
-	if body.Tail != nil {
-		cfg.Tail = config.TailSamplingConfig{
-			Enabled:   body.Tail.Enabled,
-			WindowSec: body.Tail.WindowSec,
-			SlowMs:    body.Tail.SlowMs,
-			MaxTraces: body.Tail.MaxTraces,
-		}
-	}
-	if s.sampler != nil {
-		defer s.publishConfigReload(r.Context(), "sampling")
-		if err := s.sampler.SavePersisted(r.Context(), s.store, cfg); err != nil {
-			writeErr(w, err)
-			return
-		}
-	}
-	details, _ := json.Marshal(map[string]any{
-		"default": cfg.Default, "serviceCount": len(cfg.Services),
-		"tailEnabled": cfg.Tail.Enabled,
-	})
-	s.audit(r, "settings.sampling.update", "settings", "sampling", string(details))
-	s.getSamplingSettings(w, r)
-}
-
-// samplingConfigFromBody is split out so the put handler can
-// build a SamplingConfig without circularly importing main.go's
-// view of the world. Pass-through with a nil-safe wrapping for
-// the bool overrides (so the admin UI can leave them undefined
-// to inherit defaults).
-func samplingConfigFromBody(def float64, svc map[string]float64, keepErr, keepRoot *bool) config.SamplingConfig {
-	return config.SamplingConfig{
-		Default:          def,
-		Services:         svc,
-		AlwaysKeepErrors: keepErr,
-		AlwaysKeepRoots:  keepRoot,
-	}
-}
-
-// keep the sampling import referenced explicitly — the field
-// declaration above pulls it in as a Server type, but Go's
-// unused-import check is package-scoped and the field type alone
-// counts as use, so this comment is the human marker rather than
-// a compiler need. (The build was failing earlier because
-// sampling.Config doesn't exist; the actual config type is
-// config.SamplingConfig.)
-var _ = sampling.New
 
 func (s *Server) getSMTPSettings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.notify.SMTP(r.Context())

@@ -440,12 +440,6 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload tempo: %v", err)
 			}
 		}
-	case "sampling":
-		if s.sampler != nil {
-			if err := s.sampler.LoadPersisted(ctx, s.store); err != nil {
-				log.Printf("[cache] config-reload sampling: %v", err)
-			}
-		}
 	case "pipeline":
 		if s.pipeline != nil {
 			if err := s.pipeline.LoadPersisted(ctx, s.store); err != nil {

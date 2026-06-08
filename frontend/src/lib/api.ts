@@ -1447,13 +1447,6 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipient }),
     }),
-  getSampling: () => get<import('./types').SamplingSettings>('/api/settings/sampling'),
-  putSampling: (s: Omit<import('./types').SamplingSettings, 'droppedSinceBoot'>) =>
-    request<import('./types').SamplingSettings>('/api/settings/sampling', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(s),
-    }),
   listChannels:  () => get<NotificationChannel[] | null>('/api/channels'),
   createChannel: (c: Omit<NotificationChannel, 'id' | 'createdAt'>) =>
     request<NotificationChannel>('/api/channels', {

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
 import type {
-  CardinalityReport, SamplingSettings, SystemStats,
+  CardinalityReport, SystemStats,
   StatusPageConfig, StatusComponent, StatusSubscriber,
 } from '@/lib/types';
 
@@ -26,24 +26,6 @@ export function useCardinality() {
     queryKey: keys.admin.cardinality,
     queryFn: api.cardinality,
     staleTime: 5 * 60_000,
-  });
-}
-
-export function useSamplingSettings() {
-  return useQuery<SamplingSettings>({
-    queryKey: keys.admin.sampling,
-    queryFn: api.getSampling,
-    staleTime: 30_000,
-  });
-}
-
-export function useUpdateSampling() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: api.putSampling,
-    onSuccess: (next) => {
-      qc.setQueryData(keys.admin.sampling, next);
-    },
   });
 }
 

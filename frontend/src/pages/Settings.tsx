@@ -23,7 +23,6 @@ import { KibanaTab } from './settings/KibanaTab';
 import { LDAPTab } from './settings/LdapTab';
 import { SSOPresetsTab } from './settings/SsoTab';
 import { RetentionTab } from './settings/RetentionTab';
-import { SamplingTab } from './settings/SamplingTab';
 import { AnomalyPromotionTab } from './settings/AnomalyTab';
 import { BrandingTab } from './settings/BrandingTab';
 import { CustomRolesTab } from './settings/RolesTab';
@@ -48,7 +47,6 @@ const TABS: SettingsTab[] = [
   { slug: 'ldap',        label: 'LDAP / AD',             Comp: LDAPTab },
   { slug: 'sso',         label: 'SSO presets',           Comp: SSOPresetsTab },
   { slug: 'retention',   label: 'Data retention',        Comp: RetentionTab },
-  { slug: 'sampling',    label: 'Trace sampling',        Comp: SamplingTab },
   { slug: 'anomaly',     label: 'Anomaly promotion',     Comp: AnomalyPromotionTab },
   { slug: 'branding',    label: 'Branding',              Comp: BrandingTab },
   { slug: 'roles',       label: 'Custom roles',          Comp: CustomRolesTab },

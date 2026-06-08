@@ -35,7 +35,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/monitor"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
-	"github.com/cilcenk/coremetry/internal/sampling"
 	"github.com/cilcenk/coremetry/internal/selfobs"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/elasticml"
@@ -260,54 +259,23 @@ func main() {
 	// ── OTLP ingester ─────────────────────────────────────────────────────────
 	ing := otlp.NewIngester(spanConsumer, logConsumer, metricConsumer)
 
-	// ── Trace sampling (head; always-keep-errors + always-keep-roots) ──
-	// Built from cfg.Sampling. Empty config = no sampling (keep
-	// everything), so existing deployments don't change behaviour
-	// on upgrade. Setting `sampling.default: 0.1` in config or
-	// COREMETRY_SAMPLING_DEFAULT=0.1 cuts probabilistic span volume
-	// 90% while preserving every error + root span. The Sampler is
-	// hot-swappable via Reload — admin UI / API can adjust live
-	// without a process restart.
-	// v0.5.488 — sampler + pipeline + gRPC live on ingest pods only.
-	// api/worker pods don't see incoming spans so head sampling +
-	// drop/enrich rules don't apply to them. The sampler IS still
-	// referenced by api.NewServer (for /api/settings/sampling
-	// reads) — so we still construct it on api/all, just don't
-	// attach it to a non-existent ingester.
-	sampler := sampling.New(cfg.Sampling)
+	// ── Ingest-time pipeline (v0.5.263; in-binary head sampling removed
+	// v0.8.73) ──
+	// Operator-defined drop / enrich rules. pipeline + gRPC live on ingest
+	// pods only; api/worker pods don't see incoming spans. Coremetry now
+	// stores 100% of the spans it RECEIVES — sampling, when wanted, is done
+	// at the collector (the sample-to-Coremetry / 100%-to-Tempo split).
 	pipelineEng := pipeline.New()
 	if mode.ingest {
-		// Tail sampling needs a downstream sink: kept-after-buffering
-		// spans flow back through the same span consumer the head path
-		// uses. Attach BEFORE LoadPersisted so a persisted tail-enabled
-		// config spins up a working tail (not a flush-less no-op tail).
-		sampler.AttachFlush(func(sp *chstore.Span) bool { return spanConsumer.Add(sp) })
-		if err := sampler.LoadPersisted(ctx, store); err != nil {
-			log.Printf("[sampling] load persisted: %v", err)
-		}
-		// v0.5.324 — cross-pod settings sync (see ldap/copilot/tempo/pipeline below).
-		go sampler.StartConfigRefresh(ctx, store, 30*time.Second)
-		ing.SetSampler(sampler)
-
-		// Ingest-time pipeline (v0.5.263) — operator-defined drop /
-		// enrich rules evaluated BEFORE the sampler. Loads its rule
-		// set from system_settings at boot; admin PUTs through
-		// /api/admin/pipeline-rules re-persist + immediately apply.
-		// Load failure is non-fatal (empty rule set → engine is a
-		// no-op).
+		// Loads its rule set from system_settings at boot; admin PUTs through
+		// /api/admin/pipeline-rules re-persist + immediately apply. Load
+		// failure is non-fatal (empty rule set → engine is a no-op).
 		if err := pipelineEng.LoadPersisted(ctx, store); err != nil {
 			log.Printf("[pipeline] load persisted: %v", err)
 		}
 		go pipelineEng.StartConfigRefresh(ctx, store, 30*time.Second)
 		pipelineEng.LogStats()
 		ing.SetPipeline(pipelineEng)
-		{
-			s := sampler.Snapshot()
-			log.Printf("[sampling] default=%.2f overrides=%d keepErrors=%v keepRoots=%v",
-				s.Default, len(s.Services),
-				s.AlwaysKeepErrors != nil && *s.AlwaysKeepErrors,
-				s.AlwaysKeepRoots != nil && *s.AlwaysKeepRoots)
-		}
 
 		// ── gRPC server ───────────────────────────────────────────────
 		go func() {
@@ -315,15 +283,6 @@ func main() {
 				log.Printf("[grpc] %v", err)
 			}
 		}()
-	} else {
-		// api/worker: load sampler config snapshot so /api/settings/
-		// sampling reads return the current cluster-wide state.
-		// LoadPersisted is read-only against system_settings — safe
-		// from anywhere.
-		if err := sampler.LoadPersisted(ctx, store); err != nil {
-			log.Printf("[sampling] load persisted (read-only): %v", err)
-		}
-		go sampler.StartConfigRefresh(ctx, store, 30*time.Second)
 	}
 
 	// ── Cache + distributed lock (optional) ───────────────────────────────────
@@ -641,7 +600,7 @@ func main() {
 	go clusterSvc.Start(ctx)
 	log.Printf("[cluster] pod id %s", clusterSvc.MyID())
 
-	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, sampler, bus)
+	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetCluster(clusterSvc)
 	// v0.6.4 — Model Context Protocol server. Wired on api/all
 	// modes only — worker / ingest pods don't take operator
@@ -669,7 +628,7 @@ func main() {
 	srv.SetTempo(tempoSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes
 	// to the Redis pub/sub channel so a putBranding /
-	// putSamplingSettings / etc. on one pod evicts the cached
+	// putTempoSettings / etc. on one pod evicts the cached
 	// response from EVERY pod's L1 tier within ~50ms — closes
 	// the multi-pod staleness gap (was bounded only by the
 	// soft TTL, up to 5s + the SWR window).

@@ -1281,6 +1281,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		// in distributed mode (system_settings is not high-volume, so
 		// it stays at its bare name — no _local rewrite).
 		`ALTER TABLE system_settings DELETE WHERE key = 'topology.exclude'`,
+		// In-binary head/tail sampling was removed in v0.8.73 (Coremetry
+		// stores 100% of received spans; sampling moves to the collector).
+		// Drop the orphaned persisted sampling policy so a stale row can't
+		// confuse anything. Same lightweight-mutation / no-op-when-absent
+		// semantics as the topology.exclude cleanup above.
+		`ALTER TABLE system_settings DELETE WHERE key = 'sampling'`,
 	}
 	for _, q := range alters {
 		if err := s.execDDL(ctx, q); err != nil {

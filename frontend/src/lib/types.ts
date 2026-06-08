@@ -2116,33 +2116,6 @@ export interface CardinalityReport {
   generatedAt: number;
 }
 
-export interface SamplingSettings {
-  default: number;
-  services: Record<string, number>;
-  alwaysKeepErrors: boolean;
-  alwaysKeepRoots: boolean;
-  droppedSinceBoot: number;
-  tail?: TailSamplingConfig;
-  tailStats?: TailStats;
-}
-
-export interface TailSamplingConfig {
-  enabled: boolean;
-  windowSec: number;
-  slowMs: number;
-  maxTraces: number;
-}
-
-export interface TailStats {
-  enabled: boolean;
-  windowSec: number;
-  slowMs: number;
-  maxTraces: number;
-  openTraces: number;
-  flushedSpans: number;
-  droppedSpans: number;
-  evictedTraces: number;
-}
 
 // One row of the inbound-callers backtrace — a unique
 // (caller service × caller pod / instance × client IP × user agent)

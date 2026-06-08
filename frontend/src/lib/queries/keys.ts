@@ -80,7 +80,6 @@ export const keys = {
   admin: {
     systemStats: ['admin', 'system-stats'] as const,
     cardinality: ['admin', 'cardinality'] as const,
-    sampling:    ['admin', 'sampling'] as const,
   },
 
   spans: {

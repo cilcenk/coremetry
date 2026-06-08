@@ -18,7 +18,7 @@ export {
   useAllServiceRuntimes, useServiceDeploys, useServiceRollouts,
 } from './services';
 export {
-  useSystemStats, useCardinality, useSamplingSettings, useUpdateSampling,
+  useSystemStats, useCardinality,
   useAuditLog,
   useStatusPageConfig, useUpdateStatusPageConfig,
   useStatusPageComponents, useCreateStatusComponent,

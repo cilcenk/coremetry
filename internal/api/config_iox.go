@@ -209,7 +209,7 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 	// publishConfigReload covers multi-pod via Pub/Sub; the
 	// in-process subscriber wired by reloadConfigOnSignal picks
 	// up the local-pod broadcast too.
-	for _, svc := range []string{"copilot", "ldap", "tempo", "sampling", "pipeline", "kibana"} {
+	for _, svc := range []string{"copilot", "ldap", "tempo", "pipeline", "kibana"} {
 		s.publishConfigReload(r.Context(), svc)
 	}
 

@@ -17,28 +17,22 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/pipeline"
-	"github.com/cilcenk/coremetry/internal/sampling"
 )
 
-// Ingester wires the three OTLP consumers together. When a Sampler
-// is attached (non-nil), each incoming span is routed through it
-// before reaching the consumer; sampled-out spans are dropped on
-// the floor and counted in spansSampledOut for /api/health.
+// Ingester wires the three OTLP consumers together. Every received span
+// is stored — in-binary head/tail sampling was removed (v0.8.73); sampling,
+// when wanted, happens at the collector (the sample-to-Coremetry /
+// 100%-to-Tempo split). An optional pipeline drop/enrich engine still runs
+// first.
 type Ingester struct {
 	Spans   *consumer.Consumer[*chstore.Span]
 	Logs    *consumer.Consumer[*chstore.Log]
 	Metrics *consumer.Consumer[*chstore.MetricPoint]
 
-	sampler         *sampling.Sampler
-	spansSampledOut atomic.Uint64
-
-	// pipeline (v0.5.263) — ingest-time drop / enrich rules,
-	// evaluated BEFORE the sampler so dropped spans never touch
-	// the consumer's batch buffer or the tail sampler's
-	// bookkeeping. nil = no rules (the engine itself is a
-	// no-op-on-empty so passing it through is fine too).
-	pipeline       *pipeline.Engine
-	spansDropped   atomic.Uint64
+	// pipeline (v0.5.263) — ingest-time drop / enrich rules. nil = no rules
+	// (the engine is a no-op-on-empty, so passing it through is fine too).
+	pipeline     *pipeline.Engine
+	spansDropped atomic.Uint64
 }
 
 // SetPipeline wires the ingest-time policy engine. Always called
@@ -60,46 +54,16 @@ func NewIngester(
 	return &Ingester{Spans: spans, Logs: logs, Metrics: metrics}
 }
 
-// SetSampler swaps in a sampling decision engine. Pass nil to
-// disable sampling (the default — keep every span). Safe to call
-// at any time; the next span uses the new sampler.
-func (ing *Ingester) SetSampler(s *sampling.Sampler) { ing.sampler = s }
-
-// SpansSampledOut is a monotonic counter of spans dropped by the
-// sampler since process start. Surfaced on /api/health alongside
-// the existing spans_dropped counter so an operator can see
-// sampling effectiveness without reading server logs.
-func (ing *Ingester) SpansSampledOut() uint64 { return ing.spansSampledOut.Load() }
-
-// addSpan applies sampling (if configured) and forwards to the
-// span consumer. Returns false if the consumer's buffer was full
-// and the span had to be dropped — same return semantics as the
-// raw Spans.Add it replaces.
-//
-// Routing:
-//   - If a tail sampler is enabled, the span is buffered there
-//     and the tail's sweeper later flushes kept spans through
-//     the consumer. addSpan returns true immediately — we treat
-//     "buffered for later decision" as a successful accept.
-//   - Otherwise the head sampler decides; sampled-out spans are
-//     counted and dropped on the floor.
+// addSpan runs the optional ingest-time pipeline (drop/enrich) then forwards
+// to the span consumer. Returns false only if the consumer's buffer was full
+// and the span had to be dropped — same return semantics as the raw
+// Spans.Add it replaces.
 func (ing *Ingester) addSpan(sp *chstore.Span) bool {
-	// Pipeline (v0.5.263) — drop runs BEFORE sampling so the
-	// dropped span never enters the tail buffer or burns the
-	// sampler's per-trace decision slot.
+	// Pipeline (v0.5.263) — operator drop rules. accept-but-discard so the
+	// caller's accept accounting is unaffected.
 	if ing.pipeline != nil && !ing.pipeline.AcceptSpan(sp) {
 		ing.spansDropped.Add(1)
-		return true // operator policy = accept-but-discard
-	}
-	if ing.sampler != nil {
-		if t := ing.sampler.Tail(); t != nil && t.Enabled() {
-			t.Add(sp)
-			return true
-		}
-		if !ing.sampler.Decide(sp) {
-			ing.spansSampledOut.Add(1)
-			return true
-		}
+		return true
 	}
 	return ing.Spans.Add(sp)
 }

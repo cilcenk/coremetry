@@ -689,6 +689,7 @@ func (s *Server) Start() error {
 	// v0.8.75 — autonomous agentic root-cause analysis (same loop + tools,
 	// kicked off on a subject service/problem rather than user-driven).
 	mux.HandleFunc("POST   /api/copilot/analyze",          s.copilotAnalyze)
+	mux.HandleFunc("POST   /api/copilot/analyze-service",  s.copilotAnalyzeService)
 	mux.HandleFunc("POST   /api/copilot/explain-trace/{id}", s.copilotExplainTrace)
 	// v0.5.255 — natural-language → DSL filter converter. /explore
 	// gets a "✦ Natural language" input that feeds this endpoint.

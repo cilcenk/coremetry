@@ -8,13 +8,18 @@
 // glance while healthy ranges stay grey. A P99 duration line (var(--warn)) rides
 // across the bucket centers with a "p99 <max>ms" / "0" axis label on the right.
 //
-// Buckets derive from the CURRENTLY-fetched + filtered trace rows (count + p99
-// per bucket) — so the chart always matches the table. Canvas (not uPlot)
-// because the stacked bar + per-bucket hot tint + overlaid p99 line compose in a
-// single paint that uPlot's bars plugin doesn't express cleanly.
+// v0.8.72 — TRUE volume. Buckets are the aggregated /api/spans/metric series
+// (count + errors + p99 per bucket) over the SELECTED window, matching the
+// table's filter — NOT the 50-row table page sample. Operator-reported: bucketing
+// only the loaded rows made the histogram a sparse sample (TOTAL showed 29 while
+// the window held thousands), so it wasn't a real volume histogram. Now the
+// chart reflects actual span volume; the table + FilteredRed strip carry the
+// drill-in sample. Canvas (not uPlot) because the stacked bar + per-bucket hot
+// tint + overlaid p99 line compose in a single paint that uPlot's bars plugin
+// doesn't express cleanly.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { TraceRow } from '@/lib/types';
+import type { SpanMetricSeries } from '@/lib/types';
 import { fmtDur } from './shared';
 
 const PAD = { l: 8, r: 8, t: 14, b: 6 };
@@ -33,9 +38,14 @@ interface Bucket {
 }
 
 export function VolumeChart({
-  rows, height = 120,
+  count, errors, p99, height = 120,
 }: {
-  rows: TraceRow[];
+  // Aggregated per-bucket series from /api/spans/metric over the selected window
+  // (count = total spans, errors = error spans, p99 = latency ms). null while
+  // loading. This is TRUE volume, not the table-page sample.
+  count: SpanMetricSeries[] | null;
+  errors: SpanMetricSeries[] | null;
+  p99: SpanMetricSeries[] | null;
   height?: number;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -53,46 +63,23 @@ export function VolumeChart({
     return () => ro.disconnect();
   }, []);
 
-  // Bucket the live rows into a DENSE 30-cell grid over [lo, hi]. Empty cells
-  // are kept (rendered as gaps) so the time axis is uniform and the p99 line
-  // spans real bucket centers. p99 per bucket is computed from each bucket's own
-  // duration samples.
+  // Build buckets directly from the aggregated series. The /api/spans/metric
+  // count series defines the bucket timeline; errors + p99 are joined by bucket
+  // timestamp. This is the WHOLE window's span volume, not a row sample, so the
+  // bars reflect real traffic and the totals match reality.
   const { buckets, totals } = useMemo(() => {
-    if (rows.length === 0) {
+    const cPts = count?.[0]?.points ?? [];
+    if (cPts.length === 0) {
       return { buckets: [] as Bucket[], totals: { total: 0, err: 0, p99Max: 0, maxCount: 0, maxP99: 0 } };
     }
-    let lo = Infinity, hi = -Infinity;
-    for (const r of rows) {
-      const t = r.startTime / 1e6;
-      if (t < lo) lo = t;
-      if (t > hi) hi = t;
-    }
-    if (hi <= lo) hi = lo + 1;
-    const span = hi - lo;
-    const bucketMs = span / BUCKETS;
+    const eMap = new Map((errors?.[0]?.points ?? []).map(p => [p.time, p.value]));
+    const pMap = new Map((p99?.[0]?.points ?? []).map(p => [p.time, p.value]));
 
-    const cells: { ok: number; err: number; durs: number[] }[] =
-      Array.from({ length: BUCKETS }, () => ({ ok: 0, err: 0, durs: [] }));
-    for (const r of rows) {
-      const t = r.startTime / 1e6;
-      let idx = Math.floor((t - lo) / bucketMs);
-      if (idx < 0) idx = 0;
-      if (idx >= BUCKETS) idx = BUCKETS - 1;
-      const c = cells[idx];
-      if (r.hasError) c.err++; else c.ok++;
-      c.durs.push(r.durationMs);
-    }
-
-    const out: Bucket[] = cells.map((c, i) => {
-      const total = c.ok + c.err;
-      let p99 = 0;
-      if (c.durs.length) {
-        c.durs.sort((a, b) => a - b);
-        const rank = 0.99 * (c.durs.length - 1);
-        const loI = Math.floor(rank), hiI = Math.ceil(rank);
-        p99 = c.durs[loI] + (c.durs[hiI] - c.durs[loI]) * (rank - loI);
-      }
-      return { t: lo + i * bucketMs, ok: c.ok, err: c.err, total, p99, errRate: total ? c.err / total : 0 };
+    const out: Bucket[] = cPts.map(p => {
+      const total = p.value;
+      const err = Math.min(eMap.get(p.time) ?? 0, total); // err can't exceed total
+      const p99v = pMap.get(p.time) ?? 0;
+      return { t: p.time / 1e6, ok: total - err, err, total, p99: p99v, errRate: total ? err / total : 0 };
     });
 
     let total = 0, err = 0, p99Max = 0, maxCount = 0, maxP99 = 0;
@@ -104,7 +91,7 @@ export function VolumeChart({
       maxP99 = Math.max(maxP99, b.p99);
     }
     return { buckets: out, totals: { total, err, p99Max, maxCount, maxP99 } };
-  }, [rows]);
+  }, [count, errors, p99]);
 
   // Paint.
   useEffect(() => {

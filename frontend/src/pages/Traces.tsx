@@ -35,7 +35,7 @@ import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { tsDateTime, timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
-import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr } from '@/lib/types';
+import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, SpanMetricSeries } from '@/lib/types';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
@@ -301,6 +301,40 @@ function TracesPageInner() {
     });
   }, [view, listRangeNs, sort, order, page, filter, advFilters, extraCols, showTotal, retryNonce]);
 
+  // v0.8.72 — TRUE span volume over the selected window (not the 50-row table
+  // page). Aggregated count/errors/p99 per ~30 buckets, mirroring the table's
+  // filter (service→dsl, search, advFilters), so the header chart + the
+  // TOTAL/ERRORS/P99 stats reflect REAL traffic. The table + FilteredRed strip
+  // still carry the drill-in sample.
+  const [volSeries, setVolSeries] = useState<{
+    count: SpanMetricSeries[] | null;
+    errors: SpanMetricSeries[] | null;
+    p99: SpanMetricSeries[] | null;
+  } | null>(null);
+  useEffect(() => {
+    if (view !== 'list') return;
+    const { from, to } = listRangeNs;
+    const windowSec = Math.max(60, Math.round((to - from) / 1e9));
+    let step = Math.round(windowSec / 30);
+    if (step < 1) step = 1;
+    if (step > 300) step = 300;
+    const common = {
+      from, to, step,
+      search: filter.search || undefined,
+      filters: advFilters.length ? JSON.stringify(advFilters) : undefined,
+      dsl: filter.service ? `service.name = "${filter.service.replace(/"/g, '\\"')}"` : undefined,
+    };
+    let cancelled = false;
+    Promise.all([
+      api.spanMetric({ ...common, agg: 'count' }),
+      api.spanMetric({ ...common, agg: 'errors' }),
+      api.spanMetric({ ...common, agg: 'p99', field: 'duration_ms' }),
+    ])
+      .then(([count, errors, p99]) => { if (!cancelled) setVolSeries({ count, errors, p99 }); })
+      .catch(() => { if (!cancelled) setVolSeries(null); });
+    return () => { cancelled = true; };
+  }, [view, listRangeNs, filter.service, filter.search, advFilters]);
+
   // ── Aggregate fetch ──────────────────────────────────────────────────────
   const aggRangeNs = useMemo(() => timeRangeToNs(range), [range]);
   useEffect(() => {
@@ -388,15 +422,17 @@ function TracesPageInner() {
   // Header RED stats over the live filtered rows (the stat group right of the
   // Volume|Latency toggle). Replaces the deleted standalone RED panel — the
   // filtered Rate/Errors/Duration numbers ride here + in the table.
+  // Header TOTAL/ERRORS/ERR RATE/P99 MAX — derived from the TRUE-volume series
+  // (whole window), so they describe real traffic rather than the 50-row page.
   const headerStats = useMemo(() => {
-    const total = displayRows.length;
-    let err = 0, p99Max = 0;
-    for (const t of displayRows) {
-      if (t.hasError) err++;
-      if (t.durationMs > p99Max) p99Max = t.durationMs;
-    }
+    const cPts = volSeries?.count?.[0]?.points ?? [];
+    const eMap = new Map((volSeries?.errors?.[0]?.points ?? []).map(p => [p.time, p.value]));
+    const pPts = volSeries?.p99?.[0]?.points ?? [];
+    let total = 0, err = 0, p99Max = 0;
+    for (const p of cPts) { total += p.value; err += eMap.get(p.time) ?? 0; }
+    for (const p of pPts) if (p.value > p99Max) p99Max = p.value;
     return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, p99Max };
-  }, [displayRows]);
+  }, [volSeries]);
 
   // Reset transient state on a new query / page.
   useEffect(() => { setExpanded(null); }, [page, filter, advFilters, range, view]);
@@ -513,7 +549,7 @@ function TracesPageInner() {
             ) : viz === 'volume' ? (
               // slimmer + recedes — it's the brush/overview "tool", not the
               // headline chart; the RED strip below carries the filtered numbers.
-              <VolumeChart rows={displayRows} height={120} />
+              <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p99={volSeries?.p99 ?? null} height={120} />
             ) : (
               <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, padding: '0 2px' }}>

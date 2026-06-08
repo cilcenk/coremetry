@@ -67,9 +67,9 @@ export function ColumnManager({ cols, onAdd }: {
           // Primary text + dashed primary border + a faint primary-tint fill so
           // it reads as an actionable affordance, not disabled chrome.
           padding: '4px 12px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
-          background: atLimit ? 'transparent' : 'color-mix(in srgb, var(--primary) 8%, transparent)',
-          color: 'var(--primary)',
-          border: '1px dashed var(--primary)', borderRadius: 5,
+          background: atLimit ? 'transparent' : 'color-mix(in srgb, var(--accent) 8%, transparent)',
+          color: 'var(--accent)',
+          border: '1px dashed var(--accent)', borderRadius: 5,
           cursor: atLimit ? 'not-allowed' : 'pointer',
           opacity: atLimit ? 0.5 : 1,
         }}>

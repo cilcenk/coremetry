@@ -93,7 +93,7 @@ export function VolumeChart({
       {/* Legend — ABOVE the bars, outside the plot. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, fontSize: 10.5, color: 'var(--text-faint)' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--primary)' }} /> ok spans
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--accent)' }} /> ok spans
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--red)' }} /> errors
@@ -146,10 +146,10 @@ export function VolumeChart({
                     style={{
                       flex: 1, height: h, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
                       borderRadius: '2px 2px 0 0', overflow: 'hidden', cursor: 'default',
-                      outline: on ? '1px solid var(--primary)' : 'none',
+                      outline: on ? '1px solid var(--accent)' : 'none',
                       background: hot ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'transparent',
                     }}>
-                    <div style={{ height: Math.max(0, h - errH), background: 'var(--primary)', opacity: on ? 0.95 : 0.7 }} />
+                    <div style={{ height: Math.max(0, h - errH), background: 'var(--accent)', opacity: on ? 0.95 : 0.7 }} />
                     {errH > 0 && <div style={{ height: errH, background: 'var(--red)' }} />}
                   </div>
                 );

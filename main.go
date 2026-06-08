@@ -22,6 +22,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/chmigrate"
 	"github.com/cilcenk/coremetry/internal/cluster"
 	"github.com/cilcenk/coremetry/internal/pipeline"
+	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/consumer"
@@ -107,6 +108,38 @@ func parseRunMode() runMode {
 		log.Fatalf("invalid COREMETRY_MODE=%q (must be one of: all, ingest, api, worker, agent)", m)
 		return runMode{}
 	}
+}
+
+// buildAcachePolicy resolves the autocomplete-cache cardinality policy
+// (v0.8.80). Operators tune which attribute keys keep ranked values vs. an
+// approximate HLL count via two optional CSV envs; unset → the OTel-shaped
+// DefaultPolicy. New attributes are a config change, never a code change.
+//
+//	COREMETRY_ACACHE_LOWCARD_KEYS  — keep top-N ranked values (e.g. http.route)
+//	COREMETRY_ACACHE_HIGHCARD_KEYS — HLL count only (e.g. k8s.pod.name)
+func buildAcachePolicy() acache.Policy {
+	low := splitCSVEnv("COREMETRY_ACACHE_LOWCARD_KEYS")
+	high := splitCSVEnv("COREMETRY_ACACHE_HIGHCARD_KEYS")
+	if len(low) == 0 && len(high) == 0 {
+		return acache.DefaultPolicy()
+	}
+	return acache.NewStaticPolicy(low, high, acache.CardHLL)
+}
+
+// splitCSVEnv reads a comma-separated env var into a trimmed, empties-dropped
+// slice (nil when unset).
+func splitCSVEnv(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func init() {
@@ -258,6 +291,22 @@ func main() {
 
 	// ── OTLP ingester ─────────────────────────────────────────────────────────
 	ing := otlp.NewIngester(spanConsumer, logConsumer, metricConsumer)
+
+	// ── Autocomplete cache (acache, v0.8.80) ──────────────────────────────────
+	// Redis-backed picker facets (service / operation / attribute-value names)
+	// populated from the ingest path and read by the picker endpoints in
+	// microseconds. Empty redis.url → a no-op store (pickers stay on CH). The
+	// flusher only runs where spans land (ingest / all); api pods read-only.
+	acStore, acErr := acache.NewStoreFromURL(cfg.Redis.URL, acache.Options{Policy: buildAcachePolicy()})
+	if acErr != nil {
+		log.Printf("[acache] %v — autocomplete cache disabled", acErr)
+	} else if acStore.Enabled() {
+		log.Printf("[acache] ready — picker autocomplete served from Redis")
+	}
+	ing.SetAutocomplete(acStore)
+	if mode.ingest {
+		acStore.Start(ctx)
+	}
 
 	// ── Ingest-time pipeline (v0.5.263; in-binary head sampling removed
 	// v0.8.73) ──
@@ -602,6 +651,7 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetCluster(clusterSvc)
+	srv.SetAutocomplete(acStore) // v0.8.80 — picker fast path; nil-safe, falls back to CH
 	// v0.6.4 — Model Context Protocol server. Wired on api/all
 	// modes only — worker / ingest pods don't take operator
 	// traffic so they have no MCP listeners. External LLMs

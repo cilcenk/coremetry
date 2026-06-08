@@ -3,10 +3,12 @@ package anomaly
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/correlator"
 )
 
 // Phase 7 — cross-signal fusion. The three metric detectors, trace_ops and
@@ -45,10 +47,13 @@ type EvidenceBundle struct {
 }
 
 // NeighborProblem is an open problem on a service adjacent to the trigger,
-// annotated with the call direction relative to the triggering service.
+// annotated with the call direction relative to the triggering service and
+// (Faz 6) its root-cause propagation score.
 type NeighborProblem struct {
 	Problem   chstore.Problem
-	Direction string // "calls" (trigger → neighbour) | "called_by" (neighbour → trigger)
+	Direction string  // "calls" (trigger → neighbour) | "called_by" (neighbour → trigger)
+	Score     float64 // propagation score in [0,1] — downstream suspects only; 0 for upstream / no-error edges
+	Hops      int     // topology distance: 1 = direct, 2 = transitive downstream (decayed); 0 = unscored
 }
 
 // evidenceInputs is the store-side state fused for an incident. Fetched ONCE
@@ -58,7 +63,10 @@ type evidenceInputs struct {
 	openProblems []chstore.Problem
 	events       []chstore.AnomalyEvent
 	deploys      []chstore.RecentDeployEntry
-	adjacency    []chstore.ServiceEdgePair
+	adjacency    []chstore.ServiceEdgePair // endpoint-only — drives the direction labels
+	// weightedAdjacency carries per-edge calls/errors so the root-cause
+	// propagation ranking (Faz 6) can score downstream suspects.
+	weightedAdjacency []chstore.ServiceEdgePair
 }
 
 // gatherEvidenceInputs reads the four evidence sources. Best-effort: any read
@@ -79,6 +87,9 @@ func gatherEvidenceInputs(ctx context.Context, store *chstore.Store) evidenceInp
 	}
 	if a, err := store.GetServiceAdjacency(ctx, evidenceWindow); err == nil {
 		in.adjacency = a
+	}
+	if a, err := store.GetServiceAdjacencyWeighted(ctx, evidenceWindow); err == nil {
+		in.weightedAdjacency = a
 	}
 	return in
 }
@@ -102,17 +113,56 @@ func buildEvidenceBundle(p chstore.Problem, in evidenceInputs) EvidenceBundle {
 		}
 	}
 
+	// Faz 6 — root-cause propagation ranking over the weighted graph: which
+	// downstream dep (1 or decayed-2 hops) most likely SOURCED the failure.
+	// A 2-hop downstream service with its own open problem can now surface as
+	// a suspect even though `dir` (1-hop only) wouldn't flag it, and the
+	// neighbour evidence is ordered cause-first. Empty weighted edges (read
+	// failure / no errors) degrade to the prior direction-only behaviour.
+	cause := map[string]correlator.ScoredCause{}
+	for _, sc := range correlator.RankRootCausesFromEdges(in.weightedAdjacency, p.Service) {
+		cause[sc.Service] = sc
+	}
+
 	for _, op := range in.openProblems {
 		if op.ID == p.ID {
 			continue
 		}
-		switch {
-		case op.Service == p.Service:
+		if op.Service == p.Service {
 			b.CoFiring = append(b.CoFiring, op)
-		case dir[op.Service] != "":
-			b.Neighbors = append(b.Neighbors, NeighborProblem{Problem: op, Direction: dir[op.Service]})
+			continue
 		}
+		sc, scored := cause[op.Service]
+		direction := dir[op.Service]
+		// A neighbour if it's a direct (1-hop) topology neighbour in either
+		// direction, OR a scored downstream root-cause suspect (covers the
+		// 2-hop transitive case that `dir` alone misses).
+		if direction == "" && !scored {
+			continue
+		}
+		if direction == "" {
+			direction = "calls" // reached only via the downstream propagation walk
+		}
+		b.Neighbors = append(b.Neighbors, NeighborProblem{
+			Problem:   op,
+			Direction: direction,
+			Score:     sc.Score,
+			Hops:      sc.Hops,
+		})
 	}
+
+	// Order neighbours root-cause-first: highest propagation score, then
+	// nearest hop, then name — so the explainer leads with the likely source.
+	sort.SliceStable(b.Neighbors, func(i, j int) bool {
+		a, c := b.Neighbors[i], b.Neighbors[j]
+		if a.Score != c.Score {
+			return a.Score > c.Score
+		}
+		if a.Hops != c.Hops {
+			return a.Hops < c.Hops
+		}
+		return a.Problem.Service < c.Problem.Service
+	})
 
 	for _, ev := range in.events {
 		if ev.Service == p.Service && ev.Status == "active" {
@@ -199,8 +249,14 @@ func renderEvidence(sb *strings.Builder, b EvidenceBundle) {
 				parts = append(parts, fmt.Sprintf("+%d more", n-maxEvidenceItems))
 				break
 			}
-			parts = append(parts, fmt.Sprintf("%s (%s, %s)", np.Problem.Service, np.Direction, np.Problem.RuleName))
+			label := fmt.Sprintf("%s (%s, %s)", np.Problem.Service, np.Direction, np.Problem.RuleName)
+			// Downstream suspects carry the propagation share + hop distance so
+			// the Copilot leads with the likely source, not just "also unhealthy".
+			if np.Score > 0 {
+				label += fmt.Sprintf(" — likely cause: %.0f%% of downstream errors, %d-hop", np.Score*100, np.Hops)
+			}
+			parts = append(parts, label)
 		}
-		fmt.Fprintf(sb, "- Unhealthy topology neighbours (%d): %s\n", n, strings.Join(parts, "; "))
+		fmt.Fprintf(sb, "- Unhealthy topology neighbours, root-cause-ranked (%d): %s\n", n, strings.Join(parts, "; "))
 	}
 }

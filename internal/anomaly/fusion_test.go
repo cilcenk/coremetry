@@ -69,3 +69,93 @@ func TestBuildEvidenceBundle_LoneProblemHasNoEvidence(t *testing.T) {
 		t.Errorf("lone problem bundle = %+v, want confidence 1 + empty evidence", b)
 	}
 }
+
+// v0.8.68 (correlator Faz 6) — neighbour evidence is ordered root-cause-first:
+// the downstream dep carrying the larger share of the trigger's errors ranks
+// ahead, so the Copilot leads with the likely source.
+func TestBuildEvidenceBundle_RanksDownstreamByPropagation(t *testing.T) {
+	const T = int64(1_700_000_000_000_000_000)
+	trigger := chstore.Problem{ID: "p1", Service: "checkout", Metric: "error_rate", StartedAt: T}
+	in := evidenceInputs{
+		openProblems: []chstore.Problem{
+			trigger,
+			{ID: "pp", Service: "payments", Metric: "error_rate", StartedAt: T},
+			{ID: "pi", Service: "inventory", Metric: "error_rate", StartedAt: T},
+		},
+		adjacency: []chstore.ServiceEdgePair{
+			{Caller: "checkout", Callee: "payments"},
+			{Caller: "checkout", Callee: "inventory"},
+		},
+		weightedAdjacency: []chstore.ServiceEdgePair{
+			{Caller: "checkout", Callee: "payments", Calls: 100, Errors: 9},
+			{Caller: "checkout", Callee: "inventory", Calls: 100, Errors: 1},
+		},
+	}
+	b := buildEvidenceBundle(trigger, in)
+	if len(b.Neighbors) != 2 {
+		t.Fatalf("want 2 neighbours, got %+v", b.Neighbors)
+	}
+	if b.Neighbors[0].Problem.Service != "payments" || b.Neighbors[0].Hops != 1 || b.Neighbors[0].Score < 0.89 {
+		t.Errorf("payments (90%% of errors) should rank first with score ~0.9, got %+v", b.Neighbors[0])
+	}
+	if b.Neighbors[1].Problem.Service != "inventory" {
+		t.Errorf("inventory should rank second, got %+v", b.Neighbors)
+	}
+}
+
+// A 2-hop downstream service with its own open problem surfaces as a suspect
+// (decayed), even though the 1-hop direction map never saw it.
+func TestBuildEvidenceBundle_Surfaces2HopDownstreamSuspect(t *testing.T) {
+	const T = int64(1_700_000_000_000_000_000)
+	trigger := chstore.Problem{ID: "p1", Service: "checkout", Metric: "error_rate", StartedAt: T}
+	in := evidenceInputs{
+		openProblems: []chstore.Problem{
+			trigger,
+			{ID: "pl", Service: "ledger", Metric: "error_rate", StartedAt: T}, // 2-hop downstream
+		},
+		// 1-hop dir knows only checkout→payments — ledger is NOT here.
+		adjacency: []chstore.ServiceEdgePair{
+			{Caller: "checkout", Callee: "payments"},
+		},
+		weightedAdjacency: []chstore.ServiceEdgePair{
+			{Caller: "checkout", Callee: "payments", Calls: 100, Errors: 10},
+			{Caller: "payments", Callee: "ledger", Calls: 50, Errors: 5},
+		},
+	}
+	b := buildEvidenceBundle(trigger, in)
+	var ledger *NeighborProblem
+	for i := range b.Neighbors {
+		if b.Neighbors[i].Problem.Service == "ledger" {
+			ledger = &b.Neighbors[i]
+		}
+	}
+	if ledger == nil {
+		t.Fatalf("2-hop downstream ledger should surface as a suspect, got %+v", b.Neighbors)
+	}
+	if ledger.Hops != 2 || ledger.Direction != "calls" {
+		t.Errorf("ledger should be 2-hop downstream (calls), got %+v", *ledger)
+	}
+	if ledger.Score <= 0 || ledger.Score >= 1 {
+		t.Errorf("ledger 2-hop score should be in (0,1) (decayed), got %v", ledger.Score)
+	}
+}
+
+// No weighted edges (read failure / cold start) must degrade to the prior
+// direction-only behaviour — score/hops zero, neighbour still listed.
+func TestBuildEvidenceBundle_NoWeightedEdgesDegradesToDirection(t *testing.T) {
+	const T = int64(1_700_000_000_000_000_000)
+	trigger := chstore.Problem{ID: "p1", Service: "checkout", StartedAt: T}
+	in := evidenceInputs{
+		openProblems: []chstore.Problem{
+			trigger,
+			{ID: "pp", Service: "payments", StartedAt: T},
+		},
+		adjacency: []chstore.ServiceEdgePair{{Caller: "checkout", Callee: "payments"}},
+		// weightedAdjacency intentionally empty
+	}
+	b := buildEvidenceBundle(trigger, in)
+	if len(b.Neighbors) != 1 || b.Neighbors[0].Problem.Service != "payments" ||
+		b.Neighbors[0].Direction != "calls" || b.Neighbors[0].Score != 0 || b.Neighbors[0].Hops != 0 {
+		t.Errorf("no weighted edges → direction-only (score/hops 0), got %+v", b.Neighbors)
+	}
+}

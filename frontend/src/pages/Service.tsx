@@ -397,16 +397,12 @@ function ServiceDetailInner() {
                     Now: 3 immediate queries, the rest queue
                     progressively. Mounted panels stay mounted
                     so scroll-back keeps the data. */}
-                {/* Above-the-fold (eager): ServiceInfra +
-                    DeployHistory + ServiceCharts. The operator
-                    lands on these without scrolling. */}
+                {/* v0.8.83 — Operator-requested: upstream/downstream neighbours
+                    pulled to the very top of Details; Recent rollouts
+                    (DeployHistoryPanel) moved to the bottom of the tab. */}
+                <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
+                {/* Above-the-fold (eager): ServiceInfra + ServiceCharts. */}
                 <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
-                {/* v0.5.307 — #deploys anchor so /deploys page
-                    "history →" link can scroll-to here after
-                    landing on Details tab. */}
-                <div id="deploys">
-                  <DeployHistoryPanel service={svc} />
-                </div>
                 <ServiceCharts service={svc} range={range}
                   onZoom={(fromUnixSec, toUnixSec) => {
                     setRange({
@@ -440,9 +436,6 @@ function ServiceDetailInner() {
                   <ServiceAttrsPanel service={svc} range={range} />
                 </LazyMount>
                 <LazyMount minHeight={300}>
-                  <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
-                </LazyMount>
-                <LazyMount minHeight={300}>
                   <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
                 </LazyMount>
                 <LazyMount minHeight={140}>
@@ -457,6 +450,14 @@ function ServiceDetailInner() {
                 <LazyMount minHeight={360}>
                   <ServiceLatencyHeatmap service={svc} range={range} />
                 </LazyMount>
+                {/* Recent rollouts — moved to the bottom of Details (v0.8.83).
+                    #deploys anchor preserved so the /deploys "history →" link
+                    still scrolls here; LazyMount fetches on intersection. */}
+                <div id="deploys">
+                  <LazyMount minHeight={160}>
+                    <DeployHistoryPanel service={svc} />
+                  </LazyMount>
+                </div>
               </>
             )}
           </>

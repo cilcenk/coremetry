@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
-import { timeRangeToNs, fmtNum, isMessagingDep } from '@/lib/utils';
+import { timeRangeToNs, fmtNum, isMessagingDep, tsShort } from '@/lib/utils';
 import type { TimeRange, LogRow, ServiceMap } from '@/lib/types';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -46,11 +46,12 @@ export function ServiceTracesTab({ service, range }: { service: string; range: T
         <div style={{ overflowX: 'auto' }}>
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <colgroup>
-              <col style={{ width: 150 }} /><col /><col style={{ width: 70 }} />
+              <col style={{ width: 150 }} /><col style={{ width: 132 }} /><col /><col style={{ width: 70 }} />
               <col style={{ width: 80 }} /><col style={{ width: 160 }} />
             </colgroup>
             <thead><tr>
               <th style={{ textAlign: 'left' }}>Trace</th>
+              <th style={{ textAlign: 'left' }}>Started</th>
               <th style={{ textAlign: 'left' }}>Root operation</th>
               <th className="num">Spans</th>
               <th className="num">Status</th>
@@ -60,6 +61,7 @@ export function ServiceTracesTab({ service, range }: { service: string; range: T
               {traces.map(t => (
                 <tr key={t.traceId} style={{ cursor: 'pointer' }}>
                   <td><Link className="mono" style={{ color: 'var(--accent)' }} to={`/trace?id=${t.traceId}`}>{t.traceId.slice(0, 16)}…</Link></td>
+                  <td className="mono" style={{ color: 'var(--text2)', fontSize: 11.5, whiteSpace: 'nowrap' }} title={tsShort(t.startTime)}>{tsShort(t.startTime)}</td>
                   <td><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={t.rootName}>{t.rootName || '—'}</span></td>
                   <td className="num">{t.spanCount}</td>
                   <td className="num"><span className={`badge ${t.hasError ? 'b-err' : 'b-ok'}`}>{t.hasError ? 'ERROR' : 'OK'}</span></td>

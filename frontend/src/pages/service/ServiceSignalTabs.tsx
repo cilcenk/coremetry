@@ -10,7 +10,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogTable } from '@/components/LogTable';
 import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from '@/components/TopologyPillGraph';
-import { ServiceGraph } from '@/components/ServiceGraph';
+import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
 
 // Service-scoped Traces / Logs / Topology tabs — the design's tab strip
 // beyond Overview/Operations/Details. All read-only, all reuse the
@@ -229,8 +229,11 @@ function buildPillTiers(map: ServiceMap, focus: string): {
 export function ServiceTopologyTab({ service, range }: { service: string; range: TimeRange }) {
   const navigate = useNavigate();
   const rangeParam = encodeRange(range);
-  // v0.8.14 — topology rebuild Stage 3: the canonical OTel-native ServiceGraph
-  // (neighborhood scope) replaces the bespoke serviceMap BFS + pill tiers.
+  // v0.8.93 — render the SAME focused topology as the /topology page
+  // (FocusedNeighborhood) so the service tab and the full page show one
+  // identical graph (was a different ServiceGraph neighborhood view).
+  const [hops, setHops] = useState(1);
+  const [errorsOnly, setErrorsOnly] = useState(false);
   return (
     <div className="card" style={{ marginTop: 4 }}>
       <div className="ov-card-h">
@@ -243,12 +246,15 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
         </span>
       </div>
       <div className="ov-card-b">
-        <ServiceGraph
-          scope="neighborhood"
-          focus={service}
+        <FocusedNeighborhood
           range={range}
-          height={480}
-          onSelectService={(s) => navigate(`/service?service=${encodeURIComponent(s)}&range=${rangeParam}`)}
+          focus={service}
+          hops={hops}
+          errorsOnly={errorsOnly}
+          onHops={setHops}
+          onErrorsOnly={setErrorsOnly}
+          onRecenter={(s) => navigate(`/service?service=${encodeURIComponent(s)}&range=${rangeParam}`)}
+          onClear={() => navigate(`/topology?range=${rangeParam}`)}
         />
       </div>
     </div>

@@ -18,6 +18,7 @@ const Services          = lazy(() => import('./pages/Services'));
 const Service           = lazy(() => import('./pages/Service'));
 const ServiceBacktrace  = lazy(() => import('./pages/ServiceBacktrace'));
 const Topology          = lazy(() => import('./pages/Topology'));
+const SystemAnalysis    = lazy(() => import('./pages/SystemAnalysis'));
 // v0.8.12 — topology rebuild Stage 2 scratch route (removed in Stage 4).
 const ServiceGraphPreview = lazy(() => import('./pages/ServiceGraphPreview'));
 const Traces            = lazy(() => import('./pages/Traces'));
@@ -93,6 +94,7 @@ export default function App() {
             {/* v0.8.14 — topology rebuild Stage 3: /service-map folds into /topology. */}
             <Route path="/service-map"    element={<Navigate to="/topology" replace />} />
             <Route path="/topology"       element={<Topology />} />
+            <Route path="/analysis"       element={<SystemAnalysis />} />
             <Route path="/servicegraph-preview" element={<ServiceGraphPreview />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />

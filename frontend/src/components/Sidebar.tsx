@@ -57,6 +57,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
       { href: '/problems',  label: 'nav.problems',  icon: CircleAlert },
       { href: '/anomalies', label: 'nav.anomalies', icon: Activity },
+      { href: '/analysis',  label: 'nav.analysis',  icon: Sparkles },
     ],
   },
   {

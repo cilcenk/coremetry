@@ -1717,23 +1717,6 @@ canvas { max-width: 100%; }
 .svc-title { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
 .svc-title h1 { font-size: 23px; margin: 0; letter-spacing: -.4px; font-weight: 700; white-space: nowrap; color: var(--text); }
 
-/* Tweaks panel — floating ⚙ appearance quick-controls (theme/accent/density) */
-.tweaks-fab { position: fixed; right: 18px; bottom: 18px; z-index: 60; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg1); color: var(--text2); font-size: 17px; cursor: pointer; box-shadow: var(--shadow-pop); display: grid; place-items: center; }
-.tweaks-fab:hover { color: var(--text); border-color: var(--accent); }
-.tweaks-panel { position: fixed; right: 18px; bottom: 68px; z-index: 60; width: 280px; background: var(--bg1); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-pop); padding: 0 0 10px; }
-.tweaks-h { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-.tweaks-h h3 { margin: 0; font-size: 13px; font-weight: 700; color: var(--text); }
-.tweaks-x { all: unset; cursor: pointer; color: var(--text3); font-size: 18px; line-height: 1; padding: 0 4px; }
-.tweaks-x:hover { color: var(--text); }
-.tweaks-sec { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text3); padding: 12px 14px 4px; }
-.tweaks-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 14px; font-size: 12.5px; color: var(--text2); }
-.tweaks-swatches { display: flex; gap: 6px; }
-.tweaks-sw { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-.tweaks-sw.on { border-color: var(--text); box-shadow: 0 0 0 1px var(--bg1); }
-.tweaks-sw-reset { background: var(--bg2); color: var(--text3); font-size: 11px; display: grid; place-items: center; }
-.tweaks-density { width: 100%; }
-.tweaks-density > button { flex: 1; font-size: 11px; padding: 5px 4px; }
-
 /* Overview chart hover tooltip (uPlot setCursor popover) — ported from the
    design .tt/.tt-r/.lbl with globals.css tokens. Referenced by OverviewChart. */
 .ov-tt {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
+import { MetricPanel } from './MetricPanel';
 import { EventMarkers } from './EventMarkers';
 import { Spinner } from './Spinner';
 import { CopilotExplain } from './CopilotExplain';
@@ -8,6 +9,7 @@ import { IconSparkles } from './icons';
 import { api } from '@/lib/api';
 import { useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
+import { metricQuery } from '@/lib/metricQuery';
 import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 
 // ServiceCharts — three core trend panels for the focused
@@ -38,6 +40,17 @@ export function ServiceCharts({ service, range, onZoom }: {
   // query keys (same trick the Logs page uses — Date.now() in
   // timeRangeToNs makes naive use unstable).
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+
+  // D5 doorway descriptors (v0.8.69) — each RED chart carries its MetricQuery so
+  // the hover ⋮ menu opens the Explorer on that exact series. The wrap uses
+  // menuOnly: these charts own drag-zoom + bucket-click, so a body-click →
+  // Explore would collide. filters pin the focused service; the panels split by
+  // operation, so groupBy ['name']. The bespoke spanMetricBatch fetch (one CH
+  // pass for all three aggs) is untouched — the doorway is additive.
+  const svcFilter = useMemo(() => ({ 'service.name': service }), [service]);
+  const rpsMq = useMemo(() => metricQuery({ metric: 'calls_total', agg: 'rate', unit: 'rps', filters: svcFilter, groupBy: ['name'] }), [svcFilter]);
+  const errMq = useMemo(() => metricQuery({ metric: 'calls_total', agg: 'error_rate', unit: '%', filters: svcFilter, groupBy: ['name'] }), [svcFilter]);
+  const p99Mq = useMemo(() => metricQuery({ metric: 'duration_milliseconds_bucket', agg: 'p99', unit: 'ms', filters: svcFilter, groupBy: ['name'] }), [svcFilter]);
 
   const [rpsSeries, setRpsSeries] = useState<SpanMetricSeries[] | null>(null);
   const [errSeries, setErrSeries] = useState<SpanMetricSeries[] | null>(null);
@@ -340,47 +353,53 @@ export function ServiceCharts({ service, range, onZoom }: {
             auto on the marker line so the title-tooltip still
             works on hover). */}
         <ChartCard title="RPS by operation">
-          <div style={{ position: 'relative' }}>
-            <MultiLineChart series={rpsSeries ?? []} unit="rps"
-                            height={180}
-                            deploys={deployMarkers}
-                            syncKey={syncKey}
-                            compareSeries={rpsPrev ?? undefined}
-                            compareOffsetNs={compareOffsetNs}
-                            compareLabel={compareLabel}
-                            onZoom={onZoom} />
-            <EventMarkers fromNs={from} toNs={to} service={service} />
-          </div>
+          <MetricPanel compact menuOnly title="RPS by operation" metricQuery={rpsMq}>
+            <div style={{ position: 'relative' }}>
+              <MultiLineChart series={rpsSeries ?? []} unit="rps"
+                              height={180}
+                              deploys={deployMarkers}
+                              syncKey={syncKey}
+                              compareSeries={rpsPrev ?? undefined}
+                              compareOffsetNs={compareOffsetNs}
+                              compareLabel={compareLabel}
+                              onZoom={onZoom} />
+              <EventMarkers fromNs={from} toNs={to} service={service} />
+            </div>
+          </MetricPanel>
         </ChartCard>
         <ChartCard title="Error rate by operation">
-          <div style={{ position: 'relative' }}>
-            <MultiLineChart series={errSeries ?? []} unit="%"
-                            height={180}
-                            deploys={deployMarkers}
-                            thresholds={errorThresholds}
-                            syncKey={syncKey}
-                            compareSeries={errPrev ?? undefined}
-                            compareOffsetNs={compareOffsetNs}
-                            compareLabel={compareLabel}
-                            onZoom={onZoom}
-                            onBucketClick={onErrorBucketClick} />
-            <EventMarkers fromNs={from} toNs={to} service={service} />
-          </div>
+          <MetricPanel compact menuOnly title="Error rate by operation" metricQuery={errMq}>
+            <div style={{ position: 'relative' }}>
+              <MultiLineChart series={errSeries ?? []} unit="%"
+                              height={180}
+                              deploys={deployMarkers}
+                              thresholds={errorThresholds}
+                              syncKey={syncKey}
+                              compareSeries={errPrev ?? undefined}
+                              compareOffsetNs={compareOffsetNs}
+                              compareLabel={compareLabel}
+                              onZoom={onZoom}
+                              onBucketClick={onErrorBucketClick} />
+              <EventMarkers fromNs={from} toNs={to} service={service} />
+            </div>
+          </MetricPanel>
         </ChartCard>
         <ChartCard title="P99 latency by operation">
-          <div style={{ position: 'relative' }}>
-            <MultiLineChart series={p99Series ?? []} unit="ms"
-                            height={180}
-                            deploys={deployMarkers}
-                            thresholds={latencyThresholds}
-                            syncKey={syncKey}
-                            compareSeries={p99Prev ?? undefined}
-                            compareOffsetNs={compareOffsetNs}
-                            compareLabel={compareLabel}
-                            onZoom={onZoom}
-                            onBucketClick={onLatencyBucketClick} />
-            <EventMarkers fromNs={from} toNs={to} service={service} />
-          </div>
+          <MetricPanel compact menuOnly title="P99 latency by operation" metricQuery={p99Mq}>
+            <div style={{ position: 'relative' }}>
+              <MultiLineChart series={p99Series ?? []} unit="ms"
+                              height={180}
+                              deploys={deployMarkers}
+                              thresholds={latencyThresholds}
+                              syncKey={syncKey}
+                              compareSeries={p99Prev ?? undefined}
+                              compareOffsetNs={compareOffsetNs}
+                              compareLabel={compareLabel}
+                              onZoom={onZoom}
+                              onBucketClick={onLatencyBucketClick} />
+              <EventMarkers fromNs={from} toNs={to} service={service} />
+            </div>
+          </MetricPanel>
         </ChartCard>
       </div>
 

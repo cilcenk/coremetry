@@ -39,12 +39,17 @@ export interface MetricPanelProps {
   // the same descriptor. Default (false) keeps the full header used by
   // Metrics.tsx.
   compact?: boolean;
+  // menuOnly (v0.8.69, D5) — for INTERACTIVE charts (drag-zoom, bucket-click)
+  // where a whole-body click would collide with the chart's own click handler.
+  // Suppresses body-click → Explore; the doorway is the hover ⋮ menu + the `e`
+  // shortcut only. Non-interactive panels (KPI tiles, previews) keep body-click.
+  menuOnly?: boolean;
 }
 
 type MenuAction =
   | 'explore' | 'edit' | 'view' | 'copy' | 'dashboard' | 'alert';
 
-export function MetricPanel({ title, metricQuery: mq, children, className, style, compact = false }: MetricPanelProps) {
+export function MetricPanel({ title, metricQuery: mq, children, className, style, compact = false, menuOnly = false }: MetricPanelProps) {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
@@ -238,9 +243,9 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
       {/* Body — the chart/stat, rendered verbatim. Clicking it also Explores;
           children stop propagation themselves if they have own click targets. */}
       <div
-        onClick={onBodyClick}
-        style={{ cursor: 'pointer' }}
-        title="Open in Explore (press e)"
+        onClick={menuOnly ? undefined : onBodyClick}
+        style={{ cursor: menuOnly ? 'default' : 'pointer' }}
+        title={menuOnly ? undefined : 'Open in Explore (press e)'}
       >
         {children}
       </div>

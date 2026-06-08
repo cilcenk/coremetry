@@ -63,12 +63,17 @@ export function ColumnManager({ cols, onAdd }: {
         onClick={() => setOpen(o => !o)}
         title={atLimit ? 'Column limit reached (8)' : 'Add an attribute column'}
         style={{
-          padding: '2px 8px', fontSize: 11, fontWeight: 600,
-          background: 'transparent', color: 'var(--accent2)',
-          border: '1px dashed var(--border)', borderRadius: 4,
+          // v0.8.78 — operator-reported: the picker trigger was too faint.
+          // Primary text + dashed primary border + a faint primary-tint fill so
+          // it reads as an actionable affordance, not disabled chrome.
+          padding: '4px 12px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
+          background: atLimit ? 'transparent' : 'color-mix(in srgb, var(--primary) 8%, transparent)',
+          color: 'var(--primary)',
+          border: '1px dashed var(--primary)', borderRadius: 5,
           cursor: atLimit ? 'not-allowed' : 'pointer',
+          opacity: atLimit ? 0.5 : 1,
         }}>
-        + Column
+        + Add column
       </button>
       {open && (
         <div style={{

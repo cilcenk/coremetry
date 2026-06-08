@@ -309,7 +309,7 @@ function TracesPageInner() {
   const [volSeries, setVolSeries] = useState<{
     count: SpanMetricSeries[] | null;
     errors: SpanMetricSeries[] | null;
-    p99: SpanMetricSeries[] | null;
+    p50: SpanMetricSeries[] | null;
   } | null>(null);
   useEffect(() => {
     if (view !== 'list') return;
@@ -328,9 +328,9 @@ function TracesPageInner() {
     Promise.all([
       api.spanMetric({ ...common, agg: 'count' }),
       api.spanMetric({ ...common, agg: 'errors' }),
-      api.spanMetric({ ...common, agg: 'p99', field: 'duration_ms' }),
+      api.spanMetric({ ...common, agg: 'p50', field: 'duration_ms' }),
     ])
-      .then(([count, errors, p99]) => { if (!cancelled) setVolSeries({ count, errors, p99 }); })
+      .then(([count, errors, p50]) => { if (!cancelled) setVolSeries({ count, errors, p50 }); })
       .catch(() => { if (!cancelled) setVolSeries(null); });
     return () => { cancelled = true; };
   }, [view, listRangeNs, filter.service, filter.search, advFilters]);
@@ -427,11 +427,11 @@ function TracesPageInner() {
   const headerStats = useMemo(() => {
     const cPts = volSeries?.count?.[0]?.points ?? [];
     const eMap = new Map((volSeries?.errors?.[0]?.points ?? []).map(p => [p.time, p.value]));
-    const pPts = volSeries?.p99?.[0]?.points ?? [];
-    let total = 0, err = 0, p99Max = 0;
+    const pPts = volSeries?.p50?.[0]?.points ?? [];
+    let total = 0, err = 0, p50Max = 0;
     for (const p of cPts) { total += p.value; err += eMap.get(p.time) ?? 0; }
-    for (const p of pPts) if (p.value > p99Max) p99Max = p.value;
-    return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, p99Max };
+    for (const p of pPts) if (p.value > p50Max) p50Max = p.value;
+    return { total, err, errRate: total > 0 ? (err / total) * 100 : 0, p50Max };
   }, [volSeries]);
 
   // Reset transient state on a new query / page.
@@ -538,7 +538,7 @@ function TracesPageInner() {
                 <HeaderStat label="TOTAL" value={fmtNum(headerStats.total)} />
                 <HeaderStat label="ERRORS" value={fmtNum(headerStats.err)} tone={headerStats.err > 0 ? 'err' : undefined} />
                 <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
-                <HeaderStat label="P99 MAX" value={headerStats.p99Max ? fmtDur(headerStats.p99Max) : '—'} tone="warn" />
+                <HeaderStat label="P50 MAX" value={headerStats.p50Max ? fmtDur(headerStats.p50Max) : '—'} tone="warn" />
               </div>
             </div>
 
@@ -549,7 +549,7 @@ function TracesPageInner() {
             ) : viz === 'volume' ? (
               // slimmer + recedes — it's the brush/overview "tool", not the
               // headline chart; the RED strip below carries the filtered numbers.
-              <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p99={volSeries?.p99 ?? null} height={120} />
+              <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null} height={140} />
             ) : (
               <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, padding: '0 2px' }}>

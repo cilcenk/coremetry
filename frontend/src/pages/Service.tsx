@@ -21,7 +21,6 @@ import { ServiceInfra } from '@/components/ServiceInfra';
 import { Sparkline } from '@/components/Sparkline';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { Modal } from '@/components/ui';
-import { SpanBreakdownChart } from '@/components/SpanBreakdownChart';
 import { ServiceProfilingPanel } from '@/components/ServiceProfilingPanel';
 import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
 import { api } from '@/lib/api';
@@ -416,11 +415,6 @@ function ServiceDetailInner() {
                     + fetching. minHeight is sized to the typical
                     rendered panel so the page doesn't jump as
                     panels resolve. */}
-                <LazyMount minHeight={220}>
-                  <SpanBreakdownChart service={svc}
-                                      fromNs={rangeNs.from}
-                                      toNs={rangeNs.to} />
-                </LazyMount>
                 {/* Profiling tile — Dynatrace-style "Top methods"
                     card. Self-hides when the service hasn't
                     pushed profiles, so it's a no-op for

@@ -55,6 +55,12 @@ type ServiceMetadata struct {
 	// Stored as a JSON-encoded array in custom_links column.
 	CustomLinks  []CustomLink `json:"customLinks,omitempty"`
 	UpdatedAt    int64        `json:"updatedAt"` // unix nanoseconds
+	// OwnerTeamAuto / SRETeamAuto (v0.8.100) — the last value the span-attr
+	// team-deriver auto-wrote for each field. Deriver-managed, NOT human-edited
+	// (excluded from JSON). The deriver owns owner_team/sre_team while they
+	// equal these (or are empty); a human edit (value != auto) pins the field.
+	OwnerTeamAuto string `json:"-"`
+	SRETeamAuto   string `json:"-"`
 }
 
 // GetServiceMetadata returns the catalog row for one service.
@@ -71,7 +77,7 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 	row := s.conn.QueryRow(ctx, `
 		SELECT service, owner_team, sre_team, description, repository,
 		       runbook_url, oncall_url, chat_channel, slack_channel,
-		       custom_links,
+		       custom_links, owner_team_auto, sre_team_auto,
 		       toUnixTimestamp64Nano(updated_at)
 		FROM service_metadata FINAL
 		WHERE service = ?
@@ -80,7 +86,7 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 	var legacySlack, customLinks string
 	if err := row.Scan(&m.Service, &m.OwnerTeam, &m.SRETeam, &m.Description, &m.Repository,
 		&m.RunbookURL, &m.OncallURL, &m.ChatChannel, &legacySlack,
-		&customLinks, &m.UpdatedAt); err != nil {
+		&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto, &m.UpdatedAt); err != nil {
 		// "no rows" → not yet curated; same handling pattern
 		// the rest of chstore uses.
 		return nil, nil
@@ -105,7 +111,7 @@ func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMeta
 	rows, err := s.conn.Query(ctx, `
 		SELECT service, owner_team, sre_team, description, repository,
 		       runbook_url, oncall_url, chat_channel, slack_channel,
-		       custom_links,
+		       custom_links, owner_team_auto, sre_team_auto,
 		       toUnixTimestamp64Nano(updated_at)
 		FROM service_metadata FINAL`)
 	if err != nil {
@@ -118,7 +124,7 @@ func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMeta
 		var legacySlack, customLinks string
 		if err := rows.Scan(&m.Service, &m.OwnerTeam, &m.SRETeam, &m.Description, &m.Repository,
 			&m.RunbookURL, &m.OncallURL, &m.ChatChannel, &legacySlack,
-			&customLinks, &m.UpdatedAt); err != nil {
+			&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if m.ChatChannel == "" && legacySlack != "" {
@@ -169,14 +175,16 @@ func (s *Store) UpsertServiceMetadata(ctx context.Context, m ServiceMetadata) er
 		return err
 	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO service_metadata
-		(service, owner_team, sre_team, description, repository,
+		(service, owner_team, sre_team, owner_team_auto, sre_team_auto,
+		 description, repository,
 		 runbook_url, oncall_url, chat_channel, custom_links,
 		 updated_at, version)`)
 	if err != nil {
 		return err
 	}
 	now := time.Now()
-	if err := batch.Append(m.Service, m.OwnerTeam, m.SRETeam, m.Description, m.Repository,
+	if err := batch.Append(m.Service, m.OwnerTeam, m.SRETeam, m.OwnerTeamAuto, m.SRETeamAuto,
+		m.Description, m.Repository,
 		m.RunbookURL, m.OncallURL, m.ChatChannel, string(clBytes),
 		now.UTC(), uint64(now.UnixNano())); err != nil {
 		return err
@@ -259,18 +267,26 @@ func (s *Store) DeriveServiceTeams(ctx context.Context, since time.Duration) (ma
 	return out, rows.Err()
 }
 
-// mergeTeams fills owner_team / sre_team ONLY when the catalog field is empty,
-// so a manual catalog edit always wins. Returns the (possibly) updated row + a
-// changed flag. Pure — unit-tested.
+// mergeTeams applies derived teams. The deriver OWNS a field while it's empty
+// OR still equals the value it last auto-wrote (owner_team_auto / sre_team_auto);
+// a human edit (value != auto) pins the field so the deriver leaves it. When
+// owned, the field is updated to the derived value AND the *_auto provenance is
+// re-stamped — so a team RENAME in the span attrs propagates (v0.8.100; the
+// previous fill-when-empty never updated). Returns the row + a changed flag.
+// Pure — unit-tested.
 func mergeTeams(md ServiceMetadata, t ServiceTeams) (ServiceMetadata, bool) {
 	changed := false
-	if md.OwnerTeam == "" && t.OwnerTeam != "" {
-		md.OwnerTeam = t.OwnerTeam
-		changed = true
+	if t.OwnerTeam != "" && (md.OwnerTeam == "" || md.OwnerTeam == md.OwnerTeamAuto) {
+		if md.OwnerTeam != t.OwnerTeam || md.OwnerTeamAuto != t.OwnerTeam {
+			md.OwnerTeam, md.OwnerTeamAuto = t.OwnerTeam, t.OwnerTeam
+			changed = true
+		}
 	}
-	if md.SRETeam == "" && t.SRETeam != "" {
-		md.SRETeam = t.SRETeam
-		changed = true
+	if t.SRETeam != "" && (md.SRETeam == "" || md.SRETeam == md.SRETeamAuto) {
+		if md.SRETeam != t.SRETeam || md.SRETeamAuto != t.SRETeam {
+			md.SRETeam, md.SRETeamAuto = t.SRETeam, t.SRETeam
+			changed = true
+		}
 	}
 	return md, changed
 }

@@ -361,6 +361,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			service       String,
 			owner_team    String DEFAULT '',
 			sre_team      String DEFAULT '',
+			-- *_team_auto: the last value the span-attr team-deriver wrote
+			-- (v0.8.100). It owns owner_team/sre_team while they're empty or
+			-- still equal these; a human edit (value != auto) pins the field.
+			owner_team_auto String DEFAULT '',
+			sre_team_auto   String DEFAULT '',
 			description   String DEFAULT '',
 			repository    String DEFAULT '',
 			runbook_url   String DEFAULT '',
@@ -1200,6 +1205,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// app, status page, etc.). Stored as a JSON array so
 		// the schema doesn't grow per surface.
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS custom_links String DEFAULT '[]'`,
+		// *_team_auto (v0.8.100) — the span-attr team-deriver's last write per
+		// field, so a team rename in the attrs propagates while manual edits
+		// (value != auto) stay pinned.
+		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS owner_team_auto String DEFAULT ''`,
+		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS sre_team_auto String DEFAULT ''`,
 		// Notification routing — one column carrying a JSON
 		// blob with predicates: { "services": [...],
 		// "sreTeams": [...], "ownerTeams": [...] }. Empty /

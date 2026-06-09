@@ -459,11 +459,6 @@ func (s *Server) Start() error {
 	// box. ES _terms_enum on keyword subfields for sub-ms prefix
 	// lookups; CH backend returns [] (handler degrades silently).
 	mux.HandleFunc("GET /api/logs/field-values", s.getLogsFieldValues)
-	// v0.5.468 — EQL sequence detection. POST body carries the
-	// EQL expression + time window + size cap. CH backend
-	// returns an explicit "unsupported" error; the frontend
-	// hides the panel when the logs backend reports non-ES.
-	mux.HandleFunc("POST /api/logs/eql", auth.RequireAnyRole(editorRoles, s.runLogsEQL))
 	// v0.5.402 — surrounding context (±N logs around a pivot ts).
 	// Datadog Context tab equivalent. Two parallel logstore.Search
 	// calls (before / after) so the operator sees what was emitted
@@ -1568,6 +1563,15 @@ func (s *Server) putServiceMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Service = name
+	// Preserve the deriver-managed provenance columns — the PUT body doesn't
+	// carry owner_team_auto/sre_team_auto, so copy them from the existing row.
+	// Otherwise an unrelated edit (e.g. description) would zero them and
+	// accidentally pin the auto-derived team, blocking future rename propagation
+	// (v0.8.100).
+	if existing, _ := s.store.GetServiceMetadata(r.Context(), name); existing != nil {
+		m.OwnerTeamAuto = existing.OwnerTeamAuto
+		m.SRETeamAuto = existing.SRETeamAuto
+	}
 	if err := s.store.UpsertServiceMetadata(r.Context(), m); err != nil {
 		writeErr(w, err)
 		return

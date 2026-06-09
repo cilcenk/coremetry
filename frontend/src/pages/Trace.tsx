@@ -627,10 +627,14 @@ async function copyToClipboard(text: string): Promise<void> {
 // outside Coremetry without giving them an account.
 function SharePopover({ traceId }: { traceId: string }) {
   const { user } = useAuth();
-  // v0.5.202 — public-link mint + revoke are editor / admin only.
-  // Viewers can still copy the internal URL but the public-link
-  // section is hidden so they don't see a 403 from the server.
-  const canShare = user?.role === 'admin' || user?.role === 'editor';
+  // v0.8.102 — minting a public link is now open to any authenticated
+  // user, viewers included (operator request: viewers hand traces to
+  // support/vendors too; the backend audits every mint with the
+  // actor's email). Revoke stays editor+ so a viewer can't nuke the
+  // shared pool of active links — hence the separate canRevoke gate
+  // on the per-share Revoke button below.
+  const canShare = !!user;
+  const canRevoke = user?.role === 'admin' || user?.role === 'editor';
   const wrapRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [internalCopied, setInternalCopied] = useState(false);
@@ -833,11 +837,13 @@ function SharePopover({ traceId }: { traceId: string }) {
                           title={tsLong(s.expiresAt)}>
                       {tsRel(s.expiresAt)}
                     </span>
-                    <button onClick={() => revoke(s.token)}
-                      className="sec"
-                      style={{ fontSize: 10, padding: '2px 6px', color: 'var(--err)' }}>
-                      Revoke
-                    </button>
+                    {canRevoke && (
+                      <button onClick={() => revoke(s.token)}
+                        className="sec"
+                        style={{ fontSize: 10, padding: '2px 6px', color: 'var(--err)' }}>
+                        Revoke
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

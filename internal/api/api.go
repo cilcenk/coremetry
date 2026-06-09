@@ -443,12 +443,15 @@ func (s *Server) Start() error {
 	// builders use.
 	mux.HandleFunc("POST /api/query/run",       auth.RequireRole(auth.RoleAdmin, s.runDQL))
 	mux.HandleFunc("GET /api/traces/{id}", s.getTrace)
-	// Public-share endpoints — POST mints a token (editor+ only;
-	// viewers can read traces but not externalise them through a
-	// public link), GET resolves without auth (auth middleware's
-	// SkipPath allowlist lets it through), DELETE revokes (editor+
-	// so a viewer can't nuke other operators' active shares).
-	mux.HandleFunc("POST /api/traces/{id}/share",       auth.RequireAnyRole(editorRoles, s.createTraceSnapshot))
+	// Public-share endpoints — POST mints a token (any authenticated
+	// user, viewers included: v0.8.102 operator request — viewers
+	// hand traces to support/vendors too; the mint is audited with
+	// the actor's email so a leak is traceable), GET resolves without
+	// auth (auth middleware's SkipPath allowlist lets it through),
+	// DELETE revokes (editor+ so a viewer can't nuke other operators'
+	// active shares — minting your own link is fine, deleting the
+	// shared pool isn't).
+	mux.HandleFunc("POST /api/traces/{id}/share",       s.createTraceSnapshot)
 	mux.HandleFunc("GET  /api/traces/{id}/shares",      s.listTraceSnapshots)
 	mux.HandleFunc("DELETE /api/traces/share/{token}",  auth.RequireAnyRole(editorRoles, s.revokeTraceSnapshot))
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)

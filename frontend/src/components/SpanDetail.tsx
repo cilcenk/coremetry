@@ -63,6 +63,32 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
       .catch(() => setSpanLogs([]));
   }, [span.traceId]);
 
+  // Baseline p50 — the 24h leading up to this span, for the same
+  // service+operation, off the RED metrics path (operation_summary_5m
+  // via /api/services/{svc}/operations). Anchored to the span's own
+  // end time, not now(), so an old trace compares against the
+  // baseline that was current when it ran. Graceful: any miss
+  // (endpoint error, operation not in the window) hides the row.
+  const [baseP50, setBaseP50] = useState<number | null>(null);
+  useEffect(() => {
+    setBaseP50(null);
+    if (!span.serviceName || !span.endTime) return;
+    // Stale-response guard: rapid j/k span switching can leave an
+    // older fetch resolving AFTER the newer one — without the flag
+    // the previous span's p50 would land under the current span.
+    let stale = false;
+    const DAY_NS = 86_400_000_000_000;
+    api.serviceOperations(span.serviceName, { from: span.endTime - DAY_NS, to: span.endTime })
+      .then(ops => {
+        if (stale) return;
+        const op = (ops ?? []).find(o => o.name === span.name)
+          ?? (ops ?? []).find(o => o.name === displaySpanName(span));
+        setBaseP50(op && op.p50DurationMs > 0 ? op.p50DurationMs : null);
+      })
+      .catch(() => { if (!stale) setBaseP50(null); });
+    return () => { stale = true; };
+  }, [span.spanId, span.serviceName, span.name, span.endTime]);
+
   // ── Resize handle ────────────────────────────────────────────────────────
   // Panel width persists in localStorage so navigating away and back
   // doesn't reset to the default. Initial render reads it before the
@@ -151,6 +177,17 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
             <Row k="Service" v={span.serviceName} copyable />
             <Row k="Kind" v={span.kind} copyable />
             <Row k="Duration" v={`${span.durationMs.toFixed(3)} ms`} copyable />
+            {baseP50 !== null && (
+              <tr>
+                <td>Baseline p50 (24h)</td>
+                <td title={`Median duration of ${span.serviceName} · ${displaySpanName(span)} over the 24h before this span`}>
+                  {baseP50 >= 1000 ? `${(baseP50 / 1000).toFixed(2)} s` : `${baseP50.toFixed(baseP50 < 10 ? 2 : 0)} ms`}{' '}
+                  {span.durationMs / baseP50 >= 1.5
+                    ? <span className="badge b-err">×{(span.durationMs / baseP50).toFixed(1)} slower</span>
+                    : <span className="badge b-ok">normal</span>}
+                </td>
+              </tr>
+            )}
             <Row k="Start" v={tsLong(span.startTime)} copyable />
             <Row k="Trace ID" v={span.traceId} mono copyable />
             <Row k="Span ID" v={span.spanId} mono copyable />

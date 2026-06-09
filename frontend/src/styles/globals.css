@@ -556,6 +556,25 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .wf-row.wf-match { background: rgba(240, 173, 78, .12); }
 .wf-row.wf-match.wf-sel { background: rgba(56, 139, 253, .18); }
 
+/* Per-service self-time breakdown strip above the waterfall —
+   Jaeger trace-summary pattern. Segment width ∝ self-time share. */
+.wf-svcbreak { display: flex; height: 10px; border-radius: 5px; overflow: hidden; border: 1px solid var(--border); }
+.wf-svcbreak i { display: block; height: 100%; min-width: 1px; }
+.wf-svcbreak-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 5px; font-size: 10.5px; color: var(--text2); }
+.wf-svcbreak-legend .it { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.wf-svcbreak-legend .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.wf-svcbreak-legend .ms { font-family: ui-monospace, monospace; color: var(--text3); }
+
+/* Span event marker — exception moment on the bar (rotated square). */
+.wf-ev {
+  position: absolute; top: 50%; width: 7px; height: 7px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: var(--err); border: 1px solid var(--bg0); z-index: 3; pointer-events: none;
+}
+
+/* Duration share — % chip at the right end of the row-name column. */
+.wf-pct { flex-shrink: 0; font-family: ui-monospace, monospace; font-size: 9.5px; color: var(--text3); margin-left: 6px; }
+
 /* Service-color stripe down the left edge — Tempo's primary signal for
    identifying which service this span belongs to. Always visible, fixed
    width. Selected row widens it slightly. */

@@ -2,6 +2,7 @@ import { useEffect, useState, FormEvent } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { Wordmark } from '@/components/Wordmark';
 import { api, type AuthConfigResponse } from '@/lib/api';
 import { useBranding } from '@/lib/branding';
 import { useT } from '@/lib/i18n';
@@ -117,7 +118,7 @@ export default function LoginPage() {
                     most marketing surfaces: product name
                     first, attribution mark trailing. */}
                 <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: '0.5px' }}>
-                  Coremetry
+                  <Wordmark />
                 </span>
                 <TelescopeIcon size={22} />
               </div>
@@ -135,7 +136,7 @@ export default function LoginPage() {
                 <TelescopeIcon size={40} />
               </div>
               <div style={{ fontSize: 22, fontWeight: 700, marginTop: 10, letterSpacing: '0.5px' }}>
-                {brand.appName}
+                <Wordmark name={brand.appName} />
               </div>
             </>
           )}

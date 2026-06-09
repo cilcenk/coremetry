@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Wordmark } from '@/components/Wordmark';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
@@ -79,7 +80,7 @@ function PublicTraceInner() {
       }}>
         <TelescopeIcon size={28} />
         <div>
-          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.3px' }}>Coremetry</div>
+          <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '0.3px' }}><Wordmark /></div>
           <div style={{ fontSize: 11, color: 'var(--text3)' }}>
             Shared trace · public read-only snapshot
           </div>

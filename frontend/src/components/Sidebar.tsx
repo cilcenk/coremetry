@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
+import { Wordmark } from './Wordmark';
 
 // adminOnly entries are hidden from non-admin users in the
 // sidebar. The pages themselves still enforce admin-role at
@@ -293,7 +294,7 @@ export function Sidebar() {
         }}>
         <div id="sidebar-header">
           <TelescopeIcon size={22} />
-          {showLabels && <span className="title">Coremetry</span>}
+          {showLabels && <span className="title"><Wordmark /></span>}
           {!isMobile && (
             <button onClick={toggleCollapsed}
               className="theme-toggle"

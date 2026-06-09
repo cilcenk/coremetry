@@ -9,8 +9,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,6 +40,11 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := s.logs.Search(r.Context(), f)
 	if err != nil {
+		// Surface the full backend error (ES carries the authz/index reason in
+		// the response body via res.String()) in the pod log so the operator can
+		// grep "[logs]" instead of only seeing it in the API response.
+		log.Printf("[logs] search failed (backend=%s, service=%q, trace=%q): %v",
+			s.logs.Backend(), f.Service, f.TraceID, err)
 		writeErr(w, err)
 		return
 	}
@@ -70,6 +75,7 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 		}
 		fields, err := f.ListFields(r.Context())
 		if err != nil {
+			log.Printf("[logs] field discovery failed (backend=%s): %v", s.logs.Backend(), err)
 			return nil, err
 		}
 		if fields == nil {
@@ -89,58 +95,6 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 // Cached briefly (30s) — values change slowly and the operator
 // will type new prefixes in rapid succession (each is a fresh
 // cache key).
-// runLogsEQL executes an Elastic Event Query Language sequence
-// search against the configured ES logs backend. Editor-gated —
-// EQL can return arbitrary field shapes from the index and we
-// want admin/editor accountability via audit. CH backend
-// surfaces the "not supported" error from CHStore.EQLSearch;
-// the frontend hides the panel on non-ES backends. v0.5.468.
-//
-// Not cached — EQL queries are operator-driven ad-hoc; caching
-// per-keystroke iterations would just churn Redis without
-// helping anyone.
-func (s *Server) runLogsEQL(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Query string `json:"query"`
-		From  int64  `json:"fromMs"`
-		To    int64  `json:"toMs"`
-		Size  int    `json:"size"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-	q := logstore.EQLQuery{
-		Query: body.Query,
-		Size:  body.Size,
-	}
-	if body.From > 0 {
-		q.From = time.UnixMilli(body.From)
-	}
-	if body.To > 0 {
-		q.To = time.UnixMilli(body.To)
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	seqs, err := s.logs.EQLSearch(ctx, q)
-	if err != nil {
-		writeJSON(w, map[string]any{
-			"sequences": []logstore.EQLSequence{},
-			"error":     err.Error(),
-		})
-		return
-	}
-	if seqs == nil {
-		seqs = []logstore.EQLSequence{}
-	}
-	s.audit(r, "logs.eql_run", "logs", "",
-		fmt.Sprintf(`{"len":%d,"size":%d}`, len(body.Query), body.Size))
-	writeJSON(w, map[string]any{
-		"sequences": seqs,
-		"backend":   s.logs.Backend(),
-	})
-}
 
 // adminElasticIndices returns per-index doc count, size, health,
 // and ILM lifecycle (policy + phase) for the configured logs
@@ -155,6 +109,7 @@ func (s *Server) adminElasticIndices(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, "admin-elastic-indices", 30*time.Second, func() (any, error) {
 		idx, err := s.logs.Indices(r.Context())
 		if err != nil {
+			log.Printf("[logs] indices failed (backend=%s): %v", s.logs.Backend(), err)
 			return nil, err
 		}
 		if idx == nil {
@@ -183,6 +138,9 @@ func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		vals, err := s.logs.FieldValues(r.Context(), field, prefix, limit)
 		if err != nil {
+			// Surfaced to the pod log (the UI swallows it below, so this is the
+			// only place an ES authz/_terms_enum error on field-values shows up).
+			log.Printf("[logs] field-values failed (backend=%s, field=%q): %v", s.logs.Backend(), field, err)
 			// Don't 500 on bad field names — the autocomplete UI
 			// already tolerates an empty list, and a typed
 			// "lkjasdf:" shouldn't surface as a red banner.

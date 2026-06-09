@@ -1593,6 +1593,8 @@ canvas { max-width: 100%; }
 .topo-node { position: absolute; transform: translate(-50%, -50%); z-index: 2; display: flex; align-items: center; gap: 8px; max-width: 170px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg1); box-shadow: var(--shadow-sm); cursor: default; transition: opacity .12s ease, border-color .12s ease; }
 .topo-node.focus { border: 2px solid var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--bg1)); padding: 9px 12px; }
 .topo-node.dim { opacity: .32; }
+/* Topology flow graph — dış bağımlılık (db/queue/ext) pill'i kesikli çerçeve */
+.topo-node.ext { border-style: dashed; background: var(--bg0); }
 .topo-name { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topo-sub { font-size: 9.5px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
 .topo-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }

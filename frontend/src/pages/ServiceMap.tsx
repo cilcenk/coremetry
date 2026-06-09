@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { ServiceMapGraph } from '@/components/ServiceMapGraph';
+import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import { useServiceMap, useServiceNames } from '@/lib/queries';
 import { fmtNum, hashColor } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -410,7 +410,7 @@ export default function ServiceMapPage() {
           </Empty>
         )}
         {filtered && filtered.nodes.length > 0 && (
-          <ServiceMapGraph
+          <TopologyFlowGraph
             data={filtered}
             focus={focus || null}
             hoverNode={hoverNode}

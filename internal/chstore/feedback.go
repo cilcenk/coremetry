@@ -37,8 +37,12 @@ func (s *Store) InsertFeedback(ctx context.Context, f Feedback) (Feedback, error
 }
 
 func (s *Store) ListFeedbacks(ctx context.Context, limit, offset int) ([]Feedback, bool, error) {
-	if limit <= 0 || limit > 100 {
+	// Defense-in-depth — the API handler clamps before its cache
+	// key; mirror the same bounds here for any other caller.
+	if limit <= 0 {
 		limit = 20
+	} else if limit > 100 {
+		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
@@ -46,7 +50,7 @@ func (s *Store) ListFeedbacks(ctx context.Context, limit, offset int) ([]Feedbac
 	// Fetch one extra row to determine whether more pages exist.
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, user_id, user_email, message, created_at
-		FROM feedbacks FINAL
+		FROM feedbacks
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?
 		SETTINGS max_execution_time = 10`,

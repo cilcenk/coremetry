@@ -2448,3 +2448,11 @@ export interface SpanExemplar {
   statusCode: string;
   timeUnixNs: number;
 }
+
+export interface Feedback {
+  id: string;
+  userId: string;
+  userEmail: string;
+  message: string;
+  createdAt: number; // unix ns
+}

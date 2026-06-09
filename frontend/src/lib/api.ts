@@ -19,6 +19,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
+  Feedback,
 } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 
@@ -1628,6 +1629,16 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
+    }),
+
+  listFeedbacks: (limit: number, offset: number) =>
+    get<{ feedbacks: Feedback[]; hasMore: boolean }>(`/api/feedbacks?${qs({ limit, offset })}`),
+
+  submitFeedback: (message: string) =>
+    request<Feedback>('/api/feedbacks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
     }),
 };
 

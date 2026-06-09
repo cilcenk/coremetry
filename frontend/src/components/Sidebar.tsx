@@ -8,7 +8,7 @@ import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Flame, Compass, BookText,
   LayoutDashboard, Bell, Gauge, Target, CalendarClock, CircleGauge, Search, Hash,
-  Server, Sparkles, LayoutGrid, FileClock, Terminal, Code, Globe, type LucideIcon,
+  Server, Sparkles, LayoutGrid, FileClock, Terminal, Code, Globe, MessageCircle, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -110,6 +110,12 @@ const NAV_GROUPS: NavGroup[] = [
       // sidebar carries ONE "System" entry. AI stays a sibling (not a System tab).
       { href: '/system', label: 'nav.system', icon: CircleGauge },
       { href: '/ai',     label: 'nav.ai',     icon: Sparkles, adminOnly: true },
+    ],
+  },
+  {
+    titleKey: 'navGroup.community',
+    items: [
+      { href: '/feedback', label: 'nav.feedback', icon: MessageCircle },
     ],
   },
 ];

@@ -1021,6 +1021,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		PARTITION BY toDate(time_bucket)
 		ORDER BY (time_bucket, root_service, root_op)
 		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
+		`CREATE TABLE IF NOT EXISTS feedbacks (
+			id         String,
+			user_id    String,
+			user_email String,
+			message    String,
+			created_at DateTime64(9) DEFAULT now64(9),
+			version    UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY id`,
 	}
 
 	for _, q := range tables {

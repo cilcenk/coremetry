@@ -183,3 +183,129 @@ func (s *Store) UpsertServiceMetadata(ctx context.Context, m ServiceMetadata) er
 	}
 	return batch.Send()
 }
+
+// ── Auto-derive owner/sre team from span attributes (v0.8.95) ────────────────
+
+// ServiceTeams is the dominant owner/sre team pair derived for one service from
+// its span attributes.
+type ServiceTeams struct {
+	OwnerTeam string
+	SRETeam   string
+}
+
+// deriveTeamsSQL extracts, per service, the dominant owner-team (ug-team /
+// ug_team) and sre-team (sy-team / sy_team) attribute value. Team ownership is a
+// stable signal, so the most-frequent value IS the team. Both the resource scope
+// (res_keys/res_values — preferred) AND the span scope (attr_keys/attr_values)
+// are checked, in that order, and both the hyphen + underscore key spellings.
+const deriveTeamsSQL = `
+SELECT service_name,
+       argMaxIf(ug_val, c, ug_val != '') AS owner,
+       argMaxIf(sy_val, c, sy_val != '') AS sre
+FROM (
+  SELECT service_name, ug_val, sy_val, count() AS c
+  FROM (
+    SELECT service_name,
+      multiIf(
+        has(res_keys, 'ug-team'),  res_values[indexOf(res_keys, 'ug-team')],
+        has(res_keys, 'ug_team'),  res_values[indexOf(res_keys, 'ug_team')],
+        has(attr_keys, 'ug-team'), attr_values[indexOf(attr_keys, 'ug-team')],
+        has(attr_keys, 'ug_team'), attr_values[indexOf(attr_keys, 'ug_team')],
+        '') AS ug_val,
+      multiIf(
+        has(res_keys, 'sy-team'),  res_values[indexOf(res_keys, 'sy-team')],
+        has(res_keys, 'sy_team'),  res_values[indexOf(res_keys, 'sy_team')],
+        has(attr_keys, 'sy-team'), attr_values[indexOf(attr_keys, 'sy-team')],
+        has(attr_keys, 'sy_team'), attr_values[indexOf(attr_keys, 'sy_team')],
+        '') AS sy_val
+    FROM spans
+    WHERE time >= ? AND time <= ?
+      AND ( has(res_keys, 'ug-team')  OR has(res_keys, 'ug_team')
+         OR has(res_keys, 'sy-team')  OR has(res_keys, 'sy_team')
+         OR has(attr_keys, 'ug-team') OR has(attr_keys, 'ug_team')
+         OR has(attr_keys, 'sy-team') OR has(attr_keys, 'sy_team') )
+    LIMIT 2000000
+  )
+  GROUP BY service_name, ug_val, sy_val
+)
+GROUP BY service_name
+ORDER BY service_name
+LIMIT 10000
+SETTINGS max_execution_time = 30`
+
+// DeriveServiceTeams returns service → dominant {owner, sre} team derived from
+// span/resource attributes over the window. Services emitting none of the four
+// keys are omitted.
+func (s *Store) DeriveServiceTeams(ctx context.Context, since time.Duration) (map[string]ServiceTeams, error) {
+	to := time.Now()
+	from := to.Add(-since)
+	rows, err := s.conn.Query(ctx, deriveTeamsSQL, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]ServiceTeams, 64)
+	for rows.Next() {
+		var svc, owner, sre string
+		if err := rows.Scan(&svc, &owner, &sre); err != nil {
+			return nil, err
+		}
+		owner, sre = strings.TrimSpace(owner), strings.TrimSpace(sre)
+		if owner == "" && sre == "" {
+			continue
+		}
+		out[svc] = ServiceTeams{OwnerTeam: owner, SRETeam: sre}
+	}
+	return out, rows.Err()
+}
+
+// mergeTeams fills owner_team / sre_team ONLY when the catalog field is empty,
+// so a manual catalog edit always wins. Returns the (possibly) updated row + a
+// changed flag. Pure — unit-tested.
+func mergeTeams(md ServiceMetadata, t ServiceTeams) (ServiceMetadata, bool) {
+	changed := false
+	if md.OwnerTeam == "" && t.OwnerTeam != "" {
+		md.OwnerTeam = t.OwnerTeam
+		changed = true
+	}
+	if md.SRETeam == "" && t.SRETeam != "" {
+		md.SRETeam = t.SRETeam
+		changed = true
+	}
+	return md, changed
+}
+
+// PopulateServiceTeamsFromSpans derives teams from span attributes and fills
+// the empty owner_team / sre_team catalog fields (manual values are preserved,
+// as are all other metadata fields — UpsertServiceMetadata is a full-row
+// replace, so we read-merge-write). Best-effort: a single failed upsert doesn't
+// abort the rest. Returns the number of services updated.
+func (s *Store) PopulateServiceTeamsFromSpans(ctx context.Context, since time.Duration) (int, error) {
+	derived, err := s.DeriveServiceTeams(ctx, since)
+	if err != nil {
+		return 0, err
+	}
+	if len(derived) == 0 {
+		return 0, nil
+	}
+	existing, err := s.ListServiceMetadata(ctx)
+	if err != nil {
+		return 0, err
+	}
+	updated := 0
+	for svc, t := range derived {
+		md, ok := existing[svc]
+		if !ok {
+			md = ServiceMetadata{Service: svc}
+		}
+		merged, changed := mergeTeams(md, t)
+		if !changed {
+			continue
+		}
+		if err := s.UpsertServiceMetadata(ctx, merged); err != nil {
+			continue // best-effort; the next tick retries
+		}
+		updated++
+	}
+	return updated, nil
+}

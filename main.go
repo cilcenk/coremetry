@@ -408,6 +408,9 @@ func main() {
 		// ── Exception inbox refresher ───────────────────────────────────
 		go runExceptionRefresher(ctx, store, lockImpl)
 
+		// ── Service team deriver (owner/sre team from span attrs) ───────
+		go runServiceTeamDeriver(ctx, store, lockImpl)
+
 		// ── Topology aggregator ─────────────────────────────────────────
 		topology.New(store, 5*time.Minute, 1*time.Hour, lockImpl).Start(ctx)
 
@@ -820,6 +823,45 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 	}
 
 	tick() // immediate backfill on boot (idempotent — non-leader skips)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			tick()
+		}
+	}
+}
+
+// runServiceTeamDeriver periodically derives each service's owner team
+// (ug-team / ug_team) and sre team (sy-team / sy_team) from its span/resource
+// attributes and fills the EMPTY service_metadata.owner_team / sre_team fields
+// (manual catalog edits win; all other metadata is preserved — the upsert is a
+// full-row replace, so PopulateServiceTeamsFromSpans read-merge-writes).
+// Leader-gated so it runs once cluster-wide. Populates the /services team
+// dropdowns, the catalog chips, and notify team routing automatically.
+func runServiceTeamDeriver(ctx context.Context, store *chstore.Store, lock cache.Lock) {
+	const lockKey = "coremetry:lock:service-team-deriver"
+	const interval = 10 * time.Minute
+	const window = 3 * time.Hour
+	leader := cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval))
+	leader.Start(ctx)
+	tick := func() {
+		if !leader.IsLeader() {
+			return
+		}
+		n, err := store.PopulateServiceTeamsFromSpans(ctx, window)
+		if err != nil {
+			log.Printf("[team-derive] %v", err)
+			return
+		}
+		if n > 0 {
+			log.Printf("[team-derive] filled owner/sre team for %d service(s) from span attrs", n)
+		}
+	}
+	tick() // immediate on boot (idempotent; non-leader skips)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {

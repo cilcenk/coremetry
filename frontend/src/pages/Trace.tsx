@@ -17,7 +17,7 @@ import { useCorrelatedLogs, spanHasError } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
-import { SpanPanel } from '@/components/traces/SpanPanel';
+import { SpanDetail } from '@/components/SpanDetail';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
 
 function TraceDetailInner() {
@@ -395,13 +395,13 @@ function TraceDetailInner() {
                     dropped-span counts so the operator never mistakes a partial
                     trace for a complete one. */}
                 <TraceHonesty spans={spans} source={source} />
-                <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, minHeight: 240 }}>
+                <div style={{ display: 'flex', alignItems: 'stretch', gap: 10, minHeight: 240 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter} />
                     <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds} />
                   </div>
-                  {sel && <SpanPanel span={sel} onClose={() => setSelectedId(null)} />}
+                  {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
                 </div>
               </>
             )}

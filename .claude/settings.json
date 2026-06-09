@@ -15,40 +15,36 @@
       "Bash(helm pull *)",
       "Bash(docker compose ps *)",
       "Bash(docker compose logs *)",
-      "Bash(docker compose config *)"
+      "Bash(docker compose config *)",
+      "Bash(go test *)",
+      "Bash(make test)",
+      "Bash(make test-race)",
+      "Bash(make audit)",
+      "Bash(kubectl get *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl logs *)",
+      "Bash(kubectl rollout status *)",
+      "Bash(kubectl top *)",
+      "Bash(minikube status)",
+      "Bash(minikube status *)",
+      "Bash(minikube dashboard *)",
+      "Bash(minikube config get *)",
+      "Bash(docker images *)",
+      "Bash(docker inspect *)",
+      "Bash(docker ps *)"
     ]
   },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "//": "Frontend TypeScript edits → re-run tsc so type errors surface immediately instead of waiting for the next commit. Limited to 10 lines of output to keep the agent's context window clean; if a real error fires, we re-run the full check ourselves before /release.",
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_TOOL_INPUT_FILE_PATH\" ] && echo \"$CLAUDE_TOOL_INPUT_FILE_PATH\" | grep -qE 'frontend/.+\\.(tsx?|ts)$'; then cd \"$CLAUDE_PROJECT_DIR/frontend\" && npx tsc --noEmit 2>&1 | head -10 || true; fi"
-          },
-          {
-            "//": "Backend Go edits → `go build ./...` from project root. Doesn't run tests (no test suite worth caching), just compile.",
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_TOOL_INPUT_FILE_PATH\" ] && echo \"$CLAUDE_TOOL_INPUT_FILE_PATH\" | grep -qE '\\.go$'; then cd \"$CLAUDE_PROJECT_DIR\" && go build ./... 2>&1 | head -10 || true; fi"
-          }
-        ]
-      },
-      {
-        "//": "Same checks fire after Write (new file) — covers the `New + immediate commit` path that Edit misses.",
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_TOOL_INPUT_FILE_PATH\" ] && echo \"$CLAUDE_TOOL_INPUT_FILE_PATH\" | grep -qE 'frontend/.+\\.(tsx?|ts)$'; then cd \"$CLAUDE_PROJECT_DIR/frontend\" && npx tsc --noEmit 2>&1 | head -10 || true; fi"
-          },
-          {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_TOOL_INPUT_FILE_PATH\" ] && echo \"$CLAUDE_TOOL_INPUT_FILE_PATH\" | grep -qE '\\.go$'; then cd \"$CLAUDE_PROJECT_DIR\" && go build ./... 2>&1 | head -10 || true; fi"
-          }
-        ]
-      }
-    ]
+"hooks": {
+  "PostToolUse": [
+    {
+      "matcher": "Edit|Write|MultiEdit",
+      "hooks": [
+        { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.sh\"" }
+      ]
+    }
+  ]
+},
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
   }
 }

@@ -2,8 +2,10 @@
 .gitignore
 *.md
 *.db
+coremetry
 qmetry
 demo
+*.png
 frontend/node_modules
 frontend/.next
 frontend/out

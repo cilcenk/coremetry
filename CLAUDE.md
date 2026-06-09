@@ -464,7 +464,6 @@ uniform latency, or it will visibly desync from the rest of the data.
 | Notification fan-out (channels) | `internal/notify/` |
 | Auth (local + LDAP + OIDC) | `internal/auth/` + `internal/ldap/` |
 | AI Copilot wrapper + system prompts | `internal/copilot/` |
-| Sampling | `internal/sampling/` |
 | Topology batch correlator | `internal/topology/` |
 | ClickHouse migrations | `internal/chmigrate/` |
 | Frontend pages | `frontend/src/pages/` |

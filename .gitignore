@@ -1,5 +1,5 @@
 # Built binaries
-/qmetry
+/coremetry
 /demo
 *.exe
 *.dll
@@ -63,3 +63,24 @@ VERSION.txt
 # per-developer overrides (.claude/settings.local.json) stay
 # private.
 .claude/settings.local.json
+.claude/worktrees/
+
+# Local agent tooling (machine-managed skill installs + lockfile)
+.agents/
+skills-lock.json
+
+# Playwright MCP browser profile / verification output
+.playwright-mcp/
+
+# Stray root npm cache (real one lives in frontend/)
+/node_modules/
+
+# Verification screenshots land at the repo root during
+# Playwright runs — never commit them. Tracked logo assets
+# stay tracked regardless (gitignore only hides untracked).
+/*.png
+!/OpenTelemetry.png
+
+# Design handoff working dirs (prototypes must NOT enter
+# frontend/src — vite breaks on stray ./App→app.jsx imports)
+design_handoff_*/

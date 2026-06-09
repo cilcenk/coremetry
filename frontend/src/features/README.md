@@ -54,7 +54,6 @@ because `src/App.tsx` imports them by file path.
 - `components/Topbar.tsx`, `Sidebar.tsx`, `AppShell.tsx` —
   app-shell, cross-feature.
 - `components/Sparkline.tsx`, `MultiLineChart.tsx`,
-  `MetricChart.tsx`, `TraceVolumeHistogram.tsx`,
   `TraceWaterfall.tsx`, `FlameGraph.tsx`, `ServiceMapGraph.tsx`
   — visualisations consumed by 2+ features. Stay shared.
 - `lib/api.ts`, `lib/types.ts`, `lib/utils.ts` — typed boundary

@@ -253,7 +253,7 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
           errorsOnly={errorsOnly}
           onHops={setHops}
           onErrorsOnly={setErrorsOnly}
-          onRecenter={(s) => navigate(`/service?service=${encodeURIComponent(s)}&range=${rangeParam}`)}
+          onRecenter={(s) => navigate(`/service?name=${encodeURIComponent(s)}&tab=topology&range=${rangeParam}`)}
           onClear={() => navigate(`/topology?range=${rangeParam}`)}
         />
       </div>

@@ -56,3 +56,40 @@ func TestShouldAutoResolveStale(t *testing.T) {
 		})
 	}
 }
+
+// v0.8.99 regression test — operator-reported: a manually-resolved exception
+// group flipped back to "regressed" within the 60s refresh because the
+// continuously-firing exception recurred immediately, so a manual resolve never
+// stuck. shouldRegress gates regression with a grace window: a manual resolve
+// holds through in-flight occurrences; only a fingerprint still firing PAST the
+// grace genuinely regressed.
+func TestShouldRegress(t *testing.T) {
+	resolvedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC).UnixNano()
+	ra := &resolvedAt
+	grace := 15 * time.Minute
+	within := resolvedAt + (5 * time.Minute).Nanoseconds()  // in-grace recurrence
+	past := resolvedAt + (20 * time.Minute).Nanoseconds()   // still firing past grace
+	before := resolvedAt - (5 * time.Minute).Nanoseconds()  // last occurrence pre-resolve
+
+	cases := []struct {
+		name       string
+		state      string
+		resolvedAt *int64
+		lastSeen   int64
+		want       bool
+	}{
+		{"resolved, recurs within grace → hold", ExStateResolved, ra, within, false},
+		{"resolved, still firing past grace → regress", ExStateResolved, ra, past, true},
+		{"resolved, last occurrence before resolve → hold", ExStateResolved, ra, before, false},
+		{"not resolved (new) → never regress", ExStateNew, ra, past, false},
+		{"acknowledged → never regress", ExStateAcknowledged, ra, past, false},
+		{"resolved but no resolved_at → never regress", ExStateResolved, nil, past, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldRegress(tc.state, tc.resolvedAt, tc.lastSeen, grace); got != tc.want {
+				t.Errorf("shouldRegress(state=%q, lastSeen) = %v, want %v", tc.state, got, tc.want)
+			}
+		})
+	}
+}

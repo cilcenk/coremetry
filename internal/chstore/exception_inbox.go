@@ -216,9 +216,14 @@ func (s *Store) UpsertExceptionGroup(ctx context.Context, g ExceptionGroup) erro
 		g.Assignee = existing.Assignee
 		g.Notes = existing.Notes
 		g.FirstSeen = existing.FirstSeen
-		// Regression detection — only meaningful when the group was previously
-		// closed and we're now seeing a newer occurrence.
-		if existing.State == ExStateResolved && existing.ResolvedAt != nil && g.LastSeen > *existing.ResolvedAt {
+		// Regression detection — a resolved group reopens only if it KEEPS firing
+		// past a grace window after the resolve. v0.8.99 (operator-reported:
+		// "resolve doesn't stick"): a continuously-firing exception flipped
+		// resolved→regressed within the 60s refresh, so a manual resolve never
+		// held. The grace lets the operator mute an in-flight issue while they
+		// fix it; a fingerprint still erroring well past the resolve genuinely
+		// regressed.
+		if shouldRegress(existing.State, existing.ResolvedAt, g.LastSeen, exResolveGrace) {
 			g.State = ExStateRegressed
 		} else if existing.State == ExStateIgnored {
 			// Stay ignored — silence is the whole point.
@@ -381,6 +386,22 @@ func (s *Store) CountExceptionGroups(ctx context.Context, f ExceptionGroupFilter
 
 // SetExceptionGroupState handles all explicit user-driven transitions.
 // `resolved` stamps resolved_at; transitioning out of resolved clears it.
+// exResolveGrace is how long a manual resolve holds before a still-firing
+// fingerprint can regress. Long enough that the in-flight occurrences of the
+// issue the operator is actively fixing don't immediately reopen it.
+const exResolveGrace = 15 * time.Minute
+
+// shouldRegress decides whether a resolved group reopens (regresses) on a fresh
+// occurrence. Pure — unit-tested (v0.8.99). Regression fires only for a resolved
+// group whose newest occurrence is past resolved_at + grace; an in-grace
+// occurrence keeps the operator's resolve.
+func shouldRegress(state string, resolvedAtNs *int64, lastSeenNs int64, grace time.Duration) bool {
+	if state != ExStateResolved || resolvedAtNs == nil {
+		return false
+	}
+	return lastSeenNs > *resolvedAtNs+grace.Nanoseconds()
+}
+
 func (s *Store) SetExceptionGroupState(ctx context.Context, fingerprint, newState string) error {
 	g, err := s.GetExceptionGroup(ctx, fingerprint)
 	if err != nil {

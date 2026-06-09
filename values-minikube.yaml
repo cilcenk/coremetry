@@ -88,8 +88,11 @@ otelCollector:
   # it once before `make minikube-up`:
   #   kubectl create secret generic coremetry-oneuptime \
   #     -n coremetry --from-literal=token=<your-oneuptime-ingestion-token>
+  # Disabled locally — oneuptime.com isn't reachable from minikube (DNS), so the
+  # exporter just spammed retry errors. Re-enable when you have connectivity +
+  # the coremetry-oneuptime token Secret.
   oneuptime:
-    enabled: true
+    enabled: false
     endpoint: "https://oneuptime.com/otlp"
     tokenHeader: "x-oneuptime-token"
     existingSecret: "coremetry-oneuptime"

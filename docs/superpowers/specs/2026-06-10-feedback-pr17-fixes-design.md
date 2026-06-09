@@ -57,11 +57,14 @@ review findings fixed, preserving the contributor's authorship.
    replaces the `useState`-initializer side effect (double-fetches
    under StrictMode, runs during render).
 6. Real design tokens: feed items use the `.card` class; muted text
-   `var(--text2)`; error text `var(--err)`; textarea drops its
-   hand-rolled style block for the global textarea style (keeps
-   `resize: vertical`, `width: 100%`). The previously referenced
-   `--fg`, `--fg-muted`, `--color-error`, `--bg-card`, `--bg-input`
-   variables do not exist in `globals.css`.
+   `var(--text2)`; error text `var(--err)`. The textarea keeps an
+   inline style but mirrors the global `input, select` rule's tokens
+   (`--bg2`, `--border`, `--text`, radius 6, 13px) plus
+   `resize: vertical` — the global rule does not include `textarea`,
+   and extending it would restyle 20 existing textareas across the
+   app. The previously referenced `--fg`, `--fg-muted`,
+   `--color-error`, `--bg-card`, `--bg-input` variables do not exist
+   in `globals.css`.
 7. Dedupe by `id` when appending a fetched page, so the optimistic
    prepend after submit can't produce duplicate rows/keys against
    offset pagination.

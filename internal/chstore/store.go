@@ -1021,15 +1021,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		PARTITION BY toDate(time_bucket)
 		ORDER BY (time_bucket, root_service, root_op)
 		TTL toDate(time_bucket) + INTERVAL 14 DAY`,
+		// feedbacks (PR #17 / v0.8.106) — dedicated table by design:
+		// append-only event data with its own list/paginate access
+		// pattern, NOT per-user saved state, so the saved_views
+		// catch-all (invariant #5) doesn't fit. Plain MergeTree —
+		// rows are immutable, a Replacing dedup key would never
+		// repeat (random id) and FINAL would be pure read cost.
+		// No TTL on purpose: feedback volume is tiny and it should
+		// outlive telemetry retention.
 		`CREATE TABLE IF NOT EXISTS feedbacks (
 			id         String,
 			user_id    String,
 			user_email String,
 			message    String,
-			created_at DateTime64(9) DEFAULT now64(9),
-			version    UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
-		) ENGINE = ReplacingMergeTree(version)
-		ORDER BY id`,
+			created_at DateTime64(9) DEFAULT now64(9)
+		) ENGINE = MergeTree
+		PARTITION BY toYYYYMM(created_at)
+		ORDER BY (created_at, id)`,
 	}
 
 	for _, q := range tables {

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
@@ -32,7 +32,13 @@ export default function FeedbackPage() {
         setError('Failed to load feedback.');
         return;
       }
-      setFeedbacks(prev => append ? [...(prev ?? []), ...res.feedbacks] : res.feedbacks);
+      // Dedupe by id: the optimistic prepend after submit shifts
+      // server-side offsets, so a later page can repeat a row.
+      setFeedbacks(prev => {
+        if (!append || !prev) return res.feedbacks;
+        const seen = new Set(prev.map(p => p.id));
+        return [...prev, ...res.feedbacks.filter(f => !seen.has(f.id))];
+      });
       setHasMore(res.hasMore);
       setOffset(nextOffset + res.feedbacks.length);
     } catch {
@@ -43,8 +49,7 @@ export default function FeedbackPage() {
     }
   }, []);
 
-  // Initial load
-  useState(() => { load(0, false); });
+  useEffect(() => { load(0, false); }, [load]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,7 +75,7 @@ export default function FeedbackPage() {
   return (
     <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px' }}>
       <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>Feedback</h1>
-      <p style={{ color: 'var(--fg-muted)', marginBottom: 24, fontSize: 14 }}>
+      <p style={{ color: 'var(--text2)', marginBottom: 24, fontSize: 14 }}>
         Share your thoughts about Coremetry. All feedback is visible to the team.
       </p>
 
@@ -84,14 +89,17 @@ export default function FeedbackPage() {
           rows={4}
           disabled={submitting}
           style={{
+            // Mirrors the global `input, select` tokens — the global
+            // rule doesn't cover textarea, and extending it would
+            // restyle 20 existing textareas.
             width: '100%',
             boxSizing: 'border-box',
-            padding: '10px 12px',
+            padding: '8px 12px',
             borderRadius: 6,
             border: '1px solid var(--border)',
-            background: 'var(--bg-input, var(--bg))',
-            color: 'var(--fg)',
-            fontSize: 14,
+            background: 'var(--bg2)',
+            color: 'var(--text)',
+            fontSize: 13,
             resize: 'vertical',
             fontFamily: 'inherit',
           }}
@@ -104,11 +112,11 @@ export default function FeedbackPage() {
           >
             {submitting ? 'Submitting…' : 'Submit feedback'}
           </Button>
-          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+          <span style={{ fontSize: 12, color: 'var(--text2)' }}>
             {message.length}/2000
           </span>
           {submitError && (
-            <span style={{ fontSize: 13, color: 'var(--color-error, #e55)' }}>
+            <span style={{ fontSize: 13, color: 'var(--err)' }}>
               {submitError}
             </span>
           )}
@@ -126,18 +134,10 @@ export default function FeedbackPage() {
       {feedbacks !== null && feedbacks.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {feedbacks.map(f => (
-            <div
-              key={f.id}
-              style={{
-                padding: '14px 16px',
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                background: 'var(--bg-card, var(--bg))',
-              }}
-            >
+            <div key={f.id} className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <span style={{ fontSize: 13, fontWeight: 500 }}>{f.userEmail || 'Anonymous'}</span>
-                <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{formatDate(f.createdAt)}</span>
+                <span style={{ fontSize: 12, color: 'var(--text2)' }}>{formatDate(f.createdAt)}</span>
               </div>
               <p style={{ margin: 0, fontSize: 14, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {f.message}

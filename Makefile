@@ -166,9 +166,22 @@ minikube-up:
 	@# tag can't collide). --set image.tag wires the version tag into the deploy.
 	docker build --build-arg VERSION=$(VERSION) --build-arg VITE_APP_VERSION=$(VERSION) -t ghcr.io/cilcenk/coremetry:$(VERSION) .
 	minikube image load ghcr.io/cilcenk/coremetry:$(VERSION)
-	helm upgrade --install coremetry charts/coremetry -n coremetry --create-namespace \
-	  -f values-minikube.yaml --set image.tag=$(VERSION) --wait --timeout 8m
-	@echo "[make] Coremetry distributed on minikube — all roles up."
+	@# v0.8.105 — on an EXISTING release, upgrade with --reuse-values and
+	@# WITHOUT -f: re-applying values-minikube.yaml reset goDemo.image.tag
+	@# to the chart default (0.8.0, never loaded into the node) and
+	@# javaDemo.image.tag to "local", so every main-app deploy rolled the
+	@# demos onto missing/stale images (ErrImageNeverPull, helm --wait
+	@# timeout). The demo tags are owned by `make minikube-demo`; the fast
+	@# path only moves image.tag. Edit values-minikube.yaml → delete the
+	@# release first (make minikube-down) so the install path re-reads it.
+	@if helm status coremetry -n coremetry >/dev/null 2>&1; then \
+	  helm upgrade coremetry charts/coremetry -n coremetry \
+	    --reuse-values --set image.tag=$(VERSION) --wait --timeout 8m; \
+	else \
+	  helm upgrade --install coremetry charts/coremetry -n coremetry --create-namespace \
+	    -f values-minikube.yaml --set image.tag=$(VERSION) --wait --timeout 8m; \
+	fi
+	@echo "[make] Coremetry on minikube — up (mode comes from the release values)."
 	@echo "[make]   UI:        kubectl port-forward -n coremetry svc/coremetry 8090:8088  → http://localhost:8090"
 	@echo "[make]   Dashboard: minikube dashboard --url"
 

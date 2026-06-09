@@ -31,7 +31,13 @@ image:
   pullPolicy: Never       # image is side-loaded into minikube; never pull
 
 deployment:
-  mode: distributed
+  # Operator instruction (2026-06-09): local minikube runs MONOLITHIC.
+  # The distributed HA-test config below is kept for reference but only
+  # takes effect if mode is flipped back deliberately. Note: the
+  # v0.8.104 incident — re-applying this file with mode: distributed
+  # over the operator's monolithic release spawned role deployments
+  # that leaked as helm orphans when the upgrade failed.
+  mode: monolithic
   roles:
     ingest:
       replicas: 2         # HA test (was 1) — 2 ingest pods behind the gRPC Service

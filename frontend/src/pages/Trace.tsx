@@ -16,7 +16,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useCorrelatedLogs, spanHasError } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
-import { TraceWaterfall } from '@/components/TraceWaterfall';
+import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
 
@@ -196,24 +196,17 @@ function TraceDetailInner() {
   // so the operator can still read the call hierarchy around
   // each match.
   const [spanFilter, setSpanFilter] = useState('');
+  // Critical-path FOCUS mode (distinct from the stripe show/hide
+  // checkbox): when on, every row off the critical path dims so
+  // the dominant latency chain reads as the only bright thing on
+  // screen. Composes with the span filter's own dimming.
+  const [critFocus, setCritFocus] = useState(false);
   const spanMatchIds = useMemo<Set<string> | undefined>(() => {
     const q = spanFilter.trim().toLowerCase();
     if (!q || !spans) return undefined;
     const hits = new Set<string>();
     for (const s of spans) {
-      if (s.name.toLowerCase().includes(q)
-        || s.serviceName.toLowerCase().includes(q)
-        || displaySpanName(s).toLowerCase().includes(q)) {
-        hits.add(s.spanId);
-        continue;
-      }
-      const attrs = s.attributes ?? {};
-      for (const v of Object.values(attrs)) {
-        if (String(v).toLowerCase().includes(q)) {
-          hits.add(s.spanId);
-          break;
-        }
-      }
+      if (spanMatchesQuery(s, q)) hits.add(s.spanId);
     }
     return hits;
   }, [spans, spanFilter]);
@@ -397,9 +390,13 @@ function TraceDetailInner() {
                 <TraceHonesty spans={spans} source={source} />
                 <div style={{ display: 'flex', alignItems: 'stretch', gap: 10, minHeight: 240 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter} />
+                    <TraceServiceBreakdown spans={spans} />
+                    <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter}
+                      critCount={criticalPath?.ids.size ?? 0}
+                      critFocus={critFocus} onCritFocus={setCritFocus} />
                     <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
-                      criticalPathIds={criticalPathIds} matchIds={spanMatchIds} />
+                      criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
+                      focusIds={critFocus && criticalPath ? criticalPath.ids : undefined} />
                   </div>
                   {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
                 </div>
@@ -420,27 +417,49 @@ function TraceDetailInner() {
 // + match count badge. Operator types → matching spans glow
 // in the waterfall, non-matches dim. Tree structure stays
 // intact so the call hierarchy around each match remains
-// readable.
-function SpanFilterBar({ spans, value, onChange }: {
+// readable. Also hosts the critical-path focus chip so the
+// waterfall's two dimming modes live on one toolbar row.
+// One matcher for both the page's match-set memo and the filter
+// bar's counter so the two can't drift. Substring across span
+// name, service, display name, attribute values, AND the category
+// tag (DB / HTTP / RPC / MQ) — "db" lights up every database span
+// the way the waterfall's category chips classify them.
+function spanCategoryTag(s: SpanRow): string {
+  const a = s.attributes ?? {};
+  if (a['db.system'])        return 'db';
+  if (a['messaging.system']) return 'mq';
+  if (a['rpc.system'])       return 'rpc';
+  if (a['http.method'] || a['http.request.method']) return 'http';
+  return '';
+}
+
+function spanMatchesQuery(s: SpanRow, q: string): boolean {
+  if (s.name.toLowerCase().includes(q)
+    || s.serviceName.toLowerCase().includes(q)
+    || displaySpanName(s).toLowerCase().includes(q)
+    || spanCategoryTag(s).includes(q)) {
+    return true;
+  }
+  for (const v of Object.values(s.attributes ?? {})) {
+    if (String(v).toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
+
+function SpanFilterBar({ spans, value, onChange, critCount, critFocus, onCritFocus }: {
   spans: SpanRow[];
   value: string;
   onChange: (v: string) => void;
+  critCount?: number;
+  critFocus?: boolean;
+  onCritFocus?: (v: boolean) => void;
 }) {
   const matches = useMemo(() => {
     const q = value.trim().toLowerCase();
     if (!q) return 0;
     let n = 0;
     for (const s of spans) {
-      if (s.name.toLowerCase().includes(q)
-        || s.serviceName.toLowerCase().includes(q)
-        || displaySpanName(s).toLowerCase().includes(q)) {
-        n++;
-        continue;
-      }
-      const attrs = s.attributes ?? {};
-      for (const v of Object.values(attrs)) {
-        if (String(v).toLowerCase().includes(q)) { n++; break; }
-      }
+      if (spanMatchesQuery(s, q)) n++;
     }
     return n;
   }, [spans, value]);
@@ -457,6 +476,17 @@ function SpanFilterBar({ spans, value, onChange }: {
           ? `${matches} / ${spans.length} matching`
           : `${spans.length} span${spans.length === 1 ? '' : 's'}`}
       </span>
+      {onCritFocus && (critCount ?? 0) > 0 && (
+        <span className={'facet' + (critFocus ? ' on' : '')}
+          role="button" tabIndex={0}
+          title="Dim every span that is NOT on the critical path"
+          onClick={() => onCritFocus(!critFocus)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCritFocus(!critFocus); }
+          }}>
+          Critical path focus <span className="n">{critCount}</span>
+        </span>
+      )}
     </div>
   );
 }

@@ -81,15 +81,69 @@ function categoryOf(s: SpanRow): SpanCategory | null {
 // well-separated hues (blue/purple/teal/orange/green); collisions across a
 // large service set are acceptable (the design's SVC_COLOR reuses hues too).
 const SVC_TOKENS = ['var(--accent)', 'var(--purple)', 'var(--teal)', 'var(--orange)', 'var(--ok)'];
-function svcColorToken(name: string): string {
+export function svcColorToken(name: string): string {
   let h = 5381;
   for (let i = 0; i < name.length; i++) h = ((h << 5) + h) ^ name.charCodeAt(i);
   return SVC_TOKENS[Math.abs(h) % SVC_TOKENS.length];
 }
 
+// TraceServiceBreakdown — per-service SELF-time share of the trace
+// (span duration minus the sum of its direct children, clamped to 0),
+// rendered as a horizontal stacked strip + a top-5 legend. The Jaeger
+// trace-summary pattern: "stripe-api ate 83% of these 4.8s" at a
+// glance. Colours come from the same svcColorToken hash the waterfall
+// stripes use so the strip and the rows read as one palette.
+export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
+  const breakdown = useMemo(() => {
+    // O(n): one pass to sum direct-child durations per parent,
+    // one pass to fold self-time per service.
+    const childSum = new Map<string, number>();
+    for (const s of spans) {
+      if (!s.parentSpanId) continue;
+      childSum.set(s.parentSpanId,
+        (childSum.get(s.parentSpanId) ?? 0) + (s.endTime - s.startTime));
+    }
+    const bySvc = new Map<string, number>();
+    for (const s of spans) {
+      const self = Math.max(0, (s.endTime - s.startTime) - (childSum.get(s.spanId) ?? 0));
+      bySvc.set(s.serviceName, (bySvc.get(s.serviceName) ?? 0) + self);
+    }
+    const total = [...bySvc.values()].reduce((a, b) => a + b, 0) || 1;
+    return [...bySvc.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([svc, ns]) => ({ svc, ns, pct: (ns / total) * 100 }));
+  }, [spans]);
+
+  if (breakdown.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div className="wf-svcbreak" role="img" aria-label="Self-time share per service">
+        {breakdown.map(b => (
+          <i key={b.svc}
+             style={{ width: `${b.pct}%`, background: svcColorToken(b.svc) }}
+             title={`${b.svc} — ${fmtNs(b.ns)} self time (${b.pct.toFixed(b.pct < 1 ? 1 : 0)}%)`} />
+        ))}
+      </div>
+      <div className="wf-svcbreak-legend">
+        {breakdown.slice(0, 5).map(b => (
+          <span className="it" key={b.svc}>
+            <span className="sw" style={{ background: svcColorToken(b.svc) }} />
+            {b.svc} <span className="ms">{fmtNs(b.ns)} · {b.pct.toFixed(b.pct < 1 ? 1 : 0)}%</span>
+          </span>
+        ))}
+        {breakdown.length > 5 && (
+          <span className="it" style={{ color: 'var(--text3)' }}>
+            +{breakdown.length - 5} more
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
-  criticalPathIds, matchIds,
+  criticalPathIds, matchIds, focusIds,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -118,6 +172,11 @@ export function TraceWaterfall({
   // normally. Tree structure is unchanged so the operator can
   // still read the call hierarchy around each match.
   matchIds?: Set<string>;
+  // Critical-path FOCUS mode — rows outside this set get .wf-dim,
+  // on top of (not instead of) the .wf-critical left stripe.
+  // Undefined = focus off. Independent from criticalPathIds so
+  // the stripe toggle and the focus toggle compose freely.
+  focusIds?: Set<string>;
 }) {
   // Memoise the parents-of-something set keyed by the spans array
   // identity. When defaultCollapsed is on, that set becomes the
@@ -402,14 +461,35 @@ export function TraceWaterfall({
         // matches glow (.wf-match), non-matches dim (.wf-dim).
         const filterActive = matchIds !== undefined;
         const onMatch = filterActive && matchIds!.has(s.spanId);
+        // Focus mode dims rows outside focusIds; the filter dims
+        // non-matches. Either signal alone is enough to dim — a row
+        // must survive BOTH active modes to stay full-opacity.
+        const dimmed = (filterActive && !onMatch)
+          || (focusIds !== undefined && !focusIds.has(s.spanId));
         const cls = [
           'wf-row',
           s.statusCode === 'error' ? 'wf-err' : '',
           sel ? 'wf-sel' : '',
           onCritical ? 'wf-critical' : '',
-          filterActive && onMatch  ? 'wf-match' : '',
-          filterActive && !onMatch ? 'wf-dim'   : '',
+          filterActive && onMatch ? 'wf-match' : '',
+          dimmed ? 'wf-dim' : '',
         ].filter(Boolean).join(' ');
+
+        // Share of the trace's wall-clock total. Sub-1% spans keep one
+        // decimal so a 0.4% hot path doesn't round to invisibility.
+        const durPct = (dur / totalNs) * 100;
+        const durPctLabel = durPct < 1 ? durPct.toFixed(1) : String(Math.round(durPct));
+
+        // Exception marker — first `exception` event on the span. With
+        // a usable timestamp the diamond sits at the exception moment;
+        // otherwise it falls back to the bar's end.
+        const exc = (s.events ?? []).find(e => e.name === 'exception');
+        let excLeftPct: number | null = null;
+        if (exc) {
+          const t = exc.timeNano > 0 ? exc.timeNano : s.endTime;
+          const clamped = Math.min(Math.max(t, s.startTime), s.endTime);
+          excLeftPct = Math.min(((clamped - minT) / totalNs) * 100, 99);
+        }
 
         // Decide whether the duration label fits inside the bar (Tempo
         // does this — short bars get the label outside-right). 60px is
@@ -484,6 +564,9 @@ export function TraceWaterfall({
                 {s.statusCode === 'error' && (
                   <span className="wf-err-dot" title="Error">●</span>
                 )}
+                <span className="wf-pct" title="Share of total trace duration">
+                  {durPctLabel}%
+                </span>
               </div>
             </div>
 
@@ -509,6 +592,10 @@ export function TraceWaterfall({
               >
                 {labelInside && <span className="wf-bar-label">{fmtNs(dur)}</span>}
               </div>
+              {excLeftPct !== null && (
+                <span className="wf-ev" style={{ left: `${excLeftPct}%` }}
+                      title={exc!.attributes?.['exception.type'] || 'exception'} />
+              )}
               {!labelInside && (
                 <span className="wf-bar-label-outside"
                       style={{ left: `calc(${startPct}% + ${widthPct}% + 4px)` }}>

@@ -26,6 +26,7 @@ import (
 	"math"
 	mrand "math/rand/v2"
 	"net/http"
+	"strings"
 	"os"
 	"os/signal"
 	"runtime/pprof"
@@ -162,6 +163,36 @@ func clusterFor(serviceName string) string {
 		h *= 16777619
 	}
 	return demoClusters[int(h)%len(demoClusters)]
+}
+
+// teamsFor maps a demo service to a plausible owner team (ug-team) + SRE team
+// (sy-team) by banking domain, so the catalog surfaces a realistic spread of
+// teams once Coremetry's team-derive job reads these resource attributes.
+func teamsFor(name string) (owner, sre string) {
+	has := func(subs ...string) bool {
+		for _, s := range subs {
+			if strings.Contains(name, s) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("fraud", "risk", "scoring", "ml", "underwrit", "credit"):
+		return "risk-engineering", "ml-platform-sre"
+	case has("payment", "transfer", "ledger", "posting", "settlement", "sepa", "swift"):
+		return "payments", "core-platform-sre"
+	case has("card", "atm", "pos", "merchant"):
+		return "cards-and-channels", "core-platform-sre"
+	case has("auth", "identity", "openbanking", "kyc", "consent"):
+		return "identity", "security-sre"
+	case has("mobile", "bff", "web", "frontend", "gateway", "api"):
+		return "digital-channels", "edge-sre"
+	case has("notification", "email", "sms", "comms", "messaging"):
+		return "customer-comms", "core-platform-sre"
+	default:
+		return "core-banking", "core-platform-sre"
+	}
 }
 
 // ─── Trace builder ────────────────────────────────────────────────────────────
@@ -341,6 +372,10 @@ func (t *Trace) Send() error {
 			kvStr("deployment.environment", "demo"),
 			kvStr("service.version", "1.0.0"),
 		}
+		// ug-team (owner) + sy-team (SRE) as RESOURCE attrs (v0.8.97) so
+		// Coremetry's team-derive job auto-populates the service catalog.
+		ugTeam, syTeam := teamsFor(s.Name)
+		attrs = append(attrs, kvStr("ug-team", ugTeam), kvStr("sy-team", syTeam))
 		if s.Lang != "" {
 			attrs = append(attrs,
 				kvStr("telemetry.sdk.language", s.Lang),

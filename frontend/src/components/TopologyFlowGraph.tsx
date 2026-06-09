@@ -35,6 +35,7 @@ import { isMessagingDep } from '@/lib/utils';
 
 export function TopologyFlowGraph({
   data: rawData, focus, hoverNode, onHoverNode, onSelectNode, height = 560,
+  dropMessaging = true,
 }: {
   data: ServiceMap;
   focus: string | null;
@@ -42,6 +43,10 @@ export function TopologyFlowGraph({
   onHoverNode: (s: string | null) => void;
   onSelectNode: (s: string) => void;
   height?: number;
+  // /topology'nin odaklı 1-hop görünümü kuyrukları GÖSTERİR (operatör
+  // servisi zaten seçti, hairball riski yok) — false geçer. Global
+  // /service-map varsayılanı korur: broker düğümleri düşer.
+  dropMessaging?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(900);
@@ -60,6 +65,7 @@ export function TopologyFlowGraph({
   // (broadcast topic'ler topolojiyi hairball'a çevirir; messaging'in kendi
   // yüzeyi var).
   const data = useMemo<ServiceMap>(() => {
+    if (!dropMessaging) return rawData;
     if (!rawData.nodes.some(n => isMessagingDep(n.kind, n.subkind))) return rawData;
     const drop = new Set(
       rawData.nodes.filter(n => isMessagingDep(n.kind, n.subkind)).map(n => n.service),
@@ -168,17 +174,21 @@ export function TopologyFlowGraph({
           const t = totalTraces / Math.max(1, edgeMaxTraces);
           const w = 1 + 2.2 * t;
           const errorish = e.errorCount > 0 || (re.reverse?.errorCount ?? 0) > 0;
+          // Hover vurgusu: hover edilen düğüme DOĞRUDAN bağlı kenarlar maviye
+          // döner ve kalınlaşır. Semantik renk hiyerarşisi: hata kırmızısı >
+          // hover mavisi > nötr — hatalı kenar hover'da kırmızı KALIR.
+          const hot = hoverNode && (e.caller === hoverNode || e.callee === hoverNode);
           const dimmed = active && (!active.has(e.caller) || !active.has(e.callee));
           const mx = (a.x + b.x) / 2;
           return (
             <path key={i}
               d={`M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`}
               fill="none"
-              stroke={e.isNew ? 'var(--ok)' : errorish ? 'var(--err)' : 'var(--border-strong)'}
-              strokeWidth={w}
-              opacity={dimmed ? 0.12 : errorish ? 0.85 : 0.55}
+              stroke={e.isNew ? 'var(--ok)' : errorish ? 'var(--err)' : hot ? 'var(--accent)' : 'var(--border-strong)'}
+              strokeWidth={hot ? w + 0.8 : w}
+              opacity={dimmed ? 0.12 : hot ? 0.95 : errorish ? 0.85 : 0.55}
               className="topo-edge-flow"
-              style={{ animationDuration: `${(2.8 - 1.8 * t).toFixed(2)}s`, transition: 'opacity 120ms' }}>
+              style={{ animationDuration: `${(2.8 - 1.8 * t).toFixed(2)}s`, transition: 'opacity 120ms, stroke 120ms, stroke-width 120ms' }}>
               <title>
                 {`${e.caller} → ${e.callee}\n${e.traceCount} traces · ${e.spanCount} spans` +
                   (e.errorCount > 0 ? ` · ${e.errorCount} errors` : '') +

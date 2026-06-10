@@ -76,9 +76,9 @@ const esPITKeepAlive = "2m"
 // is not unique across shards → silent drop/dup at scale). Returns the
 // pit id; callers fall back to a plain `_doc` search if this errors
 // (older ES / missing perms) so /logs never hard-breaks.
-func (s *ESStore) openPIT(ctx context.Context, keepAlive string) (string, error) {
+func (s *ESStore) openPIT(ctx context.Context, keepAlive string, indices []string) (string, error) {
 	res, err := s.cli.OpenPointInTime(
-		[]string{s.cfg.Index}, keepAlive,
+		indices, keepAlive,
 		s.cli.OpenPointInTime.WithContext(ctx),
 		s.cli.OpenPointInTime.WithIgnoreUnavailable(true),
 	)
@@ -179,7 +179,10 @@ type ESConfig struct {
 	APIKey             string
 	InsecureSkipVerify bool
 
-	Index string // e.g. "logs-*" — supports glob/data-stream patterns
+	// Index pattern, e.g. "app-*" — supports glob/data-stream patterns.
+	// Queries don't hit the raw pattern: es_indices.go resolves it to
+	// the concrete dailies covering the queried window (v0.8.109).
+	Index string
 
 	// Field paths inside each ES document. Override per-deployment via
 	// config so any shipping pipeline (Filebeat, Logstash, OTel
@@ -199,7 +202,9 @@ type ESFieldMap struct {
 
 func (c *ESConfig) defaults() {
 	if c.Index == "" {
-		c.Index = "logs-*"
+		// Operator convention (v0.8.109): application logs live in
+		// app-* dailies. Previously "logs-*" (OTel ES-exporter default).
+		c.Index = "app-*"
 	}
 	if c.Fields.Timestamp == "" {
 		c.Fields.Timestamp = "@timestamp"
@@ -227,6 +232,9 @@ type ESStore struct {
 	cli    *elasticsearch.Client
 	cfg    ESConfig
 	fields ESFieldMap
+	// idxCache backs queryIndices (es_indices.go) — concrete index
+	// names for the configured pattern, refreshed every 5 min.
+	idxCache esIndexCache
 }
 
 func NewES(cfg ESConfig) (*ESStore, error) {
@@ -330,28 +338,24 @@ func (s *ESStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, err
 		"query": q.Query,
 		"size":  size,
 	}
-	// Optional time-range filter. ES EQL accepts a `filter` field
-	// applied before the sequence-matching pass.
-	if !q.From.IsZero() || !q.To.IsZero() {
-		rng := map[string]any{}
-		if !q.From.IsZero() {
-			rng["gte"] = q.From.UnixMilli()
-		}
-		if !q.To.IsZero() {
-			rng["lte"] = q.To.UnixMilli()
-		}
-		body["filter"] = map[string]any{
-			"range": map[string]any{
-				"@timestamp": rng,
+	// Mandatory time-range filter (v0.8.109) — EQL sequence matching
+	// over an unbounded window is the most expensive query this store
+	// can emit. Zero bounds default to the last 10 minutes.
+	q.From, q.To = clampWindow(q.From, q.To)
+	body["filter"] = map[string]any{
+		"range": map[string]any{
+			"@timestamp": map[string]any{
+				"gte": q.From.UnixMilli(),
+				"lte": q.To.UnixMilli(),
 			},
-		}
+		},
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	req := esapi.EqlSearchRequest{
-		Index: s.cfg.Index,
+		Index: strings.Join(s.queryIndices(ctx, q.From, q.To), ","),
 		Body:  bytes.NewReader(raw),
 	}
 	res, err := req.Do(ctx, s.cli)
@@ -745,6 +749,16 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		from = 0
 	}
 
+	// Trace/span-scoped lookups keep their caller-provided window (a
+	// trace link can be older than any default slice — clamping would
+	// silently break trace→logs correlation). Everything else is
+	// guaranteed a bounded window: zero bounds become the last 10
+	// minutes (v0.8.109 operator rule).
+	if f.TraceID == "" && len(f.TraceIDs) == 0 && f.SpanID == "" {
+		f.From, f.To = clampWindow(f.From, f.To)
+	}
+	queryIdx := s.queryIndices(ctx, f.From, f.To)
+
 	query := s.buildQuery(f)
 	// `unmapped_type` makes the sort fail-safe: if the
 	// configured timestamp field doesn't exist in the index
@@ -791,7 +805,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	pitID, afterSort, hasCursor := decodeESCursor(f.Cursor)
 	if !hasCursor {
 		afterSort = nil
-		if pid, err := s.openPIT(ctx, esPITKeepAlive); err == nil {
+		if pid, err := s.openPIT(ctx, esPITKeepAlive, queryIdx); err == nil {
 			pitID = pid
 		} else {
 			pitID = ""
@@ -886,7 +900,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		// in PIT mode openPIT already failed-over to plain if the index
 		// was absent.
 		tru := true
-		req.Index = []string{s.cfg.Index}
+		req.Index = queryIdx
 		req.AllowNoIndices = &tru
 		req.IgnoreUnavailable = &tru
 	}
@@ -1057,6 +1071,9 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 	groupField := s.histogramGroupField(groupBy)
 
+	// Bounded window + window-narrowed dailies (v0.8.109).
+	f.From, f.To = clampWindow(f.From, f.To)
+
 	body, err := json.Marshal(buildHistogramBody(
 		s.buildQuery(f), s.fields.Timestamp, groupField, bucketSec,
 		esTimeseriesTimeoutFromEnv("10s"),
@@ -1066,7 +1083,7 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 	tru := true
 	req := esapi.SearchRequest{
-		Index: []string{s.cfg.Index},
+		Index: s.queryIndices(ctx, f.From, f.To),
 		Body:  bytes.NewReader(body),
 		// Same forgiveness as Search — no matching index → 0
 		// buckets rather than a 404. Keeps the panel rendering
@@ -1199,9 +1216,12 @@ func (s *ESStore) CountPatterns(
 	// input index — easier than maintaining a sparse mapping.
 	var ndjson strings.Builder
 	tru := true
+	// One narrowed index list for the whole batch — every per-pattern
+	// query is bounded by [baseStart, now] (v0.8.109).
+	msearchIdx := s.queryIndices(ctx, baseStart, now)
 	for _, pat := range pats {
 		header := map[string]any{
-			"index":               s.cfg.Index,
+			"index":               msearchIdx,
 			"allow_no_indices":    tru,
 			"ignore_unavailable":  tru,
 		}

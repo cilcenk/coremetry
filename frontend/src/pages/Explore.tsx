@@ -1,7 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Combobox } from '@/components/Combobox';
@@ -16,182 +15,25 @@ import { FacetsPanel } from '@/components/FacetsPanel';
 import { ShareButton } from '@/components/ShareButton';
 import { LogsExplorer } from '@/components/LogsExplorer';
 import { MetricsExplorer } from '@/components/MetricsExplorer';
-import { ColumnManager } from '@/components/ColumnManager';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
-import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { useExemplarFetcher, useServiceDeploys, useSLOs } from '@/lib/queries';
-import { timeRangeToNs, fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
+import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
 import { decodeMetricQuery, type MetricQuery, type MetricViz } from '@/lib/metricQuery';
-import type { TimeRange, FilterExpr, SpanMetricSeries, SpanAgg, TraceRow, LatencyHeatmap as Heatmap } from '@/lib/types';
-
-type ResultMode = 'metric' | 'traces' | 'repeats';
-
-// BubbleUpMode — chooses the (baseline, selection) predicate
-// pair for the BubbleUp investigator.
-//   off     — panel hidden, no fetch
-//   errors  — selection = status_code='error'
-//   slow1s  — selection = duration_ms > 1000
-//   slow5s  — selection = duration_ms > 5000
-//   custom  — selection = the last filter chip the user added;
-//             everything before it is the baseline. Legacy
-//             behaviour for power users who already know the
-//             "stage 2 chips" trick.
-type BubbleUpMode = 'off' | 'errors' | 'slow1s' | 'slow5s' | 'custom';
-type TraceSortKey = 'traceId' | 'rootName' | 'serviceName' | 'duration' | 'spans' | 'time' | 'status';
-
-// Each column's natural starting direction when first selected: time
-// and duration are most-recent / slowest-first (descending), others
-// alphabetical ascending. Matches the convention on /traces and /services.
-const TRACE_SORT_NATURAL: Record<TraceSortKey, 'asc' | 'desc'> = {
-  traceId: 'asc', rootName: 'asc', serviceName: 'asc',
-  duration: 'desc', spans: 'desc', time: 'desc', status: 'desc',
-};
-
-const AGG_OPTIONS: { v: SpanAgg; label: string; unit?: string }[] = [
-  { v: 'count',      label: 'Count',           unit: '' },
-  { v: 'rate',       label: 'Rate (per sec)',  unit: '/s' },
-  { v: 'errors',     label: 'Error count',     unit: '' },
-  { v: 'error_rate', label: 'Error rate (%)',  unit: '%' },
-  { v: 'avg',        label: 'Avg',             unit: 'ms' },
-  { v: 'p50',        label: 'P50 (median)',    unit: 'ms' },
-  { v: 'p90',        label: 'P90',             unit: 'ms' },
-  { v: 'p95',        label: 'P95',             unit: 'ms' },
-  { v: 'p99',        label: 'P99',             unit: 'ms' },
-  { v: 'p999',       label: 'P99.9',           unit: 'ms' },
-  { v: 'min',        label: 'Min',             unit: 'ms' },
-  { v: 'max',        label: 'Max',             unit: 'ms' },
-  { v: 'sum',        label: 'Sum',             unit: 'ms' },
-];
-
-const SUGGESTED_GROUPBY = [
-  'service.name', 'name', 'kind', 'status_code',
-  'http.method', 'http.route', 'http.status_code',
-  'db.system', 'rpc.method', 'peer.service',
-  'resource.host.name', 'resource.deployment.environment',
-];
-
-// Quick-metric presets — one click swaps the (agg, field, viz)
-// triplet to a common-use shape. Saves operators from "wait,
-// which option gives me error rate per service" navigation.
-// Each preset is the answer to one of the questions operators
-// actually ask during triage. Dynatrace's metric picker pre-
-// computes these as "key metrics"; we keep them lightweight
-// (no separate column) and consistent with the existing
-// builder + DSL flow.
-type MetricPreset = {
-  key: string;
-  label: string;
-  hint: string;
-  agg: SpanAgg;
-  field: string;
-  viz: Viz;
-  // Optional split-by recommendation applied when picked from
-  // an empty / single-key split state. Operator overrides freely.
-  groupBy?: string[];
-};
-const METRIC_PRESETS: MetricPreset[] = [
-  { key: 'rps',     label: 'Requests / sec',   hint: 'Throughput (rate of all matching spans)',          agg: 'rate',       field: 'duration_ms', viz: 'line', groupBy: ['service.name'] },
-  { key: 'errpct',  label: 'Error rate %',     hint: 'Percentage of spans with status_code = error',     agg: 'error_rate', field: 'duration_ms', viz: 'line', groupBy: ['service.name'] },
-  { key: 'errcnt',  label: 'Errors / period',  hint: 'Absolute error count per bucket',                  agg: 'errors',     field: 'duration_ms', viz: 'bar',  groupBy: ['service.name'] },
-  { key: 'p99',     label: 'P99 latency',      hint: 'Tail latency — slowest 1% per bucket',             agg: 'p99',        field: 'duration_ms', viz: 'line', groupBy: ['service.name'] },
-  { key: 'p95',     label: 'P95 latency',      hint: 'Standard tail-latency SLO indicator',              agg: 'p95',        field: 'duration_ms', viz: 'line', groupBy: ['service.name'] },
-  { key: 'avglat',  label: 'Avg latency',      hint: 'Mean duration — best for noisy quantile sets',     agg: 'avg',        field: 'duration_ms', viz: 'line', groupBy: ['service.name'] },
-  { key: 'count',   label: 'Span count',       hint: 'Raw count per bucket, no normalisation',           agg: 'count',      field: 'duration_ms', viz: 'bar' },
-  { key: 'heatmap', label: 'Latency heatmap',  hint: 'Honeycomb-style 2D density (time × log-duration)', agg: 'count',      field: 'duration_ms', viz: 'heatmap' },
-  // v0.5.260 — Uptrace-style "group by operation signature".
-  // Splits by (service.name, name) together so every distinct
-  // service+operation pair gets its own line. Pairs with the
-  // RED viz so the operator sees rate / errors / p99 broken
-  // down per operation in one click — Uptrace's `group by
-  // _group_id` killer view, native to Coremetry.
-  { key: 'red-op',  label: 'RED by operation', hint: 'Rate + errors + p99 stacked, broken down by (service, operation)', agg: 'rate', field: 'duration_ms', viz: 'red',  groupBy: ['service.name', 'name'] },
-];
-
-// REPEAT_PRESETS — one-click pick of (groupBy, minRepeats) that
-// turn the Repeats mode into a question. "SQL N+1" groups by
-// db.statement at ≥5 (typical ORM offender). "Chatty RPC"
-// groups by name+peer.service at ≥3 (matches the user's
-// example: 3 gRPC calls to the same operation in one trace
-// surface as a row). "Endpoint fan-out" groups by http.route
-// at ≥5 (a service hammering its own endpoint).
-type RepeatPreset = {
-  key: string;
-  label: string;
-  hint: string;
-  groupBy: string[];
-  minRepeats: number;
-  // Optional filter pins added to the chip list when the preset
-  // fires. "Chatty RPC" sets kind=client so we count caller-side
-  // outbound spans only — otherwise each duplication double-
-  // counts (3 caller client spans + 3 callee server spans → two
-  // rows for the same root issue). Filters are AND-merged with
-  // whatever the operator already has.
-  filters?: FilterExpr[];
-};
-const REPEAT_PRESETS: RepeatPreset[] = [
-  { key: 'rpc',     label: 'Chatty RPC',
-    hint: '≥ 3 client-side calls with the same (name, peer.service) — repeated outbound chatter (e.g. api-gateway calling order-service.getOrder 3× in one trace)',
-    groupBy: ['name', 'peer.service'], minRepeats: 3,
-    filters: [{ k: 'kind', op: '=', v: ['client'] }] },
-  { key: 'sql',     label: 'SQL N+1',
-    hint: '≥ 5 spans with the same db.statement inside one trace — classic ORM N+1',
-    groupBy: ['db.statement'], minRepeats: 5 },
-  { key: 'route',   label: 'Endpoint fan-out',
-    hint: '≥ 5 spans on the same http.route inside one trace — endpoint hammering itself',
-    groupBy: ['http.route'], minRepeats: 5 },
-  { key: 'op',      label: 'Same operation',
-    hint: '≥ 3 spans with the same name (operation) inside one trace — repeated work regardless of target',
-    groupBy: ['name'], minRepeats: 3 },
-];
-
-// Top-N split-by — when split is set, cap the chart to the busiest N
-// series by total count. Anything past N is silently dropped client-
-// side. Prevents the chart from drowning under 200 services on a
-// "split by service.name" with a fresh deploy. Default 10.
-const TOPN_OPTIONS = [5, 10, 20, 50];
-
-// v0.5.259 — sub-10s steps. See Metrics.tsx for the rationale.
-const STEP_OPTIONS = [
-  { v: 0,    label: 'Auto' },
-  { v: 1,    label: '1 s' },
-  { v: 5,    label: '5 s' },
-  { v: 10,   label: '10 s' },
-  { v: 30,   label: '30 s' },
-  { v: 60,   label: '1 min' },
-  { v: 300,  label: '5 min' },
-  { v: 1800, label: '30 min' },
-];
-
-type Source = 'spans' | 'metrics' | 'logs';
-type Viz = 'line' | 'bar' | 'topN' | 'kpi' | 'heatmap' | 'red';
-
-// Per-series summary row — one line of the split-by metric
-// breakdown table (Series / Last / Avg / Max / Buckets).
-type SummaryRow = { key: string[]; count: number; last: number; max: number; avg: number };
-
-// SUMMARY_COLS — column defs for the per-series summary table,
-// adopted onto the shared sortable+resizable primitive (v0.7.53).
-// Default sort is Max desc so the heaviest series surfaces first,
-// matching the chart's Top-N intent. The Series text column is
-// ascending-natural; the four numeric columns right-align via
-// numeric:true. Body-cell order below must match this order.
-const SUMMARY_COLS: DataTableColumn<SummaryRow>[] = [
-  { id: 'series',  label: 'Series',  sortValue: r => r.key.join(' / '), naturalDir: 'asc', width: 280 },
-  { id: 'last',    label: 'Last',    sortValue: r => r.last,  numeric: true, width: 130 },
-  { id: 'avg',     label: 'Avg',     sortValue: r => r.avg,   numeric: true, width: 130 },
-  { id: 'max',     label: 'Max',     sortValue: r => r.max,   numeric: true, width: 130 },
-  { id: 'buckets', label: 'Buckets', sortValue: r => r.count, numeric: true, width: 110 },
-];
-
-// REPEATS_COLS — column defs for the N+1 / fan-out finder table.
-// The backend already returns heaviest-first (by repeat count);
-// we preserve that as the initial client sort (count desc) so the
-// adopted table paints identically. The "Repeated shape" column
-// label is dynamic (tracks the active split-by) so the column set
-// is built per-render via useMemo inside the component.
+import type { TimeRange, FilterExpr, SpanMetricSeries, SpanAgg, LatencyHeatmap as Heatmap } from '@/lib/types';
+import {
+  AGG_OPTIONS, SUGGESTED_GROUPBY, METRIC_PRESETS, REPEAT_PRESETS,
+  TOPN_OPTIONS, STEP_OPTIONS, SUMMARY_COLS, needsField,
+  type ResultMode, type Source, type Viz, type BubbleUpMode,
+  type MetricPreset, type SummaryRow,
+} from './explore/presets';
+import { NLQueryBox } from './explore/NLQueryBox';
+import { TracesResult } from './explore/TracesResult';
+import { RepeatsResult } from './explore/RepeatsResult';
+import { QuestionCards } from './explore/QuestionCards';
+import { useQueryHistory } from './explore/useQueryHistory';
 
 // ── "Every metric is a doorway" — ?m= descriptor seeding (Phase B) ──────────
 // A MetricQuery descriptor riding ?m= takes precedence over the individual
@@ -349,11 +191,7 @@ function ExploreInner() {
   const [repeatMin, setRepeatMin] = useState(
     () => parseInt(searchParams.get('minRepeats') ?? '5', 10) || 5);
   const [repeats, setRepeats] = useState<import('@/lib/types').RepeatedSpanRow[] | null | undefined>(undefined);
-  const [traces, setTraces] = useState<TraceRow[] | null | undefined>(undefined);
-  // Client-side sort for the traces result table — page-size is small
-  // (default 50, max 500) so we don't need a server roundtrip per click.
-  const [traceSort, setTraceSort] = useState<TraceSortKey>('time');
-  const [traceSortDir, setTraceSortDir] = useState<'asc' | 'desc'>('desc');
+  const [traces, setTraces] = useState<import('@/lib/types').TraceRow[] | null | undefined>(undefined);
   const [traceTotal, setTraceTotal] = useState(0);
   const [traceLimit, setTraceLimit] = useState(
     () => parseInt(searchParams.get('limit') ?? '50', 10) || 50);
@@ -470,9 +308,31 @@ function ExploreInner() {
     }
   }
 
+  // Recent-queries ring for the paramless entry screen (explore-v2
+  // Phase-1). Debounced save fires below whenever the URL settles on a
+  // non-empty shape; the question-card screen reads `history`.
+  const { history, save: saveHistory } = useQueryHistory();
+
+  // hasParams — true once the operator has a real query in the URL.
+  // Drives the entry-card screen: a fresh /explore (no query, or only the
+  // auto-written default `range`) shows QuestionCards; any meaningful
+  // search param skips cards and renders the full workspace exactly as
+  // before. `range` is excluded because the State→URL effect ALWAYS
+  // writes it (encodeRange never empties), so a bare /explore becomes
+  // /explore?range=30m on mount — that alone is not "a query". Tracked
+  // as state so a card click (navigate to ?…) flips it on next render.
+  const [hasParams, setHasParams] = useState(() => hasMeaningfulParams(searchParams));
+  // First canonical URL of this mount — the seed a card/deep-link/saved
+  // view produced. History records only divergence from it (see the
+  // State→URL effect). Refs reset on the entry↔workspace key remount,
+  // so each seeded visit gets its own baseline.
+  const seedNextRef = useRef<string | null>(null);
+
   // ── State → URL (replaceState — keeps history clean) ─────────────────────
   useEffect(() => {
-    const qs = buildQuery([
+    // Non-range entries first so we can tell "real query" from "just the
+    // default range" for the entry-screen gate + history ring.
+    const queryEntries: Array<[string, string | number | undefined | null | false]> = [
       ['source',  source !== 'spans' ? source : ''],
       ['viz',     viz !== 'line' ? viz : ''],
       ['compare', compare ? 'true' : ''],
@@ -483,27 +343,51 @@ function ExploreInner() {
       ['filters', mode === 'builder' ? encodeFilters(filters) : ''],
       ['dsl',     mode === 'advanced' ? dsl : ''],
       ['mode',    mode === 'advanced' ? 'advanced' : ''],
-      ['range',   encodeRange(range)],
       ['step',    resultMode === 'metric' && step ? step : ''],
       ['topN',    resultMode === 'metric' && groupBy.length > 0 && topN !== 10 ? topN : ''],
       ['limit',   resultMode === 'traces' && traceLimit !== 50 ? traceLimit : ''],
       ['cols',    resultMode === 'traces' ? extraCols.join(',') : ''],
-    ]);
+    ];
+    const queryQs = buildQuery(queryEntries);
+    // Full URL ALWAYS carries range (encodeRange never empties) — same as
+    // before this refactor; only the gate ignores range.
+    const qs = buildQuery([...queryEntries, ['range', encodeRange(range)]]);
     const next = qs ? `?${qs}` : '';
     if (next !== window.location.search) {
       navigate(`/explore${next}`, { preventScrollReset: true, replace: true });
     }
-  }, [source, viz, compare, resultMode, agg, field, groupBy, filters, dsl, mode, range, step, traceLimit, extraCols, navigate]);
+    // Entry-screen gate + recent-queries ring. A real query (anything
+    // beyond the default range) hides the cards + records it (debounced).
+    const meaningful = queryQs.length > 0;
+    setHasParams(meaningful);
+    // Seed-skip: the first canonical URL this mount produces is the
+    // SEED (a question card, a shared deep-link, a saved view) — it's
+    // already represented by the card/link the operator clicked, so
+    // recording it would duplicate the card into "Son sorgular"
+    // (Phase-1 review finding). Only states the operator CHANGED
+    // away from the seed are history-worthy.
+    if (seedNextRef.current === null) {
+      seedNextRef.current = next;
+    }
+    if (meaningful && next !== seedNextRef.current) {
+      saveHistory(historyDesc({ resultMode, viz, agg, field, groupBy, mode, dsl, filters, repeatMin }), next);
+    }
+  }, [source, viz, compare, resultMode, agg, field, groupBy, filters, dsl, mode, range, step, topN, traceLimit, extraCols, repeatMin, navigate, saveHistory]);
 
-  // Load service options for filter value suggestions
+  // Load service options for filter value suggestions.
+  // Gated on hasParams — the entry-card screen renders no workspace, so
+  // firing its fetches there is pure wasted CH load (Phase-1 review
+  // finding). Flips true on card click → effect re-runs.
   useEffect(() => {
+    if (!hasParams) return;
     api.services(timeRangeToNs(range))
       .then(s => setServices((s ?? []).map(x => x.name)))
       .catch(() => setServices([]));
-  }, [range]);
+  }, [range, hasParams]);
 
   // Run query whenever inputs change (debounce skipped — small payload)
   useEffect(() => {
+    if (!hasParams) return;
     setQueryError(null);
     const { from, to } = timeRangeToNs(range);
     const filterArg = mode === 'builder' && filters.length ? JSON.stringify(filters) : undefined;
@@ -614,7 +498,7 @@ function ExploreInner() {
           setQueryError(msg.includes('DSL') ? msg : null);
         });
     }
-  }, [resultMode, viz, range, filters, dsl, mode, agg, field, groupBy, step, traceLimit, extraCols, compare, repeatMin]);
+  }, [resultMode, viz, range, filters, dsl, mode, agg, field, groupBy, step, traceLimit, extraCols, compare, repeatMin, hasParams]);
 
   const aggMeta = AGG_OPTIONS.find(o => o.v === agg)!;
   const unit = aggMeta.unit ?? '';
@@ -687,32 +571,7 @@ function ExploreInner() {
     return [...cappedSeries, ...shifted];
   }, [cappedSeries, cappedCompare, range]);
 
-  // Quick stats per series for the summary table
-  // Sorted view of the trace results — pure client-side because the
-  // page is bounded (default 50, hard max 500). Avoids a server
-  // round-trip per header click.
-  const sortedTraces = useMemo(() => {
-    if (!traces) return traces;
-    const cmp = (a: TraceRow, b: TraceRow): number => {
-      switch (traceSort) {
-        case 'traceId':     return a.traceId.localeCompare(b.traceId);
-        case 'rootName':    return (a.rootName || '').localeCompare(b.rootName || '');
-        case 'serviceName': return a.serviceName.localeCompare(b.serviceName);
-        case 'duration':    return a.durationMs - b.durationMs;
-        case 'spans':       return a.spanCount - b.spanCount;
-        case 'time':        return a.startTime - b.startTime;
-        case 'status':      return Number(a.hasError) - Number(b.hasError);
-      }
-    };
-    const arr = [...traces].sort(cmp);
-    return traceSortDir === 'desc' ? arr.reverse() : arr;
-  }, [traces, traceSort, traceSortDir]);
-
-  const toggleTraceSort = (col: TraceSortKey) => {
-    if (traceSort === col) setTraceSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setTraceSort(col); setTraceSortDir(TRACE_SORT_NATURAL[col]); }
-  };
-
+  // Quick stats per series for the summary table.
   const summary = useMemo<SummaryRow[]>(() => {
     if (!series) return [];
     return series.map(s => {
@@ -738,25 +597,6 @@ function ExploreInner() {
     initialSort: { id: 'max', dir: 'desc' },
   });
 
-  // Repeats (N+1 / fan-out) table. The "Repeated shape" column
-  // label tracks the active split-by, so columns are memoised on
-  // groupBy. Backend returns heaviest-first; initial sort = count
-  // desc preserves that paint.
-  const repeatCols = useMemo<DataTableColumn<import('@/lib/types').RepeatedSpanRow>[]>(() => [
-    { id: 'trace',   label: 'Trace',   sortValue: r => r.traceId, naturalDir: 'asc', width: 130 },
-    { id: 'service', label: 'Service · root', sortValue: r => `${r.service}${r.rootName ? ' · ' + r.rootName : ''}`, naturalDir: 'asc', width: 240 },
-    { id: 'shape',   label: `Repeated shape (${groupBy.length ? groupBy.join(' + ') : 'db.statement'})`, sortValue: r => (r.groupValues ?? []).join(' · '), naturalDir: 'asc', width: 360 },
-    { id: 'count',   label: 'Repeats',    sortValue: r => r.count,           numeric: true, width: 100 },
-    { id: 'total',   label: 'Total time', sortValue: r => r.totalDurationMs, numeric: true, width: 120 },
-    { id: 'started', label: 'Started',    sortValue: r => r.startedAt,                      width: 180 },
-  ], [groupBy]);
-  const repeatsDt = useDataTable<import('@/lib/types').RepeatedSpanRow>({
-    storageKey: 'explore-repeats',
-    columns: repeatCols,
-    rows: repeats ?? [],
-    initialSort: { id: 'count', dir: 'desc' },
-  });
-
   // ── Query-console zone styling ───────────────────────────────────────────
   // The spans workspace controls live in ONE bordered card whose
   // internal rows are "zones": a fixed-width uppercase micro-label
@@ -774,6 +614,24 @@ function ExploreInner() {
   const VDIV: CSSProperties = {
     width: 1, alignSelf: 'stretch', background: 'var(--border)', margin: '0 2px',
   };
+
+  // ── Entry screen — paramless /explore (explore-v2 Phase-1) ───────────────
+  // No search params = "what do you want to find out?" question cards +
+  // recent queries, with the saved-views bar below. ANY search param skips
+  // this entirely and renders the full workspace (deep-links unchanged).
+  if (!hasParams) {
+    return (
+      <>
+        <Topbar title="Explore" range={range} onRangeChange={setRange} />
+        <div id="content">
+          <QuestionCards history={history} />
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+            <SavedViewsBar page="explore" />
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -1365,149 +1223,21 @@ name ~ checkout`}
           </>
         )}
 
-        {/* ── Traces mode: matching trace list ────────────────────────────────── */}
-        {resultMode === 'traces' && traces === undefined && <Spinner />}
-        {resultMode === 'traces' && traces && traces.length === 0 && (
-          <Empty icon="⋮" title="No matching traces">
-            Loosen your filters or widen the time range.
-          </Empty>
-        )}
-        {resultMode === 'traces' && traces && traces.length > 0 && (
-          <>
-            <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>
-              Showing <b style={{ color: 'var(--accent2)' }}>{traces.length}</b> of {fmtNum(traceTotal)} traces
-              {traces.length < traceTotal && <> · raise the limit to see more</>}
-            </div>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <TraceSortTh col="traceId"     label="Trace ID"  sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                    <TraceSortTh col="rootName"    label="Root"      sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                    <TraceSortTh col="serviceName" label="Service"   sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                    <TraceSortTh col="duration"    label="Duration"  sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} align="right" />
-                    <TraceSortTh col="spans"       label="Spans"     sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} align="right" />
-                    <TraceSortTh col="time"        label="Started"   sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                    <TraceSortTh col="status"      label="Status"    sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                    {/* Same column-manager UX as /traces — adds
-                        attribute columns to the result table. */}
-                    {extraCols.map(k => (
-                      <th key={k} style={{ position: 'relative', whiteSpace: 'nowrap' }}>
-                        <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>{k}</span>
-                        <button type="button" title="Remove column"
-                          onClick={() => setExtraCols(extraCols.filter(c => c !== k))}
-                          style={{
-                            marginLeft: 6, padding: '0 4px', fontSize: 10, lineHeight: 1,
-                            background: 'transparent', border: 'none', color: 'var(--text3)',
-                            cursor: 'pointer',
-                          }}>×</button>
-                      </th>
-                    ))}
-                    <th style={{ width: 1, whiteSpace: 'nowrap' }}>
-                      <ColumnManager
-                        cols={extraCols}
-                        onAdd={k => { if (!extraCols.includes(k) && extraCols.length < 8) setExtraCols([...extraCols, k]); }} />
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(sortedTraces ?? []).map(t => (
-                    <tr key={t.traceId}
-                        {...rowClickHandlers(`/trace?id=${t.traceId}`,
-                                             () => navigate(`/trace?id=${t.traceId}`))}
-                        style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
-                      <td className="mono">
-                        <Link to={`/trace?id=${t.traceId}`}
-                              onClick={e => e.stopPropagation()}
-                              style={{ fontSize: 11 }}>
-                          {t.traceId.slice(0, 12)}…
-                        </Link>
-                      </td>
-                      <td><b>{t.rootName}</b></td>
-                      <td className="mono" style={{ fontSize: 12 }}>{t.serviceName}</td>
-                      <td className="mono" style={{ textAlign: 'right' }}>
-                        {t.durationMs.toFixed(1)}ms
-                      </td>
-                      <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(t.spanCount)}</td>
-                      <td className="mono" style={{ fontSize: 11 }}>{tsLong(t.startTime)}</td>
-                      <td>
-                        {t.hasError
-                          ? <span className="badge b-err">ERROR</span>
-                          : <span className="badge b-ok">OK</span>}
-                      </td>
-                      {extraCols.map(k => {
-                        const v = t.extras?.[k] ?? '';
-                        return (
-                          <td key={k} className="mono" style={{ fontSize: 11, color: v ? 'var(--text2)' : 'var(--text3)', whiteSpace: 'nowrap', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }} title={v || ''}>
-                            {v || '—'}
-                          </td>
-                        );
-                      })}
-                      <td />
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+        {/* ── Traces mode: matching trace list (extracted v0.8 explore-v2) ─────── */}
+        {resultMode === 'traces' && (
+          <TracesResult
+            traces={traces}
+            traceTotal={traceTotal}
+            extraCols={extraCols}
+            setExtraCols={setExtraCols} />
         )}
 
-        {/* ── Repeats mode: N+1 / fan-out finder ──────────────── */}
-        {resultMode === 'repeats' && repeats === undefined && <Spinner />}
-        {resultMode === 'repeats' && repeats && repeats.length === 0 && (
-          <Empty icon="⟳" title="No repeated span shapes found">
-            No trace has the same (group-by) shape repeating ≥ {repeatMin} times in this window.
-            Try lowering the threshold or switching the split-by (e.g. <code>name</code> + <code>peer.service</code> for chatty RPC, <code>http.route</code> for endpoint fan-out).
-          </Empty>
-        )}
-        {resultMode === 'repeats' && repeats && repeats.length > 0 && (
-          <>
-            <div style={{ marginBottom: 6, fontSize: 12, color: 'var(--text2)' }}>
-              {repeats.length} trace{repeats.length === 1 ? '' : 's'} with ≥ {repeatMin} repeats of the same span shape — heaviest at the top.
-            </div>
-            <div className="table-wrap">
-              <table style={{ tableLayout: 'fixed', width: '100%' }}>
-                <DataTableColgroup dt={repeatsDt} />
-                <DataTableHead dt={repeatsDt} />
-                <tbody>
-                  {repeatsDt.sortedRows.map((r, i) => (
-                    <tr key={`${r.traceId}|${i}`}
-                        onClick={() => navigate(`/trace?id=${r.traceId}`)}
-                        style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
-                      <td>
-                        <Link to={`/trace?id=${r.traceId}`}
-                              onClick={e => e.stopPropagation()}
-                              style={{ fontFamily: 'monospace', fontSize: 11 }}>
-                          {r.traceId.slice(0, 12)}…
-                        </Link>
-                      </td>
-                      <td style={{ fontSize: 12 }}>
-                        <span style={{ fontWeight: 600 }}>{r.service || '—'}</span>
-                        {r.rootName && (
-                          <span style={{ color: 'var(--text3)' }}> · {r.rootName}</span>
-                        )}
-                      </td>
-                      <td style={{
-                        fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                        fontSize: 11, color: 'var(--text2)',
-                      }} title={(r.groupValues ?? []).join(' · ')}>
-                        {(r.groupValues ?? []).filter(Boolean).join(' · ') ||
-                          <span style={{ color: 'var(--text3)' }}>(empty)</span>}
-                      </td>
-                      <td className="num mono" style={{ fontWeight: 700,
-                        color: r.count >= 50 ? 'var(--err)' : r.count >= 20 ? 'var(--warn)' : 'var(--text)' }}>
-                        {fmtNum(r.count)}
-                      </td>
-                      <td className="num mono">{r.totalDurationMs.toFixed(1)}ms</td>
-                      <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
-                        {tsLong(r.startedAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+        {/* ── Repeats mode: N+1 / fan-out finder (extracted v0.8 explore-v2) ───── */}
+        {resultMode === 'repeats' && (
+          <RepeatsResult
+            repeats={repeats}
+            repeatMin={repeatMin}
+            groupBy={groupBy} />
         )}
             </div>
           </div>
@@ -1539,8 +1269,44 @@ name ~ checkout`}
   );
 }
 
-function needsField(agg: SpanAgg): boolean {
-  return !['count', 'rate', 'errors', 'error_rate'].includes(agg);
+// hasMeaningfulParams — true when the URL carries a real query, i.e. any
+// search param other than `range`. The State→URL effect always writes
+// `range` (encodeRange never empties), so a fresh /explore becomes
+// /explore?range=30m on mount; that alone must still show the entry
+// cards. Any deep-link shape (agg/field/groupBy/filters/dsl/result/m/
+// service/metric/source/…) carries a non-range key and counts as a query.
+function hasMeaningfulParams(sp: URLSearchParams): boolean {
+  for (const k of sp.keys()) {
+    if (k !== 'range') return true;
+  }
+  return false;
+}
+
+// historyDesc — one-line human summary of the current query, used as
+// the recent-queries ("Son sorgular") label AND the dedupe key. Phase-1
+// explore-v2: a stable, readable digest of (resultMode, viz, agg/field,
+// split, filters/dsl) — re-running the same query produces the same
+// string so it bumps in the ring instead of duplicating.
+function historyDesc(s: {
+  resultMode: ResultMode; viz: Viz; agg: SpanAgg; field: string;
+  groupBy: string[]; mode: 'builder' | 'advanced'; dsl: string;
+  filters: FilterExpr[]; repeatMin: number;
+}): string {
+  const where = s.mode === 'advanced'
+    ? (s.dsl.trim() ? s.dsl.trim().replace(/\s+/g, ' ').slice(0, 60) : 'all spans')
+    : (s.filters.length
+        ? s.filters.map(f => `${f.k}${f.op}${(f.v ?? []).join('|')}`).join(' · ').slice(0, 60)
+        : 'all spans');
+  if (s.resultMode === 'traces') return `Traces · ${where}`;
+  if (s.resultMode === 'repeats') {
+    const shape = s.groupBy.length ? s.groupBy.join(' + ') : 'db.statement';
+    return `Repeats ≥${s.repeatMin} · ${shape} · ${where}`;
+  }
+  // metric
+  const agg = AGG_OPTIONS.find(o => o.v === s.agg)?.label ?? s.agg;
+  const split = s.groupBy.length ? ` by ${s.groupBy.join(' / ')}` : '';
+  const fieldPart = needsField(s.agg) ? ` of ${s.field}` : '';
+  return `${agg}${fieldPart}${split} · ${s.viz} · ${where}`;
 }
 
 // extractExemplarCtx — pull (service, op) from the filter chips so
@@ -1571,146 +1337,21 @@ function extractExemplarCtx(filters: FilterExpr[], mode: 'builder' | 'advanced')
 }
 
 export default function ExplorePage() {
+  // Key the inner workspace on entry-vs-deep-link so an entry ↔ deep-link
+  // transition remounts ExploreInner and its useState initializers re-seed
+  // from the new params. Explore reads the URL into state ONLY at mount
+  // (useState(() => …)); React Router does NOT remount on a query-string
+  // change, so a question-card click (navigate to /explore?…) would
+  // otherwise leave state at defaults and the State→URL effect would
+  // immediately wipe the card's params. The key flips only on the
+  // meaningful-params boundary (range alone = entry), so the workspace
+  // stays mounted across its own URL writes — transient state (zoom,
+  // bubbleMode, sort) survives.
+  const { search } = useLocation();
+  const meaningful = hasMeaningfulParams(new URLSearchParams(search));
   return (
     <Suspense fallback={<Spinner />}>
-      <ExploreInner />
+      <ExploreInner key={meaningful ? 'workspace' : 'entry'} />
     </Suspense>
-  );
-}
-
-// NLQueryBox — v0.5.255 natural-language search input.
-// Operator types a plain-English description; the Copilot returns
-// a strict-JSON filter set + time range the parent applies.
-// Hidden when copilot isn't configured (the endpoint returns 503
-// → silent failure mode rather than a misleading "AI failed" toast).
-function NLQueryBox({
-  onApply,
-}: {
-  onApply: (filters: { k: string; op: string; v: string[] }[], preset: string) => void;
-}) {
-  const [prompt, setPrompt] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [state, setState] = useState<
-    | { kind: 'idle' }
-    | { kind: 'ok'; explain: string; preset: string; filterCount: number }
-    | { kind: 'warn'; msg: string; raw?: string }
-    | { kind: 'err'; msg: string }
-    | { kind: 'unavailable' }
-  >({ kind: 'idle' });
-
-  const run = async () => {
-    const trimmed = prompt.trim();
-    if (!trimmed) return;
-    setBusy(true);
-    try {
-      const r = await api.copilotNLToQuery(trimmed);
-      if (r.warning) {
-        setState({ kind: 'warn', msg: r.warning, raw: r.raw });
-        return;
-      }
-      if (!r.filters || r.filters.length === 0) {
-        setState({ kind: 'warn', msg: 'Model produced no filters — try rephrasing.' });
-        return;
-      }
-      onApply(r.filters, r.range.preset);
-      setState({
-        kind: 'ok',
-        explain: r.explain,
-        preset: r.range.preset,
-        filterCount: r.filters.length,
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // 503 = Copilot not wired; hide the box rather than nag.
-      if (msg.toLowerCase().includes('not configured')) {
-        setState({ kind: 'unavailable' });
-      } else {
-        setState({ kind: 'err', msg });
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (state.kind === 'unavailable') return null;
-
-  return (
-    <div style={{
-      marginBottom: 10, padding: 8,
-      background: 'rgba(139,92,246,0.04)',
-      border: '1px solid rgba(139,92,246,0.20)',
-      borderRadius: 6,
-    }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <span style={{
-          fontSize: 12, fontWeight: 600,
-          color: 'var(--accent2, #a78bfa)',
-          whiteSpace: 'nowrap',
-        }}>✦ Natural language</span>
-        <input
-          value={prompt}
-          onChange={e => setPrompt(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !busy && run()}
-          placeholder={`Try: "yesterday's slow checkouts" · "5xx from auth-service last hour" · "kafka producer errors today"`}
-          disabled={busy}
-          style={{ flex: 1, fontSize: 13 }} />
-        <button onClick={run} disabled={busy || !prompt.trim()}
-          style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-          {busy ? 'Thinking…' : 'Apply'}
-        </button>
-      </div>
-      {state.kind === 'ok' && (
-        <div style={{
-          marginTop: 6, fontSize: 11, color: 'var(--text2)',
-          display: 'flex', gap: 8, alignItems: 'baseline',
-        }}>
-          <span style={{ color: 'var(--ok)' }}>✓</span>
-          <span>
-            Applied <b>{state.filterCount}</b> filter{state.filterCount === 1 ? '' : 's'} · range
-            {' '}<code style={{ fontFamily: 'ui-monospace, monospace' }}>{state.preset}</code>
-            {state.explain && <> · <span style={{ color: 'var(--text3)' }}>{state.explain}</span></>}
-          </span>
-        </div>
-      )}
-      {state.kind === 'warn' && (
-        <div style={{
-          marginTop: 6, fontSize: 11, color: 'var(--warn)',
-        }}>
-          ⚠ {state.msg}
-          {state.raw && (
-            <pre style={{
-              marginTop: 4, padding: 6, borderRadius: 4,
-              background: 'var(--bg0)', border: '1px solid var(--border)',
-              fontSize: 10, maxHeight: 80, overflow: 'auto',
-              whiteSpace: 'pre-wrap',
-            }}>{state.raw}</pre>
-          )}
-        </div>
-      )}
-      {state.kind === 'err' && (
-        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--err)' }}>
-          ✗ {state.msg}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Sortable header for the traces result table. Reuses the same .sortable
-// CSS class as the /traces and /services tables for visual consistency.
-function TraceSortTh({ col, label, sort, dir, onSort, align }: {
-  col: TraceSortKey; label: string;
-  sort: TraceSortKey; dir: 'asc' | 'desc';
-  onSort: (c: TraceSortKey) => void;
-  align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        onClick={() => onSort(col)}
-        style={{ textAlign: align ?? 'left' }}>
-      {label}
-      <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-    </th>
   );
 }

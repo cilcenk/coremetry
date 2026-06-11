@@ -134,6 +134,20 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
     window.localStorage.setItem(PANEL_STORAGE_KEY, '340');
   };
 
+  // Esc closes the drawer (v0.8.112 — it floats over the waterfall now,
+  // so a keyboard exit matters; skip when focus is in an input so Esc
+  // keeps its native "clear field" behavior there).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
     <div id="span-panel" style={{ width: panelW }}>
       <div className="span-panel-resizer"

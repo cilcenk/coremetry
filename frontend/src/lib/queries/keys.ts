@@ -102,4 +102,13 @@ export const keys = {
     all:         ['users'] as const,
     list:        ['users', 'list'] as const,
   },
+
+  // Explore v2 multi-query builder (Phase 2). `sig` is the stable
+  // querySignature(...) digest of every fetch-relevant builder input —
+  // two letters with identical inputs share one cache entry.
+  explore: {
+    all:         ['explore'] as const,
+    query:       (sig: string, from: number, to: number) =>
+                   ['explore', 'query', sig, from, to] as const,
+  },
 } as const;

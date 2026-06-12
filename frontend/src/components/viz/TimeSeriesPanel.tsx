@@ -36,6 +36,7 @@ export interface TSSeries {
   color?: string;          // CSS colour override; falls back to stable seriesColor(label)
   unit?: string;           // per-series unit (drives the axis it's bound to)
   axis?: 'left' | 'right'; // which y-axis this series reads against (default 'left')
+  dash?: number[];         // canvas dash pattern (explore-v2: the formula series)
 }
 
 export interface TSThreshold {
@@ -59,6 +60,16 @@ interface TimeSeriesPanelProps {
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
   // Hide the built-in legend table (e.g. when the parent renders its own).
   hideLegend?: boolean;
+  // ── explore-v2 controlled props — all applied rebuild-free via effects ──
+  // Controlled x-window in unix SECONDS. The parent fans one panel's onZoom
+  // out to every synced panel; null restores the full data range.
+  zoomWindow?: { from: number; to: number } | null;
+  // Controlled per-label visibility (a label in the set is hidden). When
+  // provided, this is the source of truth — the built-in legend should be
+  // hidden and toggling driven by the parent (GroupTable).
+  hiddenLabels?: Set<string>;
+  // Highlight one series (uPlot focus + alpha-dim of the rest); null clears.
+  focusedLabel?: string | null;
 }
 
 // Resolve a var(--x) token (or a raw colour) to a concrete hex/rgb for canvas
@@ -95,6 +106,7 @@ interface LegendRow {
 
 export function TimeSeriesPanel({
   series, deploys, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend,
+  zoomWindow, hiddenLabels, focusedLabel,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -104,6 +116,16 @@ export function TimeSeriesPanel({
   // React mirror used ONLY to re-paint the legend's dim state. The CHART never
   // reads this — it reads visibleRef.
   const [visTick, setVisTick] = useState(0);
+  // Latest controlled-prop values for the rebuild path: when the chart is
+  // destroyed + recreated (data/mode change), the new uPlot must re-apply the
+  // parent-controlled zoom/visibility/focus without those props being in the
+  // rebuild dep list (that would force a full rebuild per zoom/hover).
+  const zoomRef = useRef(zoomWindow);
+  zoomRef.current = zoomWindow;
+  const hiddenRef = useRef(hiddenLabels);
+  hiddenRef.current = hiddenLabels;
+  const focusedRef = useRef(focusedLabel);
+  focusedRef.current = focusedLabel;
 
   // Downsample each series to ≤2000 points BEFORE uPlot (gap-aware), then
   // re-align onto a union x grid. Memoised on series identity so we don't
@@ -154,7 +176,7 @@ export function TimeSeriesPanel({
     plotRef.current?.destroy();
     plotRef.current = null;
 
-    visibleRef.current = series.map(() => true);
+    visibleRef.current = series.map(s => !(hiddenRef.current?.has(s.label)));
 
     const { times, ySeries } = prepared;
     if (series.length === 0 || times.length === 0) return;
@@ -202,6 +224,8 @@ export function TimeSeriesPanel({
             stroke: color,
             scale: yScaleKey(s),
             width: 2,
+            show: visibleRef.current[i],
+            dash: s.dash,
             value: (_u: uPlot, v: number | null) => fmtSmart(v, u),
             points: {
               show: times.length <= 300,
@@ -256,8 +280,12 @@ export function TimeSeriesPanel({
         sync: syncKey ? { key: syncKey } : undefined,
       },
       legend: { show: false }, // our own interactive legend table renders below
+      focus: { alpha: 0.35 }, // dim non-focused series (cursor prox + focusedLabel)
+      // NOTE: uPlot's fire() does `if (evName in hooks)` — a key explicitly
+      // set to undefined still passes the `in` check and crashes on
+      // hooks[evName].forEach. Only set keys that actually have handlers.
       hooks: {
-        setSelect: onZoom ? [
+        ...(onZoom ? { setSelect: [
           (u) => {
             const sel = u.select;
             if (!sel || sel.width < 4) return;
@@ -267,9 +295,9 @@ export function TimeSeriesPanel({
             onZoom(Math.min(x0, x1), Math.max(x0, x1));
             u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
           },
-        ] : undefined,
+        ] } : {}),
         // Overlay draw — thresholds (line + breach band) then deploy annotations.
-        draw: ((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0)) ? [
+        ...(((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0)) ? { draw: [
           (u) => {
             const ctx = u.ctx;
             ctx.save();
@@ -323,7 +351,7 @@ export function TimeSeriesPanel({
             }
             ctx.restore();
           },
-        ] : undefined,
+        ] } : {}),
         // SYNCHRONISED rich tooltip + y-axis crosshair pill.
         setCursor: [
           (u) => {
@@ -410,6 +438,16 @@ export function TimeSeriesPanel({
 
     plotRef.current = new uPlot(opts, data, el);
 
+    // Re-apply parent-controlled zoom + focus onto the fresh uPlot (the
+    // controlled-prop effects below only fire when the PROPS change).
+    if (zoomRef.current) {
+      plotRef.current.setScale('x', { min: zoomRef.current.from, max: zoomRef.current.to });
+    }
+    if (focusedRef.current != null) {
+      const fi = series.findIndex(s => s.label === focusedRef.current);
+      if (fi >= 0) plotRef.current.setSeries(fi + 1, { focus: true });
+    }
+
     const ro = new ResizeObserver(() => {
       const u = plotRef.current;
       if (u && el.clientWidth) u.setSize({ width: el.clientWidth, height });
@@ -438,6 +476,48 @@ export function TimeSeriesPanel({
     el.addEventListener('dblclick', onDbl);
     return () => el.removeEventListener('dblclick', onDbl);
   }, []);
+
+  // ── explore-v2 controlled props — applied to the LIVE uPlot, no rebuild ──
+
+  // Controlled x-window. setScale is the same call drag-zoom makes, so
+  // applying the parent's window to the originating panel is idempotent.
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    if (zoomWindow) {
+      u.setScale('x', { min: zoomWindow.from, max: zoomWindow.to });
+    } else {
+      const xs = u.data[0];
+      if (xs && xs.length) u.setScale('x', { min: xs[0] as number, max: xs[xs.length - 1] as number });
+    }
+  }, [zoomWindow]);
+
+  // Controlled visibility — diff against visibleRef so we only touch series
+  // whose state actually flipped (setSeries(show) redraws once per call).
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u || !hiddenLabels) return;
+    series.forEach((s, i) => {
+      const show = !hiddenLabels.has(s.label);
+      if (visibleRef.current[i] !== show) {
+        visibleRef.current[i] = show;
+        u.setSeries(i + 1, { show });
+      }
+    });
+    setVisTick(t => t + 1);
+  }, [hiddenLabels, series]);
+
+  // Controlled focus — uPlot's focus.alpha dims everything else.
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    if (focusedLabel == null) {
+      u.setSeries(null, { focus: false });
+      return;
+    }
+    const i = series.findIndex(s => s.label === focusedLabel);
+    if (i >= 0) u.setSeries(i + 1, { focus: true });
+  }, [focusedLabel, series]);
 
   // Legend interaction — isolate-on-click (second click restores all);
   // Ctrl/Cmd-click toggles only that series. Bypasses React state for the

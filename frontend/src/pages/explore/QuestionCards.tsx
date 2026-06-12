@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import type { QueryHistoryEntry } from './useQueryHistory';
+import { encodeBuilder } from './urlCodec';
+import { blankQuery, type BuilderState } from './model';
 
 // fmtAgo — coarse "how long ago" for a recent-query epoch-ms stamp.
 // (utils.tsLong takes nanoseconds; history stamps are ms, so format
@@ -45,28 +47,35 @@ interface Card {
   to: string;
 }
 
+// builderTo — Phase-2: metric cards deep-link with the canonical ?q= codec
+// (the workspace decodes legacy shapes forever, but cards emit the v2 form).
+function builderTo(st: BuilderState): string {
+  return `?q=${encodeURIComponent(encodeBuilder(st))}`;
+}
+const mkSpanCard = (agg: string, splitBy: string[], viz: BuilderState['viz'] = 'line'): string =>
+  builderTo({
+    queries: [{ ...blankQuery('A'), agg, splitBy }],
+    formula: '', viz, step: 0,
+  });
+
 const CARDS: Card[] = [
   {
     title: 'Neden yavaş?',
     desc: 'Gecikme yoğunluğu — zaman × süre ısı haritası, yavaş kuyruk üstte.',
-    // Exactly the "Latency heatmap" METRIC_PRESETS shape: agg=count and
-    // field=duration_ms are the URL defaults (the writer omits them) and
-    // the heatmap fetch ignores agg entirely — landing the operator on
-    // the lit preset chip instead of "Custom" (Phase-1 review finding).
     pre: 'viz=heatmap · duration_ms',
-    to: '?viz=heatmap',
+    to: mkSpanCard('count', [], 'heatmap'),
   },
   {
     title: 'Hatalar nereden geliyor?',
     desc: 'Servis başına hata oranı — hangi servis kanıyor?',
-    pre: 'agg=error_rate · split=service.name',
-    to: '?agg=error_rate&groupBy=service.name',
+    pre: 'A: error_rate · split=service.name',
+    to: mkSpanCard('error_rate', ['service.name']),
   },
   {
     title: 'Ne değişti?',
     desc: 'Servis başına P95 gecikme — temel çizgiden sapmayı yakala.',
-    pre: 'agg=p95 · split=service.name',
-    to: '?agg=p95&groupBy=service.name',
+    pre: 'A: p95 · split=service.name',
+    to: mkSpanCard('p95', ['service.name']),
   },
   {
     title: 'N+1 / tekrar var mı?',
@@ -77,8 +86,8 @@ const CARDS: Card[] = [
   {
     title: 'Trafik nasıl?',
     desc: 'Servis başına saniyelik istek hızı — yük dağılımı.',
-    pre: 'agg=rate · split=service.name',
-    to: '?agg=rate&groupBy=service.name',
+    pre: 'A: rate · split=service.name',
+    to: mkSpanCard('rate', ['service.name']),
   },
   {
     title: "Tek tek trace'lere bakacağım",

@@ -6,6 +6,7 @@ import { encodeFilters } from '@/lib/urlState';
 import { timeRangeToNs } from '@/lib/utils';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
+import { GroupedMetricPicker } from '@/components/viz/GroupedMetricPicker';
 import { seriesColor } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
@@ -46,21 +47,6 @@ const LABEL_KEYS = [
   'service.name', 'http.route', 'http.request.method', 'http.response.status_code',
   'status_class', 'rpc.service', 'rpc.method', 'db.system', 'db.operation.name',
   'messaging.system', 'messaging.destination.name', 'host.name', 'deployment.environment',
-];
-
-type MGroup = 'http' | 'rpc' | 'db' | 'messaging' | 'runtime' | 'other';
-function metricGroup(name: string): MGroup {
-  const n = name.toLowerCase();
-  if (n.startsWith('http')) return 'http';
-  if (n.startsWith('rpc')) return 'rpc';
-  if (n.startsWith('db') || n.startsWith('database') || /(redis|oracle|postgres|mysql|mongo)/.test(n)) return 'db';
-  if (n.startsWith('messaging') || /(kafka|rabbit|queue|consumer)/.test(n)) return 'messaging';
-  if (/^(jvm|process|go\.|system|runtime|dotnet|nodejs|python)/.test(n)) return 'runtime';
-  return 'other';
-}
-const GROUP_FACETS: { key: 'all' | MGroup; label: string }[] = [
-  { key: 'all', label: 'All' }, { key: 'http', label: 'HTTP' }, { key: 'rpc', label: 'RPC' },
-  { key: 'runtime', label: 'Runtime' }, { key: 'db', label: 'Database' }, { key: 'messaging', label: 'Messaging' },
 ];
 
 interface MQQuery {
@@ -229,88 +215,8 @@ function parseDSL(text: string, prev: MQModel): { model?: MQModel; error?: strin
   return { model: { queries, topN: prev.topN, logScale: prev.logScale, unit: prev.unit, viz: prev.viz }, error: warn.length ? warn.join('; ') : undefined };
 }
 
-// ── Grouped metric picker (searchable + faceted, unit shown) ──────────────
-function GroupedMetricPicker({ value, unit, onPick }: {
-  value: string; unit: string; onPick: (m: MetricInfo) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const [dq, setDq] = useState('');
-  const [facet, setFacet] = useState<'all' | MGroup>('all');
-  const ref = useRef<HTMLDivElement>(null);
-  // v0.8.5 (scale-audit) — server-side search, NOT an eager full-catalogue
-  // load. Pre-v0.8.5 this did api.metricNames('') (no q/limit) on mount,
-  // pulling the entire metric_names catalogue to the client — the exact
-  // eager-load v0.5.198 removed, fatal at 10k+ distinct metric names.
-  // Now: only fetch while the dropdown is open, keyed on the debounced
-  // query, bounded to 200 server-side; the facet filter applies to the
-  // bounded result.
-  useEffect(() => {
-    const t = window.setTimeout(() => setDq(q.trim()), 150);
-    return () => clearTimeout(t);
-  }, [q]);
-  const catalogQ = useQuery({
-    queryKey: ['metric-search', dq],
-    queryFn: () => api.metricNamesSearch('', dq || undefined, 200, 0),
-    enabled: open,
-    staleTime: 60_000,
-  });
-  const catalog = catalogQ.data?.names ?? [];
-  const hasMore = catalogQ.data?.hasMore ?? false;
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
-
-  // Facet narrows the server-bounded result; the substring is already
-  // applied server-side via dq, kept here only for mid-debounce snappiness.
-  const filtered = useMemo(() => {
-    const ql = q.trim().toLowerCase();
-    return catalog.filter(m =>
-      (facet === 'all' || metricGroup(m.name) === facet) &&
-      (!ql || m.name.toLowerCase().includes(ql)));
-  }, [catalog, q, facet]);
-
-  return (
-    <div className="mqe-picker" ref={ref}>
-      <button type="button" className="mqe-pickbtn" onClick={() => setOpen(o => !o)}
-        aria-label={value ? `Metric: ${value}` : 'Pick a metric'} aria-expanded={open} title={value || 'Pick a metric'}>
-        <span className="mqe-pickname">{value || 'Select metric…'}</span>
-        {unit && <span className="mqe-unit">{unit}</span>}
-        <span className="mqe-caret">▾</span>
-      </button>
-      {open && (
-        <div className="mqe-pop">
-          <input autoFocus className="mqe-search" placeholder="Search metrics…" value={q}
-            onChange={e => setQ(e.target.value)} />
-          <div className="mqe-facets">
-            {GROUP_FACETS.map(f => (
-              <button key={f.key} type="button" className={'mqe-facet' + (facet === f.key ? ' on' : '')}
-                onClick={() => setFacet(f.key)}>{f.label}</button>
-            ))}
-          </div>
-          <div className="mqe-list">
-            {catalogQ.isLoading ? <div className="mqe-hint"><Spinner /></div>
-              : filtered.length === 0 ? <div className="mqe-hint">No metrics match.</div>
-              : <>
-                {filtered.map(m => (
-                  <button key={m.name} type="button" className={'mqe-opt' + (m.name === value ? ' on' : '')}
-                    onClick={() => { onPick(m); setOpen(false); }}>
-                    <span className="mqe-optname">{m.name}</span>
-                    {m.unit && <span className="mqe-unit">{m.unit}</span>}
-                  </button>
-                ))}
-                {hasMore && <div className="mqe-hint">More results — refine your search…</div>}
-              </>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// Grouped metric picker — extracted to components/viz/GroupedMetricPicker.tsx
+// (explore-v2 Phase 2) so the Explore builder shares it.
 
 // ── Filter chips with metric-label-value autocomplete ─────────────────────
 function FilterEditor({ metric, filters, onChange }: {

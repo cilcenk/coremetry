@@ -15,9 +15,9 @@ import { useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from '@/lib/queries/keys';
 import { encodeFilters } from '@/lib/urlState';
-import type { SpanMetricSeries } from '@/lib/types';
+import type { SpanMetricSeries, MetricExemplar } from '@/lib/types';
 import {
-  type BuilderState, produces, effectiveFilters, querySignature,
+  type BuilderState, produces, effectiveFilters, querySignature, exemplarDescriptor,
 } from './model';
 
 export interface ExploreQueriesResult {
@@ -82,4 +82,40 @@ export function useExploreQueries(
     return { byLetter, anyLoading, error };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, state]);
+}
+
+// useExploreExemplars (explore-v2 Phase 3.2) — per-bucket slow/error trace_ids
+// for each exemplar-ELIGIBLE builder query. Eligibility (exemplarDescriptor !=
+// null) mirrors the spanmetrics rollup planner: only a span query the rollups
+// can serve rides /api/metrics/resolve?exemplars=1; everything else returns []
+// (no ◆ glyphs, no wasted query). Separate from the series fetch so the chart's
+// data source stays api.spanMetric — the resolver only supplies the trace_ids.
+export function useExploreExemplars(
+  state: BuilderState,
+  from: number,
+  to: number,
+): Record<string, MetricExemplar[]> {
+  const results = useQueries({
+    queries: state.queries.map(q => {
+      const desc = exemplarDescriptor(q);
+      return {
+        queryKey: ['explore-exemplars', querySignature(q, state.step), from, to],
+        queryFn: (): Promise<MetricExemplar[]> =>
+          desc
+            ? api.resolveMetric(desc, { from, to }, { step: state.step || undefined, exemplars: true })
+                .then(r => r?.exemplars ?? [])
+            : Promise.resolve([]),
+        enabled: !!desc && produces(q) && from > 0,
+        staleTime: 30_000,
+      };
+    }),
+  });
+
+  const sig = results.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|');
+  return useMemo(() => {
+    const out: Record<string, MetricExemplar[]> = {};
+    state.queries.forEach((q, i) => { out[q.letter] = results[i].data ?? []; });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig, state]);
 }

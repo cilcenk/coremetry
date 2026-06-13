@@ -37,6 +37,10 @@ export interface TSSeries {
   unit?: string;           // per-series unit (drives the axis it's bound to)
   axis?: 'left' | 'right'; // which y-axis this series reads against (default 'left')
   dash?: number[];         // canvas dash pattern (explore-v2: the formula series)
+  // explore-v2 Phase 3.2 — exemplar trace markers (◆) anchored on this series.
+  // time is unix NANOS (bucket start); value is the series value to pin the
+  // glyph at; kind tints it (error = red, slow = accent). Click opens the trace.
+  exemplars?: { time: number; value: number; traceId: string; kind: 'slow' | 'error' }[];
 }
 
 export interface TSThreshold {
@@ -75,6 +79,9 @@ interface TimeSeriesPanelProps {
   // the cursorBus through this so its GroupTable's @cursor column tracks the
   // hover; kept generic so this primitive stays decoupled from that page.
   onCursorTime?: (timeSec: number | null) => void;
+  // explore-v2 Phase 3.2 — click an exemplar ◆ to open its trace. Receives the
+  // exemplar's trace_id; the page navigates to the trace view.
+  onExemplarClick?: (traceId: string) => void;
 }
 
 // Resolve a var(--x) token (or a raw colour) to a concrete hex/rgb for canvas
@@ -111,7 +118,7 @@ interface LegendRow {
 
 export function TimeSeriesPanel({
   series, deploys, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend,
-  zoomWindow, hiddenLabels, focusedLabel, onCursorTime,
+  zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -135,6 +142,8 @@ export function TimeSeriesPanel({
   // a 60fps mousemove path must not rebuild the chart.
   const cursorTimeRef = useRef(onCursorTime);
   cursorTimeRef.current = onCursorTime;
+  const exemplarClickRef = useRef(onExemplarClick);
+  exemplarClickRef.current = onExemplarClick;
 
   // Downsample each series to ≤2000 points BEFORE uPlot (gap-aware), then
   // re-align onto a union x grid. Memoised on series identity so we don't
@@ -193,6 +202,7 @@ export function TimeSeriesPanel({
     const css = getComputedStyle(document.documentElement);
     const text3 = css.getPropertyValue('--text3').trim() || '#484f58';
     const grid = css.getPropertyValue('--bg2').trim() || '#21262d';
+    const bg1 = css.getPropertyValue('--bg1').trim() || '#0d1117';  // exemplar ◆ halo
 
     // ── Stacked transform ────────────────────────────────────────────────
     // Plot cumulative running sums; fill the band between adjacent cumulative
@@ -306,7 +316,7 @@ export function TimeSeriesPanel({
           },
         ] } : {}),
         // Overlay draw — thresholds (line + breach band) then deploy annotations.
-        ...(((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0)) ? { draw: [
+        ...(((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0) || series.some(s => s.exemplars && s.exemplars.length > 0)) ? { draw: [
           (u) => {
             const ctx = u.ctx;
             ctx.save();
@@ -356,6 +366,37 @@ export function TimeSeriesPanel({
                 ctx.stroke();
                 ctx.setLineDash([]);
                 ctx.fillText('▼', x - 3, u.bbox.top + 9);
+              }
+            }
+
+            // explore-v2 Phase 3.2 — exemplar ◆ markers, drawn last so they sit
+            // on top of the lines. One per (visible series, bucket-with-a-trace);
+            // a thin halo in the panel bg keeps them legible over same-coloured
+            // lines. error = --err, slow = --accent2.
+            const exMinX = u.scales.x.min ?? 0;
+            const exMaxX = u.scales.x.max ?? 0;
+            for (let si = 0; si < series.length; si++) {
+              const exs = series[si].exemplars;
+              if (!exs || exs.length === 0 || !visibleRef.current[si]) continue;
+              const sk = series[si].axis === 'right' ? 'yr' : 'y';
+              for (const ex of exs) {
+                const t = ex.time / 1e9;
+                if (t < exMinX || t > exMaxX) continue;
+                const x = u.valToPos(t, 'x', true);
+                const y = u.valToPos(ex.value, sk, true);
+                const col = resolveColor(ex.kind === 'error' ? 'var(--err)' : 'var(--accent2)')
+                  || (ex.kind === 'error' ? '#ef4444' : '#a371f7');
+                ctx.beginPath();
+                ctx.moveTo(x, y - 4);
+                ctx.lineTo(x + 4, y);
+                ctx.lineTo(x, y + 4);
+                ctx.lineTo(x - 4, y);
+                ctx.closePath();
+                ctx.fillStyle = col;
+                ctx.strokeStyle = bg1;
+                ctx.lineWidth = 1;
+                ctx.fill();
+                ctx.stroke();
               }
             }
             ctx.restore();
@@ -429,8 +470,38 @@ export function TimeSeriesPanel({
               }
             }
 
+            // explore-v2 Phase 3.2 — if the cursor is near an exemplar ◆ of a
+            // visible series, surface it (kind + short trace id). Same over-
+            // relative px basis as cursor.left/top (valToPos w/o canvasPixels).
+            let exemplarRow = '';
+            {
+              const cx = u.cursor.left ?? -1, cy = u.cursor.top ?? -1;
+              let near: { kind: string; traceId: string } | null = null;
+              let bd = 196; // 14px squared
+              for (let i = 0; i < series.length; i++) {
+                const exs = series[i].exemplars;
+                if (!exs || !visibleRef.current[i]) continue;
+                const sk = series[i].axis === 'right' ? 'yr' : 'y';
+                for (const ex of exs) {
+                  const px = u.valToPos(ex.time / 1e9, 'x');
+                  const py = u.valToPos(ex.value, sk);
+                  const d = (px - cx) ** 2 + (py - cy) ** 2;
+                  if (d < bd) { bd = d; near = { kind: ex.kind, traceId: ex.traceId }; }
+                }
+              }
+              if (near) {
+                const c = near.kind === 'error' ? 'var(--err)' : 'var(--accent2)';
+                exemplarRow =
+                  `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">` +
+                    `<span style="color:${c}">◆</span>` +
+                    `<span style="flex:1">${escapeHTML(near.kind)} trace ${escapeHTML(near.traceId.slice(0, 8))}… · tıkla→aç</span>` +
+                  `</div>`;
+              }
+            }
+
             tip.innerHTML =
               `<div style="font-weight:600;margin-bottom:4px">${hh}:${mm}:${ss}</div>` +
+              exemplarRow +
               deployRow +
               rows.map(r => {
                 const lbl = escapeHTML(r.label);
@@ -465,6 +536,31 @@ export function TimeSeriesPanel({
       if (fi >= 0) plotRef.current.setSeries(fi + 1, { focus: true });
     }
 
+    // explore-v2 Phase 3.2 — click an exemplar ◆ to open its trace. Hit-test in
+    // over-relative px (valToPos without canvasPixels = the over element's
+    // offset basis), so the click lines up with the rendered glyphs.
+    const over = plotRef.current.over;
+    const onExemplarClickDom = (ev: MouseEvent) => {
+      const u = plotRef.current;
+      const cb = exemplarClickRef.current;
+      if (!u || !cb) return;
+      let hitId: string | null = null;
+      let bestD = 100; // 10px squared tolerance
+      for (let si = 0; si < series.length; si++) {
+        const exs = series[si].exemplars;
+        if (!exs || !visibleRef.current[si]) continue;
+        const sk = series[si].axis === 'right' ? 'yr' : 'y';
+        for (const ex of exs) {
+          const px = u.valToPos(ex.time / 1e9, 'x');
+          const py = u.valToPos(ex.value, sk);
+          const d = (px - ev.offsetX) ** 2 + (py - ev.offsetY) ** 2;
+          if (d < bestD) { bestD = d; hitId = ex.traceId; }
+        }
+      }
+      if (hitId) cb(hitId);
+    };
+    over.addEventListener('click', onExemplarClickDom);
+
     const ro = new ResizeObserver(() => {
       const u = plotRef.current;
       if (u && el.clientWidth) u.setSize({ width: el.clientWidth, height });
@@ -472,6 +568,7 @@ export function TimeSeriesPanel({
     ro.observe(el);
 
     return () => {
+      over.removeEventListener('click', onExemplarClickDom);
       ro.disconnect();
       plotRef.current?.destroy();
       plotRef.current = null;

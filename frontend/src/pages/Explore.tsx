@@ -31,7 +31,7 @@ import {
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
 } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
-import { useExploreQueries } from './explore/useExploreQueries';
+import { useExploreQueries, useExploreExemplars } from './explore/useExploreQueries';
 import { PanelStack, buildPanels } from './explore/PanelStack';
 import { GroupTable } from './explore/GroupTable';
 import { QueryRow } from './explore/QueryRow';
@@ -211,12 +211,18 @@ function ExploreInner() {
 
   // ── Builder fan-out (react-query; inactive modes pass from=0 → disabled) ──
   const builderActive = hasParams && source === 'spans' && resultMode === 'metric';
+  const builderFrom = builderActive && debounced.viz !== 'heatmap' ? exploreRange.from : 0;
   const { byLetter, anyLoading, error: builderError } = useExploreQueries(
     debounced,
-    builderActive && debounced.viz !== 'heatmap' ? exploreRange.from : 0,
+    builderFrom,
     exploreRange.to,
   );
-  const panels = useMemo(() => buildPanels(debounced, byLetter), [debounced, byLetter]);
+  // Phase 3.2 — per-bucket exemplar trace_ids for eligible queries (◆ glyphs).
+  const exemplarsByLetter = useExploreExemplars(debounced, builderFrom, exploreRange.to);
+  const panels = useMemo(
+    () => buildPanels(debounced, byLetter, exemplarsByLetter),
+    [debounced, byLetter, exemplarsByLetter],
+  );
   const anyProduces = debounced.queries.some(produces);
 
   // Heatmap viz — the LatencyHeatmap path, driven by query A (panel header
@@ -646,7 +652,8 @@ name ~ checkout`}
                   hiddenKeys={hiddenKeys}
                   focusKey={focusKey}
                   zoomWindow={zoomWindow}
-                  onZoom={(f, t) => setZoomWindow({ from: f, to: t })} />
+                  onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
+                  onExemplarClick={(id) => navigate(`/trace?id=${id}`)} />
                 <GroupTable panels={panels}
                   hiddenKeys={hiddenKeys}
                   onToggleHidden={toggleHidden}

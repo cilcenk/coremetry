@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { SpanMetricSeries, MetricExemplar } from '@/lib/types';
-import type { TSSeries } from '@/components/viz/TimeSeriesPanel';
+import type { TSSeries, TSThreshold } from '@/components/viz/TimeSeriesPanel';
 import { seriesColor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
 import {
@@ -24,6 +24,8 @@ export interface PanelData {
   loading: boolean;
   series: TSSeries[];      // capped, labeled, coloured
   more: number;            // series dropped by the cap
+  deploys?: number[];      // ▼ deploy markers (Phase 3.3 — pinned-service queries)
+  thresholds?: TSThreshold[]; // SLO latency threshold lines (Phase 3.3)
 }
 
 // buildPanels — pure projection BuilderState + fetch results → panel data.
@@ -56,6 +58,7 @@ export function buildPanels(
   state: BuilderState,
   byLetter: Record<string, SpanMetricSeries[] | undefined>,
   exemplarsByLetter: Record<string, MetricExemplar[]> = {},
+  overlaysByLetter: Record<string, { deploys: number[]; thresholds: TSThreshold[] }> = {},
 ): PanelData[] {
   const out: PanelData[] = [];
   for (const q of state.queries) {
@@ -84,10 +87,13 @@ export function buildPanels(
     const ranked = labeled
       .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value ?? 0), 0) }))
       .sort((a, b) => b.area - a.area);
+    const ov = overlaysByLetter[q.letter];
     out.push({
       key: q.letter, letter: q.letter, desc, unit, isFormula: false, loading: false,
       series: ranked.slice(0, PANEL_SERIES_CAP).map(x => x.s),
       more: Math.max(0, ranked.length - PANEL_SERIES_CAP),
+      deploys: ov?.deploys?.length ? ov.deploys : undefined,
+      thresholds: ov?.thresholds?.length ? ov.thresholds : undefined,
     });
   }
   // Formula panel — dashed, gaps where a referenced bucket is missing.

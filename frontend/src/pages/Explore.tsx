@@ -31,7 +31,7 @@ import {
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
 } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
-import { useExploreQueries, useExploreExemplars } from './explore/useExploreQueries';
+import { useExploreQueries, useExploreExemplars, useExploreOverlays } from './explore/useExploreQueries';
 import { PanelStack, buildPanels } from './explore/PanelStack';
 import { GroupTable } from './explore/GroupTable';
 import { QueryRow } from './explore/QueryRow';
@@ -219,9 +219,11 @@ function ExploreInner() {
   );
   // Phase 3.2 — per-bucket exemplar trace_ids for eligible queries (◆ glyphs).
   const exemplarsByLetter = useExploreExemplars(debounced, builderFrom, exploreRange.to);
+  // Phase 3.3 — deploy markers + SLO thresholds for pinned-service queries.
+  const overlaysByLetter = useExploreOverlays(debounced, builderFrom, exploreRange.to);
   const panels = useMemo(
-    () => buildPanels(debounced, byLetter, exemplarsByLetter),
-    [debounced, byLetter, exemplarsByLetter],
+    () => buildPanels(debounced, byLetter, exemplarsByLetter, overlaysByLetter),
+    [debounced, byLetter, exemplarsByLetter, overlaysByLetter],
   );
   const anyProduces = debounced.queries.some(produces);
 

@@ -97,22 +97,17 @@ export function LogsHistogram({ range, filter }: {
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
-  const xOf = (i: number) =>
-    padL + (stack.times.length > 1 ? (i / (stack.times.length - 1)) * innerW : innerW / 2);
+  const n = stack.times.length;
+  const slotW = n > 0 ? innerW / n : innerW;
+  // ~18% inter-bar gap, clamped so a dense window still renders a hairline bar.
+  const barW = Math.max(1, slotW * 0.82);
+  const xOf = (i: number) => padL + i * slotW + (slotW - barW) / 2;
   const yOf = (v: number) =>
     padT + innerH - (v / Math.max(1, stack.max)) * innerH;
 
-  // Render bands bottom-up. Each band's path = upper edge then
-  // lower edge reversed = closed polygon.
-  const bandPaths = stack.bands.map((band) => {
-    const upper: string[] = [];
-    const lower: string[] = [];
-    for (let i = 0; i < stack.times.length; i++) {
-      upper.push(`${xOf(i)},${yOf(band.cum[i])}`);
-      lower.push(`${xOf(i)},${yOf(band.cum[i] - band.values[i])}`);
-    }
-    return `M ${upper.join(' L ')} L ${lower.reverse().join(' L ')} Z`;
-  });
+  // Per-bucket hover summary (native SVG <title>): clock + per-level counts.
+  const spanSec = n > 1 ? (stack.times[n - 1] - stack.times[0]) / 1e9 : 0;
+  const withSec = spanSec > 0 && spanSec < 600;
 
   return (
     <div style={{
@@ -121,13 +116,35 @@ export function LogsHistogram({ range, filter }: {
       display: 'flex', alignItems: 'flex-start', gap: 12,
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Kibana-Discover-style STACKED BARS — one column per time bucket,
+            segmented by severity. (Was a stacked-area chart, which read as a
+            line graph rather than a histogram.) */}
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
           preserveAspectRatio="none"
           style={{ display: 'block', width: '100%' }}>
-          {stack.bands.map((band, i) => (
-            <path key={band.name} d={bandPaths[i]}
-              fill={colorFor(band.name)} opacity={0.85} />
+          {stack.bands.map(band => (
+            <g key={band.name} fill={colorFor(band.name)}>
+              {band.values.map((v, i) => {
+                if (v <= 0) return null;
+                const yTop = yOf(band.cum[i]);
+                const h = yOf(band.cum[i] - v) - yTop;
+                return <rect key={i} x={xOf(i)} y={yTop} width={barW} height={Math.max(0.5, h)} />;
+              })}
+            </g>
           ))}
+          {/* Transparent full-height hit targets carry the per-bucket tooltip. */}
+          {stack.times.map((t, i) => {
+            const total = stack.bands.reduce((s, b) => s + b.values[i], 0);
+            if (total <= 0) return null;
+            const parts = stack.bands
+              .filter(b => b.values[i] > 0)
+              .map(b => `${b.name} ${fmtNum(b.values[i])}`);
+            return (
+              <rect key={`h${i}`} x={padL + i * slotW} y={padT} width={slotW} height={innerH} fill="transparent">
+                <title>{`${fmtClock(t, withSec)} · ${fmtNum(total)} logs — ${parts.join(' · ')}`}</title>
+              </rect>
+            );
+          })}
         </svg>
         {ticks.length > 0 && (
           <div style={{

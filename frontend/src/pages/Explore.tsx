@@ -32,7 +32,7 @@ import {
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
 } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
-import { useExploreQueries, useExploreExemplars, useExploreOverlays } from './explore/useExploreQueries';
+import { useExploreQueries, useExploreOverlays } from './explore/useExploreQueries';
 import { PanelStack, buildPanels } from './explore/PanelStack';
 import { GroupTable } from './explore/GroupTable';
 import { SummaryViz } from './explore/SummaryViz';
@@ -219,13 +219,13 @@ function ExploreInner() {
   // ── Builder fan-out (react-query; inactive modes pass from=0 → disabled) ──
   const builderActive = hasParams && source === 'spans' && resultMode === 'metric';
   const builderFrom = builderActive && debounced.viz !== 'heatmap' ? exploreRange.from : 0;
-  const { byLetter, anyLoading, error: builderError } = useExploreQueries(
+  // D5 — eligible span queries fetch series + exemplars in ONE resolver call;
+  // exemplarsByLetter (◆ glyphs) comes from the same hook now.
+  const { byLetter, exemplarsByLetter, anyLoading, error: builderError } = useExploreQueries(
     debounced,
     builderFrom,
     exploreRange.to,
   );
-  // Phase 3.2 — per-bucket exemplar trace_ids for eligible queries (◆ glyphs).
-  const exemplarsByLetter = useExploreExemplars(debounced, builderFrom, exploreRange.to);
   // Phase 3.3 — deploy markers + SLO thresholds for pinned-service queries.
   const overlaysByLetter = useExploreOverlays(debounced, builderFrom, exploreRange.to);
   const panels = useMemo(

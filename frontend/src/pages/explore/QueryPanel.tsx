@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { TimeSeriesPanel, type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { Spinner } from '@/components/Spinner';
+import { publishCursor } from './cursorBus';
 import type { PanelData } from './PanelStack';
 
 // QueryPanel (explore-v2 Phase 2) — one query's chart card in the stack.
@@ -69,6 +70,7 @@ export const QueryPanel = memo(function QueryPanel({
           zoomWindow={zoomWindow}
           hiddenLabels={hiddenLabels}
           focusedLabel={focusedLabel}
+          onCursorTime={publishCursor}
           onZoom={onZoom} />
       )}
     </div>

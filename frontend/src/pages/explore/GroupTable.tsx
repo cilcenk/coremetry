@@ -3,13 +3,15 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtSmart } from '@/lib/chartFmt';
 import { fmtNum } from '@/lib/utils';
+import { useCursorTime, valueAtCursor } from './cursorBus';
 import type { PanelData } from './PanelStack';
 
-// GroupTable (explore-v2 Phase 2) — ONE combined per-series breakdown across
+// GroupTable (explore-v2 Phase 2/3) — ONE combined per-series breakdown across
 // every panel (SUMMARY_COLS clone; col0 = letter badge + group label). Row
 // hover focuses that series on its panel; click toggles visibility (eye).
-// The @cursor column (cursorBus) lands in Phase 3 — Phase 2 shows Last.
-// Sort + widths persist via the shared primitive (storageKey).
+// Phase 3: the @imleç column reads the cursorBus and shows each series' value
+// under the synced crosshair (blank when no cursor). Sort + widths persist via
+// the shared primitive (storageKey).
 
 export interface GroupRow {
   rowKey: string;            // `${letter}:${label}` — the hidden/focus key
@@ -21,10 +23,15 @@ export interface GroupRow {
   avg: number;
   max: number;
   buckets: number;
+  points: { time: number; value: number | null }[];  // for the @imleç lookup
 }
 
+// @imleç is intentionally NOT sortable (no sortValue): its value changes every
+// cursor frame, so making it a sort key would force a re-sort per mousemove.
+// Omitting sortValue keeps the column resizable but inert — rows stay stable.
 const COLS: DataTableColumn<GroupRow>[] = [
   { id: 'series',  label: 'Seri',     sortValue: r => `${r.letter} ${r.label}`, naturalDir: 'asc', width: 320 },
+  { id: 'cursor',  label: '@imleç',   numeric: true, width: 120 },
   { id: 'last',    label: 'Son',      sortValue: r => r.last,    numeric: true, width: 120 },
   { id: 'avg',     label: 'Ort',      sortValue: r => r.avg,     numeric: true, width: 120 },
   { id: 'max',     label: 'Maks',     sortValue: r => r.max,     numeric: true, width: 120 },
@@ -47,6 +54,7 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
         avg: vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : NaN,
         max: vs.length ? Math.max(...vs) : NaN,
         buckets: vs.length,
+        points: s.points,
       });
     }
   }
@@ -60,6 +68,9 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onFocus }: {
   onFocus: (rowKey: string | null) => void;
 }) {
   const rows = useMemo(() => buildGroupRows(panels), [panels]);
+  // Re-renders this table (and only this table) once per animation frame while
+  // the crosshair moves — the charts stay out of React via uPlot's own sync.
+  const cursorSec = useCursorTime();
 
   const dt = useDataTable<GroupRow>({
     storageKey: 'explore-group-table',
@@ -96,6 +107,9 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onFocus }: {
                     fontSize: 10, fontWeight: 700, verticalAlign: 'middle',
                   }}>{r.letter}</span>
                   <b>{r.label}</b>
+                </td>
+                <td className="mono" style={{ textAlign: 'right', color: cursorSec == null ? 'var(--text3)' : 'var(--accent2)' }}>
+                  {cursorSec == null ? '·' : fmtSmart(valueAtCursor(r.points, cursorSec), r.unit)}
                 </td>
                 <td className="mono" style={{ textAlign: 'right' }}>{fmtSmart(r.last, r.unit)}</td>
                 <td className="mono" style={{ textAlign: 'right' }}>{fmtSmart(r.avg, r.unit)}</td>

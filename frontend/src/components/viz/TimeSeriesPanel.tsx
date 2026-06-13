@@ -70,6 +70,11 @@ interface TimeSeriesPanelProps {
   hiddenLabels?: Set<string>;
   // Highlight one series (uPlot focus + alpha-dim of the rest); null clears.
   focusedLabel?: string | null;
+  // Crosshair time channel — called from the setCursor hook with the cursor's
+  // time in unix SECONDS (null when the cursor leaves). The explore page wires
+  // the cursorBus through this so its GroupTable's @cursor column tracks the
+  // hover; kept generic so this primitive stays decoupled from that page.
+  onCursorTime?: (timeSec: number | null) => void;
 }
 
 // Resolve a var(--x) token (or a raw colour) to a concrete hex/rgb for canvas
@@ -106,7 +111,7 @@ interface LegendRow {
 
 export function TimeSeriesPanel({
   series, deploys, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend,
-  zoomWindow, hiddenLabels, focusedLabel,
+  zoomWindow, hiddenLabels, focusedLabel, onCursorTime,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -126,6 +131,10 @@ export function TimeSeriesPanel({
   hiddenRef.current = hiddenLabels;
   const focusedRef = useRef(focusedLabel);
   focusedRef.current = focusedLabel;
+  // Held in a ref so the cursor publish never enters the rebuild dep list —
+  // a 60fps mousemove path must not rebuild the chart.
+  const cursorTimeRef = useRef(onCursorTime);
+  cursorTimeRef.current = onCursorTime;
 
   // Downsample each series to ≤2000 points BEFORE uPlot (gap-aware), then
   // re-align onto a union x grid. Memoised on series identity so we don't
@@ -370,8 +379,16 @@ export function TimeSeriesPanel({
                 } else yPill.style.opacity = '0';
               }
             }
-            if (!tip) return;
             const idx = u.cursor.idx;
+            // Publish the crosshair time (unix sec) to whoever wired the bus.
+            // Done BEFORE the tooltip early-returns so a cursor-leave (idx null)
+            // clears the channel too. Synced panels all fire the same time —
+            // the bus dedupes them to one notification per frame.
+            if (cursorTimeRef.current) {
+              const cx = idx == null || idx < 0 ? null : (u.data[0][idx] as number | null);
+              cursorTimeRef.current(cx != null && isFinite(cx) ? cx : null);
+            }
+            if (!tip) return;
             if (idx == null || idx < 0) { tip.style.opacity = '0'; return; }
             const xVal = u.data[0][idx];
             if (xVal == null) { tip.style.opacity = '0'; return; }

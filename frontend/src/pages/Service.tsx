@@ -526,8 +526,8 @@ function ServiceSLOChip({ slo }: { slo: SLORow }) {
 }
 
 // OperationsTable — per-operation aggregate (count / err / avg / p50 /
-// p95 / p99 / apdex). Click an operation to drill into Explore with
-// `name = <op>` pre-filtered alongside the service. Sortable; aggregate
+// p95 / p99 / apdex). Click an operation to drill into Traces with
+// the service + operation name pre-filtered. Sortable; aggregate
 // "All" row at the top mirrors the services page so totals are visible
 // without scrolling.
 //
@@ -780,11 +780,9 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
             ? `${dt.sortedRows.length} / ${rows.length} matching`
             : `${rows.length} distinct span name${rows.length === 1 ? '' : 's'} in ${service}`}
         </span>
-        <input ref={searchRef} value={filter} onChange={e => setFilter(e.target.value)}
+        <input ref={searchRef} className="field" value={filter} onChange={e => setFilter(e.target.value)}
           placeholder="Filter by name…  ( / to focus, j/k to move, Enter to open )"
-          style={{ marginLeft: 'auto', width: 320, padding: '4px 10px', fontSize: 12,
-                   background: 'var(--bg)', color: 'var(--text)',
-                   border: '1px solid var(--border)', borderRadius: 4 }} />
+          style={{ marginLeft: 'auto', width: 320 }} />
       </div>
       {/* v0.5.462 — operator-reported: the previous maxHeight:540
           inner-scroll wrapper made even a 50-op service feel
@@ -859,7 +857,7 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
                     <Link
                       to={opHref(op.name)}
                       style={{ fontWeight: 500 }}
-                      title="Open this operation in Explore — service + name pre-filtered"
+                      title="Open this operation in Traces — service + name pre-filtered"
                     >{op.name}</Link>
                   </td>
                   <td>
@@ -1080,52 +1078,45 @@ export default function ServiceDetailPage() {
 // scoped to that one cluster. The sort defaults to spanCount
 // desc so the heaviest cluster lands at top — usually what an
 // operator triaging "is this service slow?" wants first.
-type ClusterSortKey = 'cluster' | 'calls' | 'errRate' | 'avg' | 'p99';
+const CLUSTER_COLS: DataTableColumn<import('@/lib/types').ServiceClusterStat>[] = [
+  { id: 'cluster', label: 'Cluster', sortValue: r => r.cluster,       naturalDir: 'asc', width: 220 },
+  { id: 'calls',   label: 'Calls',   sortValue: r => r.spanCount,     numeric: true,     width: 110 },
+  { id: 'errRate', label: 'Err %',   sortValue: r => r.errorRate,     numeric: true,     width: 90 },
+  { id: 'avg',     label: 'Avg',     sortValue: r => r.avgDurationMs, numeric: true,     width: 90 },
+  { id: 'p99',     label: 'P99',     sortValue: r => r.p99DurationMs, numeric: true,     width: 90 },
+];
+
 function ServiceClusterBreakdown({ service, range }: {
   service: string;
   range: import('@/lib/types').TimeRange;
 }) {
-  const [data, setData] = useState<import('@/lib/types').ServiceClusterStat[] | null | undefined>(undefined);
-  const [sortBy, setSortBy] = useState<ClusterSortKey>('calls');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+  // v0.8.116 — fetch via React Query under a key shared with
+  // ServiceLatencyHeatmap's cluster dropdown, so the two collapse into one
+  // round trip instead of issuing the same serviceClusters call twice.
+  const q = useQuery({
+    queryKey: ['service-clusters', service, from, to],
+    queryFn: () => api.serviceClusters(service, from, to),
+    enabled: !!service && from > 0,
+    staleTime: 30_000,
+  });
+  const clusters = useMemo(() => q.data?.clusters ?? [], [q.data]);
 
-  useEffect(() => {
-    setData(undefined);
-    const { from, to } = timeRangeToNs(range);
-    api.serviceClusters(service, from, to)
-      .then(r => setData(r?.clusters ?? []))
-      .catch(() => setData(null));
-  }, [service, range]);
+  // v0.8.116 — adopt the shared sortable + resizable primitive. This panel
+  // previously hand-rolled sort via ClusterTh/ClusterSortKey — the exact
+  // anti-pattern CLAUDE.md's "never hand-roll sort/resize" constraint names.
+  // Hook is unconditional + above the <2-cluster early return.
+  const dt = useDataTable<import('@/lib/types').ServiceClusterStat>({
+    storageKey: 'service-clusters',
+    columns: CLUSTER_COLS,
+    rows: clusters,
+    initialSort: { id: 'calls', dir: 'desc' },
+  });
 
-  const sorted = useMemo(() => {
-    if (!data) return data;
-    const arr = [...data];
-    arr.sort((a, b) => {
-      switch (sortBy) {
-        case 'cluster': return a.cluster.localeCompare(b.cluster);
-        case 'calls':   return a.spanCount - b.spanCount;
-        case 'errRate': return a.errorRate - b.errorRate;
-        case 'avg':     return a.avgDurationMs - b.avgDurationMs;
-        case 'p99':     return a.p99DurationMs - b.p99DurationMs;
-      }
-    });
-    return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [data, sortBy, sortDir]);
-
-  // Silent when fewer than 2 clusters — single-cluster (or
-  // zero-cluster, e.g. SDK without resource attrs) deployments
-  // don't need the panel. Loading / error states stay quiet
-  // for the same reason.
-  if (!sorted || sorted.length < 2) return null;
-
-  const toggleSort = (col: ClusterSortKey) => {
-    if (sortBy === col) {
-      setSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
-    } else {
-      setSortBy(col);
-      setSortDir(col === 'cluster' ? 'asc' : 'desc');
-    }
-  };
+  // Silent when fewer than 2 clusters — single-cluster (or zero-cluster,
+  // e.g. SDK without resource attrs) deployments don't need the panel.
+  // Loading / error states stay quiet for the same reason.
+  if (clusters.length < 2) return null;
 
   return (
     <div style={{ marginBottom: 14 }}>
@@ -1135,25 +1126,18 @@ function ServiceClusterBreakdown({ service, range }: {
       }}>
         Per-cluster breakdown <span style={{
           fontWeight: 400, color: 'var(--text3)', textTransform: 'none',
-        }}>· {sorted.length} clusters</span>
+        }}>· {clusters.length} clusters</span>
       </div>
       <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <ClusterTh col="cluster" label="Cluster" sort={sortBy} dir={sortDir} onSort={toggleSort} />
-              <ClusterTh col="calls"   label="Calls"   sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <ClusterTh col="errRate" label="Err %"   sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <ClusterTh col="avg"     label="Avg"     sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-              <ClusterTh col="p99"     label="P99"     sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-            </tr>
-          </thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} />
+          <DataTableHead dt={dt} />
           <tbody>
-            {sorted.map(c => {
+            {dt.sortedRows.map(c => {
               const errCls = c.errorRate > 5 ? 'err' : c.errorRate > 0 ? 'warn' : 'ok';
               return (
                 <tr key={c.cluster}>
-                  <td>
+                  <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <Link to={`/services?cluster=${encodeURIComponent(c.cluster)}`}
                           style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
                           title={`Filter /services to cluster ${c.cluster}`}>
@@ -1187,104 +1171,57 @@ function ServiceLatencyHeatmap({ service, range }: {
   range: import('@/lib/types').TimeRange;
 }) {
   const [data, setData] = useState<import('@/lib/types').LatencyHeatmap | null | undefined>(undefined);
-  // Same service usually runs across multiple clusters
-  // simultaneously (eu-west + eu-central + us-east as one
-  // logical fleet). We load the cluster set from the
-  // per-service breakdown endpoint that already powers the
-  // table above and let the operator pivot the heatmap to
-  // any single cluster — or "All clusters" (the merged
-  // distribution, default) which is the union view a
-  // global-latency owner cares about.
-  const [clusters, setClusters] = useState<string[]>([]);
   const [picked, setPicked] = useState<string>(''); // '' = all
-  // Collapse state — defaults open. Persisted to localStorage
-  // so an operator who'd rather hide the panel doesn't fight
-  // it on every reload. Keyed globally (not per-service) so
-  // the preference is a one-time setting.
+  // Collapse state — defaults open. Persisted to localStorage so an operator
+  // who'd rather hide the panel doesn't fight it on every reload. Keyed
+  // globally (not per-service) so the preference is a one-time setting.
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem('svc.heatmap.collapsed') === '1'; }
     catch { return false; }
   });
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
-  // Lazy-mount gate — the heatmap is below the RED chart row
-  // and the operations table, so on a wide enough viewport
-  // it's often only seen after a scroll. Until the section
-  // has been visible at least once (or sits within 200px of
-  // the viewport), the spanHeatmap fetch is deferred. Keeps
-  // the cold initial render from competing for CH bandwidth
-  // with the above-the-fold queries.
-  //
-  // Sticky: once the operator has seen the heatmap, we leave
-  // hasBeenVisible=true so subsequent scrolls / re-mounts
-  // don't toggle it back to "deferred" and re-skip fetches.
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [hasBeenVisible, setHasBeenVisible] = useState(false);
-  useEffect(() => {
-    if (hasBeenVisible) return;
-    if (!containerRef.current) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      // Old browser fallback — eagerly mount, same behaviour
-      // as before lazy-mount existed.
-      setHasBeenVisible(true);
-      return;
-    }
-    const io = new IntersectionObserver(entries => {
-      for (const e of entries) {
-        if (e.isIntersecting) {
-          setHasBeenVisible(true);
-          io.disconnect();
-          break;
-        }
-      }
-    }, {
-      // Start fetching 200px before the panel enters the
-      // viewport so the data is usually ready by the time
-      // the operator reads its top edge.
-      rootMargin: '200px',
-    });
-    io.observe(containerRef.current);
-    return () => io.disconnect();
-  }, [hasBeenVisible]);
+  // v0.8.116 — the parent already wraps this panel in <LazyMount> (mounts
+  // within 200px of the viewport), so the former in-component
+  // IntersectionObserver/hasBeenVisible gate was a redundant second lazy
+  // layer and was removed. Fetches gate on !collapsed alone.
 
-  // Pull the cluster set whenever the service or window
-  // changes. Cheap (cached server-side 30s) and keeps the
-  // dropdown in sync with whatever traffic is in the window.
-  // Gated on visibility too — no point loading the cluster
-  // list for a panel the operator hasn't scrolled to.
+  // Cluster set for the pivot dropdown — a service usually runs across several
+  // clusters at once and the operator pivots the heatmap to one (or the union
+  // "All clusters" default). Shares ServiceClusterBreakdown's query key so the
+  // two panels collapse into a single serviceClusters round trip.
+  const clustersQ = useQuery({
+    queryKey: ['service-clusters', service, from, to],
+    queryFn: () => api.serviceClusters(service, from, to),
+    enabled: !!service && from > 0 && !collapsed,
+    staleTime: 30_000,
+  });
+  const clusters = useMemo(
+    () => (clustersQ.data?.clusters ?? []).map(c => c.cluster),
+    [clustersQ.data],
+  );
+  // If the previously-picked cluster vanished from the window (window moved
+  // past its traffic), drop back to "All" instead of querying for nothing.
   useEffect(() => {
-    if (!hasBeenVisible || collapsed) return;
-    const { from, to } = timeRangeToNs(range);
-    api.serviceClusters(service, from, to)
-      .then(r => {
-        const names = (r?.clusters ?? []).map(c => c.cluster);
-        setClusters(names);
-        // If the previously-picked cluster vanished from the
-        // window (e.g. window moved past its traffic), drop
-        // back to "All" instead of querying for nothing.
-        if (picked && !names.includes(picked)) setPicked('');
-      })
-      .catch(() => setClusters([]));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [service, range, hasBeenVisible, collapsed]);
+    if (picked && !clusters.includes(picked)) setPicked('');
+  }, [clusters, picked]);
 
   useEffect(() => {
-    if (collapsed || !hasBeenVisible) return;
+    if (collapsed) return;
     setData(undefined);
-    const { from, to } = timeRangeToNs(range);
     const f: { key: string; op: string; value: string }[] = [
       { key: 'service.name', op: '=', value: service },
     ];
     if (picked) {
-      // Hit the resource-attr key directly. The OTLP ingest
-      // path materialises k8s.cluster.name as a span attr,
-      // so a single predicate is enough (no coalesce across
-      // resource + span attrs needed at query time).
+      // Hit the resource-attr key directly. The OTLP ingest path materialises
+      // k8s.cluster.name as a span attr, so a single predicate is enough (no
+      // coalesce across resource + span attrs needed at query time).
       f.push({ key: 'k8s.cluster.name', op: '=', value: picked });
     }
     api.spanHeatmap({ from, to, filters: JSON.stringify(f), buckets: 60 })
       .then(r => setData(r ?? null))
       .catch(() => setData(null));
-  }, [service, range, collapsed, picked, hasBeenVisible]);
+  }, [service, from, to, collapsed, picked]);
 
   const toggle = () => {
     const next = !collapsed;
@@ -1294,7 +1231,7 @@ function ServiceLatencyHeatmap({ service, range }: {
   };
 
   return (
-    <div ref={containerRef} style={{ marginTop: 24, marginBottom: 14 }}>
+    <div style={{ marginTop: 24, marginBottom: 14 }}>
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
       }}>
@@ -1348,26 +1285,3 @@ function ServiceLatencyHeatmap({ service, range }: {
   );
 }
 
-function ClusterTh({ col, label, sort, dir, onSort, align }: {
-  col: ClusterSortKey; label: string;
-  sort: ClusterSortKey; dir: 'asc' | 'desc';
-  onSort: (c: ClusterSortKey) => void;
-  align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        style={{ textAlign: align ?? 'left' }}
-        aria-sort={active ? (dir === 'desc' ? 'descending' : 'ascending') : 'none'}>
-      <button type="button" onClick={() => onSort(col)}
-        style={{
-          all: 'unset', display: 'inline-flex', alignItems: 'baseline',
-          gap: 4, width: '100%', cursor: 'pointer',
-          justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
-        }}>
-        {label}
-        <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-      </button>
-    </th>
-  );
-}

@@ -14,7 +14,7 @@ const SYNC_KEY = 'explore-v2';
 const PANEL_HEIGHT = 200;
 
 export const QueryPanel = memo(function QueryPanel({
-  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom,
+  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom, onExemplarClick,
 }: {
   panel: PanelData;
   mode: TSMode;
@@ -22,6 +22,7 @@ export const QueryPanel = memo(function QueryPanel({
   focusedLabel: string | null;
   zoomWindow: { from: number; to: number } | null;
   onZoom: (fromSec: number, toSec: number) => void;
+  onExemplarClick?: (traceId: string) => void;
 }) {
   return (
     <div style={{
@@ -71,6 +72,7 @@ export const QueryPanel = memo(function QueryPanel({
           hiddenLabels={hiddenLabels}
           focusedLabel={focusedLabel}
           onCursorTime={publishCursor}
+          onExemplarClick={onExemplarClick}
           onZoom={onZoom} />
       )}
     </div>

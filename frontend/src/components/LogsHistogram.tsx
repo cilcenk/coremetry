@@ -81,6 +81,9 @@ export function LogsHistogram({ range, filter }: {
   }, [range.from, range.to, filter.service, filter.search, filter.severity, filter.traceId]);
 
   const stack = useMemo(() => buildStack(data ?? []), [data]);
+  // x-axis time ticks (unix ns → clock). Hooks must precede the early
+  // returns below, so compute alongside the stack.
+  const ticks = useMemo(() => axisTicks(stack.times), [stack.times]);
 
   if (data === undefined) {
     return <div style={{ height: 80, marginBottom: 10 }} />;
@@ -90,7 +93,7 @@ export function LogsHistogram({ range, filter }: {
   }
 
   const W = 1000, H = 80;
-  const padT = 6, padB = 14, padL = 4, padR = 4;
+  const padT = 6, padB = 4, padL = 4, padR = 4;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
@@ -117,14 +120,25 @@ export function LogsHistogram({ range, filter }: {
       borderRadius: 6, padding: 8, marginBottom: 10,
       display: 'flex', alignItems: 'flex-start', gap: 12,
     }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
-        preserveAspectRatio="none"
-        style={{ display: 'block', flex: 1 }}>
-        {stack.bands.map((band, i) => (
-          <path key={band.name} d={bandPaths[i]}
-            fill={colorFor(band.name)} opacity={0.85} />
-        ))}
-      </svg>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
+          preserveAspectRatio="none"
+          style={{ display: 'block', width: '100%' }}>
+          {stack.bands.map((band, i) => (
+            <path key={band.name} d={bandPaths[i]}
+              fill={colorFor(band.name)} opacity={0.85} />
+          ))}
+        </svg>
+        {ticks.length > 0 && (
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            marginTop: 3, fontSize: 10, color: 'var(--text3)',
+            fontFamily: 'ui-monospace, monospace',
+          }}>
+            {ticks.map((t, i) => <span key={i}>{t}</span>)}
+          </div>
+        )}
+      </div>
       <div style={{
         display: 'flex', flexDirection: 'column', gap: 2,
         fontSize: 11, minWidth: 100,
@@ -155,6 +169,32 @@ function pickBucket(range: { from?: number; to?: number }): number {
   if (spanSec < 60 * 60 * 6) return 60;    // <6h     → 1m
   if (spanSec < 60 * 60 * 24) return 5*60; // <24h    → 5m
   return 15 * 60;                          // ≥24h    → 15m
+}
+
+// axisTicks — up to 6 evenly-spaced bucket timestamps (unix ns)
+// formatted as clock labels for the x-axis. Seconds are shown only
+// for sub-10-minute windows so a 5s-bucket view doesn't collapse to
+// a row of identical HH:MM. Rendered as HTML below the SVG (the SVG
+// is non-uniformly stretched, which would distort in-svg <text>).
+function axisTicks(times: number[]): string[] {
+  if (times.length === 0) return [];
+  const spanSec = (times[times.length - 1] - times[0]) / 1e9;
+  const withSec = spanSec > 0 && spanSec < 600;
+  const N = Math.min(6, times.length);
+  const out: string[] = [];
+  for (let k = 0; k < N; k++) {
+    const idx = Math.round((k * (times.length - 1)) / Math.max(1, N - 1));
+    out.push(fmtClock(times[idx], withSec));
+  }
+  return out;
+}
+
+function fmtClock(ns: number, withSec: boolean): string {
+  const d = new Date(ns / 1e6);
+  const p = (n: number) => n.toString().padStart(2, '0');
+  return withSec
+    ? `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+    : `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // buildStack turns the per-severity series into a cumulative

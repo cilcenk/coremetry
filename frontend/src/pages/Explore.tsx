@@ -34,6 +34,7 @@ import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
 import { useExploreQueries, useExploreExemplars, useExploreOverlays } from './explore/useExploreQueries';
 import { PanelStack, buildPanels } from './explore/PanelStack';
 import { GroupTable } from './explore/GroupTable';
+import { SummaryViz } from './explore/SummaryViz';
 import { QueryRow } from './explore/QueryRow';
 import { FormulaRow } from './explore/FormulaRow';
 import { VizRail } from './explore/VizRail';
@@ -649,13 +650,19 @@ name ~ checkout`}
                   </div>
                 )}
                 {panels.length === 0 && anyLoading && <Spinner />}
-                <PanelStack panels={panels}
-                  viz={debounced.viz}
-                  hiddenKeys={hiddenKeys}
-                  focusKey={focusKey}
-                  zoomWindow={zoomWindow}
-                  onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
-                  onExemplarClick={(id) => navigate(`/trace?id=${id}`)} />
+                {(debounced.viz === 'line' || debounced.viz === 'area' || debounced.viz === 'bars') && (
+                  <PanelStack panels={panels}
+                    viz={debounced.viz}
+                    hiddenKeys={hiddenKeys}
+                    focusKey={focusKey}
+                    zoomWindow={zoomWindow}
+                    onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
+                    onExemplarClick={(id) => navigate(`/trace?id=${id}`)} />
+                )}
+                {(debounced.viz === 'stat' || debounced.viz === 'toplist') && (
+                  <SummaryViz panels={panels} mode={debounced.viz} />
+                )}
+                {/* 'table' viz: no primary panel — the GroupTable below IS the view. */}
                 <GroupTable panels={panels}
                   hiddenKeys={hiddenKeys}
                   onToggleHidden={toggleHidden}

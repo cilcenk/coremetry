@@ -16,11 +16,11 @@ import { metricQuery, type MetricQuery, type MetricAgg } from '@/lib/metricQuery
 // 'metric' reads a catalogue metric via api.metricQuery.
 export type QuerySource = 'span' | 'metric';
 
-// Phase-2 viz set — line/area/bars render on TimeSeriesPanel; heatmap keeps
-// the existing LatencyHeatmap path (driven by query A). toplist / stat /
-// table land in Phase 4.
-export type ExploreViz = 'line' | 'area' | 'bars' | 'heatmap';
-export const EXPLORE_VIZ: ExploreViz[] = ['line', 'area', 'bars', 'heatmap'];
+// Viz set — line/area/bars render on TimeSeriesPanel; stat/toplist render the
+// per-series summary (SummaryViz, Phase 4); table is the GroupTable alone;
+// heatmap keeps the LatencyHeatmap path (driven by query A).
+export type ExploreViz = 'line' | 'area' | 'bars' | 'stat' | 'toplist' | 'table' | 'heatmap';
+export const EXPLORE_VIZ: ExploreViz[] = ['line', 'area', 'bars', 'stat', 'toplist', 'table', 'heatmap'];
 
 // Aggregations differ per source (plan ground-truth #10): the metric query
 // API supports avg|sum|min|max|last|p50|p95|p99; span signals add

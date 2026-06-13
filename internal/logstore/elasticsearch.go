@@ -174,8 +174,9 @@ type ESConfig struct {
 	Password  string
 	// APIKey is the base64 "id:api_key" string — the `encoded` field
 	// returned by POST /_security/api_key. Takes precedence over basic
-	// auth: if both APIKey and Username are set, the underlying client
-	// sends an Authorization: ApiKey ... header and ignores user/pass.
+	// auth: when it's set, NewES drops Username/Password entirely (see
+	// resolveESAuth) so an api-key install sends ONLY an
+	// Authorization: ApiKey header — never basic-auth creds alongside it.
 	APIKey             string
 	InsecureSkipVerify bool
 
@@ -237,6 +238,18 @@ type ESStore struct {
 	idxCache esIndexCache
 }
 
+// resolveESAuth selects exactly ONE auth method for the ES client. API key
+// takes precedence over basic auth — when an API key is configured we drop
+// username/password so an api-key install never also carries basic-auth
+// credentials (operator-reported: both were being passed at once). At most one
+// of (apiKey) or (username+password) comes back non-empty.
+func resolveESAuth(cfg ESConfig) (apiKey, username, password string) {
+	if cfg.APIKey != "" {
+		return cfg.APIKey, "", ""
+	}
+	return "", cfg.Username, cfg.Password
+}
+
 func NewES(cfg ESConfig) (*ESStore, error) {
 	cfg.defaults()
 
@@ -244,11 +257,15 @@ func NewES(cfg ESConfig) (*ESStore, error) {
 	if cfg.InsecureSkipVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	// Exactly ONE auth method reaches the client — API key wins and clears
+	// user/pass, so a request never carries both an ApiKey header and
+	// basic-auth credentials.
+	apiKey, username, password := resolveESAuth(cfg)
 	cli, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses: cfg.Addresses,
-		Username:  cfg.Username,
-		Password:  cfg.Password,
-		APIKey:    cfg.APIKey,
+		Username:  username,
+		Password:  password,
+		APIKey:    apiKey,
 		Transport: transport,
 	})
 	if err != nil {

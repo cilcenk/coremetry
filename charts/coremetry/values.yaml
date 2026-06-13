@@ -350,6 +350,30 @@ logs:
     insecureSkipVerify: false # true only for self-signed certs in dev/test
     # password / apiKey come from the Secret (secrets.esPassword,
     # secrets.esApiKey) so they don't end up in `helm get values` output.
+    #
+    # LEAST-PRIVILEGE / READ-ONLY ES USER. Coremetry only READS from
+    # Elasticsearch — it never indexes, bulk-writes, creates indices, or edits
+    # mappings (the write path is ClickHouse). The entire query surface is:
+    #   _search · _msearch · _terms_enum · _eql/search · _sql · PIT open+close
+    #       → the index `read` privilege
+    #   _mapping · _ilm/explain · field discovery
+    #       → the index `view_index_metadata` privilege
+    #   _cat/indices (resolve the dated indices behind the pattern)
+    #       → the cluster `monitor` privilege (read-only monitoring, not a write)
+    # Scope the ES user / API key to exactly this — nothing more is needed:
+    #
+    #   POST /_security/role/coremetry_logs_ro
+    #   { "cluster": ["monitor"],
+    #     "indices": [{ "names": ["logs-otel-*"],          # match .index below
+    #                   "privileges": ["read", "view_index_metadata"] }] }
+    #
+    # API-key form (preferred — scoped + rotatable; feeds secrets.esApiKey):
+    #   POST /_security/api_key
+    #   { "name": "coremetry-logs-ro",
+    #     "role_descriptors": { "coremetry_logs_ro": {
+    #       "cluster": ["monitor"],
+    #       "indices": [{ "names": ["logs-otel-*"],
+    #                     "privileges": ["read", "view_index_metadata"] }] } } }
 
 # Redis (cache + distributed lock). Setting `enabled: true` creates a small
 # in-cluster Deployment good for dev/small prod. For high-throughput

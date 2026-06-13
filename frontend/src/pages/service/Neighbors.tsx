@@ -96,6 +96,8 @@ export function Neighbors({ service, range, from, to }: {
       <div className="ov-card-b">
         {topoQ.isLoading ? (
           <div style={{ display: 'grid', placeItems: 'center', padding: 24 }}><Spinner /></div>
+        ) : topoQ.isError ? (
+          <div className="nbr-empty" style={{ textAlign: 'center', padding: 16, color: 'var(--err)' }}>Failed to load neighbors.</div>
         ) : total === 0 ? (
           <div className="nbr-empty" style={{ textAlign: 'center', padding: 16 }}>No neighbors in this window.</div>
         ) : (

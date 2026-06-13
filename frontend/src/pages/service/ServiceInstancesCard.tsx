@@ -96,6 +96,8 @@ export function ServiceInstancesCard({ service, since }: { service: string; sinc
         {/* Per-pod rows */}
         {podQ.isLoading ? (
           <Spinner />
+        ) : podQ.isError ? (
+          <div style={{ color: 'var(--err)', fontSize: 13 }}>Failed to load instance metrics.</div>
         ) : pods.length === 0 ? (
           <div style={{ color: 'var(--text2)', fontSize: 13 }}>No per-pod metrics for {service} in this window.</div>
         ) : (

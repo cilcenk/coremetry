@@ -10,6 +10,7 @@ import { OpsCard, DbCard } from './OverviewTables';
 import { ServiceInstancesCard } from './ServiceInstancesCard';
 import { MetricPanel } from '@/components/MetricPanel';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
+import { Spinner } from '@/components/Spinner';
 import { metricQuery, type MetricQuery } from '@/lib/metricQuery';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
@@ -108,9 +109,12 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
 // comes from the first non-empty line — all aggs share the WHERE + step so
 // the points align index-for-index.
 interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
-function ChartCard({ title, lines, unit, mode = 'line', deploy }: {
+function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready' }: {
   title: string; lines: ChartLine[]; unit: string;
   mode?: 'line' | 'area' | 'stacked'; deploy?: { sec: number; label: string } | null;
+  // RED series fetch state — distinguishes loading/error from a genuinely
+  // empty window so a failed metric fetch doesn't masquerade as "No data".
+  status?: 'loading' | 'error' | 'ready';
 }) {
   const times = useMemo(() => {
     const base = lines.find(l => (l.series[0]?.points ?? []).length)?.series[0]?.points ?? [];
@@ -133,8 +137,11 @@ function ChartCard({ title, lines, unit, mode = 'line', deploy }: {
       </div>
       <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
         {times.length < 2 ? (
-          <div style={{ height: 150, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
-            No data in this window
+          <div style={{ height: 150, display: 'grid', placeItems: 'center',
+            color: status === 'error' ? 'var(--err)' : 'var(--text3)', fontSize: 12 }}>
+            {status === 'loading' ? <Spinner />
+              : status === 'error' ? 'Failed to load metrics'
+              : 'No data in this window'}
           </div>
         ) : (
           <OverviewChart times={times} series={ovSeries} unit={unit} mode={mode}
@@ -185,6 +192,10 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
     staleTime: 30_000,
   });
   const s = seriesQ.data;
+  // RED fetch state for the chart cards (KPI tiles render their numbers from
+  // `info` immediately, so they don't gate on this).
+  const redStatus: 'loading' | 'error' | 'ready' =
+    seriesQ.isLoading ? 'loading' : seriesQ.isError ? 'error' : 'ready';
 
   const deploysQ = useServiceDeploys(service, from, to);
   // The single deploy marker drawn on the charts = the latest deploy inside
@@ -259,17 +270,17 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
           its viz:'line' descriptor through the compact MetricPanel doorway. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} lines={[
+          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={redStatus} lines={[
             { series: s?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
             { series: s?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
             { series: s?.p99 ?? [], color: 'var(--err)', label: 'P99' },
           ]} />
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>
-          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} lines={throughputBands} />
+          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} lines={throughputBands} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} lines={[
+          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} lines={[
             { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
         </MetricPanel>

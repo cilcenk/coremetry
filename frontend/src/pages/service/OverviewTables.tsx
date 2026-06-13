@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { Sparkline } from '@/components/Sparkline';
+import { Spinner } from '@/components/Spinner';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { OperationSummary, DBQueryStat, TimeRange } from '@/lib/types';
 
@@ -102,9 +103,15 @@ export function DbCard({ service, from, to }: { service: string; from: number; t
   return (
     <div className="card">
       <div className="ov-card-h"><h3>Top DB statements</h3></div>
-      {rows.length === 0 ? (
+      {dbQ.isLoading ? (
+        <div className="ov-card-b" style={{ display: 'grid', placeItems: 'center', padding: 16 }}><Spinner /></div>
+      ) : dbQ.isError ? (
+        <div className="ov-card-b" style={{ color: 'var(--err)', fontSize: 13 }}>
+          Failed to load DB statements.
+        </div>
+      ) : rows.length === 0 ? (
         <div className="ov-card-b" style={{ color: 'var(--text2)', fontSize: 13 }}>
-          {dbQ.isLoading ? 'Loading…' : `No db.statement spans for ${service} in this window.`}
+          No db.statement spans for {service} in this window.
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>

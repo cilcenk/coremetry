@@ -1,722 +1,184 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Combobox } from '@/components/Combobox';
-import { ServicePicker } from '@/components/ServicePicker';
-import { MetricNamePicker } from '@/components/MetricNamePicker';
-import { FilterBuilder } from '@/components/FilterBuilder';
-import { MultiLineChart } from '@/components/MultiLineChart';
-import { HistogramHeatmap } from '@/components/HistogramHeatmap';
-import { EventMarkers } from '@/components/EventMarkers';
-import { DrillButton } from '@/components/DrillButton';
-import { ShareButton } from '@/components/ShareButton';
 import { Button } from '@/components/ui/Button';
-import { MetricPanel } from '@/components/MetricPanel';
-import { metricQuery, type MetricAgg, type MetricViz } from '@/lib/metricQuery';
+import { MetricQueryEditor } from '@/components/viz/MetricQueryEditor';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDebouncedValue } from '@/lib/perf/useDebouncedValue';
 import { api } from '@/lib/api';
-import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { decodeRange } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
-import { classifyMetric, type MetricTemplate } from '@/lib/metricTemplates';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
-import { MetricsExplorer } from './metrics/MetricsExplorer';
-import { MetricQueryEditor } from '@/components/viz/MetricQueryEditor';
+import { classifyMetric } from '@/lib/metricTemplates';
+import { metricCatalogueHref } from './explore/urlCodec';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { Service, MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, HistogramResult } from '@/lib/types';
+import type { MetricInfo, TimeRange } from '@/lib/types';
 
-// Per-series legend stats row + columns for the shared DataTable.
-interface MetricSummaryRow { key: string[]; last: number; avg: number; max: number; min: number; count: number; }
-const METRIC_SUMMARY_COLS: DataTableColumn<MetricSummaryRow>[] = [
-  { id: 'series', label: 'Series', sortValue: r => r.key.join(' / '), naturalDir: 'asc', width: 240 },
-  { id: 'last', label: 'Last',  sortValue: r => r.last,  numeric: true, width: 110 },
-  { id: 'min',  label: 'Min',   sortValue: r => r.min,   numeric: true, width: 110 },
-  { id: 'avg',  label: 'Avg',   sortValue: r => r.avg,   numeric: true, width: 110 },
-  { id: 'max',  label: 'Max',   sortValue: r => r.max,   numeric: true, width: 110 },
-  { id: 'count', label: 'Buckets', sortValue: r => r.count, numeric: true, width: 100 },
+// Metrics — v0.8.x Phase-5 collapse. /metrics is now a CATALOGUE: a
+// server-side-searchable, sortable index of every metric name (name / type /
+// unit / description). Picking a row opens it in Explore as a real builder
+// query A (source=metric) via metricCatalogueHref — Explore is the one place a
+// metric is actually charted, so the old in-page builder + dual-mode explorer
+// are gone. Two escape valves remain:
+//   • ?editor=1 — the full MetricQueryEditor as a page (power users).
+//   • legacy /metrics?metric=&service=&agg= bookmarks / saved views collapse
+//     to the canonical /explore?q= seed (Navigate replace).
+
+type MGroup = 'http' | 'rpc' | 'runtime' | 'db' | 'messaging' | 'other';
+const GROUPS: { key: MGroup | 'all'; label: string }[] = [
+  { key: 'all', label: 'All' }, { key: 'http', label: 'HTTP' }, { key: 'rpc', label: 'RPC' },
+  { key: 'runtime', label: 'Runtime' }, { key: 'db', label: 'Database' }, { key: 'messaging', label: 'Messaging' },
 ];
 
-const AGG_OPTIONS = [
-  { v: 'avg',  label: 'Average' },
-  { v: 'sum',  label: 'Sum' },
-  { v: 'last', label: 'Last' },
-  { v: 'min',  label: 'Min' },
-  { v: 'max',  label: 'Max' },
-  { v: 'p50',  label: 'P50' },
-  { v: 'p95',  label: 'P95' },
-  { v: 'p99',  label: 'P99' },
-];
+// Classify a metric into a facet group by its OTel name prefix (moved verbatim
+// from the retired pages/metrics/MetricsExplorer).
+function metricGroup(name: string): MGroup {
+  const n = name.toLowerCase();
+  if (n.startsWith('http')) return 'http';
+  if (n.startsWith('rpc')) return 'rpc';
+  if (n.startsWith('db') || n.startsWith('database') || /(redis|oracle|postgres|mysql|mongo)/.test(n)) return 'db';
+  if (n.startsWith('messaging') || /(kafka|rabbit|queue|consumer)/.test(n)) return 'messaging';
+  if (/^(jvm|process|go\.|system|runtime|dotnet|nodejs|python)/.test(n)) return 'runtime';
+  return 'other';
+}
 
-// v0.5.259 — sub-10s steps for short-window deep-dives. 1s + 5s
-// expose the OTel point-precision metrics actually carry — at
-// ingest rate ~10/sec per metric we were artificially folding
-// 10 samples into one bucket on a 10min view.
-const STEP_OPTIONS = [
-  { v: 0,    label: 'Auto' },
-  { v: 1,    label: '1 s' },
-  { v: 5,    label: '5 s' },
-  { v: 10,   label: '10 s' },
-  { v: 30,   label: '30 s' },
-  { v: 60,   label: '1 min' },
-  { v: 300,  label: '5 min' },
-  { v: 1800, label: '30 min' },
-];
-
-const SUGGESTED_GROUPBY = [
-  'host.name', 'service.name',
-  'resource.host.name', 'resource.deployment.environment',
-  'resource.service.instance.id', 'resource.k8s.pod.name', 'resource.k8s.node.name',
-  'http.method', 'http.route', 'http.status_code',
-  'db.system',
+const CATALOG_COLS: DataTableColumn<MetricInfo>[] = [
+  { id: 'name', label: 'Metric',      sortValue: m => m.name,             naturalDir: 'asc', width: 360 },
+  { id: 'type', label: 'Type',        sortValue: m => m.type,             naturalDir: 'asc', width: 120 },
+  { id: 'unit', label: 'Unit',        sortValue: m => m.unit || '',       naturalDir: 'asc', width: 100 },
+  { id: 'desc', label: 'Description', sortValue: m => m.description || '', naturalDir: 'asc', width: 460 },
 ];
 
 export default function MetricsPage() {
-  // v0.6.10 — bug-fix: Services sparkline click and similar
-  // drill-ins navigate here with `?service=X&metric=Y&range=Z`.
-  // Pre-v0.6.10 these params were ignored and the page opened
-  // empty. Now we seed the initial state from them so the
-  // drill lands on a populated chart immediately.
-  //
-  // setSearchParams is intentionally NOT wired back from every
-  // state change — keeping the URL writes scoped to deep-link
-  // entry only avoids a thrash of replaceState() calls every
-  // time the operator twiddles agg/step/groupBy. Use ShareButton
-  // for the explicit "copy this state" affordance.
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  const editor = searchParams.get('editor') === '1';
+  const legacyMetric = searchParams.get('metric') ?? '';
+
   const [range, setRange] = useState<TimeRange>(() =>
     decodeRange(searchParams.get('range') ?? storedRangeString(), { preset: '30m' }));
-  // Explorer (the design-handoff redesign) is the default surface; the
-  // advanced query-builder is one toggle away.
-  const [mode, setMode] = useState<'explorer' | 'editor' | 'builder'>('explorer');
-  // v0.5.198 — `services` eager cache dropped. FilterBuilder
-  // server-fetches service.name values via /api/attribute-values?q=
-  // when the operator types in the value field; the ServicePicker
-  // up top is already debounced server-side. The eager all-services
-  // load at billion-span scale was the page's biggest TTFI cost.
-  // Metadata for the currently-picked metric (unit, type,
-  // description). Populated by MetricNamePicker's onPick
-  // callback so we don't have to eager-fetch the entire metric
-  // catalogue just to display "ms · gauge · request_duration".
-  // v0.5.181 — previously this was derived from a full
-  // metricNames[] list eager-loaded on mount, which at 10k+
-  // metrics dominated the page's TTFI.
-  const [currentMeta, setCurrentMeta] = useState<MetricInfo | null>(null);
-  // v0.5.487 — template auto-applied to the current metric. null
-  // means the operator typed the metric directly (no MetricInfo
-  // arrived) or cleared the template chip.
-  const [appliedTemplate, setAppliedTemplate] = useState<MetricTemplate | null>(null);
-  const [service, setService] = useState(() => searchParams.get('service') || '');
-  const [metric, setMetric] = useState(() => searchParams.get('metric') || '');
-  const [agg, setAgg] = useState(() => searchParams.get('agg') || 'avg');
-  const [step, setStep] = useState(0);
-  const [filters, setFilters] = useState<FilterExpr[]>([]);
-  const [groupBy, setGroupBy] = useState<string[]>([]);
-  // v0.6.18 — SLO / alert threshold overlay. Operator types a
-  // value; chart draws a dashed horizontal line + a faint band
-  // above. Auto-populated when a known OTel-template metric is
-  // picked (e.g. http.server.request.duration → 1000ms). null =
-  // no overlay.
-  const [threshold, setThreshold] = useState<number | null>(null);
-  // v0.5.484 — SRE incident-debug toolkit:
-  // compare = overlay the same series shifted back N hours.
-  // logScale = uPlot distr:3 for orders-of-magnitude metrics.
-  type CompareMode = 'off' | '1h' | '24h' | '7d' | 'prev';
-  const [compare, setCompare] = useState<CompareMode>('off');
-  const [logScale, setLogScale] = useState(false);
-  const [compareSeries, setCompareSeries] = useState<SpanMetricSeries[] | null>(null);
-  const [groupDraft, setGroupDraft] = useState('');
-  const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
-  // v0.6.56 — explicit-histogram view. When the picked metric is a
-  // histogram instrument we additionally fetch the bucket heatmap and
-  // render it in place of the line chart.
-  const [histData, setHistData] = useState<HistogramResult | null | undefined>(undefined);
-  const [histMode, setHistMode] = useState<'heatmap' | 'volume' | 'percentile'>('heatmap');
+  const [search, setSearch] = useState('');
+  const [facet, setFacet] = useState<MGroup | 'all'>('all');
 
-  // Suggestion sources for filters and group-by
-  const [hostValues, setHostValues] = useState<string[]>([]);
-  const [instanceValues, setInstanceValues] = useState<string[]>([]);
+  // Legacy deep-link → canonical Explore seed. Computed pre-render; the
+  // Navigate return sits AFTER every hook so rules-of-hooks holds.
+  const redirectTo = !editor && legacyMetric
+    ? metricCatalogueHref(legacyMetric, {
+        service: searchParams.get('service') || undefined,
+        agg: searchParams.get('agg') || undefined,
+      }) + (searchParams.get('range') ? `&range=${encodeURIComponent(searchParams.get('range')!)}` : '')
+    : null;
 
-  // Service swap → metric becomes stale. Clear the selection so
-  // the operator picks fresh from the new service's catalog
-  // rather than seeing data for the wrong service via a metric
-  // that doesn't apply.
-  useEffect(() => {
-    setMetric('');
-    setCurrentMeta(null);
-    setAppliedTemplate(null);
-    setThreshold(null);
-  }, [service]); // eslint-disable-line react-hooks/exhaustive-deps
+  // SERVER-SIDE search (scale-audit #10) — debounced, bounded to 200 rows. The
+  // eager api.metricNames('') full-catalogue load is fatal at 10k+ names.
+  const dq = useDebouncedValue(search.trim(), 250);
+  const catalogQ = useQuery({
+    queryKey: ['metric-catalog', dq],
+    queryFn: () => api.metricNamesSearch('', dq || undefined, 200, 0),
+    staleTime: 60_000,
+    enabled: !redirectTo && !editor,
+  });
+  const catalog = useMemo<MetricInfo[]>(() => catalogQ.data?.names ?? [], [catalogQ.data]);
+  const hasMore = catalogQ.data?.hasMore ?? false;
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const m of catalog) { const g = metricGroup(m.name); c[g] = (c[g] ?? 0) + 1; }
+    return c;
+  }, [catalog]);
+  const filtered = useMemo(
+    () => catalog.filter(m => facet === 'all' || metricGroup(m.name) === facet),
+    [catalog, facet]);
 
-  // v0.5.487 — apply the OTel semconv template to a freshly-
-  // picked metric. Only stomps defaults: agg jumps to the
-  // template's choice unconditionally (the operator picked the
-  // metric, they want it set up right), groupBy only fills when
-  // empty so we don't clobber an in-flight slice operation.
-  const onPickMetric = (info: MetricInfo) => {
-    setCurrentMeta(info);
-    const tpl = classifyMetric(info);
-    setAppliedTemplate(tpl);
-    if (tpl) {
-      setAgg(tpl.agg);
-      if (tpl.groupBy && tpl.groupBy.length > 0 && groupBy.length === 0) {
-        setGroupBy(tpl.groupBy);
-      }
-      // v0.6.18 — auto-populate the threshold overlay from the
-      // template's suggestion (e.g. HTTP server latency → 1000ms).
-      // Operator can clear or override via the input below the
-      // chart. Only sets when the operator hasn't already typed
-      // their own value.
-      if (tpl.threshold && threshold === null) {
-        setThreshold(tpl.threshold.value);
-      }
-    }
-  };
-
-  // Pull dimension values for the current metric (host / instance) for combobox
-  useEffect(() => {
-    if (!metric) { setHostValues([]); setInstanceValues([]); return; }
-    api.metricLabels(metric, 'host.name').then(v => setHostValues(v ?? [])).catch(() => {});
-    api.metricLabels(metric, 'resource.service.instance.id').then(v => setInstanceValues(v ?? [])).catch(() => {});
-  }, [metric]);
-
-  // v0.5.481 — lifted out of useEffect so EventMarkers can use
-  // the same resolved bounds without a second timeRangeToNs
-  // call (which is a stable-references trap because of now()).
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
-
-  // Auto-switch to the histogram heatmap when the picked metric is an
-  // explicit-histogram instrument (MetricInfo.type mirrors the OTel
-  // instrument kind). Declared before the effects + render that depend on
-  // it; gauge/sum/etc. stay on the line chart.
-  const isHistogram = currentMeta?.name === metric && currentMeta?.type === 'histogram';
-
-  useEffect(() => {
-    if (!metric) { setSeries(null); return; }
-    setSeries(undefined);
-    api.metricQuery({
-      name: metric,
-      service: service || undefined,
-      agg,
-      filters: filters.length ? JSON.stringify(filters) : undefined,
-      groupBy: groupBy.join(',') || undefined,
-      from, to, step: step || undefined,
-    }).then(r => setSeries(r ?? [])).catch(() => setSeries(null));
-  }, [metric, service, agg, filters, groupBy, step, from, to]);
-
-  // v0.6.56 — histogram bucket fetch, only when the picked metric is a
-  // histogram. Deps mirror the line-chart effect minus agg/groupBy, which
-  // the heatmap ignores (it aggregates all matching series into one).
-  useEffect(() => {
-    if (!metric || !isHistogram) { setHistData(undefined); return; }
-    setHistData(undefined);
-    let cancelled = false;
-    api.metricHistogram({
-      name: metric,
-      service: service || undefined,
-      filters: filters.length ? JSON.stringify(filters) : undefined,
-      from, to, step: step || undefined,
-    }).then(r => { if (!cancelled) setHistData(r ?? null); })
-      .catch(() => { if (!cancelled) setHistData(null); });
-    return () => { cancelled = true; };
-  }, [metric, service, filters, step, from, to, isHistogram]);
-
-  // v0.5.484 — compare-period fetch. Off → null. 1h/24h/7d use
-  // fixed offsets; 'prev' uses the matched window (to - from)
-  // so a 30min window compares to 30min before that.
-  const compareOffsetNs = useMemo(() => {
-    switch (compare) {
-      case '1h':  return 60 * 60 * 1_000_000_000;
-      case '24h': return 24 * 60 * 60 * 1_000_000_000;
-      case '7d':  return 7 * 24 * 60 * 60 * 1_000_000_000;
-      case 'prev': return to - from;
-      default: return 0;
-    }
-  }, [compare, from, to]);
-
-  useEffect(() => {
-    if (!metric || compare === 'off' || compareOffsetNs <= 0) {
-      setCompareSeries(null);
-      return;
-    }
-    let cancelled = false;
-    api.metricQuery({
-      name: metric,
-      service: service || undefined,
-      agg,
-      filters: filters.length ? JSON.stringify(filters) : undefined,
-      groupBy: groupBy.join(',') || undefined,
-      from: from - compareOffsetNs,
-      to: to - compareOffsetNs,
-      step: step || undefined,
-    })
-      .then(r => { if (!cancelled) setCompareSeries(r ?? []); })
-      .catch(() => { if (!cancelled) setCompareSeries(null); });
-    return () => { cancelled = true; };
-  }, [metric, service, agg, filters, groupBy, step, from, to, compare, compareOffsetNs]);
-
-  // Display meta only when the picker handed us metadata for
-  // the currently-typed metric — typing an arbitrary name
-  // before picking shows no meta, which is the right signal.
-  const meta = currentMeta && currentMeta.name === metric ? currentMeta : null;
-  const unit = meta?.unit ?? '';
-
-  const addGroupKey = (k: string) => {
-    const t = k.trim();
-    if (!t || groupBy.includes(t)) return;
-    setGroupBy([...groupBy, t]);
-    setGroupDraft('');
-  };
-  const removeGroupKey = (k: string) => setGroupBy(groupBy.filter(x => x !== k));
-
-  // Per-series stats for the legend table
-  const summary = useMemo(() => (series ?? []).map(s => {
-    const vs = s.points.map(p => p.value).filter(v => v != null && !isNaN(v));
-    if (vs.length === 0) return { key: s.groupKey, last: 0, avg: 0, max: 0, min: 0, count: 0 };
-    return {
-      key: s.groupKey,
-      last: vs[vs.length - 1],
-      avg: vs.reduce((a, b) => a + b, 0) / vs.length,
-      max: Math.max(...vs),
-      min: Math.min(...vs),
-      count: vs.length,
-    };
-  }), [series]);
-
-  // Shared sortable + resizable legend table (unconditional hook).
-  const summaryDt = useDataTable<MetricSummaryRow>({
-    storageKey: 'metrics-summary',
-    columns: METRIC_SUMMARY_COLS,
-    rows: summary,
+  const dt = useDataTable<MetricInfo>({
+    storageKey: 'metric-catalog',
+    columns: CATALOG_COLS,
+    rows: filtered,
+    initialSort: { id: 'name', dir: 'asc' },
   });
 
-  // v0.5.484 — window-wide aggregate for the stat tiles. Across
-  // ALL series + ALL points in the visible window. delta is the
-  // last value vs the compare-period equivalent (when compare
-  // is on) — gives SREs "is this drifting?" at a glance.
-  const stats = useMemo(() => {
-    const all: number[] = [];
-    const lasts: number[] = [];
-    for (const s of series ?? []) {
-      const vs = s.points.map(p => p.value).filter(v => v != null && !isNaN(v));
-      all.push(...vs);
-      if (vs.length > 0) lasts.push(vs[vs.length - 1]);
-    }
-    if (all.length === 0) return null;
-    const sorted = all.slice().sort((a, b) => a - b);
-    const pct = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
-    const current = lasts.length > 0
-      ? lasts.reduce((a, b) => a + b, 0) / lasts.length
-      : sorted[sorted.length - 1];
-    // Compare-window equivalent for delta calculation.
-    let compareCurrent: number | null = null;
-    if (compareSeries) {
-      const cLast: number[] = [];
-      for (const s of compareSeries) {
-        const vs = s.points.map(p => p.value).filter(v => v != null && !isNaN(v));
-        if (vs.length > 0) cLast.push(vs[vs.length - 1]);
-      }
-      if (cLast.length > 0) {
-        compareCurrent = cLast.reduce((a, b) => a + b, 0) / cLast.length;
-      }
-    }
-    return {
-      current,
-      min: sorted[0],
-      max: sorted[sorted.length - 1],
-      avg: sorted.reduce((a, b) => a + b, 0) / sorted.length,
-      p50: pct(0.50),
-      p99: pct(0.99),
-      compareCurrent,
-    };
-  }, [series, compareSeries]);
+  if (redirectTo) return <Navigate replace to={redirectTo} />;
 
-  // Range encoded as a `custom:fromMs-toMs` string so the
-  // DrillButton's TimeRange propagation lands on /traces with
-  // the SAME window the operator is looking at. The chart's
-  // resolved bounds, not the picker's preset, drive this.
-  const customRange: TimeRange = useMemo(() => ({
-    preset: 'custom',
-    fromMs: Math.floor(from / 1_000_000),
-    toMs:   Math.floor(to / 1_000_000),
-  }), [from, to]);
-
-  // "Every metric is a doorway" (Phase B demo) — the live builder state as a
-  // MetricQuery descriptor. This is the SAME object the MetricPanel turns into
-  // a deep link, so clicking the chart / picking Explore round-trips this exact
-  // query into the Explorer. The builder's agg set is a superset of the
-  // descriptor's; last/min/max have no spanmetrics analogue, so they project to
-  // avg for the doorway (the closest centre-of-mass agg the Explorer supports).
-  const panelMq = useMemo(() => {
-    const aggMap: Record<string, MetricAgg> = {
-      avg: 'avg', sum: 'sum', last: 'avg', min: 'avg', max: 'avg',
-      p50: 'p50', p95: 'p95', p99: 'p99',
-    };
-    const filterRecord: Record<string, string> = {};
-    if (service) filterRecord['service.name'] = service;
-    for (const f of filters) {
-      const v = f.v?.[0];
-      if (f.k && v != null && v !== '') filterRecord[f.k] = v;
-    }
-    return metricQuery({
-      source: 'spanmetrics',
-      metric: metric || 'metric',
-      agg: aggMap[agg] ?? 'avg',
-      filters: filterRecord,
-      groupBy: groupBy.length ? groupBy : undefined,
-      viz: 'line' as MetricViz,
-      step: step ? String(step) : undefined,
-      range,
-    });
-  }, [metric, agg, service, filters, groupBy, step, range]);
+  // classifyMetric picks the default agg (e.g. p99 for a histogram) so the
+  // chart lands right; metricCatalogueHref encodes it into the ?q= seed.
+  const openMetric = (m: MetricInfo) =>
+    navigate(metricCatalogueHref(m.name, { agg: classifyMetric(m)?.agg }));
 
   return (
     <>
       <Topbar title="Metrics" range={range} onRangeChange={setRange} />
       <div id="content">
-        {/* Explorer (default — the design-handoff redesign: left catalog +
-            focused Grafana-grade chart + sparkline grid) is the primary
-            surface. The advanced query editor / builder sit one toggle away. */}
-        <div className="row gap-3" style={{ marginBottom: 12 }}>
-          <div className="segmented">
-            <button className={mode === 'explorer' ? 'active' : ''} onClick={() => setMode('explorer')}>Explorer</button>
-            <button className={mode === 'editor' ? 'active' : ''} onClick={() => setMode('editor')}>Advanced query</button>
-            <button className={mode === 'builder' ? 'active' : ''} onClick={() => setMode('builder')}>Query builder</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+            Metric catalogue — pick one to open it in Explore.
           </div>
-          <span className="field-label row-grow">
-            {mode === 'builder' ? 'Pick a metric, slice by service / host / instance, or split by any attribute.' : ''}
-          </span>
-          <ShareButton />
-        </div>
-        {mode === 'explorer' && <MetricsExplorer range={range} />}
-        {mode === 'editor' && <MetricQueryEditor range={range} />}
-        {mode === 'builder' && (
-        <>
-
-        {/* Metric + service + agg + step */}
-        <div className="controls">
-          <span className="field-label">Service:</span>
-          <ServicePicker value={service} onChange={setService}
-            placeholder="(all)" width={170} />
-          <span className="field-label">Metric:</span>
-          <MetricNamePicker service={service} value={metric}
-            onChange={setMetric}
-            onPick={onPickMetric}
-            placeholder="select metric…" width={280} />
-          {appliedTemplate && appliedTemplate.id !== `OTel ${currentMeta?.type || 'metric'}` && (
-            <span
-              className="fb-chip"
-              title={appliedTemplate.description + (appliedTemplate.threshold
-                ? `\nThreshold: ${appliedTemplate.threshold.cmp} ${appliedTemplate.threshold.value} (${appliedTemplate.threshold.reason})`
-                : '')}
-              style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)' }}
-            >
-              Template: <b>{appliedTemplate.id}</b>
-              <button className="fb-chip-x" type="button"
-                onClick={() => setAppliedTemplate(null)}
-                aria-label="Clear template">✕</button>
-            </span>
-          )}
-          <span className="field-label">Agg:</span>
-          <select value={agg} onChange={e => setAgg(e.target.value)}>
-            {AGG_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
-          </select>
-          <span className="field-label">Step:</span>
-          <select value={step} onChange={e => setStep(Number(e.target.value))}>
-            {STEP_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
-          </select>
-          {meta && (
-            <span className="field-hint" style={{ marginLeft: 'auto' }}>
-              {meta.type}{meta.unit && ` · ${meta.unit}`}{meta.description && ` · ${meta.description}`}
-            </span>
-          )}
+          <div style={{ flex: 1 }} />
+          <Button variant={editor ? 'primary' : 'secondary'} size="sm"
+            onClick={() => navigate(editor ? '/metrics' : '/metrics?editor=1')}>
+            {editor ? '← Catalogue' : 'Advanced query editor →'}
+          </Button>
         </div>
 
-        {/* Attribute filters */}
-        <FilterBuilder value={filters} onChange={setFilters}
-          suggestedValues={{
-            'host.name':      hostValues,
-            'resource.host.name': hostValues,
-            'resource.service.instance.id': instanceValues,
-            'resource.deployment.environment': ['production', 'demo', 'staging'],
-            'http.method':    ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-          }} />
-
-        {/* Split by */}
-        <div className="controls">
-          <span className="field-label">Split by:</span>
-          {groupBy.length === 0 && (
-            <span className="field-hint" style={{ fontStyle: 'italic' }}>
-              (single line — add attributes to break down)
-            </span>
-          )}
-          {groupBy.map(k => (
-            <span key={k} className="fb-chip">
-              <b>{k}</b>
-              <button className="fb-chip-x" type="button"
-                onClick={() => removeGroupKey(k)} aria-label="Remove">✕</button>
-            </span>
-          ))}
-          <Combobox value={groupDraft} onChange={setGroupDraft}
-            options={SUGGESTED_GROUPBY.filter(k => !groupBy.includes(k))}
-            placeholder="+ split key" width={200}
-            onEnter={() => addGroupKey(groupDraft)} />
-          {groupDraft && <Button variant="secondary" size="sm" onClick={() => addGroupKey(groupDraft)}>Add</Button>}
-        </div>
-
-        {!metric && (
-          <Empty icon="∿" title="Select a metric to begin">
-            Use the Metric dropdown above. <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> apps push here.
-          </Empty>
-        )}
-        {metric && series === undefined && <Spinner />}
-        {metric && series && series.length === 0 && (
-          <Empty icon="∿" title="No data points for this query">
-            Try a wider time range, fewer filters, or remove split keys.
-          </Empty>
-        )}
-        {metric && series && series.length > 0 && (
+        {editor ? (
+          <MetricQueryEditor range={range} />
+        ) : (
           <>
-            {/* "Every metric is a doorway" Phase B demo — the chart card is
-                wrapped in the reusable MetricPanel affordance: title click /
-                body click / `e` → Explore, ⋮ menu for Explore/Edit/View
-                query/Copy link/Add to dashboard/Create alert. Same descriptor
-                draws here and re-opens in the Explorer. */}
-            <MetricPanel title={`${agg} of ${metric}`} metricQuery={panelMq}>
-            <div style={{
-              background: 'var(--bg1)', border: '1px solid var(--border)',
-              borderRadius: 8, padding: 14,
-            }}>
-              {/* v0.5.484 — header strip: title + SRE toolbar
-                  (compare, log scale, drill-to-traces). Stat
-                  tiles below carry the at-a-glance numbers. */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                <div style={{ fontSize: 11, color: 'var(--text2)', flex: 1, minWidth: 200 }}>
-                  <b style={{ color: 'var(--accent2)' }}>{agg}</b> of{' '}
-                  <b style={{ color: 'var(--accent2)' }}>{metric}</b>
-                  {service && <> · service <b>{service}</b></>}
-                  {groupBy.length > 0 && <> · split by <b>{groupBy.join(' / ')}</b></>}
-                  {' · '}{series.length} series
-                </div>
-                <label style={{ fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                  Compare:
-                  <select value={compare} onChange={e => setCompare(e.target.value as CompareMode)}
-                    style={{ fontSize: 11, padding: '2px 6px' }}
-                    title="Overlay the same series shifted back by N hours so an anomaly stands out against its own baseline">
-                    <option value="off">off</option>
-                    <option value="1h">1h ago</option>
-                    <option value="24h">24h ago</option>
-                    <option value="7d">7d ago</option>
-                    <option value="prev">prev window</option>
-                  </select>
-                </label>
-                <label style={{ fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-                  title="Log10 y-axis — flip when the metric spans orders of magnitude">
-                  <input type="checkbox" checked={logScale}
-                    onChange={e => setLogScale(e.target.checked)} />
-                  log y
-                </label>
-                <DrillButton to="/traces"
-                  params={{ service: service || undefined }}
-                  range={customRange}
-                  title="View traces in this window"
-                  label="⋮ Traces" />
-              </div>
-
-              {/* Stat tiles (v0.5.484) — SRE at-a-glance. */}
-              {stats && (
-                <div style={{
-                  display: 'flex', gap: 14, marginBottom: 10, flexWrap: 'wrap',
-                  padding: '6px 0', borderTop: '1px solid var(--border)',
-                  borderBottom: '1px solid var(--border)',
-                }}>
-                  <StatTile label="current" value={fmtMetric(stats.current, unit)}
-                    delta={stats.compareCurrent != null ? deltaPct(stats.current, stats.compareCurrent) : null}
-                    compareLabel={compareLabelFor(compare)} />
-                  <StatTile label="min"  value={fmtMetric(stats.min,  unit)} />
-                  <StatTile label="max"  value={fmtMetric(stats.max,  unit)} />
-                  <StatTile label="avg"  value={fmtMetric(stats.avg,  unit)} />
-                  <StatTile label="p50"  value={fmtMetric(stats.p50,  unit)} />
-                  <StatTile label="p99"  value={fmtMetric(stats.p99,  unit)} />
-                </div>
-              )}
-
-              {/* v0.5.481 — operator event markers (deploy /
-                  config / incident / maintenance) overlaid on
-                  the metric chart. Service-scoped when the
-                  operator narrowed by service; otherwise shows
-                  all events in the window.
-                  v0.6.18 — optional SLO/alert threshold line,
-                  auto-populated from the OTel metric template
-                  when one matches (e.g. http.server.request.
-                  duration → 1000ms). Operator clears/edits via
-                  the row beneath the chart. */}
-              {isHistogram ? (
-                <div style={{ position: 'relative' }}>
-                  <div className="row row-end" style={{ marginBottom: 6 }}>
-                    <div className="segmented">
-                      {(['heatmap', 'volume', 'percentile'] as const).map(m => (
-                        <button key={m} type="button"
-                          className={histMode === m ? 'active' : ''}
-                          onClick={() => setHistMode(m)}>
-                          {m === 'heatmap' ? 'Heatmap' : m === 'volume' ? 'Volume' : 'Percentiles'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {histData === undefined ? <Spinner />
-                    : !histData || !histData.bounds || histData.bounds.length === 0 ? (
-                      <Empty icon="📊" title="No histogram buckets">
-                        This metric has no explicit-bucket histogram data in the selected window.
-                      </Empty>
-                    ) : (
-                      <HistogramHeatmap data={histData} mode={histMode} unit={unit} />
-                    )}
-                </div>
-              ) : (
-                <div style={{ position: 'relative' }}>
-                  <MultiLineChart series={series} unit={unit}
-                    compareSeries={compareSeries ?? undefined}
-                    compareOffsetNs={compareOffsetNs > 0 ? compareOffsetNs : undefined}
-                    compareLabel={compareLabelFor(compare) ?? undefined}
-                    logScale={logScale}
-                    thresholds={threshold !== null ? [{
-                      value: threshold,
-                      label: appliedTemplate?.threshold
-                        ? `${appliedTemplate.id} threshold`
-                        : 'threshold',
-                      severity: 'warn',
-                    }] : undefined} />
-                  <EventMarkers fromNs={from} toNs={to} service={service || undefined} />
-                </div>
-              )}
-
-              {/* v0.6.18 — SLO/alert threshold control. Lives
-                  beneath the chart so it doesn't clutter the
-                  main controls bar above. The auto-populated
-                  value (from the metric template) appears in
-                  the input; the operator can override or clear.
-                  Cleared state hides the line entirely. */}
-              <div className="row row-wrap gap-2 field-label" style={{ marginTop: 8 }}>
-                <span>Threshold:</span>
-                <input
-                  type="number"
-                  className="mono"
-                  value={threshold ?? ''}
-                  onChange={e => {
-                    const v = e.target.value.trim();
-                    setThreshold(v === '' ? null : parseFloat(v));
-                  }}
-                  placeholder="(none)"
-                  style={{ width: 110 }}
-                  title="Draw a horizontal SLO/alert line on the chart. Auto-populated from the OTel metric template when applicable."
-                />
-                {unit && <span style={{ color: 'var(--text3)' }}>{unit}</span>}
-                {appliedTemplate?.threshold && (
-                  <span style={{ color: 'var(--text3)' }}>
-                    · template suggests {appliedTemplate.threshold.cmp} {appliedTemplate.threshold.value}
-                    ({appliedTemplate.threshold.reason})
+            <div className="controls" style={{ marginBottom: 10 }}>
+              <input className="field" placeholder="Search metrics…" value={search}
+                onChange={e => setSearch(e.target.value)} style={{ width: 280 }} autoFocus />
+              <div className="ov-logbar" style={{ gap: 4, marginBottom: 0 }}>
+                {GROUPS.map(g => (
+                  <span key={g.key}
+                    className={'ov-facet' + (facet === g.key ? ' on' : '')}
+                    onClick={() => setFacet(g.key)}>
+                    {g.label}{g.key !== 'all' && <span className="n">{counts[g.key] ?? 0}</span>}
                   </span>
-                )}
-                {threshold !== null && (
-                  <Button variant="secondary" size="sm" type="button"
-                    onClick={() => setThreshold(null)}>
-                    Clear
-                  </Button>
-                )}
+                ))}
               </div>
             </div>
-            </MetricPanel>
 
-            {groupBy.length > 0 && summary.length > 1 && (
-              <div className="table-wrap" style={{ marginTop: 14 }}>
-                <table style={{ tableLayout: 'fixed', width: '100%' }}>
-                  <DataTableColgroup dt={summaryDt} />
-                  <DataTableHead dt={summaryDt} />
-                  <tbody>
-                    {summaryDt.sortedRows.map((row, i) => (
-                      <tr key={i} {...summaryDt.rowProps(i)}>
-                        <td><b>{row.key.join(' / ') || '(all)'}</b></td>
-                        <td className="mono" style={{ textAlign: 'right' }}>{row.last.toFixed(2)}{unit}</td>
-                        <td className="mono" style={{ textAlign: 'right' }}>{row.min.toFixed(2)}{unit}</td>
-                        <td className="mono" style={{ textAlign: 'right' }}>{row.avg.toFixed(2)}{unit}</td>
-                        <td className="mono" style={{ textAlign: 'right' }}>{row.max.toFixed(2)}{unit}</td>
-                        <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(row.count)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            {catalogQ.isLoading ? <Spinner />
+              : filtered.length === 0 ? (
+                <Empty icon="∿" title="No metrics match">
+                  Try a different search, or check <code>OTEL_EXPORTER_OTLP_ENDPOINT</code> apps are pushing.
+                </Empty>
+              ) : (
+                <>
+                  <div className="table-wrap">
+                    <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                      <DataTableColgroup dt={dt} />
+                      <DataTableHead dt={dt} />
+                      <tbody>
+                        {dt.sortedRows.map((m, i) => (
+                          <tr key={m.name} {...dt.rowProps(i)}
+                            onClick={() => openMetric(m)}
+                            style={{ cursor: 'pointer' }}
+                            title={`Open ${m.name} in Explore`}>
+                            <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {m.name}
+                            </td>
+                            <td>{m.type}</td>
+                            <td className="mono">{m.unit || '·'}</td>
+                            <td style={{ color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              title={m.description}>
+                              {m.description || '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {hasMore && (
+                    <div style={{ padding: '8px 4px', color: 'var(--text3)', fontSize: 11 }}>
+                      More results — refine your search…
+                    </div>
+                  )}
+                </>
+              )}
           </>
-        )}
-        </>
         )}
       </div>
     </>
-  );
-}
-
-// ─── v0.5.484 SRE toolkit helpers ───────────────────────────
-
-function fmtMetric(v: number, unit: string): string {
-  if (!isFinite(v)) return '—';
-  // Compact human-readable formatting. For "ms" / "s" / "%"
-  // keep one decimal; for counter-style metrics (no unit or
-  // "1") fmtNum's k/M/B collapse reads better.
-  if (unit === 'ms' || unit === 's' || unit === '%') {
-    return v.toFixed(v >= 100 ? 0 : 1) + (unit ? ' ' + unit : '');
-  }
-  return fmtNum(v) + (unit && unit !== '1' ? ' ' + unit : '');
-}
-
-function deltaPct(current: number, prev: number): number {
-  if (!isFinite(prev) || prev === 0) return 0;
-  return ((current - prev) / Math.abs(prev)) * 100;
-}
-
-function compareLabelFor(c: 'off' | '1h' | '24h' | '7d' | 'prev'): string | null {
-  switch (c) {
-    case '1h':  return '1h ago';
-    case '24h': return '24h ago';
-    case '7d':  return '7d ago';
-    case 'prev': return 'prev window';
-    default: return null;
-  }
-}
-
-function StatTile({ label, value, delta, compareLabel }: {
-  label: string;
-  value: string;
-  delta?: number | null;
-  compareLabel?: string | null;
-}) {
-  const hasDelta = delta != null && isFinite(delta);
-  // ±5% threshold for visually neutral; beyond that the colour
-  // signals whether the metric is climbing or falling. Operator
-  // can read direction without parsing the number.
-  const sign = hasDelta && Math.abs(delta!) >= 5
-    ? (delta! > 0 ? 'up' : 'down')
-    : 'flat';
-  // up is bad (latency / failure / apdex drift) → err red; down → ok green.
-  const deltaColour =
-    sign === 'flat' ? 'var(--text3)'
-    : sign === 'up'  ? 'var(--err)'
-    : 'var(--ok)';
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 80 }}>
-      <span style={{
-        fontSize: 10, color: 'var(--text3)',
-        textTransform: 'uppercase', letterSpacing: 0.4,
-      }}>{label}</span>
-      <span style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600, fontFamily: 'ui-monospace, monospace' }}>
-        {value}
-      </span>
-      {hasDelta && compareLabel && (
-        <span style={{ fontSize: 10, color: deltaColour, fontFamily: 'ui-monospace, monospace' }}
-          title={`current vs ${compareLabel}`}>
-          {sign === 'flat' ? '~' : sign === 'up' ? '↑' : '↓'} {Math.abs(delta!).toFixed(1)}% vs {compareLabel}
-        </span>
-      )}
-    </div>
   );
 }

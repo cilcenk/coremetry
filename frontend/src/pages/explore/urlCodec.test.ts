@@ -8,7 +8,7 @@
 //     pages link with the old params forever).
 
 import { describe, it, expect } from 'vitest';
-import { encodeBuilder, decodeBuilder, seedFromLegacyParams } from './urlCodec';
+import { encodeBuilder, decodeBuilder, seedFromLegacyParams, metricCatalogueHref } from './urlCodec';
 import { defaultBuilderState, blankQuery, type BuilderState } from './model';
 import { encodeMetricQuery, metricQuery } from '@/lib/metricQuery';
 import { encodeFilters } from '@/lib/urlState';
@@ -160,5 +160,37 @@ describe('seedFromLegacyParams', () => {
     const st = seed('agg=p95&compare=true');
     expect(st).not.toBeNull();
     expect(st!.queries[0].agg).toBe('p95');
+  });
+});
+
+// Phase-5 (/metrics collapse): metricCatalogueHref is the ONE producer the
+// Metrics catalogue, DependenciesTable and ServiceInfra all emit. It must
+// round-trip through the SAME ?q= decoder Explore uses, or those three entry
+// points land on an empty workspace.
+describe('metricCatalogueHref → ?q= round-trip', () => {
+  // Extract the q param the href carries and decode it the way Explore does.
+  const decode = (href: string) => {
+    const qs = href.slice(href.indexOf('?') + 1);
+    return seedFromLegacyParams(new URLSearchParams(qs));
+  };
+
+  it('service + agg → metric-source query A with scope + agg', () => {
+    const st = decode(metricCatalogueHref('jvm.gc.pause', { service: 'checkout', agg: 'p99' }));
+    expect(st).not.toBeNull();
+    expect(st!.queries).toHaveLength(1);
+    const a = st!.queries[0];
+    expect(a.source).toBe('metric');
+    expect(a.metric).toBe('jvm.gc.pause');
+    expect(a.scope).toBe('checkout');
+    expect(a.agg).toBe('p99');
+  });
+
+  it('bare name → metric-source query A, agg defaults to avg, no scope', () => {
+    const st = decode(metricCatalogueHref('process.cpu.utilization'));
+    const a = st!.queries[0];
+    expect(a.source).toBe('metric');
+    expect(a.metric).toBe('process.cpu.utilization');
+    expect(a.agg).toBe('avg');
+    expect(a.scope).toBe('');
   });
 });

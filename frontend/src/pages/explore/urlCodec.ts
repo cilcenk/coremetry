@@ -46,6 +46,26 @@ export function encodeBuilder(st: BuilderState): string {
   });
 }
 
+// metricCatalogueHref — canonical /explore?q= deep-link for a single
+// catalogue metric (Phase 5 /metrics collapse). The Metrics catalogue rows,
+// DependenciesTable and ServiceInfra all emit THIS so a metric inspection
+// opens as a real builder query A (source=metric) instead of the retired
+// source=metrics panel. agg should be the classifyMetric default so the
+// initial chart is right (e.g. p99 for a histogram) — the bare ?metric=
+// legacy branch can't carry it.
+export function metricCatalogueHref(
+  name: string, opts?: { service?: string; agg?: string },
+): string {
+  const q: BuilderQuery = {
+    ...blankQuery('A', 'metric'),
+    metric: name,
+    agg: opts?.agg || 'avg',
+    scope: opts?.service || '',
+  };
+  const state: BuilderState = { queries: [q], formula: '', viz: 'line', step: 0 };
+  return `/explore?q=${encodeURIComponent(encodeBuilder(state))}`;
+}
+
 export function decodeBuilder(s: string | null | undefined): BuilderState | null {
   if (!s) return null;
   try {

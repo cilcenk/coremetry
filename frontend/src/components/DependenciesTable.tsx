@@ -6,6 +6,7 @@ import { Sparkline } from './Sparkline';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
+import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import { Button } from '@/components/ui/Button';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -1168,7 +1169,7 @@ function OracleMetricDrillModal({ drill, range, onClose }: {
             </span>
           )}
           <span style={{ marginLeft: 'auto' }}>
-            <Link to={`/explore?metric=${encodeURIComponent(drill.metric)}&result=metric`}
+            <Link to={metricCatalogueHref(drill.metric)}
                   style={{ fontSize: 11, marginRight: 12 }}>
               Open in Explore →
             </Link>

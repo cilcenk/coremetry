@@ -4,6 +4,7 @@ import { Sparkline } from './Sparkline';
 import { ServiceRuntimeBadge } from './ServiceRuntimeBadge';
 import { api } from '@/lib/api';
 import { useServiceRuntime } from '@/lib/queries';
+import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { fmtBytes } from '@/lib/utils';
 import type { InfraMetricSeries } from '@/lib/types';
 
@@ -93,12 +94,12 @@ function InfraTile({ s, service }: { s: InfraMetricSeries; service: string }) {
   const max  = s.points.length > 0 ? Math.max(...s.points.map(p => p.v)) : 0;
   const min  = s.points.length > 0 ? Math.min(...s.points.map(p => p.v)) : 0;
   const label = LABELS[s.metric] ?? s.metric.toUpperCase();
-  // Drill-down to the metrics explorer with this exact source
-  // metric pre-loaded for the same service. The explorer reads
-  // ?source/?service/?metric on mount (see /explore page).
-  const href = `/explore?source=metrics&service=${encodeURIComponent(service)}&metric=${encodeURIComponent(s.source)}`;
+  // Drill-down to Explore as a real builder query A (source=metric) scoped to
+  // this service — Phase 5 collapse moved this off the retired source=metrics
+  // panel onto the canonical /explore?q= seed.
+  const href = metricCatalogueHref(s.source, { service });
   return (
-    <Link to={href} title={`Open ${s.source} in metric explorer`}
+    <Link to={href} title={`Open ${s.source} in Explore`}
       style={{
         padding: 10, border: '1px solid var(--border)',
         borderRadius: 6, background: 'var(--bg2)',

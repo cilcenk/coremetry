@@ -103,35 +103,6 @@ function pickVolumeBucket(from?: number, to?: number): number {
   return 15 * 60;                            // ≥24h   → 15m
 }
 
-// fmtBucket — render a bucket width in seconds as a human label
-// for the volume card subtitle ("per 30s", "per 5m", "per 15m").
-function fmtBucket(sec: number): string {
-  if (sec % 3600 === 0) return `${sec / 3600}h`;
-  if (sec % 60 === 0)   return `${sec / 60}m`;
-  return `${sec}s`;
-}
-
-// foldVolume — collapse the per-severity timeseries into one
-// stacked bar per time bucket: { info, warn, error } counts (info
-// = INFO+DEBUG+TRACE+OTHER baseline, warn = WARN, error =
-// ERROR+FATAL). Mirrors the prototype's 3-band stack, but the
-// total is faithful — every band counts toward exactly one slot.
-function foldVolume(series: SevSeries[]): { info: number; warn: number; error: number }[] {
-  const byTime = new Map<number, { info: number; warn: number; error: number }>();
-  for (const s of series) {
-    const facet = bandToFacet(s.name);
-    const slot = facet === 'error' ? 'error' : facet === 'warn' ? 'warn' : 'info';
-    for (const p of s.points) {
-      const cur = byTime.get(p.t) ?? { info: 0, warn: 0, error: 0 };
-      cur[slot] += p.v;
-      byTime.set(p.t, cur);
-    }
-  }
-  return Array.from(byTime.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([, v]) => v);
-}
-
 // Compose a KQL clause from the current filter state so the
 // Kibana deep-link lands on the same slice. service / trace_id
 // become per-field clauses; the free-text search string passes
@@ -256,9 +227,10 @@ function LogsInner() {
     spanId:  filter.spanId  || undefined,
   });
 
-  // Level-facet counts + stacked volume bars (prototype LogsView).
-  // ONE per-severity timeseries query feeds BOTH the toolbar facet
-  // chip badges and the Logs-local stacked-bar volume row. Scoped
+  // Level-facet counts. A per-severity timeseries query feeds the
+  // toolbar facet chip badges (the duplicate Logs-local stacked-bar
+  // volume row was removed in v0.8.115 — the Elastic-style
+  // LogsHistogram below is the one volume viz). Scoped
   // to the current applied filter (service / search / trace) and
   // the active window, but deliberately WITHOUT severity — the
   // chips must show counts for every level, otherwise selecting
@@ -294,11 +266,6 @@ function LogsInner() {
     }
     return c;
   }, [sevSeries]);
-  const volBars = useMemo(() => foldVolume(sevSeries), [sevSeries]);
-  const volMax = useMemo(
-    () => Math.max(1, ...volBars.map(b => b.info + b.warn + b.error)),
-    [volBars],
-  );
 
   // Live-tail query — separate hook with refetchInterval so
   // RQ owns the polling loop. The query key includes the
@@ -653,60 +620,6 @@ function LogsInner() {
             </div>
           );
         })()}
-
-        {/* Log-volume stacked bars (prototype LogsView .volbars) —
-            one thin bar per time bucket, stacked error (top, --err)
-            / warn (--warn) / info (--accent). Reuses the SAME
-            per-severity timeseries query as the facet counts above
-            (no extra fetch). Sits above the shared severity-area
-            LogsHistogram, which we keep. Hidden until there's a
-            bounded window; renders skeleton/empty inline. */}
-        {volumeEnabled && (
-          <div className="card" style={{ marginBottom: 10, padding: 0 }}>
-            <div className="ov-card-h">
-              <h3>Log volume</h3>
-              <span className="ov-sub">per {fmtBucket(volumeBucket)} · by level</span>
-              <div className="ov-right" style={{ fontSize: 11 }}>
-                {(['error', 'warn', 'info'] as const).map(k => (
-                  <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--text2)' }}>
-                    <span style={{
-                      width: 9, height: 9, borderRadius: 2, display: 'inline-block',
-                      background: k === 'error' ? 'var(--err)' : k === 'warn' ? 'var(--warn)' : 'var(--accent)',
-                    }} />
-                    {k}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="ov-card-b">
-              {volumeQ.isLoading ? (
-                <div style={{ height: 40 }} />
-              ) : volBars.length === 0 ? (
-                <div style={{ height: 40, display: 'flex', alignItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
-                  No log volume in this window.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 40 }}>
-                  {volBars.map((b, i) => {
-                    const tot = b.info + b.warn + b.error;
-                    return (
-                      <div key={i}
-                        title={`${tot.toLocaleString()} logs — ${b.error.toLocaleString()} error · ${b.warn.toLocaleString()} warn · ${b.info.toLocaleString()} info`}
-                        style={{
-                          flex: 1, minWidth: 0, display: 'flex',
-                          flexDirection: 'column-reverse',
-                        }}>
-                        <span style={{ display: 'block', height: (b.error / volMax) * 40, background: 'var(--err)' }} />
-                        <span style={{ display: 'block', height: (b.warn / volMax) * 40, background: 'var(--warn)' }} />
-                        <span style={{ display: 'block', height: (b.info / volMax) * 40, background: 'var(--accent)' }} />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Field-mapping chips (v0.5.137). Toggled via the ƒ
             Fields button next to the search input. Discovered

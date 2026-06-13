@@ -20,10 +20,15 @@ import { fmtNum } from '@/lib/utils';
 // remounts hit the 60s server cache.
 
 export function BubbleUpPanel({
-  baseline, selection, from, to, onApplyFilter,
+  baseline, selection, baselineDsl, selectionDsl, from, to, onApplyFilter,
 }: {
   baseline: FilterExpr[];
   selection: FilterExpr[];
+  // Optional free-form DSL predicates AND-joined with the FilterExpr lists on
+  // each side. The Explore heatmap box-select passes query A's advanced DSL as
+  // baselineDsl so the baseline population matches what the heatmap rendered.
+  baselineDsl?: string;
+  selectionDsl?: string;
   from: number;
   to: number;
   // When the operator clicks an attribute value chip, we add
@@ -39,12 +44,14 @@ export function BubbleUpPanel({
       from, to,
       filters: baseline.length ? encodeFilters(baseline) : undefined,
       selFilters: selection.length ? encodeFilters(selection) : undefined,
+      dsl: baselineDsl?.trim() || undefined,
+      selDsl: selectionDsl?.trim() || undefined,
     })
       .then(r => setData(r ?? null))
       .catch(() => setData(null));
   }, [
     // Stringify both sides so the deps shape is stable.
-    JSON.stringify(baseline), JSON.stringify(selection), from, to,
+    JSON.stringify(baseline), JSON.stringify(selection), baselineDsl, selectionDsl, from, to,
   ]);
 
   if (data === undefined) {

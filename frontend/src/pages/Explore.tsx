@@ -7,6 +7,7 @@ import { FilterBuilder } from '@/components/FilterBuilder';
 import { HeatmapCellExemplars, type HeatmapCellRef } from '@/components/HeatmapCellExemplars';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
+import { BubbleUpPanel } from '@/components/BubbleUpPanel';
 import { FacetsPanel } from '@/components/FacetsPanel';
 import { ShareButton } from '@/components/ShareButton';
 import { LogsExplorer } from '@/components/LogsExplorer';
@@ -134,6 +135,11 @@ function ExploreInner() {
   const [services, setServices] = useState<string[]>([]);
   const [heatmap, setHeatmap] = useState<Heatmap | null | undefined>(undefined);
   const [cellExemplar, setCellExemplar] = useState<HeatmapCellRef | null>(null);
+  // Phase 4.2 — heatmap box-select → BubbleUp. The dragged (time × latency)
+  // rectangle becomes the selection; query A's filters/DSL are the baseline.
+  const [boxSel, setBoxSel] = useState<
+    { timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number } | null
+  >(null);
 
   const exploreRange = useMemo(() => timeRangeToNs(range), [range]);
 
@@ -231,6 +237,9 @@ function ExploreInner() {
   // Heatmap viz — the LatencyHeatmap path, driven by query A (panel header
   // states it). Gated exactly like the pre-v2 heatmap fetch.
   useEffect(() => {
+    // Any query / range / viz change invalidates a pending box-select — the
+    // dragged rectangle no longer maps onto the heatmap about to render.
+    setBoxSel(null);
     if (!builderActive || debounced.viz !== 'heatmap') return;
     const a = debounced.queries.find(produces);
     if (!a) { setHeatmap(null); return; }
@@ -700,7 +709,61 @@ name ~ checkout`}
                     lowDurMs: cell.lowDurMs,
                     highDurMs: cell.highDurMs,
                     count: cell.count,
-                  })} />
+                  })}
+                  onBoxSelect={setBoxSel} />
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                  Tek hücre = örnek trace · sürükle (kutu seç) = BubbleUp
+                </div>
+                {boxSel && (() => {
+                  const a = debounced.queries.find(produces);
+                  const baseline = a ? effectiveFilters(a) : [];
+                  const baselineDsl = a && a.dsl.trim() ? a.dsl : undefined;
+                  // Latency band → duration_ms filter pair (well-known field →
+                  // (duration / 1e6) in chstore/filterexpr.go). Time bounds ride
+                  // the BubbleUp from/to. Selection narrows the same-window
+                  // baseline to the dragged latency band.
+                  const selection: FilterExpr[] = [
+                    { k: 'duration_ms', op: '>=', v: [String(Math.max(0, boxSel.lowDurMs))] },
+                    { k: 'duration_ms', op: '<=', v: [String(boxSel.highDurMs)] },
+                  ];
+                  const tFmt = (ns: number) => new Date(ns / 1e6).toLocaleTimeString();
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        fontSize: 11, color: 'var(--text2)',
+                      }}>
+                        <span>
+                          Seçim · {fmtNum(boxSel.count)} span · {tFmt(boxSel.timeFromNs)}–{tFmt(boxSel.timeToNs)}
+                          {' '}· {boxSel.lowDurMs >= 1 ? Math.round(boxSel.lowDurMs) : boxSel.lowDurMs.toFixed(1)}–{Math.round(boxSel.highDurMs)} ms
+                        </span>
+                        <button type="button" onClick={() => setBoxSel(null)}
+                          title="Seçimi kapat"
+                          style={{
+                            background: 'transparent', border: '1px solid var(--border)',
+                            borderRadius: 4, color: 'var(--text2)', cursor: 'pointer',
+                            fontSize: 11, lineHeight: 1, padding: '2px 7px',
+                          }}>✕</button>
+                      </div>
+                      <BubbleUpPanel
+                        baseline={baseline}
+                        baselineDsl={baselineDsl}
+                        selection={selection}
+                        from={boxSel.timeFromNs}
+                        to={boxSel.timeToNs}
+                        onApplyFilter={(f) => {
+                          if (a) {
+                            setBuilder(b => ({
+                              ...b,
+                              queries: b.queries.map(q =>
+                                q.letter === a.letter ? { ...q, filters: [...q.filters, f] } : q),
+                            }));
+                          }
+                          setBoxSel(null);
+                        }} />
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </>

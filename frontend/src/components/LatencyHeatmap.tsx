@@ -91,7 +91,7 @@ function computeHeatmapStats(data: Heatmap): HeatmapStats {
   return { mean, stddev, outliers };
 }
 
-export function LatencyHeatmap({ data, height = 220, onCellClick }: {
+export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }: {
   data: Heatmap;
   height?: number;
   // v0.5.260 — operator-clickable cells for trace exemplars.
@@ -99,6 +99,12 @@ export function LatencyHeatmap({ data, height = 220, onCellClick }: {
   // and can fetch matching traces. Honeycomb's classic
   // "click the slow band, see what trace ran there" workflow.
   onCellClick?: (cell: { timeNs: number; lowDurMs: number; highDurMs: number; count: number }) => void;
+  // explore-v2 Phase 4.2 — drag a rectangle across cells to select a
+  // (time × latency) region for BubbleUp. timeFromNs/timeToNs bound the
+  // dragged columns (± half a bucket); lowDurMs/highDurMs bound the dragged
+  // rows. When provided, drag = box-select and a single click still falls
+  // through to onCellClick.
+  onBoxSelect?: (box: { timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number }) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -107,6 +113,13 @@ export function LatencyHeatmap({ data, height = 220, onCellClick }: {
     time: number; durMs: number; count: number;
     z: number; isOutlier: boolean;
   } | null>(null);
+  // Phase 4.2 box-select — start + current cell while dragging (null = idle).
+  const [drag, setDrag] = useState<{ a: { col: number; row: number }; b: { col: number; row: number } } | null>(null);
+  // dragMoved: the pointer left the start cell → this gesture is a box, not a
+  // click. suppressClick: a box just fired on mouseup → swallow the synthetic
+  // click that follows so it doesn't ALSO open the single-cell exemplar modal.
+  const dragMovedRef = useRef(false);
+  const suppressClickRef = useRef(false);
   // Stats are recomputed when `data` changes; cheap (O(N*M)
   // single pass) and avoids a useMemo deopt + dep churn.
   const statsRef = useRef<HeatmapStats>({ mean: 0, stddev: 0, outliers: new Set() });
@@ -221,11 +234,86 @@ export function LatencyHeatmap({ data, height = 220, onCellClick }: {
     return () => ro.disconnect();
   }, [data, height]);
 
+  // ── Box-select geometry (Phase 4.2) ──────────────────────────────────────
+  // Shared cell math so the drag handlers and the rubber-band overlay agree
+  // with the draw loop. `cellFromClient` returns the strict cell under the
+  // pointer (null when outside the plot); `clampedCellFromClient` always
+  // returns an in-grid cell (used while dragging past an edge).
+  const PAD_L = 56, PAD_B = 22, PAD_T = 4, PAD_R = 4;
+  const gridDims = (w: number) => {
+    const cols = data.times.length;
+    const rows = data.durationBins.length;
+    const plotW = Math.max(1, w - PAD_L - PAD_R);
+    const plotH = Math.max(1, height - PAD_T - PAD_B);
+    return { cols, rows, cellW: plotW / cols, cellH: plotH / rows };
+  };
+  const clampedCellFromClient = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+    const { cols, rows, cellW, cellH } = gridDims(rect.width);
+    const col = Math.min(cols - 1, Math.max(0, Math.floor((e.clientX - rect.left - PAD_L) / cellW)));
+    const rowTop = Math.min(rows - 1, Math.max(0, Math.floor((e.clientY - rect.top - PAD_T) / cellH)));
+    return { col, row: (rows - 1) - rowTop };
+  };
+  const cellFromClient = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
+    const { cols, rows, cellW, cellH } = gridDims(rect.width);
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    if (x < PAD_L || y < PAD_T || y > height - PAD_B) return null;
+    const col = Math.floor((x - PAD_L) / cellW);
+    const row = (rows - 1) - Math.floor((y - PAD_T) / cellH);
+    if (col < 0 || col >= cols || row < 0 || row >= rows) return null;
+    return { col, row };
+  };
+
+  // mousedown starts a box gesture (only when a box-select consumer is wired).
+  const onMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!onBoxSelect || e.button !== 0) return;
+    const c = cellFromClient(e);
+    if (!c) return;
+    dragMovedRef.current = false;
+    setDrag({ a: c, b: c });
+  };
+
+  // mouseup finishes the gesture. A real drag (left the start cell) over a
+  // non-empty region fires onBoxSelect; the trailing click is suppressed so it
+  // doesn't ALSO trigger the single-cell exemplar drill. A no-move gesture
+  // falls through to onClickCell unchanged.
+  const onMouseUp = () => {
+    if (!drag) return;
+    const cur = drag;
+    setDrag(null);
+    if (!dragMovedRef.current || !onBoxSelect) return;
+    const colLo = Math.min(cur.a.col, cur.b.col), colHi = Math.max(cur.a.col, cur.b.col);
+    const rowLo = Math.min(cur.a.row, cur.b.row), rowHi = Math.max(cur.a.row, cur.b.row);
+    let count = 0;
+    for (let i = colLo; i <= colHi; i++) {
+      for (let j = rowLo; j <= rowHi; j++) count += data.counts[i]?.[j] ?? 0;
+    }
+    if (count === 0) return; // empty rectangle — nothing to investigate
+    suppressClickRef.current = true;
+    // Time bounds: half a bucket either side of the first/last selected column
+    // (mirrors onClickCell's half-bucket framing). Latency band: (prev_bin of
+    // the lowest row, this_bin of the highest row].
+    const bw = data.times.length >= 2 ? (data.times[1] - data.times[0]) : 60 * 1e9;
+    onBoxSelect({
+      timeFromNs: data.times[colLo] - bw / 2,
+      timeToNs: data.times[colHi] + bw / 2,
+      lowDurMs: rowLo > 0 ? data.durationBins[rowLo - 1] : 0,
+      highDurMs: data.durationBins[rowHi],
+      count,
+    });
+  };
+
   // Mouse hover → look up the cell under the cursor and
   // surface (time, latency band, count) in the floating
   // tooltip. Cell math mirrors the draw loop so positions
   // line up exactly.
   const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (drag) {
+      const c = clampedCellFromClient(e);
+      if (c.col !== drag.a.col || c.row !== drag.a.row) dragMovedRef.current = true;
+      setDrag({ a: drag.a, b: c });
+    }
     const wrap = containerRef.current;
     if (!wrap) return;
     const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
@@ -267,6 +355,9 @@ export function LatencyHeatmap({ data, height = 220, onCellClick }: {
   // to (prev_bin, this_bin] so the caller can filter spans
   // precisely to the slice the operator clicked.
   const onClickCell = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // A box-select just completed — swallow the synthetic click that trails
+    // the drag's mouseup so it doesn't also open the single-cell drill.
+    if (suppressClickRef.current) { suppressClickRef.current = false; return; }
     if (!onCellClick) return;
     const rect = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     const w = rect.width;
@@ -306,7 +397,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick }: {
   return (
     <div ref={containerRef}
          style={{ position: 'relative', width: '100%' }}
-         onMouseLeave={() => setHover(null)}>
+         onMouseLeave={() => { setHover(null); setDrag(null); }}>
       {sampledTag && (
         <div style={{
           position: 'absolute', top: 6, right: 6, zIndex: 4,
@@ -321,9 +412,32 @@ export function LatencyHeatmap({ data, height = 220, onCellClick }: {
         </div>
       )}
       <canvas ref={canvasRef}
-              style={{ display: 'block', cursor: onCellClick ? 'pointer' : 'crosshair' }}
+              style={{ display: 'block', cursor: onBoxSelect ? 'crosshair' : (onCellClick ? 'pointer' : 'crosshair') }}
               onMouseMove={onMouseMove}
+              onMouseDown={onMouseDown}
+              onMouseUp={onMouseUp}
               onClick={onClickCell} />
+      {/* Rubber-band rectangle while dragging a box (Phase 4.2). Rendered as
+          an absolutely-positioned div over the canvas — same cell math as the
+          draw loop, so the box snaps to the cell grid the operator sees. */}
+      {drag && dragMovedRef.current && (() => {
+        const w = containerRef.current?.clientWidth ?? 0;
+        const { rows, cellW, cellH } = gridDims(w);
+        const colLo = Math.min(drag.a.col, drag.b.col), colHi = Math.max(drag.a.col, drag.b.col);
+        const rowLo = Math.min(drag.a.row, drag.b.row), rowHi = Math.max(drag.a.row, drag.b.row);
+        return (
+          <div style={{
+            position: 'absolute', pointerEvents: 'none', zIndex: 3,
+            left: PAD_L + colLo * cellW,
+            width: (colHi - colLo + 1) * cellW,
+            top: PAD_T + (rows - 1 - rowHi) * cellH,
+            height: (rowHi - rowLo + 1) * cellH,
+            background: 'rgba(63,140,253,0.15)',
+            border: '1px solid var(--accent, #3f8cfd)',
+            borderRadius: 2,
+          }} />
+        );
+      })()}
       {hover && (
         <div style={{
           position: 'absolute', pointerEvents: 'none',

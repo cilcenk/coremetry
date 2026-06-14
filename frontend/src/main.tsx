@@ -6,18 +6,49 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
 import './styles/globals.css';
 
-// Defer the OpenTelemetry browser SDK off the critical path (v0.7.84).
-// The SDK + auto-instrumentations are ~26kB gzip and main.tsx is their
-// ONLY importer (withSpan/getTracer have no other call sites), so a
-// dynamic import keeps the whole @opentelemetry/* tree out of the entry
-// chunk entirely. It's RUM of our OWN UI — not needed for first paint,
-// and the operator's value is their services' traces, not perfect
-// self-RUM on the cold-load fetch. Firing on idle means it never
-// competes with the initial render + first data fetch (TTFI budget
-// <1.5s). Trade-off: the earliest fetch spans before idle may be
-// missed — acceptable for self-observability. Still a no-op when
-// VITE_OTEL_DISABLE=1 (checked inside initOtel).
+// Defer AND gate the OpenTelemetry browser SDK off the critical path
+// (v0.7.84 deferred; gating added to shrink the cold path further).
+// The SDK + auto-instrumentations are ~26kB gzip (its own 'otel' chunk)
+// and main.tsx is their ONLY importer (withSpan/getTracer have no other
+// call sites). It's RUM of our OWN UI — not needed for first paint, and
+// the operator's value is their services' traces, not perfect self-RUM
+// on the cold-load fetch.
+//
+// KEY: the enablement decision is made HERE, before the dynamic
+// import(), so when RUM is off the otel chunk is never even fetched or
+// parsed. Previously the chunk loaded on idle every session and only
+// then did initOtel() bail on the disable flag — paying the network +
+// parse cost for nothing. rumEnabled() reads only runtime knobs (no
+// otel import), so the gate is free.
+//
+// rumEnabled precedence (first match wins), default ON to preserve
+// existing behaviour:
+//   1. VITE_OTEL_DISABLE==='1'        → off (build-time hard kill switch)
+//   2. window.__COREMETRY_RUM__       → host-page/server-injected boolean
+//      (lets a deployment force RUM on/off without a rebuild)
+//   3. localStorage 'coremetry-rum'   → 'off'/'on' operator opt-out toggle
+//      (the runtime opt-out the perf baseline flagged as missing)
+//   4. default                        → on
+function rumEnabled(): boolean {
+  if (import.meta.env.VITE_OTEL_DISABLE === '1') return false;
+  try {
+    const injected = (window as { __COREMETRY_RUM__?: boolean }).__COREMETRY_RUM__;
+    if (typeof injected === 'boolean') return injected;
+    const ls = window.localStorage?.getItem('coremetry-rum');
+    if (ls === 'off' || ls === '0' || ls === 'false') return false;
+    if (ls === 'on' || ls === '1' || ls === 'true') return true;
+  } catch {
+    // localStorage can throw in locked-down/private contexts — fall
+    // through to the default rather than blocking RUM init.
+  }
+  return true;
+}
+
+// Firing on idle means it never competes with the initial render + first
+// data fetch (TTFI budget <1.5s). Trade-off: the earliest fetch spans
+// before idle may be missed — acceptable for self-observability.
 function bootOtel() {
+  if (!rumEnabled()) return;
   void import('./lib/browserOtel').then(m => m.initOtel()).catch(() => {});
 }
 if ('requestIdleCallback' in window) {

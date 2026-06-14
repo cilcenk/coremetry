@@ -16,6 +16,27 @@ replicated cluster with **zero code changes** — just a config knob.
 Cluster mode also unlocks **HA**: replicated tables survive a node loss.
 That's a separate reason to enable it even at moderate scale.
 
+## Memory sizing — the MV aggregation working set
+
+The binding constraint per CH node is **RAM, not disk or row count**.
+Coremetry feeds spans into ~12 materialized views that build
+`quantilesState` / `argMaxState` aggregate states *per insert block*
+(`service_summary_5m`, `operation_summary_5m`, `spanmetrics_{1s,10s,1m}`,
+`topology_*`, `db_*`, `trace_summary_*`). That aggregation working set —
+plus async_insert buffers and the background merges of those state parts —
+is what consumes memory under sustained ingest.
+
+Empirically (2026-06-14 local ingest-load test, single node): ~233–413
+spans/s (10–17× a quiet baseline) pinned a 3 GiB node at its ceiling; the
+node held (ClickHouse self-limits + async_insert buffering — it did **not**
+OOM-crash and recorded no `MEMORY_LIMIT_EXCEEDED`), but had near-zero
+headroom. Read-path memory is separately bounded (MV reads are flat — see
+[[project-scale-test-result]]). **Budget RAM per node for the *insert* MV
+working set, not the query path.** When one node's ingest working set
+approaches its limit, scale **horizontally** (add a shard) rather than only
+vertically — each shard's MVs aggregate only its slice of the spans, so the
+working set distributes. More bundled-single-node RAM only moves the knee.
+
 ## How Coremetry adapts the schema
 
 When `clickhouse.cluster_name` is set, every DDL Coremetry runs is

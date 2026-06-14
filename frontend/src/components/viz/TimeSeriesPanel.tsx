@@ -512,10 +512,17 @@ export function TimeSeriesPanel({
                 `</div>`;
               }).join('');
             tip.style.opacity = '1';
+            // cursor.left/top are over-relative; pass the over box's offset +
+            // size + the container box so placement and clamping share one
+            // basis and the panel never lands under the pointer (esp. near the
+            // y-axis, where the over box is inset by the axis width).
+            const over = u.over;
             const { x, y } = placeTooltip(
               u.cursor.left ?? 0, u.cursor.top ?? 0,
               tip.offsetWidth, tip.offsetHeight,
-              el.clientWidth, height,
+              over.clientWidth, over.clientHeight,
+              over.offsetLeft, over.offsetTop,
+              el.clientWidth, el.clientHeight,
             );
             tip.style.left = `${x}px`;
             tip.style.top = `${y}px`;

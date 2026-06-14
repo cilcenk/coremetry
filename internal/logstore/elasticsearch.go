@@ -871,8 +871,17 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			},
 			map[string]any{tiebreak: sortDir},
 		},
-		"size":             limit,
-		"track_total_hits": true,
+		"size": limit,
+		// track_total_hits capped (was `true` = an all-shard exact count of
+		// EVERY matching doc, catastrophic at billion-doc scale). 10000 is the
+		// ES default bound — the UI shows "10000+" and keyset/search_after
+		// paging never needs an exact total. Plus a soft per-request timeout so
+		// a slow shard returns partial results (timed_out:true) instead of
+		// hanging the /api/logs handler. Mirrors searchForward +
+		// buildHistogramBody, which already carry these guards — this Search
+		// was the CH-vs-ES divergence laggard. v0.8.x.
+		"track_total_hits": 10000,
+		"timeout":          esTimeoutFromEnv("10s"),
 	}
 	if usePIT {
 		// The PIT carries the index + a frozen segment view, so the index
@@ -912,6 +921,12 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	req := esapi.SearchRequest{
 		Body: bytes.NewReader(body),
 	}
+	// Live log data mutates constantly, so the shard request cache would
+	// rarely hit and risks serving stale edge rows — keep it OFF explicitly
+	// (matches searchForward; the histogram size:0 agg is the only caller that
+	// turns it ON). v0.8.x.
+	reqCacheOff := false
+	req.RequestCache = &reqCacheOff
 	if !usePIT {
 		// Plain (fallback) mode: the index lives in the request URL, plus
 		// the index-options below. PIT mode omits ALL of these — the `pit`

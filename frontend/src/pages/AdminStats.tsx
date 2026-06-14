@@ -189,6 +189,9 @@ export default function AdminStatsPage() {
               <KPI label="Disk total" value={fmtBytes(data.snapshot.totalDiskBytes)} />
             </div>
 
+            {/* ── Ingest data loss ────────────────────────────────── */}
+            <DropsPanel drops={data.drops} />
+
             {/* ── 30-day history ──────────────────────────────────── */}
             <div style={{
               background: 'var(--bg1)', border: '1px solid var(--border)',
@@ -464,6 +467,69 @@ function Legend() {
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <StatusDot status="outage" /> Outage
       </span>
+    </div>
+  );
+}
+
+// DropsPanel renders the cumulative ingest data-loss counters (since process
+// start). Compact "✓ no loss" when clean; a red per-signal breakdown when any
+// counter is non-zero — queue-full (receiver buffer overflow) vs write-failed
+// (ClickHouse insert dropped, not retried). Self-observability: an explicit
+// "no loss" indicator is as valuable as the alarm.
+function DropsPanel({ drops }: { drops: SystemStats['drops'] }) {
+  const d = drops ?? {
+    spansQueueFull: 0, logsQueueFull: 0, metricsQueueFull: 0,
+    spansWriteFailed: 0, logsWriteFailed: 0, metricsWriteFailed: 0,
+  };
+  const total =
+    d.spansQueueFull + d.logsQueueFull + d.metricsQueueFull +
+    d.spansWriteFailed + d.logsWriteFailed + d.metricsWriteFailed;
+  const signals = [
+    { label: 'Spans',   queueFull: d.spansQueueFull,   writeFailed: d.spansWriteFailed },
+    { label: 'Logs',    queueFull: d.logsQueueFull,    writeFailed: d.logsWriteFailed },
+    { label: 'Metrics', queueFull: d.metricsQueueFull, writeFailed: d.metricsWriteFailed },
+  ];
+  return (
+    <div style={{
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: 14, marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: total > 0 ? 12 : 0 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Ingest data loss</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          cumulative since process start · queue-full = buffer overflow · write-failed = CH insert dropped
+        </span>
+        <span style={{ flex: 1 }} />
+        {total === 0
+          ? <span className="ok" style={{ fontSize: 12, fontWeight: 600 }}>✓ no loss</span>
+          : <span className="err" style={{ fontSize: 12, fontWeight: 700 }}>⚠ {fmtNum(total)} dropped</span>}
+      </div>
+      {total > 0 && (
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12,
+        }}>
+          {signals.map(s => {
+            const lost = s.queueFull + s.writeFailed;
+            return (
+              <div key={s.label} style={{
+                padding: 12, border: '1px solid var(--border)',
+                borderRadius: 6, background: 'var(--bg2)',
+              }}>
+                <div style={{
+                  fontSize: 10, color: 'var(--text3)',
+                  textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 600,
+                }}>{s.label}</div>
+                <div className={lost > 0 ? 'err' : 'ok'} style={{ fontSize: 20, fontWeight: 700, marginTop: 4 }}>
+                  {fmtNum(lost)}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                  queue-full {fmtNum(s.queueFull)} · write-failed {fmtNum(s.writeFailed)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

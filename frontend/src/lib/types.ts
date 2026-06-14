@@ -2221,6 +2221,17 @@ export interface SystemStats {
     logsPerSec: number;
     metricsPerSec: number;
   };
+  // Cumulative ingest data-loss counters since process start (v0.8.x).
+  // queueFull = receiver buffer overflow; writeFailed = ClickHouse insert
+  // errored and the batch was dropped (not retried).
+  drops: {
+    spansQueueFull: number;
+    logsQueueFull: number;
+    metricsQueueFull: number;
+    spansWriteFailed: number;
+    logsWriteFailed: number;
+    metricsWriteFailed: number;
+  };
 }
 
 export interface AggSpanNode {

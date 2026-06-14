@@ -1201,7 +1201,29 @@ func scoreHealth(svc *chstore.ServiceSummary, c chstore.OpenProblemCounts) (stri
 // MV so it stays sub-second even at 40M traces / day. Cached 60s.
 func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, "system-stats", 60*time.Second, func() (any, error) {
-		return s.store.GetSystemStats(r.Context())
+		st, err := s.store.GetSystemStats(r.Context())
+		if err != nil || st == nil {
+			return st, err
+		}
+		// Augment with the live in-process ingest data-loss counters. Kept
+		// out of GetSystemStats (CH-only) so chstore stays free of any otlp
+		// dependency; the handler has both s.store and s.ing. nil-guarded for
+		// api-only pods that don't run receivers (distributed mode).
+		if s.ing != nil {
+			if s.ing.Spans != nil {
+				st.Drops.SpansQueueFull = s.ing.Spans.Dropped()
+				st.Drops.SpansWriteFailed = s.ing.Spans.WriteFailed()
+			}
+			if s.ing.Logs != nil {
+				st.Drops.LogsQueueFull = s.ing.Logs.Dropped()
+				st.Drops.LogsWriteFailed = s.ing.Logs.WriteFailed()
+			}
+			if s.ing.Metrics != nil {
+				st.Drops.MetricsQueueFull = s.ing.Metrics.Dropped()
+				st.Drops.MetricsWriteFailed = s.ing.Metrics.WriteFailed()
+			}
+		}
+		return st, nil
 	})
 }
 
@@ -8094,6 +8116,11 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"logs_capacity":    logsCap,
 		"metrics_capacity": metricsCap,
 		"spans_dropped":    s.ing.Spans.Dropped(),
+		"logs_dropped":     s.ing.Logs.Dropped(),
+		"metrics_dropped":  s.ing.Metrics.Dropped(),
+		"spans_write_failed":   s.ing.Spans.WriteFailed(),
+		"logs_write_failed":    s.ing.Logs.WriteFailed(),
+		"metrics_write_failed": s.ing.Metrics.WriteFailed(),
 		"spans_accepted":   s.ing.Spans.Accepted(),
 		"logs_accepted":    s.ing.Logs.Accepted(),
 		"metrics_accepted": s.ing.Metrics.Accepted(),

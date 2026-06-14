@@ -18,6 +18,26 @@ type SystemStats struct {
 	Tables   []TableStat    `json:"tables"`
 	History  []DayStat      `json:"history"`
 	Ingest   IngestRates    `json:"ingest"`
+	Drops    IngestDrops    `json:"drops"`
+}
+
+// IngestDrops surfaces the in-process ingest data-loss counters (cumulative
+// since process start) on /admin/stats — previously invisible: an operator
+// could only see spans_dropped on /api/health and nothing about logs/metrics
+// or write-path loss. Two loss classes per signal:
+//   - QueueFull: the receiver buffer was full when the item arrived
+//     (producer outran the CH writer — backpressure overflow).
+//   - WriteFailed: the ClickHouse insert errored and the batch was dropped,
+//     not retried (silent loss the flusher only logged before v0.8.x).
+// Populated by the API getSystemStats handler from the live consumers;
+// GetSystemStats (CH-only) leaves it zero so chstore keeps no otlp dependency.
+type IngestDrops struct {
+	SpansQueueFull     int64 `json:"spansQueueFull"`
+	LogsQueueFull      int64 `json:"logsQueueFull"`
+	MetricsQueueFull   int64 `json:"metricsQueueFull"`
+	SpansWriteFailed   int64 `json:"spansWriteFailed"`
+	LogsWriteFailed    int64 `json:"logsWriteFailed"`
+	MetricsWriteFailed int64 `json:"metricsWriteFailed"`
 }
 
 type SystemSnapshot struct {

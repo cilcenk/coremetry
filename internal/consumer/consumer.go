@@ -34,6 +34,11 @@ type Consumer[T any] struct {
 	flushFn func(ctx context.Context, batch []T) error
 	wg      sync.WaitGroup
 	dropped atomic.Int64
+	// writeFailed counts items lost because flushFn (the ClickHouse insert)
+	// errored — the batch is logged and discarded, never retried, so this is
+	// silent data loss the operator otherwise can't see. Surfaced on
+	// /admin/stats (v0.8.x). Distinct from `dropped` (receiver buffer full).
+	writeFailed atomic.Int64
 	// accepted is a monotonic counter of items the consumer received
 	// (including ones it later dropped from the channel-full path —
 	// well, actually NO, dropped items never enter; this counts only
@@ -146,7 +151,8 @@ func (c *Consumer[T]) flusher() {
 	defer c.wg.Done()
 	for batch := range c.flushQ {
 		if err := c.flushFn(context.Background(), batch); err != nil {
-			log.Printf("[consumer/%s] flush error: %v", c.name, err)
+			c.writeFailed.Add(int64(len(batch)))
+			log.Printf("[consumer/%s] flush error (%d items lost): %v", c.name, len(batch), err)
 		}
 	}
 }
@@ -158,11 +164,19 @@ func (c *Consumer[T]) Stop() {
 	if n := c.dropped.Load(); n > 0 {
 		log.Printf("[consumer/%s] dropped %d items (buffer was full)", c.name, n)
 	}
+	if n := c.writeFailed.Load(); n > 0 {
+		log.Printf("[consumer/%s] lost %d items to flush errors", c.name, n)
+	}
 }
 
 func (c *Consumer[T]) QueueLen() int  { return len(c.ch) }
 func (c *Consumer[T]) Capacity() int  { return cap(c.ch) }
 func (c *Consumer[T]) Dropped() int64 { return c.dropped.Load() }
+
+// WriteFailed returns the cumulative count of items lost because the
+// ClickHouse insert (flushFn) errored — the batch was discarded, not
+// retried. Surfaced on /admin/stats as the "write-failed" data-loss class.
+func (c *Consumer[T]) WriteFailed() int64 { return c.writeFailed.Load() }
 
 // Accepted returns the cumulative count of items that were successfully
 // queued. Sampled twice over a known interval to compute an ingest rate.

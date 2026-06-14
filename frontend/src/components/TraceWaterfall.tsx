@@ -587,7 +587,6 @@ export function TraceWaterfall({
                 style={{
                   left: `${startPct}%`, width: `${widthPct}%`, background: color,
                   opacity: criticalActive && !onCritical ? 0.62 : 1,
-                  boxShadow: s.statusCode === 'error' ? 'inset 0 0 0 1.6px var(--err)' : undefined,
                 }}
               >
                 {labelInside && <span className="wf-bar-label">{fmtNs(dur)}</span>}

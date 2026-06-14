@@ -534,6 +534,14 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .wf-row.wf-sel { background: rgba(56,139,253,.10); }
 .wf-row.wf-sel .wf-stripe { width: 3px; filter: brightness(1.25); opacity: 0.95; }
 .wf-row.wf-err .wf-name { color: var(--err); }
+/* Error span — whole-row low-opacity red tint (Tempo latest).
+   Replaces the previous 1.6px red inset frame around the duration
+   bar, which read as a hard "broken bar" border; the soft row wash
+   is the calmer, more scannable error signal. Hover + selected
+   overrides below keep those states readable over the tint. */
+.wf-row.wf-err { background: color-mix(in srgb, var(--err) 9%, transparent); }
+.wf-row.wf-err:hover { background: color-mix(in srgb, var(--err) 16%, var(--bg2)); }
+.wf-row.wf-err.wf-sel { background: color-mix(in srgb, var(--err) 12%, rgba(56,139,253,.10)); }
 
 /* Critical path — spans whose chain through the DAG sums to
    the trace's wall-clock latency. Marked with a left-edge red

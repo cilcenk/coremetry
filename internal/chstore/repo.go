@@ -1167,6 +1167,36 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 // memory-constrained nodes; nodes with ample RAM rarely reach the threshold.
 const tracesSpillSettings = "max_bytes_before_external_group_by = 536870912, max_bytes_before_external_sort = 536870912"
 
+// searchHaystack is the per-span text the free-text trace search scans:
+// operation name + HTTP method + route + every span-attr value, space-joined
+// into one string so the operator's words match whichever field carries them.
+// arrayStringConcat on an empty attr_values returns '' (concat is NULL-safe).
+const searchHaystack = `concat(name, ' ', http_method, ' ', http_route, ' ', arrayStringConcat(attr_values, ' '))`
+
+// searchPredicate builds the per-span free-text match for a query string plus
+// its CH args. The input is whitespace-split into tokens; a span matches only
+// when EVERY token appears (case-insensitive, UTF8) somewhere in searchHaystack
+// — ALL-tokens semantics (v0.8.x, operator choice). multiSearchAllPositions
+// returns each token's position in a single pass over the haystack; arrayAll
+// asserts none is zero (all found). A single token reduces to the prior
+// single-needle behaviour (verified byte-identical on live spans). Returns
+// ("", nil) for a blank / all-whitespace query so the caller adds no predicate.
+func searchPredicate(search string) (string, []any) {
+	tokens := strings.Fields(search)
+	if len(tokens) == 0 {
+		return "", nil
+	}
+	ph := make([]string, len(tokens))
+	args := make([]any, len(tokens))
+	for i, t := range tokens {
+		ph[i] = "?"
+		args[i] = t
+	}
+	sql := "arrayAll(p -> p > 0, multiSearchAllPositionsCaseInsensitiveUTF8(" +
+		searchHaystack + ", [" + strings.Join(ph, ", ") + "]))"
+	return sql, args
+}
+
 func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	// MV fast-path. Activates when:
 	//   • Window is ≥ 5 minutes (MVs are 5-min bucketed)
@@ -1272,23 +1302,14 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// Combined into one countIf to keep the HAVING args
 	// addressable; CH treats it as a single trace-level
 	// predicate.
-	if f.Search != "" {
-		// v0.5.372 — broader search target. v0.5.370 hand-listed
-		// url.path / http.target etc.; operators report SDKs that
-		// emit the path under non-canonical keys (http.url, url.full,
-		// custom org-specific attrs). Switch to arrayExists across
-		// the full attr_values array so the search hits any attr
-		// regardless of which key the SDK chose. name + http_route
-		// stay dedicated checks since they're indexed columns
-		// (fast prune even without the array scan).
-		havingParts = append(havingParts,
-			"countIf("+
-				"positionCaseInsensitive(name, ?) > 0 OR "+
-				"positionCaseInsensitive(http_route, ?) > 0 OR "+
-				"positionCaseInsensitive(concat(http_method, ' ', http_route), ?) > 0 OR "+
-				"arrayExists(v -> positionCaseInsensitive(v, ?) > 0, attr_values)"+
-				") > 0")
-		havingArgs = append(havingArgs, f.Search, f.Search, f.Search, f.Search)
+	if pred, pargs := searchPredicate(f.Search); pred != "" {
+		// v0.8.x — ALL-tokens free-text match over the combined per-span
+		// haystack (name + method + route + attr_values). countIf(...) > 0
+		// keeps it a trace-level predicate (any span in the trace matching
+		// all the words surfaces the trace). Replaces the prior 4-leg
+		// single-needle OR-chain; single-word queries behave identically.
+		havingParts = append(havingParts, "countIf("+pred+") > 0")
+		havingArgs = append(havingArgs, pargs...)
 	}
 	havingSQL := ""
 	if len(havingParts) > 0 {
@@ -1921,6 +1942,13 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	// a misconfigured filter that fans out across a giant
 	// window terminates with an error rather than wedging a
 	// page-load forever.
+	// v0.8.x — ALL-tokens free-text match (see searchPredicate). Computed once
+	// so the inner-HAVING SQL and its args stay in lockstep on token count.
+	searchSQL, searchArgs := searchPredicate(f.Search)
+	searchHaving := ""
+	if searchSQL != "" {
+		searchHaving = " AND countIf(" + searchSQL + ") > 0"
+	}
 	sql := `
 		SELECT group_key, group_extra,
 		       count()                                   AS trace_count,
@@ -1943,20 +1971,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		           max(if(status_code = 'error', 1, 0)) AS has_error
 		    FROM spans ` + wc.sql() + `
 		    GROUP BY trace_id
-		    HAVING group_key != ''` + func() string {
-				if f.Search != "" {
-					// v0.5.372 — arrayExists across attr_values
-					// (any key, any value). See GetTraces
-					// commentary for the rationale.
-					return ` AND countIf(` +
-						`positionCaseInsensitive(name, ?) > 0 OR ` +
-						`positionCaseInsensitive(http_route, ?) > 0 OR ` +
-						`positionCaseInsensitive(concat(http_method, ' ', http_route), ?) > 0 OR ` +
-						`arrayExists(v -> positionCaseInsensitive(v, ?) > 0, attr_values)` +
-						`) > 0`
-				}
-				return ""
-			}() + `
+		    HAVING group_key != ''` + searchHaving + `
 		    ORDER BY trace_start DESC
 		    LIMIT 200000
 		)`
@@ -1970,12 +1985,8 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	args := []any{windowMin}
 	args = append(args, groupArgs...)
 	args = append(args, wc.args...)
-	// v0.5.369-372 — search placeholders in the inner HAVING.
-	// Four bindings: name / http_route / verb+route /
-	// attr_values-arrayExists.
-	if f.Search != "" {
-		args = append(args, f.Search, f.Search, f.Search, f.Search)
-	}
+	// v0.8.x — one bind per search token in the inner HAVING (ALL-tokens).
+	args = append(args, searchArgs...)
 	postFilter := ""
 	if f.MinMs > 0 {
 		postFilter += " AND avg_ms >= ?"

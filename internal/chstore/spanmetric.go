@@ -75,19 +75,13 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		wc.add("time <= ?", f.To)
 	}
 	ApplyFilters(&wc, f.Filters)
-	// v0.6.32 — free-text search at WHERE level. Same predicate
-	// shape as GetTraces' HAVING clause (name / http_route /
-	// http_method+route concat / attr_values), just applied
-	// per-span instead of per-trace so the histogram total
-	// matches the search-narrowed set the table is showing.
-	if f.Search != "" {
-		wc.add(
-			"(positionCaseInsensitive(name, ?) > 0 OR "+
-				"positionCaseInsensitive(http_route, ?) > 0 OR "+
-				"positionCaseInsensitive(concat(http_method, ' ', http_route), ?) > 0 OR "+
-				"arrayExists(v -> positionCaseInsensitive(v, ?) > 0, attr_values))",
-			f.Search, f.Search, f.Search, f.Search,
-		)
+	// v0.6.32 — free-text search at WHERE level, applied per-span (not
+	// per-trace) so the histogram total matches the search-narrowed set the
+	// traces table shows. v0.8.x — shares searchPredicate with GetTraces:
+	// ALL-tokens match over the combined haystack, so both surfaces narrow
+	// identically.
+	if pred, pargs := searchPredicate(f.Search); pred != "" {
+		wc.add(pred, pargs...)
 	}
 
 	// ── Bucket size ───────────────────────────────────────────────────────────

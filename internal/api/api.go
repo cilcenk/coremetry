@@ -1999,9 +1999,12 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	// the table. Opt-in (doubles CH cost) so the default page-
 	// load stays a single scan.
 	compare := q.Get("compare") == "prior"
-	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d:cmp=%v", cacheBucket(from, to), service, search, cluster, limit, compare)
+	// v0.8.x — Uptrace-style "group by shape": cluster paths carrying IDs
+	// (/orders/8421) into a normalized signature (/orders/:id) at read time.
+	bySignature := q.Get("groupBy") == "signature"
+	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d:cmp=%v:sig=%v", cacheBucket(from, to), service, search, cluster, limit, compare, bySignature)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		rows, err := s.store.GetEndpoints(r.Context(), from, to, service, search, cluster, limit)
+		rows, err := s.store.GetEndpoints(r.Context(), from, to, service, search, cluster, limit, bySignature)
 		if err != nil {
 			return nil, err
 		}
@@ -2013,7 +2016,7 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		dur := to.Sub(from)
 		priorFrom := from.Add(-dur)
 		priorTo := from
-		priorRows, err := s.store.GetEndpoints(r.Context(), priorFrom, priorTo, service, search, cluster, limit)
+		priorRows, err := s.store.GetEndpoints(r.Context(), priorFrom, priorTo, service, search, cluster, limit, bySignature)
 		if err != nil {
 			// Prior failure is non-fatal — return current rows
 			// without trends rather than 500'ing the page.

@@ -108,6 +108,9 @@ export default function EndpointsPage() {
   // since it doubles backend CH scan cost; operator opts in
   // when they want trend arrows next to each metric.
   const [compare, setCompare] = useState<boolean>(false);
+  // v0.8.x — Uptrace-style "group by shape": cluster paths carrying IDs
+  // (/orders/8421) into a normalized signature (/orders/:id) at read time.
+  const [bySignature, setBySignature] = useState<boolean>(false);
   // v0.5.406 — row expansion + per-service dependency cache.
   // Clicking the "▶" chevron on a row reveals a strip showing
   // which services this endpoint's service typically calls
@@ -156,10 +159,11 @@ export default function EndpointsPage() {
       cluster: cluster || undefined,
       limit,
       compare: compare ? 'prior' : undefined,
+      groupBy: bySignature ? 'signature' : undefined,
     })
       .then(r => setRows(r ?? []))
       .catch(() => setRows(null));
-  }, [from, to, service, search, cluster, limit, compare]);
+  }, [from, to, service, search, cluster, limit, compare, bySignature]);
 
   // Cluster picker options — mirror Services page so symmetry is
   // intuitive for operators landing here after filtering there.
@@ -235,6 +239,13 @@ export default function EndpointsPage() {
               checked={compare}
               onChange={e => setCompare(e.target.checked)} />
             Compare vs prior
+          </label>
+          <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+            title="Group endpoints by normalized shape: paths carrying IDs (/orders/8421) collapse into one stable group (/orders/:id). p99/error-rate stay exact.">
+            <input type="checkbox"
+              checked={bySignature}
+              onChange={e => setBySignature(e.target.checked)} />
+            Group by shape
           </label>
           {/* v0.5.405 — fix-me-first preset. Sorts by composite
               impact (calls × p99 × (1+errorRate)) so high-traffic

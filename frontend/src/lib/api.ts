@@ -1188,7 +1188,7 @@ export const api = {
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
   metricHistogram: (params: MetricQueryParams) =>
     get<HistogramResult | null>(`/api/metrics/histogram?${qs(params)}`),
-  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number; compare?: 'prior' }) =>
+  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature' }) =>
     get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
   serviceAttrs: (service: string, from: number, to: number, opts?: { top?: number; samples?: number }) =>
     get<ServiceAttrsResponse>(

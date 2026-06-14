@@ -87,7 +87,21 @@ type EndpointRow struct {
 // case for a lot of manual instrumentation + older SDKs +
 // frameworks that don't auto-decorate kind. We now keep any
 // span with a real path that isn't an OUTGOING call.
-func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, cluster string, limit int) ([]EndpointRow, error) {
+// opSigWrap wraps an endpoint-path SQL expression in a deterministic
+// normalization (Uptrace-style _group_id): collapse UUIDs and numeric path
+// segments to placeholders so high-cardinality paths carrying IDs
+// (/orders/8421, /orders/8422) cluster into one stable group (/orders/:id).
+// Applied only to the GROUP-BY projection; the per-bucket CTE re-computes the
+// quantile over the normalized group, so p99/error-rate stay exact (no MV,
+// no schema change, no ingest fan-out). RE2 syntax. UUID first so the numeric
+// rule doesn't chew its digit runs.
+func opSigWrap(expr string) string {
+	return `replaceRegexpAll(replaceRegexpAll(` + expr +
+		`, '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', ':uuid')` +
+		`, '/[0-9]+', '/:id')`
+}
+
+func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, cluster string, limit int, bySignature bool) ([]EndpointRow, error) {
 	if limit <= 0 || limit > 10000 {
 		limit = 500
 	}
@@ -156,10 +170,17 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	// 0 on non-numeric or missing values; the BETWEEN bounds
 	// naturally exclude 0 so non-HTTP spans don't bias any class.
 	const statusExpr = `toUInt16OrZero(attr_values[indexOf(attr_keys, 'http.status_code')])`
+	// Group-by projection: raw path by default, normalized signature when the
+	// operator toggles "group by shape". Filtering (search, != '') stays on the
+	// raw pathExpr so the normalization only affects clustering.
+	pathProj := pathExpr
+	if bySignature {
+		pathProj = opSigWrap(pathExpr)
+	}
 	q := `
 		WITH per_bucket AS (
 		  SELECT service_name,
-		         ` + pathExpr + `                                AS path,
+		         ` + pathProj + `                                AS path,
 		         intDiv(toUnixTimestamp64Nano(time) - ?, ?)      AS b,
 		         count()                                         AS bv,
 		         countIf(status_code = 'error')                  AS bv_err,

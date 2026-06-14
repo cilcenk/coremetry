@@ -21,12 +21,14 @@ import (
 	"github.com/cilcenk/coremetry/internal/logstore"
 )
 
-// logsTailCadence is how often the streamLogs handler issues a forward
-// read. Decoupled from the (retired) client poll: the read is a cheap
-// bounded delta (time>=cursor, no count, no PIT), so a snappy 5s feel is
-// affordable. The ~10s OTel ingest lag means faster surfaces nothing
-// sooner; slower multiplies backend load by concurrent live tabs.
-const logsTailCadence = 5 * time.Second
+// logsTailCadence is how often the streamLogs handler issues a forward read.
+// The read is a cheap bounded delta (time>=cursor, no count, no PIT), but each
+// connected live tab drives its own poll — at billion-doc ES scale a fleet of
+// open Logs tabs is real backend load. The ~10s OTel ingest lag means a faster
+// tick surfaces nothing sooner anyway, so 10s (the CLAUDE.md polling floor)
+// halves the per-tab Elasticsearch query rate with zero perceptible latency
+// cost (v0.8.x — operator asked to ease ES request pressure).
+const logsTailCadence = 10 * time.Second
 
 // tailStep is the pure cursor-advance for the live-tail loop. Given the
 // current forward cursor `sinceNs`, the ids already emitted at exactly that
@@ -187,20 +189,32 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		// back the prior response's nextCursor; backend-owned format.
 		Cursor: q.Get("after"),
 	}
-	page, err := s.logs.Search(r.Context(), f)
-	if err != nil {
-		// Surface the full backend error (ES carries the authz/index reason in
-		// the response body via res.String()) in the pod log so the operator can
-		// grep "[logs]" instead of only seeing it in the API response.
-		log.Printf("[logs] search failed (backend=%s, service=%q, trace=%q): %v",
-			s.logs.Backend(), f.Service, f.TraceID, err)
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]interface{}{
-		"total":      page.Total,
-		"logs":       page.Logs,
-		"nextCursor": page.NextCursor,
+	// v0.8.x — cache the static log search (15s). This was the ONLY ES-backed
+	// read still hitting Elasticsearch uncached on every request; the live edge
+	// is served by the SSE tail (streamLogs), not this path, so concurrent
+	// operators, pagination round-trips and rapid filter toggles all fanned out
+	// straight to ES. Key hashes EVERY filter input; raw from/to strings keep a
+	// relative window stable within the TTL (mirrors getLogsTimeseries).
+	// (operator asked to ease ES request pressure).
+	key := fmt.Sprintf("logs:svc=%s:clu=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:lim=%d:off=%d:cur=%s:q=%s",
+		f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
+		q.Get("from"), q.Get("to"), f.Limit, f.Offset, f.Cursor, f.Search)
+	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
+		page, err := s.logs.Search(r.Context(), f)
+		if err != nil {
+			// Surface the full backend error (ES carries the authz/index reason
+			// in the response body via res.String()) in the pod log so the
+			// operator can grep "[logs]" instead of only seeing it in the API
+			// response.
+			log.Printf("[logs] search failed (backend=%s, service=%q, trace=%q): %v",
+				s.logs.Backend(), f.Service, f.TraceID, err)
+			return nil, err
+		}
+		return map[string]interface{}{
+			"total":      page.Total,
+			"logs":       page.Logs,
+			"nextCursor": page.NextCursor,
+		}, nil
 	})
 }
 

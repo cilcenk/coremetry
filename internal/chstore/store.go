@@ -324,13 +324,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			res_values    Array(String),
 			events        String       DEFAULT '[]',
 			scope_name    LowCardinality(String) DEFAULT '',
+			cluster       LowCardinality(String) MATERIALIZED %s,
 			INDEX idx_trace  trace_id  TYPE bloom_filter(0.01) GRANULARITY 4,
 			INDEX idx_name   name      TYPE set(0) GRANULARITY 4
 		) ENGINE = MergeTree()
 		PARTITION BY toDate(time)
 		ORDER BY (service_name, time)
 		TTL toDate(time) + INTERVAL %d DAY
-		SETTINGS index_granularity = 8192`, sd),
+		SETTINGS index_granularity = 8192`, clusterDeriveExpr, sd),
 
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS logs (
 			trace_id      String       DEFAULT '',
@@ -1082,6 +1083,15 @@ func (s *Store) migrate(ctx context.Context) error {
 	// (MATERIALIZE INDEX is too heavy on a 36B-row table) but ages
 	// out via TTL inside the retention window.
 	alters := []string{
+		// v0.8.x — cluster promoted from a read-time res_values/attr_values
+		// array scan (clusterDeriveExpr, the 6-key coalesce) to a MATERIALIZED
+		// column so /endpoints + topology cluster filters/derivations hit an
+		// indexed LowCardinality col instead of indexOf() over the attr arrays.
+		// Forward-only: fills NEW parts at insert; old parts read '' and the
+		// callers fall back to clusterDeriveExpr via clusterColExpr (no backfill
+		// MATERIALIZE mutation — that would stress the RAM-bound CH). The column
+		// references the SAME const as the fallback so new/old parts never drift.
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS cluster LowCardinality(String) MATERIALIZED ` + clusterDeriveExpr,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider LowCardinality(String) DEFAULT 'local'`,
 		// team — operator-curated grouping (e.g. "platform-sre",
 		// "fraud", "payments"). LowCardinality because each

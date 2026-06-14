@@ -218,6 +218,18 @@ const clusterDeriveExpr = `coalesce(
 	''
 )`
 
+// clusterColExpr reads the promoted `cluster` MATERIALIZED column
+// (v0.8.x) when present — new parts compute+store it at insert — and
+// falls back to the live clusterDeriveExpr array scan for old parts
+// that predate the column add (those read '' for the materialized
+// col). CH short-circuits coalesce, so new parts never pay the
+// indexOf() scan over res_values/attr_values; old parts pay it once,
+// until they TTL out of the retention window, after which every part
+// carries the column. The SAME clusterDeriveExpr const is embedded
+// here as the column's MATERIALIZED expression (store.go) so new and
+// old parts always derive identical cluster names — no drift.
+const clusterColExpr = `coalesce(nullIf(cluster, ''), ` + clusterDeriveExpr + `)`
+
 // GetServiceClusterMap returns one entry per service with the
 // distinct cluster names it ran in during the last `since`
 // window. Used to enrich Problems / Anomalies / Incidents at
@@ -235,7 +247,7 @@ func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (
 	}
 	from := time.Now().Add(-since)
 	rows, err := s.conn.Query(ctx, `
-		SELECT service_name, `+clusterDeriveExpr+` AS cluster
+		SELECT service_name, `+clusterColExpr+` AS cluster
 		FROM spans
 		WHERE time >= ? AND service_name != ''
 		GROUP BY service_name, cluster
@@ -272,7 +284,7 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 		to = time.Now()
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT `+clusterDeriveExpr+` AS cluster
+		SELECT `+clusterColExpr+` AS cluster
 		FROM spans
 		WHERE time >= ? AND time <= ?
 		GROUP BY cluster
@@ -331,7 +343,7 @@ func (s *Store) GetServiceClusterBreakdown(
 		to = time.Now()
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT `+clusterDeriveExpr+` AS cluster,
+		SELECT `+clusterColExpr+` AS cluster,
 		       count()                          AS span_count,
 		       countIf(status_code = 'error')   AS error_count,
 		       avg(duration) / 1e6              AS avg_ms,
@@ -405,12 +417,11 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 		wc.add("service_name IN ("+strings.Join(holders, ",")+")", args...)
 	}
 	if cluster != "" {
-		// Match exactly against the derived cluster name. The
-		// coalesce expression is repeated inline because CH
-		// doesn't carry derived expressions across WHERE — but
-		// the cost is the same indexOf scan whether referenced
-		// once (here) or twice (here + GROUP BY).
-		wc.add(clusterDeriveExpr+" = ?", cluster)
+		// Match against the promoted cluster column with a derive
+		// fallback for pre-column parts (clusterColExpr). New parts
+		// hit the indexed LowCardinality col; old parts fall back to
+		// the indexOf scan until they age out.
+		wc.add(clusterColExpr+" = ?", cluster)
 	}
 	limitClause := ""
 	if limit > 0 {

@@ -3680,8 +3680,32 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 	// tick now() and poison the key (v0.5.184 class).
 	key := "span-metric:" + r.URL.RawQuery
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.QuerySpanMetric(r.Context(), f)
+		// v0.8.x — trim the wire payload on a high-cardinality groupBy. The
+		// frontend (PanelStack) only ever renders the top ≤TOP_N_MAX series by
+		// area, so returning thousands wastes wire + parse. QuerySpanMetricTopN
+		// keeps the top-50 by the SAME area metric and reports the pre-trim
+		// total so the "+N more" stays accurate. totalSeries omitted (== len)
+		// when no trim happened, keeping the response compact.
+		series, total, err := s.store.QuerySpanMetricTopN(r.Context(), f)
+		if err != nil {
+			return nil, err
+		}
+		resp := spanMetricResponse{Series: series}
+		if total > len(series) {
+			resp.TotalSeries = total
+		}
+		return resp, nil
 	})
+}
+
+// spanMetricResponse is the /api/spans/metric envelope. Series is the (possibly
+// top-N-trimmed) list; TotalSeries is the pre-trim count, omitted when it equals
+// len(Series) so the frontend defaults the "+N more" to series length. The
+// resolver + batch paths return the bare series slice and never set this — the
+// frontend type makes totalSeries optional so they keep working unchanged.
+type spanMetricResponse struct {
+	Series      []chstore.SpanMetricSeries `json:"series"`
+	TotalSeries int                        `json:"totalSeries,omitempty"`
 }
 
 // spanMetricBatch runs N aggregations over the same span

@@ -1122,6 +1122,18 @@ export interface SpanMetricSeries {
   points: { time: number; value: number }[]; // time = unix nanoseconds
 }
 
+// SpanMetricResult — /api/spans/metric envelope (v0.8.x). The backend trims a
+// high-cardinality groupBy to the top ≤TOP_N_MAX series by area (the exact set
+// the UI renders) to keep the wire payload small. `totalSeries` is the pre-trim
+// count so PanelStack's "+N more" stays accurate; it is OMITTED when no trim
+// happened — consumers default it to `series.length`. The resolver + batch
+// paths return the bare series slice and never set totalSeries, so it stays
+// optional and they keep working unchanged.
+export interface SpanMetricResult {
+  series: SpanMetricSeries[];
+  totalSeries?: number;
+}
+
 // v0.8.53 ("every metric is a doorway" D4) — result of server-side descriptor
 // resolution (/api/metrics/resolve). `tier` reports which store served it
 // (1s|10s|1m for spanmetrics, trace_summary_5m for tracemetrics, spans for the

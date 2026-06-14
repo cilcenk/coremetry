@@ -32,6 +32,11 @@ export interface ExploreQueriesResult {
   // letter → that query's series fan-out. undefined = loading or not
   // producing; [] = ran, no data.
   byLetter: Record<string, SpanMetricSeries[] | undefined>;
+  // letter → total series the query produced BEFORE the server's top-N trim.
+  // Equals byLetter[letter].length when no trim happened (resolver / metric /
+  // small-cardinality span queries). PanelStack uses this for an accurate
+  // "+N more" instead of inferring it from the (already-capped) series count.
+  totalByLetter: Record<string, number | undefined>;
   // letter → per-bucket slow/error exemplar trace_ids (◆ glyphs). Populated
   // ONLY for resolver-eligible span queries — which now fetch series AND
   // exemplars in the SAME api.resolveMetric call (D5). [] for everything else.
@@ -47,6 +52,10 @@ export interface ExploreQueriesResult {
 interface QueryData {
   series: SpanMetricSeries[];
   exemplars: MetricExemplar[];
+  // Pre-trim series count. Only the legacy span path (api.spanMetricTopN) can
+  // report a value > series.length; the resolver + metric paths leave it
+  // undefined and the consumer defaults to series.length.
+  totalSeries?: number;
 }
 
 export function useExploreQueries(
@@ -73,7 +82,7 @@ export function useExploreQueries(
             ? api.resolveMetric(desc, { from, to }, { step: state.step || undefined, exemplars: true })
                 .then(r => ({ series: r?.series ?? [], exemplars: r?.exemplars ?? [] }))
             : q.source === 'span'
-              ? api.spanMetric({
+              ? api.spanMetricTopN({
                   agg: q.agg,
                   field: q.metric || undefined,
                   groupBy: q.splitBy.join(',') || undefined,
@@ -81,7 +90,7 @@ export function useExploreQueries(
                   dsl: q.dsl.trim() || undefined,
                   from, to,
                   step: state.step || undefined,
-                }).then(r => ({ series: r ?? [], exemplars: [] }))
+                }).then(r => ({ series: r?.series ?? [], exemplars: [], totalSeries: r?.totalSeries }))
               : api.metricQuery({
                   name: q.metric,
                   agg: q.agg,
@@ -100,6 +109,7 @@ export function useExploreQueries(
   const dataSig = results.map(r => (r.data ? r.dataUpdatedAt : r.isError ? -1 : 0)).join('|');
   return useMemo(() => {
     const byLetter: Record<string, SpanMetricSeries[] | undefined> = {};
+    const totalByLetter: Record<string, number | undefined> = {};
     const exemplarsByLetter: Record<string, MetricExemplar[]> = {};
     let anyLoading = false;
     let error: { letter: string; message: string } | null = null;
@@ -110,10 +120,14 @@ export function useExploreQueries(
       if (r.isError && !error) {
         error = { letter: q.letter, message: r.error instanceof Error ? r.error.message : String(r.error) };
       }
-      byLetter[q.letter] = r.data === undefined ? undefined : (r.data.series ?? []);
+      const series = r.data === undefined ? undefined : (r.data.series ?? []);
+      byLetter[q.letter] = series;
+      // Default the total to the (possibly capped) series length when the path
+      // doesn't report one — resolver / metric queries are never trimmed.
+      totalByLetter[q.letter] = series === undefined ? undefined : (r.data?.totalSeries ?? series.length);
       exemplarsByLetter[q.letter] = r.data?.exemplars ?? [];
     });
-    return { byLetter, exemplarsByLetter, anyLoading, error };
+    return { byLetter, totalByLetter, exemplarsByLetter, anyLoading, error };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, state]);
 }

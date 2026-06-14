@@ -778,15 +778,12 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 	// Subsequent ticks scan a 5-minute trailing window — generous overlap
 	// to catch ingest lag, harmless because UpsertExceptionGroup is idempotent.
 	since := time.Now().Add(-24 * time.Hour)
-	// v0.6.24 — operator-reported: the /problems "Resolved" tab
-	// stayed empty forever on installs where nobody clicked Resolve.
-	// Auto-resolve any open/acknowledged group whose last occurrence
-	// is older than this threshold. 14 days matches Honeycomb's
-	// default; Sentry uses 30d which is too lenient for the rate
-	// banks file exceptions at. UpsertExceptionGroup's existing
-	// regression detector flips a group back to `regressed` if the
-	// same exception fires again later — so this is reversible.
-	const staleHorizon = 14 * 24 * time.Hour
+	// v0.6.24 — auto-resolve any open/acknowledged group whose last
+	// occurrence is older than this threshold (the "Resolved tab stays
+	// empty forever" fix). Window + rationale live next to exResolveGrace
+	// in chstore so both exception-lifecycle timings are co-located +
+	// unit-tested. v0.8.x: 14d → 24h (operator: transitions too slow).
+	const staleHorizon = chstore.DefaultExceptionStaleHorizon
 	// Sweep cadence is generous — the cutoff moves a minute at a
 	// time; running this every 6 ticks (6 min) is plenty. Use a
 	// modulo on a tick counter rather than a second ticker so the

@@ -93,3 +93,39 @@ func TestShouldRegress(t *testing.T) {
 		})
 	}
 }
+
+// v0.8.x regression test — operator-reported: a Problem/exception took far too
+// long to fall into resolved/regressed (staleHorizon was 14 DAYS, exResolveGrace
+// 15m). Pin the windows fast so a future bump back to slow values is caught
+// here, while preserving the v0.8.99 invariant (grace > the 60s refresh so a
+// manual resolve isn't undone within one tick).
+func TestExceptionTransitionWindowsStayFast(t *testing.T) {
+	if DefaultExceptionStaleHorizon > 48*time.Hour {
+		t.Errorf("DefaultExceptionStaleHorizon = %v; want <= 48h so a fixed exception clears promptly (was 14d)", DefaultExceptionStaleHorizon)
+	}
+	if exResolveGrace > 10*time.Minute {
+		t.Errorf("exResolveGrace = %v; want <= 10m so a still-firing fingerprint regresses promptly (was 15m)", exResolveGrace)
+	}
+	if exResolveGrace <= time.Minute {
+		t.Errorf("exResolveGrace = %v; must stay > the 60s refresh so a manual resolve sticks (v0.8.99)", exResolveGrace)
+	}
+
+	now := time.Now()
+	// Idle past the horizon → auto-resolves; a recent occurrence does not.
+	stale := now.Add(-DefaultExceptionStaleHorizon - time.Minute).UnixNano()
+	if !shouldAutoResolveStale(ExStateNew, stale, DefaultExceptionStaleHorizon, now) {
+		t.Error("a group idle past DefaultExceptionStaleHorizon should auto-resolve")
+	}
+	fresh := now.Add(-DefaultExceptionStaleHorizon + time.Hour).UnixNano()
+	if shouldAutoResolveStale(ExStateNew, fresh, DefaultExceptionStaleHorizon, now) {
+		t.Error("a group with a recent occurrence must NOT auto-resolve")
+	}
+	// Resolved group firing past the grace regresses; within the grace it sticks.
+	resolvedAt := now.Add(-time.Hour).UnixNano()
+	if !shouldRegress(ExStateResolved, &resolvedAt, resolvedAt+exResolveGrace.Nanoseconds()+int64(time.Minute), exResolveGrace) {
+		t.Error("a resolved group firing past exResolveGrace should regress")
+	}
+	if shouldRegress(ExStateResolved, &resolvedAt, resolvedAt+exResolveGrace.Nanoseconds()/2, exResolveGrace) {
+		t.Error("a resolved group firing within the grace must NOT regress (resolve sticks)")
+	}
+}

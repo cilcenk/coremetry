@@ -386,10 +386,24 @@ func (s *Store) CountExceptionGroups(ctx context.Context, f ExceptionGroupFilter
 
 // SetExceptionGroupState handles all explicit user-driven transitions.
 // `resolved` stamps resolved_at; transitioning out of resolved clears it.
-// exResolveGrace is how long a manual resolve holds before a still-firing
-// fingerprint can regress. Long enough that the in-flight occurrences of the
-// issue the operator is actively fixing don't immediately reopen it.
-const exResolveGrace = 15 * time.Minute
+// exResolveGrace is how long a resolve holds before a still-firing fingerprint
+// can regress. A short grace still absorbs the in-flight occurrences of an
+// issue the operator just resolved (so a manual resolve isn't undone within the
+// 60s refresh — the v0.8.99 fix), but past it a fingerprint that's genuinely
+// still erroring should resurface promptly. v0.8.x: operator wanted regressed
+// to land sooner — 15m → 5m (still > the 60s refresh, so resolve sticks).
+const exResolveGrace = 5 * time.Minute
+
+// DefaultExceptionStaleHorizon is how long a group can go with NO new
+// occurrences before the background sweep auto-resolves it (main.go wires this
+// into AutoResolveStaleExceptionGroups). v0.8.x — operator-reported: the old
+// 14-day horizon made resolved transitions take far too long and contradicted
+// the v0.6.24 "cleared by tomorrow" intent. 24h clears a genuinely-fixed
+// exception by the next day (14× faster) while a still-active fingerprint keeps
+// firing well inside the window so it never spuriously resolves. Lives here
+// (not main.go) so it sits beside exResolveGrace and both windows are unit-
+// testable. Reversible: shouldRegress re-opens a fingerprint that fires again.
+const DefaultExceptionStaleHorizon = 24 * time.Hour
 
 // shouldRegress decides whether a resolved group reopens (regresses) on a fresh
 // occurrence. Pure — unit-tested (v0.8.99). Regression fires only for a resolved

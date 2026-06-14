@@ -50,7 +50,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
     try {
       if (kind === 'runbook') {
         const r = await api.copilotRunbook(id);
-        setText(r.explanation);
+        setText(r.explanation || '⚠ Model boş yanıt döndürdü (reasoning modu + düşük max_tokens olabilir).');
         // Surface the "based on N past resolutions" hint so the
         // operator knows whether the steps are grounded in
         // real history or first-principles.
@@ -64,7 +64,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
                 : kind === 'incident'       ? await api.copilotExplainIncident(id)
                 : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id)
                 :                             await api.copilotExplainServiceHealth(id, fromNs ?? 0, toNs ?? 0);
-        setText(r.explanation);
+        setText(r.explanation || '⚠ Model boş yanıt döndürdü (reasoning modu + düşük max_tokens olabilir).');
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Explain failed');

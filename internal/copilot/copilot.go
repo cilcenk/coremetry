@@ -339,6 +339,12 @@ func truncErr(s string) string {
 // local endpoints (older Ollama, vLLM) omit usage; those return
 // 0 tokens and the recorder writes the row anyway with what it
 // has (the latency + status are still useful).
+// openAICompletionTokens caps the OpenAI-compatible completion budget.
+// Reasoning models (Qwen3, deepseek-r1, …) spend tokens on a thinking phase
+// before emitting the answer; at 1024 they often finished mid-thought
+// (finish_reason "length", empty content), so we give them room.
+const openAICompletionTokens = 4096
+
 func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
 	s.mu.RLock()
 	apiKey, model, base := s.apiKey, s.model, s.baseURL
@@ -354,7 +360,7 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 	url := strings.TrimRight(base, "/") + "/chat/completions"
 	body := map[string]any{
 		"model":       model,
-		"max_tokens":  1024,
+		"max_tokens":  openAICompletionTokens,
 		"temperature": 0.2,
 		"messages": []map[string]any{
 			{"role": "system", "content": systemPrompt},
@@ -382,8 +388,10 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 	var parsed struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     uint32 `json:"prompt_tokens"`
@@ -397,8 +405,32 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
 			errors.New("openai-compat: empty response")
 	}
-	return parsed.Choices[0].Message.Content,
-		parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, nil
+	out := stripThinking(parsed.Choices[0].Message.Content)
+	if out == "" {
+		// Reasoning models (Qwen3, deepseek-r1, …) emit the answer in a
+		// separate field and/or burn the whole budget thinking.
+		out = stripThinking(parsed.Choices[0].Message.ReasoningContent)
+	}
+	if out == "" {
+		if parsed.Choices[0].FinishReason == "length" {
+			return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
+				errors.New("model returned no answer — token budget exhausted by reasoning; raise max_tokens or disable thinking (e.g. Qwen3 /no_think)")
+		}
+		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
+			errors.New("openai-compat: model returned empty content")
+	}
+	return out, parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, nil
+}
+
+// stripThinking removes a leading chain-of-thought block emitted by some
+// local reasoning models (Qwen3, deepseek-r1, …) that inline it as
+// <think>…</think> in the content field. Keeps only what follows the
+// final </think>. No-op when absent.
+func stripThinking(s string) string {
+	if i := strings.LastIndex(s, "</think>"); i != -1 {
+		s = s[i+len("</think>"):]
+	}
+	return strings.TrimSpace(s)
 }
 
 // ── Anthropic ───────────────────────────────────────────────────────────────

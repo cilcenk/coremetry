@@ -2638,19 +2638,31 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	if f.CountMode == "" {
 		f.CountMode = "skip"
 	}
-	traces, total, hasMore, err := s.store.GetTraces(r.Context(), f)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	resp := map[string]interface{}{"traces": traces, "hasMore": hasMore}
-	// Only emit `total` when the caller actually computed one — clients
-	// distinguish "unknown total" from "zero total" by the field's
-	// presence, not its value.
-	if f.CountMode != "skip" {
-		resp["total"] = total
-	}
-	writeJSON(w, resp)
+	// 20s cache. /api/traces is the heaviest uncached read: a filtered
+	// query disqualifies the trace_summary MV fast-path and falls back to
+	// a raw GROUP BY trace_id over spans. Pagination round-trips, sort /
+	// filter toggles and concurrent operators all repeat the same
+	// predicate, so serveCached gives cache-hit + singleflight coalescing
+	// + stale-while-revalidate. Key = full query string (same shape as the
+	// traces-agg / span-metric keys); the handler is a pure function of the
+	// query string (GET, no body/role variance). raw from/to keep a
+	// relative window stable within the TTL (do NOT key on parsed now()-
+	// ticking time, the v0.5.184 class).
+	key := "traces:" + r.URL.RawQuery
+	s.serveCached(w, r, key, 20*time.Second, func() (any, error) {
+		traces, total, hasMore, err := s.store.GetTraces(r.Context(), f)
+		if err != nil {
+			return nil, err
+		}
+		resp := map[string]interface{}{"traces": traces, "hasMore": hasMore}
+		// Only emit `total` when the caller actually computed one — clients
+		// distinguish "unknown total" from "zero total" by the field's
+		// presence, not its value.
+		if f.CountMode != "skip" {
+			resp["total"] = total
+		}
+		return resp, nil
+	})
 }
 
 // exportTracesCSV serves the current /traces filter set as a
@@ -2792,12 +2804,16 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Filters = filters
 
-	// 15s cache. /traces aggregated tab is the default landing
+	// 20s cache. /traces aggregated tab is the default landing
 	// view; sort / group toggles re-call this and tend to repeat
-	// the same predicate. Filter set goes through the raw query
-	// string so the key is stable across distinct callers.
-	key := fmt.Sprintf("traces-agg:%s", r.URL.RawQuery)
-	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
+	// the same predicate, and a filtered group-by disqualifies the
+	// trace_summary MV and falls back to a raw GROUP BY trace_id over
+	// spans. Filter set goes through the raw query string so the key
+	// is stable across distinct callers (pure function of the query
+	// string; GET, no body/role variance). raw from/to keep a
+	// relative window stable within the TTL (v0.5.184 class).
+	key := "traces-agg:" + r.URL.RawQuery
+	s.serveCached(w, r, key, 20*time.Second, func() (any, error) {
 		return s.store.GetTraceAggregate(r.Context(), f)
 	})
 }

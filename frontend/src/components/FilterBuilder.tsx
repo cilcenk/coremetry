@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Combobox } from './Combobox';
 import { api } from '@/lib/api';
 import type { FilterExpr, FilterOp } from '@/lib/types';
+import { useUrlRange } from '@/lib/useUrlRange';
+import { timeRangeToNs } from '@/lib/utils';
 
 // Suggested attribute keys for the autocomplete. Users can type anything else
 // (custom span/resource attributes) — backend looks them up in the matching
@@ -157,6 +159,11 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
   topHints: { key: string; count: number }[];
 }) {
   const [local, setLocal] = useState<FilterExpr>(draft);
+  // v0.8.x (trace-query gap-1) — bind value autocomplete to the page's active
+  // window (the URL range source of truth), not a hard-coded 1h, so a value
+  // picked on a 24h/7d view matches the rows actually shown.
+  const [range] = useUrlRange();
+  const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
   const needsValue = NEEDS_VALUE[local.op];
   const isList = local.op === 'IN' || local.op === 'NOT IN';
 
@@ -196,7 +203,7 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
     let cancelled = false;
     setLiveLoading(true);
     const handle = setTimeout(() => {
-      api.attributeValues(k, '1h', 200, typedValue || undefined)
+      api.attributeValues(k, '1h', 200, typedValue || undefined, rangeNs)
         .then(rows => {
           if (cancelled) return;
           setLiveValues((rows ?? []).map(r => r.value));
@@ -205,7 +212,7 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
         .finally(() => { if (!cancelled) setLiveLoading(false); });
     }, 200);
     return () => { cancelled = true; clearTimeout(handle); };
-  }, [local.k, typedValue]);
+  }, [local.k, typedValue, rangeNs]);
 
   // Combine: parent-provided suggestions first (services /
   // operations tend to be richer than the 1h fast-cache),

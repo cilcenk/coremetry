@@ -330,9 +330,9 @@ export const api = {
   // top-200 by count; with it, an operator hunting a long-tail
   // value (specific http.url, db.statement fragment) can find
   // it without scrolling.
-  attributeValues: (key: string, since = '1h', limit = 200, q?: string) =>
+  attributeValues: (key: string, since = '1h', limit = 200, q?: string, range?: { from: number; to: number }) =>
     get<{ value: string; count: number }[] | null>(
-      `/api/attribute-values?${qs({ key, since, limit, q })}`),
+      `/api/attribute-values?${qs({ key, since, limit, q, from: range?.from, to: range?.to })}`),
   operations: (service: string, r: RangeParams) =>
     get<string[] | null>(`/api/operations?${qs({ ...r, service })}`),
 

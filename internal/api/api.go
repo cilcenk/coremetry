@@ -2342,6 +2342,12 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 // the query O(sample) instead of O(window) at billion-span scale.
 const attrKeysSampleRows = 200_000
 
+// attrValuesSampleRows bounds the inner scan in getAttributeValues' array path
+// when no q is given. Range-bound autocomplete (v0.8.x) can now select a wide
+// window, so the sample keeps the GROUP BY O(sample) not O(window); an explicit
+// q runs the exact filtered scan instead, so long-tail values stay reachable.
+const attrValuesSampleRows = 200_000
+
 // attributeKeysSQL builds the distinct-attribute-keys discovery query that
 // drives the Traces "Add column" picker + FilterBuilder autocomplete.
 //
@@ -2404,6 +2410,12 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid key", http.StatusBadRequest); return
 	}
 	since := parseDuration(q.Get("since"), time.Hour)
+	// v0.8.x (trace-query gap-1) — range-bind the value autocomplete to the
+	// operator's selected window. FilterBuilder used to hard-code since=1h, so
+	// a value picked on a 24h/7d traces view never matched the rows in view.
+	// from/to take precedence; since stays the back-compat fallback.
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
 	limit := parseInt(q.Get("limit"), 200)
 	if limit > 1000 { limit = 1000 }
 	// v0.5.182 — optional `q` query for server-side substring /
@@ -2427,7 +2439,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 	// cache falls through too. The bare key (scope prefix stripped) matches how
 	// the cache stores keys.
 	bareKey := strings.TrimPrefix(strings.TrimPrefix(rawKey, "resource."), "span.")
-	if vals, _, freeText, hit := s.autocomplete.GetAttributeValues(r.Context(), bareKey, pattern, limit); hit && !freeText {
+	if vals, _, freeText, hit := s.autocomplete.GetAttributeValues(r.Context(), bareKey, pattern, limit); hit && !freeText && pattern == "" {
 		if vals == nil {
 			vals = []acache.ValueCount{}
 		}
@@ -2436,7 +2448,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("attr-values:%s:since=%s:limit=%d:q=%s", rawKey, q.Get("since"), limit, pattern)
+	cacheKey := fmt.Sprintf("attr-values:%s:since=%s:from=%s:to=%s:limit=%d:q=%s", rawKey, q.Get("since"), q.Get("from"), q.Get("to"), limit, pattern)
 	s.serveCached(w, r, cacheKey, 60*time.Second, func() (any, error) {
 		// Decide projection. The HTTP-layer attribute-key picker is
 		// allowed to send `resource.X` and `span.X` prefixes; strip
@@ -2453,10 +2465,16 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 
 		var sql string
 		var args []any
-		// Optional WHERE / HAVING fragment for the q filter — same
-		// shape regardless of which projection path we take. We
-		// apply it in HAVING for both paths so the alias `v` is
-		// always in scope (WHERE doesn't see SELECT aliases).
+		// v0.8.x — window bound: explicit from/to when present (range-bound
+		// autocomplete), else the legacy since-duration fallback.
+		timeWhere := "time >= now() - toIntervalSecond(?)"
+		timeArgs := []any{int64(since.Seconds())}
+		if !from.IsZero() && !to.IsZero() {
+			timeWhere = "time >= ? AND time <= ?"
+			timeArgs = []any{from, to}
+		}
+		// Optional q filter — ILIKE on the value alias `v`, applied in HAVING
+		// (WHERE doesn't see SELECT aliases) on the column path.
 		havingQ := ""
 		if likeFilter != "" {
 			havingQ = " AND v ILIKE ?"
@@ -2468,14 +2486,14 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 			sql = fmt.Sprintf(`
 				SELECT toString(%s) AS v, count() AS c
 				FROM coremetry.spans
-				WHERE time >= now() - toIntervalSecond(?)
+				WHERE %s
 				  AND %s != ''
 				GROUP BY v
 				HAVING 1=1%s
 				ORDER BY c DESC
 				LIMIT ?
-				SETTINGS max_execution_time = 30`, col, col, havingQ)
-			args = []any{int64(since.Seconds())}
+				SETTINGS max_execution_time = 30`, col, timeWhere, col, havingQ)
+			args = append([]any{}, timeArgs...)
 			if likeFilter != "" {
 				args = append(args, likeFilter)
 			}
@@ -2488,21 +2506,41 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 			if scope == "resource" {
 				arrKeys, arrVals = "res_keys", "res_values"
 			}
-			sql = fmt.Sprintf(`
-				SELECT %s[indexOf(%s, ?)] AS v, count() AS c
-				FROM coremetry.spans
-				WHERE time >= now() - toIntervalSecond(?)
-				  AND has(%s, ?)
-				GROUP BY v
-				HAVING v != ''%s
-				ORDER BY c DESC
-				LIMIT ?
-				SETTINGS max_execution_time = 30`, arrVals, arrKeys, arrKeys, havingQ)
-			args = []any{key, int64(since.Seconds()), key}
-			if likeFilter != "" {
-				args = append(args, likeFilter)
+			if likeFilter == "" {
+				// No q — sample-bound the inner scan so a wide window on a hot
+				// key can't run past max_execution_time. Top-N over a bounded
+				// sample is fine for an autocomplete dropdown.
+				sql = fmt.Sprintf(`
+					SELECT v, count() AS c FROM (
+					    SELECT %s[indexOf(%s, ?)] AS v
+					    FROM coremetry.spans
+					    WHERE %s AND has(%s, ?)
+					    LIMIT %d
+					)
+					WHERE v != ''
+					GROUP BY v
+					ORDER BY c DESC
+					LIMIT ?
+					SETTINGS max_execution_time = 30`, arrVals, arrKeys, timeWhere, arrKeys, attrValuesSampleRows)
+				args = append([]any{key}, timeArgs...)
+				args = append(args, key, limit)
+			} else {
+				// Explicit q — exact filtered scan (ILIKE + has + time bound +
+				// max_execution_time keep it bounded), so a long-tail value on a
+				// high-cardinality key is always reachable.
+				sql = fmt.Sprintf(`
+					SELECT %s[indexOf(%s, ?)] AS v, count() AS c
+					FROM coremetry.spans
+					WHERE %s
+					  AND has(%s, ?)
+					GROUP BY v
+					HAVING v != '' AND v ILIKE ?
+					ORDER BY c DESC
+					LIMIT ?
+					SETTINGS max_execution_time = 30`, arrVals, arrKeys, timeWhere, arrKeys)
+				args = append([]any{key}, timeArgs...)
+				args = append(args, key, likeFilter, limit)
 			}
-			args = append(args, limit)
 		}
 
 		rows, err := s.store.Conn().Query(r.Context(), sql, args...)

@@ -49,7 +49,14 @@ import (
 var (
 	endpoint        = flag.String("endpoint", "http://localhost:14318", "OTLP HTTP endpoint (collector host port)")
 	profileEndpoint = flag.String("profile-endpoint", "", "Coremetry profile ingest endpoint (defaults to -endpoint with /v1/profiles, NOT collector!)")
-	rps             = flag.Float64("rps", 2.0, "Scenarios per second to generate")
+	rps             = flag.Float64("rps", 2.0, "Scenarios per second to generate (each scenario is a multi-span trace; effective spans/sec ≈ rps × ~10 × live diurnal factor)")
+	// duration bounds a load-test run: after this much wall-clock the
+	// generator shuts down cleanly (same path as SIGTERM — flushes final
+	// metrics). 0 (the default) means run forever, preserving the original
+	// demo behaviour. Used by scripts/loadtest/ingest-ramp.sh so a stress
+	// step is self-limiting and a forgotten run can't keep firehosing the
+	// cluster overnight.
+	duration = flag.Duration("duration", 0, "Run for this long then exit cleanly (0 = run forever)")
 )
 
 var httpClient = &http.Client{Timeout: 5 * time.Second}
@@ -1705,10 +1712,25 @@ func main() {
 	log.Printf("  endpoint:         %s (traces/logs/metrics)", *endpoint)
 	log.Printf("  profile endpoint: %s", *profileEndpoint)
 	log.Printf("  rate:             %.1f scenarios/sec", *rps)
+	if *duration > 0 {
+		log.Printf("  duration:         %s (auto-stop)", *duration)
+	}
 	rollPodGeneration()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Bounded run for load tests — cancel the same context SIGTERM would,
+	// so every loop (driver, metrics ticker, profile loop) drains via its
+	// <-ctx.Done() branch and sendMetrics does its final flush. AfterFunc
+	// rather than a context deadline so the log line below can report it.
+	if *duration > 0 {
+		stopTimer := time.AfterFunc(*duration, func() {
+			log.Printf("duration %s elapsed — stopping", *duration)
+			cancel()
+		})
+		defer stopTimer.Stop()
+	}
 
 	var wg sync.WaitGroup
 

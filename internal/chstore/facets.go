@@ -63,9 +63,13 @@ var wellKnownFacets = []facetCol{
 // LowCardinality dict on every well-known column so the actual scan
 // is cheap even at billion-span scale — the only honest cost is the
 // network round-trip per facet.
+// root is the optional grouped AND/OR builder (v0.8.x gap-2). When non-nil
+// it SUPERSEDES filters (ApplyFilterGroup vs ApplyFilters); a flat-AND root
+// is byte-identical to the legacy filters path. Existing callers pass nil.
 func (s *Store) GetSpanFacets(
 	ctx context.Context,
 	filters []FilterExpr,
+	root *FilterGroup,
 	from, to time.Time,
 	topValues int,
 ) ([]Facet, error) {
@@ -79,7 +83,11 @@ func (s *Store) GetSpanFacets(
 	if !to.IsZero() {
 		wc.add("time <= ?", to)
 	}
-	ApplyFilters(&wc, filters)
+	if root != nil {
+		ApplyFilterGroup(&wc, *root)
+	} else {
+		ApplyFilters(&wc, filters)
+	}
 
 	out := make([]Facet, 0, len(wellKnownFacets))
 	for _, fc := range wellKnownFacets {

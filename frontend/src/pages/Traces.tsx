@@ -25,6 +25,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { OperationPicker } from '@/components/OperationPicker';
 import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
+import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
 import { Button } from '@/components/ui/Button';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
@@ -34,8 +35,8 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { tsDateTime, timeRangeToNs, fmtNum } from '@/lib/utils';
-import { encodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
-import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, SpanMetricSeries } from '@/lib/types';
+import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
+import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries } from '@/lib/types';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
@@ -96,6 +97,14 @@ const COL_W: Record<string, number> = {
   time: 168, service: 130, operation: 300, duration: 200, spans: 72, status: 84,
 };
 const ATTR_W = 160;
+// Shared value-suggestion seeds for the advanced filter builders (flat +
+// grouped). Hoisted so both render paths use the identical hints.
+const FILTER_SUGGESTED_VALUES: Record<string, string[]> = {
+  'kind': ['internal', 'server', 'client', 'producer', 'consumer'],
+  'status_code': ['ok', 'error', 'unset'],
+  'http.method': ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  'db.system': ['postgresql', 'mysql', 'redis', 'mongodb', 'elasticsearch'],
+};
 // Which fixed columns map to a server SortColumn (others aren't server-sortable).
 const SERVER_SORTABLE: Partial<Record<string, SortColumn>> = {
   time: 'time', service: 'service', operation: 'operation',
@@ -170,6 +179,18 @@ function TracesPageInner() {
   }));
   const [draft, setDraft] = useState(filter);
   const [advFilters, setAdvFilters] = useState<FilterExpr[]>(() => decodeFilters(searchParams.get('filters')));
+  // v0.8.x gap-2 — grouped AND/OR builder. null = flat chip mode (the DEFAULT,
+  // and what every existing saved view / shared URL decodes to). Non-null only
+  // when the URL carries a real OR / nested `filterGroup`, or when the operator
+  // toggles grouped mode on. When grouped, `advGroup` is the source of truth
+  // and `filterGroup` supersedes `filters` server-side (flat-AND is byte-
+  // identical, so the round-trip never changes a flat query's results).
+  const [advGroup, setAdvGroup] = useState<FilterGroup | null>(() => decodeFilterGroup(searchParams.get('filterGroup')));
+  // grouped mode is active whenever a FilterGroup is mounted. The encoded form
+  // is '' for a flat-AND group, so a grouped session that the operator empties
+  // back to flat-AND naturally falls back to the legacy `filters=` param.
+  const grouped = advGroup !== null;
+  const advGroupParam = useMemo(() => encodeFilterGroup(advGroup), [advGroup]);
   const [extraCols, setExtraCols] = useState<string[]>(
     () => (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean));
 
@@ -212,14 +233,18 @@ function TracesPageInner() {
       ['hasError', filter.hasError ? 'true' : ''],
       ['rootOnly', filter.rootOnly ? '' : 'false'],
       ['services', filter.requireServices.join(',')],
-      ['filters',  encodeFilters(advFilters)],
+      // Grouped (OR / nested) → filterGroup param; flat → legacy filters param.
+      // Never both: a non-empty filterGroup suppresses filters so the URL has a
+      // single source of truth and the backend's prefer-filterGroup rule is moot.
+      ['filters',  advGroupParam ? '' : encodeFilters(advFilters)],
+      ['filterGroup', advGroupParam],
       ['cols',     extraCols.join(',')],
     ]);
     const target = qs ? `?${qs}` : '';
     if (typeof window !== 'undefined' && target !== window.location.search) {
       navigate(`/traces${target}`, { preventScrollReset: true, replace: true });
     }
-  }, [range, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, extraCols, navigate]);
+  }, [range, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam, extraCols, navigate]);
 
   // ── List fetch ───────────────────────────────────────────────────────────
   const listRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -240,14 +265,17 @@ function TracesPageInner() {
       hasError: filter.hasError || undefined,
       rootOnly: filter.rootOnly || undefined,
       services: filter.requireServices.length ? filter.requireServices : undefined,
-      filters: advFilters.length ? JSON.stringify(advFilters) : undefined,
+      // Grouped builder supersedes the flat filters when an OR/nested group is
+      // active; flat-AND encodes to '' so the legacy filters path stays in use.
+      filterGroup: advGroupParam || undefined,
+      filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
       extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
       count: showTotal && !tid ? 'exact' : 'skip',
     }).then(setData).catch((e: unknown) => {
       setListErr(e instanceof Error ? e.message : 'Request failed');
       setData(null);
     });
-  }, [view, listRangeNs, sort, order, page, filter, advFilters, extraCols, showTotal, retryNonce]);
+  }, [view, listRangeNs, sort, order, page, filter, advFilters, advGroupParam, extraCols, showTotal, retryNonce]);
 
   // v0.8.72 — TRUE span volume over the selected window (not the 50-row table
   // page). Aggregated count/errors/p99 per ~30 buckets, mirroring the table's
@@ -266,10 +294,16 @@ function TracesPageInner() {
     let step = Math.round(windowSec / 30);
     if (step < 1) step = 1;
     if (step > 300) step = 300;
+    // The header volume chart rides /api/spans/metric, which is a flat-filters
+    // surface (filterGroup is a /traces + /aggregate + /facets capability in
+    // v0.8.x gap-2 — spanMetric isn't wired for it). When a grouped OR/nested
+    // filter is active we therefore omit the flat filters here rather than send
+    // a misleading partial predicate; the table + aggregate below still apply
+    // the full group. The chart reflects the service/search context only.
     const common = {
       from, to, step,
       search: filter.search || undefined,
-      filters: advFilters.length ? JSON.stringify(advFilters) : undefined,
+      filters: (!grouped && advFilters.length) ? JSON.stringify(advFilters) : undefined,
       dsl: filter.service ? `service.name = "${filter.service.replace(/"/g, '\\"')}"` : undefined,
     };
     let cancelled = false;
@@ -281,7 +315,7 @@ function TracesPageInner() {
       .then(([count, errors, p50]) => { if (!cancelled) setVolSeries({ count, errors, p50 }); })
       .catch(() => { if (!cancelled) setVolSeries(null); });
     return () => { cancelled = true; };
-  }, [view, listRangeNs, filter.service, filter.search, advFilters]);
+  }, [view, listRangeNs, filter.service, filter.search, advFilters, grouped]);
 
   // ── Aggregate fetch ──────────────────────────────────────────────────────
   const aggRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -299,9 +333,10 @@ function TracesPageInner() {
       hasError: filter.hasError || undefined,
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
-      filters: advFilters.length ? JSON.stringify(advFilters) : undefined,
+      filterGroup: advGroupParam || undefined,
+      filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
     }).then(setAgg).catch(() => setAgg(null));
-  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters]);
+  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam]);
 
   // apply commits the draft as the live filter (overrideService sidesteps the
   // picker auto-commit race).
@@ -323,7 +358,7 @@ function TracesPageInner() {
   const reset = () => {
     const empty = { service: '', search: '', traceId: '', minMs: '', maxMs: '', hasError: false, rootOnly: true, requireServices: [] as string[] };
     setDraft(empty); setFilter(empty); setPage(0);
-    setAdvFilters([]); setQuick(null); setExpanded(null);
+    setAdvFilters([]); setAdvGroup(null); setQuick(null); setExpanded(null);
   };
   const toggleAggSort = (col: AggSort) => {
     if (aggSort === col) setAggOrder(aggOrder === 'desc' ? 'asc' : 'desc');
@@ -383,8 +418,8 @@ function TracesPageInner() {
   }, [volSeries]);
 
   // Reset transient state on a new query / page.
-  useEffect(() => { setExpanded(null); }, [page, filter, advFilters, range, view]);
-  useEffect(() => { if (quick) setQuick(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, advFilters, range, view]);
+  useEffect(() => { setExpanded(null); }, [page, filter, advFilters, advGroupParam, range, view]);
+  useEffect(() => { if (quick) setQuick(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, advFilters, advGroupParam, range, view]);
 
   const openTrace = (t: TraceRow) => navigate(`/trace?id=${t.traceId}`);
 
@@ -666,14 +701,39 @@ function TracesPageInner() {
           </div>
         )}
 
-        {/* Advanced filter chips. */}
-        <FilterBuilder value={advFilters} onChange={setAdvFilters}
-          suggestedValues={{
-            'kind': ['internal', 'server', 'client', 'producer', 'consumer'],
-            'status_code': ['ok', 'error', 'unset'],
-            'http.method': ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-            'db.system': ['postgresql', 'mysql', 'redis', 'mongodb', 'elasticsearch'],
-          }} />
+        {/* Advanced filters. Default = flat chip row (FilterBuilder); the
+            operator can switch to the grouped AND/OR builder for queries the
+            flat conjunction can't express, e.g. (A OR B) AND C. Switching is
+            lossless: flat→grouped seeds the group's top-level leaves from the
+            current chips; grouped→flat flattens the top-level leaves back (and
+            drops any OR / nested structure, which has no flat representation).
+            v0.8.x gap-2. */}
+        <div className="row gap-2" style={{ alignItems: 'center', justifyContent: 'flex-end', marginBottom: -4 }}>
+          {!grouped ? (
+            <Button variant="ghost" size="sm"
+              title="Switch to the grouped AND/OR builder for (A OR B) AND C style queries"
+              onClick={() => setAdvGroup({ join: 'AND', filters: advFilters })}>
+              ⊞ Group filters (AND/OR)
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm"
+              title="Back to the flat filter chips (drops any OR / nested groups)"
+              onClick={() => {
+                setAdvFilters((advGroup?.filters ?? []).filter(f => f.k && f.k.trim()));
+                setAdvGroup(null);
+              }}>
+              ⊟ Flatten to chips
+            </Button>
+          )}
+        </div>
+        {!grouped ? (
+          <FilterBuilder value={advFilters} onChange={setAdvFilters}
+            suggestedValues={FILTER_SUGGESTED_VALUES} />
+        ) : (
+          <FilterGroupBuilder value={advGroup ?? { join: 'AND', filters: [] }}
+            onChange={setAdvGroup}
+            suggestedValues={FILTER_SUGGESTED_VALUES} />
+        )}
 
         {/* List view. */}
         {view === 'list' && data === undefined && <TableSkeleton rows={10} cols={7} />}

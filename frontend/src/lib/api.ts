@@ -310,14 +310,17 @@ export const api = {
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
   // surface as suggestions in addition to the hardcoded list.
-  attributeKeys: (since = '1h', limit = 500, filters?: string) => {
+  attributeKeys: (since = '1h', limit = 500, filters?: string, filterGroup?: string) => {
     // v0.5.261 — optional filter context. When the operator has
     // active filters in /explore, pass them through so the
     // suggester returns attribute keys with data UNDER those
     // filters (not the global top-N). Empty / undefined keeps
     // the old global-scan behaviour.
+    // v0.8.x gap-2 — filterGroup (grouped AND/OR) supersedes `filters`
+    // server-side when present; additive, default-off.
     const qsParts = [`since=${since}`, `limit=${limit}`];
-    if (filters && filters !== '[]') qsParts.push(`filters=${encodeURIComponent(filters)}`);
+    if (filterGroup) qsParts.push(`filterGroup=${encodeURIComponent(filterGroup)}`);
+    else if (filters && filters !== '[]') qsParts.push(`filters=${encodeURIComponent(filters)}`);
     return get<{ scope: 'span' | 'resource'; key: string; count: number }[] | null>(
       `/api/attribute-keys?${qsParts.join('&')}`);
   },
@@ -670,12 +673,14 @@ export const api = {
     if (params.limit) q.set('limit', String(params.limit));
     return get<import('./types').RepeatedSpanRow[] | null>(`/api/spans/repeats?${q}`);
   },
-  spanFacets: (params: { from: number; to: number; dsl?: string; filters?: string; topValues?: number }) => {
+  spanFacets: (params: { from: number; to: number; dsl?: string; filters?: string; filterGroup?: string; topValues?: number }) => {
     const q = new URLSearchParams();
     q.set('from', String(params.from));
     q.set('to', String(params.to));
     if (params.dsl) q.set('dsl', params.dsl);
     if (params.filters) q.set('filters', params.filters);
+    // filterGroup (v0.8.x gap-2) supersedes filters server-side when present.
+    if (params.filterGroup) q.set('filterGroup', params.filterGroup);
     if (params.topValues) q.set('topValues', String(params.topValues));
     return get<import('./types').Facet[] | null>(`/api/spans/facets?${q}`);
   },
@@ -1780,6 +1785,10 @@ export interface AggregateParams {
   from?: number;
   to?: number;
   filters?: string;     // JSON-encoded FilterExpr[]
+  // filterGroup — grouped AND/OR builder JSON (v0.8.x gap-2). When present it
+  // SUPERSEDES `filters` server-side; a flat-AND group is byte-identical to
+  // the legacy filters path, so passing it is purely additive.
+  filterGroup?: string; // JSON-encoded FilterGroup
   sort?: string;
   order?: SortOrder;
   limit?: number;
@@ -1811,6 +1820,10 @@ export interface TracesParams {
   from?: number;
   to?: number;
   filters?: string;     // JSON-encoded FilterExpr[]
+  // filterGroup — grouped AND/OR builder JSON (v0.8.x gap-2). Supersedes
+  // `filters` server-side when present; flat-AND is byte-identical so this is
+  // additive and existing callers that omit it are unaffected.
+  filterGroup?: string; // JSON-encoded FilterGroup
   dsl?: string;         // multi-line DSL (AND-joined with `filters`)
   sort?: SortColumn;
   order?: SortOrder;

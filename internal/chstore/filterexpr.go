@@ -180,3 +180,154 @@ func ApplyFilters(wc *whereClause, filters []FilterExpr) {
 		wc.add(sql, args...)
 	}
 }
+
+// FilterGroup is a grouped boolean combination of FilterExpr leaves and
+// (one level of) nested groups, joined by a single AND/OR operator. It is
+// the additive, default-off upgrade over the flat conjunction-only
+// `[]FilterExpr` path: an operator can finally express
+// `(http.status >= 500 OR db.system = oracle) AND env = prod`.
+//
+// Depth cap: v1 supports exactly ONE level of nested groups. The top-level
+// group may carry Groups; nested groups carry only Filters (deeper Groups
+// are ignored by BuildFilterGroupSQL). One level buys ~95% of real queries
+// per the trace-query-explore spec; arbitrary nesting is a bigger UI + URL
+// codec lift deferred past v1.
+//
+// BACK-COMPAT CONTRACT (pinned by filtergroup_test.go): a flat-AND group —
+// `FilterGroup{Join:"AND", Filters:<legacy []FilterExpr>}` with no Groups —
+// emits byte-identical SQL + args to the legacy ApplyFilters path, so saved
+// views / shared URLs / DQL / facets are untouched. The flat-AND case is
+// routed straight through ApplyFilters precisely so it cannot drift.
+type FilterGroup struct {
+	Join    string        `json:"join"`   // "AND" | "OR" (default AND)
+	Filters []FilterExpr  `json:"filters"`
+	Groups  []FilterGroup `json:"groups,omitempty"`
+}
+
+// isFlatAnd reports whether the group is equivalent to the legacy flat
+// conjunction-only path: AND-joined leaves, no nested groups. Used both by
+// ApplyFilterGroup (to take the byte-identical fast path) and by the
+// repo-layer MV gate (an OR / nested group disqualifies the
+// trace_summary_5m fast-path exactly like Search / custom-attr does today).
+func (g FilterGroup) isFlatAnd() bool {
+	if len(g.Groups) > 0 {
+		return false
+	}
+	return joinOp(g.Join) == "AND"
+}
+
+// IsFlatAnd is the exported guard the repo MV gate calls on an optional
+// *FilterGroup: a nil root or a flat-AND root keeps the MV fast-path; any
+// OR / nested group falls to the raw-spans GROUP-BY path (same cost class
+// as free-text Search today).
+func (g *FilterGroup) IsFlatAnd() bool {
+	if g == nil {
+		return true
+	}
+	return g.isFlatAnd()
+}
+
+// hasPredicate reports whether the group would contribute ANY compilable
+// WHERE term. nil-safe so the repo MV gate can call it on an optional
+// *FilterGroup: a nil or empty root contributes nothing (MV fast-path
+// stays eligible), any compilable leaf — flat-AND or OR — disqualifies the
+// MV exactly like a legacy non-empty Filters slice does today.
+func (g *FilterGroup) hasPredicate() bool {
+	if g == nil {
+		return false
+	}
+	sql, _ := BuildFilterGroupSQL(*g)
+	return sql != ""
+}
+
+// joinOp normalises the join operator to "AND" or "OR"; anything unknown /
+// empty defaults to "AND" (the safe, legacy-equivalent operator).
+func joinOp(j string) string {
+	if strings.EqualFold(strings.TrimSpace(j), "OR") {
+		return "OR"
+	}
+	return "AND"
+}
+
+// buildGroupFragment renders a group to a single parenthesised SQL fragment
+// + ordered args, reusing FilterExpr.SQL() per leaf. Malformed / empty
+// leaves are silently skipped (mirrors ApplyFilters' contract). nested is
+// true when rendering a child group (caps the depth at one level — a
+// nested group's own Groups are ignored).
+//
+// Returns ("", nil) when the group yields no compilable terms, so the
+// caller can omit it entirely.
+func buildGroupFragment(g FilterGroup, nested bool) (string, []any) {
+	op := joinOp(g.Join)
+	var parts []string
+	var args []any
+	for _, f := range g.Filters {
+		sql, fargs, err := f.SQL()
+		if err != nil || sql == "" {
+			continue // silently skip — UI validates first
+		}
+		parts = append(parts, sql)
+		args = append(args, fargs...)
+	}
+	if !nested {
+		for _, sub := range g.Groups {
+			// Depth cap: render child groups as leaf fragments (their own
+			// Groups are ignored — see the FilterGroup depth-cap doc).
+			frag, fargs := buildGroupFragment(sub, true)
+			if frag == "" {
+				continue
+			}
+			parts = append(parts, frag)
+			args = append(args, fargs...)
+		}
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	if len(parts) == 1 {
+		// A single term needs no wrapping parens when it's already a
+		// self-contained fragment; but a nested child is always wrapped so
+		// the parent's join can't bind across it. Top-level single term
+		// returns bare (matches the flat path's per-conjunct add).
+		if nested {
+			return "(" + parts[0] + ")", args
+		}
+		return parts[0], args
+	}
+	return "(" + strings.Join(parts, " "+op+" ") + ")", args
+}
+
+// BuildFilterGroupSQL renders a FilterGroup to a single WHERE fragment +
+// ordered args, ready to AND onto the rest of a query's predicates. Returns
+// ("", nil) for a group with no compilable terms.
+//
+// For a flat-AND group it produces the same per-leaf SQL the legacy path
+// produces, joined by " AND " (no outer parens at the top level when there's
+// a single combined fragment) — but callers that need byte-identical
+// behaviour with ApplyFilters should use ApplyFilterGroup, which routes the
+// flat-AND case straight through ApplyFilters.
+func BuildFilterGroupSQL(g FilterGroup) (string, []any) {
+	return buildGroupFragment(g, false)
+}
+
+// ApplyFilterGroup appends a FilterGroup's predicates onto a whereClause.
+//
+//   - Flat-AND (no OR, no nested groups): delegated VERBATIM to ApplyFilters
+//     so the emitted conds + args are byte-identical to the legacy
+//     `[]FilterExpr` path — each leaf is a separate ` AND `-joined conjunct.
+//     This is the zero-risk back-compat path saved views ride on.
+//   - Anything with OR or a nested group: rendered to a single parenthesised
+//     fragment via BuildFilterGroupSQL and added as ONE conjunct, so the
+//     group's internal boolean structure is preserved against the
+//     surrounding (always-AND) time / service / error predicates.
+func ApplyFilterGroup(wc *whereClause, g FilterGroup) {
+	if g.isFlatAnd() {
+		ApplyFilters(wc, g.Filters)
+		return
+	}
+	sql, args := BuildFilterGroupSQL(g)
+	if sql == "" {
+		return
+	}
+	wc.add(sql, args...)
+}

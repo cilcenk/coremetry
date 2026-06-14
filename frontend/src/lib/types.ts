@@ -1110,6 +1110,24 @@ export interface FilterExpr {
   v: string[];      // single value for most ops, multiple for IN/NOT IN
 }
 
+// FilterGroup — grouped AND/OR boolean builder (v0.8.x trace-query gap-2).
+// Additive, default-off upgrade over the flat conjunction-only FilterExpr[]
+// path: lets an operator express `(http.status >= 500 OR db.system = oracle)
+// AND env = prod`. Sent to the backend as the `filterGroup` query param
+// (JSON), which SUPERSEDES the legacy `filters` param when present.
+//
+// Depth cap: v1 supports exactly ONE level of nested `groups`. A flat-AND
+// group — `{ join: 'AND', filters: <leaves> }` with no `groups` — is treated
+// byte-identically to the legacy FilterExpr[] by the backend, so the default
+// flat-chip-row render keeps every existing saved view / shared URL working.
+export type FilterJoin = 'AND' | 'OR';
+
+export interface FilterGroup {
+  join: FilterJoin;
+  filters: FilterExpr[];
+  groups?: FilterGroup[]; // ≤1 level of nesting in v1
+}
+
 // ── Span metrics (Tempo span-metrics + Dynatrace MDA) ────────────────────────
 
 export type SpanAgg =

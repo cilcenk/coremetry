@@ -1039,6 +1039,14 @@ type TraceFilter struct {
 	// SELECT clause.
 	ExtraAttrs []string
 	Filters    []FilterExpr // advanced filter chips (AND-joined)
+	// FilterRoot is the optional grouped AND/OR builder (v0.8.x trace-query
+	// gap-2). When non-nil it SUPERSEDES Filters: buildGetTracesWhere calls
+	// ApplyFilterGroup instead of ApplyFilters. A flat-AND FilterRoot emits
+	// byte-identical SQL to the legacy Filters path (pinned by
+	// filtergroup_test.go), so existing callers that leave it nil are wholly
+	// unaffected. An OR / nested group disqualifies the trace_summary MV
+	// fast-path exactly like Search / custom-attr does (see GetTraces gate).
+	FilterRoot *FilterGroup
 	Sort     string       // "time" | "duration"
 	Order    string       // "asc" | "desc"
 	Limit    int
@@ -1153,7 +1161,16 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 	if f.MaxMs > 0 {
 		wc.add("duration <= ?", int64(f.MaxMs*1e6))
 	}
-	ApplyFilters(&wc, f.Filters)
+	// Grouped AND/OR builder supersedes the flat Filters when present
+	// (v0.8.x gap-2). A flat-AND FilterRoot routes straight through
+	// ApplyFilters inside ApplyFilterGroup, so the legacy path stays
+	// byte-identical; an OR / nested group emits a single parenthesised
+	// conjunct.
+	if f.FilterRoot != nil {
+		ApplyFilterGroup(&wc, *f.FilterRoot)
+	} else {
+		ApplyFilters(&wc, f.Filters)
+	}
 	return wc
 }
 
@@ -1236,6 +1253,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		f.To.Sub(f.From) >= 5*time.Minute &&
 		f.Search == "" && f.TraceID == "" &&
 		len(f.Filters) == 0 &&
+		!f.FilterRoot.hasPredicate() &&
 		len(f.RequireServices) == 0 &&
 		(f.CountMode == "skip" || f.CountMode == "") {
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
@@ -1787,6 +1805,10 @@ type AggregateFilter struct {
 	MinMs     float64
 	MaxMs     float64
 	Filters   []FilterExpr
+	// FilterRoot — grouped AND/OR builder (v0.8.x gap-2). Supersedes Filters
+	// when non-nil; flat-AND is byte-identical to the legacy path, OR /
+	// nested disqualifies the trace_summary MV fast-path.
+	FilterRoot *FilterGroup
 	Sort      string // "count"|"perMin"|"errorRate"|"avg"|"p50"|"p95"|"p99"|"max"|"name"
 	Order     string // "asc"|"desc"
 	Limit     int
@@ -1812,6 +1834,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	if (f.GroupBy == "service" || f.GroupBy == "operation" || f.GroupBy == "") &&
 		f.GroupAttr == "" && f.Search == "" &&
 		len(f.Filters) == 0 &&
+		!f.FilterRoot.hasPredicate() &&
 		!f.From.IsZero() && !f.To.IsZero() &&
 		f.To.Sub(f.From) >= 5*time.Minute {
 		if rows, err := s.getTraceAggregateFromMV(ctx, f); err == nil {
@@ -1848,7 +1871,11 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	if f.HasError {
 		wc.add("status_code = 'error'")
 	}
-	ApplyFilters(&wc, f.Filters)
+	if f.FilterRoot != nil {
+		ApplyFilterGroup(&wc, *f.FilterRoot)
+	} else {
+		ApplyFilters(&wc, f.Filters)
+	}
 
 	// Pick the grouping expression. Every form uses anyIf to grab
 	// the root span's value ((parent_id = '' OR parent_id = '0000000000000000')), matching Uptrace-
@@ -2748,5 +2775,19 @@ func BuildFilterWhere(filters []FilterExpr) (string, []any) {
 	}
 	var wc whereClause
 	ApplyFilters(&wc, filters)
+	return wc.sql(), wc.args
+}
+
+// BuildFilterGroupWhere is the grouped-AND/OR companion to BuildFilterWhere
+// (v0.8.x gap-2). Returns the `WHERE …` fragment + args for a FilterGroup, or
+// ("", nil) when the group contributes no compilable terms. A flat-AND group
+// matches BuildFilterWhere's output (each leaf a separate ` AND ` conjunct)
+// via the same ApplyFilterGroup→ApplyFilters delegation the repo layer uses.
+func BuildFilterGroupWhere(g FilterGroup) (string, []any) {
+	var wc whereClause
+	ApplyFilterGroup(&wc, g)
+	if len(wc.conds) == 0 {
+		return "", nil
+	}
 	return wc.sql(), wc.args
 }

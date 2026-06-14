@@ -2289,14 +2289,27 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 	// keeps the old global-scan behaviour.
 	rawFilters := q.Get("filters")
 	filters := parseFilters(rawFilters)
+	// v0.8.x gap-2 — grouped AND/OR builder context. When the operator has a
+	// grouped filter set in /explore, the attribute-key suggester should scope
+	// to data UNDER that group. filterGroup supersedes the flat filters= (a
+	// flat-AND group is byte-identical); both strings enter the cache key so a
+	// grouped vs flat context can't cross-poison.
+	rawFilterGroup := q.Get("filterGroup")
+	root := parseFilterGroup(rawFilterGroup)
 
-	key := fmt.Sprintf("attr-keys:since=%s:limit=%d:f=%s",
-		q.Get("since"), limit, rawFilters)
+	key := fmt.Sprintf("attr-keys:since=%s:limit=%d:f=%s:fg=%s",
+		q.Get("since"), limit, rawFilters, rawFilterGroup)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Filter-derived WHERE fragment via the public chstore helper so we
 		// don't reach into the package's internal whereClause type. AND-merged
 		// with the time floor inside attributeKeysSQL for each union branch.
-		filterSQL, filterArgs := chstore.BuildFilterWhere(filters)
+		var filterSQL string
+		var filterArgs []any
+		if root != nil {
+			filterSQL, filterArgs = chstore.BuildFilterGroupWhere(*root)
+		} else {
+			filterSQL, filterArgs = chstore.BuildFilterWhere(filters)
+		}
 		extra := ""
 		if filterSQL != "" {
 			extra = " AND " + strings.TrimPrefix(filterSQL, "WHERE ")
@@ -2651,6 +2664,11 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.Filters = filters
+	// v0.8.x gap-2 — grouped AND/OR builder. When the FE sends a filterGroup
+	// it SUPERSEDES the flat filters= (a flat-AND group is byte-identical, an
+	// OR/nested group disqualifies the MV fast-path). filterGroup rides the
+	// raw query string so the "traces:"+RawQuery cache key already hashes it.
+	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
 	// Extra attribute columns. Comma-separated keys requested by the
 	// /traces UI's column manager. Strict allow-list on characters
 	// (alphanumeric + . _ -) so even though the value flows in as a
@@ -2753,6 +2771,9 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.Filters = filters
+	// v0.8.x gap-2 — grouped builder parity with /api/traces so a CSV export
+	// matches exactly what's on screen.
+	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
 	if extras := q.Get("extraAttrs"); extras != "" {
 		for _, k := range strings.Split(extras, ",") {
 			k = strings.TrimSpace(k)
@@ -2841,6 +2862,10 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.Filters = filters
+	// v0.8.x gap-2 — grouped AND/OR builder supersedes flat filters= when
+	// present; rides the raw query string so the "traces-agg:"+RawQuery cache
+	// key already hashes it.
+	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
 
 	// 20s cache. /traces aggregated tab is the default landing
 	// view; sort / group toggles re-call this and tend to repeat
@@ -3641,6 +3666,11 @@ func (s *Server) spanFacets(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid query DSL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// v0.8.x gap-2 — grouped AND/OR builder. When present it supersedes the
+	// flat filters= (a flat-AND group is byte-identical). The raw filterGroup
+	// string enters the cache key below so distinct group shapes don't poison
+	// each other.
+	root := parseFilterGroup(q.Get("filterGroup"))
 	from := parseTime(q.Get("from"))
 	to := parseTime(q.Get("to"))
 	if to.IsZero() {
@@ -3651,10 +3681,10 @@ func (s *Server) spanFacets(w http.ResponseWriter, r *http.Request) {
 	}
 	topValues := parseInt(q.Get("topValues"), 8)
 	key := fmt.Sprintf("facets:%s:%d:%d:%d",
-		q.Get("dsl")+"|"+q.Get("filters"),
+		q.Get("dsl")+"|"+q.Get("filters")+"|"+q.Get("filterGroup"),
 		from.UnixNano(), to.UnixNano(), topValues)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetSpanFacets(r.Context(), filters, from, to, topValues)
+		return s.store.GetSpanFacets(r.Context(), filters, root, from, to, topValues)
 	})
 }
 
@@ -8822,6 +8852,25 @@ func parseFiltersAndDSL(jsonFilters, dsl string) ([]chstore.FilterExpr, error) {
 		return nil, err
 	}
 	return append(out, parsed...), nil
+}
+
+// parseFilterGroup decodes the JSON-encoded `filterGroup` query parameter —
+// the grouped AND/OR builder shape (v0.8.x trace-query gap-2). Empty/missing
+// → nil so callers fall back to the legacy flat `filters=` path. A malformed
+// body returns nil (logged) rather than erroring: the grouped builder is an
+// additive, default-off upgrade and a bad blob must never break the page —
+// the flat path picks up the slack. The repo layer treats a flat-AND group
+// byte-identically to []FilterExpr, so this is pure additive behaviour.
+func parseFilterGroup(raw string) *chstore.FilterGroup {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var g chstore.FilterGroup
+	if err := json.Unmarshal([]byte(raw), &g); err != nil {
+		log.Printf("[api] filterGroup parse: %v", err)
+		return nil
+	}
+	return &g
 }
 
 // isSafeAttrKey allows only OTel-style attribute keys (alphanum + dot,

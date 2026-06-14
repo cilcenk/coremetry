@@ -48,14 +48,27 @@ export interface BuilderState {
   formula: string;         // '' = none. Expression over letters, e.g. "A / B * 100"
   viz: ExploreViz;
   step: number;            // seconds; 0 = auto. GLOBAL so formula buckets stay aligned.
+  topN?: number;           // top-N series per panel by area (Uptrace top10). 0/undef = PANEL_SERIES_CAP.
 }
 
 export const MAX_QUERIES = 4;
 export const QUERY_LETTERS = ['A', 'B', 'C', 'D'];
 
-// Per-panel client-side series cap (plan perf guard: 4 panels × ≤10 series
-// stays inside the uPlot budget). Biggest-by-area series win.
+// Default per-panel client-side series cap (plan perf guard: 4 panels × ≤10
+// series stays inside the uPlot budget). Biggest-by-area series win. The
+// operator can override via the toolbar "Top N" control (state.topN); this is
+// the fallback when unset. Hard ceiling stays at TOP_N_MAX to protect uPlot.
 export const PANEL_SERIES_CAP = 10;
+export const TOP_N_MAX = 50;
+export const TOP_N_OPTIONS = [5, 10, 20, 50];
+
+// effectiveTopN — the operator's chosen cap, clamped to [1, TOP_N_MAX]; falls
+// back to PANEL_SERIES_CAP when unset. One place so PanelStack + any future
+// consumer agree.
+export function effectiveTopN(topN?: number): number {
+  if (!topN || topN <= 0) return PANEL_SERIES_CAP;
+  return Math.min(topN, TOP_N_MAX);
+}
 
 export function blankQuery(letter: string, source: QuerySource = 'span'): BuilderQuery {
   return {

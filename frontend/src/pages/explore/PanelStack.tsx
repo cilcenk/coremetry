@@ -5,7 +5,7 @@ import { seriesColor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
 import {
   type BuilderState, type BuilderQuery, produces, queryDesc, queryUnit,
-  seriesGroupLabel, PANEL_SERIES_CAP,
+  seriesGroupLabel, effectiveTopN,
 } from './model';
 import { valueAtCursor } from './cursorBus';
 import { QueryPanel } from './QueryPanel';
@@ -88,10 +88,11 @@ export function buildPanels(
       .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value ?? 0), 0) }))
       .sort((a, b) => b.area - a.area);
     const ov = overlaysByLetter[q.letter];
+    const cap = effectiveTopN(state.topN);
     out.push({
       key: q.letter, letter: q.letter, desc, unit, isFormula: false, loading: false,
-      series: ranked.slice(0, PANEL_SERIES_CAP).map(x => x.s),
-      more: Math.max(0, ranked.length - PANEL_SERIES_CAP),
+      series: ranked.slice(0, cap).map(x => x.s),
+      more: Math.max(0, ranked.length - cap),
       deploys: ov?.deploys?.length ? ov.deploys : undefined,
       thresholds: ov?.thresholds?.length ? ov.thresholds : undefined,
     });

@@ -30,6 +30,7 @@ export function encodeBuilder(st: BuilderState): string {
   return JSON.stringify({
     ...(st.viz !== 'line' ? { v: st.viz } : {}),
     ...(st.step ? { s: st.step } : {}),
+    ...(st.topN ? { n: st.topN } : {}),
     ...(st.formula.trim() ? { f: st.formula.trim() } : {}),
     q: st.queries.map(q => ({
       l: q.letter,
@@ -94,6 +95,7 @@ export function decodeBuilder(s: string | null | undefined): BuilderState | null
       formula: typeof o.f === 'string' ? o.f : '',
       viz,
       step: typeof o.s === 'number' && o.s > 0 ? o.s : 0,
+      topN: typeof o.n === 'number' && o.n > 0 ? o.n : undefined,
     };
   } catch {
     return null;

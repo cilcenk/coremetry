@@ -35,6 +35,18 @@ describe('?q= codec round-trip', () => {
     expect(decodeBuilder(encodeBuilder(st))).toEqual(st);
   });
 
+  it('topN (Uptrace top10 series cap) round-trips', () => {
+    const st: BuilderState = {
+      queries: [{ ...blankQuery('A'), splitBy: ['service.name'] }],
+      formula: '', viz: 'line', step: 0, topN: 20,
+    };
+    const back = decodeBuilder(encodeBuilder(st));
+    expect(back?.topN).toBe(20);
+    // unset topN decodes to undefined (falls back to PANEL_SERIES_CAP), not 0
+    const plain = decodeBuilder(encodeBuilder({ ...st, topN: undefined }));
+    expect(plain?.topN).toBeUndefined();
+  });
+
   it('rejects garbage', () => {
     expect(decodeBuilder('not json')).toBeNull();
     expect(decodeBuilder('{"q":[]}')).toBeNull();

@@ -30,6 +30,7 @@ import { useQueryHistory } from './explore/useQueryHistory';
 import {
   type BuilderState, defaultBuilderState, blankQuery, nextLetter,
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
+  PANEL_SERIES_CAP, TOP_N_OPTIONS,
 } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
 import { useExploreQueries, useExploreOverlays } from './explore/useExploreQueries';
@@ -422,6 +423,12 @@ function ExploreInner() {
                   onChange={e => setBuilder(b => ({ ...b, step: Number(e.target.value) }))}
                   title="Bucket genişliği — formül hizası için tüm sorgularda ortak">
                   {STEP_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+                </select>
+                <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>Top:</span>
+                <select value={builder.topN ?? PANEL_SERIES_CAP}
+                  onChange={e => setBuilder(b => ({ ...b, topN: Number(e.target.value) }))}
+                  title="En çok alanı kaplayan ilk N seriyi göster (Uptrace top10) — kalan seriler '+N more' olarak gizlenir">
+                  {TOP_N_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               </>
             )}

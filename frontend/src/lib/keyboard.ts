@@ -69,16 +69,20 @@ function isEditableTarget(t: EventTarget | null): boolean {
 // Normalise a KeyboardEvent into the same string format we
 // register: 'mod+k' / 'g s' / 'a'. Multi-key sequences are
 // resolved via pendingPrefix, not here.
-function comboFromEvent(e: KeyboardEvent): string {
+export function comboFromEvent(e: KeyboardEvent): string {
   const parts: string[] = [];
   // mod = Cmd on Mac, Ctrl elsewhere — matches what Datadog
   // and most editors use.
   if (e.metaKey || e.ctrlKey) parts.push('mod');
   if (e.altKey) parts.push('alt');
-  if (e.shiftKey && e.key.length > 1) parts.push('shift');
+  // e.key can be undefined on synthetic / programmatic KeyboardEvents
+  // (password managers, IME composition, autofill dispatch). Normalise to ''
+  // so .length / .toLowerCase() never throw (v0.8.x crash fix).
+  const key = e.key ?? '';
+  if (e.shiftKey && key.length > 1) parts.push('shift');
   // Use lowercase letter for printable keys; dedicated names
   // for special keys.
-  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const k = key.length === 1 ? key.toLowerCase() : key;
   parts.push(k);
   return parts.join('+');
 }
@@ -93,7 +97,7 @@ function installListener(): void {
     // current event might complete a registered sequence. Only
     // letters/numbers participate — modifier presses don't
     // reset the prefix.
-    if (pendingPrefix && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (pendingPrefix && e.key && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const seq = `${pendingPrefix} ${e.key.toLowerCase()}`;
       const sc = registry.get(seq);
       if (sc && (!inEditable || sc.evenInInputs)) {

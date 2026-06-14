@@ -65,7 +65,13 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	}
 	maxConns := cfg.MaxOpenConns
 	if maxConns == 0 {
-		maxConns = 10
+		// Default sized to the ingest flusher fan-out: 3 signals (spans /
+		// logs / metrics) × Ingestion.Workers (8) = 24 concurrent batch
+		// inserts, all sharing this pool with read-path queries. At the old
+		// default of 10 the flushers contended for connections under load
+		// (Phase-2 #2). The driver opens lazily, so api-only pods that never
+		// flush pay nothing for the higher ceiling.
+		maxConns = 24
 	}
 
 	ctx := context.Background()

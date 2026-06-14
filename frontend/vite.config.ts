@@ -53,6 +53,23 @@ export default defineConfig({
             if (id.includes('@tanstack')) return 'tanstack';
             if (id.includes('uplot')) return 'charts';
             if (id.includes('@opentelemetry')) return 'otel';
+            // dagre (+ its graphlib + lodash layout deps) is a heavy
+            // layered-DAG engine imported ONLY by ServiceGraph.tsx,
+            // which is reached solely through the route-lazy
+            // ServiceGraphPreview page. Without this rule the vendor
+            // catch-all below pins dagre into the ALWAYS-loaded vendor
+            // chunk, so every cold first paint ships ~40 kB gz of graph
+            // layout the operator may never open. Splitting it into its
+            // own 'graph' chunk lets it load only with the topology
+            // route. graphlib + lodash are dagre-exclusive transitive
+            // deps (no app source imports lodash), so co-locating them
+            // keeps the chunk self-contained AND strips the lodash shard
+            // out of vendor too.
+            if (
+              id.includes('/dagre/') ||
+              id.includes('/graphlib/') ||
+              id.includes('/lodash')
+            ) return 'graph';
             return 'vendor';
           }
         },

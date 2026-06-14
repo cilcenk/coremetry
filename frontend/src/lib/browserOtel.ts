@@ -16,10 +16,16 @@
 //     so a "click on services nav → /api/services" lights up
 //     as a parent click span with a fetch child.
 //
-// Disable knobs:
+// Disable knobs (the PRIMARY gate is rumEnabled() in main.tsx, which
+// decides whether this module is even dynamically imported — so when
+// RUM is off the whole 'otel' chunk is never fetched/parsed. The
+// VITE_OTEL_DISABLE check below is a redundant defense-in-depth guard
+// for any direct initOtel() caller):
 //   - VITE_OTEL_DISABLE=1 → skip the whole init. For
 //     environments where the operator doesn't want their UI
 //     traffic mixed into the trace store.
+//   - window.__COREMETRY_RUM__ / localStorage 'coremetry-rum' →
+//     runtime on/off opt-out evaluated in main.tsx (no rebuild).
 //   - VITE_OTEL_ENDPOINT — override the OTLP endpoint (default:
 //     same-origin /v1/traces). For deployments where the UI
 //     and backend are different hosts.

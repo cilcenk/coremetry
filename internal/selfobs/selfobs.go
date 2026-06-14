@@ -194,8 +194,18 @@ func buildResource(mode, version string) (*resource.Resource, error) {
 	if version == "" {
 		version = "dev"
 	}
-	return resource.Merge(resource.Default(), resource.NewWithAttributes(
-		semconv.SchemaURL,
+	// v0.8.x bug-fix: use NewSchemaless for the custom attrs, NOT
+	// NewWithAttributes(semconv.SchemaURL, …). resource.Merge ERRORS when
+	// both sides carry a different non-empty schema URL — resource.Default()
+	// pins the SDK's bundled semconv schema (e.g. .../1.26.0) while the
+	// imported semconv package may be newer (.../1.37.0). When those drifted
+	// (a dependency bump, 2026-05-31) the merge failed → buildResource
+	// returned an error → selfobs silently fell back to noop and the backend
+	// coremetry-api/worker/agent self-telemetry stopped emitting. A schemaless
+	// resource has an empty schema URL, so the merge keeps Default()'s URL
+	// without conflict and stays robust to future SDK/semconv version skew.
+	// (service.name/version/instance keys are stable across semconv versions.)
+	return resource.Merge(resource.Default(), resource.NewSchemaless(
 		semconv.ServiceName(serviceName(mode)),
 		semconv.ServiceVersion(version),
 		semconv.ServiceInstanceID(host),

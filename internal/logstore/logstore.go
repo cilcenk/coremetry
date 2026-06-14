@@ -17,6 +17,15 @@ import (
 	"time"
 )
 
+// LogsTailMax caps the per-tick batch the live-tail forward read returns
+// (Filter.SinceNs mode). A bounded read per tick keeps the CH/ES query
+// cheap; when a tick fills this cap the stream emits a `gap` marker so a
+// busy service surfaces "fell behind" instead of silently dropping rows.
+const LogsTailMax = 500
+
+// logsTailMax is the unexported alias used inside this package.
+const logsTailMax = LogsTailMax
+
 // Filter is the union of every supported log-query parameter. Backends
 // translate as much as they can; what they can't handle they ignore
 // (with a log line).
@@ -53,6 +62,20 @@ type Filter struct {
 	// not the n newest in the forward window. Backends honour it only
 	// on a non-cursor read (keyset paging is DESC-only).
 	Ascending bool
+	// SinceNs (v0.8.x) — FORWARD-TAIL mode for the live-tail SSE stream.
+	// When > 0 the backend reads `time >= SinceNs` oldest-first, bounded
+	// by Limit, and DELIBERATELY skips the total count() (the per-tick
+	// cost the SSE tail exists to remove) AND the keyset Cursor/PIT
+	// machinery (a forward tail at the live edge must NOT reuse the
+	// DESC keyset cursor — elasticsearch.go's PIT-per-page would re-pin
+	// segment readers every tick, the v0.8.3 incident shape). ES uses a
+	// plain bounded range query (no PIT, track_total_hits:false, explicit
+	// timeout, request_cache off). The caller (streamLogs handler) tracks
+	// the newest timestamp it has emitted and passes it back as the next
+	// SinceNs; it dedups same-ns boundary rows by LogRecord.ID. `>=` (not
+	// `>`) so a log ingested late at the boundary ns is re-read, not
+	// silently dropped (the v0.7.15 silent-drop failure).
+	SinceNs int64
 }
 
 // LogRecord is the in-memory shape returned by every backend. It mirrors

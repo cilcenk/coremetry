@@ -9,6 +9,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,6 +20,154 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/logstore"
 )
+
+// logsTailCadence is how often the streamLogs handler issues a forward
+// read. Decoupled from the (retired) client poll: the read is a cheap
+// bounded delta (time>=cursor, no count, no PIT), so a snappy 5s feel is
+// affordable. The ~10s OTel ingest lag means faster surfaces nothing
+// sooner; slower multiplies backend load by concurrent live tabs.
+const logsTailCadence = 5 * time.Second
+
+// tailStep is the pure cursor-advance for the live-tail loop. Given the
+// current forward cursor `sinceNs`, the ids already emitted at exactly that
+// ns (`boundary`), and the oldest-first batch a forward read returned, it
+// returns the rows to emit (same-ns boundary dups removed), the next cursor,
+// the rebuilt boundary set, and whether the batch saturated the per-tick
+// `cap` (→ a gap marker). Extracted + unit-tested because it carries the two
+// load-bearing invariants: never silently drop a row, and always make
+// forward progress (even when >cap rows share one nanosecond).
+func tailStep(
+	sinceNs int64, boundary map[int64]struct{},
+	rows []*logstore.LogRecord, cap int,
+) (emit []*logstore.LogRecord, nextSince int64, nextBoundary map[int64]struct{}, gap bool) {
+	maxTs := sinceNs
+	for _, lg := range rows {
+		if lg.Timestamp > maxTs {
+			maxTs = lg.Timestamp
+		}
+	}
+	for _, lg := range rows {
+		if lg.Timestamp == sinceNs {
+			if _, seen := boundary[lg.ID]; seen {
+				continue // already emitted this boundary row on a prior tick
+			}
+		}
+		emit = append(emit, lg)
+	}
+	gap = len(rows) >= cap
+	switch {
+	case maxTs > sinceNs:
+		// Advanced to a newer ns — the boundary is now the ids at maxTs.
+		nextSince = maxTs
+		nextBoundary = map[int64]struct{}{}
+		for _, lg := range rows {
+			if lg.Timestamp == maxTs {
+				nextBoundary[lg.ID] = struct{}{}
+			}
+		}
+	case gap:
+		// A whole saturated batch at the boundary ns (>cap rows at one ns) —
+		// can't advance by timestamp; step past it. The gap marker tells the
+		// client some same-ns lines were skipped.
+		nextSince = sinceNs + 1
+		nextBoundary = map[int64]struct{}{}
+	default:
+		// No newer ns; remember everything at the boundary so the inclusive
+		// `>=` re-read next tick doesn't re-emit it (handles late ingestion).
+		nextSince = sinceNs
+		nextBoundary = map[int64]struct{}{}
+		for k := range boundary {
+			nextBoundary[k] = struct{}{}
+		}
+		for _, lg := range rows {
+			if lg.Timestamp == sinceNs {
+				nextBoundary[lg.ID] = struct{}{}
+			}
+		}
+	}
+	return
+}
+
+// streamLogs is the live-tail SSE endpoint — a DEDICATED per-connection
+// handler (the internal/sse Broker is a broadcast bus; a log tail is
+// per-query with its own filters + forward cursor). On a ticker it issues
+// a forward-tail read (logstore.Filter.SinceNs) and pushes only NEW rows.
+// It seeds the cursor from ?since=<unix ns> (the client's newest buffered
+// row, for reconnect catch-up) or from now. Same filter set as getLogs.
+// Read-only: no serveCached (uncacheable live edge), no audit.
+func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sev, _ := strconv.Atoi(q.Get("severity"))
+	base := logstore.Filter{
+		Service:     q.Get("service"),
+		Cluster:     q.Get("cluster"),
+		Search:      q.Get("search"),
+		SeverityMin: uint8(sev),
+		TraceID:     q.Get("traceId"),
+		SpanID:      q.Get("spanId"),
+		Limit:       logstore.LogsTailMax,
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no") // disable NGINX buffering
+	w.Header().Set("Connection", "keep-alive")
+	fmt.Fprint(w, ": ok\n\n")
+	flusher.Flush()
+
+	// Cursor: seed from the client's newest row (reconnect catch-up) or now.
+	sinceNs := time.Now().UnixNano()
+	if v, err := strconv.ParseInt(q.Get("since"), 10, 64); err == nil && v > 0 {
+		sinceNs = v
+	}
+	boundaryIDs := map[int64]struct{}{} // ids already emitted at exactly sinceNs
+
+	tick := time.NewTicker(logsTailCadence)
+	defer tick.Stop()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case <-tick.C:
+			tickCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			f := base
+			f.SinceNs = sinceNs
+			page, err := s.logs.Search(tickCtx, f)
+			cancel()
+			if err != nil {
+				// Transient backend error — keep the stream open, retry next
+				// tick. Logged for the operator; not surfaced to the client.
+				log.Printf("[logs-stream] tail failed (backend=%s): %v", s.logs.Backend(), err)
+				continue
+			}
+			emit, nextSince, nextBoundary, gap := tailStep(sinceNs, boundaryIDs, page.Logs, logstore.LogsTailMax)
+			for _, lg := range emit {
+				if data, err := json.Marshal(lg); err == nil {
+					fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
+				}
+			}
+			if gap {
+				// Hit the per-tick cap — a busy service may have produced more
+				// than we read. Signal "fell behind" rather than silently drop.
+				fmt.Fprint(w, "event: gap\ndata: {\"dropped\":true}\n\n")
+			}
+			flusher.Flush()
+			sinceNs, boundaryIDs = nextSince, nextBoundary
+		}
+	}
+}
 
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()

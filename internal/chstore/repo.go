@@ -2266,6 +2266,13 @@ type LogFilter struct {
 	// "after" window so LIMIT n returns the n rows immediately
 	// AFTER the pivot, not the n newest in the forward window.
 	Ascending bool
+	// SinceNs (v0.8.x) — forward-tail mode for the live-tail SSE
+	// stream. When > 0, GetLogs reads `time >= SinceNs` oldest-first,
+	// bounded by Limit, and SKIPS the count() total + the keyset
+	// cursor. The handler tracks the newest emitted timestamp and
+	// passes it back; it dedups same-ns boundary rows by LogRow.ID
+	// (the cityHash64 rowkey). See logstore.Filter.SinceNs.
+	SinceNs int64
 }
 
 // logsMaxLimit caps the per-page row count on the logs table. A
@@ -2432,6 +2439,51 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	}
 	if f.Limit > logsMaxLimit {
 		f.Limit = logsMaxLimit
+	}
+
+	// v0.8.x — forward-tail mode (live-tail SSE). Read `time >= SinceNs`
+	// oldest-first, bounded LIMIT, NO count() (the per-tick cost the tail
+	// removes) and NO keyset cursor. Returns (rows, len, "", nil); the
+	// handler advances SinceNs from the newest row + dedups the boundary
+	// ns by LogRow.ID.
+	if f.SinceNs > 0 {
+		wc.add("time >= ?", time.Unix(0, f.SinceNs))
+		rows, err := s.conn.Query(ctx, `
+			SELECT time, severity_num, severity_text, body,
+			       service_name, trace_id, span_id,
+			       attr_keys, attr_values, res_keys, res_values,
+			       `+logsRowKeyExpr+` AS _rowkey
+			FROM logs `+wc.sql()+`
+			ORDER BY time ASC, `+logsRowKeyExpr+` ASC
+			LIMIT ?
+			SETTINGS max_execution_time = 15`, append(wc.args, f.Limit)...)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		defer rows.Close()
+		var out []LogRow
+		for rows.Next() {
+			var lr LogRow
+			var t time.Time
+			var rowKey uint64
+			var attrK, attrV, resK, resV []string
+			if err := rows.Scan(
+				&t, &lr.SeverityNumber, &lr.SeverityText, &lr.Body,
+				&lr.ServiceName, &lr.TraceID, &lr.SpanID,
+				&attrK, &attrV, &resK, &resV, &rowKey,
+			); err != nil {
+				return nil, 0, "", err
+			}
+			lr.Timestamp = t.UnixNano()
+			lr.ID = rowKey
+			lr.Attributes = arraysToMap(attrK, attrV)
+			lr.ResourceAttributes = arraysToMap(resK, resV)
+			out = append(out, lr)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, 0, "", err
+		}
+		return out, uint64(len(out)), "", nil
 	}
 
 	// Total covers the full match window (independent of the cursor)

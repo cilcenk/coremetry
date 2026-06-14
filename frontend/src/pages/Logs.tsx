@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
@@ -267,40 +267,67 @@ function LogsInner() {
     return c;
   }, [sevSeries]);
 
-  // Live-tail query — separate hook with refetchInterval so
-  // RQ owns the polling loop. The query key includes the
-  // service/search/severity filters but NOT a moving `from`/
-  // `to` (the polling fetches the latest 5 min each tick).
-  // Disabled when live=false; the static query (above) takes
-  // over in that case.
-  const liveQ = useQuery({
-    queryKey: ['logs', 'live', filter.service, filter.cluster, filter.search, filter.severity],
-    queryFn: () => {
-      const now = Date.now() * 1_000_000;
-      const fromNs = Math.floor((Date.now() - 5 * 60_000) * 1_000_000);
-      return api.logs({
-        limit: 200, from: fromNs, to: now,
-        service: filter.service || undefined,
-        cluster: filter.cluster || undefined,
-        search: filter.search || undefined,
-        severity: filter.severity > 0 ? filter.severity : undefined,
-      });
-    },
-    enabled: live,
-    // 10s, not 2s — ≥10s budget + ~10s ES pipeline lag (see the `live` decl).
-    // refetchIntervalInBackground defaults false, so RQ already pauses the
-    // poll when the tab is hidden (document.hidden rule).
-    refetchInterval: live ? 10_000 : false,
-    staleTime: 0,
-  });
+  // Live-tail (v0.8.x) — server-pushed SSE replaces the old 10s poll. The
+  // table renders a bounded, newest-first client buffer fed by
+  // /api/logs/stream: each `event: log` prepends a row (dedup by id, capped
+  // at LIVE_CAP); an `event: gap` flags that a busy service outran the
+  // per-tick read. The stream closes on document.hidden and reopens on show,
+  // catching up via `since` = the newest row we hold (mirrors the SSE
+  // reconnect catch-up shipped in eventStream.ts). A filter change starts a
+  // fresh stream.
+  const LIVE_CAP = 1000;
+  const [liveBuffer, setLiveBuffer] = useState<LogRow[]>([]);
+  const [liveGap, setLiveGap] = useState(false);
+  const newestNsRef = useRef(0);
 
-  // Merge: when live is on, prefer the live data; otherwise
-  // the static window result. Mirrors the previous setData
-  // behaviour where live overwrote static.
-  const dataSource = live ? liveQ : staticQ;
-  const data = dataSource.isLoading ? undefined
-    : dataSource.isError ? null
-    : dataSource.data;
+  useEffect(() => {
+    if (!live || typeof EventSource === 'undefined') return;
+    setLiveBuffer([]); setLiveGap(false); newestNsRef.current = 0;
+    let es: EventSource | null = null;
+    const open = () => {
+      const p = new URLSearchParams();
+      if (filter.service) p.set('service', filter.service);
+      if (filter.cluster) p.set('cluster', filter.cluster);
+      if (filter.search) p.set('search', filter.search);
+      if (filter.severity > 0) p.set('severity', String(filter.severity));
+      if (newestNsRef.current) p.set('since', String(newestNsRef.current)); // reconnect catch-up
+      es = new EventSource('/api/logs/stream?' + p.toString(), { withCredentials: true });
+      es.addEventListener('log', (e) => {
+        let row: LogRow;
+        try { row = JSON.parse((e as MessageEvent).data) as LogRow; } catch { return; }
+        if (row.timestamp > newestNsRef.current) newestNsRef.current = row.timestamp;
+        setLiveBuffer(buf => {
+          if (buf.some(r => r.id === row.id)) return buf; // dedup (boundary / reconnect overlap)
+          const next = [row, ...buf];
+          if (next.length > LIVE_CAP) next.length = LIVE_CAP;
+          return next;
+        });
+      });
+      es.addEventListener('gap', () => setLiveGap(true));
+      // EventSource auto-reconnects on transport 'error'; the next 'open'
+      // catches up forward via newestNsRef — nothing to do here.
+    };
+    open();
+    const onVis = () => {
+      if (document.hidden) { es?.close(); es = null; }
+      else if (!es) { open(); }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      es?.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, filter.service, filter.cluster, filter.search, filter.severity]);
+
+  // When live, the table renders the SSE buffer; otherwise the static
+  // windowed query. Live has no loading/error gate — rows fill in as they
+  // arrive (an empty buffer shows the "waiting" empty state).
+  const data: LogsResponse | undefined | null = live
+    ? { total: liveBuffer.length, logs: liveBuffer, nextCursor: '' }
+    : staticQ.isLoading ? undefined
+    : staticQ.isError ? null
+    : staticQ.data;
 
   // Reset expansion state when the filter / range / page
   // changes — opening row #5 in one window doesn't translate
@@ -501,9 +528,14 @@ function LogsInner() {
           <button className={live ? 'live-on' : 'sec'}
             onClick={() => setLive(v => !v)}
             style={{ marginLeft: 'auto' }}
-            title="Auto-refresh every 2 seconds with the latest logs">
+            title="Stream the latest logs live (server-pushed; pauses when the tab is hidden)">
             {live ? '⏸ Pause Live' : '▶ Live tail'}
           </button>
+          {live && liveGap && (
+            <span className="badge b-warn" title="A busy service produced more lines than one tick could read — narrow the filter to see them all.">
+              ⚠ high volume — some lines skipped
+            </span>
+          )}
           {/* External Kibana deep-link (v0.5.236). Hidden unless
               the admin has filled in Settings → Kibana link.
               Carries the current filter context — service /

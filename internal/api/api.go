@@ -456,6 +456,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /api/traces/share/{token}",  auth.RequireAnyRole(editorRoles, s.revokeTraceSnapshot))
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
+	mux.HandleFunc("GET /api/logs/stream", s.streamLogs) // v0.8.x — live-tail SSE
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
 	// v0.5.464 — field-aware autocomplete on the /logs search

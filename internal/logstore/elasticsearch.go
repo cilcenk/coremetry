@@ -757,6 +757,13 @@ func (s *ESStore) Ping(ctx context.Context) error {
 }
 
 func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
+	// v0.8.x — forward-tail mode (live-tail SSE). Deliberately bypasses the
+	// PIT + search_after keyset path below: a forward tail at the live edge
+	// would open a fresh PIT per tick, re-pinning segment readers (the
+	// v0.8.3 incident shape). searchForward is a plain bounded range read.
+	if f.SinceNs > 0 {
+		return s.searchForward(ctx, f)
+	}
 	limit := f.Limit
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -984,6 +991,77 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			f.TraceID, f.SpanID, s.cfg.Index, string(body))
 	}
 	return &Page{Total: raw.Hits.Total.Value, Logs: out, NextCursor: next}, nil
+}
+
+// searchForward is the live-tail read (Filter.SinceNs > 0): a plain
+// bounded range query `timestamp >= SinceNs`, oldest-first, capped size,
+// with the v0.8.3 cost-guard discipline — NO PIT (no per-tick segment-
+// reader pinning), track_total_hits:false (no all-shard count fan-out),
+// an explicit soft timeout, and request_cache OFF (live edge data is
+// uncacheable). The handler advances SinceNs from the newest hit and
+// dedups same-ns boundary rows by LogRecord.ID. No NextCursor — the tail
+// owns its own forward cursor in the handler, not the opaque keyset token.
+func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > logsTailMax {
+		limit = logsTailMax
+	}
+	// Forward window: [SinceNs, now]. buildQuery emits the gte/lte range
+	// from f.From/f.To plus the service/search/severity/trace filters.
+	f.From = time.Unix(0, f.SinceNs)
+	if f.To.IsZero() {
+		f.To = time.Now()
+	}
+	queryIdx := s.queryIndices(ctx, f.From, f.To)
+	searchBody := map[string]any{
+		"query": s.buildQuery(f),
+		"sort": []any{
+			map[string]any{
+				s.fields.Timestamp: map[string]any{"order": "asc", "unmapped_type": "date"},
+			},
+			map[string]any{"_doc": "asc"},
+		},
+		"size":             limit,
+		"track_total_hits": false,
+		"timeout":          esTimeoutFromEnv("10s"),
+	}
+	body, err := json.Marshal(searchBody)
+	if err != nil {
+		return nil, err
+	}
+	tru := true
+	fals := false
+	req := esapi.SearchRequest{
+		Index:             queryIdx,
+		Body:              bytes.NewReader(body),
+		AllowNoIndices:    &tru,
+		IgnoreUnavailable: &tru,
+		RequestCache:      &fals,
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return nil, fmt.Errorf("ES tail search: %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return nil, parseESError("tail search", res, s.cfg.Index)
+	}
+	var raw struct {
+		Hits struct {
+			Hits []struct {
+				ID     string         `json:"_id"`
+				Source map[string]any `json:"_source"`
+			} `json:"hits"`
+		} `json:"hits"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("decode ES tail response: %w", err)
+	}
+	out := make([]*LogRecord, 0, len(raw.Hits.Hits))
+	for _, h := range raw.Hits.Hits {
+		out = append(out, s.mapHit(h.ID, h.Source))
+	}
+	return &Page{Total: len(out), Logs: out}, nil
 }
 
 // Histogram runs a date_histogram aggregation against ES,

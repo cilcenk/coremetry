@@ -37,6 +37,7 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		Offset:      f.Offset,
 		Cursor:      f.Cursor, // v0.7.22 — opaque CH keyset token round-trip
 		Ascending:   f.Ascending, // v0.7.83 — oldest-first for Context "after"
+		SinceNs:     f.SinceNs,   // v0.8.x — forward-tail (live-tail SSE)
 	})
 	if err != nil {
 		return nil, err

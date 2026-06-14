@@ -89,6 +89,21 @@ type ServiceMap struct {
 	BaselineAgo   string           `json:"baselineAgo,omitempty"` // e.g. "24h" — echoed for UI labelling
 }
 
+// spanStatusIsError reports whether a span's status_code column value
+// denotes an error. The ingest path (internal/otlp/convert.go) maps
+// the OTLP STATUS_CODE_ERROR enum to the lowercase token "error"
+// before the CH write, so that — case-insensitively — is the ONLY
+// value the topology walk must treat as a failure. The legacy
+// predicate here compared against the OTLP enum names
+// ("STATUS_CODE_ERROR" / "ERROR" / "Error") which never appear in the
+// column, so every node errorRate and edge errorCount came back 0
+// while services ran 1-6% errors (red-edge/amber-node rendering on the
+// /service-map preview was dead). Kept as a pure func so the
+// regression test can pin every observed token.
+func spanStatusIsError(statusCode string) bool {
+	return strings.EqualFold(statusCode, "error")
+}
+
 // GetServiceMap derives the global service-level topology from a
 // bounded sample of recent traces. Mirrors the ServiceNeighbors
 // approach but globally — no anchor service. Two queries:
@@ -104,9 +119,11 @@ type ServiceMap struct {
 //
 // In-memory walk: for every span S whose parent's service ≠ S's
 // service, emit an edge (parent.service → S.service). Errors are
-// counted on the callee side (status_code == STATUS_CODE_ERROR /
-// 2 in OTel). Result is bounded by the sample size so a billion-
-// span/day deployment still answers in <2s.
+// counted on the callee side. The status_code column stores the
+// lowercase token the ingest path writes (otlp/convert.go maps
+// STATUS_CODE_ERROR → "error"), so the predicate compares against
+// "error" — NOT the OTLP enum name. Result is bounded by the sample
+// size so a billion-span/day deployment still answers in <2s.
 //
 // The IN (?,...) construct holds N=200-ish trace IDs; ClickHouse
 // happily plans this against the partition key + bloom-filter on
@@ -280,7 +297,7 @@ func (s *Store) getServiceMapAt(
 			&dbSystem, &peerSvc, &spanKind); err != nil {
 			return nil, err
 		}
-		isErr := statusCode == "STATUS_CODE_ERROR" || statusCode == "ERROR" || statusCode == "Error"
+		isErr := spanStatusIsError(statusCode)
 		m, ok := byTrace[traceID]
 		if !ok {
 			m = map[string]spanInfo{}

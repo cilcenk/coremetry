@@ -31,7 +31,7 @@ import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { Service, Problem, TimeRange, OperationSummary, SpanMetricSeries, SLORow } from '@/lib/types';
+import type { Service, Problem, TimeRange, OperationSummary, SpanMetricSeries, SLORow, SpanAgg } from '@/lib/types';
 
 const SINCE_MAP: Record<string, string> = {
   '5m': '5m', '10m': '10m', '15m': '15m', '30m': '30m',
@@ -953,6 +953,30 @@ function OperationMetricModal({
     `&search=${encodeURIComponent(op.name)}` +
     `&range=${encodeURIComponent(encodeRange(range))}` +
     `&view=list&rootOnly=false`;
+
+  // v0.8.x — drill from this popup to /explore, operation-scoped.
+  // Mirrors the v0.6.55 /services sparkline→/explore pattern
+  // (Services.tsx goToExplore) but carries TWO filters: the service
+  // pin AND the span name, so the operator lands on the exact metric
+  // chart for THIS (service, operation) tuple with the clicked
+  // aggregation preselected (Calls→rate, Errors→error_rate, P99→p99).
+  // We reuse the SAME legacy ?result=metric URL shape that
+  // urlCodec.seedFromLegacyParams decodes — extractScope lifts
+  // service.name into the builder scope, `name=` stays a chip
+  // (model.pinnedOperation reads it). No new URL scheme invented.
+  const exploreHref = (agg: SpanAgg) => {
+    const filters = encodeFilters([
+      { k: 'service.name', op: '=', v: [service] },
+      { k: 'name', op: '=', v: [op.name] },
+    ]);
+    return `/explore?${buildQuery([
+      ['range', encodeRange(range)],
+      ['filters', filters],
+      ['agg', agg],
+      ['field', 'duration_ms'],
+      ['result', 'metric'],
+    ])}`;
+  };
   return (
     <Modal
       open
@@ -989,9 +1013,27 @@ function OperationMetricModal({
         p99 at the same instant. Total errors in window:
         {' '}<strong>{fmtNum(totalErrs)}</strong>.
       </div>
-      <div style={{ display: 'flex', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <Link to={tracesHref} style={{ fontSize: 12, color: 'var(--accent2)' }}>
           View traces →
+        </Link>
+        {/* v0.8.x — open this (service, operation) tuple in Explore,
+            carrying the clicked metric's aggregation so the operator
+            lands on the exact chart with the full builder toolbar.
+            Mirrors the /services sparkline→/explore drill (v0.6.55),
+            operation-scoped. */}
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Explore:</span>
+        <Link to={exploreHref('rate')} style={{ fontSize: 12, color: 'var(--accent2)' }}
+          title={`Open call rate for ${op.name} in Explore (service + operation scoped)`}>
+          Calls →
+        </Link>
+        <Link to={exploreHref('error_rate')} style={{ fontSize: 12, color: 'var(--accent2)' }}
+          title={`Open error rate for ${op.name} in Explore (service + operation scoped)`}>
+          Errors →
+        </Link>
+        <Link to={exploreHref('p99')} style={{ fontSize: 12, color: 'var(--accent2)' }}
+          title={`Open p99 latency for ${op.name} in Explore (service + operation scoped)`}>
+          P99 →
         </Link>
       </div>
     </Modal>

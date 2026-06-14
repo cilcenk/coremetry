@@ -1113,7 +1113,7 @@ export interface FilterExpr {
 // ── Span metrics (Tempo span-metrics + Dynatrace MDA) ────────────────────────
 
 export type SpanAgg =
-  | 'count' | 'rate' | 'errors' | 'error_rate'
+  | 'count' | 'rate' | 'per_min' | 'errors' | 'error_rate' | 'apdex'
   | 'avg' | 'sum' | 'min' | 'max'
   | 'p50' | 'p90' | 'p95' | 'p99' | 'p999';
 

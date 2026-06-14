@@ -266,6 +266,15 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
 	case "errors":
 		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)))"
+	case "per_min":
+		// Per-minute throughput (Uptrace perMin). count over the step / step
+		// seconds × 60. v0.8.x forced add alongside the legacy `rate`.
+		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
+	case "apdex":
+		// Apdex score from the MV's satisfied/tolerating states (Uptrace
+		// apdex()). T is fixed at MV build time (apdex_satisfied = dur ≤ T,
+		// tolerating = T < dur ≤ 4T). v0.8.x.
+		aggExpr = "toNullable((toFloat64(countMerge(apdex_satisfied_state)) + toFloat64(countMerge(apdex_tolerating_state)) / 2) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
 	case "avg":
 		aggExpr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
 	case "p50":
@@ -433,6 +442,15 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
 	case "errors":
 		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)))"
+	case "per_min":
+		// Per-minute throughput (Uptrace perMin). count over the step / step
+		// seconds × 60. v0.8.x forced add alongside the legacy `rate`.
+		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
+	case "apdex":
+		// Apdex score from the MV's satisfied/tolerating states (Uptrace
+		// apdex()). T is fixed at MV build time (apdex_satisfied = dur ≤ T,
+		// tolerating = T < dur ≤ 4T). v0.8.x.
+		aggExpr = "toNullable((toFloat64(countMerge(apdex_satisfied_state)) + toFloat64(countMerge(apdex_tolerating_state)) / 2) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
 	case "avg":
 		aggExpr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
 	case "p50":
@@ -603,6 +621,10 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 			expr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
 		case "errors":
 			expr = "toNullable(toFloat64(countMerge(error_count_state)))"
+		case "per_min":
+			expr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
+		case "apdex":
+			expr = "toNullable((toFloat64(countMerge(apdex_satisfied_state)) + toFloat64(countMerge(apdex_tolerating_state)) / 2) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
 		case "avg":
 			expr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
 		case "p50":
@@ -949,10 +971,16 @@ func aggToSQL(agg, field string, stepSec int) (string, error) {
 		return wrap("count()"), nil
 	case "rate":
 		return wrap(fmt.Sprintf("count() / %d.0", stepSec)), nil
+	case "per_min":
+		return wrap(fmt.Sprintf("count() / %d.0 * 60.0", stepSec)), nil
 	case "error_rate":
 		return wrap("100.0 * countIf(status_code = 'error') / count()"), nil
 	case "errors":
 		return wrap("countIf(status_code = 'error')"), nil
+	case "apdex":
+		// Raw-spans Apdex, thresholds matched to the MV (T=200ms, 4T=800ms;
+		// see store.go apdexT). field = (duration / 1e6) ms via fieldToSQL.
+		return wrap(fmt.Sprintf("(countIf(%[1]s <= 200.0) + countIf(%[1]s > 200.0 AND %[1]s <= 800.0) / 2.0) / count()", field)), nil
 	case "sum":
 		return wrap("sumOrNull(" + field + ")"), nil
 	case "avg":

@@ -79,14 +79,16 @@ export function nextLetter(queries: BuilderQuery[]): string | null {
 // spanNeedsField — latency-style span aggs measure a field; count-style
 // don't (mirrors presets.needsField, kept here so model.ts stays leaf).
 export function spanNeedsField(agg: string): boolean {
-  return !['count', 'rate', 'errors', 'error_rate'].includes(agg);
+  return !['count', 'rate', 'per_min', 'errors', 'error_rate', 'apdex'].includes(agg);
 }
 
 // spanAggUnit — the y-unit a span aggregation produces (matches
 // presets.AGG_OPTIONS). Metric-source queries carry MetricInfo.unit instead.
 export function spanAggUnit(agg: string): string {
   if (agg === 'rate') return '/s';
+  if (agg === 'per_min') return '/min';
   if (agg === 'error_rate') return '%';
+  if (agg === 'apdex') return '';  // 0–1 score, unitless
   if (['avg', 'p50', 'p90', 'p95', 'p99', 'p999', 'min', 'max', 'sum'].includes(agg)) return 'ms';
   return '';
 }
@@ -193,7 +195,7 @@ const TIER_DIM_KEYS = new Set([
 
 // Aggs spanmetricStateAgg can serve (no p999/min/max/last on the rollups).
 const EXEMPLAR_AGGS = new Set([
-  'count', 'rate', 'errors', 'error_rate', 'avg', 'sum', 'p50', 'p90', 'p95', 'p99',
+  'count', 'rate', 'per_min', 'errors', 'error_rate', 'apdex', 'avg', 'sum', 'p50', 'p90', 'p95', 'p99',
 ]);
 
 export function exemplarDescriptor(q: BuilderQuery): MetricQuery | null {

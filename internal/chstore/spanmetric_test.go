@@ -40,7 +40,9 @@ func TestAggToSQL_NonPercentileUnchanged(t *testing.T) {
 	cases := map[string]string{
 		"count":      "count()",
 		"rate":       "count() / 60.0",
+		"per_min":    "count() / 60.0 * 60.0", // Uptrace perMin (v0.8.x) — distinct raw expr from rate
 		"error_rate": "countIf(status_code = 'error')",
+		"apdex":      "<= 200.0", // Apdex T=200ms matched to the MV (store.go apdexT); v0.8.x
 		"avg":        "avgOrNull",
 	}
 	for agg, want := range cases {

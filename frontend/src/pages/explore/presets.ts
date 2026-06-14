@@ -38,8 +38,10 @@ export const TRACE_SORT_NATURAL: Record<TraceSortKey, 'asc' | 'desc'> = {
 export const AGG_OPTIONS: { v: SpanAgg; label: string; unit?: string }[] = [
   { v: 'count',      label: 'Count',           unit: '' },
   { v: 'rate',       label: 'Rate (per sec)',  unit: '/s' },
+  { v: 'per_min',    label: 'Rate (per min)',  unit: '/min' },
   { v: 'errors',     label: 'Error count',     unit: '' },
   { v: 'error_rate', label: 'Error rate (%)',  unit: '%' },
+  { v: 'apdex',      label: 'Apdex',           unit: '' },
   { v: 'avg',        label: 'Avg',             unit: 'ms' },
   { v: 'p50',        label: 'P50 (median)',    unit: 'ms' },
   { v: 'p90',        label: 'P90',             unit: 'ms' },

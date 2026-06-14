@@ -41,7 +41,22 @@ type Store struct {
 	smCovMu  sync.RWMutex
 	smCovAt  time.Time // when smCovVal was last probed
 	smCovVal time.Time // earliest available spanmetrics bucket
+
+	// alertRules* (v0.8.x) — in-process cache of the tiny alert_rules
+	// ReplacingMergeTree. The load-test profile showed ListAlertRules
+	// (a FINAL scan) ran 1000+×/4min on the problems-enrichment +
+	// evaluator hot paths; rules are tens of rows and mutate only on an
+	// operator action. Short TTL + write-side invalidation keeps it fresh.
+	// In distributed mode a peer pod's write is picked up within the TTL
+	// (acceptable lag for alert-rule edits).
+	alertRulesMu  sync.RWMutex
+	alertRulesAt  time.Time // when alertRulesVal was last fetched
+	alertRulesVal []AlertRule
 }
+
+// alertRulesCacheTTL bounds how stale a cached rule list can be when no
+// write invalidates it first.
+const alertRulesCacheTTL = 30 * time.Second
 
 func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	dialTimeout, _ := time.ParseDuration(cfg.DialTimeout)

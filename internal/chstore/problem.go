@@ -573,6 +573,18 @@ func (s *Store) EnrichProblemsWithRunbooks(ctx context.Context, problems []Probl
 // ── Alert rules ───────────────────────────────────────────────────────────────
 
 func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
+	// Serve from the in-process cache when fresh (v0.8.x — load-test
+	// finding: this FINAL scan ran 1000+×/4min). The cached slice is
+	// REPLACED, never mutated in place, so a reader holding the old
+	// snapshot stays consistent without copying.
+	s.alertRulesMu.RLock()
+	if s.alertRulesVal != nil && time.Since(s.alertRulesAt) < alertRulesCacheTTL {
+		out := s.alertRulesVal
+		s.alertRulesMu.RUnlock()
+		return out, nil
+	}
+	s.alertRulesMu.RUnlock()
+
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
@@ -597,7 +609,29 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		r.BuiltIn = builtIn == 1
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// out can be nil on an empty table; store an empty non-nil slice so the
+	// freshness check above still treats it as cached (not a cold miss).
+	cached := out
+	if cached == nil {
+		cached = []AlertRule{}
+	}
+	s.alertRulesMu.Lock()
+	s.alertRulesVal = cached
+	s.alertRulesAt = time.Now()
+	s.alertRulesMu.Unlock()
+	return out, nil
+}
+
+// invalidateAlertRules clears the cache so the next ListAlertRules re-reads
+// after a write (Upsert / Delete / SetEnabled). Cheap; called off the
+// operator-action path, not the hot read path.
+func (s *Store) invalidateAlertRules() {
+	s.alertRulesMu.Lock()
+	s.alertRulesVal = nil
+	s.alertRulesMu.Unlock()
 }
 
 func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
@@ -618,7 +652,11 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 		time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
 		return err
 	}
-	return batch.Send()
+	if err := batch.Send(); err != nil {
+		return err
+	}
+	s.invalidateAlertRules()
+	return nil
 }
 
 // DeleteAlertRule removes the row entirely (ALTER … DELETE)
@@ -632,7 +670,11 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 // Disable-without-delete remains available through
 // SetAlertRuleEnabled (toggled by the noisy-rules bulk path).
 func (s *Store) DeleteAlertRule(ctx context.Context, id string) error {
-	return s.conn.Exec(ctx, `ALTER TABLE alert_rules DELETE WHERE id = ?`, id)
+	if err := s.conn.Exec(ctx, `ALTER TABLE alert_rules DELETE WHERE id = ?`, id); err != nil {
+		return err
+	}
+	s.invalidateAlertRules()
+	return nil
 }
 
 // SetAlertRuleEnabled flips a rule's enabled flag. Used by both the

@@ -59,6 +59,11 @@ export function buildPanels(
   byLetter: Record<string, SpanMetricSeries[] | undefined>,
   exemplarsByLetter: Record<string, MetricExemplar[]> = {},
   overlaysByLetter: Record<string, { deploys: number[]; thresholds: TSThreshold[] }> = {},
+  // letter → pre-trim series count. The server caps a high-cardinality span
+  // groupBy to TOP_N_MAX, so ranked.length here is already ≤50; the true
+  // "+N more" must come from this total, not the capped slice. Falls back to
+  // the received series count when absent (resolver / metric paths).
+  totalByLetter: Record<string, number | undefined> = {},
 ): PanelData[] {
   const out: PanelData[] = [];
   for (const q of state.queries) {
@@ -89,10 +94,16 @@ export function buildPanels(
       .sort((a, b) => b.area - a.area);
     const ov = overlaysByLetter[q.letter];
     const cap = effectiveTopN(state.topN);
+    // The server may have already trimmed to TOP_N_MAX, so ranked.length
+    // undercounts the real series total on a high-card groupBy. Use the
+    // reported pre-trim total (defaulting to ranked.length) so "+N more"
+    // reflects what actually exists, not just what came over the wire.
+    const total = totalByLetter[q.letter] ?? ranked.length;
+    const shown = Math.min(cap, ranked.length);
     out.push({
       key: q.letter, letter: q.letter, desc, unit, isFormula: false, loading: false,
       series: ranked.slice(0, cap).map(x => x.s),
-      more: Math.max(0, ranked.length - cap),
+      more: Math.max(0, total - shown),
       deploys: ov?.deploys?.length ? ov.deploys : undefined,
       thresholds: ov?.thresholds?.length ? ov.thresholds : undefined,
     });

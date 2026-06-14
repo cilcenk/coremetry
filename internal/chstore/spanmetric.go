@@ -3,9 +3,50 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 )
+
+// spanMetricTopN is the server-side ceiling on the number of series
+// QuerySpanMetric returns on a high-cardinality groupBy. It is set to the
+// frontend's TOP_N_MAX (the operator can pick at most this many "top" series
+// in PanelStack) so the trimmed set is a SUPERSET of anything the UI will
+// display — the frontend ranks by the SAME area metric (sum of abs(value))
+// and slices to ≤ this cap, so displayed lines are byte-identical while the
+// wire payload drops from thousands of series to at most this many.
+const spanMetricTopN = 50
+
+// seriesArea is the ranking weight used by both the server trim and the
+// frontend cap: the sum of the absolute point values of a series. Bigger
+// area = more visually significant line.
+func seriesArea(s SpanMetricSeries) float64 {
+	var a float64
+	for _, p := range s.Points {
+		a += math.Abs(p.Value)
+	}
+	return a
+}
+
+// trimTopNByArea returns the input untouched when it already fits within n,
+// otherwise ranks by area (sum of abs(point value)) descending and keeps the
+// top n. The full series count BEFORE trimming is returned as `total` so the
+// caller can surface an accurate "+N more" to the operator. A stable sort
+// keeps the original (gk-then-time) ordering among equal-area series so the
+// result is deterministic across calls.
+func trimTopNByArea(series []SpanMetricSeries, n int) (kept []SpanMetricSeries, total int) {
+	total = len(series)
+	if total <= n {
+		return series, total
+	}
+	ranked := make([]SpanMetricSeries, len(series))
+	copy(ranked, series)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return seriesArea(ranked[i]) > seriesArea(ranked[j])
+	})
+	return ranked[:n], total
+}
 
 // SpanMetricFilter selects a slice of spans and turns them into a time-series
 // metric (Tempo's span-metrics generator pattern). Optional groupBy keys
@@ -38,6 +79,24 @@ type SpanMetricSeries struct {
 type SpanMetricPoint struct {
 	Time  int64   `json:"time"`  // unix nanos (bucket start)
 	Value float64 `json:"value"`
+}
+
+// QuerySpanMetricTopN runs QuerySpanMetric and, on a high-cardinality groupBy,
+// trims the result to the spanMetricTopN biggest-by-area series — the exact set
+// the frontend would render anyway (PanelStack ranks by the same area metric and
+// caps at TOP_N_MAX). `total` is the series count BEFORE trimming so the UI's
+// "+N more" stays accurate even though the wire payload is bounded.
+//
+// Only the primary /api/spans/metric handler uses this. The resolver, DQL, RED
+// and batch paths keep calling QuerySpanMetric directly (they either already
+// bound cardinality or need every series), so their behaviour is unchanged.
+func (s *Store) QuerySpanMetricTopN(ctx context.Context, f SpanMetricFilter) (series []SpanMetricSeries, total int, err error) {
+	all, err := s.QuerySpanMetric(ctx, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	kept, total := trimTopNByArea(all, spanMetricTopN)
+	return kept, total, nil
 }
 
 // QuerySpanMetric computes the requested aggregation over the matching spans,

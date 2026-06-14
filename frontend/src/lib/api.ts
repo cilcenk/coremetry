@@ -1,7 +1,7 @@
 import type {
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
   LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
-  ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, HistogramResult,
+  ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
   AlertRule, Problem, ServiceEdgeStats, Exception,
@@ -1025,8 +1025,22 @@ export const api = {
   monitorTimeline: (id: string, limit = 200) =>
     get<MonitorResult[] | null>(`/api/monitors/${id}/timeline?limit=${limit}`),
 
+  // spanMetric — bare series list for the legacy consumers (RED panel, Traces
+  // volume strip, dashboard panels). The endpoint now returns a
+  // { series, totalSeries? } envelope (v0.8.x top-N trim); this method unwraps
+  // .series so those callers stay on SpanMetricSeries[] | null. Explore, which
+  // needs the pre-trim total for its "+N more", uses spanMetricTopN below.
   spanMetric: (params: SpanMetricParams) =>
-    get<SpanMetricSeries[] | null>(`/api/spans/metric?${qs(params)}`),
+    get<SpanMetricResult | null>(`/api/spans/metric?${qs(params)}`)
+      .then(r => (r ? r.series : null)),
+
+  // spanMetricTopN — full { series, totalSeries? } envelope for the Explore
+  // builder. The backend trims a high-cardinality groupBy to the top
+  // ≤TOP_N_MAX series by area (the exact set PanelStack renders); totalSeries
+  // is the pre-trim count (omitted when no trim happened) so the "+N more"
+  // count stays accurate without shipping thousands of series over the wire.
+  spanMetricTopN: (params: SpanMetricParams) =>
+    get<SpanMetricResult | null>(`/api/spans/metric?${qs(params)}`),
 
   // resolveMetric — "every metric is a doorway" D4. Resolves a MetricQuery
   // descriptor server-side: the descriptor rides as ?m=<base64url(JSON)> (the

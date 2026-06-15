@@ -102,6 +102,48 @@ func (s *Store) UpsertAnomalyEvent(ctx context.Context, e AnomalyEvent) error {
 	return batch.Send()
 }
 
+// GetAnomalyEvent reads one event by id (the FingerprintAnomaly hash).
+// FINAL collapses the ReplacingMergeTree versions to the latest row.
+// Returns (nil, nil) on no-match so the API layer can answer a clean 404
+// instead of treating "not found" as an error. The status is derived the
+// same way ListAnomalyEvents derives it — active iff last_seen is fresh
+// within ActiveAge (default 10m) — so an event-anchored read agrees with
+// the list view. Bounded by the id equality on the PK; anomaly_events is a
+// small state table, not spans/metric_points, so no time-bound is needed.
+func (s *Store) GetAnomalyEvent(ctx context.Context, id string, activeAge time.Duration) (*AnomalyEvent, error) {
+	if activeAge == 0 {
+		activeAge = 10 * time.Minute
+	}
+	var e AnomalyEvent
+	row := s.conn.QueryRow(ctx, `
+		SELECT id, kind, pattern, service,
+		       toUnixTimestamp64Nano(started_at),
+		       toUnixTimestamp64Nano(last_seen),
+		       peak_ratio, current_ratio, current_count, sample,
+		       if(last_seen >= now64() - INTERVAL ? SECOND, 'active', 'cleared') AS status
+		FROM anomaly_events FINAL
+		WHERE id = ?
+		LIMIT 1`,
+		int64(activeAge.Seconds()),
+		id,
+	)
+	if err := row.Scan(
+		&e.ID, &e.Kind, &e.Pattern, &e.Service,
+		&e.StartedAt, &e.LastSeen,
+		&e.PeakRatio, &e.CurrentRatio, &e.CurrentCount, &e.Sample,
+		&e.Status,
+	); err != nil {
+		// clickhouse-go's QueryRow surfaces an empty result as this exact
+		// string (no typed sentinel) — the same no-rows idiom the other
+		// by-id reads use (dashboard.go, monitor.go). Soft "not found".
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &e, nil
+}
+
 // ListAnomalyEventsFilter is the read-side cut. SinceNs filters by
 // last_seen >= … so a 24h window returns both currently-active
 // events and ones that cleared up to 24h ago.

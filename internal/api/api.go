@@ -576,6 +576,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/anomalies/trace-ops",    s.getTraceOpAnomalies)
 	mux.HandleFunc("GET /api/anomalies/metric",       s.getMetricAnomalies)
 	mux.HandleFunc("GET /api/anomalies/events",       s.getAnomalyEvents)
+	// Anomaly-anchored root cause (v0.8.x, release #1) — same parallel
+	// soft-fail fan-out as /api/problems/{id}/rootcause but anchored on an
+	// AnomalyEvent window. Read-only, open (writes no state; same posture
+	// as the problem-rootcause route and /api/anomalies). The 4-segment
+	// {id}/rootcause shape doesn't collide with the literal sibling routes
+	// above (log-patterns/trace-ops/metric/events are 3-segment leaves).
+	mux.HandleFunc("GET /api/anomalies/{id}/rootcause", s.getAnomalyRootCause)
 	// Cmd-K palette autocomplete for the "silence anomaly" action
 	// (v0.5.459). Editor-gated since the only useful next step is
 	// creating a silence, and that's editor-gated too.

@@ -110,3 +110,49 @@ func TestExplainOpenAINormalContent(t *testing.T) {
 		t.Fatalf("usage = (%d,%d); want (11,22)", pt, ct)
 	}
 }
+
+// v0.8.x — operator-reported: a local reasoning model returned "model returned
+// empty content" 500s on both chat + explain-trace. Cause: the model emitted
+// ONLY a <think> block (no post-</think> answer) or used the `reasoning` field.
+// These pin the salvage so the answer is recovered instead of failing.
+func TestExplainOpenAISalvagesThinkOnlyContent(t *testing.T) {
+	// content = "<think>…the answer…</think>" with NOTHING after the close tag.
+	body := `{"choices":[{"message":{"content":"<think>The checkout span is slow due to an Oracle row lock.</think>"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":4}}`
+	s, done := newOpenAITestService(t, body)
+	defer done()
+	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "The checkout span is slow due to an Oracle row lock." {
+		t.Fatalf("out = %q; want the salvaged reasoning text", out)
+	}
+}
+
+func TestExplainOpenAIReasoningFieldFallback(t *testing.T) {
+	// content empty, answer in the `reasoning` field (not reasoning_content).
+	body := `{"choices":[{"message":{"content":"","reasoning":"answer from the reasoning field"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":7}}`
+	s, done := newOpenAITestService(t, body)
+	defer done()
+	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "answer from the reasoning field" {
+		t.Fatalf("out = %q; want the reasoning-field fallback", out)
+	}
+}
+
+func TestExplainOpenAITrulyEmptyStillErrors(t *testing.T) {
+	// genuinely nothing anywhere → still a clear error (with the diagnostic hint).
+	body := `{"choices":[{"message":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":0}}`
+	s, done := newOpenAITestService(t, body)
+	defer done()
+	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	if err == nil {
+		t.Fatalf("expected an error for genuinely empty content; got out=%q", out)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "empty content") {
+		t.Fatalf("error %q should mention empty content", err.Error())
+	}
+}

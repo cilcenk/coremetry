@@ -389,7 +389,8 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 		Choices []struct {
 			Message struct {
 				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"`
+				ReasoningContent string `json:"reasoning_content"` // deepseek-r1 / Qwen3 style
+				Reasoning        string `json:"reasoning"`         // some servers use this name
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -405,21 +406,54 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
 			errors.New("openai-compat: empty response")
 	}
-	out := stripThinking(parsed.Choices[0].Message.Content)
+	msg := parsed.Choices[0].Message
+	// Pull the answer from wherever the model put it, in priority order:
+	//   1. content after the final </think> (the normal case),
+	//   2. a dedicated reasoning field (reasoning_content / reasoning),
+	//   3. as a last resort, the reasoning text INSIDE the <think> block — some
+	//      reasoning models (Qwen3, deepseek-r1, …) emit ONLY a think block with
+	//      no post-</think> answer; the reasoning usually IS the explanation, so
+	//      salvaging it beats failing the request.
+	out := stripThinking(msg.Content)
 	if out == "" {
-		// Reasoning models (Qwen3, deepseek-r1, …) emit the answer in a
-		// separate field and/or burn the whole budget thinking.
-		out = stripThinking(parsed.Choices[0].Message.ReasoningContent)
+		out = stripThinking(msg.ReasoningContent)
 	}
 	if out == "" {
+		out = stripThinking(msg.Reasoning)
+	}
+	if out == "" {
+		out = thinkingContent(msg.Content)
+	}
+	if out == "" {
+		// Genuinely nothing usable. Log the raw shape so the operator can see
+		// what their local model actually returned (wrong model name/endpoint,
+		// a non-standard schema, or a model that emits no content at all).
+		log.Printf("[copilot] openai-compat empty answer: finish_reason=%q content_len=%d reasoning_content_len=%d reasoning_len=%d raw=%.500s",
+			parsed.Choices[0].FinishReason, len(msg.Content), len(msg.ReasoningContent), len(msg.Reasoning),
+			strings.TrimSpace(string(respBody)))
 		if parsed.Choices[0].FinishReason == "length" {
 			return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
 				errors.New("model returned no answer — token budget exhausted by reasoning; raise max_tokens or disable thinking (e.g. Qwen3 /no_think)")
 		}
 		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
-			errors.New("openai-compat: model returned empty content")
+			errors.New("openai-compat: model returned empty content — no answer in content/reasoning. Check the model name + endpoint; a reasoning model may need /no_think. See the [copilot] pod log for the raw response")
 	}
 	return out, parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, nil
+}
+
+// thinkingContent returns the text INSIDE the first <think>…</think> block,
+// trimmed — the reasoning a model produced before its (here, missing) answer.
+// Last-resort salvage when stripThinking leaves nothing after the close tag.
+func thinkingContent(s string) string {
+	open := strings.Index(s, "<think>")
+	if open == -1 {
+		return ""
+	}
+	rest := s[open+len("<think>"):]
+	if c := strings.Index(rest, "</think>"); c != -1 {
+		rest = rest[:c]
+	}
+	return strings.TrimSpace(rest)
 }
 
 // stripThinking removes a leading chain-of-thought block emitted by some

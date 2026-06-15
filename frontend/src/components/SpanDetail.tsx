@@ -12,7 +12,22 @@ const PANEL_MIN = 300;
 const PANEL_MAX = 1100;
 const PANEL_STORAGE_KEY = 'coremetry-span-panel-w';
 
-export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => void }) {
+// ±1min (Unix ns) fallback window when the caller doesn't pass the trace's
+// own window — used in standalone SpanDetail mounts. Mirrors
+// TRACE_LOG_WINDOW_BUFFER_NS in lib/otel; kept local so this component has no
+// import just for the standalone fallback path.
+const SPAN_LOG_WINDOW_BUFFER_NS = 60_000_000_000;
+
+export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
+  span: SpanRow;
+  onClose: () => void;
+  // Trace-anchored log lookup window (Unix ns), threaded down from the Trace
+  // page so the trace→logs ES query is bounded to the trace's time ±1min
+  // instead of a full-index scan by trace_id (v0.8.180). Optional: standalone
+  // mounts fall back to the span's OWN window ± buffer below.
+  logsFrom?: number;
+  logsTo?: number;
+}) {
   const attrs = Object.entries(span.attributes ?? {});
   const res = Object.entries(span.resourceAttributes ?? {});
   const allEvents = span.events ?? [];
@@ -55,13 +70,21 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
   // trace has plenty of logs. Same result the trace-detail
   // Logs tab shows, just lifted into the side panel for the
   // span the operator is hovering on.
+  // Bound the trace→logs ES lookup to a time window (Unix ns) so the search
+  // hits the trace's window ±1min instead of scanning the whole index by
+  // trace_id (v0.8.180). Prefer the trace-anchored window passed by the Trace
+  // page; for standalone mounts fall back to THIS span's own window ± buffer.
+  // The window is anchored to span times, never now() — so it doesn't
+  // reintroduce the v0.5.223 "old traces vanish" bug.
+  const logsFromBound = logsFrom ?? (span.startTime ? span.startTime - SPAN_LOG_WINDOW_BUFFER_NS : undefined);
+  const logsToBound   = logsTo   ?? (span.endTime   ? span.endTime   + SPAN_LOG_WINDOW_BUFFER_NS : undefined);
   const [spanLogs, setSpanLogs] = useState<LogRow[]>([]);
   useEffect(() => {
     if (!span.traceId) { setSpanLogs([]); return; }
-    api.logs({ traceId: span.traceId, limit: 50 })
+    api.logs({ traceId: span.traceId, from: logsFromBound, to: logsToBound, limit: 50 })
       .then(r => setSpanLogs(r.logs ?? []))
       .catch(() => setSpanLogs([]));
-  }, [span.traceId]);
+  }, [span.traceId, logsFromBound, logsToBound]);
 
   // Baseline p50 — the 24h leading up to this span, for the same
   // service+operation, off the RED metrics path (operation_summary_5m
@@ -263,7 +286,9 @@ export function SpanDetail({ span, onClose }: { span: SpanRow; onClose: () => vo
         <Section title={
           <>
             Logs ({spanLogs.length})
-            <Link to={`/logs?traceId=${span.traceId}`}
+            <Link to={`/logs?traceId=${span.traceId}` +
+                      (logsFromBound ? `&from=${logsFromBound}` : '') +
+                      (logsToBound ? `&to=${logsToBound}` : '')}
               style={{ marginLeft: 8, fontSize: 10, fontWeight: 400, color: 'var(--accent2)' }}>
               open in Logs ↗
             </Link>

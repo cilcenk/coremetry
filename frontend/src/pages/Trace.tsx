@@ -13,7 +13,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { useCorrelatedLogs, spanHasError } from '@/lib/otel';
+import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange, PivotAnchor } from '@/lib/types';
 import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
@@ -54,10 +54,19 @@ function TraceDetailInner() {
   // the Trace page doesn't otherwise show, alongside the trace + correlated logs.
   const [correlateAnchor, setCorrelateAnchor] = useState<PivotAnchor | null>(null);
 
+  // Trace-anchored log lookup window (Unix ns) — min(span.startTime)-1min ..
+  // max(span.endTime)+1min. Bounds the trace→logs ES query to the trace's own
+  // time window instead of a full-index scan by trace_id (v0.8.180). Anchored
+  // to span times, NOT now(), so it doesn't reintroduce the v0.5.223 "old
+  // traces vanish" bug. Stable per trace → no refetch churn from the key.
+  const logWin = useMemo(() => traceLogWindow(spans), [spans]);
+
   // Correlated logs ride the shared OTel hook — every log line sharing this
   // trace_id, react-query-cached. Enabled lazily (only when the Logs tab is
   // open) so the trace page stays fast for operators who never need them.
-  const logsQuery = useCorrelatedLogs(tab === 'logs' ? id : undefined, undefined, { limit: 500 });
+  const logsQuery = useCorrelatedLogs(
+    tab === 'logs' ? id : undefined, undefined,
+    { limit: 500, from: logWin?.from, to: logWin?.to });
   const logs: LogRow[] | null | undefined =
     tab !== 'logs' ? undefined
     : logsQuery.isLoading ? undefined
@@ -296,7 +305,8 @@ function TraceDetailInner() {
                     Operators jump trace→logs constantly during
                     incident investigation; carrying the trace_id
                     saves the manual paste step. */}
-                <DrillButton to="/logs" params={{ traceId: id }}
+                <DrillButton to="/logs"
+                  params={{ traceId: id, from: logWin?.from, to: logWin?.to }}
                   title="Logs correlated to this trace_id"
                   label="≡ Logs" variant="secondary" />
                 {/* Correlated Signals (task #6) — open the cross-signal pivot
@@ -413,7 +423,8 @@ function TraceDetailInner() {
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined} />
                   </div>
-                  {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
+                  {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)}
+                    logsFrom={logWin?.from} logsTo={logWin?.to} />}
                 </div>
               </>
             )}

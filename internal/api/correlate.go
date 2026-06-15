@@ -21,21 +21,27 @@ import (
 // orchestrates a Problem's sub-reads. Read-only, open (writes no state).
 //
 // The pivot anchor is one of three shapes, each carrying enough context to
-// derive the other two. The join keys, in priority order, are exactly the three
+// derive the other two. The join keys, in priority order, are exactly the ones
 // the codebase already trusts:
 //   1. trace_id — the only cross-signal key OTel carries everywhere; exact join
 //      when present (no time fuzz).
-//   2. service.name — the fallback when no trace_id (a raw metric data point has
-//      no trace_id on the wire today).
-//   3. time-window [from,to] — bounds every service-keyed derivation.
+//   2. exemplar — a REAL representative trace for a metric anchor (the actual
+//      slow/error trace that produced the p99/error spike), resolved off the
+//      spanmetrics rollup's argMax(If) exemplar states — the same trace_id
+//      Explore's ◆ glyphs use. Exact-enough to pivot INTO, just not the literal
+//      data point the operator clicked. Applies to latency + error metric kinds.
+//   3. service.name + time-window — the genuinely fuzzy fallback: no trace_id
+//      and no representative span (a pure count/throughput metric, where no
+//      single span "is" the value), so the other lenses are matched by
+//      service + [from,to] only.
 //
-// HONESTY (task #6, spec Risk §1): the METRIC anchor is intentionally DEFERRED
-// in v1. A raw OTLP metric point carries no trace_id, so its "derived trace" is
-// fuzzy (service+window), not exact — shipping it claiming an exact metric→trace
-// pivot erodes the differentiator. The handler accepts kind=metric only to
-// return the RED + logs lenses (clearly service+window-joined); it does NOT
-// fabricate an exact exemplar pivot. Trace + Log anchors (real / near-real
-// trace_id joins) are the shippable v1.
+// HONESTY: the METRIC anchor is no longer deferred. For latency + error a
+// metric→trace pivot lands on a REAL representative exemplar (slow / error
+// trace from the rollup, falling back to the slowest/erroring raw span) — that
+// IS the standard Datadog/Honeycomb exemplar, not a fabrication. Only a
+// throughput/count metric (no representative span) keeps the honest weaker
+// "service+window" join. Trace + Log anchors are unchanged (exact / near-real
+// trace_id joins).
 
 // CorrelationKind is the pivot anchor's signal shape.
 type CorrelationKind string
@@ -44,6 +50,22 @@ const (
 	CorrelateTrace  CorrelationKind = "trace"
 	CorrelateLog    CorrelationKind = "log"
 	CorrelateMetric CorrelationKind = "metric"
+)
+
+// Join-key labels the bundle reports back to the drawer's anchor chip. These
+// are the exact strings the frontend special-cases, so keep them in sync with
+// CorrelationContextDrawer.tsx.
+const (
+	// joinTraceID — exact cross-signal join on trace_id (no time fuzz).
+	joinTraceID = "trace_id"
+	// joinExemplar — a REAL representative trace from the spanmetrics rollup
+	// (or the slowest/erroring raw span): exact-enough to pivot INTO. The
+	// metric→trace pivot for latency + error anchors.
+	joinExemplar = "exemplar"
+	// joinServiceWindow — the genuinely-fuzzy fallback: no trace_id and no
+	// representative span (throughput/count metric), so the lenses are matched
+	// by service + time-window only.
+	joinServiceWindow = "service+window"
 )
 
 // CorrelationAnchor is what the operator pivoted FROM, echoed back so the
@@ -57,7 +79,13 @@ type CorrelationAnchor struct {
 	ToNs    int64           `json:"toNs"`
 	// JoinKey is the strongest join the bundle actually used:
 	//   "trace_id"       — exact cross-signal join (no time fuzz)
-	//   "service+window" — fuzzy join (the operator must see this)
+	//   "exemplar"       — a real representative trace from the spanmetrics
+	//                      rollup (or the slowest/erroring raw span): the
+	//                      metric→trace pivot for latency/error anchors. Not the
+	//                      literal data point, but exact-enough to pivot into.
+	//   "service+window" — the genuinely-fuzzy fallback (throughput/count
+	//                      metric, or no exemplar resolved): the operator must
+	//                      see this.
 	JoinKey string `json:"joinKey"`
 }
 
@@ -89,7 +117,7 @@ type CorrelationContext struct {
 	Trace    *CorrelationTrace           `json:"trace,omitempty"`
 	Logs     []*logstore.LogRecord       `json:"logs"`              // always present (possibly empty)
 	Metrics  []chstore.SpanMetricSeries  `json:"metrics"`           // anchor service RED series (possibly empty)
-	Exemplar *chstore.Exemplar           `json:"exemplar,omitempty"` // metric anchor: representative trace to pivot INTO (fuzzy)
+	Exemplar *chstore.Exemplar           `json:"exemplar,omitempty"` // metric anchor: a REAL representative trace to pivot INTO (slow/error rollup exemplar, raw-span fallback)
 }
 
 // correlateSpanCap bounds the trace lens span list so a pathological 10k-span
@@ -224,9 +252,11 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 				TsNs:    tsNs,
 				FromNs:  from.UnixNano(),
 				ToNs:    to.UnixNano(),
-				// trace_id present ⇒ exact join; else the service+window fuzzy
-				// join — surfaced to the operator via the drawer's join chip.
-				JoinKey: joinKeyFor(traceID),
+				// trace_id present ⇒ exact join. Else, for a METRIC anchor whose
+				// kind has a representative span (latency/error), the resolved
+				// exemplar is a real trace ⇒ "exemplar". Otherwise the genuinely
+				// fuzzy "service+window". All surfaced via the drawer's join chip.
+				JoinKey: joinKeyFor(traceID, kind, metricKind),
 			},
 			Logs:    []*logstore.LogRecord{},
 			Metrics: []chstore.SpanMetricSeries{},
@@ -298,19 +328,29 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 		// after the trace lens (a) resolves — the RED series must cover the
 		// period the TRACE occurred in, not the default window around now().
 
-		// (d) Exemplar — ONLY for the metric anchor, and clearly fuzzy: the
-		// representative bad trace for (service, window, kind) the operator can
-		// pivot INTO. FindExemplar is the same lossy shortcut useExemplars
-		// documents (service+window, not a true OTLP exemplar). We surface it,
-		// but the anchor JoinKey already tells the UI this is service+window.
+		// (d) Exemplar — ONLY for the metric anchor: a REAL representative trace
+		// for (service, window, kind) the operator can pivot INTO. PREFER the
+		// spanmetrics rollup's argMax(If) exemplar (FindExemplarRollup — the same
+		// trace_id Explore's ◆ glyphs use, one MV read, the most precise + cheapest
+		// source). Fall back to FindExemplar (raw spans, still real: the
+		// slowest/erroring span in the bucket) when the rollup has no exemplar for
+		// that window (cutover/TTL/no-error). Both yield a real chstore.Exemplar;
+		// soft-fail to nil either way. For latency/error the anchor JoinKey is
+		// "exemplar"; for throughput it's "service+window" (no representative span).
 		if kind == CorrelateMetric && service != "" {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				ex, err := s.store.FindExemplar(r.Context(), chstore.ExemplarReq{
+				req := chstore.ExemplarReq{
 					Service: service, From: from, To: to,
-					Kind: exemplarKindForMetric(metricKind),
-				})
+					Kind: correlateExemplarKind(metricKind),
+				}
+				ex, err := s.store.FindExemplarRollup(r.Context(), req)
+				if err != nil || ex == nil {
+					// Rollup miss (pre-cutover / TTL'd / no error in window) →
+					// raw-spans fallback. Still a real representative trace.
+					ex, err = s.store.FindExemplar(r.Context(), req)
+				}
 				if err == nil && ex != nil {
 					mu.Lock()
 					out.Exemplar = ex
@@ -353,14 +393,53 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// joinKeyFor reports the strongest join key the bundle can use: an exact
-// trace_id join, or the fuzzy service+window fallback. The drawer renders this
-// as a chip so the operator always sees which join they're trusting.
-func joinKeyFor(traceID string) string {
+// joinKeyFor reports the strongest join key the bundle can use, which the
+// drawer renders as a chip so the operator always sees which join they're
+// trusting:
+//   - a trace_id ⇒ exact "trace_id" join (any anchor kind);
+//   - a METRIC anchor whose metricKind has a representative span
+//     (latency/error) ⇒ "exemplar" — a real representative trace to pivot into;
+//   - otherwise (throughput/count metric, or a non-metric anchor with no
+//     trace_id) ⇒ the genuinely-fuzzy "service+window".
+func joinKeyFor(traceID string, kind CorrelationKind, metricKind string) string {
 	if traceID != "" {
-		return "trace_id"
+		return joinTraceID
 	}
-	return "service+window"
+	if kind == CorrelateMetric && metricHasExemplar(metricKind) {
+		return joinExemplar
+	}
+	return joinServiceWindow
+}
+
+// correlateExemplarKind maps the drawer's metricKind enum (error|latency|
+// throughput) to the exemplar trace flavour:
+//   - latency  → slow  (the slowest representative trace)
+//   - error    → error (the loudest erroring representative trace)
+//   - throughput / anything else → any (no single representative span; the
+//     "loudest in the window" stand-in, labelled service+window by joinKeyFor)
+// Distinct from rootcause.go's exemplarKindForMetric, which classifies a
+// problem's free-form metric NAME; here metricKind is already the clean enum.
+func correlateExemplarKind(metricKind string) chstore.ExemplarKind {
+	switch strings.ToLower(strings.TrimSpace(metricKind)) {
+	case "error":
+		return chstore.ExemplarError
+	case "latency":
+		return chstore.ExemplarSlow
+	default:
+		return chstore.ExemplarAny
+	}
+}
+
+// metricHasExemplar reports whether a metricKind has a REAL representative span
+// (latency/error do — the slow/error trace; throughput/count does not, since no
+// single span "is" the value). Decides "exemplar" vs "service+window".
+func metricHasExemplar(metricKind string) bool {
+	switch correlateExemplarKind(metricKind) {
+	case chstore.ExemplarSlow, chstore.ExemplarError:
+		return true
+	default:
+		return false
+	}
 }
 
 // redSeries fetches the anchor service's three RED series (rate / error_rate /

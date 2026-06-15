@@ -25,12 +25,13 @@ import type {
 // Built shareable-URL-first conceptually (the anchor is fully serialisable) so a
 // future standalone /correlate route is a thin wrapper. v1 is drawer-only.
 //
-// HONESTY (spec Risk §1): the join-key CHIP in the anchor header always tells
-// the operator whether the join is exact (`trace_id`) or fuzzy (`service+window`).
-// The METRIC anchor is deferred — a raw OTLP metric point has no trace_id, so the
-// three entry points wired in v1 are TRACE + LOG (real / near-real trace_id
-// joins). The drawer still RENDERS a metric anchor if handed one, but labels its
-// derived exemplar fuzzy.
+// HONESTY: the join-key CHIP in the anchor header always tells the operator
+// which join the bundle used: exact (`trace_id`), a real representative
+// `exemplar` (a metric→trace pivot for latency/error — the actual slow/error
+// trace from the spanmetrics rollup), or the genuinely-fuzzy `service+window`
+// (throughput/count metric, no representative span). The metric anchor is no
+// longer deferred: latency + error pivot into a real exemplar trace; only
+// throughput keeps the amber fuzzy warning.
 export function CorrelationContextDrawer({
   anchor,
   onClose,
@@ -149,12 +150,15 @@ export function CorrelationContextDrawer({
 
 // ── Anchor header ───────────────────────────────────────────────────────────
 // What the operator pivoted FROM + the resolved join-key chip. The chip is the
-// honesty surface: trace_id = exact join (green), service+window = fuzzy (amber).
+// honesty surface, three states:
+//   trace_id       — exact cross-signal join (green)
+//   exemplar       — a real representative trace (metric→trace pivot, accent)
+//   service+window — genuinely fuzzy, no representative span (amber)
 function AnchorHeader({ ctx }: { ctx: CorrelationContext }) {
   const a = ctx.anchor;
   const kindLabel =
     a.kind === 'trace' ? 'Trace' : a.kind === 'log' ? 'Log line' : 'Metric';
-  const exact = a.joinKey === 'trace_id';
+  const join = joinKeyStyle(a.joinKey);
   return (
     <div
       style={{
@@ -182,26 +186,45 @@ function AnchorHeader({ ctx }: { ctx: CorrelationContext }) {
       )}
       <span
         className="badge"
-        title={
-          exact
-            ? 'Exact cross-signal join on trace_id — no time fuzz.'
-            : 'Fuzzy join: no trace_id on this signal, so the other lenses are matched by service + time-window.'
-        }
+        title={join.title}
         style={{
           marginLeft: 'auto',
           fontSize: 10.5,
           padding: '2px 8px',
           borderRadius: 4,
           fontWeight: 600,
-          background: exact
-            ? 'color-mix(in srgb, var(--ok) 16%, transparent)'
-            : 'color-mix(in srgb, var(--warn) 16%, transparent)',
-          color: exact ? 'var(--ok)' : 'var(--warn)',
+          background: `color-mix(in srgb, ${join.color} 16%, transparent)`,
+          color: join.color,
         }}>
         join: {a.joinKey}
       </span>
     </div>
   );
+}
+
+// joinKeyStyle resolves the colour + tooltip for the anchor join-key chip. The
+// three values mirror correlate.go's join* consts: trace_id (exact, green),
+// exemplar (a real representative trace, accent), service+window (fuzzy, amber).
+function joinKeyStyle(joinKey: string): { color: string; title: string } {
+  switch (joinKey) {
+    case 'trace_id':
+      return {
+        color: 'var(--ok)',
+        title: 'Exact cross-signal join on trace_id — no time fuzz.',
+      };
+    case 'exemplar':
+      return {
+        color: 'var(--accent2)',
+        title:
+          'Pivot into a real representative trace — the actual slow/error trace from the spanmetrics rollup that produced this metric. Exact-enough to drill into.',
+      };
+    default:
+      return {
+        color: 'var(--warn)',
+        title:
+          'Fuzzy join: no trace_id and no representative span (count/throughput), so the other lenses are matched by service + time-window.',
+      };
+  }
 }
 
 // ── Lens section shell ──────────────────────────────────────────────────────
@@ -359,10 +382,14 @@ function LogsLens({ ctx, onReAnchor }: { ctx: CorrelationContext; onReAnchor: (a
 // The anchor service's RED series (rate / error_rate / p99) over [from,to]. One
 // small uPlot per metric (they carry different units, so a shared axis would
 // mislead). A click on any chart resolves the bucket window and re-anchors on a
-// representative trace for it (the metric→trace pivot, fuzzy by service+window).
+// representative trace for it (the metric→trace pivot — a real exemplar for
+// latency/error, service+window only for throughput).
 function MetricsLens({ ctx, onReAnchor }: { ctx: CorrelationContext; onReAnchor: (a: PivotAnchor) => void }) {
   const series = ctx.metrics ?? [];
   const service = ctx.anchor.service;
+  // The exemplar is real (a representative trace) unless the anchor resolved to
+  // the genuinely-fuzzy service+window join (throughput/count metric).
+  const exemplarReal = ctx.anchor.joinKey === 'exemplar';
   const byLabel = useMemo(() => {
     const m = new Map<string, SpanMetricSeries>();
     for (const s of series) m.set(s.groupKey[0] ?? '', s);
@@ -440,21 +467,36 @@ function MetricsLens({ ctx, onReAnchor }: { ctx: CorrelationContext; onReAnchor:
             fontSize: 11,
           }}>
           <span
-            title="No true OTLP exemplar on the wire — this representative trace is matched by service + window (fuzzy)."
+            className="badge"
+            title={
+              exemplarReal
+                ? 'Representative trace — the actual slow/error trace from the spanmetrics rollup that produced this metric. Exact-enough to pivot into.'
+                : 'No representative span for a count/throughput metric — this trace is matched by service + window (fuzzy).'
+            }
             style={{
               fontSize: 10,
               fontWeight: 600,
               padding: '1px 6px',
               borderRadius: 4,
-              background: 'color-mix(in srgb, var(--warn) 16%, transparent)',
-              color: 'var(--warn)',
+              background: exemplarReal
+                ? 'color-mix(in srgb, var(--accent2) 16%, transparent)'
+                : 'color-mix(in srgb, var(--warn) 16%, transparent)',
+              color: exemplarReal ? 'var(--accent2)' : 'var(--warn)',
             }}>
-            fuzzy exemplar
+            {exemplarReal ? 'exemplar · representative trace' : 'fuzzy exemplar'}
           </span>
-          <span className="mono" style={{ color: 'var(--text2)' }} title={ctx.exemplar.name}>
-            {ctx.exemplar.name}
-          </span>
-          <span style={{ color: 'var(--text3)' }}>{(ctx.exemplar.durationNs / 1e6).toFixed(0)}ms</span>
+          {ctx.exemplar.name ? (
+            <span className="mono" style={{ color: 'var(--text2)' }} title={ctx.exemplar.name}>
+              {ctx.exemplar.name}
+            </span>
+          ) : (
+            <span className="mono" style={{ color: 'var(--text3)' }} title={ctx.exemplar.traceId}>
+              {ctx.exemplar.traceId.slice(0, 12)}…
+            </span>
+          )}
+          {ctx.exemplar.durationNs > 0 && (
+            <span style={{ color: 'var(--text3)' }}>{(ctx.exemplar.durationNs / 1e6).toFixed(0)}ms</span>
+          )}
           <button
             type="button"
             onClick={() => onReAnchor({ kind: 'trace', traceId: ctx.exemplar!.traceId })}

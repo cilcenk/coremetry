@@ -1393,6 +1393,15 @@ func (s *ESStore) CountPatterns(
 	// input index — easier than maintaining a sparse mapping.
 	var ndjson strings.Builder
 	tru := true
+	// v0.8.164 — cost guards on every per-pattern subquery, at parity with
+	// every sibling ES path (Search, searchForward, buildHistogramBody). The
+	// _msearch API can't carry a request-level timeout (esapi.MsearchRequest
+	// has no Timeout field), so a slow shard on a billion-doc external ES
+	// would otherwise hold the coordinating-node slot + pooled connection to
+	// the full handler deadline — the v0.8.3 histogram-incident mechanism
+	// (identical size:0 agg shape). track_total_hits:false skips the
+	// all-shard exact doc count the detector never needs. Computed once.
+	patTimeout := esTimeoutFromEnv("10s")
 	// One narrowed index list for the whole batch — every per-pattern
 	// query is bounded by [baseStart, now] (v0.8.109).
 	msearchIdx := s.queryIndices(ctx, baseStart, now)
@@ -1414,60 +1423,9 @@ func (s *ESStore) CountPatterns(
 		}
 
 		tokenQuery := buildPatternTokenQuery(pat.Tokens, s.fields.Body)
-		body := map[string]any{
-			"size": 0,
-			"query": map[string]any{
-				"query_string": map[string]any{
-					"query":                  tokenQuery,
-					"default_field":          s.fields.Body,
-					"default_operator":       "OR",
-					"allow_leading_wildcard": false,
-					"lenient":                true,
-				},
-			},
-			"aggs": map[string]any{
-				"cur_window": map[string]any{
-					"filter": map[string]any{
-						"range": map[string]any{
-							s.fields.Timestamp: map[string]any{
-								"gte": curFrom, "lt": curEnd,
-							},
-						},
-					},
-					"aggs": map[string]any{
-						"by_service": map[string]any{
-							"terms": map[string]any{
-								"field": s.fields.Service + ".keyword",
-								"size":  5, // v0.5.287 — top-5 services per pattern
-							},
-						},
-						"sample": map[string]any{
-							"top_hits": map[string]any{
-								"size":    1,
-								"_source": []string{s.fields.Body, s.fields.Timestamp},
-								"sort": []any{
-									map[string]any{
-										s.fields.Timestamp: map[string]any{
-											"order":         "desc",
-											"unmapped_type": "date",
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				"base_window": map[string]any{
-					"filter": map[string]any{
-						"range": map[string]any{
-							s.fields.Timestamp: map[string]any{
-								"gte": baseFrom, "lt": curFrom,
-							},
-						},
-					},
-				},
-			},
-		}
+		body := patternCountBody(
+			tokenQuery, s.fields.Body, s.fields.Timestamp, s.fields.Service,
+			baseFrom, curFrom, curEnd, patTimeout)
 		bb, _ := json.Marshal(body)
 		ndjson.Write(bb)
 		ndjson.WriteByte('\n')
@@ -1564,6 +1522,74 @@ func (s *ESStore) CountPatterns(
 		out[i] = stats
 	}
 	return out, nil
+}
+
+// patternCountBody builds one CountPatterns _msearch subquery body: a
+// size:0 aggregation over the token query, split into a current and a
+// baseline window, with a top-5-services terms agg + a 1-hit sample. Pure
+// (no receiver) so a regression test can pin the v0.8.164 cost guards —
+// track_total_hits:false (skip the all-shard exact count the detector
+// never reads) and a per-body timeout (the _msearch API can't carry a
+// request-level one, so a slow shard on a billion-doc external ES would
+// otherwise hold the slot to the handler deadline). At parity with
+// buildHistogramBody.
+func patternCountBody(tokenQuery, bodyField, tsField, svcField, baseFrom, curFrom, curEnd, timeout string) map[string]any {
+	return map[string]any{
+		"size":             0,
+		"track_total_hits": false,
+		"timeout":          timeout,
+		"query": map[string]any{
+			"query_string": map[string]any{
+				"query":                  tokenQuery,
+				"default_field":          bodyField,
+				"default_operator":       "OR",
+				"allow_leading_wildcard": false,
+				"lenient":                true,
+			},
+		},
+		"aggs": map[string]any{
+			"cur_window": map[string]any{
+				"filter": map[string]any{
+					"range": map[string]any{
+						tsField: map[string]any{
+							"gte": curFrom, "lt": curEnd,
+						},
+					},
+				},
+				"aggs": map[string]any{
+					"by_service": map[string]any{
+						"terms": map[string]any{
+							"field": svcField + ".keyword",
+							"size":  5, // v0.5.287 — top-5 services per pattern
+						},
+					},
+					"sample": map[string]any{
+						"top_hits": map[string]any{
+							"size":    1,
+							"_source": []string{bodyField, tsField},
+							"sort": []any{
+								map[string]any{
+									tsField: map[string]any{
+										"order":         "desc",
+										"unmapped_type": "date",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"base_window": map[string]any{
+				"filter": map[string]any{
+					"range": map[string]any{
+						tsField: map[string]any{
+							"gte": baseFrom, "lt": curFrom,
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 // buildPatternTokenQuery composes the detector tokens into a

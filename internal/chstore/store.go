@@ -344,6 +344,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			res_values    Array(String),
 			events        String       DEFAULT '[]',
 			scope_name    LowCardinality(String) DEFAULT '',
+			op_group      LowCardinality(String) DEFAULT '',
 			cluster       LowCardinality(String) MATERIALIZED %s,
 			INDEX idx_trace  trace_id  TYPE bloom_filter(0.01) GRANULARITY 4,
 			INDEX idx_name   name      TYPE set(0) GRANULARITY 4
@@ -1144,6 +1145,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		// MATERIALIZE mutation — that would stress the RAM-bound CH). The column
 		// references the SAME const as the fallback so new/old parts never drift.
 		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS cluster LowCardinality(String) MATERIALIZED ` + clusterDeriveExpr,
+		// op_group — normalized operation-shape column (group_id rel A).
+		// Explicit Go-written column (NOT MATERIALIZED): convert.go
+		// computes it per-span via templater.NormalizeOperation and the
+		// spans INSERT binds sp.OpGroup. Forward-only: old parts read ''
+		// (the Release B MV + Release C UI tolerate the empty group).
+		// Routed through execDDL→adaptDDL so external Distributed installs
+		// get the ALTER rewritten to spans_local ON CLUSTER (v0.8.160-166).
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS op_group LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider LowCardinality(String) DEFAULT 'local'`,
 		// team — operator-curated grouping (e.g. "platform-sre",
 		// "fraud", "payments"). LowCardinality because each

@@ -79,7 +79,7 @@ func (s *Store) InsertSpans(ctx context.Context, spans []*Span) error {
 			sp.DBSystem, sp.DBStatement, sp.HTTPMethod, sp.HTTPRoute, sp.HTTPStatus,
 			sp.RPCSystem, sp.RPCMethod, sp.PeerService, sp.MsgSystem,
 			sp.AttrKeys, sp.AttrValues, sp.ResKeys, sp.ResValues,
-			sp.Events, sp.ScopeName,
+			sp.Events, sp.ScopeName, sp.OpGroup,
 		); err != nil {
 			return fmt.Errorf("append span: %w", err)
 		}

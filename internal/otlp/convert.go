@@ -14,6 +14,7 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/templater"
 )
 
 // ── Trace conversion ──────────────────────────────────────────────────────────
@@ -85,9 +86,15 @@ func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName strin
 		dur = 0
 	}
 
+	// op_group — pure, cheap, lock-free per-span operation-shape
+	// normalizer (group_id rel A). Source priority: http.route >
+	// DB-statement-stripped > generic name normalization. NOT the
+	// stateful Drain tree — that mutex-locks per call.
+	opGroup := templater.NormalizeOperation(sp.Name, kind, httpMethod, httpRoute, dbSystem, dbStmt)
+
 	return &chstore.Span{
 		TraceID: hexID(sp.TraceId), SpanID: hexID(sp.SpanId), ParentID: parentID(sp.ParentSpanId),
-		Name: sp.Name, Kind: kind,
+		Name: sp.Name, OpGroup: opGroup, Kind: kind,
 		ServiceName: svcName, HostName: hostName, DeployEnv: deployEnv,
 		StatusCode: statusCode, StatusMsg: statusMsg,
 		Time:     time.Unix(0, int64(sp.StartTimeUnixNano)).UTC(),

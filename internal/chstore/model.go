@@ -8,6 +8,7 @@ type Span struct {
 	SpanID      string
 	ParentID    string
 	Name        string
+	OpGroup     string // normalized operation shape (group_id rel A); '' = no group
 	Kind        string
 	ServiceName string
 	HostName    string

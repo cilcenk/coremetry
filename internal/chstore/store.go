@@ -596,6 +596,38 @@ func (s *Store) migrate(ctx context.Context) error {
 		ORDER BY id
 		TTL toDate(started_at) + INTERVAL 30 DAY`,
 
+		// root_cause_hypotheses: the persisted, pre-computed root-cause
+		// ranking per anchor (an anomaly OR a critical problem). The
+		// anomaly→root-cause worker synthesizes correlator.Synthesize over
+		// the same bounded evidence the on-demand /rootcause fan-out gathers
+		// and upserts here on a leader-gated tick, so /anomalies + /problems
+		// can render a "Root cause: <suspect> (NN%)" ribbon with NO per-row
+		// fetch. COMPUTED state (not operator-saved) — a dedicated table like
+		// anomaly_events above, NOT the saved_views catch-all (invariant #5
+		// is for USER state). ReplacingMergeTree(version) keeps the latest
+		// synthesis per anchor; reads use FINAL. ORDER BY is the dedup key
+		// ONLY: (anchor_kind, anchor_id). Low volume (one row per open
+		// anchor) → monthly partition like anomaly_events. candidates is a
+		// JSON String blob (the small ScoredCause list, read whole, never
+		// queried by sub-field) — no nested/Array-of-Tuple schema. TTL drops
+		// stale syntheses 30d after compute, partition-aligned on the
+		// DateTime64 column (toDateTime64 row → toDate → + INTERVAL N DAY).
+		`CREATE TABLE IF NOT EXISTS root_cause_hypotheses (
+			anchor_kind   LowCardinality(String),     -- anomaly | problem
+			anchor_id     String,                      -- AnomalyEvent.id OR Problem.id
+			service       LowCardinality(String),
+			computed_at   DateTime64(9),
+			top_suspect   String        DEFAULT '',    -- #1 candidate's service ('' = no clear cause)
+			top_score     Float64       DEFAULT 0,
+			confidence    Float64       DEFAULT 0,
+			candidates    String        DEFAULT '[]',  -- JSON-encoded []ScoredCause, best first
+			recent_deploy String        DEFAULT '',    -- JSON-encoded *RecentDeploy or ''
+			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		PARTITION BY toYYYYMM(computed_at)
+		ORDER BY (anchor_kind, anchor_id)
+		TTL toDate(computed_at) + INTERVAL 30 DAY`,
+
 		`CREATE TABLE IF NOT EXISTS alert_rules (
 			id           String,
 			name         String,

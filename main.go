@@ -643,6 +643,18 @@ func main() {
 		go anomaly.NewProblemExplainer(store, copilotSvc, lockImpl).Start(ctx)
 	}
 
+	// ── Root-cause synthesizer (rc #2, v0.8.x) ───────────────────────────────
+	// Every 30s, pre-computes + persists a ranked root-cause hypothesis per
+	// anchor (recent anomalies + critical open problems) via the PURE
+	// correlator.Synthesize fuser over the SAME bounded cross-signal evidence
+	// the explainer + on-demand /rootcause fan-out use. /anomalies + /problems
+	// then render a "Root cause: <suspect> (NN%)" ribbon (rc #3) with no
+	// per-row synthesis. Leader-gated + batched like the explainer; no Copilot
+	// dependency (deterministic ranking only). v0.8.x — worker-only.
+	if mode.worker {
+		go anomaly.NewRootCauseSynthesizer(store, lockImpl).Start(ctx)
+	}
+
 	// ── HTTP server (OTLP + API + UI) ─────────────────────────────────────────
 	// Cluster membership service (v0.5.253) — per-pod heartbeat
 	// + member listing for /admin/cluster. Always created (Noop

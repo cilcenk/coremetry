@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { Spinner, Empty } from '@/components/Spinner';
+import { mapNumber, nodeSizeMetric } from '@/lib/topologyNodes';
 import type { TimeRange } from '@/lib/types';
 import type { GraphNode, GraphEdge, GraphNodeKind, ServiceGraphResponse } from '@/lib/types';
 
@@ -22,8 +23,14 @@ import type { GraphNode, GraphEdge, GraphNodeKind, ServiceGraphResponse } from '
 // The SAME component serves the Service "Topology" tab (scope=neighborhood +
 // focus) and the full /topology page (scope=global) via props.
 
-const NODE_W = 156;
+const NODE_W = 156; // fallback card width when no size metric is supplied
 const NODE_H = 38;
+// Node-size encoding (v0.8.x — Uptrace adapt, slice 2): card WIDTH encodes
+// outgoing throughput. MIN_W keeps the labelled name readable (Uptrace's 10-40px
+// dots are too small for Coremetry's named cards); MAX_W caps the widest node so
+// one hot service can't dwarf the canvas. Height stays fixed at NODE_H.
+const MIN_W = 140;
+const MAX_W = 220;
 
 interface Pal {
   bg0: string; bg1: string; bg2: string;
@@ -71,12 +78,16 @@ interface Layout {
   height: number;
 }
 
-function layoutGraph(data: ServiceGraphResponse): Layout {
+// layoutGraph lays the graph out with dagre. `widthOf` returns the per-node card
+// width (the size-encoding map from nodeWidths); dagre packs ranks by the ACTUAL
+// width so nodesep/ranksep account for variable-width cards (no overlap), and the
+// bbox below uses each node's real width so Fit frames variable-width graphs.
+function layoutGraph(data: ServiceGraphResponse, widthOf: (id: string) => number): Layout {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: 'LR', nodesep: 22, ranksep: 64, marginx: 28, marginy: 28 });
   g.setDefaultEdgeLabel(() => ({}));
   const ids = new Set(data.nodes.map(n => n.id));
-  for (const n of data.nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
+  for (const n of data.nodes) g.setNode(n.id, { width: widthOf(n.id), height: NODE_H });
   for (const e of data.edges) {
     if (ids.has(e.source) && ids.has(e.target) && e.source !== e.target) g.setEdge(e.source, e.target);
   }
@@ -117,7 +128,26 @@ export function ServiceGraph({
     staleTime: 30_000,
   });
 
-  const layout = useMemo(() => (q.data && q.data.nodes.length ? layoutGraph(q.data) : null), [q.data]);
+  // Node-size encoding (v0.8.x — Uptrace adapt, slice 2): width = outgoing rate.
+  // Pure client-side reduce over the already-fetched payload (no new fetch). The
+  // metric → width map drives BOTH the dagre layout and the canvas draw via
+  // layout.pos[*].w, so packing and rendering agree exactly.
+  const nodeWidths = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!q.data) return m;
+    const { metric, max } = nodeSizeMetric(q.data.nodes, q.data.edges);
+    for (const n of q.data.nodes) {
+      m.set(n.id, mapNumber(metric.get(n.id) ?? 0, 0, max, MIN_W, MAX_W));
+    }
+    return m;
+  }, [q.data]);
+
+  const layout = useMemo(
+    () => (q.data && q.data.nodes.length
+      ? layoutGraph(q.data, (id) => nodeWidths.get(id) ?? MIN_W)
+      : null),
+    [q.data, nodeWidths],
+  );
   const nodeById = useMemo(() => {
     const m = new Map<string, GraphNode>();
     for (const n of q.data?.nodes ?? []) m.set(n.id, n);
@@ -182,10 +212,11 @@ export function ServiceGraph({
     const hoverSet = hover ? (neighbors.get(hover) ?? new Set<string>()) : null;
     const isLit = (id: string) => !hover || id === hover || (hoverSet?.has(id) ?? false);
 
-    // viewport bounds in world coords for culling.
-    const minX = -view.tx / view.scale - NODE_W;
+    // viewport bounds in world coords for culling. Pad by MAX_W so the widest
+    // size-encoded cards aren't culled a frame early at the viewport edges.
+    const minX = -view.tx / view.scale - MAX_W;
     const minY = -view.ty / view.scale - NODE_H;
-    const maxX = (vw - view.tx) / view.scale + NODE_W;
+    const maxX = (vw - view.tx) / view.scale + MAX_W;
     const maxY = (vh - view.ty) / view.scale + NODE_H;
 
     // edges first

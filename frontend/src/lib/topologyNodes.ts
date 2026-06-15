@@ -37,3 +37,45 @@ export function infraNodeLabel(name: string): string {
   if (name.startsWith('ext:')) return name.slice('ext:'.length);
   return name;
 }
+
+// ── node-size encoding (v0.8.x — Uptrace service-graph adapt, slice 2) ──────
+//
+// mapNumber linearly maps `value` from [inMin,inMax] onto [outMin,outMax] and
+// CLAMPS the result to [outMin,outMax]. A degenerate input range (inMax<=inMin,
+// e.g. every node has the same metric, or max=0) collapses to outMin so a flat
+// graph renders at the minimum size rather than dividing by zero. NaN → outMin.
+export function mapNumber(
+  value: number, inMin: number, inMax: number, outMin: number, outMax: number,
+): number {
+  if (!Number.isFinite(value) || inMax <= inMin) return outMin;
+  const t = (value - inMin) / (inMax - inMin);
+  const out = outMin + t * (outMax - outMin);
+  return Math.max(outMin, Math.min(outMax, out));
+}
+
+// nodeSizeMetric rolls each node's per-direction edge stats into ONE number per
+// node — Uptrace's node cue (nodes summarise their edges; size = throughput).
+// Slice 2 hardcodes the default mode = OUTGOING + RATE: a node's metric is the
+// sum of `rate` (calls/min) over the edges where it is the SOURCE. Slice 3 will
+// make direction/metric a toggle; this returns a typed { metric, max } so the
+// dagre layout and the canvas draw read the IDENTICAL per-node value.
+//
+// Edges whose endpoints aren't in the node set are skipped (defensive — the
+// layout already drops them). max is the largest per-node metric (0 if none),
+// the denominator mapNumber uses to scale widths.
+export function nodeSizeMetric(
+  nodes: ReadonlyArray<{ id: string }>,
+  edges: ReadonlyArray<{ source: string; target: string; rate: number }>,
+): { metric: Map<string, number>; max: number } {
+  const metric = new Map<string, number>();
+  const ids = new Set(nodes.map(n => n.id));
+  for (const n of nodes) metric.set(n.id, 0); // every node present → 0 default
+  for (const e of edges) {
+    if (!ids.has(e.source)) continue; // outgoing → attribute to the source node
+    const r = Number.isFinite(e.rate) ? e.rate : 0;
+    metric.set(e.source, (metric.get(e.source) ?? 0) + r);
+  }
+  let max = 0;
+  for (const v of metric.values()) if (v > max) max = v;
+  return { metric, max };
+}

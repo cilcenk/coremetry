@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { Spinner, Empty } from '@/components/Spinner';
 import { mapNumber, nodeSizeMetric } from '@/lib/topologyNodes';
+import type { NodeSizeMode, NodeSizeMetric } from '@/lib/topologyNodes';
 import type { TimeRange } from '@/lib/types';
 import type { GraphNode, GraphEdge, GraphNodeKind, ServiceGraphResponse } from '@/lib/types';
 
@@ -110,37 +111,64 @@ function layoutGraph(data: ServiceGraphResponse, widthOf: (id: string) => number
 
 export function ServiceGraph({
   scope, focus, range, height = 560, onSelectService,
+  nodeSizeMode: nodeSizeModeProp, nodeSizeMetric: nodeSizeMetricProp, onNodeSizeChange,
 }: {
   scope: 'global' | 'neighborhood';
   focus?: string;
   range: TimeRange;
   height?: number;
   onSelectService?: (service: string) => void;
+  // Node-size encoding axes (v0.8.x — Uptrace adapt, slice 3). Optional so the
+  // standalone service-detail Topology tab works with no wiring (defaults
+  // outgoing/rate). When a controlled value + onNodeSizeChange callback are
+  // supplied (the /topology page lifts these to the URL), the toggles are
+  // fully controlled; otherwise they fall back to LOCAL state below.
+  nodeSizeMode?: NodeSizeMode;
+  nodeSizeMetric?: NodeSizeMetric;
+  onNodeSizeChange?: (mode: NodeSizeMode, metric: NodeSizeMetric) => void;
 }) {
   const pal = usePalette();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Controlled-or-local toggle state. If the parent passes a value, that wins;
+  // otherwise we own a local useState so the component is self-sufficient. The
+  // setter always re-roll's client-side — it NEVER touches the query key.
+  const [localMode, setLocalMode] = useState<NodeSizeMode>('outgoing');
+  const [localMetric, setLocalMetric] = useState<NodeSizeMetric>('rate');
+  const sizeMode = nodeSizeModeProp ?? localMode;
+  const sizeMetric = nodeSizeMetricProp ?? localMetric;
+  const applySize = useCallback((mode: NodeSizeMode, metric: NodeSizeMetric) => {
+    if (onNodeSizeChange) onNodeSizeChange(mode, metric);
+    else { setLocalMode(mode); setLocalMetric(metric); }
+  }, [onNodeSizeChange]);
+
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const q = useQuery<ServiceGraphResponse>({
+    // NOTE: the query key deliberately does NOT include sizeMode/sizeMetric —
+    // toggling them re-rolls the SAME fetched payload client-side (the whole
+    // point of slice 3, like Uptrace). A key change here would refetch.
     queryKey: ['servicegraph', scope, focus ?? '', from, to],
     queryFn: () => api.serviceGraph({ scope, focus: focus || undefined, from, to }),
     staleTime: 30_000,
   });
 
-  // Node-size encoding (v0.8.x — Uptrace adapt, slice 2): width = outgoing rate.
-  // Pure client-side reduce over the already-fetched payload (no new fetch). The
+  // Node-size encoding (v0.8.x — Uptrace adapt, slice 3): width encodes the
+  // selected mode (incoming|outgoing) × metric (rate|duration). Pure
+  // client-side reduce over the already-fetched payload (no new fetch). The
   // metric → width map drives BOTH the dagre layout and the canvas draw via
-  // layout.pos[*].w, so packing and rendering agree exactly.
+  // layout.pos[*].w, so packing and rendering agree exactly. mapNumber's
+  // [MIN_W,MAX_W] mapping is metric-agnostic — it normalises against the max of
+  // whatever metric is selected, so toggling just re-scales the widths.
   const nodeWidths = useMemo(() => {
     const m = new Map<string, number>();
     if (!q.data) return m;
-    const { metric, max } = nodeSizeMetric(q.data.nodes, q.data.edges);
+    const { metric, max } = nodeSizeMetric(q.data.nodes, q.data.edges, sizeMode, sizeMetric);
     for (const n of q.data.nodes) {
       m.set(n.id, mapNumber(metric.get(n.id) ?? 0, 0, max, MIN_W, MAX_W));
     }
     return m;
-  }, [q.data]);
+  }, [q.data, sizeMode, sizeMetric]);
 
   const layout = useMemo(
     () => (q.data && q.data.nodes.length
@@ -358,6 +386,38 @@ export function ServiceGraph({
         <LegendDot color="var(--warn)" label="1–5% err" />
         <LegendDot color="var(--err)" label="≥5% err" />
         <span style={{ color: 'var(--text3)' }}>{q.data.nodes.length} nodes · {q.data.edges.length} edges</span>
+      </div>
+      {/* Node-size encoding toggles (v0.8.x — Uptrace adapt, slice 3). Two
+          compact segmented controls re-roll the SAME payload client-side: no
+          refetch. Reuses the shared .segmented primitive (v0.7.54 one-design-
+          language rule) — no hand-rolled button styles. */}
+      <div style={{ position: 'absolute', left: 10, top: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Size by</span>
+        <div className="segmented" style={{ fontSize: 11 }}>
+          <button type="button" className={sizeMode === 'incoming' ? 'active' : ''}
+            onClick={() => applySize('incoming', sizeMetric)}
+            title="Size each node by the edges where it is the TARGET (who calls it)">
+            Incoming
+          </button>
+          <button type="button" className={sizeMode === 'outgoing' ? 'active' : ''}
+            onClick={() => applySize('outgoing', sizeMetric)}
+            title="Size each node by the edges where it is the SOURCE (what it calls)">
+            Outgoing
+          </button>
+        </div>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>Metric</span>
+        <div className="segmented" style={{ fontSize: 11 }}>
+          <button type="button" className={sizeMetric === 'rate' ? 'active' : ''}
+            onClick={() => applySize(sizeMode, 'rate')}
+            title="Sum of edge call rate (calls/min)">
+            Rate
+          </button>
+          <button type="button" className={sizeMetric === 'duration' ? 'active' : ''}
+            onClick={() => applySize(sizeMode, 'duration')}
+            title="Call-weighted average edge latency (avg ms)">
+            Duration
+          </button>
+        </div>
       </div>
       <button type="button" onClick={fit}
         style={{ position: 'absolute', right: 10, top: 10, fontSize: 12, padding: '4px 10px', background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', cursor: 'pointer' }}>

@@ -53,29 +53,93 @@ export function mapNumber(
   return Math.max(outMin, Math.min(outMax, out));
 }
 
+// NodeSizeMode / NodeSizeMetric — the two user-controllable axes of the
+// node-size encoding (slice 3). Direction picks WHICH edges of a node roll up;
+// metric picks the QUANTITY rolled.
+export type NodeSizeMode = 'incoming' | 'outgoing';
+export type NodeSizeMetric = 'rate' | 'duration';
+
+// NodeSizeEdge — the per-edge fields the rollup reads. `rate` is calls/min;
+// `avgMs` + `calls` drive the call-weighted duration mean. All optional/NaN
+// values coerce to 0 so a partial payload renders flat rather than throwing.
+export interface NodeSizeEdge {
+  source: string;
+  target: string;
+  rate: number;
+  avgMs: number;
+  calls: number;
+}
+
 // nodeSizeMetric rolls each node's per-direction edge stats into ONE number per
 // node — Uptrace's node cue (nodes summarise their edges; size = throughput).
-// Slice 2 hardcodes the default mode = OUTGOING + RATE: a node's metric is the
-// sum of `rate` (calls/min) over the edges where it is the SOURCE. Slice 3 will
-// make direction/metric a toggle; this returns a typed { metric, max } so the
-// dagre layout and the canvas draw read the IDENTICAL per-node value.
+// Slice 3 makes both axes user-controllable:
 //
-// Edges whose endpoints aren't in the node set are skipped (defensive — the
-// layout already drops them). max is the largest per-node metric (0 if none),
-// the denominator mapNumber uses to scale widths.
+//   mode 'outgoing' → roll edges where the node is the SOURCE (what it calls);
+//   mode 'incoming' → roll edges where the node is the TARGET (who calls it).
+//
+//   metric 'rate'     → SUM the edge `rate` (calls/min) over the directional
+//                       edges. This is the slice-2 behaviour at outgoing+rate.
+//   metric 'duration' → a representative latency per node: the CALL-WEIGHTED
+//                       average of edge `avgMs`, i.e. Σ(avgMs·calls)/Σ(calls)
+//                       over the directional edges (Σcalls=0 → 0). We weight by
+//                       calls so a chatty fast edge can't be averaged up by one
+//                       rare slow edge — it's a true-ish mean of the latency the
+//                       node actually experiences. (Edges also carry p99Ms; avg
+//                       is the calmer, less jumpy size cue — a node shouldn't
+//                       balloon because one request tail-latency'd. The picker
+//                       can surface p99 elsewhere; size stays steady.)
+//
+// Returns a typed { metric, max } so the dagre layout and the canvas draw read
+// the IDENTICAL per-node value. The width math (mapNumber [MIN_W,MAX_W]) is
+// metric-agnostic: it normalises against `max` of WHATEVER metric is selected,
+// so switching rate↔duration just re-scales — no per-metric width tuning.
+//
+// Edges whose relevant endpoint isn't in the node set are skipped (defensive —
+// the layout already drops them). max is the largest per-node metric (0 if
+// none), the denominator mapNumber uses to scale widths.
 export function nodeSizeMetric(
   nodes: ReadonlyArray<{ id: string }>,
-  edges: ReadonlyArray<{ source: string; target: string; rate: number }>,
+  edges: ReadonlyArray<NodeSizeEdge>,
+  mode: NodeSizeMode = 'outgoing',
+  metric: NodeSizeMetric = 'rate',
 ): { metric: Map<string, number>; max: number } {
-  const metric = new Map<string, number>();
   const ids = new Set(nodes.map(n => n.id));
-  for (const n of nodes) metric.set(n.id, 0); // every node present → 0 default
-  for (const e of edges) {
-    if (!ids.has(e.source)) continue; // outgoing → attribute to the source node
-    const r = Number.isFinite(e.rate) ? e.rate : 0;
-    metric.set(e.source, (metric.get(e.source) ?? 0) + r);
+  // The node an edge attributes to depends on the direction: outgoing → source,
+  // incoming → target.
+  const endpointOf = (e: NodeSizeEdge) => (mode === 'outgoing' ? e.source : e.target);
+
+  const out = new Map<string, number>();
+  for (const n of nodes) out.set(n.id, 0); // every node present → 0 default
+
+  if (metric === 'rate') {
+    for (const e of edges) {
+      const id = endpointOf(e);
+      if (!ids.has(id)) continue;
+      const r = Number.isFinite(e.rate) ? e.rate : 0;
+      out.set(id, (out.get(id) ?? 0) + r);
+    }
+  } else {
+    // duration → call-weighted mean: accumulate Σ(avgMs·calls) and Σ(calls)
+    // per node, then divide (guarding Σcalls=0 so a node with only zero-call
+    // edges stays at 0 rather than NaN).
+    const wSum = new Map<string, number>(); // Σ(avgMs·calls)
+    const cSum = new Map<string, number>(); // Σ(calls)
+    for (const e of edges) {
+      const id = endpointOf(e);
+      if (!ids.has(id)) continue;
+      const calls = Number.isFinite(e.calls) ? e.calls : 0;
+      const avgMs = Number.isFinite(e.avgMs) ? e.avgMs : 0;
+      if (calls <= 0) continue; // zero-call edge carries no weight
+      wSum.set(id, (wSum.get(id) ?? 0) + avgMs * calls);
+      cSum.set(id, (cSum.get(id) ?? 0) + calls);
+    }
+    for (const id of out.keys()) {
+      const c = cSum.get(id) ?? 0;
+      out.set(id, c > 0 ? (wSum.get(id) ?? 0) / c : 0);
+    }
   }
+
   let max = 0;
-  for (const v of metric.values()) if (v > max) max = v;
-  return { metric, max };
+  for (const v of out.values()) if (v > max) max = v;
+  return { metric: out, max };
 }

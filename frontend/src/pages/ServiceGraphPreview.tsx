@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { ServiceGraph } from '@/components/ServiceGraph';
+import type { NodeSizeMode, NodeSizeMetric } from '@/lib/topologyNodes';
 
 // ServiceGraphPreview — the v0.8.12 Stage-2 scratch route (/servicegraph-preview)
 // for comparing the new canonical OTel-native ServiceGraph against the old
@@ -16,6 +17,22 @@ export default function ServiceGraphPreview() {
   const [focusInput, setFocusInput] = useState('');
   const [focus, setFocus] = useState('');
   const nav = useNavigate();
+
+  // Node-size encoding (v0.8.x — Uptrace adapt, slice 3) lifted to the URL so a
+  // global service-graph view is shareable: ?size=incoming|outgoing (default
+  // outgoing) and ?metric=rate|duration (default rate). The toggles re-roll the
+  // SAME fetched payload client-side — writing these params does NOT change
+  // ServiceGraph's react-query key, so flipping them never refetches.
+  const [params, setParams] = useSearchParams();
+  const nodeSizeMode: NodeSizeMode = params.get('size') === 'incoming' ? 'incoming' : 'outgoing';
+  const nodeSizeMetric: NodeSizeMetric = params.get('metric') === 'duration' ? 'duration' : 'rate';
+  const onNodeSizeChange = (mode: NodeSizeMode, metric: NodeSizeMetric) => {
+    const next = new URLSearchParams(params);
+    // Defaults stay out of the URL so a shared link is clean; non-defaults persist.
+    if (mode === 'outgoing') next.delete('size'); else next.set('size', mode);
+    if (metric === 'rate') next.delete('metric'); else next.set('metric', metric);
+    setParams(next, { replace: true });
+  };
 
   const preset = range.preset ?? '';
 
@@ -50,6 +67,9 @@ export default function ServiceGraphPreview() {
         range={range}
         height={640}
         onSelectService={svc => nav(`/service?service=${encodeURIComponent(svc)}`)}
+        nodeSizeMode={nodeSizeMode}
+        nodeSizeMetric={nodeSizeMetric}
+        onNodeSizeChange={onNodeSizeChange}
       />
     </div>
   );

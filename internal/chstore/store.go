@@ -20,6 +20,20 @@ type Store struct {
 	cfg  config.CHConfig
 	ret  config.RetentionConfig
 
+	// hasClusterCol records whether the spans table the read path
+	// actually resolves against carries the materialized `cluster`
+	// column (v0.8.132). When chstore owns the DDL (single node, or a
+	// cluster with cfg.ClusterName set) the migration adds it and this
+	// is true. Against an EXTERNAL Distributed `spans` with ClusterName
+	// unset — the operator manages spans_local's schema — the column
+	// never reaches the per-shard table, so any query that references
+	// `cluster` fails with code 47 ("cannot be resolved"). Probed once
+	// at boot (see migrate); when false the cluster expression falls
+	// back to the pure res/attr derive — correct everywhere, just
+	// without the column short-circuit. (v0.8.162 — operator-reported:
+	// distributed prod spammed code-47 on the cluster warm query.)
+	hasClusterCol bool
+
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
 	// problem into an existing incident on a service that calls
@@ -2086,6 +2100,28 @@ func (s *Store) migrate(ctx context.Context) error {
 				return fmt.Errorf("recreate %s with fallback chain: %w", table, err)
 			}
 		}
+	}
+
+	// v0.8.162 — operator-reported (external Distributed cluster): the
+	// cluster-filter warm query spammed code 47 ("Identifier
+	// '__table1.cluster' cannot be resolved") on a fixed cadence. The
+	// materialized `cluster` column (v0.8.132) is only added when chstore
+	// owns the DDL; against an external Distributed `spans` (ClusterName
+	// unset → no ON CLUSTER) it never reaches spans_local, so every query
+	// referencing `cluster` fails. Probe the ACTUAL read path — a tiny
+	// recent-window select that routes to spans_local in distributed mode.
+	// A non-trivial predicate (not 1=0) forces shard analysis so the
+	// optimizer can't fold the query away before resolving the column.
+	// On resolve-error every cluster expression falls back to the pure
+	// res/attr derive (see clusterExpr).
+	probeRows, probeErr := s.conn.Query(ctx,
+		`SELECT cluster FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+	if probeRows != nil {
+		probeRows.Close()
+	}
+	s.hasClusterCol = probeErr == nil
+	if !s.hasClusterCol {
+		log.Printf("[chstore] `cluster` column not resolvable on spans (%v) — cluster filter queries use the res/attr derive (expected on an external Distributed cluster with cluster_name unset)", probeErr)
 	}
 
 	log.Println("[chstore] migrations complete")

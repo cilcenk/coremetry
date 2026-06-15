@@ -230,6 +230,22 @@ const clusterDeriveExpr = `coalesce(
 // old parts always derive identical cluster names — no drift.
 const clusterColExpr = `coalesce(nullIf(cluster, ''), ` + clusterDeriveExpr + `)`
 
+// clusterExpr returns the SQL expression that yields a span's cluster name.
+// When the materialized `cluster` column is resolvable on the read path
+// (s.hasClusterCol, probed once at boot) it uses the COMPLETE clusterColExpr:
+// the cheap column read with the derive as a coalesce fallback for
+// pre-v0.8.132 parts. When the column is absent — an external Distributed
+// cluster where chstore never added it to spans_local — it uses the pure
+// res/attr derive so the query never references a column the per-shard
+// table lacks (which fails with code 47). Every cluster query path goes
+// through this so the two modes can't drift. (v0.8.162.)
+func (s *Store) clusterExpr() string {
+	if s.hasClusterCol {
+		return clusterColExpr
+	}
+	return clusterDeriveExpr
+}
+
 // GetServiceClusterMap returns one entry per service with the
 // distinct cluster names it ran in during the last `since`
 // window. Used to enrich Problems / Anomalies / Incidents at
@@ -247,7 +263,7 @@ func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (
 	}
 	from := time.Now().Add(-since)
 	rows, err := s.conn.Query(ctx, `
-		SELECT service_name, `+clusterColExpr+` AS cluster
+		SELECT service_name, `+s.clusterExpr()+` AS cluster
 		FROM spans
 		WHERE time >= ? AND service_name != ''
 		GROUP BY service_name, cluster
@@ -291,7 +307,7 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 	// live ONLY in pre-column parts, so the list is never missing a real cluster.
 	// On err==nil we return even an empty result (genuinely no clusters).
 	if names, err := s.scanClusters(ctx, `
-		SELECT `+clusterColExpr+` AS cluster
+		SELECT `+s.clusterExpr()+` AS cluster
 		FROM spans
 		WHERE time >= ? AND time <= ?
 		GROUP BY cluster
@@ -300,6 +316,12 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 		LIMIT 200
 		SETTINGS max_execution_time = 8`, from, to); err == nil {
 		return names, nil
+	} else if !s.hasClusterCol {
+		// No `cluster` column on the read path (external Distributed cluster):
+		// the primary WAS the pure derive, so there's no faster column DISTINCT
+		// to fall back to. Surface the derive's error rather than running a
+		// DISTINCT cluster query that would itself fail with code 47.
+		return nil, err
 	}
 	// Fallback ONLY on error: at billion-span scale during the transition the
 	// derive can blow the 8s budget (operator-reported blank dropdown — a derive
@@ -372,7 +394,7 @@ func (s *Store) GetServiceClusterBreakdown(
 		to = time.Now()
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT `+clusterColExpr+` AS cluster,
+		SELECT `+s.clusterExpr()+` AS cluster,
 		       count()                          AS span_count,
 		       countIf(status_code = 'error')   AS error_count,
 		       avg(duration) / 1e6              AS avg_ms,
@@ -450,7 +472,7 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 		// fallback for pre-column parts (clusterColExpr). New parts
 		// hit the indexed LowCardinality col; old parts fall back to
 		// the indexOf scan until they age out.
-		wc.add(clusterColExpr+" = ?", cluster)
+		wc.add(s.clusterExpr()+" = ?", cluster)
 	}
 	limitClause := ""
 	if limit > 0 {

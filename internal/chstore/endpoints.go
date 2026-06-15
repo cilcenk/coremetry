@@ -140,7 +140,7 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	// string. Empty cluster filter = "all clusters".
 	whereCluster := ""
 	if cluster != "" {
-		whereCluster = " AND " + clusterColExpr + " = ?"
+		whereCluster = " AND " + s.clusterExpr() + " = ?"
 		args = append(args, cluster)
 	}
 	// v0.5.370 — single-pass aggregation including sparkline.

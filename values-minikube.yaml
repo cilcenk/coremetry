@@ -74,15 +74,17 @@ clickhouse:
   enabled: true
   containerSecurityContext: null   # null (not {}) so Helm coalesce DROPS the hardened default → CH image runs as its own user
   resources:
-    # v0.8.x — bumped 2Gi→4Gi after the 2026-06-14 ingest-load test: the 12
-    # spans-fed MVs build quantilesState/argMaxState per insert block, so the
-    # aggregation WORKING SET (not row count) is the memory driver — ~233-413
-    # spans/s (10-17x baseline) pinned a 3Gi node at its ceiling. 4Gi gives the
-    # single local node headroom; true horizontal scale = an EXTERNAL sharded
-    # CH cluster (set clickhouse.clusterName/replicaPath/shardKey), not more
-    # bundled-node RAM. The minikube VM has ~4.4Gi headroom for this.
+    # v0.8.x — 2Gi→4Gi→6Gi. The 15 spans-fed MVs build quantilesState/
+    # argMaxState per insert block, so the aggregation WORKING SET (not row
+    # count) is the memory driver — at baseline CH idles ~3Gi/4Gi, leaving only
+    # ~1Gi for a load ramp. Bumped to 6Gi (2026-06-15 bounded smoke: 4× held at
+    # 3.5Gi, but the supervised cliff-walk needs headroom). 6Gi is the feasible
+    # max on the ~9.7Gi minikube node (6Gi CH + ~2Gi others ≈ 8Gi, fits); the
+    # LIMIT also CONTAINS any ramp OOM to the CH pod (it restarts) instead of
+    # pressuring the whole node. True horizontal scale = an EXTERNAL sharded CH
+    # cluster (clickhouse.clusterName/replicaPath/shardKey), not more node RAM.
     requests: { cpu: 250m, memory: 1Gi }
-    limits:   { cpu: "2",  memory: 4Gi }
+    limits:   { cpu: "2",  memory: 6Gi }
   storage:
     size: 5Gi             # laptop PVC
 

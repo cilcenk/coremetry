@@ -4,6 +4,8 @@ import { Modal } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
+import { ServiceTimeline } from '@/components/traces/ServiceTimeline';
+import { TraceLogList } from '@/components/traces/TraceLogList';
 import type { TraceDetailResponse, LogRow } from '@/lib/types';
 
 // TracePeekDrawer — v0.5.398. Logs page side-loop drill-in.
@@ -141,41 +143,7 @@ export function TracePeekDrawer({
             <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
               Service timeline
             </div>
-            {summary.orderedServices.map((svc, i) => {
-              const svcSpans = trace.spans.filter(s => s.serviceName === svc);
-              const svcStart = Math.min(...svcSpans.map(s => s.startTime));
-              const svcEnd = Math.max(...svcSpans.map(s => s.endTime));
-              const totalNs = summary.maxEnd - summary.minStart;
-              const left = totalNs > 0 ? ((svcStart - summary.minStart) / totalNs) * 100 : 0;
-              const width = totalNs > 0 ? Math.max(0.5, ((svcEnd - svcStart) / totalNs) * 100) : 100;
-              const svcErrs = svcSpans.filter(s => s.statusCode === 'error').length;
-              const barColor = svcErrs > 0 ? 'var(--err)' : 'var(--accent2)';
-              return (
-                <div key={svc} style={{
-                  display: 'grid', gridTemplateColumns: '140px 1fr 80px',
-                  gap: 6, alignItems: 'center', marginBottom: 3,
-                  fontSize: 11,
-                }}>
-                  <span className="mono" style={{
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }} title={svc}>{svc}</span>
-                  <div style={{
-                    position: 'relative', height: 12,
-                    background: 'var(--bg2)', borderRadius: 2,
-                  }}>
-                    <div style={{
-                      position: 'absolute', top: 0, bottom: 0,
-                      left: `${left}%`, width: `${width}%`,
-                      background: barColor, borderRadius: 2,
-                      opacity: 0.85,
-                    }} />
-                  </div>
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'right' }}>
-                    {fmtNum(svcSpans.length)} sp · {((svcEnd - svcStart) / 1e6).toFixed(0)}ms
-                  </span>
-                </div>
-              );
-            })}
+            <ServiceTimeline spans={trace.spans} />
           </div>
 
           {/* Logs of this trace, chronological. Limit 500 — caps
@@ -208,42 +176,7 @@ export function TracePeekDrawer({
               </div>
             )}
             {logs && logs.length > 0 && (
-              <div style={{ maxHeight: 320, overflowY: 'auto', padding: 4 }}>
-                {logs
-                  .slice()
-                  .sort((a, b) => a.timestamp - b.timestamp)
-                  .map(l => {
-                    const offsetMs = summary
-                      ? (l.timestamp - summary.minStart) / 1e6
-                      : 0;
-                    return (
-                      <div key={l.id} style={{
-                        display: 'grid',
-                        gridTemplateColumns: '60px 50px 110px 1fr',
-                        gap: 6, padding: '2px 6px',
-                        fontSize: 11, fontFamily: 'ui-monospace, monospace',
-                        borderBottom: '1px solid var(--bg2)',
-                        alignItems: 'baseline',
-                      }}>
-                        <span style={{ color: 'var(--text3)', textAlign: 'right' }}>
-                          {offsetMs >= 0 ? `+${offsetMs.toFixed(0)}ms` : `${offsetMs.toFixed(0)}ms`}
-                        </span>
-                        <span className={sevClass(l.severityText)}
-                              style={{ fontWeight: 600 }}>
-                          {(l.severityText || '').toUpperCase().slice(0, 4) || '—'}
-                        </span>
-                        <span style={{ color: 'var(--text2)',
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }} title={l.serviceName}>
-                          {l.serviceName}
-                        </span>
-                        <span style={{
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }} title={l.body}>{l.body}</span>
-                      </div>
-                    );
-                  })}
-              </div>
+              <TraceLogList logs={logs} offsetFromNs={summary.minStart} />
             )}
           </div>
 
@@ -286,15 +219,4 @@ function PeekKPI({ label, value, sub, cls, small }: {
       )}
     </div>
   );
-}
-
-function sevClass(s: string): string {
-  switch ((s || '').toUpperCase()) {
-    case 'FATAL':
-    case 'ERROR':   return 'sev-err';
-    case 'WARN':
-    case 'WARNING': return 'sev-warn';
-    case 'INFO':    return 'sev-info';
-    default:        return 'sev-dim';
-  }
 }

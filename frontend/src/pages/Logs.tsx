@@ -12,7 +12,7 @@ import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
-import { TracePeekDrawer } from '@/components/TracePeekDrawer';
+import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { Button } from '@/components/ui/Button';
@@ -159,10 +159,11 @@ function LogsInner() {
       .then(r => setClusters(r?.clusters ?? []))
       .catch(() => setClusters([]));
   }, []);
-  // v0.5.399 — trace peek drawer state. Clicking the "👁" button
-  // next to a trace_id in the log row sets this; TracePeekDrawer
-  // fetches the trace summary + sibling logs and renders inline
-  // without disturbing the page's existing filter/search state.
+  // v0.5.399 — trace peek state. Clicking the "👁" button next to a
+  // trace_id in the log row sets this. Task #6: the peek now opens the
+  // CorrelationContextDrawer anchored on that trace_id — the SAME trace + sibling
+  // logs the old TracePeekDrawer showed, plus the service's RED metrics lens, all
+  // joined on the exact trace_id. No page change, page filter/search untouched.
   const [peekTraceId, setPeekTraceId] = useState<string | null>(null);
   // v0.5.402 — surrounding-context modal state. Clicking "≡ View
   // ±50 context" on an expanded log row stores the pivot row here;
@@ -767,7 +768,9 @@ function LogsInner() {
           </>
         )}
       </div>
-      <TracePeekDrawer traceId={peekTraceId} onClose={() => setPeekTraceId(null)} />
+      <CorrelationContextDrawer
+        anchor={peekTraceId ? { kind: 'trace', traceId: peekTraceId } : null}
+        onClose={() => setPeekTraceId(null)} />
       <LogContextModal pivot={contextPivot}
         onClose={() => setContextPivot(null)}
         onTracePeek={tid => { setContextPivot(null); setPeekTraceId(tid); }} />

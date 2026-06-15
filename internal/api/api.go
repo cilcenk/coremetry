@@ -502,6 +502,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/spans/facets", s.spanFacets)
 	mux.HandleFunc("GET /api/spans/repeats", s.spanRepeats)
 	mux.HandleFunc("GET /api/spans/exemplar", s.spanExemplar)
+	// Correlated Signals (task #6) — one cross-signal pivot bundle (trace ↔ logs
+	// ↔ metrics, joined on trace_id → service.name → window). Read-only, open
+	// (writes no state; same posture as /api/correlations, /api/problems). Pure
+	// orchestration over existing reads — no new CH query.
+	mux.HandleFunc("GET /api/correlate/context", s.getCorrelationContext)
 	mux.HandleFunc("GET /api/spans/heatmap", s.spanHeatmap)
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)

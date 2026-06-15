@@ -582,6 +582,68 @@ export interface RootCause {
   exemplar?: SpanExemplar;
 }
 
+// ── Correlated Signals (task #6) ────────────────────────────────────────────
+// One pivot surface: given any single signal (trace / log / metric) the
+// /api/correlate/context endpoint assembles the correlated OTHER two —
+// trace ↔ logs ↔ metrics — joined on trace_id → service.name → time-window.
+// This is synthesis over existing reads (mirrors RootCause's bundle-fan-out),
+// not new capability. Drawer-first (no /correlate route in v1).
+//
+// HONESTY (spec Risk §1): the METRIC anchor is DEFERRED in v1 — a raw OTLP
+// metric point carries no trace_id, so its derived trace would be fuzzy
+// (service+window). The drawer wires the TRACE + LOG anchors (real / near-real
+// trace_id joins) and surfaces the join key so the operator always sees whether
+// the join is exact (`trace_id`) or fuzzy (`service+window`).
+export type CorrelationKind = 'trace' | 'log' | 'metric';
+
+// PivotAnchor — discriminated union on `kind`, the shape the drawer is opened
+// with. Each variant carries enough context to derive the other two lenses.
+export type PivotAnchor =
+  | { kind: 'trace'; traceId: string; service?: string; fromNs?: number; toNs?: number }
+  | { kind: 'log'; traceId?: string; service?: string; tsNs: number; fromNs?: number; toNs?: number }
+  | { kind: 'metric'; service: string; tsNs?: number; metricKind?: 'error' | 'latency' | 'throughput'; fromNs?: number; toNs?: number };
+
+// CorrelationAnchor — what the operator pivoted FROM, echoed back by the
+// backend with the resolved window + the strongest join key it actually used.
+export interface CorrelationAnchor {
+  kind: CorrelationKind;
+  traceId?: string;
+  service?: string;
+  tsNs?: number;
+  fromNs: number;
+  toNs: number;
+  // joinKey: 'trace_id' = exact cross-signal join (no time fuzz);
+  // 'service+window' = fuzzy join — the drawer renders this as a visible chip.
+  joinKey: 'trace_id' | 'service+window';
+}
+
+// CorrelationTrace — condensed trace lens (the timeline mini-waterfall reads
+// `spans`; the header reads the scalars). Same shape TracePeekDrawer derives,
+// but computed server-side so the drawer is one round-trip.
+export interface CorrelationTrace {
+  traceId: string;
+  rootName: string;
+  service: string;
+  durationMs: number;
+  spanCount: number;
+  services: string[];
+  errSpans: number;
+  startTimeNs: number;
+  endTimeNs: number;
+  spans: SpanRow[];          // capped server-side
+}
+
+// CorrelationContext — the assembled pivot bundle. Every lens is best-effort:
+// `logs`/`metrics` are always present (possibly empty); `trace`/`exemplar` are
+// omitted when not derivable. Mirrors RootCause's partial-bundle posture.
+export interface CorrelationContext {
+  anchor: CorrelationAnchor;
+  trace?: CorrelationTrace;
+  logs: LogRow[];                 // trace_id join when present, else service+window
+  metrics: SpanMetricSeries[];    // anchor service RED series (rate / error_rate / p99)
+  exemplar?: SpanExemplar;        // metric anchor: representative (fuzzy) trace to pivot INTO
+}
+
 // RedisStats matches cache.RedisStats — INFO + DBSIZE snapshot
 // rendered on the System page. version=="" means Redis is not
 // configured (Noop cache active); the UI shows a "wire it up for HA"

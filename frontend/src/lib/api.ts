@@ -730,6 +730,20 @@ export const api = {
   // sub-signal, so the bundle is always returned (404 only if id unknown).
   problemRootCause: (id: string) =>
     get<import('./types').RootCause>(`/api/problems/${encodeURIComponent(id)}/rootcause`),
+  // Correlated Signals (task #6) — one cross-signal pivot bundle. Given any
+  // anchor (trace / log / metric) the backend assembles the correlated other
+  // two (trace ↔ logs ↔ metrics, joined on trace_id → service.name → window),
+  // soft-failing each lens. Read-only, open. Drives CorrelationContextDrawer.
+  correlateContext: (anchor: import('./types').PivotAnchor) => {
+    const p: Record<string, string | number> = { kind: anchor.kind };
+    if ('traceId' in anchor && anchor.traceId) p.traceId = anchor.traceId;
+    if ('service' in anchor && anchor.service) p.service = anchor.service;
+    if ('tsNs' in anchor && anchor.tsNs) p.tsNs = anchor.tsNs;
+    if ('metricKind' in anchor && anchor.metricKind) p.metricKind = anchor.metricKind;
+    if (anchor.fromNs) p.from = anchor.fromNs;
+    if (anchor.toNs) p.to = anchor.toNs;
+    return get<import('./types').CorrelationContext>(`/api/correlate/context?${qs(p)}`);
+  },
   // Branding overlay — public GET (login page reads pre-auth),
   // admin-only PUT. The save endpoint accepts up to 256 KB so a
   // pasted logo data URI fits.

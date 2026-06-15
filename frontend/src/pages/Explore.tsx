@@ -12,6 +12,8 @@ import { FacetsPanel } from '@/components/FacetsPanel';
 import { ShareButton } from '@/components/ShareButton';
 import { LogsExplorer } from '@/components/LogsExplorer';
 import { MetricsExplorer } from '@/components/MetricsExplorer';
+import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
+import type { PivotAnchor } from '@/lib/types';
 import type { ExploreVizKind } from '@/components/ExploreViz';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
@@ -103,6 +105,10 @@ function ExploreInner() {
   const [zoomWindow, setZoomWindow] = useState<{ from: number; to: number } | null>(null);
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  // Correlated Signals (task #6) — the exemplar ◆ click opens the pivot drawer
+  // anchored on that trace instead of navigating away to /trace, keeping the
+  // operator in Explore. This is the single highest-traffic cross-signal pivot.
+  const [correlateAnchor, setCorrelateAnchor] = useState<PivotAnchor | null>(null);
 
   // ── Traces / repeats console state (pre-v2, unchanged shapes) ────────────
   const [filters, setFilters] = useState<FilterExpr[]>(
@@ -673,7 +679,7 @@ name ~ checkout`}
                     focusKey={focusKey}
                     zoomWindow={zoomWindow}
                     onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
-                    onExemplarClick={(id) => navigate(`/trace?id=${id}`)} />
+                    onExemplarClick={(id) => setCorrelateAnchor({ kind: 'trace', traceId: id })} />
                 )}
                 {(debounced.viz === 'stat' || debounced.viz === 'toplist') && (
                   <SummaryViz panels={panels} mode={debounced.viz} />
@@ -811,6 +817,13 @@ name ~ checkout`}
               onClose={() => setCellExemplar(null)} />
           );
         })()}
+
+        {/* Correlated Signals pivot drawer (task #6) — anchored on the exemplar
+            ◆ the operator clicked. Keeps them in Explore instead of navigating
+            to /trace. */}
+        <CorrelationContextDrawer
+          anchor={correlateAnchor}
+          onClose={() => setCorrelateAnchor(null)} />
       </div>
     </>
   );

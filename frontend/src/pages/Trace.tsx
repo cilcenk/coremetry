@@ -15,10 +15,11 @@ import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useCorrelatedLogs, spanHasError } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
-import type { LogRow, SpanRow, TimeRange } from '@/lib/types';
+import type { LogRow, SpanRow, TimeRange, PivotAnchor } from '@/lib/types';
 import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
+import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 
 function TraceDetailInner() {
   const navigate = useNavigate();
@@ -48,6 +49,10 @@ function TraceDetailInner() {
   // never need them.
   const [tab, setTab] = useState<'trace' | 'logs'>(
     () => (searchParams.get('tab') === 'logs' ? 'logs' : 'trace'));
+  // Correlated Signals (task #6) — "Correlate ◆" opens the pivot drawer anchored
+  // on this trace, surfacing the METRICS lens (the anchor service's RED series)
+  // the Trace page doesn't otherwise show, alongside the trace + correlated logs.
+  const [correlateAnchor, setCorrelateAnchor] = useState<PivotAnchor | null>(null);
 
   // Correlated logs ride the shared OTel hook — every log line sharing this
   // trace_id, react-query-cached. Enabled lazily (only when the Logs tab is
@@ -294,6 +299,16 @@ function TraceDetailInner() {
                 <DrillButton to="/logs" params={{ traceId: id }}
                   title="Logs correlated to this trace_id"
                   label="≡ Logs" variant="secondary" />
+                {/* Correlated Signals (task #6) — open the cross-signal pivot
+                    drawer anchored on this trace. Surfaces the metrics lens the
+                    Trace page doesn't show, plus the correlated logs, without a
+                    page change. */}
+                <Button variant="secondary" size="sm"
+                  onClick={() => setCorrelateAnchor({ kind: 'trace', traceId: id })}
+                  title="Correlated signals — trace ↔ logs ↔ metrics for this trace"
+                  leftIcon={<IconLink />}>
+                  <span>Correlate ◆</span>
+                </Button>
                 <SharePopover traceId={id} />
                 <Button variant="secondary" size="sm"
                   onClick={() => exportTraceJSON(id, spans)}
@@ -409,6 +424,9 @@ function TraceDetailInner() {
           </>
         )}
       </div>
+      <CorrelationContextDrawer
+        anchor={correlateAnchor}
+        onClose={() => setCorrelateAnchor(null)} />
     </>
   );
 }

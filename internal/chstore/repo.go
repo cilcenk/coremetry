@@ -283,7 +283,25 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 	if to.IsZero() {
 		to = time.Now()
 	}
-	rows, err := s.conn.Query(ctx, `
+	// Fast path (v0.8.x — operator-reported "cluster dropdown sometimes empty"):
+	// DISTINCT over the materialized LowCardinality `cluster` column (v0.8.132)
+	// reads only the column dictionary — no res_values/attr_values indexOf scan
+	// — so it stays well inside max_execution_time at billion-span scale, where
+	// the full clusterColExpr derive could blow the 8s budget and blank the
+	// dropdown (the derive errored → empty list → cached empty for the TTL).
+	if names, err := s.scanClusters(ctx, `
+		SELECT DISTINCT cluster
+		FROM spans
+		WHERE time >= ? AND time <= ? AND cluster != ''
+		ORDER BY cluster
+		LIMIT 200
+		SETTINGS max_execution_time = 8`, from, to); err == nil && len(names) > 0 {
+		return names, nil
+	}
+	// Fallback: the full derive — covers pre-v0.8.132 parts (whose `cluster`
+	// column is '') during the post-migration transition, or a column-read
+	// error, so the dropdown is never blank when clusters genuinely exist.
+	return s.scanClusters(ctx, `
 		SELECT `+clusterColExpr+` AS cluster
 		FROM spans
 		WHERE time >= ? AND time <= ?
@@ -292,6 +310,12 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 		ORDER BY cluster
 		LIMIT 200
 		SETTINGS max_execution_time = 8`, from, to)
+}
+
+// scanClusters runs a single-string-column cluster query and collects the
+// distinct names. Shared by the fast column path and the derive fallback.
+func (s *Store) scanClusters(ctx context.Context, sql string, args ...any) ([]string, error) {
+	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +327,7 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 			out = append(out, c)
 		}
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // ServiceClusterStat is one row of the per-cluster breakdown

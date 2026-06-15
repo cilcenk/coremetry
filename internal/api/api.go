@@ -1009,11 +1009,14 @@ func (s *Server) warmDependenciesCache() {
 // getClusters returns the distinct k8s / openshift cluster names
 // observed in the requested window. Drives the cluster-filter
 // dropdown on /services + the per-cluster selector on
-// /service?name=. Cached 60s — cluster set changes rarely.
+// /service?name=. Cached 5min — the cluster set changes very rarely, so
+// the longer TTL (+ serveCached's stale-while-revalidate) keeps the
+// dropdown instant and means a transient slow ListClusters refresh serves
+// the last-good value instead of blanking (operator-reported empties).
 func (s *Server) getClusters(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 24*time.Hour)
 	key := "clusters:" + cacheBucket(from, to)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 5*time.Minute, func() (any, error) {
 		names, err := s.store.ListClusters(r.Context(), from, to)
 		if err != nil {
 			return nil, err

@@ -8,7 +8,8 @@
 // Pure types + helpers only — no React, no fetch — so urlCodec and
 // formulaSeries stay unit-testable without the chart bundle.
 
-import type { FilterExpr, SpanAgg } from '@/lib/types';
+import type { FilterExpr, FilterGroup, SpanAgg } from '@/lib/types';
+import { isFlatAndGroup } from '@/lib/urlState';
 import { metricQuery, type MetricQuery, type MetricAgg } from '@/lib/metricQuery';
 
 // Per-query source: 'span' aggregates the spans table via api.spanMetric
@@ -40,6 +41,14 @@ export interface BuilderQuery {
   scope: string;           // service.name pin ('' = all) — synthesized into a filter at fetch
   splitBy: string[];       // group-by keys → series fan-out
   filters: FilterExpr[];   // AND-ed attribute filters
+  // filterGroup — optional grouped AND/OR builder (v0.8.x gap-2, extended into
+  // Explore). When set to a genuine OR / nested group it SUPERSEDES `filters`
+  // at fetch (effectiveFilters stays the flat back-compat path). A flat-AND or
+  // absent group is byte-identical to the legacy chip row — encodeFilterGroup
+  // returns '' for it so the URL + fetch carry the flat `filters` only. A
+  // non-flat group also disqualifies the spanmetrics resolver (exemplar) path:
+  // OR / nested can't ride the rollup tiers.
+  filterGroup?: FilterGroup;
   dsl: string;             // advanced span DSL (legacy decode surface; AND-joined with filters)
 }
 
@@ -123,6 +132,32 @@ export function effectiveFilters(q: BuilderQuery): FilterExpr[] {
   return [...scoped, ...q.filters];
 }
 
+// hasGroupedFilter — true only when the query carries a GENUINE OR / nested
+// group (a flat-AND or absent group is indistinguishable from the legacy chip
+// row). The one place that decides whether the grouped builder is "active":
+//   - fetch: send filterGroup (effectiveFilterGroup) instead of flat filters
+//   - resolver: a grouped query can't ride the rollup tiers → no exemplars
+//   - signature: the group folds into the cache key
+// so they can never drift.
+export function hasGroupedFilter(q: BuilderQuery): boolean {
+  return !isFlatAndGroup(q.filterGroup);
+}
+
+// effectiveFilterGroup — the grouped predicate actually sent to the backend
+// when hasGroupedFilter(q): the scope pin synthesized as a top-level
+// service.name AND leaf (matching effectiveFilters) plus the query's own
+// group. Returns null when the query has no genuine OR / nested group so the
+// caller falls back to the flat effectiveFilters path. The scope leaf is added
+// at the TOP-LEVEL join (always AND-combined with the rest), so an inner OR
+// can't bind across it — identical scoping semantics to the flat path.
+export function effectiveFilterGroup(q: BuilderQuery): FilterGroup | null {
+  if (!hasGroupedFilter(q) || !q.filterGroup) return null;
+  const g = q.filterGroup;
+  if (!q.scope) return g;
+  const scopeLeaf: FilterExpr = { k: 'service.name', op: '=', v: [q.scope] };
+  return { ...g, filters: [scopeLeaf, ...(g.filters ?? [])] };
+}
+
 // querySignature — stable serialization of every fetch-relevant input, used
 // as the react-query cache key component (lib/queries/keys.ts explore.query).
 // Letter intentionally EXCLUDED: two letters with identical inputs share one
@@ -131,6 +166,11 @@ export function querySignature(q: BuilderQuery, step: number): string {
   return JSON.stringify({
     s: q.source, m: q.metric, a: q.agg, sc: q.scope,
     by: q.splitBy, f: q.filters, d: q.dsl, st: step,
+    // Only a GENUINE OR / nested group enters the key — a flat-AND / absent
+    // group is byte-identical to the flat `f` path, so two queries differing
+    // only by an inert group still share one fetch (and the signature stays
+    // byte-identical to a pre-group query, so warm caches survive).
+    ...(hasGroupedFilter(q) ? { fg: q.filterGroup } : {}),
   });
 }
 
@@ -214,6 +254,10 @@ const EXEMPLAR_AGGS = new Set([
 export function exemplarDescriptor(q: BuilderQuery): MetricQuery | null {
   if (q.source !== 'span') return null;
   if (q.dsl.trim()) return null;
+  // A genuine OR / nested filter group can't be expressed as the resolver's
+  // equality-only filter map — it must fall to the raw spanMetric path (which
+  // honours boolean structure) and renders without ◆ exemplar glyphs.
+  if (hasGroupedFilter(q)) return null;
   if (!EXEMPLAR_AGGS.has(q.agg)) return null;
   if (spanNeedsField(q.agg) && q.metric && q.metric !== 'duration_ms') return null;
   const filters: Record<string, string> = {};

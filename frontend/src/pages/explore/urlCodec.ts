@@ -14,9 +14,9 @@
 // Pure module (no React) — table-driven tests in urlCodec.test.ts exercise
 // every legacy shape.
 
-import { decodeFilters } from '@/lib/urlState';
+import { decodeFilters, isFlatAndGroup } from '@/lib/urlState';
 import { decodeMetricQuery, type MetricQuery } from '@/lib/metricQuery';
-import type { FilterExpr } from '@/lib/types';
+import type { FilterExpr, FilterGroup } from '@/lib/types';
 import {
   type BuilderState, type BuilderQuery, type ExploreViz, type QuerySource,
   EXPLORE_VIZ, QUERY_LETTERS, MAX_QUERIES, blankQuery, spanNeedsField,
@@ -42,6 +42,10 @@ export function encodeBuilder(st: BuilderState): string {
       ...(q.scope ? { sc: q.scope } : {}),
       ...(q.splitBy.length ? { by: q.splitBy } : {}),
       ...(q.filters.length ? { fl: q.filters } : {}),
+      // fg — a GENUINE OR / nested filter group only (gap-2 → Explore). A
+      // flat-AND / absent group is omitted, so an existing URL with only flat
+      // chips is byte-identical to its pre-group form.
+      ...(!isFlatAndGroup(q.filterGroup) ? { fg: q.filterGroup } : {}),
       ...(q.dsl.trim() ? { d: q.dsl } : {}),
     })),
   });
@@ -67,6 +71,34 @@ export function metricCatalogueHref(
   return `/explore?q=${encodeURIComponent(encodeBuilder(state))}`;
 }
 
+// decodeFgInline — narrow an already-parsed ?q= `fg` value into a FilterGroup.
+// Mirrors lib/urlState.decodeFilterGroup's shape guard but operates on the
+// object the ?q= JSON already parsed (no second JSON.parse). Returns undefined
+// for a malformed or flat-AND group so it never shadows the flat `fl` path.
+function decodeFgInline(v: unknown): FilterGroup | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as { join?: unknown; filters?: unknown; groups?: unknown };
+  if (!Array.isArray(o.filters)) return undefined;
+  const g: FilterGroup = {
+    join: o.join === 'OR' ? 'OR' : 'AND',
+    filters: o.filters as FilterExpr[],
+  };
+  if (Array.isArray(o.groups) && o.groups.length > 0) {
+    g.groups = (o.groups as unknown[])
+      .map(sub => {
+        const so = sub as { join?: unknown; filters?: unknown };
+        return {
+          join: so.join === 'OR' ? 'OR' : 'AND',
+          filters: Array.isArray(so.filters) ? (so.filters as FilterExpr[]) : [],
+        } as FilterGroup;
+      })
+      .filter(sub => (sub.filters ?? []).length > 0);
+  }
+  // A flat-AND group is inert — drop it so the flat `fl` path stays the single
+  // source of truth and the URL round-trips byte-identically.
+  return isFlatAndGroup(g) ? undefined : g;
+}
+
 export function decodeBuilder(s: string | null | undefined): BuilderState | null {
   if (!s) return null;
   try {
@@ -86,6 +118,10 @@ export function decodeBuilder(s: string | null | undefined): BuilderState | null
           scope: typeof q.sc === 'string' ? q.sc : '',
           splitBy: Array.isArray(q.by) ? (q.by as string[]).filter(x => typeof x === 'string') : [],
           filters: Array.isArray(q.fl) ? (q.fl as FilterExpr[]) : [],
+          // fg — grouped AND/OR builder (gap-2 → Explore). Accept only a
+          // well-formed group (object with a filters array); a flat-AND one is
+          // dropped to undefined so it can't shadow the flat `fl` path.
+          filterGroup: decodeFgInline(q.fg),
           dsl: typeof q.d === 'string' ? q.d : '',
         };
       });

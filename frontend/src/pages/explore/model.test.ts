@@ -50,6 +50,11 @@ describe('exemplarDescriptor', () => {
     ['non-eq operator',          { filters: [{ k: 'kind', op: 'IN', v: ['server', 'client'] }] }],
     ['off-dim splitBy',          { splitBy: ['db.system'] }],
     ['contradictory dup filter', { filters: [f('kind', 'server'), f('kind', 'client')] }],
+    // gap-2 → Explore: a genuine OR / nested group can't be expressed as the
+    // resolver's equality-only filter map, so it must fall to raw spanMetric.
+    ['grouped OR filter', {
+      filterGroup: { join: 'OR', filters: [f('kind', 'server'), f('kind', 'client')] },
+    }],
   ];
   for (const [name, over] of rejects) {
     it(`rejects: ${name}`, () => {
@@ -59,6 +64,16 @@ describe('exemplarDescriptor', () => {
 
   it('accepts a duplicate filter that agrees (no information lost in the map)', () => {
     const d = exemplarDescriptor(q({ filters: [f('kind', 'server'), f('kind', 'server')] }));
+    expect(d).not.toBeNull();
+  });
+
+  // A flat-AND group is inert (byte-identical to the flat chip path), so it
+  // must NOT disqualify the resolver — exemplars keep working for it.
+  it('accepts a flat-AND filterGroup (inert; exemplars still resolve)', () => {
+    const d = exemplarDescriptor(q({
+      agg: 'p95', metric: 'duration_ms',
+      filterGroup: { join: 'AND', filters: [f('kind', 'server')] },
+    }));
     expect(d).not.toBeNull();
   });
 });

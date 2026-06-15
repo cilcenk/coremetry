@@ -21,11 +21,11 @@ import { useMemo } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from '@/lib/queries/keys';
-import { encodeFilters } from '@/lib/urlState';
+import { encodeFilters, encodeFilterGroup } from '@/lib/urlState';
 import type { SpanMetricSeries, MetricExemplar } from '@/lib/types';
 import {
   type BuilderState, produces, effectiveFilters, querySignature, exemplarDescriptor,
-  pinnedService, pinnedOperation, queryUnit,
+  pinnedService, pinnedOperation, queryUnit, hasGroupedFilter, effectiveFilterGroup,
 } from './model';
 
 export interface ExploreQueriesResult {
@@ -86,7 +86,19 @@ export function useExploreQueries(
                   agg: q.agg,
                   field: q.metric || undefined,
                   groupBy: q.splitBy.join(',') || undefined,
-                  filters: filters.length ? JSON.stringify(filters) : undefined,
+                  // Grouped (genuine OR / nested) query → send filterGroup and
+                  // suppress flat filters (never both; backend prefers
+                  // filterGroup). effectiveFilterGroup folds the scope pin in as
+                  // a top-level AND leaf so scoping matches the flat path.
+                  // Flat / absent group → legacy filters= path, byte-identical
+                  // (encodeFilterGroup returns '' for it so the param is
+                  // omitted and the query string + cache key are unchanged).
+                  filters: hasGroupedFilter(q)
+                    ? undefined
+                    : (filters.length ? JSON.stringify(filters) : undefined),
+                  filterGroup: hasGroupedFilter(q)
+                    ? (encodeFilterGroup(effectiveFilterGroup(q)) || undefined)
+                    : undefined,
                   dsl: q.dsl.trim() || undefined,
                   from, to,
                   step: state.step || undefined,

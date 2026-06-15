@@ -52,6 +52,41 @@ describe('?q= codec round-trip', () => {
     expect(decodeBuilder('{"q":[]}')).toBeNull();
     expect(decodeBuilder(null)).toBeNull();
   });
+
+  // gap-2 → Explore: a GENUINE OR / nested filterGroup round-trips; a flat-AND
+  // / absent group is omitted from ?q= so an existing URL stays byte-identical.
+  it('genuine OR filterGroup round-trips', () => {
+    const st: BuilderState = {
+      queries: [{
+        ...blankQuery('A'), agg: 'count', scope: 'checkout',
+        filterGroup: {
+          join: 'OR',
+          filters: [
+            { k: 'http.status_code', op: '>=', v: ['500'] },
+            { k: 'db.system', op: '=', v: ['oracle'] },
+          ],
+        },
+      }],
+      formula: '', viz: 'line', step: 0,
+    };
+    expect(decodeBuilder(encodeBuilder(st))).toEqual(st);
+  });
+
+  it('flat-AND filterGroup is omitted (URL stays byte-identical to pre-group)', () => {
+    const flatGroup: BuilderState = {
+      queries: [{
+        ...blankQuery('A'),
+        filterGroup: { join: 'AND', filters: [{ k: 'http.method', op: '=', v: ['GET'] }] },
+      }],
+      formula: '', viz: 'line', step: 0,
+    };
+    // The encoded ?q= must NOT carry the inert flat-AND group ...
+    expect(encodeBuilder(flatGroup)).not.toContain('"fg"');
+    // ... and decode drops it to undefined so the flat path is the single
+    // source of truth (no shadow group changing the cache key).
+    const back = decodeBuilder(encodeBuilder(flatGroup));
+    expect(back?.queries[0].filterGroup).toBeUndefined();
+  });
 });
 
 describe('seedFromLegacyParams', () => {

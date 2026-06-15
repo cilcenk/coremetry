@@ -3847,6 +3847,13 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 		StepSeconds: step,
 		Search:      q.Get("search"), // v0.6.32 — push search down to histogram
 	}
+	// v0.8.x gap-2 (Explore) — grouped AND/OR builder. When the FE sends a
+	// filterGroup it supersedes the flat filters= (a flat-AND group is
+	// byte-identical; an OR / nested group disqualifies the MV fast-path and
+	// falls to the bounded raw-spans GROUP BY). Same precedence getTraces uses.
+	// The cache key (r.URL.RawQuery, below) already hashes filterGroup so
+	// distinct group shapes don't poison each other.
+	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
 	// v0.8.32 (Phase-2 #1) — 30s cache. Explore's default latency/rate chart
 	// re-fires this on every keystroke + range nudge, and the compare-period
 	// overlay fires a second call per render. When a filter/DSL/sub-5min step

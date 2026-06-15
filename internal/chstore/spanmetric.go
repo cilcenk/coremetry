@@ -53,6 +53,17 @@ func trimTopNByArea(series []SpanMetricSeries, n int) (kept []SpanMetricSeries, 
 // produce one series per unique combination — Dynatrace-style MDA.
 type SpanMetricFilter struct {
 	Filters     []FilterExpr // span filter chips
+	// FilterRoot is the optional grouped AND/OR builder (v0.8.x gap-2,
+	// extended into Explore). When non-nil, QuerySpanMetric routes the
+	// predicate through ApplyFilterGroup INSTEAD of ApplyFilters(f.Filters),
+	// so the operator can express `(http.status >= 500 OR db.system = oracle)
+	// AND env = prod` in an Explore panel. Mirrors how repo.go's TraceFilter
+	// gained FilterRoot. A flat-AND FilterRoot is byte-identical to the legacy
+	// Filters path (ApplyFilterGroup delegates flat-AND to ApplyFilters); an
+	// OR / nested group disqualifies the MV fast-paths (it can't ride the
+	// service_summary_5m / operation_summary_5m rollups, same cost class as a
+	// free-text Search), so it falls to the bounded raw-spans GROUP BY.
+	FilterRoot  *FilterGroup
 	Aggregation string       // count | error_rate | rate | avg | sum | p50 | p95 | p99 | max | min
 	Field       string       // attribute / column to aggregate (default: duration_ms)
 	GroupBy     []string     // 0..N attribute names; same syntax as FilterExpr.Key
@@ -68,6 +79,24 @@ type SpanMetricFilter struct {
 	// down at the WHERE level makes the histogram's total
 	// agree with the spans the search actually selects.
 	Search string
+}
+
+// effectiveFastPathFilters returns the flat []FilterExpr the MV fast-path
+// gates (tryServiceMVFastPath / tryOperationMVFastPath) should inspect. The
+// fast-paths only ever accept `service.name = X` predicates, and they're only
+// reached when the root is nil or flat-AND (see QuerySpanMetric's gate), so:
+//   - FilterRoot == nil           → the legacy f.Filters slice
+//   - FilterRoot is flat-AND       → FilterRoot.Filters (the AND-joined leaves,
+//     which is exactly what ApplyFilters would emit), so a flat-AND group with
+//     a `service.name = X` leaf stays MV-eligible — byte-identical to passing
+//     that leaf via f.Filters.
+// A non-flat root never reaches here (the gate disables the fast-paths first),
+// but for safety we return f.Filters unchanged in that case.
+func (f SpanMetricFilter) effectiveFastPathFilters() []FilterExpr {
+	if f.FilterRoot != nil && f.FilterRoot.isFlatAnd() {
+		return f.FilterRoot.Filters
+	}
+	return f.Filters
 }
 
 // SpanMetricSeries is one line on the chart — typically one per groupKey.
@@ -116,7 +145,11 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 	// attr_values or http_route, so a search clause can't be
 	// honoured against them. Same gate shape GetTraces uses
 	// (repo.go line ~1177).
-	if f.Search == "" {
+	// v0.8.x gap-2 (Explore) — an OR / nested FilterRoot ALSO bypasses the
+	// fast-paths: the MV rollups can't represent boolean OR structure (same
+	// cost class as Search). FilterRoot.IsFlatAnd() is true for nil and for a
+	// pure AND group, so the legacy + flat-AND paths still ride the MV.
+	if f.Search == "" && f.FilterRoot.IsFlatAnd() {
 		if rows, ok := s.tryServiceMVFastPath(ctx, f); ok {
 			return rows, nil
 		}
@@ -133,7 +166,16 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 	if !f.To.IsZero() {
 		wc.add("time <= ?", f.To)
 	}
-	ApplyFilters(&wc, f.Filters)
+	// v0.8.x gap-2 (Explore) — grouped AND/OR builder supersedes the flat
+	// Filters when present. A flat-AND FilterRoot routes straight through
+	// ApplyFilters inside ApplyFilterGroup, so the legacy path stays
+	// byte-identical; an OR / nested group emits a single parenthesised
+	// conjunct. Same shape repo.go's buildGetTracesWhere uses.
+	if f.FilterRoot != nil {
+		ApplyFilterGroup(&wc, *f.FilterRoot)
+	} else {
+		ApplyFilters(&wc, f.Filters)
+	}
 	// v0.6.32 — free-text search at WHERE level, applied per-span (not
 	// per-trace) so the histogram total matches the search-narrowed set the
 	// traces table shows. v0.8.x — shares searchPredicate with GetTraces:
@@ -290,9 +332,11 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 	}
 
 	// Filter gate — only service.name = X allowed; everything
-	// else needs raw spans.
+	// else needs raw spans. effectiveFastPathFilters resolves a flat-AND
+	// FilterRoot's leaves to the same slice ApplyFilters would emit, so a
+	// grouped flat-AND `service.name = X` still rides the MV (v0.8.x gap-2).
 	var serviceFilter string
-	for _, fe := range f.Filters {
+	for _, fe := range f.effectiveFastPathFilters() {
 		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
 			serviceFilter = fe.Values[0]
 			continue
@@ -461,9 +505,11 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 		return nil, false
 	}
 
-	// Filter gate.
+	// Filter gate. effectiveFastPathFilters resolves a flat-AND FilterRoot's
+	// leaves to the legacy slice so a grouped `service.name = X` stays
+	// MV-eligible (v0.8.x gap-2).
 	var serviceFilter string
-	for _, fe := range f.Filters {
+	for _, fe := range f.effectiveFastPathFilters() {
 		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
 			serviceFilter = fe.Values[0]
 			continue

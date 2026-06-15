@@ -1803,6 +1803,12 @@ export interface SpanMetricParams {
   // WHERE so a histogram's total matches the table's
   // search-narrowed list.
   search?: string;
+  // filterGroup — grouped AND/OR builder JSON (v0.8.x gap-2, extended into
+  // Explore). When present it SUPERSEDES `filters` server-side; a flat-AND
+  // group is byte-identical to the legacy filters path, so passing it is
+  // purely additive. Omitted → byte-identical query string + cache key to the
+  // pre-group call (qs() drops undefined), so existing callers are untouched.
+  filterGroup?: string; // JSON-encoded FilterGroup
 }
 
 // Aggregation grouping dimensions accepted by /api/traces/aggregate.

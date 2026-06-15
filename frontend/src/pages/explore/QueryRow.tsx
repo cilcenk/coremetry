@@ -1,6 +1,8 @@
 import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
+import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
+import { Button } from '@/components/ui/Button';
 import { GroupedMetricPicker } from '@/components/viz/GroupedMetricPicker';
 import { AGG_OPTIONS } from './presets';
 import { SplitByPicker } from './SplitByPicker';
@@ -8,6 +10,7 @@ import {
   type BuilderQuery, type QuerySource,
   METRIC_CATALOG_AGGS, spanNeedsField, blankQuery,
 } from './model';
+import type { FilterGroup } from '@/lib/types';
 
 // QueryRow — one builder query (explore-v2 Phase 2):
 //   [A◉] [Spans|Metric] [agg of field | metric-picker agg] [scope] [filters] [split] [×]
@@ -24,8 +27,31 @@ export function QueryRow({ q, canRemove, onChange, onRemove }: {
   const setSource = (source: QuerySource) => {
     if (source === q.source) return;
     const base = blankQuery(q.letter, source);
-    onChange({ ...base, enabled: q.enabled, scope: q.scope, filters: q.filters, splitBy: q.splitBy });
+    // Keep the operator's narrowing intent across the flip — scope, flat chips,
+    // splitBy AND any grouped builder (the group is inert on a metric query but
+    // restored when they flip back to spans).
+    onChange({
+      ...base, enabled: q.enabled, scope: q.scope,
+      filters: q.filters, splitBy: q.splitBy, filterGroup: q.filterGroup,
+    });
   };
+
+  // grouped — the genuine OR / nested builder is active. The flat FilterBuilder
+  // is the DEFAULT render (existing queries are untouched); the operator opts
+  // into grouped mode, mirroring the /traces toggle UX (gap-2). Only offered on
+  // span queries — the metric-source fetch (api.metricQuery) takes no group.
+  const grouped = q.filterGroup != null;
+  const enterGrouped = () =>
+    onChange({ ...q, filterGroup: { join: 'AND', filters: q.filters } });
+  const flattenGroup = () =>
+    onChange({
+      ...q,
+      // grouped→flat keeps the top-level leaves (OR / nested structure has no
+      // flat representation), then clears the group.
+      filters: (q.filterGroup?.filters ?? []).filter(f => f.k && f.k.trim()),
+      filterGroup: undefined,
+    });
+  const setGroup = (next: FilterGroup) => onChange({ ...q, filterGroup: next });
 
   return (
     <div style={{
@@ -90,7 +116,33 @@ export function QueryRow({ q, canRemove, onChange, onRemove }: {
         placeholder="tüm servisler" width={170} />
 
       <div style={{ flex: 1, minWidth: 220 }}>
-        <FilterBuilder value={q.filters} onChange={f => onChange({ ...q, filters: f })} />
+        {/* Span queries can switch the flat chip row to the grouped AND/OR
+            builder for (A OR B) AND C predicates (gap-2 → Explore). flat→grouped
+            seeds the group's top-level leaves from the current chips;
+            grouped→flat flattens back. The flat builder stays the DEFAULT. */}
+        {q.source === 'span' && (
+          <div className="row gap-2" style={{ alignItems: 'center', justifyContent: 'flex-end', marginBottom: 4 }}>
+            {!grouped ? (
+              <Button variant="ghost" size="sm"
+                title="Gruplu AND/OR oluşturucuya geç — (A OR B) AND C tarzı sorgular için"
+                onClick={enterGrouped}>
+                ⊞ Group (AND/OR)
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm"
+                title="Düz filtre çiplerine dön (OR / iç içe grupları atar)"
+                onClick={flattenGroup}>
+                ⊟ Flatten to chips
+              </Button>
+            )}
+          </div>
+        )}
+        {q.source !== 'span' || !grouped ? (
+          <FilterBuilder value={q.filters} onChange={f => onChange({ ...q, filters: f })} />
+        ) : (
+          <FilterGroupBuilder value={q.filterGroup ?? { join: 'AND', filters: [] }}
+            onChange={setGroup} />
+        )}
         {q.dsl.trim() !== '' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
             <span style={{ fontSize: 10.5, color: 'var(--text3)', textTransform: 'uppercase',

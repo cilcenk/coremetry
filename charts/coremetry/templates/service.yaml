@@ -66,6 +66,38 @@ spec:
       targetPort: otlp-grpc
       protocol: TCP
     {{- end }}
+---
+{{/* v0.8.171 — headless Service for in-cluster gRPC round-robin to the OTLP
+     ingest endpoint. A normal ClusterIP load-balances per-CONNECTION, and
+     OTLP/gRPC multiplexes everything over one long-lived HTTP/2 connection —
+     so a collector's stream pins to a single replica (the load test saw one
+     pod take ~all spans). clusterIP:None makes DNS return EVERY ingest pod IP,
+     so the in-cluster otel-collector's exporter (balancer_name: round_robin
+     over a dns:/// target) spreads RPCs across all replicas. Complements the
+     server-side MaxConnectionAge connection recycle (v0.8.159). Selects the
+     OTLP-receiving pods: the all-mode pods in monolithic, the ingest role in
+     distributed. Always rendered (1 replica → 1 address → harmless). */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-ingest-headless
+  labels:
+    {{- include "coremetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coremetry-ingest-headless
+spec:
+  clusterIP: None
+  selector:
+    {{- include "coremetry.selectorLabels" . | nindent 4 }}
+    {{- if eq $mode "distributed" }}
+    app.kubernetes.io/component: coremetry-ingest
+    {{- else }}
+    app.kubernetes.io/component: coremetry
+    {{- end }}
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.service.grpcPort }}
+      targetPort: otlp-grpc
+      protocol: TCP
 {{- if eq $mode "distributed" }}
 ---
 apiVersion: v1

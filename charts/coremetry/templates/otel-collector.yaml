@@ -29,7 +29,15 @@ data:
         # <release>-ingest. In monolithic mode the all-mode pod receives, so
         # the stable Service is correct. (v0.6.69 — without this, distributed
         # installs silently dropped every span at the api pod.)
-        endpoint: {{ include "coremetry.fullname" . }}{{ if eq .Values.deployment.mode "distributed" }}-ingest{{ end }}:{{ .Values.service.grpcPort }}
+        # v0.8.171 — dns:/// + round_robin over the headless ingest Service so
+        # RPCs spread across ALL ingest replicas, not pinned to one connection.
+        # The dns scheme makes gRPC resolve every pod A-record the headless
+        # Service publishes; round_robin balances Exports across the resulting
+        # subchannels. Complements the server-side MaxConnectionAge (v0.8.159).
+        # Works in both modes — the headless Service selects all-mode pods in
+        # monolithic, the ingest role in distributed.
+        endpoint: dns:///{{ include "coremetry.fullname" . }}-ingest-headless:{{ .Values.service.grpcPort }}
+        balancer_name: round_robin
         tls: { insecure: true }
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 5000 }
         retry_on_failure: { enabled: true, initial_interval: 1s, max_interval: 30s }

@@ -40,6 +40,11 @@ export const keys = {
                    ['services', 'map', since, samples, diff ?? ''] as const,
     backtrace:   (svc: string, opts: { since?: string; from?: number; to?: number; limit?: number }) =>
                    ['services', 'backtrace', svc, opts] as const,
+    // group_id rel C — per-operation aggregate keyed on the normalized
+    // flag so the raw and op_group-shape tables cache as two distinct
+    // entries (they return different row sets for the same window).
+    operations:  (svc: string, range: { from: number; to: number }, normalized: boolean) =>
+                   ['services', 'operations', svc, range, normalized] as const,
   },
 
   problems: {

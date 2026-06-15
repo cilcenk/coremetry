@@ -21,7 +21,6 @@ const Topology          = lazy(() => import('./pages/Topology'));
 // v0.8.104 — flow-graph preview: /service-map revived to evaluate
 // TopologyFlowGraph side-by-side with /topology before a swap call.
 const ServiceMap        = lazy(() => import('./pages/ServiceMap'));
-const SystemAnalysis    = lazy(() => import('./pages/SystemAnalysis'));
 // v0.8.12 — topology rebuild Stage 2 scratch route (removed in Stage 4).
 const ServiceGraphPreview = lazy(() => import('./pages/ServiceGraphPreview'));
 const Traces            = lazy(() => import('./pages/Traces'));
@@ -99,7 +98,6 @@ export default function App() {
                 as the TopologyFlowGraph preview surface (not in sidebar). */}
             <Route path="/service-map"    element={<ServiceMap />} />
             <Route path="/topology"       element={<Topology />} />
-            <Route path="/analysis"       element={<SystemAnalysis />} />
             <Route path="/servicegraph-preview" element={<ServiceGraphPreview />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />

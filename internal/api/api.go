@@ -2946,6 +2946,9 @@ func (s *Server) getTracesByRelation(w http.ResponseWriter, r *http.Request) {
 	if limit < 1 {
 		limit = 50
 	}
+	if limit > 500 { // mirror the store-side relMaxLimit; reject loudly at the edge
+		limit = 500
+	}
 
 	rf := chstore.RelationFilter{
 		Parent: parent,

@@ -283,30 +283,35 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 	if to.IsZero() {
 		to = time.Now()
 	}
-	// Fast path (v0.8.x — operator-reported "cluster dropdown sometimes empty"):
-	// DISTINCT over the materialized LowCardinality `cluster` column (v0.8.132)
-	// reads only the column dictionary — no res_values/attr_values indexOf scan
-	// — so it stays well inside max_execution_time at billion-span scale, where
-	// the full clusterColExpr derive could blow the 8s budget and blank the
-	// dropdown (the derive errored → empty list → cached empty for the TTL).
+	// Primary: the COMPLETE clusterColExpr (column for new parts, derive for old).
+	// CH short-circuits the coalesce, so post-migration — once every part carries
+	// the materialized `cluster` column (v0.8.132) — the derive (res_values/
+	// attr_values indexOf) is never evaluated and this is just the cheap column
+	// read. During the migration window it additionally derives clusters that
+	// live ONLY in pre-column parts, so the list is never missing a real cluster.
+	// On err==nil we return even an empty result (genuinely no clusters).
 	if names, err := s.scanClusters(ctx, `
-		SELECT DISTINCT cluster
-		FROM spans
-		WHERE time >= ? AND time <= ? AND cluster != ''
-		ORDER BY cluster
-		LIMIT 200
-		SETTINGS max_execution_time = 8`, from, to); err == nil && len(names) > 0 {
-		return names, nil
-	}
-	// Fallback: the full derive — covers pre-v0.8.132 parts (whose `cluster`
-	// column is '') during the post-migration transition, or a column-read
-	// error, so the dropdown is never blank when clusters genuinely exist.
-	return s.scanClusters(ctx, `
 		SELECT `+clusterColExpr+` AS cluster
 		FROM spans
 		WHERE time >= ? AND time <= ?
 		GROUP BY cluster
 		HAVING cluster != ''
+		ORDER BY cluster
+		LIMIT 200
+		SETTINGS max_execution_time = 8`, from, to); err == nil {
+		return names, nil
+	}
+	// Fallback ONLY on error: at billion-span scale during the transition the
+	// derive can blow the 8s budget (operator-reported blank dropdown — a derive
+	// error used to cache an empty list). Fall back to a sub-second DISTINCT over
+	// the LowCardinality `cluster` column so the dropdown shows the live/active
+	// clusters instead of blanking. This can omit a cluster active ONLY in
+	// pre-v0.8.132 parts, but it self-heals as old parts age out, and the filter
+	// itself uses clusterColExpr so any cluster stays selectable.
+	return s.scanClusters(ctx, `
+		SELECT DISTINCT cluster
+		FROM spans
+		WHERE time >= ? AND time <= ? AND cluster != ''
 		ORDER BY cluster
 		LIMIT 200
 		SETTINGS max_execution_time = 8`, from, to)

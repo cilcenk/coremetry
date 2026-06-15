@@ -446,24 +446,91 @@ func dotGet(src map[string]any, path string) any {
 	return cur
 }
 
+// tsLayouts are the non-epoch date string shapes a log shipper emits
+// beyond strict RFC3339 — log4j/logback's space-separated form is the
+// common banking-stack case. Tried in order after the epoch paths.
+var tsLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02 15:04:05",
+}
+
+// epochToNs magnitude-detects the unit of an integer epoch timestamp
+// (seconds / millis / micros / nanos) and returns unix-nanoseconds. ES
+// `date` fields most commonly serialise as epoch_millis, but pipelines
+// also emit seconds (log4j) or nanos (OTel) — guessing by magnitude
+// avoids a per-field unit config. The 1e11 boundary cleanly separates a
+// realistic seconds value (< year 5138) from a realistic millis value
+// (≥ year 1973), and so on up the units.
+func epochToNs(n int64) int64 {
+	switch {
+	case n <= 0:
+		return 0
+	case n < 1e11: // seconds
+		return n * 1_000_000_000
+	case n < 1e14: // millis
+		return n * 1_000_000
+	case n < 1e17: // micros
+		return n * 1_000
+	default: // nanos
+		return n
+	}
+}
+
+// parseLogTimestampNs normalises ONE ES _source timestamp value to
+// unix-ns, tolerating the shapes a real shipper emits: an RFC3339
+// string (ECS/Beats), an epoch number (epoch_millis mapping decodes to
+// float64), an epoch numeric string, or a non-RFC date string
+// (log4j/logback). v0.8.163 — operator-reported: the Logs LIST was
+// blank while the histogram (aggregated server-side by ES, format-
+// agnostic) showed bars, because mapHit parsed ONLY RFC3339Nano and
+// dropped epoch/non-RFC timestamps to 0 → rows landed at 1970 and fell
+// outside the queried time window.
+func parseLogTimestampNs(v any) int64 {
+	switch t := v.(type) {
+	case string:
+		if t == "" {
+			return 0
+		}
+		if n, err := strconv.ParseInt(t, 10, 64); err == nil {
+			return epochToNs(n)
+		}
+		if f, err := strconv.ParseFloat(t, 64); err == nil {
+			return epochToNs(int64(f))
+		}
+		for _, layout := range tsLayouts {
+			if ts, err := time.Parse(layout, t); err == nil {
+				return ts.UnixNano()
+			}
+		}
+	case float64:
+		return epochToNs(int64(t))
+	case int64:
+		return epochToNs(t)
+	case int:
+		return epochToNs(int64(t))
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return epochToNs(n)
+		}
+		if f, err := t.Float64(); err == nil {
+			return epochToNs(int64(f))
+		}
+	}
+	return 0
+}
+
 // timestampNs picks the event's timestamp out of common ECS /
-// flat shapes and normalises to unix-ns.
+// flat shapes and normalises to unix-ns. Delegates the per-value
+// parse to parseLogTimestampNs so epoch + non-RFC shapes work here too.
 func timestampNs(src map[string]any) int64 {
 	for _, p := range []string{"@timestamp", "timestamp", "time"} {
-		v := dotGet(src, p)
-		if v == nil {
-			continue
-		}
-		switch t := v.(type) {
-		case string:
-			if ms, err := time.Parse(time.RFC3339Nano, t); err == nil {
-				return ms.UnixNano()
+		if v := dotGet(src, p); v != nil {
+			if ns := parseLogTimestampNs(v); ns != 0 {
+				return ns
 			}
-		case float64:
-			// ES often serialises millis as float64.
-			return int64(t) * 1_000_000
-		case int64:
-			return t * 1_000_000
 		}
 	}
 	return 0
@@ -1764,10 +1831,18 @@ func (s *ESStore) mapHit(id string, src map[string]any) *LogRecord {
 		ResourceAttributes: map[string]string{},
 	}
 
-	if v := readPath(src, s.fields.Timestamp); v != "" {
-		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
-			r.Timestamp = t.UnixNano()
-		}
+	// Robust per-value parse (epoch number/string, RFC3339, or a non-RFC
+	// shipper format) — NOT a strict RFC3339Nano parse, which silently
+	// dropped epoch/non-RFC timestamps to 0 and blanked the time-windowed
+	// list while the server-side histogram still rendered (v0.8.163).
+	if raw := dotGet(src, s.fields.Timestamp); raw != nil {
+		r.Timestamp = parseLogTimestampNs(raw)
+	}
+	// Configured field missing or unparseable → fall back to the common
+	// @timestamp/timestamp/time shapes so a mis-set timestamp field doesn't
+	// zero the row's time (which would drop it from a time-windowed view).
+	if r.Timestamp == 0 {
+		r.Timestamp = timestampNs(src)
 	}
 	r.TraceID = readPathAny(src, s.fields.TraceID,
 		"trace.id", "trace_id", "traceId", "TraceId")

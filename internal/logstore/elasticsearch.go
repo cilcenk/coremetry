@@ -563,7 +563,7 @@ func (s *ESStore) Indices(ctx context.Context) ([]IndexInfo, error) {
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, fmt.Errorf("cat indices: %s", res.String())
+		return nil, catIndicesError(res.StatusCode, res, s.cfg.Index)
 	}
 	var rows []catRow
 	if err := json.NewDecoder(res.Body).Decode(&rows); err != nil {
@@ -2121,6 +2121,27 @@ func traceTermsAny(configured, body, value, kind string) map[string]any {
 //
 // Falls back to res.Status() + raw body when the envelope shape
 // isn't what we expect (older ES, transport-level errors).
+// isESPermissionStatus is true for the HTTP statuses ES returns when the
+// credential is rejected or under-privileged for the requested action.
+func isESPermissionStatus(code int) bool { return code == 401 || code == 403 }
+
+// catIndicesError classifies a non-2xx _cat/indices response. A 401/403
+// is the least-privilege case: a bank apikey scoped to index `read` on
+// logs-* but WITHOUT cluster `monitor` (the only privilege _cat/indices
+// needs — /logs Search needs just index read and keeps working). Return a
+// clear, actionable message — NOT the raw ES JSON, and NOT a degraded
+// empty list (an empty slice renders as "No indices match the configured
+// pattern", falsely implying an empty cluster). Other statuses fall
+// through to the shared parseESError. (v0.8.166.)
+func catIndicesError(statusCode int, res *esapi.Response, configuredIndex string) error {
+	if isESPermissionStatus(statusCode) {
+		return fmt.Errorf(
+			"apikey lacks the cluster `monitor` privilege required for _cat/indices (status %d) — index inventory unavailable; /logs search is unaffected",
+			statusCode)
+	}
+	return parseESError("cat indices", res, configuredIndex)
+}
+
 func parseESError(op string, res *esapi.Response, configuredIndex string) error {
 	var parsed struct {
 		Error struct {

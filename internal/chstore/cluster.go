@@ -833,7 +833,16 @@ func isClusterUnsupportedAlter(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "is not supported by storage Distributed")
+	// CH error 48 — ADD_INDEX / DROP_INDEX etc. ("... is not supported by
+	// storage Distributed"). CH error 36 — MODIFY TTL ("Engine Distributed
+	// doesn't support TTL clause"). Both fire when Coremetry points at an
+	// EXTERNAL Distributed `spans` but chstore.cluster_name is unset, so
+	// adaptDDL can't rewrite the ALTER to <table>_local ON CLUSTER. These
+	// are storage-engine limitations on the Distributed wrapper, not real
+	// failures — the caller skips + logs and the operator applies them on
+	// the per-shard local tables (or sets cluster_name).
+	return strings.Contains(msg, "is not supported by storage Distributed") ||
+		strings.Contains(msg, "Distributed doesn't support TTL")
 }
 
 // identifyDDLTarget pulls the target table/view name out of a DDL

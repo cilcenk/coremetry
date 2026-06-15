@@ -103,6 +103,9 @@ func TestIsClusterUnsupportedAlter(t *testing.T) {
 	}{
 		{"code: 48, message: Alter of type 'ADD_INDEX' is not supported by storage Distributed", true},
 		{"is not supported by storage Distributed", true},
+		// v0.8.162 — MODIFY TTL on a Distributed wrapper raises CH code
+		// 36; retention.go now skips it the same way as the index ALTERs.
+		{"code: 36, message: Engine Distributed doesn't support TTL clause", true},
 		// Unrelated DDL failures must still bubble up — we don't
 		// want to swallow real schema bugs.
 		{"code: 60, message: Table doesn't exist", false},

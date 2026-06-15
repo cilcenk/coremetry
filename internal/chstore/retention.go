@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -116,7 +117,18 @@ func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string
 		// of touching only the Distributed wrapper (which has no
 		// TTL). Single-node mode runs the SQL unchanged.
 		if err := s.execDDL(ctx, stmt); err != nil {
-			return fmt.Errorf("apply TTL on %s: %w", p.table, err)
+			if !isClusterUnsupportedAlter(err) {
+				return fmt.Errorf("apply TTL on %s: %w", p.table, err)
+			}
+			// External Distributed `spans` with cluster_name unset: the
+			// wrapper engine can't carry a TTL and adaptDDL can't rewrite to
+			// <table>_local ON CLUSTER without the cluster name. Skip the apply
+			// (don't crash-loop boot / 500 the admin PUT) but still record the
+			// intent below, so it's re-applied automatically if cluster_name is
+			// later set. Until then the operator manages TTL on the per-shard
+			// local table. (v0.8.162 — operator-reported: distributed prod
+			// errored "Engine Distributed doesn't support TTL clause" each cycle.)
+			log.Printf("[chstore] retention TTL on %s not applied: %v — set chstore.cluster_name or apply TTL on the per-shard local table; the override is still recorded", p.table, err)
 		}
 		// Persist the override.
 		if err := s.upsertSetting(ctx, p.key, p.val, actor); err != nil {

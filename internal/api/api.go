@@ -7996,6 +7996,13 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 			}
 			probs = keep
 		}
+		// rc #3 — attach the persisted root-cause top-suspect summary in
+		// ONE batch read (GetHypotheses) so each problem row renders the
+		// in-page ribbon without a per-row /rootcause fetch. Runs AFTER the
+		// priority filter so the IN-list only covers the visible rows. Soft-
+		// fails to the unenriched slice; rows with no hypothesis keep
+		// RootCause=nil (honest "no clear cause yet"). Read-only — no audit.
+		probs = s.store.EnrichProblemsWithRootCause(r.Context(), probs)
 		return probs, nil
 	})
 }
@@ -8502,6 +8509,14 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 		// effective-version chain (Helm labels, image tags) so
 		// installs with no service.version still correlate.
 		rows = s.store.EnrichAnomaliesWithDeploys(r.Context(), rows, 30*time.Minute)
+		// rc #3 — attach the persisted root-cause top-suspect summary in
+		// ONE batch read (GetHypotheses) so each anomaly row renders the
+		// in-page ribbon without a per-row /rootcause fetch. Soft-fails to
+		// the unenriched rows; rows with no hypothesis keep RootCause=nil
+		// (honest "no clear cause yet" state). Stays inside serveCached —
+		// the existing key already hashes since+limit; this join is
+		// read-only, no new audit.
+		rows = s.store.EnrichAnomaliesWithRootCause(r.Context(), rows)
 		return rows, nil
 	})
 }

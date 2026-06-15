@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -144,4 +145,201 @@ func (s *Store) GetHypothesis(ctx context.Context, anchorKind, anchorID string) 
 		h.RecentDeploy = &d
 	}
 	return &h, nil
+}
+
+// RootCauseSummary is the COMPACT slice of a hypothesis the /anomalies and
+// /problems list rows carry so the in-page ribbon (rc #3) renders the
+// "Root cause: <suspect> (NN%)" chip WITHOUT a per-row fetch of the full
+// hypothesis. Only the three fields the collapsed ribbon needs — the expand
+// fetches the full /rootcause fan-out on demand. Attached at read time by the
+// list handlers (same posture as Problem.RecentDeploy / .Priority): never
+// stored on the problems / anomaly_events rows, joined from
+// root_cause_hypotheses on each read.
+type RootCauseSummary struct {
+	TopSuspect string  `json:"topSuspect"` // the #1 candidate's service ("" = no clear cause)
+	TopScore   float64 `json:"topScore"`   // the #1 candidate's blended score
+	Confidence float64 `json:"confidence"` // 0..1 — honest low/zero when evidence is thin
+}
+
+// hypothesesIDCap bounds the IN-list one batch read accepts. The list handlers
+// already cap their row count (problems 100, anomaly events 200), but the read
+// defends against an unbounded id slice independently — a single oversized IN()
+// is the kind of accidental fan-out the CH bounds invariant guards against.
+const hypothesesIDCap = 500
+
+// boundHypothesisIDs is the PURE id-list guard GetHypotheses applies before
+// building its `IN (?, …)` clause: drop empties, de-duplicate (a repeated id
+// shouldn't pad the placeholder list), and cap at hypothesesIDCap so the IN-list
+// can never fan out unbounded regardless of caller input. Order-preserving on
+// first occurrence so the placeholder ↔ arg pairing the caller builds stays
+// deterministic. Extracted + table-driven tested (rootcause_hypothesis_test.go)
+// because the cap/dedup is exactly the kind of bound the CH-query invariant
+// guards — a regression here re-opens an unbounded IN(). rc #3.
+func boundHypothesisIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+		if len(out) >= hypothesesIDCap {
+			break
+		}
+	}
+	return out
+}
+
+// GetHypotheses batch-reads the latest hypothesis for many anchors of ONE kind
+// in a SINGLE FINAL query — `WHERE anchor_kind = ? AND anchor_id IN (?, ?, …)`.
+// This is the N+1-free join the /anomalies + /problems list handlers use to
+// attach a RootCauseSummary per row: one round-trip for the whole page instead
+// of GetHypothesis per row. Returns a map keyed by anchor_id holding only the
+// anchors that HAVE a synthesized hypothesis — callers omit the summary for the
+// rest (the ribbon shows an honest "no clear cause yet" state).
+//
+// Plain `IN (?, …)` — NOT `GLOBAL IN`: root_cause_hypotheses is a local
+// ReplacingMergeTree state table (like anomaly_events / problems), not a
+// Distributed table, and the values are bound literals, not a subquery. GLOBAL
+// IN only matters when the right-hand side is a subquery executed over a
+// Distributed table. The id slice is de-duplicated + capped at hypothesesIDCap
+// so the IN-list can't fan out unbounded. The (anchor_kind, anchor_id) ORDER BY
+// key bounds the scan; the table is small + low-volume so no time-bound is
+// needed (same rationale as GetHypothesis).
+func (s *Store) GetHypotheses(ctx context.Context, anchorKind string, ids []string) (map[string]RootCauseHypothesis, error) {
+	out := make(map[string]RootCauseHypothesis)
+	if anchorKind == "" {
+		return out, nil
+	}
+	bounded := boundHypothesisIDs(ids)
+	if len(bounded) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(bounded)+1)
+	args = append(args, anchorKind)
+	holders := make([]string, 0, len(bounded))
+	for _, id := range bounded {
+		holders = append(holders, "?")
+		args = append(args, id)
+	}
+
+	rows, err := s.conn.Query(ctx, `
+		SELECT anchor_kind, anchor_id, service,
+		       computed_at,
+		       top_suspect, top_score, confidence,
+		       candidates, recent_deploy, version
+		FROM root_cause_hypotheses FINAL
+		WHERE anchor_kind = ? AND anchor_id IN (`+strings.Join(holders, ",")+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			h          RootCauseHypothesis
+			computedAt time.Time
+			candsJSON  string
+			deployJSON string
+		)
+		if err := rows.Scan(
+			&h.AnchorKind, &h.AnchorID, &h.Service,
+			&computedAt,
+			&h.TopSuspect, &h.TopScore, &h.Confidence,
+			&candsJSON, &deployJSON, &h.Version,
+		); err != nil {
+			return nil, err
+		}
+		h.ComputedAt = computedAt.UnixNano()
+		if candsJSON != "" {
+			if err := json.Unmarshal([]byte(candsJSON), &h.Candidates); err != nil {
+				return nil, err
+			}
+		}
+		if deployJSON != "" {
+			var d RecentDeploy
+			if err := json.Unmarshal([]byte(deployJSON), &d); err != nil {
+				return nil, err
+			}
+			h.RecentDeploy = &d
+		}
+		out[h.AnchorID] = h
+	}
+	return out, rows.Err()
+}
+
+// summaryOf projects a hypothesis down to the compact ribbon summary. Returns
+// nil when there is no clear suspect AND no confidence — an empty top_suspect
+// with zero confidence is a synthesized "no clear cause" row, which the ribbon
+// can derive from the absence of a summary just as well, so we omit it to keep
+// the wire payload lean. A confidence > 0 (even with an empty suspect) is kept
+// so the ribbon can honestly say "computing… / N signals" rather than nothing.
+func summaryOf(h RootCauseHypothesis) *RootCauseSummary {
+	if h.TopSuspect == "" && h.Confidence <= 0 {
+		return nil
+	}
+	return &RootCauseSummary{
+		TopSuspect: h.TopSuspect,
+		TopScore:   h.TopScore,
+		Confidence: h.Confidence,
+	}
+}
+
+// EnrichProblemsWithRootCause attaches the persisted root-cause summary to each
+// problem in ONE batch read — the N+1-free join the /problems list handler uses
+// for the in-page ribbon. Collects the ids, fires a single GetHypotheses, and
+// sets p.RootCause only for problems that have a hypothesis (the rest keep nil
+// → honest "no clear cause yet" ribbon). Soft-fails to the unenriched slice on
+// error so a transient blip on this advisory join never blanks the page (same
+// posture as EnrichProblemsWithClusters).
+func (s *Store) EnrichProblemsWithRootCause(ctx context.Context, problems []Problem) []Problem {
+	if len(problems) == 0 {
+		return problems
+	}
+	ids := make([]string, 0, len(problems))
+	for i := range problems {
+		ids = append(ids, problems[i].ID)
+	}
+	hyps, err := s.GetHypotheses(ctx, "problem", ids)
+	if err != nil || len(hyps) == 0 {
+		return problems
+	}
+	for i := range problems {
+		if h, ok := hyps[problems[i].ID]; ok {
+			problems[i].RootCause = summaryOf(h)
+		}
+	}
+	return problems
+}
+
+// EnrichAnomaliesWithRootCause is the anomaly-anchored sibling — same single
+// batch GetHypotheses("anomaly", ids) join for the /anomalies events list
+// ribbon. Soft-fails to the unenriched slice on error.
+func (s *Store) EnrichAnomaliesWithRootCause(ctx context.Context, events []AnomalyEvent) []AnomalyEvent {
+	if len(events) == 0 {
+		return events
+	}
+	ids := make([]string, 0, len(events))
+	for i := range events {
+		ids = append(ids, events[i].ID)
+	}
+	hyps, err := s.GetHypotheses(ctx, "anomaly", ids)
+	if err != nil || len(hyps) == 0 {
+		return events
+	}
+	for i := range events {
+		if h, ok := hyps[events[i].ID]; ok {
+			events[i].RootCause = summaryOf(h)
+		}
+	}
+	return events
 }

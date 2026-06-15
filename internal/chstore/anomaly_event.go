@@ -40,6 +40,15 @@ type AnomalyEvent struct {
 	// the "did this break because of a deploy?" question into
 	// a single glance.
 	RecentDeploy *RecentDeploy `json:"recentDeploy,omitempty"`
+	// RootCause — compact top-suspect summary of the persisted
+	// root-cause hypothesis the worker synthesized for this anomaly
+	// (rc #3 of the anomaly → root-cause feature). Attached at READ
+	// time by the /anomalies events handler via a single batch
+	// GetHypotheses join (NO per-row fetch); nil when the worker
+	// hasn't synthesized a hypothesis for this anchor yet. The
+	// RootCauseRibbon renders the collapsed chip from this; the
+	// expand fetches the full /anomalies/{id}/rootcause fan-out.
+	RootCause *RootCauseSummary `json:"rootCause,omitempty"`
 }
 
 // FingerprintAnomaly stitches the same (kind, pattern, service)

@@ -15,6 +15,7 @@ import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react'
 import { Card, Badge, Row, Button } from '@/components/ui';
 import { ClusterChips } from '@/components/ClusterChips';
 import { CopilotExplain } from '@/components/CopilotExplain';
+import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { useAuth } from '@/components/AuthProvider';
 import {
   useLogPatternAnomalies, useTraceOpAnomalies, useMetricAnomalies,
@@ -430,6 +431,11 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
                   {e.recentDeploy && (
                     <DeployChip d={e.recentDeploy} service={e.service} />
                   )}
+                  {/* rc #3 — in-page root-cause ribbon. Collapsed chip renders
+                      from the row's persisted summary (e.rootCause, joined by
+                      the events handler — no fetch); expand reads the full
+                      /anomalies/{id}/rootcause fan-out. */}
+                  <RootCauseRibbon anchor="anomaly" id={e.id} summary={e.rootCause} />
                 </td>
                 <td>
                   <span className="badge b-gray" style={{ fontSize: 10 }}>

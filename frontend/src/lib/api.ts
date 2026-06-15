@@ -730,6 +730,13 @@ export const api = {
   // sub-signal, so the bundle is always returned (404 only if id unknown).
   problemRootCause: (id: string) =>
     get<import('./types').RootCause>(`/api/problems/${encodeURIComponent(id)}/rootcause`),
+  // Anomaly-anchored root-cause bundle (rc #1) — same fan-out as
+  // problemRootCause but keyed on an AnomalyEvent's window. The
+  // RootCauseRibbon fetches this ON EXPAND for an anomaly row to show the
+  // ranked candidates + deploy + exemplar; the collapsed chip rides the list
+  // summary (AnomalyEvent.rootCause), so there's NO fetch on mount.
+  anomalyRootCause: (id: string) =>
+    get<import('./types').AnomalyRootCause>(`/api/anomalies/${encodeURIComponent(id)}/rootcause`),
   // Correlated Signals (task #6) — one cross-signal pivot bundle. Given any
   // anchor (trace / log / metric) the backend assembles the correlated other
   // two (trace ↔ logs ↔ metrics, joined on trace_id → service.name → window),

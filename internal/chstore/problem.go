@@ -131,6 +131,15 @@ type Problem struct {
 	// generation; lets the UI show "AI insight · 12s ago".
 	AISummary    string `json:"aiSummary,omitempty"`
 	AISummaryAt  int64  `json:"aiSummaryAt,omitempty"`
+	// RootCause — compact top-suspect summary of the persisted
+	// root-cause hypothesis the worker synthesized for this problem
+	// (rc #3 of the anomaly → root-cause feature). Attached at READ
+	// time by the /problems list handler via a single batch
+	// GetHypotheses join (NO per-row fetch); nil when the worker
+	// hasn't synthesized a hypothesis for this anchor yet. The
+	// RootCauseRibbon renders the collapsed chip from this; the
+	// expand fetches the full /rootcause fan-out on demand.
+	RootCause *RootCauseSummary `json:"rootCause,omitempty"`
 }
 
 // RecentDeploy is the compact deploy signal attached to a

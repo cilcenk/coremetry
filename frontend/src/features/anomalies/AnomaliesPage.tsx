@@ -9,6 +9,7 @@ import { CopilotExplain } from '@/components/CopilotExplain';
 import { ClusterChips } from '@/components/ClusterChips';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { RootCausePanel } from '@/components/RootCausePanel';
+import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { ArrowDownToLine, Users, ChevronRight, ChevronDown, CornerDownRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
@@ -855,6 +856,15 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             {p.aiSummary}
                           </div>
                         )}
+                        {/* rc #3 — in-page root-cause ribbon. Collapsed chip
+                            renders from the row's persisted summary
+                            (p.rootCause, joined by the /problems handler — no
+                            fetch); expand reads the full /rootcause fan-out.
+                            The chip's own stopPropagation keeps the row's
+                            navigate-on-click intact. */}
+                        <div style={{ marginTop: p.aiSummary ? 6 : 2 }}>
+                          <RootCauseRibbon anchor="problem" id={p.id} summary={p.rootCause} />
+                        </div>
                       </td>
                       <td className="mono">{tsLong(p.startedAt)}</td>
                       <td>

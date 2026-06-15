@@ -582,6 +582,65 @@ export interface RootCause {
   exemplar?: SpanExemplar;
 }
 
+// AnomalyRootCause — the anomaly-anchored sibling of RootCause. The
+// /api/anomalies/{id}/rootcause endpoint embeds the SAME root-cause fan-out
+// (deploy / correlations / blast-radius / bubble-up / exemplar) and stamps the
+// AnomalyEvent anchor (id / kind / pattern) instead of a Problem. The
+// RootCauseRibbon fetches this ON EXPAND for an anomaly row (the collapsed chip
+// rides the list summary — no fetch on mount). Mirrors the Go AnomalyRootCause.
+export interface AnomalyRootCause extends RootCause {
+  anomalyId: string;
+  anomalyKind: string;   // log_pattern | log_template_new | trace_op
+  pattern: string;       // log pattern name OR operation name (trace_op)
+}
+
+// ── Root-cause hypothesis (rc #2/#3) ────────────────────────────────────────
+// The PERSISTED, pre-computed root-cause ranking the worker synthesizes per
+// anchor and the /anomalies + /problems lists join as a compact summary.
+
+// ScoredCause — one ranked candidate cause. Mirrors the Go chstore.ScoredCause
+// (and correlator.ScoredCause): service + blended score + hop distance + the
+// optional propagation path + the human "why this rank" reason line.
+export interface ScoredCause {
+  service: string;
+  score: number;
+  hops: number;
+  path?: string[];
+  reason?: string;
+}
+
+// RootCauseHypothesis — the full persisted ranking for one anchor (mirrors Go
+// chstore.RootCauseHypothesis). Not fetched directly by the ribbon; the expand
+// reads the live /rootcause fan-out (AnomalyRootCause) instead. Defined here so
+// the shape is documented + available if a future surface reads the raw row.
+export interface RootCauseHypothesis {
+  anchorKind: string;          // "anomaly" | "problem"
+  anchorId: string;
+  service: string;
+  computedAt: number;          // unix ns
+  topSuspect: string;          // "" = no clear cause
+  topScore: number;
+  confidence: number;          // 0..1
+  candidates: ScoredCause[];
+  recentDeploy?: {
+    version: string;
+    timeUnixNs: number;
+    ageSeconds: number;
+  };
+  version: number;
+}
+
+// RootCauseSummary — the COMPACT slice each /anomalies + /problems list row
+// carries (mirrors Go chstore.RootCauseSummary) so the collapsed ribbon renders
+// "Root cause: <suspect> (NN%)" without a per-row fetch. Backend omits it when
+// the worker hasn't synthesized a hypothesis for the anchor (→ honest "no clear
+// cause yet" ribbon).
+export interface RootCauseSummary {
+  topSuspect: string;
+  topScore: number;
+  confidence: number;          // 0..1 — low/zero ⇒ muted honest state
+}
+
 // ── Correlated Signals (task #6) ────────────────────────────────────────────
 // One pivot surface: given any single signal (trace / log / metric) the
 // /api/correlate/context endpoint assembles the correlated OTHER two —
@@ -1489,6 +1548,12 @@ export interface Problem {
   // clicking it expands the full blurb inline.
   aiSummary?: string;
   aiSummaryAt?: number;
+  // Root-cause ribbon summary (rc #3) — the worker's persisted top-suspect
+  // for this problem, joined at read time by the /problems list handler.
+  // Absent until the worker synthesizes a hypothesis (→ honest "no clear
+  // cause yet" ribbon). Powers RootCauseRibbon's collapsed chip with no
+  // per-row fetch; the expand reads the full /rootcause fan-out.
+  rootCause?: RootCauseSummary;
 }
 
 export interface ServiceEdgeStats {
@@ -2131,6 +2196,12 @@ export interface AnomalyEvent {
     timeUnixNs: number;
     ageSeconds: number;
   };
+  // Root-cause ribbon summary (rc #3) — the worker's persisted top-suspect
+  // for this anomaly, joined at read time by the /anomalies events handler.
+  // Absent until synthesized (→ honest "no clear cause yet" ribbon). Powers
+  // RootCauseRibbon's collapsed chip; the expand reads the full
+  // /anomalies/{id}/rootcause fan-out.
+  rootCause?: RootCauseSummary;
 }
 
 // Per-operation error anomaly — a (service, operation) tuple

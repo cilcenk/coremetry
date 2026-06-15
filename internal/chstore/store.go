@@ -1492,6 +1492,49 @@ func (s *Store) migrate(ctx context.Context) error {
 		 FROM spans
 		 GROUP BY service_name, name, time_bucket`, apdexT, apdexT, apdex4T),
 
+		// operation_group_summary_5m: per-(service, op_group, 5min)
+		// pre-aggregation — the normalized-operation-clustering twin of
+		// operation_summary_5m (group_id rel B). Where operation_summary_5m
+		// keys by the RAW operation name, this one keys by op_group, the
+		// normalized operation-shape column the ingest normalizer
+		// (templater.NormalizeOperation) writes per span (group_id rel A,
+		// v0.8.x). The whole point is to fold the long tail of
+		// high-cardinality raw names (GET /orders/8421, GET /orders/9134, …)
+		// into one shape row (GET /orders/:id), so the operator's
+		// Operations table groups by behaviour, not by accidental id
+		// variance. Same aggregate states as operation_summary_5m (count +
+		// error + sum/duration + quantiles + apdex satisfied/tolerating) so
+		// the read path computes the identical numeric set, just keyed by
+		// shape. ORDER BY mirrors the GROUP BY (service_name, op_group,
+		// time_bucket) with op_group in name's slot — service filters get a
+		// tight prefix prune, exactly like operation_summary_5m.
+		//
+		// Forward-only (like every MV here): rolls ONLY spans inserted after
+		// this CREATE runs. Pre-Release-A spans have op_group = '' and the
+		// read path excludes that bucket (WHERE op_group != '') so the
+		// normalized list is clean — the ungrouped '' rows are never
+		// surfaced as a phantom operation. Issued through execDDL so external
+		// Distributed installs get the spans_local + ON CLUSTER + Replicated
+		// rewrite, identical to operation_summary_5m's issuance.
+		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS operation_group_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, op_group, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   op_group,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)  AS time_bucket,
+		   countState()                                AS span_count_state,
+		   countIfState(status_code = 'error')         AS error_count_state,
+		   sumState(duration)                          AS duration_sum_state,
+		   quantilesState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   countIfState(duration <= %d)                AS apdex_satisfied_state,
+		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
+		 FROM spans
+		 GROUP BY service_name, op_group, time_bucket`, apdexT, apdexT, apdex4T),
+
 		// spanmetrics_{1m,10s,1s}: "every metric is a doorway" multi-grain
 		// span-metrics rollups (v0.8.50, doorway Phase D). A SUPERSET of
 		// operation_summary_5m's dims — adds kind / status_code / http_route so

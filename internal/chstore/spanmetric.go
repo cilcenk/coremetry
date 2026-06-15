@@ -1043,6 +1043,18 @@ func groupKeyExpr(key string) (string, []any) {
 	switch {
 	case strings.HasPrefix(key, "resource."):
 		return "toString(res_values[indexOf(res_keys, ?)])", []any{strings.TrimPrefix(key, "resource.")}
+	// op_group — the normalized operation-shape column (group_id rel B).
+	// Lets Explore's groupBy=op_group fold the high-cardinality raw-name
+	// tail (GET /orders/8421, …) into shape rows (GET /orders/:id) on the
+	// spans/metric group-by path. Resolved to the dedicated LowCardinality
+	// column, not the attr-array fallback. NOTE: the existing `operation`
+	// alias is intentionally left mapping to the raw `name` column
+	// (wellKnown["operation"]="name") — re-pointing it to op_group would
+	// silently change every existing groupBy=operation query + the
+	// MetricLabelValues value-suggester, which is a behaviour change, not a
+	// trivial alias. The explicit `op_group` key is the normalized handle.
+	case key == "op_group":
+		return "toString(op_group)", nil
 	case strings.HasPrefix(key, "span."):
 		name := strings.TrimPrefix(key, "span.")
 		if col, ok := wellKnown[name]; ok {

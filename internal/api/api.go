@@ -1455,7 +1455,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			ops, err := s.store.GetOperationSummary(r.Context(), svc, since, from, to)
+			ops, err := s.store.GetOperationSummary(r.Context(), svc, since, from, to, false)
 			if err != nil {
 				log.Printf("[svc-bundle] operations %s: %v", svc, err)
 				return
@@ -6035,13 +6035,30 @@ func (s *Server) svcSpanBreakdown(w http.ResponseWriter, r *http.Request) {
 
 // svcOperationSummary returns per-operation aggregates for a single
 // service. Drives the Operations table on the service detail page.
+// svcOpsCacheKey builds the serveCached key for the per-service operation
+// summary. normalized is part of the key because raw-name and op_group-shape
+// groupings return different row sets for the SAME window — omitting it would
+// cross-poison the two cached results (the v0.5.187 class of bug: a key that
+// doesn't hash every input that changes the response). Extracted as a pure
+// function (v0.5.447 regression-test pattern) so op_group_cache_key_test.go can
+// pin the normalized-distinctness invariant without a live server.
+func svcOpsCacheKey(svc, since, from, to string, normalized bool) string {
+	return fmt.Sprintf("svc-ops:svc=%s:since=%s:from=%s:to=%s:norm=%t",
+		svc, since, from, to, normalized)
+}
+
 func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	svc := r.PathValue("name")
 	since := parseDuration(q.Get("since"), 24*time.Hour)
 	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
-	key := fmt.Sprintf("svc-ops:svc=%s:since=%s:from=%s:to=%s",
-		svc, q.Get("since"), q.Get("from"), q.Get("to"))
+	// normalized=1 groups operations by op_group (normalized shape;
+	// group_id rel B) instead of raw name. MUST be in the cache key —
+	// raw and normalized return different row sets for the same window,
+	// so omitting it would cross-poison the two (the v0.5.187 class of
+	// bug: a key that doesn't hash all inputs).
+	normalized := q.Get("normalized") == "1"
+	key := svcOpsCacheKey(svc, q.Get("since"), q.Get("from"), q.Get("to"), normalized)
 	// 30s TTL — operation set changes on deploys (minutes
 	// apart), not seconds. With the SWR tier in cache.go, a
 	// 30s soft TTL still gives 90s of stale-but-usable
@@ -6051,7 +6068,7 @@ func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	// half-the-time forced an upstream re-fetch the operator
 	// would never notice if it was stale.
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetOperationSummary(r.Context(), svc, since, from, to)
+		return s.store.GetOperationSummary(r.Context(), svc, since, from, to, normalized)
 	})
 }
 

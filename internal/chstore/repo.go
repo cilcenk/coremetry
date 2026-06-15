@@ -537,9 +537,26 @@ const SparklineBuckets = 30
 // caller's "fall back to raw spans" path activates on error so a
 // fresh install whose MV hasn't been backfilled yet still serves
 // /services/{name}/operations.
-func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winStart, winEnd time.Time) ([]OperationSummary, error) {
+// queryOperationsFromMV reads the per-operation rollup MV. When
+// normalized is true it reads operation_group_summary_5m keyed by the
+// normalized op_group shape (group_id rel B) instead of
+// operation_summary_5m keyed by the raw operation name; op_group is
+// aliased back to the OperationSummary.Name field so the read path,
+// scanner, and frontend render identically. The ungrouped '' bucket
+// (old/pre-Release-A spans) is excluded so the normalized list stays
+// clean. When normalized is false the behaviour is byte-for-byte the
+// pre-rel-B path.
+func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winStart, winEnd time.Time, normalized bool) ([]OperationSummary, error) {
 	if service == "" {
 		return nil, fmt.Errorf("queryOperationsFromMV: service required")
+	}
+	// Pick the MV + grouping column. op_group is aliased AS name so the
+	// rest of this function (scan into r.Name, sparkline idxByName) is
+	// shared verbatim across both modes. opFilter excludes the ungrouped
+	// '' bucket in normalized mode only.
+	mvTable, nameCol, opFilter := "operation_summary_5m", "name", ""
+	if normalized {
+		mvTable, nameCol, opFilter = "operation_group_summary_5m", "op_group", " AND op_group != ''"
 	}
 	// v0.5.299 — Operator-reported: "No operations" on services
 	// that DO have traffic. Root cause: time_bucket holds the
@@ -556,9 +573,12 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	// is included.
 	bucketStart := winStart.Truncate(5 * time.Minute)
 	// First pass: aggregate rollup per name across the window.
+	// nameCol/mvTable/opFilter are server-side constants (never user
+	// input) so the interpolation is injection-safe; the window bounds
+	// stay parameterised.
 	const apdexT = 200.0
 	rows, err := s.conn.Query(ctx, `
-		SELECT name,
+		SELECT `+nameCol+` AS name,
 		       countMerge(span_count_state)                            AS span_count,
 		       countMerge(error_count_state)                           AS error_count,
 		       sumMerge(duration_sum_state) / 1e6
@@ -569,9 +589,9 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		       (countMerge(apdex_satisfied_state)
 		         + countMerge(apdex_tolerating_state) / 2)
 		         / nullIf(countMerge(span_count_state), 0)             AS apdex
-		FROM operation_summary_5m
-		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
-		GROUP BY name
+		FROM `+mvTable+`
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
+		GROUP BY `+nameCol+`
 		ORDER BY span_count DESC
 		LIMIT 500
 		SETTINGS max_execution_time = 10,
@@ -624,14 +644,14 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		bucketSec = 1
 	}
 	bucketRows, err := s.conn.Query(ctx, `
-		SELECT name,
+		SELECT `+nameCol+` AS name,
 		       intDiv(toUInt32(time_bucket) - toUInt32(?), ?) AS bidx,
 		       countMerge(span_count_state)                   AS c,
 		       countMerge(error_count_state)                  AS e,
 		       arrayElement(quantilesMerge(0.99)(duration_q_state), 1) / 1e6 AS p99
-		FROM operation_summary_5m
-		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
-		GROUP BY name, bidx
+		FROM `+mvTable+`
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
+		GROUP BY `+nameCol+`, bidx
 		SETTINGS max_execution_time = 10,
 		         optimize_skip_unused_shards = 1`,
 		bucketStart, bucketSec, service, bucketStart, winEnd)
@@ -690,7 +710,14 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 // queries run sequentially (not parallel) because the cache key is
 // shared and the second one is small/fast enough that the round-trip
 // cost dominates over its execution time.
-func (s *Store) GetOperationSummary(ctx context.Context, service string, since time.Duration, from, to time.Time) ([]OperationSummary, error) {
+// normalized=true groups the operations by op_group (the normalized
+// operation-shape column; group_id rel B) instead of the raw operation
+// name — both the MV path (operation_group_summary_5m) and the raw-spans
+// fallback group by op_group and exclude the ungrouped '' bucket. The
+// OperationSummary.Name field carries the op_group value in that mode, so
+// the scanner, sparkline, and frontend are unchanged. normalized=false is
+// byte-for-byte the pre-rel-B behaviour.
+func (s *Store) GetOperationSummary(ctx context.Context, service string, since time.Duration, from, to time.Time, normalized bool) ([]OperationSummary, error) {
 	// Resolve the absolute [winStart, winEnd] up front so the sparkline
 	// bucketing query uses the exact same window as the aggregate.
 	// Using time.Now() twice in the two query branches would skew the
@@ -725,7 +752,7 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	// which path is serving each request.
 	useMV := winEnd.Sub(winStart) >= 5*time.Minute
 	if useMV {
-		out, err := s.queryOperationsFromMV(ctx, service, winStart, winEnd)
+		out, err := s.queryOperationsFromMV(ctx, service, winStart, winEnd, normalized)
 		if err != nil {
 			log.Printf("[ops] service=%s MV path errored: %v — falling through to raw spans",
 				service, err)
@@ -739,15 +766,26 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		}
 	}
 
+	// Raw-spans fallback. In normalized mode group by the op_group shape
+	// and exclude the ungrouped '' bucket so the list matches the MV
+	// path; otherwise group by the raw name. nameCol is a server-side
+	// constant, injection-safe to interpolate; bounds stay parameterised
+	// (LIMIT + max_execution_time + time-bounded WHERE preserved either
+	// way — CLAUDE.md raw-spans constraint).
+	rawNameCol := "name"
 	var wc whereClause
 	wc.add("time >= ?", winStart)
 	wc.add("time <= ?", winEnd)
 	if service != "" {
 		wc.add("service_name = ?", service)
 	}
+	if normalized {
+		rawNameCol = "op_group"
+		wc.add("op_group != ''") // no placeholder — adds zero args
+	}
 	const apdexT = 200.0
 	rows, err := s.conn.Query(ctx, `
-		SELECT name,
+		SELECT `+rawNameCol+` AS name,
 		       count()                                       AS span_count,
 		       countIf(status_code = 'error')                AS error_count,
 		       avg(duration) / 1e6                           AS avg_ms,
@@ -758,7 +796,7 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		         + countIf(duration > ? * 1e6 AND duration <= ? * 1e6) / 2)
 		         / nullIf(count(), 0)                        AS apdex
 		FROM spans `+wc.sql()+`
-		GROUP BY name
+		GROUP BY `+rawNameCol+`
 		ORDER BY span_count DESC
 		LIMIT 500
 		SETTINGS max_execution_time = 20,
@@ -836,15 +874,19 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		args = append(args, n)
 	}
 
+	// Same rawNameCol switch as the aggregate query above: in normalized
+	// mode select/filter/group by op_group (aliased back AS name so the
+	// scanner + idxByName lookup are shared). wc already carries the
+	// op_group != '' predicate appended above.
 	sparkRows, err := s.conn.Query(ctx, `
-		SELECT name,
+		SELECT `+rawNameCol+` AS name,
 		       intDiv(toUInt32(time) - toUInt32(?), ?) AS bidx,
 		       count()                                 AS c,
 		       countIf(status_code = 'error')          AS e,
 		       quantile(0.99)(duration) / 1e6          AS p99
 		FROM spans `+wc.sql()+`
-		  AND name IN (`+strings.Join(holders, ",")+`)
-		GROUP BY name, bidx
+		  AND `+rawNameCol+` IN (`+strings.Join(holders, ",")+`)
+		GROUP BY `+rawNameCol+`, bidx
 		SETTINGS max_execution_time = 15`,
 		args...)
 	if err != nil {

@@ -432,6 +432,13 @@ func (s *Server) Start() error {
 	// so the browser triggers a download rather than rendering.
 	mux.HandleFunc("GET /api/traces/export.csv", s.exportTracesCSV)
 	mux.HandleFunc("GET /api/traces/aggregate", s.getTraceAggregate)
+	// v0.8.x (Gap 3) — span-relationship / structural trace operators.
+	// Two predicate sets (parent / child) + a kind (child-of /
+	// descendant-of / sequence) + direct-only flag → a BOUNDED self-join
+	// over raw spans (the one legitimate MV bypass) resolving a
+	// LIMIT-capped trace-id list, then the existing GetTraces page fetch.
+	// Read-only (viewer baseline); serveCached 30s with all-input key.
+	mux.HandleFunc("GET /api/traces/relations", s.getTracesByRelation)
 	// v0.5.264 — trace shape clustering. Groups traces by their
 	// sorted-unique (service, operation) fingerprint; surfaces
 	// the dominant call-pattern cohorts. Sample-based so the
@@ -2878,6 +2885,103 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 	key := "traces-agg:" + r.URL.RawQuery
 	s.serveCached(w, r, key, 20*time.Second, func() (any, error) {
 		return s.store.GetTraceAggregate(r.Context(), f)
+	})
+}
+
+// getTracesByRelation serves the span-relationship / structural query
+// (v0.8.x, Gap 3). The operator builds two predicate sets — parent and
+// child — plus a relation kind (child-of / descendant-of / sequence) and an
+// optional direct-only flag. The store runs a BOUNDED self-join over raw
+// spans (the one legitimate MV bypass — structural parent/child topology
+// cannot be precomputed in any *_5m), resolves a LIMIT-capped trace-id list,
+// then re-fetches the summary rows via the existing GetTraces path so the
+// list render is identical to List / Aggregated / Shapes.
+//
+// Read-only, no auth gate beyond the viewer baseline. serveCached 30s with a
+// key that hashes ALL inputs (parent+child filter JSON via sorted+FNV, plus
+// kind / direct / window).
+func (s *Server) getTracesByRelation(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	from := parseTime(q.Get("from"))
+	to := parseTime(q.Get("to"))
+	if from.IsZero() || to.IsZero() || !to.After(from) {
+		http.Error(w, "relation query requires a valid from/to window", http.StatusBadRequest)
+		return
+	}
+
+	kind := chstore.RelationKind(strings.TrimSpace(q.Get("kind")))
+	switch kind {
+	case chstore.RelChildOf, chstore.RelDescendantOf, chstore.RelSequence:
+		// ok
+	case "":
+		kind = chstore.RelChildOf
+	default:
+		http.Error(w, "invalid relation kind (child-of | descendant-of | sequence)", http.StatusBadRequest)
+		return
+	}
+
+	parent := parseFilters(q.Get("parent"))
+	child := parseFilters(q.Get("child"))
+	// Predicate-count cap per side — stops a crafted URL from fanning out the
+	// self-join. Mirrors the store-side relMaxPredicates; reject loudly here.
+	if len(parent) > 8 || len(child) > 8 {
+		http.Error(w, "too many predicates (max 8 per side)", http.StatusBadRequest)
+		return
+	}
+	if len(parent) == 0 && len(child) == 0 {
+		http.Error(w, "relation query requires at least one parent or child predicate", http.StatusBadRequest)
+		return
+	}
+
+	limit := parseInt(q.Get("limit"), 50)
+	if limit < 1 {
+		limit = 50
+	}
+
+	rf := chstore.RelationFilter{
+		Parent: parent,
+		Child:  child,
+		Kind:   kind,
+		Direct: q.Get("direct") == "true",
+		From:   from,
+		To:     to,
+		Limit:  limit,
+	}
+
+	// Cache key hashes ALL inputs. Parent/child filter JSON go through the
+	// FNV digest (sorted+stable per the v0.5.187 rule), window through raw
+	// nanos (keeps a relative range stable within the TTL, v0.5.184 class),
+	// kind/direct/limit appended verbatim.
+	key := fmt.Sprintf("traces-rel:k=%s:d=%t:l=%d:from=%s:to=%s:p=%s:c=%s",
+		kind, rf.Direct, limit, q.Get("from"), q.Get("to"),
+		jsonSetDigest(q.Get("parent")), jsonSetDigest(q.Get("child")))
+
+	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		ids, hasMore, err := s.store.GetTracesByRelation(r.Context(), rf)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return map[string]any{"traceIds": []string{}, "traces": []any{}, "hasMore": false}, nil
+		}
+		// Re-fetch the summary rows for the resolved trace IDs. The
+		// `trace_id IN (…)` clause rides the idx_trace bloom skip index so
+		// this is bounded by the page size, not the window.
+		tf := chstore.TraceFilter{
+			TraceIDs:  ids,
+			From:      from,
+			To:        to,
+			Sort:      q.Get("sort"),
+			Order:     q.Get("order"),
+			Limit:     len(ids),
+			CountMode: "skip",
+		}
+		traces, _, _, terr := s.store.GetTraces(r.Context(), tf)
+		if terr != nil {
+			return nil, terr
+		}
+		return map[string]any{"traceIds": ids, "traces": traces, "hasMore": hasMore}, nil
 	})
 }
 

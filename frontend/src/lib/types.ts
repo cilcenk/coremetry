@@ -1128,6 +1128,25 @@ export interface FilterGroup {
   groups?: FilterGroup[]; // ≤1 level of nesting in v1
 }
 
+// ── Span-relationship / structural trace operators (Gap 3) ───────────────────
+// child-of      — child span is a DIRECT child of the parent span
+// descendant-of — child span is a child OR grandchild (depth ≤ 2)
+// sequence      — parent span happens-before the child span (A.end ≤ B.start)
+export type RelationKind = 'child-of' | 'descendant-of' | 'sequence';
+
+export interface RelationFilter {
+  parent: FilterExpr[]; // predicates on the parent / earlier span
+  child: FilterExpr[];  // predicates on the child / later span
+  kind: RelationKind;
+  direct: boolean;      // descendant-of: collapse to a direct child-of edge
+}
+
+export interface RelationResponse {
+  traceIds: string[];
+  traces: TraceRow[];
+  hasMore?: boolean;
+}
+
 // ── Span metrics (Tempo span-metrics + Dynatrace MDA) ────────────────────────
 
 export type SpanAgg =

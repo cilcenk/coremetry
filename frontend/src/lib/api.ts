@@ -20,6 +20,7 @@ import type {
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
   Feedback,
+  RelationResponse, RelationKind, FilterExpr,
 } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 
@@ -342,6 +343,31 @@ export const api = {
   traces:    (params: TracesParams)  => get<TracesResponse>(`/api/traces?${qs(params)}`),
   tracesAggregate: (params: AggregateParams) =>
     get<AggregateRow[] | null>(`/api/traces/aggregate?${qs(params)}`),
+  // Span-relationship / structural query (Gap 3). Parent + child predicate
+  // sets are JSON-encoded into the query string; the backend runs a bounded
+  // self-join over raw spans and returns the resolved trace rows.
+  tracesByRelation: (params: {
+    parent: FilterExpr[];
+    child: FilterExpr[];
+    kind: RelationKind;
+    direct: boolean;
+    from?: number;
+    to?: number;
+    limit?: number;
+    sort?: string;
+    order?: string;
+  }) =>
+    get<RelationResponse>(`/api/traces/relations?${qs({
+      parent: params.parent.length ? JSON.stringify(params.parent) : undefined,
+      child: params.child.length ? JSON.stringify(params.child) : undefined,
+      kind: params.kind,
+      direct: params.direct ? 'true' : undefined,
+      from: params.from,
+      to: params.to,
+      limit: params.limit,
+      sort: params.sort,
+      order: params.order,
+    })}`),
   trace:     (id: string)            => get<TraceDetailResponse>(`/api/traces/${id}`),
 
   logs:      (params: LogsParams)    => get<LogsResponse>(`/api/logs?${qs(params)}`),

@@ -26,6 +26,7 @@ import { OperationPicker } from '@/components/OperationPicker';
 import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
+import { RelationBuilder } from '@/components/RelationBuilder';
 import { Button } from '@/components/ui/Button';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
@@ -36,7 +37,7 @@ import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { tsDateTime, timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
-import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries } from '@/lib/types';
+import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries, RelationFilter, RelationKind } from '@/lib/types';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
@@ -57,7 +58,7 @@ const QUICK_ATTR_DEFAULT: Record<string, string> = {
   'db.system': 'oracle',
 };
 
-type View = 'list' | 'aggregate' | 'shapes';
+type View = 'list' | 'aggregate' | 'shapes' | 'relations';
 type GroupBy =
   | 'operation' | 'service' | 'kind' | 'status'
   | 'http_method' | 'http_route' | 'http_status'
@@ -150,7 +151,7 @@ function TracesPageInner() {
   const [range, setRange] = useUrlRange('30m');
   const [view, setView] = useState<View>(() => {
     const v = searchParams.get('view');
-    return v === 'aggregate' || v === 'shapes' ? v : 'list';
+    return v === 'aggregate' || v === 'shapes' || v === 'relations' ? v : 'list';
   });
 
   // List view server sort.
@@ -193,6 +194,27 @@ function TracesPageInner() {
   const advGroupParam = useMemo(() => encodeFilterGroup(advGroup), [advGroup]);
   const [extraCols, setExtraCols] = useState<string[]>(
     () => (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean));
+
+  // Relations view (Gap 3) — structural query state. URL-reflected so a
+  // shared link reproduces the parent/child predicates + kind + direct flag.
+  const [relation, setRelation] = useState<RelationFilter>(() => {
+    const parseSet = (raw: string | null): FilterExpr[] => {
+      if (!raw) return [];
+      try { const v = JSON.parse(raw); return Array.isArray(v) ? v : []; } catch { return []; }
+    };
+    const k = searchParams.get('relKind');
+    const kind: RelationKind = k === 'descendant-of' || k === 'sequence' ? k : 'child-of';
+    return {
+      parent: parseSet(searchParams.get('relParent')),
+      child: parseSet(searchParams.get('relChild')),
+      kind,
+      direct: searchParams.get('relDirect') === 'true',
+    };
+  });
+  // relNonce bumps on "Run" so the relation fetch re-fires even when the
+  // predicate sets are unchanged (operator re-runs after a data window shift).
+  const [relNonce, setRelNonce] = useState(0);
+  const [relErr, setRelErr] = useState<string | null>(null);
 
   // Header viz mode + interaction state.
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
@@ -239,12 +261,16 @@ function TracesPageInner() {
       ['filters',  advGroupParam ? '' : encodeFilters(advFilters)],
       ['filterGroup', advGroupParam],
       ['cols',     extraCols.join(',')],
+      ['relKind',   view === 'relations' && relation.kind !== 'child-of' ? relation.kind : ''],
+      ['relDirect', view === 'relations' && relation.direct ? 'true' : ''],
+      ['relParent', view === 'relations' && relation.parent.length ? JSON.stringify(relation.parent) : ''],
+      ['relChild',  view === 'relations' && relation.child.length ? JSON.stringify(relation.child) : ''],
     ]);
     const target = qs ? `?${qs}` : '';
     if (typeof window !== 'undefined' && target !== window.location.search) {
       navigate(`/traces${target}`, { preventScrollReset: true, replace: true });
     }
-  }, [range, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam, extraCols, navigate]);
+  }, [range, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam, extraCols, relation, navigate]);
 
   // ── List fetch ───────────────────────────────────────────────────────────
   const listRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -276,6 +302,47 @@ function TracesPageInner() {
       setData(null);
     });
   }, [view, listRangeNs, sort, order, page, filter, advFilters, advGroupParam, extraCols, showTotal, retryNonce]);
+
+  // ── Relations fetch (Gap 3) ────────────────────────────────────────────────
+  // Structural self-join over raw spans. Fires only in relations view, and
+  // only on an explicit Run (relNonce) or a range/sort change — NOT on every
+  // predicate keystroke (the self-join is the codebase's most expensive read;
+  // we never fire it implicitly). Result rows land in the SAME `data` state
+  // the list table renders, so the result list is byte-identical to List view.
+  const relRangeNs = useMemo(() => timeRangeToNs(range), [range]);
+  useEffect(() => {
+    if (view !== 'relations') return;
+    // Nothing to run until the operator has entered at least one predicate.
+    if (relation.parent.length === 0 && relation.child.length === 0) {
+      setData(null);
+      setRelErr(null);
+      return;
+    }
+    setData(undefined);
+    setRelErr(null);
+    const { from, to } = relRangeNs;
+    let cancelled = false;
+    api.tracesByRelation({
+      parent: relation.parent,
+      child: relation.child,
+      kind: relation.kind,
+      direct: relation.direct,
+      from, to, limit: 50, sort, order,
+    }).then(res => {
+      if (cancelled) return;
+      // Adapt RelationResponse → TracesResponse so the shared list render
+      // (gated on view === 'list' || 'relations') consumes it unchanged.
+      setData({ traces: res.traces ?? [], hasMore: res.hasMore });
+    }).catch((e: unknown) => {
+      if (cancelled) return;
+      setRelErr(e instanceof Error ? e.message : 'Relation query failed');
+      setData(null);
+    });
+    return () => { cancelled = true; };
+  // relation.parent/child are intentionally NOT deps — the query only re-runs
+  // on explicit Run (relNonce) or range/sort change, never per keystroke.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, relRangeNs, sort, order, relation.kind, relation.direct, relNonce]);
 
   // v0.8.72 — TRUE span volume over the selected window (not the 50-row table
   // page). Aggregated count/errors/p99 per ~30 buckets, mirroring the table's
@@ -561,6 +628,10 @@ function TracesPageInner() {
               title="Cluster traces by their (service, operation) signature — find dominant call patterns at a glance">
               Shapes
             </button>
+            <button onClick={() => setView('relations')} className={view === 'relations' ? 'active' : ''}
+              title="Structural query — find traces by span relationships: child-of / descendant-of / sequence (e.g. frontend → payment direct child)">
+              Relations
+            </button>
           </div>
           {view === 'aggregate' && (
             <>
@@ -590,7 +661,19 @@ function TracesPageInner() {
           </div>
         </div>
 
-        {/* Filters */}
+        {/* Relations view — structural query builder replaces the flat filter
+            row. Drives the bounded self-join (GET /api/traces/relations). */}
+        {view === 'relations' && (
+          <RelationBuilder
+            value={relation}
+            onChange={setRelation}
+            onRun={() => setRelNonce(n => n + 1)}
+            running={data === undefined}
+          />
+        )}
+
+        {/* Filters — hidden in relations view (RelationBuilder owns the query). */}
+        {view !== 'relations' && (
         <div className="controls" data-shortcut-search>
           <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
             placeholder="Service…" width={170} onEnter={(v) => apply(v)} />
@@ -665,6 +748,7 @@ function TracesPageInner() {
             </span>
           )}
         </div>
+        )}
 
         {/* Quick-filter chips. */}
         {view === 'list' && traces.length > 0 && (
@@ -701,42 +785,46 @@ function TracesPageInner() {
           </div>
         )}
 
-        {/* Advanced filters. Default = flat chip row (FilterBuilder); the
-            operator can switch to the grouped AND/OR builder for queries the
-            flat conjunction can't express, e.g. (A OR B) AND C. Switching is
-            lossless: flat→grouped seeds the group's top-level leaves from the
-            current chips; grouped→flat flattens the top-level leaves back (and
-            drops any OR / nested structure, which has no flat representation).
-            v0.8.x gap-2. */}
-        <div className="row gap-2" style={{ alignItems: 'center', justifyContent: 'flex-end', marginBottom: -4 }}>
+        {/* Advanced filters — flat chip row by default; the operator can switch
+            to the grouped AND/OR builder for (A OR B) AND C queries (gap-2).
+            flat→grouped seeds the group's top-level leaves from the current
+            chips; grouped→flat flattens them back (OR / nested structure has no
+            flat representation). The whole block is hidden in the relations
+            view (gap-3), which has its own predicate builders. v0.8.x. */}
+        {view !== 'relations' && (
+          <>
+          <div className="row gap-2" style={{ alignItems: 'center', justifyContent: 'flex-end', marginBottom: -4 }}>
+            {!grouped ? (
+              <Button variant="ghost" size="sm"
+                title="Switch to the grouped AND/OR builder for (A OR B) AND C style queries"
+                onClick={() => setAdvGroup({ join: 'AND', filters: advFilters })}>
+                ⊞ Group filters (AND/OR)
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm"
+                title="Back to the flat filter chips (drops any OR / nested groups)"
+                onClick={() => {
+                  setAdvFilters((advGroup?.filters ?? []).filter(f => f.k && f.k.trim()));
+                  setAdvGroup(null);
+                }}>
+                ⊟ Flatten to chips
+              </Button>
+            )}
+          </div>
           {!grouped ? (
-            <Button variant="ghost" size="sm"
-              title="Switch to the grouped AND/OR builder for (A OR B) AND C style queries"
-              onClick={() => setAdvGroup({ join: 'AND', filters: advFilters })}>
-              ⊞ Group filters (AND/OR)
-            </Button>
+            <FilterBuilder value={advFilters} onChange={setAdvFilters}
+              suggestedValues={FILTER_SUGGESTED_VALUES} />
           ) : (
-            <Button variant="ghost" size="sm"
-              title="Back to the flat filter chips (drops any OR / nested groups)"
-              onClick={() => {
-                setAdvFilters((advGroup?.filters ?? []).filter(f => f.k && f.k.trim()));
-                setAdvGroup(null);
-              }}>
-              ⊟ Flatten to chips
-            </Button>
+            <FilterGroupBuilder value={advGroup ?? { join: 'AND', filters: [] }}
+              onChange={setAdvGroup}
+              suggestedValues={FILTER_SUGGESTED_VALUES} />
           )}
-        </div>
-        {!grouped ? (
-          <FilterBuilder value={advFilters} onChange={setAdvFilters}
-            suggestedValues={FILTER_SUGGESTED_VALUES} />
-        ) : (
-          <FilterGroupBuilder value={advGroup ?? { join: 'AND', filters: [] }}
-            onChange={setAdvGroup}
-            suggestedValues={FILTER_SUGGESTED_VALUES} />
+          </>
         )}
 
-        {/* List view. */}
-        {view === 'list' && data === undefined && <TableSkeleton rows={10} cols={7} />}
+        {/* List + Relations views share the result table (Relations populates
+            the same `data` state, so the render below is identical). */}
+        {(view === 'list' || view === 'relations') && data === undefined && <TableSkeleton rows={10} cols={7} />}
         {view === 'list' && listErr && (
           <Empty icon="⚠" title="Query failed">
             <p>The trace query errored or timed out. Try a narrower time range, then retry.</p>
@@ -744,10 +832,36 @@ function TracesPageInner() {
             <Button variant="secondary" size="sm" onClick={() => setRetryNonce(n => n + 1)}>↻ Retry</Button>
           </Empty>
         )}
+        {view === 'relations' && relErr && (
+          <Empty icon="⚠" title="Relation query failed">
+            <p>The structural self-join errored or timed out. Try a narrower time range or fewer predicates, then re-run.</p>
+            <p className="mono" style={{ fontSize: 12, color: 'var(--text2)', wordBreak: 'break-word', margin: '8px 0' }}>{relErr}</p>
+            <Button variant="secondary" size="sm" onClick={() => setRelNonce(n => n + 1)}>↻ Retry</Button>
+          </Empty>
+        )}
+        {view === 'relations' && !relErr && data === null && relation.parent.length === 0 && relation.child.length === 0 && (
+          <Empty icon="⮑" title="Build a structural query">
+            <p style={{ color: 'var(--text2)' }}>
+              Add a predicate to the parent and/or child builder above, pick a relation
+              kind (child-of / descendant-of / sequence), then Run. Example:
+              parent <code>service.name = frontend</code>, child <code>service.name = payment</code>,
+              kind <b>child of</b> finds traces where frontend directly calls payment.
+            </p>
+          </Empty>
+        )}
+        {view === 'relations' && !relErr && data && traces.length === 0 && (
+          <Empty icon="∅" title="No traces match this relationship">
+            <p style={{ color: 'var(--text2)' }}>
+              No traces in this window where the parent/child predicates hold under
+              the chosen relation. Widen the time range, relax a predicate, or switch
+              to a looser kind (descendant-of / sequence).
+            </p>
+          </Empty>
+        )}
         {view === 'list' && !listErr && data && traces.length === 0 && (
           <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')} />
         )}
-        {view === 'list' && data && traces.length > 0 && (
+        {(view === 'list' || view === 'relations') && data && traces.length > 0 && (
           <>
             {/* Column toolbar — attribute columns are added via "+ Column"
                 (ColumnManager) and removed by their chips. VirtualTable's shared

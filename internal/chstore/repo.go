@@ -1027,6 +1027,15 @@ type TraceFilter struct {
 	// drill-in to surface only traces where caller × callee
 	// actually co-occur.
 	RequireServices []string
+	// TraceIDs restricts the result to this explicit set of trace IDs
+	// (rendered as `trace_id IN (…)`). Used by the relations view
+	// (relations.go): the bounded self-join resolves a page of trace
+	// IDs, then GetTraces re-fetches their summary rows for the list
+	// render. The `trace_id IN (…)` clause rides the idx_trace bloom
+	// skip index so the re-fetch is bounded by the page size, not the
+	// window. Caller caps the slice length (≤ page size). When set, the
+	// trace_summary MV fast-path is disqualified (raw access required).
+	TraceIDs []string
 	MinMs    float64
 	MaxMs    float64
 	AttrKey  string
@@ -1152,6 +1161,18 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 			wc.add("startsWith(trace_id, ?)", f.TraceID)
 		}
 	}
+	if len(f.TraceIDs) > 0 {
+		// Explicit trace-id set (relations view). `trace_id IN (…)` rides
+		// the idx_trace bloom skip index so even a wide window scans only
+		// the page's spans. Caller caps the slice length.
+		holders := make([]string, len(f.TraceIDs))
+		args := make([]any, len(f.TraceIDs))
+		for i, id := range f.TraceIDs {
+			holders[i] = "?"
+			args[i] = id
+		}
+		wc.add("trace_id IN ("+strings.Join(holders, ",")+")", args...)
+	}
 	if f.HasError {
 		wc.add("status_code = 'error'")
 	}
@@ -1255,6 +1276,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		len(f.Filters) == 0 &&
 		!f.FilterRoot.hasPredicate() &&
 		len(f.RequireServices) == 0 &&
+		len(f.TraceIDs) == 0 &&
 		(f.CountMode == "skip" || f.CountMode == "") {
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
 		if err == nil {

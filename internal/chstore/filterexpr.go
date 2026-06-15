@@ -63,6 +63,53 @@ var wellKnown = map[string]string{
 // pushes the key as a parameter. For numeric ops we cast to Float64 so that
 // even string-stored attributes compare correctly when they parse.
 func (f FilterExpr) SQL() (string, []any, error) {
+	return f.sql("")
+}
+
+// SQLAliased is the alias-qualified twin of SQL: every column reference is
+// prefixed with `<alias>.` so the fragment is safe to use inside a self-join
+// over `spans AS <alias>` (relations.go, v0.8.x). With an empty alias it is
+// byte-identical to SQL() — the existing flat-filter callers are unchanged.
+//
+// Only the alias is concatenated into the SQL text; it is validated by the
+// caller (relations.go uses the fixed literals "c" / "p"), never threaded
+// from user input. Keys and values still flow exclusively as `?` params.
+func (f FilterExpr) SQLAliased(alias string) (string, []any, error) {
+	return f.sql(alias)
+}
+
+// qualCol prefixes a well-known column expression (which may itself be a
+// compound expression like "(duration / 1e6)") with the join alias. An empty
+// alias is a no-op so SQL() stays byte-identical to its pre-alias form.
+func qualCol(alias, col string) string {
+	if alias == "" {
+		return col
+	}
+	// Compound well-known expr — only `(duration / 1e6)` today. Qualify the
+	// inner column rather than the whole parenthesised expression.
+	if strings.HasPrefix(col, "(") {
+		return strings.Replace(col, "duration", alias+".duration", 1)
+	}
+	return alias + "." + col
+}
+
+// qualArr prefixes the array-lookup columns (attr/res keys+values) with the
+// join alias. arrCol is the bare expression, e.g.
+// "attr_values[indexOf(attr_keys, ?)]" or "has(res_keys, ?)".
+func qualArr(alias, expr string) string {
+	if alias == "" {
+		return expr
+	}
+	r := strings.NewReplacer(
+		"attr_values", alias+".attr_values",
+		"attr_keys", alias+".attr_keys",
+		"res_values", alias+".res_values",
+		"res_keys", alias+".res_keys",
+	)
+	return r.Replace(expr)
+}
+
+func (f FilterExpr) sql(alias string) (string, []any, error) {
 	op := strings.ToUpper(strings.TrimSpace(f.Op))
 	if op == "" {
 		op = "="
@@ -83,22 +130,22 @@ func (f FilterExpr) SQL() (string, []any, error) {
 	switch {
 	case strings.HasPrefix(f.Key, "resource."):
 		name := strings.TrimPrefix(f.Key, "resource.")
-		lhs = "res_values[indexOf(res_keys, ?)]"
+		lhs = qualArr(alias, "res_values[indexOf(res_keys, ?)]")
 		args = append(args, name)
 	case strings.HasPrefix(f.Key, "span."):
 		name := strings.TrimPrefix(f.Key, "span.")
 		// Allow span.<known> to fall back to the dedicated column for indexing
 		if col, ok := wellKnown[name]; ok {
-			lhs = col
+			lhs = qualCol(alias, col)
 		} else {
-			lhs = "attr_values[indexOf(attr_keys, ?)]"
+			lhs = qualArr(alias, "attr_values[indexOf(attr_keys, ?)]")
 			args = append(args, name)
 		}
 	default:
 		if col, ok := wellKnown[f.Key]; ok {
-			lhs = col
+			lhs = qualCol(alias, col)
 		} else {
-			lhs = "attr_values[indexOf(attr_keys, ?)]"
+			lhs = qualArr(alias, "attr_values[indexOf(attr_keys, ?)]")
 			args = append(args, f.Key)
 		}
 	}
@@ -116,19 +163,19 @@ func (f FilterExpr) SQL() (string, []any, error) {
 		switch {
 		case strings.HasPrefix(f.Key, "resource."):
 			name := strings.TrimPrefix(f.Key, "resource.")
-			hasExpr = "has(res_keys, ?)"; hArgs = []any{name}
+			hasExpr = qualArr(alias, "has(res_keys, ?)"); hArgs = []any{name}
 		case strings.HasPrefix(f.Key, "span."):
 			name := strings.TrimPrefix(f.Key, "span.")
 			if _, ok := wellKnown[name]; ok {
-				hasExpr = "(" + wellKnown[name] + " != '')"
+				hasExpr = "(" + qualCol(alias, wellKnown[name]) + " != '')"
 			} else {
-				hasExpr = "has(attr_keys, ?)"; hArgs = []any{name}
+				hasExpr = qualArr(alias, "has(attr_keys, ?)"); hArgs = []any{name}
 			}
 		default:
 			if _, ok := wellKnown[f.Key]; ok {
-				hasExpr = "(" + wellKnown[f.Key] + " != '')"
+				hasExpr = "(" + qualCol(alias, wellKnown[f.Key]) + " != '')"
 			} else {
-				hasExpr = "has(attr_keys, ?)"; hArgs = []any{f.Key}
+				hasExpr = qualArr(alias, "has(attr_keys, ?)"); hArgs = []any{f.Key}
 			}
 		}
 		if neg {

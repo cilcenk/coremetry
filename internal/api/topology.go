@@ -253,6 +253,39 @@ func excludeKeyDigest(m map[string]bool) string {
 	return fmt.Sprintf("%x", h.Sum64())
 }
 
+// jsonSetDigest hashes a FilterExpr[]-JSON string into a stable, distinct
+// cache-key fragment (sorted + FNV-64a, per the v0.5.187 rule). Used by the
+// relations handler for the parent/child predicate sets. It parses the JSON
+// to a canonical per-predicate string and SORTS before hashing so that two
+// requests whose predicate arrays differ only in element ORDER (a conjunction
+// — order is semantically irrelevant) share a cache entry, while any genuine
+// difference (a changed op/value/key) produces a distinct digest. Falls back
+// to hashing the raw bytes when the JSON doesn't parse, so a malformed input
+// still keys distinctly rather than collapsing to a shared key.
+func jsonSetDigest(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "0"
+	}
+	exprs := parseFilters(raw)
+	h := fnv.New64a()
+	if len(exprs) == 0 {
+		// Unparseable / empty-after-parse — hash the raw bytes so distinct
+		// malformed inputs don't cross-poison each other.
+		h.Write([]byte(raw))
+		return fmt.Sprintf("r%x", h.Sum64())
+	}
+	canon := make([]string, 0, len(exprs))
+	for _, e := range exprs {
+		canon = append(canon, e.Key+"\x1f"+e.Op+"\x1f"+strings.Join(e.Values, "\x1e"))
+	}
+	sort.Strings(canon)
+	for _, c := range canon {
+		h.Write([]byte(c))
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%x", h.Sum64())
+}
+
 // getServiceTopology delivers the full service-level interaction
 // graph for a time window. No depth bound — the entire backend
 // fabric is small enough (tens to low hundreds of services) to

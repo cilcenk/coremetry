@@ -54,7 +54,7 @@ export const AGG_OPTIONS: { v: SpanAgg; label: string; unit?: string }[] = [
 ];
 
 export const SUGGESTED_GROUPBY = [
-  'service.name', 'name', 'kind', 'status_code',
+  'service.name', 'name', 'op_group', 'kind', 'status_code',
   'http.method', 'http.route', 'http.status_code',
   'db.system', 'rpc.method', 'peer.service',
   'resource.host.name', 'resource.deployment.environment',

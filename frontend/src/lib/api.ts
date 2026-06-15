@@ -1294,8 +1294,17 @@ export const api = {
   profileHotspots: (params: { service: string; type?: string; from: number; to: number; limit?: number; top?: number }) =>
     get<ProfileHotspotsResponse>(`/api/profiles/hotspots?${qs(params)}`),
 
-  serviceOperations: (svc: string, r: RangeParams) =>
-    get<OperationSummary[] | null>(`/api/services/${encodeURIComponent(svc)}/operations?${qs(r)}`),
+  // group_id rel C — `normalized` flips the endpoint to its op_group
+  // mode: operations are grouped by normalized shape (GET /users/:id)
+  // instead of raw name. Same OperationSummary shape — `name` carries
+  // the op_group string. Omitted/false = current raw behaviour. The
+  // backend's serveCached key already hashes `normalized` (rel B) so
+  // the two views don't cross-poison. Default is forward-only: old
+  // windows have no op_group yet, so normalized can legitimately be
+  // empty (the page renders an honest empty state, not a blank panel).
+  serviceOperations: (svc: string, r: RangeParams, normalized = false) =>
+    get<OperationSummary[] | null>(
+      `/api/services/${encodeURIComponent(svc)}/operations?${qs(r)}${normalized ? '&normalized=1' : ''}`),
   // serviceBundle — single round trip that returns the three
   // panels the Service detail mount needs (KPI summary,
   // recent problems, operations table). Server fans out to

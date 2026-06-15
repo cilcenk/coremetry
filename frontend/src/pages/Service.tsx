@@ -62,6 +62,13 @@ function ServiceDetailInner() {
   const [info, setInfo] = useState<Service | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
+  // group_id rel C — Raw ⇄ Normalized toggle for the Operations table.
+  // Default RAW (forward-only: old windows have no op_group yet). When
+  // ON, operations are grouped by their normalized shape (GET /users/:id)
+  // instead of raw name. The toggle is opt-in; viewer SEES it (read-only
+  // data, no gating). State is local — not URL-persisted — so a shared
+  // link lands on the familiar raw view.
+  const [normalized, setNormalized] = useState(false);
   // v0.6.51 — this service's SLOs, surfaced as a compact health
   // strip so the service detail page unifies RED + problems +
   // operations + deploys + SLO without bouncing to /slos. listSLOs
@@ -193,6 +200,26 @@ function ServiceDetailInner() {
       .catch(() => { if (!cancelled) setSlos([]); });
     return () => { cancelled = true; };
   }, [svc]);
+
+  // group_id rel C — normalized (op_group) operations are fetched
+  // lazily and only when the Raw ⇄ Normalized toggle is ON. The raw
+  // table already arrives in the bundle, so we don't double-fetch it
+  // here; flipping the toggle re-fetches the op_group shape from the
+  // same /operations endpoint with normalized=1. The query key carries
+  // the `normalized` flag (and svc + window) so the two views cache as
+  // separate entries — no raw/normalized cross-poisoning. uses the
+  // memoized rangeNs window so it doesn't tick now() each render.
+  const normOpsQ = useQuery({
+    queryKey: keys.services.operations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, true),
+    queryFn: () => api.serviceOperations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, true),
+    enabled: !!svc && normalized,
+    staleTime: 60_000,
+  });
+  // The table's data source flips with the toggle: bundle ops when raw,
+  // the op_group query when normalized. Everything downstream (row
+  // renderer, useDataTable sort, sparkline) is unchanged — only `rows`.
+  const displayedOps = normalized ? (normOpsQ.data ?? []) : operations;
+  const opsLoading = normalized && normOpsQ.isLoading;
 
   if (!svc) {
     return (
@@ -381,9 +408,12 @@ function ServiceDetailInner() {
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
             {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}
             {tab === 'operations' && (
-              <OperationsTable service={svc} rows={operations} range={range}
+              <OperationsTable service={svc} rows={displayedOps} range={range}
                 preset={range.preset}
-                onWiden={() => setRange({ preset: '1h' })} />
+                onWiden={() => setRange({ preset: '1h' })}
+                normalized={normalized}
+                onToggleNormalized={setNormalized}
+                loading={opsLoading} />
             )}
             {tab === 'details' && (
               <>
@@ -622,7 +652,7 @@ function TabStrip({ tab, onChange, opCount }: {
   );
 }
 
-function OperationsTable({ service, rows, range, preset, onWiden }: {
+function OperationsTable({ service, rows, range, preset, onWiden, normalized, onToggleNormalized, loading }: {
   service: string;
   rows: OperationSummary[];
   range: TimeRange;
@@ -634,6 +664,13 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
   // windows; on a 7d range, empty really means empty).
   preset?: string;
   onWiden?: () => void;
+  // group_id rel C — Raw ⇄ Normalized toggle. normalized reflects
+  // the current mode; onToggleNormalized flips it (the parent owns
+  // the fetch). loading covers the normalized refetch so the table
+  // shows a Spinner instead of flashing the previous mode's rows.
+  normalized: boolean;
+  onToggleNormalized: (v: boolean) => void;
+  loading: boolean;
 }) {
   // v0.5.374 — client-side filter. At 500+ operations on a
   // monolith service the scroll-then-eyeball loop fails;
@@ -736,7 +773,61 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
     searchRef,
   });
 
+  // group_id rel C — the Raw ⇄ Normalized toggle + helper caption.
+  // Rendered above EVERY state (loading / empty / populated) so the
+  // operator can always flip back to raw — never trap them in a
+  // normalized-empty view with no escape. Reuses the shared <Button>
+  // atom (the v0.7.54 one-design-language rule); no hand-rolled button
+  // styles. Viewer SEES the toggle — read-only data, no gating.
+  const modeToggle = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+      <span style={{ display: 'inline-flex', gap: 4 }}>
+        <Button variant={normalized ? 'ghost' : 'secondary'} size="sm"
+          onClick={() => onToggleNormalized(false)}
+          title="Show operations by raw span name">Raw</Button>
+        <Button variant={normalized ? 'secondary' : 'ghost'} size="sm"
+          onClick={() => onToggleNormalized(true)}
+          title="Collapse id-bearing operations into shapes (GET /users/:id)">Normalized</Button>
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--text3)', maxWidth: 320, lineHeight: 1.3 }}>
+        collapse id-bearing operations into shapes — <code>GET /users/:id</code>
+      </span>
+    </div>
+  );
+
+  // Loading covers the normalized refetch (raw arrives in the bundle).
+  if (loading) {
+    return (
+      <div style={{ marginTop: 18 }}>
+        <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700 }}>⊙ Operations</h3>
+          {modeToggle}
+        </div>
+        <Spinner />
+      </div>
+    );
+  }
+
   if (rows.length === 0) {
+    // group_id rel C — normalized-empty is a DIFFERENT story than
+    // raw-empty: it's not "no traffic", it's "no op_group shapes in
+    // this window yet" (forward-only — grouping starts with newly-
+    // ingested spans, so old windows legitimately have none). Honest
+    // <Empty> message + the toggle stays visible so the operator flips
+    // back to raw without losing the page.
+    if (normalized) {
+      return (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700 }}>⊙ Operations</h3>
+            {modeToggle}
+          </div>
+          <Empty icon="∅" title="No normalized shapes in this window">
+            Normalized grouping starts with newly-ingested spans — no shapes in this window yet.
+          </Empty>
+        </div>
+      );
+    }
     // v0.5.292 — short-window (≤30 min) default hits "no
     // traffic" often enough that operators reported the page
     // as broken. Surface a one-click widen-to-1h instead of
@@ -747,7 +838,10 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
       && ['5m', '10m', '15m', '30m'].includes(preset);
     return (
       <div style={{ marginTop: 18 }}>
-        <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>⊙ Operations</h3>
+        <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700 }}>⊙ Operations</h3>
+          {modeToggle}
+        </div>
         <div className="empty" style={{ padding: 30 }}>
           {isShortWindow ? (
             <>
@@ -773,12 +867,16 @@ function OperationsTable({ service, rows, range, preset, onWiden }: {
 
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'baseline', gap: 8 }}>
+      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
         <h3 style={{ fontSize: 13, fontWeight: 700 }}>⊙ Operations</h3>
+        {modeToggle}
+      </div>
+      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          {normalized && <b style={{ color: 'var(--text2)' }}>normalized · </b>}
           {filter.trim()
             ? `${dt.sortedRows.length} / ${rows.length} matching`
-            : `${rows.length} distinct span name${rows.length === 1 ? '' : 's'} in ${service}`}
+            : `${rows.length} ${normalized ? 'operation shape' : 'distinct span name'}${rows.length === 1 ? '' : 's'} in ${service}`}
         </span>
         <input ref={searchRef} className="field" value={filter} onChange={e => setFilter(e.target.value)}
           placeholder="Filter by name…  ( / to focus, j/k to move, Enter to open )"

@@ -2,7 +2,9 @@ package chstore
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -103,7 +105,21 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 	// the budget, instead of a blanket error card.
 
 	// ── Storage (system.parts is metadata-only, instant) ────────
-	rows, err := s.conn.Query(ctx, `
+	// v0.8.165 — system.parts is a LOCAL system table. In an external
+	// Distributed cluster the storage lives on per-shard <table>_local
+	// tables, so a plain read sees only the connected shard (≈1/N of the
+	// cluster) AND labels every row <table>_local — which made the
+	// all-time switch below (it matches the BARE names) read 0. When
+	// cluster_name is set we fan the read across one replica per shard via
+	// cluster() for the true cluster total; without it (operator-managed
+	// external cluster, name unset) we read the connected shard. Either
+	// way we normalise the _local suffix so the labels + all-time counts
+	// resolve to the bare signal names.
+	partsSource := "system.parts"
+	if cn := strings.TrimSpace(s.cfg.ClusterName); cn != "" {
+		partsSource = "cluster('" + cn + "', system.parts)"
+	}
+	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
 		SELECT
 		  table,
 		  sum(rows)                       AS rows,
@@ -113,13 +129,13 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 		  toUInt32(count())               AS parts,
 		  toUnixTimestamp64Nano(toDateTime64(min(min_time), 9)) AS oldest_ns,
 		  toUnixTimestamp64Nano(toDateTime64(max(max_time), 9)) AS newest_ns
-		FROM system.parts
+		FROM %s
 		WHERE database = currentDatabase()
 		  AND active = 1
-		  AND table NOT LIKE '.inner%'
+		  AND table NOT LIKE '.inner%%'
 		GROUP BY table
 		ORDER BY bytes_on_disk DESC
-		SETTINGS max_execution_time = 8`)
+		SETTINGS max_execution_time = 8`, partsSource))
 	if err == nil {
 		for rows.Next() {
 			var t TableStat
@@ -128,6 +144,10 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 				&t.OldestNs, &t.NewestNs); err != nil {
 				break
 			}
+			// Distributed shards store under <table>_local; normalise to the
+			// bare name so labels read spans/logs/… and the all-time switch
+			// matches (otherwise SpansAllTime/… stay 0 on a distributed read).
+			t.Table = normalizeStorageTableName(t.Table)
 			out.Tables = append(out.Tables, t)
 			out.Snapshot.TotalDiskBytes += t.BytesOnDisk
 		}
@@ -155,19 +175,11 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 		Scan(&out.Snapshot.Spans7d)
 
 	// All-time spans is the table-level row count from system.parts
-	// — already collected. Same for logs / metrics / profiles.
-	for _, t := range out.Tables {
-		switch t.Table {
-		case "spans":
-			out.Snapshot.SpansAllTime = t.Rows
-		case "logs":
-			out.Snapshot.LogsAllTime = t.Rows
-		case "metric_points":
-			out.Snapshot.MetricsAllTime = t.Rows
-		case "profiles":
-			out.Snapshot.ProfilesAllTime = t.Rows
-		}
-	}
+	// — already collected (and _local-normalised above). Same for logs /
+	// metrics / profiles.
+	out.Snapshot.SpansAllTime, out.Snapshot.LogsAllTime,
+		out.Snapshot.MetricsAllTime, out.Snapshot.ProfilesAllTime =
+		allTimeRowCounts(out.Tables)
 
 	// v0.5.319 — Operator-reported: System page "What's inside"
 	// loaded glacially at production scale. Root cause: every
@@ -276,4 +288,33 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 	// frontend rendered the bare "Failed to load system stats"
 	// Empty card — far less useful than partial data.
 	return out, nil
+}
+
+// normalizeStorageTableName maps a system.parts table label to the bare
+// signal name. In an external Distributed cluster the actual storage is
+// on <table>_local shards, so system.parts reports "spans_local" etc.;
+// stripping the suffix lets the storage labels + the all-time row-count
+// switch resolve to spans/logs/metric_points/profiles. The inverse of
+// LocalTableName(). No-op on a single-node install (bare names already).
+func normalizeStorageTableName(table string) string {
+	return strings.TrimSuffix(table, "_local")
+}
+
+// allTimeRowCounts pulls the per-signal all-time row totals out of the
+// (already _local-normalised) storage table stats. Pure so the
+// distributed _local-label regression is unit-tested without a live CH.
+func allTimeRowCounts(tables []TableStat) (spans, logs, metrics, profiles uint64) {
+	for _, t := range tables {
+		switch t.Table {
+		case "spans":
+			spans = t.Rows
+		case "logs":
+			logs = t.Rows
+		case "metric_points":
+			metrics = t.Rows
+		case "profiles":
+			profiles = t.Rows
+		}
+	}
+	return
 }

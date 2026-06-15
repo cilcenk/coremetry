@@ -87,18 +87,39 @@ type EndpointRow struct {
 // case for a lot of manual instrumentation + older SDKs +
 // frameworks that don't auto-decorate kind. We now keep any
 // span with a real path that isn't an OUTGOING call.
-// opSigWrap wraps an endpoint-path SQL expression in a deterministic
-// normalization (Uptrace-style _group_id): collapse UUIDs and numeric path
-// segments to placeholders so high-cardinality paths carrying IDs
-// (/orders/8421, /orders/8422) cluster into one stable group (/orders/:id).
-// Applied only to the GROUP-BY projection; the per-bucket CTE re-computes the
-// quantile over the normalized group, so p99/error-rate stay exact (no MV,
-// no schema change, no ingest fan-out). RE2 syntax. UUID first so the numeric
-// rule doesn't chew its digit runs.
+// opSig* are the read-time ID-collapsing regexes for the Endpoints
+// "Group by shape" toggle, applied IN ORDER (UUID first so the numeric/hex
+// rules don't chew its runs). v0.8.x — ALIGNED with the ingest-time
+// normalizer templater.NormalizeOperation (the op_group column): same `:id`
+// placeholder for every id type, and a long-hex rule mirroring
+// LooksLikeOpaqueID's hex≥16 case — so a given path segment collapses to the
+// SAME shape whether it's grouped read-time here (/endpoints) or by the
+// stored op_group on the service Operations tab. (The op_sig + op_group
+// op_sig_align_test pins this.) RE2 syntax (== Go regexp). Residual: opSigWrap
+// covers the COMMON id types (numeric / UUID / long-hex); the rarer opaque
+// kinds LooksLikeOpaqueID catches (base64url / consonant-only) over-match as a
+// SQL regex, so they collapse only on the ingest path — documented, accepted.
+// Exported so the cross-package op_sig↔op_group alignment regression test
+// (internal/templater, which can't be imported here without a cycle) can pin
+// that these read-time patterns collapse a path to the same shape as the
+// ingest-time NormalizeOperation.
+const (
+	OpSigReUUID = `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`
+	OpSigReHex  = `/[0-9a-fA-F]{16,}`
+	OpSigReNum  = `/[0-9]+`
+)
+
+// opSigWrap wraps an endpoint-path SQL expression in the deterministic
+// ID-collapsing above so high-cardinality paths carrying IDs (/orders/8421,
+// /orders/8422) cluster into one stable group (/orders/:id). Applied only to
+// the GROUP-BY projection; the per-bucket CTE re-computes the quantile over
+// the normalized group, so p99/error-rate stay exact (no MV, no ingest
+// fan-out). Placeholder + rules match templater.NormalizeOperation.
 func opSigWrap(expr string) string {
-	return `replaceRegexpAll(replaceRegexpAll(` + expr +
-		`, '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', ':uuid')` +
-		`, '/[0-9]+', '/:id')`
+	return `replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(` + expr +
+		`, '` + OpSigReUUID + `', ':id')` +
+		`, '` + OpSigReHex + `', '/:id')` +
+		`, '` + OpSigReNum + `', '/:id')`
 }
 
 func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, cluster string, limit int, bySignature bool) ([]EndpointRow, error) {

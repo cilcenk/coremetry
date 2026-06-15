@@ -1549,10 +1549,16 @@ func (s *ESStore) CountPatterns(
 			if v, ok := src[s.fields.Body].(string); ok {
 				stats.Sample = v
 			}
-			if v, ok := src[s.fields.Timestamp].(string); ok {
-				if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
-					stats.LastSeenNs = t.UnixNano()
-				}
+			// Robust timestamp parse, NOT a strict RFC3339Nano-only
+			// assertion — epoch_millis decodes to float64 (the .(string)
+			// assertion failed) and log4j-style dates parse-fail, both of
+			// which left LastSeenNs=0. That 0 flows into the persisted
+			// AnomalyEvent.LastSeen for every recorded log-pattern anomaly,
+			// pinning the operator's "last seen" column to 1970 on an
+			// external ES install. Same class as the v0.8.161 mapHit fix —
+			// the CountPatterns sibling was just missed. (v0.8.163.)
+			if raw, ok := src[s.fields.Timestamp]; ok {
+				stats.LastSeenNs = parseLogTimestampNs(raw)
 			}
 		}
 		out[i] = stats

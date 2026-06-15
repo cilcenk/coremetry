@@ -71,6 +71,26 @@ func TestEpochToNs_MagnitudeBands(t *testing.T) {
 	}
 }
 
+// v0.8.163 — the ES CountPatterns sample-timestamp extraction (which
+// stamps AnomalyEvent.LastSeen for every recorded log-pattern anomaly)
+// must use parseLogTimestampNs on the RAW _source value, not the old
+// strict `src[...].(string)` + RFC3339Nano parse. On an epoch_millis
+// index ES decodes the value to float64, so the string assertion failed
+// and LastSeen pinned to 1970. This guards the float64 path the old code
+// dropped.
+func TestCountPatternsSampleTimestamp_RobustOnFloat64(t *testing.T) {
+	want := time.Date(2026, 6, 15, 10, 11, 19, 0, time.UTC).UnixNano()
+	// As ES decodes an epoch_millis _source field: a JSON number → float64.
+	src := map[string]any{"@timestamp": float64(want / 1_000_000)}
+	if _, ok := src["@timestamp"].(string); ok {
+		t.Fatal("precondition: epoch_millis must decode to float64, not string")
+	}
+	if got := parseLogTimestampNs(src["@timestamp"]); got != want {
+		t.Fatalf("CountPatterns float64 epoch_millis sample → %d, want %d "+
+			"(regressed to a strict string parse?)", got, want)
+	}
+}
+
 func itoa(n int64) string {
 	if n == 0 {
 		return "0"

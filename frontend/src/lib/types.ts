@@ -589,11 +589,11 @@ export interface RootCause {
 // This is synthesis over existing reads (mirrors RootCause's bundle-fan-out),
 // not new capability. Drawer-first (no /correlate route in v1).
 //
-// HONESTY (spec Risk §1): the METRIC anchor is DEFERRED in v1 — a raw OTLP
-// metric point carries no trace_id, so its derived trace would be fuzzy
-// (service+window). The drawer wires the TRACE + LOG anchors (real / near-real
-// trace_id joins) and surfaces the join key so the operator always sees whether
-// the join is exact (`trace_id`) or fuzzy (`service+window`).
+// HONESTY: the join key the drawer surfaces tells the operator which join the
+// bundle used — exact (`trace_id`), a real representative `exemplar` (the
+// metric→trace pivot for latency/error: the actual slow/error trace from the
+// spanmetrics rollup), or the genuinely-fuzzy `service+window` (throughput/count
+// metric, no representative span). The metric anchor is no longer deferred.
 export type CorrelationKind = 'trace' | 'log' | 'metric';
 
 // PivotAnchor — discriminated union on `kind`, the shape the drawer is opened
@@ -612,9 +612,12 @@ export interface CorrelationAnchor {
   tsNs?: number;
   fromNs: number;
   toNs: number;
-  // joinKey: 'trace_id' = exact cross-signal join (no time fuzz);
-  // 'service+window' = fuzzy join — the drawer renders this as a visible chip.
-  joinKey: 'trace_id' | 'service+window';
+  // joinKey, rendered as a visible chip by the drawer:
+  //   'trace_id'       = exact cross-signal join (no time fuzz)
+  //   'exemplar'       = a real representative trace (metric→trace pivot for
+  //                      latency/error — exact-enough to pivot into)
+  //   'service+window' = genuinely-fuzzy fallback (throughput/count metric)
+  joinKey: 'trace_id' | 'exemplar' | 'service+window';
 }
 
 // CorrelationTrace — condensed trace lens (the timeline mini-waterfall reads
@@ -641,7 +644,7 @@ export interface CorrelationContext {
   trace?: CorrelationTrace;
   logs: LogRow[];                 // trace_id join when present, else service+window
   metrics: SpanMetricSeries[];    // anchor service RED series (rate / error_rate / p99)
-  exemplar?: SpanExemplar;        // metric anchor: representative (fuzzy) trace to pivot INTO
+  exemplar?: SpanExemplar;        // metric anchor: a REAL representative trace to pivot INTO (rollup slow/error exemplar, raw-span fallback)
 }
 
 // RedisStats matches cache.RedisStats — INFO + DBSIZE snapshot

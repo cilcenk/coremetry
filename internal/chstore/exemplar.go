@@ -61,6 +61,71 @@ type Exemplar struct {
 	TimeUnixNs int64  `json:"timeUnixNs"`
 }
 
+// FindExemplarRollup resolves the representative trace_id for (service, window,
+// kind) straight off the spanmetrics rollup's argMax(If) exemplar states — the
+// EXACT same per-bucket exemplar trace_id Explore's ◆ glyphs use, and the most
+// precise + cheapest exemplar we have: one MV read over spanmetrics_1m (the
+// always-present 30d tier), no raw-spans scan.
+//
+// slow_exemplar_state is argMaxState(trace_id, duration) and
+// error_exemplar_state is argMaxIfState(trace_id, duration, status_code='error')
+// — argMaxMerge over the whole window collapses every bucket's per-bucket winner
+// into THE single max-duration (or max-duration-among-errors) trace for the
+// span, so one row gives the representative trace directly. Combinator contract:
+// argMaxMerge for the slow state, argMaxIfMerge for the If-state (mixing them up
+// fails at runtime — the v0.8.51 catch).
+//
+// Returns (nil, nil) — the soft "not found" posture — when the window predates
+// the rollup cutover / has TTL'd away / has no exemplar for that span, so the
+// caller can fall through to FindExemplar (raw spans, still real). The result
+// carries only TraceID + Service (the rollup exemplar state is a trace_id, not a
+// span row); the caller pivots on the trace_id, which is the precise part.
+//
+// Bound: spanmetrics_1m is an AggregatingMergeTree MV — the WHERE is
+// service_name equality + a time_bucket range on the ORDER BY prefix, so CH
+// prunes to the relevant granules. LIMIT 1 + max_execution_time cap it.
+func (s *Store) FindExemplarRollup(ctx context.Context, req ExemplarReq) (*Exemplar, error) {
+	if strings.TrimSpace(req.Service) == "" {
+		return nil, fmt.Errorf("service is required")
+	}
+	if req.From.IsZero() || req.To.IsZero() {
+		return nil, fmt.Errorf("from/to are required")
+	}
+
+	// Pick the exemplar-state finalizer per kind. Throughput ("any") has no
+	// representative span — the slow state is the most useful stand-in (the
+	// loudest trace in the window) but the caller labels that join weak.
+	var traceExpr string
+	switch req.Kind {
+	case ExemplarError:
+		traceExpr = "argMaxIfMerge(error_exemplar_state)"
+	case ExemplarSlow, ExemplarAny, "":
+		traceExpr = "argMaxMerge(slow_exemplar_state)"
+	default:
+		return nil, fmt.Errorf("unknown exemplar kind %q", req.Kind)
+	}
+
+	sql := fmt.Sprintf(`
+		SELECT %s AS trace_id
+		FROM spanmetrics_1m
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+		LIMIT 1
+		SETTINGS max_execution_time = 10`, traceExpr)
+
+	row := s.conn.QueryRow(ctx, sql, req.Service, req.From, req.To)
+	var traceID string
+	if err := row.Scan(&traceID); err != nil {
+		// Empty / no-exemplar rollup surfaces as a scan error — same clean
+		// "not found" treatment FindExemplar uses. Caller falls back.
+		return nil, nil
+	}
+	if strings.TrimSpace(traceID) == "" {
+		// argMaxIfMerge over an all-non-error window yields the empty default.
+		return nil, nil
+	}
+	return &Exemplar{TraceID: traceID, Service: req.Service}, nil
+}
+
 func (s *Store) FindExemplar(ctx context.Context, req ExemplarReq) (*Exemplar, error) {
 	if strings.TrimSpace(req.Service) == "" {
 		return nil, fmt.Errorf("service is required")

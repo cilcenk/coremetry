@@ -1,6 +1,8 @@
 package api
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,5 +132,123 @@ func TestBoundAnalysisWindow(t *testing.T) {
 				t.Errorf("end = %v, want %v", gotEnd, tt.wantEnd)
 			}
 		})
+	}
+}
+
+// v0.8.x rc #4 — the Copilot prose narration flattens a persisted
+// RootCauseHypothesis into the user prompt the model narrates. buildRootCausePrompt
+// is the pure boundary the regression test pins: it must (a) render the no-suspect
+// branch honestly (never imply a cause the ranking didn't find), (b) include the
+// recent deploy line with a human age, (c) carry every ranked candidate's score +
+// hop + Reason so the model narrates the SAME evidence the ribbon shows, and
+// (d) cap the candidate list so a pathological fan-out can't balloon the prompt.
+// A regression in any of these silently degrades or misleads the narration.
+func TestBuildRootCausePrompt(t *testing.T) {
+	t.Run("no suspect — honest empty ranking", func(t *testing.T) {
+		got := buildRootCausePrompt(&chstore.RootCauseHypothesis{
+			AnchorKind: "anomaly", Service: "checkout", TopSuspect: "",
+			TopScore: 0, Confidence: 0,
+		})
+		if !strings.Contains(got, "Top suspect: (none") {
+			t.Errorf("no-suspect branch missing honest (none) marker:\n%s", got)
+		}
+		if !strings.Contains(got, "Ranked candidates: (none)") {
+			t.Errorf("empty candidate list not rendered honestly:\n%s", got)
+		}
+		if !strings.Contains(got, "Confidence: 0%") {
+			t.Errorf("confidence not rendered:\n%s", got)
+		}
+	})
+
+	t.Run("deploy-led — deploy line with human age", func(t *testing.T) {
+		got := buildRootCausePrompt(&chstore.RootCauseHypothesis{
+			AnchorKind: "anomaly", Service: "payment-svc",
+			TopSuspect: "payment-svc", TopScore: 78.0, Confidence: 0.78,
+			RecentDeploy: &chstore.RecentDeploy{Version: "v42", AgeSeconds: 240},
+			Candidates: []chstore.ScoredCause{
+				{Service: "payment-svc", Score: 78.0, Hops: 0, Reason: "fresh deploy 4m before onset"},
+			},
+		})
+		if !strings.Contains(got, "Top suspect: payment-svc (score 78.0)") {
+			t.Errorf("top suspect line wrong:\n%s", got)
+		}
+		if !strings.Contains(got, "Recent deploy: service.version=v42 first seen 4m before onset") {
+			t.Errorf("deploy line / age wrong:\n%s", got)
+		}
+		if !strings.Contains(got, "fresh deploy 4m before onset") {
+			t.Errorf("candidate Reason dropped — model would narrate without evidence:\n%s", got)
+		}
+		if !strings.Contains(got, "Confidence: 78%") {
+			t.Errorf("confidence not rendered as percent:\n%s", got)
+		}
+	})
+
+	t.Run("propagation-led — hop + reason carried per candidate", func(t *testing.T) {
+		got := buildRootCausePrompt(&chstore.RootCauseHypothesis{
+			AnchorKind: "problem", Service: "checkout",
+			TopSuspect: "oracle-core", TopScore: 0.62, Confidence: 0.41,
+			Candidates: []chstore.ScoredCause{
+				{Service: "oracle-core", Score: 0.62, Hops: 1, Reason: "downstream error-share 0.62"},
+				{Service: "kafka", Score: 0.20, Hops: 2, Reason: "co-firing problem"},
+			},
+		})
+		if !strings.Contains(got, "1. oracle-core (score 0.6, 1 hop(s)) — downstream error-share 0.62") {
+			t.Errorf("propagation candidate line wrong:\n%s", got)
+		}
+		if !strings.Contains(got, "2. kafka (score 0.2, 2 hop(s)) — co-firing problem") {
+			t.Errorf("second candidate dropped or mangled:\n%s", got)
+		}
+	})
+
+	t.Run("candidate list capped at 8", func(t *testing.T) {
+		cands := make([]chstore.ScoredCause, 20)
+		for i := range cands {
+			cands[i] = chstore.ScoredCause{Service: fmt.Sprintf("svc-%02d", i), Score: float64(20 - i)}
+		}
+		got := buildRootCausePrompt(&chstore.RootCauseHypothesis{
+			AnchorKind: "anomaly", Service: "x", TopSuspect: "svc-00",
+			Candidates: cands,
+		})
+		if !strings.Contains(got, "8. svc-07") {
+			t.Errorf("8th candidate should render:\n%s", got)
+		}
+		if strings.Contains(got, "9. svc-08") || strings.Contains(got, "svc-19") {
+			t.Errorf("candidate list exceeded the cap of 8:\n%s", got)
+		}
+	})
+
+	t.Run("empty reason falls back, never a bare dash", func(t *testing.T) {
+		got := buildRootCausePrompt(&chstore.RootCauseHypothesis{
+			AnchorKind: "anomaly", Service: "x", TopSuspect: "y",
+			Candidates: []chstore.ScoredCause{{Service: "y", Score: 1.0, Reason: "   "}},
+		})
+		if !strings.Contains(got, "— no reason recorded") {
+			t.Errorf("blank reason should fall back to a placeholder:\n%s", got)
+		}
+	})
+}
+
+// v0.8.x rc #4 — fmtDeployAge mirrors the frontend fmtAgo so the prose age
+// phrasing matches the ribbon. Table-driven over every magnitude branch
+// (sec/min/hour/day) — the boundary values are where an off-by-one in the
+// divisor would silently shift the age the model reports.
+func TestFmtDeployAge(t *testing.T) {
+	cases := []struct {
+		sec  int64
+		want string
+	}{
+		{0, "0s"},
+		{59, "59s"},
+		{60, "1m"},
+		{3599, "59m"},
+		{3600, "1h"},
+		{86399, "23h"},
+		{86400, "1d"},
+		{259200, "3d"},
+	}
+	for _, c := range cases {
+		if got := fmtDeployAge(c.sec); got != c.want {
+			t.Errorf("fmtDeployAge(%d) = %q, want %q", c.sec, got, c.want)
+		}
 	}
 }

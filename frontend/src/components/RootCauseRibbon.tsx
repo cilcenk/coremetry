@@ -101,6 +101,10 @@ export function RootCauseRibbon({
             </div>
           )}
           {rc && <ExpandedBody rc={rc} />}
+          {/* Optional Copilot prose narration on top of the deterministic
+              ranking (rc #4). Lazy — only fetched when the operator clicks
+              ✨ Explain (Copilot calls cost), never on mount/expand. */}
+          {rc && <ExplainBlock anchor={anchor} id={id} />}
         </div>
       )}
     </div>
@@ -211,6 +215,59 @@ function ExpandedBody({ rc }: { rc: RootCause | AnomalyRootCause }) {
               {rc.exemplar.traceId.slice(0, 16)}… ↗
             </span>
           </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ExplainBlock — the opt-in ✨ Explain affordance (rc #4). Turns the persisted
+// deterministic ranking into an operator-readable paragraph via Copilot. LAZY:
+// nothing is fetched until the operator clicks the button — a Copilot call is
+// expensive, so it never auto-fires on mount/expand. Honest about degradation:
+// a 404 (no hypothesis synthesized yet) or a 503 (Copilot not configured) or
+// any other error collapses to a muted inline message, never a crash and never
+// fabricated prose. The backend caches the prose keyed on the hypothesis
+// version, so a re-click after a re-synthesis gets fresh narration.
+function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: string }) {
+  const [loading, setLoading] = useState(false);
+  // undefined = not asked yet, null = failed/empty (honest degraded), string = prose.
+  const [prose, setProse] = useState<string | null | undefined>(undefined);
+
+  const onExplain = () => {
+    if (loading) return;
+    setLoading(true);
+    const p = anchor === 'anomaly' ? api.rootCauseExplain(id) : api.problemRootCauseExplain(id);
+    p.then(r => {
+      const text = r?.prose?.trim();
+      setProse(text ? text : null);
+    }).catch(() => setProse(null)).finally(() => setLoading(false));
+  };
+
+  return (
+    <div style={{ marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+      {prose === undefined && !loading && (
+        <Button variant="secondary" size="sm" onClick={onExplain}>
+          ✨ Explain
+        </Button>
+      )}
+      {loading && <Spinner label="Narrating the ranked evidence…" />}
+      {prose === null && (
+        <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic' }}>
+          No narration available — the hypothesis isn't synthesized yet, or the
+          AI copilot isn't configured.
+        </div>
+      )}
+      {prose && (
+        <div
+          style={{
+            fontSize: 12.5, lineHeight: 1.55, color: 'var(--text2)',
+            padding: '10px 12px', borderRadius: 6,
+            background: 'var(--accent-soft)',
+            border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
+          }}>
+          <span aria-hidden="true" style={{ marginRight: 6 }}>✨</span>
+          {prose}
         </div>
       )}
     </div>

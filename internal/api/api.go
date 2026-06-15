@@ -528,6 +528,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/problems/count",            s.countProblems)
 	mux.HandleFunc("GET    /api/problems/buckets",          s.listProblemBuckets)
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause",   s.getProblemRootCause)
+	// Copilot prose narration of the persisted problem hypothesis (rc #4) —
+	// problem-anchored sibling of the anomaly explain route. Lazy/opt-in,
+	// version-keyed cache, routes through s.copilotExplain. The 5-segment
+	// {id}/rootcause/explain out-ranks the 4-segment {id}/rootcause — no collision.
+	mux.HandleFunc("GET    /api/problems/{id}/rootcause/explain", s.getProblemRootCauseExplain)
 	mux.HandleFunc("POST   /api/problems/acknowledge",      auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
 	mux.HandleFunc("PATCH  /api/problems/{id}/assignee",    auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
 	// Unified triage inbox (v0.5.211) — merges Problems +
@@ -583,6 +588,15 @@ func (s *Server) Start() error {
 	// {id}/rootcause shape doesn't collide with the literal sibling routes
 	// above (log-patterns/trace-ops/metric/events are 3-segment leaves).
 	mux.HandleFunc("GET /api/anomalies/{id}/rootcause", s.getAnomalyRootCause)
+	// Optional Copilot PROSE narration on top of the deterministic ranking
+	// (v0.8.x, release #4). Lazy + opt-in (frontend ✨ Explain button fetches
+	// on click). Reads the PERSISTED hypothesis (GetHypothesis), routes through
+	// s.copilotExplain for /ai attribution, serveCached keyed on the hypothesis
+	// version. Viewer-readable; no audit (the copilotExplain wrapper records the
+	// ai_calls row). The 5-segment {id}/rootcause/explain shape is MORE specific
+	// than the 4-segment {id}/rootcause above, so Go 1.22's mux matches it first
+	// — no collision (audit CHECK 7).
+	mux.HandleFunc("GET /api/anomalies/{id}/rootcause/explain", s.getAnomalyRootCauseExplain)
 	// Cmd-K palette autocomplete for the "silence anomaly" action
 	// (v0.5.459). Editor-gated since the only useful next step is
 	// creating a silence, and that's editor-gated too.

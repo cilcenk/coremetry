@@ -641,6 +641,16 @@ export interface RootCauseSummary {
   confidence: number;          // 0..1 — low/zero ⇒ muted honest state
 }
 
+// RootCauseExplain — the optional Copilot PROSE narration on top of the
+// deterministic ranking (rc #4). The ✨ Explain button in the expanded ribbon
+// fetches this lazily on click (Copilot calls cost — never on mount/expand);
+// the backend renders the PERSISTED hypothesis into 2-4 advisory sentences via
+// s.copilotExplain. 404 when no hypothesis is synthesized yet (honest "no
+// narration available" state — never fabricated).
+export interface RootCauseExplain {
+  prose: string;
+}
+
 // ── Correlated Signals (task #6) ────────────────────────────────────────────
 // One pivot surface: given any single signal (trace / log / metric) the
 // /api/correlate/context endpoint assembles the correlated OTHER two —

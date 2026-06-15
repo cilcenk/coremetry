@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
 // RootCause is the assembled "what changed / likely cause" bundle for one
@@ -312,4 +313,133 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Wait()
 		return out, nil
 	})
+}
+
+// buildRootCausePrompt renders a persisted RootCauseHypothesis into the
+// compact user prompt the narration model consumes (rc #4). PURE — no I/O,
+// table-driven tested in rootcause_test.go over the no-suspect, deploy-led,
+// and propagation-led shapes so the prompt the model sees stays stable. It
+// flattens the SAME ranked evidence the deterministic ribbon already shows:
+// the anchor context, the top suspect + score + confidence, every ranked
+// candidate with its score / hop distance / Reason line, and the recent
+// deploy the fuser weighted. It deliberately does NOT re-rank or add signal —
+// the model narrates what the worker already computed. The candidate list is
+// capped at the top 8 so a pathological fan-out can't balloon the prompt.
+func buildRootCausePrompt(h *chstore.RootCauseHypothesis) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Anchor: %s\n", h.AnchorKind)
+	fmt.Fprintf(&b, "Service: %s\n", h.Service)
+	if h.TopSuspect != "" {
+		fmt.Fprintf(&b, "Top suspect: %s (score %.1f)\n", h.TopSuspect, h.TopScore)
+	} else {
+		b.WriteString("Top suspect: (none — no single cause stood out)\n")
+	}
+	fmt.Fprintf(&b, "Confidence: %.0f%%\n", h.Confidence*100)
+	if h.RecentDeploy != nil {
+		fmt.Fprintf(&b, "Recent deploy: service.version=%s first seen %s before onset\n",
+			h.RecentDeploy.Version, fmtDeployAge(h.RecentDeploy.AgeSeconds))
+	}
+	if len(h.Candidates) == 0 {
+		b.WriteString("Ranked candidates: (none)\n")
+		return b.String()
+	}
+	b.WriteString("Ranked candidates (best first):\n")
+	const maxCands = 8
+	for i, c := range h.Candidates {
+		if i >= maxCands {
+			break
+		}
+		hops := ""
+		if c.Hops > 0 {
+			hops = fmt.Sprintf(", %d hop(s)", c.Hops)
+		}
+		reason := strings.TrimSpace(c.Reason)
+		if reason == "" {
+			reason = "no reason recorded"
+		}
+		fmt.Fprintf(&b, "  %d. %s (score %.1f%s) — %s\n", i+1, c.Service, c.Score, hops, reason)
+	}
+	return b.String()
+}
+
+// fmtDeployAge — compact "6m" / "2h" / "3d" age for the deploy line in the
+// narration prompt. Mirrors the frontend fmtAgo so the prose age phrasing
+// matches what the ribbon shows.
+func fmtDeployAge(sec int64) string {
+	switch {
+	case sec < 60:
+		return fmt.Sprintf("%ds", sec)
+	case sec < 3600:
+		return fmt.Sprintf("%dm", sec/60)
+	case sec < 86400:
+		return fmt.Sprintf("%dh", sec/3600)
+	default:
+		return fmt.Sprintf("%dd", sec/86400)
+	}
+}
+
+// rootCauseExplainProse is the shared body of the two narration handlers:
+// it loads the PERSISTED hypothesis for the anchor (never re-synthesizes —
+// the worker owns synthesis), refuses to fabricate when none exists, routes
+// the compact prompt through s.copilotExplain (the /ai-attribution wrapper,
+// NEVER copilot.Explain direct — make audit CHECK 4), and caches the prose
+// keyed on the anchor id + the hypothesis VERSION so a re-synthesis (which
+// bumps the version) invalidates the cache and we never serve stale prose for
+// a changed ranking. Read-only, viewer-readable; no audit (the copilotExplain
+// wrapper records the ai_calls row for /ai attribution).
+func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, anchorKind string) {
+	if !s.copilot.Configured() {
+		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "anchor id required", http.StatusBadRequest)
+		return
+	}
+	// Load OUTSIDE the cache so a missing hypothesis is an honest 404 (not a
+	// cached empty body) and so the cache key can include the version — we must
+	// read the row to know it. Cheap: small FINAL state-table read keyed on the
+	// (anchor_kind, anchor_id) ORDER BY.
+	h, err := s.store.GetHypothesis(r.Context(), anchorKind, id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if h == nil {
+		// No persisted hypothesis yet — do NOT fabricate one. The worker
+		// synthesizes on a tick; the operator sees an honest empty state.
+		http.Error(w, "no hypothesis synthesized for this anchor yet", http.StatusNotFound)
+		return
+	}
+
+	// Cache keyed on anchor id + hypothesis VERSION: a re-synthesis bumps the
+	// version (ReplacingMergeTree DEFAULT stamps a monotonic ns), so the key
+	// changes and we never serve prose for a stale ranking. Copilot calls are
+	// expensive — a 10m TTL lets concurrent triage clicks share one trip while
+	// the version guarantees freshness on re-rank.
+	key := fmt.Sprintf("rootcause-explain:%s:%s:%d", anchorKind, id, h.Version)
+	s.serveCached(w, r, key, 10*time.Minute, func() (any, error) {
+		prose, err := s.copilotExplain(r, copilot.SystemPromptRootCauseNarration(), buildRootCausePrompt(h))
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"prose": prose}, nil
+	})
+}
+
+// getAnomalyRootCauseExplain narrates the PERSISTED anomaly hypothesis as
+// operator-readable prose (rc #4). GET /api/anomalies/{id}/rootcause/explain —
+// opt-in (the frontend ✨ Explain button fetches it lazily on click, never on
+// mount/expand: Copilot calls cost). Viewer-readable; no audit.
+func (s *Server) getAnomalyRootCauseExplain(w http.ResponseWriter, r *http.Request) {
+	s.rootCauseExplainProse(w, r, "anomaly")
+}
+
+// getProblemRootCauseExplain is the problem-anchored sibling — same builder,
+// same wrapper, same version-keyed cache, only the anchor kind differs. The
+// hypothesis for a problem is synthesized by the SAME worker tick, so the
+// prompt + prose path are identical. GET /api/problems/{id}/rootcause/explain.
+func (s *Server) getProblemRootCauseExplain(w http.ResponseWriter, r *http.Request) {
+	s.rootCauseExplainProse(w, r, "problem")
 }

@@ -737,6 +737,16 @@ export const api = {
   // summary (AnomalyEvent.rootCause), so there's NO fetch on mount.
   anomalyRootCause: (id: string) =>
     get<import('./types').AnomalyRootCause>(`/api/anomalies/${encodeURIComponent(id)}/rootcause`),
+  // Optional Copilot PROSE narration on top of the deterministic ranking (rc
+  // #4). The ✨ Explain button in the expanded ribbon fetches this LAZILY on
+  // click — never on mount/expand (Copilot calls cost). Backend reads the
+  // PERSISTED hypothesis, routes through s.copilotExplain (/ai attribution), and
+  // caches the prose keyed on the hypothesis version. 404 (request throws) when
+  // no hypothesis is synthesized yet → the ribbon shows "no narration available".
+  rootCauseExplain: (id: string) =>
+    get<import('./types').RootCauseExplain>(`/api/anomalies/${encodeURIComponent(id)}/rootcause/explain`),
+  problemRootCauseExplain: (id: string) =>
+    get<import('./types').RootCauseExplain>(`/api/problems/${encodeURIComponent(id)}/rootcause/explain`),
   // Correlated Signals (task #6) — one cross-signal pivot bundle. Given any
   // anchor (trace / log / metric) the backend assembles the correlated other
   // two (trace ↔ logs ↔ metrics, joined on trace_id → service.name → window),

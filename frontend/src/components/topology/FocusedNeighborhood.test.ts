@@ -14,7 +14,7 @@ import type { GraphEdge } from '@/lib/types';
 // focus is at column 0. These cases would fail on the pre-fix path-sum code.
 
 const e = (source: string, target: string): GraphEdge => ({
-  source, target, calls: 1, errors: 0, errorRate: 0, avgMs: 1, p99Ms: 1,
+  source, target, calls: 1, errors: 0, errorRate: 0, rate: 0, avgMs: 1, p99Ms: 1,
 });
 
 describe('assignFocusColumns', () => {

@@ -135,6 +135,7 @@ export interface GraphNode {
   calls: number;
   errors: number;
   errorRate: number;   // (errors/calls)*100 — health color
+  rate: number;        // calls per minute over the window — node-size encoding
 }
 export interface GraphEdge {
   source: string;
@@ -142,6 +143,7 @@ export interface GraphEdge {
   calls: number;
   errors: number;
   errorRate: number;
+  rate: number;        // calls per minute over the window
   avgMs: number;
   p99Ms: number;
   protocol?: string;   // http | grpc | db | kafka — SpanKind proxy

@@ -30,6 +30,7 @@ type GraphNode struct {
 	Calls     uint64  `json:"calls"`            // node throughput (inbound preferred, else outbound)
 	Errors    uint64  `json:"errors"`
 	ErrorRate float64 `json:"errorRate"` // (errors/calls)*100 — drives health color
+	Rate      float64 `json:"rate"`      // calls per minute over the window — node-size encoding (v0.8.x)
 }
 
 // GraphEdge is one directed caller→callee edge carrying RED metrics + protocol.
@@ -39,6 +40,7 @@ type GraphEdge struct {
 	Calls     uint64  `json:"calls"`
 	Errors    uint64  `json:"errors"`
 	ErrorRate float64 `json:"errorRate"`
+	Rate      float64 `json:"rate"` // calls per minute over the window (v0.8.x)
 	AvgMs     float64 `json:"avgMs"`
 	P99Ms     float64 `json:"p99Ms"`
 	Protocol  string  `json:"protocol,omitempty"` // http | grpc | db | kafka — SpanKind proxy
@@ -113,13 +115,28 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 		// Best-effort db.name enrichment for database nodes; a lookup failure
 		// leaves nodes unannotated rather than failing the whole graph.
 		dbNames, _ := s.store.DbNamesBySystem(r.Context(), from, to)
-		return buildServiceGraph(edges, focus, scope, dbNames), nil
+		return buildServiceGraph(edges, focus, scope, dbNames, serviceGraphWindowMinutes(from, to)), nil
 	})
+}
+
+// serviceGraphWindowMinutes returns the window length in minutes used to derive
+// each node/edge calls-per-minute Rate, FLOORED at 1 so a sub-minute or zero
+// window can't divide-by-zero or inflate the rate. (v0.8.x — the one metric
+// Uptrace's service graph derives that Coremetry lacked; p99/avg/errors already
+// ride every edge. Pure + table-driven tested per the unit-mixing discipline.)
+func serviceGraphWindowMinutes(from, to time.Time) float64 {
+	if m := to.Sub(from).Minutes(); m >= 1 {
+		return m
+	}
+	return 1
 }
 
 // buildServiceGraph is the pure transform from MV edge rows to the OTel-native
 // {nodes, edges} model. Extracted so it's unit-testable without ClickHouse.
-func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string, dbNames map[string]string) ServiceGraphResponse {
+func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string, dbNames map[string]string, windowMin float64) ServiceGraphResponse {
+	if windowMin < 1 {
+		windowMin = 1
+	}
 	// v0.8.11 — merge ext:<name> peers into the real service node when <name>
 	// is a known service.name. A service referenced via peer.service (and seen
 	// as ext:<name>) otherwise splits into a duplicate service + external node.
@@ -196,6 +213,7 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 		graphEdges = append(graphEdges, GraphEdge{
 			Source: e.ParentService, Target: e.ChildNode,
 			Calls: e.Calls, Errors: e.Errors, ErrorRate: e.ErrorRate,
+			Rate:  float64(e.Calls) / windowMin,
 			AvgMs: e.AvgMs, P99Ms: e.P99Ms, Protocol: e.Protocol,
 		})
 	}
@@ -212,6 +230,7 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 		if n.Calls > 0 {
 			n.ErrorRate = float64(n.Errors) / float64(n.Calls) * 100
 		}
+		n.Rate = float64(n.Calls) / windowMin
 		// Enrich a database node with the dominant db.name for its db.system
 		// (db_summary_5m). A nil/empty map or unknown system is a no-op.
 		if dn := dbNames[n.System]; dn != "" && n.System != "" {

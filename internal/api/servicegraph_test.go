@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -37,7 +38,7 @@ func sampleEdges() []chstore.ServiceTopologyEdge {
 }
 
 func TestBuildServiceGraph_GlobalDecodesOTelKinds(t *testing.T) {
-	g := buildServiceGraph(sampleEdges(), "", "global", nil)
+	g := buildServiceGraph(sampleEdges(), "", "global", nil, 60)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -89,7 +90,7 @@ func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
 		sgEdge("mobile", "ext:payments", "external", "http", 100, 5, 80), // same service, seen via peer.service
 		sgEdge("orders", "ext:stripe.com", "external", "http", 60, 6, 400), // true 3rd party
 	}
-	g := buildServiceGraph(edges, "", "global", nil)
+	g := buildServiceGraph(edges, "", "global", nil, 60)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -110,7 +111,7 @@ func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
 }
 
 func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
-	g := buildServiceGraph(sampleEdges(), "payments", "neighborhood", nil)
+	g := buildServiceGraph(sampleEdges(), "payments", "neighborhood", nil, 60)
 	if g.Scope != "neighborhood" || g.Focus != "payments" {
 		t.Fatalf("scope/focus = %q/%q", g.Scope, g.Focus)
 	}
@@ -136,7 +137,7 @@ func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
 // only database nodes (which carry a System) pick one up.
 func TestBuildServiceGraph_DbNameEnrichment(t *testing.T) {
 	dbNames := map[string]string{"postgresql": "core_txn"}
-	g := buildServiceGraph(sampleEdges(), "", "global", dbNames)
+	g := buildServiceGraph(sampleEdges(), "", "global", dbNames, 60)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -149,9 +150,63 @@ func TestBuildServiceGraph_DbNameEnrichment(t *testing.T) {
 		t.Errorf("service node payments must not carry db.name, got %q", p.DbName)
 	}
 	// nil map → no enrichment, no panic.
-	for _, n := range buildServiceGraph(sampleEdges(), "", "global", nil).Nodes {
+	for _, n := range buildServiceGraph(sampleEdges(), "", "global", nil, 60).Nodes {
 		if n.DbName != "" {
 			t.Errorf("nil dbNames must leave DbName empty, %s got %q", n.ID, n.DbName)
 		}
+	}
+}
+
+// v0.8.x (Uptrace service-graph adaptation, slice 1) — calls/min Rate. The
+// window-minutes divide is unit-mixing-prone: a sub-minute or zero window must
+// floor to 1 (no divide-by-zero, no inflated rate). Per the unit-mixing
+// regression-test discipline, exercise every branch.
+func TestServiceGraphWindowMinutes(t *testing.T) {
+	base := time.Now()
+	cases := []struct {
+		name     string
+		from, to time.Time
+		want     float64
+	}{
+		{"one hour", base, base.Add(time.Hour), 60},
+		{"five minutes", base, base.Add(5 * time.Minute), 5},
+		{"exactly one minute", base, base.Add(time.Minute), 1},
+		{"sub-minute floors to 1", base, base.Add(30 * time.Second), 1},
+		{"zero window floors to 1", base, base, 1},
+		{"inverted window floors to 1", base.Add(time.Hour), base, 1},
+	}
+	for _, c := range cases {
+		if got := serviceGraphWindowMinutes(c.from, c.to); got != c.want {
+			t.Errorf("%s: serviceGraphWindowMinutes = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// rate = calls / windowMinutes must ride every node + edge, and buildServiceGraph
+// must independently floor windowMin so a bad caller can't divide-by-zero.
+func TestBuildServiceGraph_RatePerMinute(t *testing.T) {
+	g := buildServiceGraph([]chstore.ServiceTopologyEdge{
+		sgEdge("gateway", "payments", "service", "http", 1200, 0, 50),
+	}, "", "global", nil, 60) // 1h window → 1200/60 = 20 calls/min
+	var edgeRate float64
+	for _, e := range g.Edges {
+		if e.Source == "gateway" && e.Target == "payments" {
+			edgeRate = e.Rate
+		}
+	}
+	if edgeRate != 20 {
+		t.Errorf("edge rate = %v, want 20 (1200 calls / 60 min)", edgeRate)
+	}
+	for _, n := range g.Nodes {
+		if n.ID == "payments" && n.Rate != 20 { // payments: 1200 inbound calls
+			t.Errorf("payments node rate = %v, want 20", n.Rate)
+		}
+	}
+	// guard: windowMin<1 floored to 1 inside buildServiceGraph (rate = calls).
+	g0 := buildServiceGraph([]chstore.ServiceTopologyEdge{
+		sgEdge("a", "b", "service", "http", 5, 0, 1),
+	}, "", "global", nil, 0)
+	if g0.Edges[0].Rate != 5 {
+		t.Errorf("windowMin=0 must floor to 1 → rate=calls=5, got %v", g0.Edges[0].Rate)
 	}
 }

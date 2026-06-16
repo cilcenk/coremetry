@@ -34,6 +34,26 @@ type Store struct {
 	// distributed prod spammed code-47 on the cluster warm query.)
 	hasClusterCol bool
 
+	// hasOpGroupCol records whether the spans table the WRITE path
+	// inserts into actually carries the `op_group` column (v0.8.172).
+	// op_group is an EXPLICIT Go-written column (convert.go fills it
+	// from templater.NormalizeOperation; the spans INSERT binds
+	// sp.OpGroup), so unlike the materialized `cluster` it sits on the
+	// INGEST path — if the column never reached the per-shard
+	// spans_local the INSERT fails with code 16 ("No such column
+	// op_group in table spans_local") and EVERY span batch is lost.
+	// That is exactly what happened on an external Distributed install
+	// with cfg.ClusterName unset (v0.8.186): chstore can't ON CLUSTER
+	// the ALTER, so it lands on the Distributed wrapper definition only
+	// and never on spans_local. When this is false the INSERT drops
+	// op_group from its column list entirely, the operation_group
+	// summary MV is dropped + not recreated, and the normalized
+	// operations read soft-degrades to raw-name grouping. Probed once
+	// at boot (see migrate). On a single node or a cluster with
+	// ClusterName set (where adaptDDL owns spans_local) this is true
+	// and the path is byte-identical to pre-v0.8.186.
+	hasOpGroupCol bool
+
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
 	// problem into an existing incident on a service that calls
@@ -1145,14 +1165,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		// MATERIALIZE mutation — that would stress the RAM-bound CH). The column
 		// references the SAME const as the fallback so new/old parts never drift.
 		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS cluster LowCardinality(String) MATERIALIZED ` + clusterDeriveExpr,
-		// op_group — normalized operation-shape column (group_id rel A).
-		// Explicit Go-written column (NOT MATERIALIZED): convert.go
-		// computes it per-span via templater.NormalizeOperation and the
-		// spans INSERT binds sp.OpGroup. Forward-only: old parts read ''
-		// (the Release B MV + Release C UI tolerate the empty group).
-		// Routed through execDDL→adaptDDL so external Distributed installs
-		// get the ALTER rewritten to spans_local ON CLUSTER (v0.8.160-166).
-		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS op_group LowCardinality(String) DEFAULT ''`,
+		// NOTE: the op_group ALTER (an EXPLICIT Go-written column on the
+		// INGEST path) is NOT in this list — it is gated separately below
+		// (see opGroupAlter) because on an external Distributed install
+		// with cfg.ClusterName unset the ALTER lands on the wrapper only,
+		// never on spans_local, and the next INSERT then loses every span
+		// batch with code 16 (v0.8.186). Materialized columns like
+		// `cluster` are safe to leave here: they aren't bound in the INSERT
+		// column list, so a wrapper/local mismatch can't break ingest.
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider LowCardinality(String) DEFAULT 'local'`,
 		// team — operator-curated grouping (e.g. "platform-sre",
 		// "fraud", "payments"). LowCardinality because each
@@ -1425,6 +1445,67 @@ func (s *Store) migrate(ctx context.Context) error {
 			// crashes — we only soften the specific Distributed
 			// limitation.
 			return fmt.Errorf("alter table: %w", err)
+		}
+	}
+
+	// op_group — the normalized operation-shape column (group_id rel A,
+	// v0.8.172). EXPLICIT Go-written, NOT MATERIALIZED: convert.go computes
+	// it per-span via templater.NormalizeOperation and the spans INSERT
+	// binds sp.OpGroup. Because it's on the INGEST path, a wrapper/local
+	// mismatch is catastrophic (code 16 on every flush → zero ingest), so
+	// it's gated OUT of the alters slice above and added here only when
+	// chstore actually owns spans_local:
+	//   • cfg.ClusterName set  → adaptDDL rewrites the ALTER to
+	//     `spans_local ON CLUSTER` (clusterMode); safe.
+	//   • single-node MergeTree spans → the bare `spans` IS the data table;
+	//     safe.
+	//   • external Distributed spans, ClusterName unset → the ALTER would
+	//     land on the wrapper only, never on spans_local → SKIP + log
+	//     (v0.8.186 examplebank: this exact inconsistent state lost every span
+	//     batch). The hasOpGroupCol probe below then reads false, the
+	//     INSERT drops op_group from its column list, and the read path
+	//     soft-degrades to raw-name grouping.
+	// Forward-only: old parts read '' (the MV + UI tolerate the empty group).
+	const opGroupAlter = `ALTER TABLE spans ADD COLUMN IF NOT EXISTS op_group LowCardinality(String) DEFAULT ''`
+	if s.spansIsExternalDistributed(ctx) {
+		log.Printf("[chstore] external Distributed `spans` with cluster_name unset — SKIPPING op_group ALTER (it can't reach spans_local; adding it to the wrapper only would break every INSERT with code 16). op_group features degrade gracefully; set config.clickhouse.cluster_name to enable them.")
+	} else if err := s.execDDL(ctx, opGroupAlter); err != nil {
+		return fmt.Errorf("alter table (op_group): %w", err)
+	}
+
+	// Probe whether op_group is genuinely present on the table the WRITE
+	// path inserts into. In distributed mode this select routes to
+	// spans_local, so it correctly returns false when the column never
+	// reached the shard (the skipped-ALTER case above, OR an external
+	// install that pre-dates the column). Mirrors the hasClusterCol probe
+	// shape at the bottom of migrate(); uses maybeCloseRows so a query
+	// error never nil-derefs Close() (v0.8.185 boot-panic discipline).
+	ogRows, ogErr := s.conn.Query(ctx,
+		`SELECT op_group FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(ogRows, ogErr)
+	s.hasOpGroupCol = ogErr == nil
+	if !s.hasOpGroupCol {
+		log.Printf("[chstore] `op_group` column not present on spans (%v) — INSERT omits it, operation_group_summary_5m MV disabled, normalized operations read falls back to raw operation names (expected on an external Distributed cluster with cluster_name unset)", ogErr)
+	}
+
+	// Defensive recovery (v0.8.186): when op_group is genuinely absent, DROP
+	// operation_group_summary_5m if it lingers from a prior boot. The MV's
+	// SELECT references op_group, so its insert-trigger fires on every span
+	// INSERT and FAILS with code 16 — which under default CH semantics
+	// aborts the source INSERT too, blocking ALL ingest. Dropping it lets
+	// spans land again. Idempotent; only fires when the column is truly
+	// missing so the healthy path never touches the MV. The creation loop
+	// below also skips recreating it while hasOpGroupCol is false.
+	if !s.hasOpGroupCol {
+		if err := s.execDDL(ctx, `DROP VIEW IF EXISTS operation_group_summary_5m`); err != nil {
+			// Non-fatal: log + continue. A failed DROP must not crash-loop
+			// the pod; the worst case is the MV trigger keeps failing, but
+			// that's the pre-existing broken state, not a regression from
+			// this guard. Most installs won't have the MV at all (DROP is a
+			// no-op via IF EXISTS).
+			log.Printf("[chstore] could not drop stale operation_group_summary_5m MV (op_group absent): %v", err)
+		} else {
+			log.Printf("[chstore] dropped operation_group_summary_5m MV (op_group absent — its insert trigger would block ingest)")
 		}
 	}
 
@@ -2019,6 +2100,16 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	for _, q := range mvs {
+		// Skip the operation_group_summary_5m MV when op_group isn't on the
+		// table (v0.8.186): its SELECT reads op_group, so creating it would
+		// install an insert-trigger that fails code 16 on every span INSERT
+		// and blocks ALL ingest. The defensive DROP above already removed any
+		// stale copy; don't recreate what we just dropped. Every other MV is
+		// op_group-agnostic and created unconditionally. Cheap substring
+		// match on the CREATE — the MV name is unique in the statement.
+		if !s.hasOpGroupCol && strings.Contains(q, "operation_group_summary_5m") {
+			continue
+		}
 		if err := s.execDDL(ctx, q); err != nil {
 			return fmt.Errorf("create MV: %w", err)
 		}

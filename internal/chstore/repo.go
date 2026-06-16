@@ -65,22 +65,78 @@ func asyncInsertCtx(ctx context.Context) context.Context {
 	}))
 }
 
+// spansInsertColumns is the EXPLICIT, physically-ordered column list for the
+// spans INSERT EXCEPT the trailing op_group column (which is conditional —
+// see InsertSpans) and the materialized `cluster` column (which is NEVER in
+// an INSERT). The order MUST match the spans CREATE TABLE in store.go
+// (trace_id … scope_name) AND the value order built in spanAppendArgs.
+// v0.8.186 — moved from a positional `INSERT INTO spans` to a named column
+// list (the metric_points pattern) so op_group can be dropped per
+// s.hasOpGroupCol without misaligning every other column. A named INSERT also
+// fails loudly on a stale schema instead of silently writing into the wrong
+// column.
+var spansInsertColumns = []string{
+	"trace_id", "span_id", "parent_id", "name", "kind",
+	"service_name", "host_name", "deploy_env", "status_code", "status_msg",
+	"time", "duration",
+	"db_system", "db_statement", "http_method", "http_route", "http_status",
+	"rpc_system", "rpc_method", "peer_service", "msg_system",
+	"attr_keys", "attr_values", "res_keys", "res_values",
+	"events", "scope_name",
+}
+
+// spanAppendArgs builds the positional Append() arguments for one span in the
+// EXACT order of spansInsertColumns, optionally appending op_group LAST when
+// withOpGroup is true. Keeping the column list and the value list in one place
+// (this function + spansInsertColumns) is the single guarantee against
+// positional drift: op_group is appended to both, or to neither, in lockstep.
+func spanAppendArgs(sp *Span, withOpGroup bool) []any {
+	args := []any{
+		sp.TraceID, sp.SpanID, sp.ParentID, sp.Name, sp.Kind,
+		sp.ServiceName, sp.HostName, sp.DeployEnv, sp.StatusCode, sp.StatusMsg,
+		sp.Time, sp.Duration,
+		sp.DBSystem, sp.DBStatement, sp.HTTPMethod, sp.HTTPRoute, sp.HTTPStatus,
+		sp.RPCSystem, sp.RPCMethod, sp.PeerService, sp.MsgSystem,
+		sp.AttrKeys, sp.AttrValues, sp.ResKeys, sp.ResValues,
+		sp.Events, sp.ScopeName,
+	}
+	if withOpGroup {
+		args = append(args, sp.OpGroup)
+	}
+	return args
+}
+
+// spansInsertColumnNames returns the ordered column list the INSERT will use,
+// appending op_group as the LAST column iff withOpGroup. Pure helper shared by
+// spansInsertSQL and the alignment regression test (v0.8.186).
+func spansInsertColumnNames(withOpGroup bool) []string {
+	if !withOpGroup {
+		return spansInsertColumns
+	}
+	return append(append([]string{}, spansInsertColumns...), "op_group")
+}
+
+// spansInsertSQL builds the `INSERT INTO spans (col, col, …)` statement.
+func spansInsertSQL(withOpGroup bool) string {
+	return "INSERT INTO spans (" + strings.Join(spansInsertColumnNames(withOpGroup), ", ") + ")"
+}
+
 func (s *Store) InsertSpans(ctx context.Context, spans []*Span) error {
 	ctx = asyncInsertCtx(ctx)
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO spans")
+	// op_group is bound ONLY when the column is actually present on the table
+	// the write fans out to (s.hasOpGroupCol, probed once at boot). On an
+	// external Distributed install where the ALTER never reached spans_local
+	// (v0.8.186), hasOpGroupCol is false: the column list AND the per-row
+	// value list both drop op_group, so the INSERT matches the real schema
+	// and ingest survives. The monolithic / cluster-name-set path keeps
+	// hasOpGroupCol=true → byte-identical column+value layout to pre-v0.8.186.
+	withOpGroup := s.hasOpGroupCol
+	batch, err := s.conn.PrepareBatch(ctx, spansInsertSQL(withOpGroup))
 	if err != nil {
 		return fmt.Errorf("prepare spans: %w", err)
 	}
 	for _, sp := range spans {
-		if err := batch.Append(
-			sp.TraceID, sp.SpanID, sp.ParentID, sp.Name, sp.Kind,
-			sp.ServiceName, sp.HostName, sp.DeployEnv, sp.StatusCode, sp.StatusMsg,
-			sp.Time, sp.Duration,
-			sp.DBSystem, sp.DBStatement, sp.HTTPMethod, sp.HTTPRoute, sp.HTTPStatus,
-			sp.RPCSystem, sp.RPCMethod, sp.PeerService, sp.MsgSystem,
-			sp.AttrKeys, sp.AttrValues, sp.ResKeys, sp.ResValues,
-			sp.Events, sp.ScopeName, sp.OpGroup,
-		); err != nil {
+		if err := batch.Append(spanAppendArgs(sp, withOpGroup)...); err != nil {
 			return fmt.Errorf("append span: %w", err)
 		}
 	}
@@ -718,6 +774,17 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 // the scanner, sparkline, and frontend are unchanged. normalized=false is
 // byte-for-byte the pre-rel-B behaviour.
 func (s *Store) GetOperationSummary(ctx context.Context, service string, since time.Duration, from, to time.Time, normalized bool) ([]OperationSummary, error) {
+	// v0.8.186 — when op_group isn't on the spans table (external Distributed
+	// install where the ALTER couldn't reach spans_local), BOTH normalized
+	// branches reference op_group: the MV path reads the now-absent
+	// operation_group_summary_5m, and the raw-spans fallback selects / filters
+	// / groups by `op_group` — which HARD-ERRORS with code 16. Force
+	// normalized=false so the read soft-degrades to raw operation-name
+	// grouping instead of failing the whole Operations table. The healthy path
+	// (hasOpGroupCol=true) is unaffected.
+	if normalized && !s.hasOpGroupCol {
+		normalized = false
+	}
 	// Resolve the absolute [winStart, winEnd] up front so the sparkline
 	// bucketing query uses the exact same window as the aggregate.
 	// Using time.Now() twice in the two query branches would skew the

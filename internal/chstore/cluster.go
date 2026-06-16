@@ -23,6 +23,41 @@ import (
 // clusterMode reports whether Distributed-CH schema should be used.
 func (s *Store) clusterMode() bool { return strings.TrimSpace(s.cfg.ClusterName) != "" }
 
+// spansIsExternalDistributed reports whether the connected `spans`
+// table is a Distributed wrapper that chstore does NOT own — i.e. the
+// operator pointed Coremetry at an existing Distributed CH but left
+// cfg.ClusterName unset, so adaptDDL can't rewrite our DDL to
+// `spans_local ON CLUSTER`. In that state any explicit-column ALTER
+// (op_group, v0.8.172) "succeeds" against the Distributed wrapper
+// definition but never reaches the per-shard spans_local — and the
+// next INSERT, which fans out to the shards, fails with code 16
+// ("No such column op_group in table spans_local"), losing every span
+// batch (the v0.8.186 examplebank ingest outage).
+//
+// Detection: clusterMode() is the affirmative "chstore owns the local"
+// signal — when ClusterName is set, adaptDDL handles the rewrite, so
+// this returns false regardless of engine. Otherwise probe the actual
+// engine: a single-node MergeTree `spans` (the common case) IS the data
+// table, so it's safe to ALTER; only a bare Distributed engine is the
+// dangerous external case. Any probe error is treated as "not external"
+// (false) so a single-node install with a transient system.tables hiccup
+// keeps its byte-identical behaviour — the column probe downstream still
+// gates the write path on the column's actual presence.
+func (s *Store) spansIsExternalDistributed(ctx context.Context) bool {
+	if s.clusterMode() {
+		return false // adaptDDL owns spans_local + ON CLUSTER
+	}
+	var engine string
+	err := s.conn.QueryRow(ctx, `
+		SELECT engine FROM system.tables
+		WHERE database = currentDatabase() AND name = 'spans'
+		LIMIT 1`).Scan(&engine)
+	if err != nil {
+		return false // unknown → don't change behaviour; column probe still guards writes
+	}
+	return engine == "Distributed"
+}
+
 // onCluster appends an `ON CLUSTER <name>` clause when in cluster
 // mode, otherwise returns "". Insert it right after the table /
 // view name in any DDL statement so the same definition flows to

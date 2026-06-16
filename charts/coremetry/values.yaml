@@ -461,6 +461,7 @@ otelCollector:
     enabled: false
     endpoint: "http://elasticsearch:9200"   # ES HTTP endpoint the collector ships to
     logsIndex: "coremetry-logs"              # index/data-stream the logs land in
+    apiKey: ""                               # base64 "id:api_key" — when set, the collector writes via the ES ApiKey header (no basic auth); required for a security-enabled ES
 
 # Java demo — Spring Boot e-commerce app with zero-code OTel auto-
 # instrumentation + sidecar profile pusher. Off by default; flip on for

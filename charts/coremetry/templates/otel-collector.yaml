@@ -67,6 +67,12 @@ data:
       # which Coremetry's ESStore pickString fallbacks read without extra config.
       elasticsearch/logs:
         endpoints: [{{ .Values.otelCollector.elasticsearch.endpoint | quote }}]
+        {{- if .Values.otelCollector.elasticsearch.apiKey }}
+        # v0.8.180 — when an apiKey is set the collector writes via the ES
+        # ApiKey header (NO basic auth). The value is the base64 "id:api_key"
+        # encoded apikey. Required when the target ES has security enabled.
+        headers: { Authorization: "ApiKey {{ .Values.otelCollector.elasticsearch.apiKey }}" }
+        {{- end }}
         logs_index: {{ .Values.otelCollector.elasticsearch.logsIndex | quote }}
         mapping: { mode: ecs }
         # The ES exporter has its own retry/flush config (NOT the standard

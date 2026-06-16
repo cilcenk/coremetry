@@ -2200,9 +2200,11 @@ func (s *Store) migrate(ctx context.Context) error {
 	// res/attr derive (see clusterExpr).
 	probeRows, probeErr := s.conn.Query(ctx,
 		`SELECT cluster FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
-	if probeRows != nil {
-		probeRows.Close()
-	}
+	// v0.8.185 — operator-reported PRODUCTION PANIC (examplebank distributed):
+	// on a Query ERROR clickhouse-go returns a NON-NIL but half-initialised
+	// *rows, so the old `if probeRows != nil { Close() }` nil-derefs inside
+	// Close() and crash-loops the pod at boot. NEVER touch the rows on error.
+	maybeCloseRows(probeRows, probeErr)
 	s.hasClusterCol = probeErr == nil
 	if !s.hasClusterCol {
 		log.Printf("[chstore] `cluster` column not resolvable on spans (%v) — cluster filter queries use the res/attr derive (expected on an external Distributed cluster with cluster_name unset)", probeErr)
@@ -2210,4 +2212,21 @@ func (s *Store) migrate(ctx context.Context) error {
 
 	log.Println("[chstore] migrations complete")
 	return nil
+}
+
+// rowsCloser is the Close half of driver.Rows — narrowed so maybeCloseRows is
+// unit-testable with a fake.
+type rowsCloser interface{ Close() error }
+
+// maybeCloseRows closes a Query's rows ONLY when the query SUCCEEDED. On a
+// query error clickhouse-go (v2.46) returns a NON-NIL but partially-
+// initialised *rows whose Close() nil-dereferences — so guarding on `rows !=
+// nil` alone still panics (the production crash-loop on the examplebank distributed
+// cluster, v0.8.185, where `SELECT cluster FROM spans` errors because the
+// materialized column never reached spans_local). Gate on the error: never
+// touch the rows when the query failed.
+func maybeCloseRows(rows rowsCloser, queryErr error) {
+	if queryErr == nil && rows != nil {
+		_ = rows.Close()
+	}
 }

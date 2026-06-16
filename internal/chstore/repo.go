@@ -342,6 +342,32 @@ func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (
 	return out, rows.Err()
 }
 
+// clusterScanWindow bounds how far back a cluster-enumeration scan
+// reaches. The k8s/openshift cluster set is infrastructure-stable —
+// a cluster that runs observable services emits spans every few
+// minutes — so enumerating "which clusters exist" never needs to
+// scan the operator's full selected range. On an external Distributed
+// `spans` with cluster_name unset (no materialized `cluster` column),
+// the only available expression is the per-row res/attr indexOf derive
+// (clusterDeriveExpr); running it across a 24h window of a billion-
+// span/day cluster blows max_execution_time = 8 → code 159
+// TIMEOUT_EXCEEDED (v0.8.188 — operator-reported: the `clusters` cache
+// warmer timed out every tick). Capping the scan at the most recent
+// hour keeps the derive within budget. The filter itself is unaffected
+// — clusterExpr() resolves any cluster name over any window on the
+// read path, so a cluster the operator already knows stays selectable.
+const clusterScanWindow = time.Hour
+
+// clampClusterFrom returns the earliest scan timestamp for cluster
+// enumeration: never more than clusterScanWindow before `to`. Pure so
+// the budget-clamp is regression-testable without a live CH.
+func clampClusterFrom(from, to time.Time) time.Time {
+	if earliest := to.Add(-clusterScanWindow); from.Before(earliest) {
+		return earliest
+	}
+	return from
+}
+
 // ListClusters returns the distinct cluster names observed in
 // the window, sourced from the same resource/attr coalesce
 // chain the filter uses. Drives the cluster-filter dropdown on
@@ -355,6 +381,11 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 	if to.IsZero() {
 		to = time.Now()
 	}
+	// Bound the scan to a recent window — the cluster set is infra-stable,
+	// so a wider range only burns CH read bandwidth (and on an external
+	// Distributed cluster, blows the 8s budget on the derive). See
+	// clusterScanWindow.
+	from = clampClusterFrom(from, to)
 	// Primary: the COMPLETE clusterColExpr (column for new parts, derive for old).
 	// CH short-circuits the coalesce, so post-migration — once every part carries
 	// the materialized `cluster` column (v0.8.132) — the derive (res_values/

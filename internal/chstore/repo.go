@@ -2375,7 +2375,9 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 		       db_system, db_statement, http_method, http_route, http_status, peer_service
 		FROM spans
 		WHERE trace_id = ?
-		ORDER BY time ASC`, traceID)
+		ORDER BY time ASC
+		LIMIT 50000
+		SETTINGS max_execution_time = 20`, traceID)
 	if err != nil {
 		return nil, err
 	}

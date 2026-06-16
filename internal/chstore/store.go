@@ -1488,6 +1488,51 @@ func (s *Store) migrate(ctx context.Context) error {
 		log.Printf("[chstore] `op_group` column not present on spans (%v) — INSERT omits it, operation_group_summary_5m MV disabled, normalized operations read falls back to raw operation names (expected on an external Distributed cluster with cluster_name unset)", ogErr)
 	}
 
+	// Boot self-heal (v0.8.187): op_group absent on spans_local while `spans` is
+	// an external Distributed table. A pre-fix boot (≤ v0.8.172) added op_group
+	// to the WRAPPER only; the Distributed engine then fills the wrapper's
+	// DEFAULT '' and forwards a column spans_local lacks → `code 16: No such
+	// column op_group in …spans_local` on EVERY flush (CH PR #7377: DEFAULT
+	// columns are forwarded, only MATERIALIZED are erased). v0.8.186's named-
+	// INSERT omit can't reach the wrapper's schema, so reconcile the SCHEMA
+	// here: discover the cluster the Distributed table fans to (config first,
+	// else parse it out of the engine def) and ADD op_group to spans_local AND
+	// the wrapper ON CLUSTER — this reaches every shard, makes the structures
+	// consistent, and ENABLES the feature (better than dropping the wrapper
+	// column, which heals one host + keeps the feature off). Best-effort: any
+	// failure logs and leaves hasOpGroupCol=false so the v0.8.186 degrade path
+	// keeps ingest alive. Never crash-loops. Only fires on the broken external-
+	// Distributed shape, so healthy installs are untouched.
+	if !s.hasOpGroupCol && s.spansIsExternalDistributed(ctx) {
+		cluster := strings.TrimSpace(s.cfg.ClusterName)
+		if cluster == "" {
+			cluster = s.discoverSpansCluster(ctx)
+		}
+		if cluster == "" {
+			log.Printf("[chstore] op_group self-heal: spans is Distributed but no cluster name (config or discoverable from its engine def) — cannot reconcile; set config.clickhouse.cluster_name. op_group features stay degraded.")
+		} else {
+			q := "'" + strings.ReplaceAll(cluster, "'", "''") + "'"
+			for _, tbl := range []string{"spans_local", "spans"} {
+				ddl := fmt.Sprintf("ALTER TABLE %s ON CLUSTER %s ADD COLUMN IF NOT EXISTS op_group LowCardinality(String) DEFAULT ''", tbl, q)
+				if err := s.conn.Exec(ctx, ddl); err != nil {
+					log.Printf("[chstore] op_group self-heal: ALTER %s ON CLUSTER %s failed (non-fatal): %v", tbl, cluster, err)
+				} else {
+					log.Printf("[chstore] op_group self-heal: added op_group to %s ON CLUSTER %s", tbl, cluster)
+				}
+			}
+			// Re-probe: did op_group reach spans_local on the shards?
+			rRows, rErr := s.conn.Query(ctx,
+				`SELECT op_group FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+			maybeCloseRows(rRows, rErr)
+			s.hasOpGroupCol = rErr == nil
+			if s.hasOpGroupCol {
+				log.Printf("[chstore] op_group self-heal succeeded — op_group now resolvable on spans_local (cluster %s); INSERT writes it + features enabled", cluster)
+			} else {
+				log.Printf("[chstore] op_group self-heal: still not resolvable after ALTER (%v) — features stay degraded; verify cluster '%s' and spans_local on all shards", rErr, cluster)
+			}
+		}
+	}
+
 	// Defensive recovery (v0.8.186): when op_group is genuinely absent, DROP
 	// operation_group_summary_5m if it lingers from a prior boot. The MV's
 	// SELECT references op_group, so its insert-trigger fires on every span

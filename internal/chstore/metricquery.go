@@ -81,7 +81,9 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, err
 		parts := make([]string, len(f.GroupBy))
 		var groupArgs []any
 		for i, k := range f.GroupBy {
-			expr, args := groupKeyExpr(k)
+			// metric_points path: op_group isn't a metric dimension, so pass
+			// true to keep the expression byte-identical to pre-v0.8.187.
+			expr, args := groupKeyExpr(k, true)
 			parts[i] = expr
 			groupArgs = append(groupArgs, args...)
 		}
@@ -179,7 +181,7 @@ func (s *Store) MetricLabelValues(ctx context.Context, metric, key string, since
 	if metric == "" || key == "" {
 		return nil, nil
 	}
-	expr, args := groupKeyExpr(key)
+	expr, args := groupKeyExpr(key, true) // metric_points labels; op_group inert here
 	cutoff := time.Now().Add(-since)
 	queryArgs := append(args, metric, cutoff)
 	rows, err := s.conn.Query(ctx,

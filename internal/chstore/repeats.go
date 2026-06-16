@@ -86,7 +86,7 @@ func (s *Store) QueryRepeatedSpans(ctx context.Context, f RepeatedSpanFilter) ([
 	keyExprs := make([]string, len(f.GroupBy))
 	var keyArgs []any
 	for i, k := range f.GroupBy {
-		expr, args := groupKeyExpr(k)
+		expr, args := groupKeyExpr(k, s.hasOpGroupCol)
 		keyExprs[i] = expr
 		keyArgs = append(keyArgs, args...)
 	}

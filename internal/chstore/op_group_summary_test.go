@@ -28,31 +28,71 @@ import (
 
 func TestGroupKeyExpr_OpGroup(t *testing.T) {
 	cases := []struct {
-		key      string
-		wantExpr string
-		wantArgs int // number of bound args the expr pushes
+		key        string
+		hasOpGroup bool
+		wantExpr   string
+		wantArgs   int // number of bound args the expr pushes
 	}{
 		// The new explicit handle resolves to the dedicated column, no arg.
-		{"op_group", "toString(op_group)", 0},
-		// The existing alias must NOT be hijacked — still the raw name column.
-		{"operation", "toString(name)", 0},
+		{"op_group", true, "toString(op_group)", 0},
+		// v0.8.187 — when op_group never reached spans_local (external
+		// Distributed, cluster_name unset), groupBy=op_group MUST soft-degrade
+		// to the raw operation name instead of emitting toString(op_group),
+		// which hard-errors code 16 against raw spans.
+		{"op_group", false, "toString(name)", 0},
+		// The existing alias must NOT be hijacked — still the raw name column,
+		// independent of the op_group flag.
+		{"operation", true, "toString(name)", 0},
+		{"operation", false, "toString(name)", 0},
 		// Sanity: raw name key still resolves to the name column.
-		{"name", "toString(name)", 0},
+		{"name", true, "toString(name)", 0},
 		// span.-prefixed well-known still works.
-		{"span.status_code", "toString(status_code)", 0},
+		{"span.status_code", true, "toString(status_code)", 0},
 		// A genuinely unknown key still falls through to the attr-array lookup
 		// (and pushes the key as a bound arg) — op_group's case must not
-		// accidentally swallow other keys.
-		{"my.custom.attr", "toString(attr_values[indexOf(attr_keys, ?)])", 1},
+		// accidentally swallow other keys, and the flag must not affect it.
+		{"my.custom.attr", true, "toString(attr_values[indexOf(attr_keys, ?)])", 1},
+		{"my.custom.attr", false, "toString(attr_values[indexOf(attr_keys, ?)])", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.key, func(t *testing.T) {
-			expr, args := groupKeyExpr(tc.key)
+			expr, args := groupKeyExpr(tc.key, tc.hasOpGroup)
 			if expr != tc.wantExpr {
-				t.Errorf("groupKeyExpr(%q) expr = %q, want %q", tc.key, expr, tc.wantExpr)
+				t.Errorf("groupKeyExpr(%q, hasOpGroup=%v) expr = %q, want %q", tc.key, tc.hasOpGroup, expr, tc.wantExpr)
 			}
 			if len(args) != tc.wantArgs {
-				t.Errorf("groupKeyExpr(%q) pushed %d args, want %d", tc.key, len(args), tc.wantArgs)
+				t.Errorf("groupKeyExpr(%q, hasOpGroup=%v) pushed %d args, want %d", tc.key, tc.hasOpGroup, len(args), tc.wantArgs)
+			}
+		})
+	}
+}
+
+// TestParseDistributedCluster pins the v0.8.187 cluster-name discovery used by
+// the op_group boot self-heal: it must extract the FIRST Distributed() arg
+// (the cluster name) regardless of quoting / extra args, and return "" for a
+// non-Distributed engine so the self-heal degrades instead of issuing a bogus
+// ON CLUSTER DDL.
+func TestParseDistributedCluster(t *testing.T) {
+	cases := []struct {
+		engineFull string
+		want       string
+	}{
+		{"Distributed('uptrace_all', 'coremetry_test', 'spans_local')", "uptrace_all"},
+		{"Distributed('uptrace_all', 'coremetry_test', 'spans_local', rand())", "uptrace_all"},
+		{"Distributed('uptrace_all', 'db', 'spans_local', cityHash64(service_name))", "uptrace_all"},
+		{`Distributed("uptrace_all", 'db', 'spans_local')`, "uptrace_all"},
+		{"Distributed(uptrace_all, db, spans_local)", "uptrace_all"},
+		{"Distributed(  'uptrace_all'  , 'db', 'spans_local')", "uptrace_all"},
+		// Non-Distributed engines → "" (self-heal must not fire).
+		{"MergeTree", ""},
+		{"MergeTree() PARTITION BY toDate(time)", ""},
+		{"ReplicatedMergeTree('/clickhouse/tables/{shard}/spans', '{replica}')", ""},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.engineFull, func(t *testing.T) {
+			if got := parseDistributedCluster(tc.engineFull); got != tc.want {
+				t.Errorf("parseDistributedCluster(%q) = %q, want %q", tc.engineFull, got, tc.want)
 			}
 		})
 	}

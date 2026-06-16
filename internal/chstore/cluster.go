@@ -58,6 +58,41 @@ func (s *Store) spansIsExternalDistributed(ctx context.Context) bool {
 	return engine == "Distributed"
 }
 
+// discoverSpansCluster reads the cluster name the `spans` Distributed table
+// fans to, from its engine definition, for the v0.8.187 op_group self-heal when
+// config.clickhouse.cluster_name is unset. Returns "" if spans isn't a
+// Distributed table or the name can't be parsed.
+func (s *Store) discoverSpansCluster(ctx context.Context) string {
+	var engineFull string
+	if err := s.conn.QueryRow(ctx,
+		`SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = 'spans' LIMIT 1`).Scan(&engineFull); err != nil {
+		return ""
+	}
+	return parseDistributedCluster(engineFull)
+}
+
+// parseDistributedCluster extracts the cluster name (the FIRST argument) from a
+// Distributed engine definition string, e.g.
+//
+//	Distributed('uptrace_all', 'db', 'spans_local', rand()) → "uptrace_all"
+//
+// Returns "" for a non-Distributed engine or an unparseable string. Pure so the
+// self-heal's cluster discovery is unit-testable (v0.8.187).
+func parseDistributedCluster(engineFull string) string {
+	i := strings.Index(engineFull, "Distributed(")
+	if i < 0 {
+		return ""
+	}
+	rest := engineFull[i+len("Distributed("):]
+	j := strings.IndexByte(rest, ',')
+	if j < 0 {
+		return ""
+	}
+	arg := strings.TrimSpace(rest[:j])
+	arg = strings.Trim(arg, "'\"`")
+	return strings.TrimSpace(arg)
+}
+
 // onCluster appends an `ON CLUSTER <name>` clause when in cluster
 // mode, otherwise returns "". Insert it right after the table /
 // view name in any DDL statement so the same definition flows to

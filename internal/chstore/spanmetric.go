@@ -219,7 +219,7 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		parts := make([]string, len(f.GroupBy))
 		var groupArgs []any
 		for i, k := range f.GroupBy {
-			expr, args := groupKeyExpr(k)
+			expr, args := groupKeyExpr(k, s.hasOpGroupCol)
 			parts[i] = expr
 			groupArgs = append(groupArgs, args...)
 		}
@@ -938,7 +938,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		parts := make([]string, len(f.GroupBy))
 		var groupArgs []any
 		for i, k := range f.GroupBy {
-			expr, args := groupKeyExpr(k)
+			expr, args := groupKeyExpr(k, s.hasOpGroupCol)
 			parts[i] = expr
 			groupArgs = append(groupArgs, args...)
 		}
@@ -1038,8 +1038,12 @@ func fieldToSQL(field string) string {
 }
 
 // groupKeyExpr returns the SQL expression for one group key plus any extra
-// query parameters it needs (for attribute lookups by name).
-func groupKeyExpr(key string) (string, []any) {
+// query parameters it needs (for attribute lookups by name). hasOpGroup is the
+// Store's probed op_group presence; when false a groupBy=op_group soft-degrades
+// to the raw operation name instead of emitting `toString(op_group)`, which
+// would hard-error code 16 against raw spans on an external Distributed cluster
+// where op_group never reached spans_local (v0.8.187).
+func groupKeyExpr(key string, hasOpGroup bool) (string, []any) {
 	switch {
 	case strings.HasPrefix(key, "resource."):
 		return "toString(res_values[indexOf(res_keys, ?)])", []any{strings.TrimPrefix(key, "resource.")}
@@ -1054,6 +1058,13 @@ func groupKeyExpr(key string) (string, []any) {
 	// MetricLabelValues value-suggester, which is a behaviour change, not a
 	// trivial alias. The explicit `op_group` key is the normalized handle.
 	case key == "op_group":
+		if !hasOpGroup {
+			// op_group never reached spans_local (external Distributed,
+			// cluster_name unset). Soft-degrade to the raw operation name so
+			// the Explore panel returns rows instead of code 16, mirroring
+			// GetOperationSummary's normalized fallback (v0.8.187).
+			return "toString(name)", nil
+		}
 		return "toString(op_group)", nil
 	case strings.HasPrefix(key, "span."):
 		name := strings.TrimPrefix(key, "span.")

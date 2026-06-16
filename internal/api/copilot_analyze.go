@@ -75,8 +75,8 @@ type systemAnalysis struct {
 // copilotAnalyze runs the system-wide single-shot analysis and returns the
 // model's JSON verdict (parsed + raw). Read-only; any authenticated user.
 func (s *Server) copilotAnalyze(w http.ResponseWriter, r *http.Request) {
-	if s.copilot == nil || !s.copilot.Configured() {
-		http.Error(w, `{"error":"AI copilot not configured"}`, http.StatusServiceUnavailable)
+	if s.copilot == nil || !s.copilot.Active() {
+		http.Error(w, `{"error":"AI copilot not available (disabled or not configured)"}`, http.StatusServiceUnavailable)
 		return
 	}
 	rangeS := parseInt(r.URL.Query().Get("rangeS"), 1800)

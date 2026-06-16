@@ -64,6 +64,16 @@ type Service struct {
 	// by default; toggled via the Settings UI.
 	skipTLS bool
 
+	// enabled — master on/off switch INDEPENDENT of whether creds
+	// are stored (wf: enable/disable toggle). Configured() means
+	// "has creds"; Active() means "enabled AND configured". The
+	// operator flips this off to STOP the background ProblemExplainer
+	// hammering the provider + hide the AI affordances WITHOUT
+	// clearing the stored key (re-enabling is one click). A fresh
+	// Service is enabled by default; a persisted blob without the
+	// "enabled" field decodes as enabled (the *bool nil⇒true rule).
+	enabled bool
+
 	// GitHub session token cache. We exchange ghu_ → session token
 	// once and reuse until ~30s before the server-stated expiry.
 	ghSessTok string
@@ -161,6 +171,9 @@ func New(provider, apiKey, model string) *Service {
 		provider: provider,
 		apiKey:   apiKey,
 		model:    model,
+		// A fresh Service is enabled by default — the operator only
+		// flips it off explicitly via Settings (wf: enable/disable).
+		enabled: true,
 		// Local LLMs (Ollama loading a 70B model, llama.cpp on CPU)
 		// can take 60+ seconds for a first generation. The client
 		// timeout (180s) matches the cold-load worst case.
@@ -178,7 +191,10 @@ func New(provider, apiKey, model string) *Service {
 // v0.5.360: skipTLS rebuilds the http.Client transport when it
 // flips; otherwise the existing client is kept (its 180s timeout
 // matches the local-LLM use case).
-func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS bool) {
+// wf: enabled is the master on/off switch — set here so it lives
+// behind the same lock as the creds and can't tear with an
+// in-flight Active()/Explain.
+func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS, enabled bool) {
 	if provider == "" {
 		provider = ProviderAnthropic
 	}
@@ -192,6 +208,7 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS boo
 		s.cli = buildCopilotHTTPClient(skipTLS)
 	}
 	s.provider, s.apiKey, s.model, s.baseURL, s.skipTLS = provider, apiKey, model, baseURL, skipTLS
+	s.enabled = enabled
 }
 
 // buildCopilotHTTPClient — mirrors the Tempo / LDAP pattern. When
@@ -216,10 +233,12 @@ func buildCopilotHTTPClient(skipTLS bool) *http.Client {
 // we echo it back so the Settings page can show what's wired up.
 // v0.5.360 — skipTLS surfaced so the UI checkbox reflects what's
 // actually live.
-func (s *Service) Snapshot() (provider, model, baseURL string, hasKey, skipTLS bool) {
+// wf — enabled surfaced so getAISettings can drive the Settings
+// toggle independently of whether a key is stored.
+func (s *Service) Snapshot() (provider, model, baseURL string, hasKey, skipTLS, enabled bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.provider, s.model, s.baseURL, s.apiKey != "", s.skipTLS
+	return s.provider, s.model, s.baseURL, s.apiKey != "", s.skipTLS, s.enabled
 }
 
 // Configured reports whether the service has credentials. The "openai"
@@ -240,6 +259,35 @@ func (s *Service) Configured() bool {
 	return s.provider == ProviderOpenAI && s.baseURL != ""
 }
 
+// Active reports whether the Copilot is BOTH enabled AND configured.
+// This is the gate for any path that actually calls the provider —
+// the background ProblemExplainer, Explain/ChatWithTools, the AI-usage
+// HTTP endpoints, and the UI feature-flag (/api/copilot/config).
+//
+// Distinct from Configured(): when the operator flips "Enable AI
+// Copilot" OFF in Settings we KEEP the stored creds (Configured()
+// stays true so the Settings form still renders) but Active() goes
+// false — the background explainer stops hammering the provider, the
+// AI affordances hide, and the AI endpoints 503. Re-enabling is one
+// click (no key to re-paste). wf.
+//
+// Inlines Configured()'s logic under a single RLock so the enabled
+// gate and the cred check read a consistent snapshot.
+func (s *Service) Active() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.enabled {
+		return false
+	}
+	if s.apiKey != "" {
+		return true
+	}
+	return s.provider == ProviderOpenAI && s.baseURL != ""
+}
+
 // Explain runs a single Messages/Chat call with the given system +
 // user prompt. Branches on the configured provider. v0.5.162 wraps
 // the dispatch with the AI-observability recorder so every call
@@ -247,8 +295,8 @@ func (s *Service) Configured() bool {
 // on a goroutine so the user doesn't pay ingest cost in their
 // request path.
 func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
-	if !s.Configured() {
-		return "", errors.New("AI copilot not configured (open Settings → AI Copilot)")
+	if !s.Active() {
+		return "", errors.New("AI copilot not available (disabled or not configured — open Settings → AI Copilot)")
 	}
 	s.mu.RLock()
 	provider, model, baseURL := s.provider, s.model, s.baseURL
@@ -670,6 +718,12 @@ type persisted struct {
 	// v0.5.360 — omitempty so legacy blobs decode without the
 	// field, leaving skipTLS=false (current default).
 	SkipTLS  bool   `json:"skipTls,omitempty"`
+	// wf — Enabled is a POINTER so a legacy blob saved BEFORE this
+	// field existed decodes as nil, which LoadPersisted treats as
+	// "enabled" (nil⇒true). A non-pointer bool would decode as
+	// false and silently disable AI for every existing install on
+	// upgrade. omitempty keeps the JSON clean when nil.
+	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
 // SettingsStore is the small slice of *chstore.Store we need —
@@ -694,7 +748,12 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
 	}
-	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL, p.SkipTLS)
+	// wf — backward-compat: a blob saved before the "enabled" field
+	// existed (p.Enabled == nil) loads as enabled=true. Existing
+	// installs keep AI on across the upgrade; only an explicit
+	// "enabled":false from the Settings toggle disables it.
+	enabled := p.Enabled == nil || *p.Enabled
+	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL, p.SkipTLS, enabled)
 	return nil
 }
 
@@ -725,15 +784,19 @@ func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, i
 // SavePersisted writes new credentials to system_settings AND updates
 // the live Service. Called by PUT /api/settings/ai.
 // v0.5.360 — skipTLS plumbed through end-to-end.
-func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS bool) error {
-	raw, err := json.Marshal(persisted{Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL, SkipTLS: skipTLS})
+// wf — enabled persisted as a pointer (&enabled) so the round-trip is
+// explicit; once SavePersisted has run the blob always carries the
+// field. The disable-without-clearing-creds path is just enabled=false
+// with the apiKey left untouched.
+func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS, enabled bool) error {
+	raw, err := json.Marshal(persisted{Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL, SkipTLS: skipTLS, Enabled: &enabled})
 	if err != nil {
 		return err
 	}
 	if err := store.PutSetting(ctx, settingsKey, raw); err != nil {
 		return err
 	}
-	s.Configure(provider, apiKey, model, baseURL, skipTLS)
+	s.Configure(provider, apiKey, model, baseURL, skipTLS, enabled)
 	return nil
 }
 

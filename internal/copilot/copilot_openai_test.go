@@ -26,7 +26,7 @@ func newOpenAITestService(t *testing.T, responseBody string) (*Service, func()) 
 		_, _ = w.Write([]byte(responseBody))
 	}))
 	s := New("openai", "", "test-model")
-	s.Configure("openai", "", "test-model", srv.URL, false)
+	s.Configure("openai", "", "test-model", srv.URL, false, true)
 	return s, srv.Close
 }
 

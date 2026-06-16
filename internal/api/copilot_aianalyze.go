@@ -131,8 +131,8 @@ type aiPostCheck struct {
 // copilotAnalyzeService runs the per-service single-shot analysis. Read-only;
 // any authenticated user. Cached in Redis for 5 minutes per (service, rangeS).
 func (s *Server) copilotAnalyzeService(w http.ResponseWriter, r *http.Request) {
-	if s.copilot == nil || !s.copilot.Configured() {
-		http.Error(w, `{"error":"AI copilot not configured"}`, http.StatusServiceUnavailable)
+	if s.copilot == nil || !s.copilot.Active() {
+		http.Error(w, `{"error":"AI copilot not available (disabled or not configured)"}`, http.StatusServiceUnavailable)
 		return
 	}
 	service := strings.TrimSpace(r.URL.Query().Get("service"))

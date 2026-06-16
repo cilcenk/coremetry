@@ -23,6 +23,9 @@ export function AITab() {
   const [hasKey, setHasKey] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [skipTls, setSkipTls] = useState(false);
+  // wf — master on/off toggle, distinct from hasKey. Default true so a
+  // fresh / legacy backend (no "enabled" field) renders as enabled.
+  const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -33,6 +36,7 @@ export function AITab() {
       setBaseUrl(s.baseUrl || '');
       setHasKey(s.hasKey);
       setSkipTls(s.skipTls ?? false);
+      setEnabled(s.enabled ?? true);
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);
@@ -41,11 +45,17 @@ export function AITab() {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls });
+      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls, enabled });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
+      setEnabled(next.enabled ?? true);
       setApiKey('');
-      setMsg({ kind: 'ok', text: next.hasKey ? 'Saved — Copilot is live.' : 'Saved — Copilot disabled.' });
+      setMsg({
+        kind: 'ok',
+        text: !next.enabled
+          ? (next.hasKey ? 'Saved — Copilot disabled (key kept).' : 'Saved — Copilot disabled.')
+          : (next.hasKey || (provider === 'openai' && baseUrl) ? 'Saved — Copilot is live.' : 'Saved — Copilot dormant (no key).'),
+      });
     } catch (err) {
       setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Save failed' });
     } finally {
@@ -57,9 +67,10 @@ export function AITab() {
     if (!confirm('Remove the saved API key? Copilot buttons will disappear until a new key is set.')) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls });
+      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
+      setEnabled(next.enabled ?? true);
       setApiKey('');
       setMsg({ kind: 'ok', text: 'Key cleared — Copilot is dormant.' });
     } catch (err) {
@@ -120,23 +131,57 @@ export function AITab() {
         never leave your perimeter.
       </p>
 
-      <div className={`status-banner status-banner-${hasKey || (provider === 'openai' && baseUrl) ? 'operational' : 'degraded'}`}>
-        <span className={`status-pill status-pill-${hasKey || (provider === 'openai' && baseUrl) ? 'operational' : 'degraded'}`}>
-          {hasKey || (provider === 'openai' && baseUrl) ? 'CONFIGURED' : 'NOT CONFIGURED'}
-        </span>
-        <span style={{ fontWeight: 600, fontSize: 14 }}>
-          {hasKey
-            ? `Provider: ${providerLabel} — ready.`
-            : provider === 'openai' && baseUrl
-              ? `Provider: ${providerLabel} (no auth) — ready at ${baseUrl}.`
-              : 'Not configured. Paste a key (or set a local endpoint URL) below.'}
-        </span>
-      </div>
+      {(() => {
+        // Live state in three tiers: configured-and-enabled (active),
+        // configured-but-disabled (creds kept, AI off), or not
+        // configured. wf: the disabled tier is the whole point of the
+        // toggle — show it distinctly so the operator sees AI is off
+        // without thinking the key was lost.
+        const configured = hasKey || (provider === 'openai' && !!baseUrl);
+        const active = configured && enabled;
+        const tier = active ? 'operational' : 'degraded';
+        const label = active ? 'ACTIVE' : configured ? 'DISABLED' : 'NOT CONFIGURED';
+        return (
+          <div className={`status-banner status-banner-${tier}`}>
+            <span className={`status-pill status-pill-${tier}`}>{label}</span>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              {active
+                ? (hasKey
+                    ? `Provider: ${providerLabel} — ready.`
+                    : `Provider: ${providerLabel} (no auth) — ready at ${baseUrl}.`)
+                : configured
+                  ? `Provider: ${providerLabel} — credentials kept, AI Copilot turned off.`
+                  : 'Not configured. Paste a key (or set a local endpoint URL) below.'}
+            </span>
+          </div>
+        );
+      })()}
 
       <form onSubmit={save} style={{
         marginTop: 18, padding: 16, borderRadius: 8,
         background: 'var(--bg2)', border: '1px solid var(--border)',
       }}>
+        {/* Master on/off toggle (wf). Disabling stops the background
+            problem-explainer, hides the in-app AI affordances, and
+            503s the AI endpoints — all WITHOUT touching the stored
+            key, so re-enabling is one click. Same checkbox markup as
+            Skip-TLS below so the controls read as one family. */}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8,
+                        marginBottom: 12, fontSize: 12, color: 'var(--text2)' }}>
+          <input type="checkbox" checked={enabled}
+                 onChange={e => setEnabled(e.target.checked)}
+                 style={{ marginTop: 2 }} />
+          <div>
+            <div>Enable AI Copilot</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, lineHeight: 1.5 }}>
+              Master switch. Uncheck + Save to turn AI Copilot off
+              without removing the stored key — the background
+              problem-explainer stops, the ✨ Explain buttons hide,
+              and AI endpoints return 503. Re-check + Save to resume.
+            </div>
+          </div>
+        </label>
+
         <label style={{ display: 'block', marginBottom: 12 }}>
           <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Provider</div>
           <select value={provider}
@@ -226,7 +271,12 @@ export function AITab() {
         )}
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button type="submit" variant="primary" disabled={busy || (!apiKey && !hasKey)}>
+          {/* Save is actionable whenever there's something to persist:
+              a new key, an already-stored key, or an openai endpoint
+              with no key. The last clause keeps the Enable toggle
+              actionable on a no-auth-local install. */}
+          <Button type="submit" variant="primary"
+                  disabled={busy || (!apiKey && !hasKey && !(provider === 'openai' && !!baseUrl))}>
             {busy ? 'Saving…' : 'Save'}
           </Button>
           {hasKey && (

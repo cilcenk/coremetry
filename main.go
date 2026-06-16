@@ -583,13 +583,16 @@ func main() {
 	// v0.5.360: SkipTLS env default is false — operator opts in
 	// per-deployment via Settings → AI Copilot for self-hosted
 	// LLMs behind an enterprise CA.
-	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL, false)
+	// wf — env-default enables AI; the persisted blob's "enabled"
+	// (LoadPersisted, applied next) overlays on top, so an operator
+	// who disabled AI in Settings stays disabled across a restart.
+	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL, false, true)
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
 	go copilotSvc.StartConfigRefresh(ctx, store, 30*time.Second)
-	if copilotSvc.Configured() {
-		p, m, b, _, _ := copilotSvc.Snapshot()
+	if copilotSvc.Active() {
+		p, m, b, _, _, _ := copilotSvc.Snapshot()
 		if b != "" {
 			log.Printf("[copilot] AI explain enabled (provider=%s model=%s baseURL=%s)", p, m, b)
 		} else {

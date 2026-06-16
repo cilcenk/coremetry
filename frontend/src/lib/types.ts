@@ -767,6 +767,11 @@ export interface AISettings {
   // Operator-opt-in for self-hosted LLMs behind an enterprise
   // CA Go's default trust store doesn't know about.
   skipTls?: boolean;
+  // wf — master on/off toggle, DISTINCT from hasKey. Unchecking +
+  // saving disables the Copilot (stops the background explainer,
+  // hides AI affordances, 503s AI endpoints) WITHOUT clearing the
+  // stored key. Backend defaults a missing field to true.
+  enabled?: boolean;
 }
 export interface AISettingsInput {
   provider: AIProvider;
@@ -774,6 +779,9 @@ export interface AISettingsInput {
   model?: string;
   baseUrl?: string;
   skipTls?: boolean;
+  // wf — see AISettings.enabled. Always sent by the Settings form;
+  // omitting it defaults to true on the backend (*bool nil⇒true).
+  enabled?: boolean;
 }
 
 // External Tempo backend (v0.5.208) — fallback for trace-by-id

@@ -6554,8 +6554,12 @@ func (s *Server) putAnomalyPromotion(w http.ResponseWriter, r *http.Request) {
 
 // copilotConfig surfaces whether the feature is enabled — UI uses this
 // to show or hide the "AI explain" buttons. Doesn't leak the key.
+// wf — Active() (not Configured()): the AI affordances hide when the
+// operator flips the "Enable AI Copilot" toggle off even though the
+// creds are still stored. Active() nil-guards internally (s.copilot is
+// nil when no key was ever configured), so no separate nil check.
 func (s *Server) copilotConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]bool{"enabled": s.copilot.Configured()})
+	writeJSON(w, map[string]bool{"enabled": s.copilot.Active()})
 }
 
 // getAISettings returns the current Copilot config minus the actual
@@ -6565,13 +6569,17 @@ func (s *Server) copilotConfig(w http.ResponseWriter, r *http.Request) {
 // we echo it so the UI can show "currently pointing at <local
 // endpoint>" without operator memorisation.
 func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
-	provider, model, baseURL, hasKey, skipTLS := s.copilot.Snapshot()
+	// wf — enabled is the master on/off toggle, DISTINCT from hasKey
+	// (creds stored). The Settings form binds the checkbox to enabled
+	// and shows the "key stored" indicator off hasKey independently.
+	provider, model, baseURL, hasKey, skipTLS, enabled := s.copilot.Snapshot()
 	writeJSON(w, map[string]any{
 		"provider": provider,
 		"model":    model,
 		"baseUrl":  baseURL,
 		"hasKey":   hasKey,
 		"skipTls":  skipTLS,
+		"enabled":  enabled,
 	})
 }
 
@@ -6588,6 +6596,10 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		Model    string `json:"model"`
 		BaseURL  string `json:"baseUrl"`
 		SkipTLS  bool   `json:"skipTls"`
+		// wf — Enabled is a POINTER so an older PUT client that doesn't
+		// send the field (nil) defaults to enabled=true and can't
+		// accidentally disable AI. The Settings UI always sends it.
+		Enabled  *bool  `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest); return
@@ -6598,15 +6610,18 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		in.Provider != copilot.ProviderOpenAI {
 		http.Error(w, "provider must be 'anthropic', 'github' or 'openai'", http.StatusBadRequest); return
 	}
-	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS); err != nil {
+	enabled := in.Enabled == nil || *in.Enabled
+	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
 	s.publishConfigReload(r.Context(), "ai")
-	provider, model, baseURL, hasKey, skipTLS := s.copilot.Snapshot()
+	provider, model, baseURL, hasKey, skipTLS, enabledNow := s.copilot.Snapshot()
 	// apiKey itself never enters audit_log; hasKey is the only
 	// secret-adjacent bit and it's already part of the public GET.
+	// wf — enabled recorded so the audit trail shows the operator
+	// flipping AI off/on (the disable-without-clearing-creds action).
 	details, _ := json.Marshal(map[string]any{
-		"provider": provider, "model": model, "baseUrl": baseURL, "hasKey": hasKey, "skipTls": skipTLS,
+		"provider": provider, "model": model, "baseUrl": baseURL, "hasKey": hasKey, "skipTls": skipTLS, "enabled": enabledNow,
 	})
 	s.audit(r, "settings.ai.update", "settings", "ai", string(details))
 	writeJSON(w, map[string]any{
@@ -6615,6 +6630,7 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		"baseUrl":  baseURL,
 		"hasKey":   hasKey,
 		"skipTls":  skipTLS,
+		"enabled":  enabledNow,
 	})
 }
 
@@ -6624,8 +6640,8 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 // browser doesn't ship trace data back to the API just to ship it on
 // to Anthropic.
 func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable); return
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable); return
 	}
 	id := r.PathValue("id")
 	spans, err := s.store.GetTrace(r.Context(), id)
@@ -6674,8 +6690,8 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 // configured backend — Anthropic, OpenAI, or a local LLM via
 // OpenAI-compatible base URL (Ollama / vLLM / LM Studio).
 func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable); return
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable); return
 	}
 	traceID := r.PathValue("traceId")
 	spanID := strings.TrimSpace(r.URL.Query().Get("span"))
@@ -6769,8 +6785,8 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 // likely-cause + first-action summary. Useful on a fresh page during
 // an incident.
 func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable); return
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable); return
 	}
 	id := r.PathValue("id")
 	probs, err := s.store.ListProblems(r.Context(), chstore.ProblemFilter{Limit: 1000})
@@ -6877,8 +6893,8 @@ func topNeighborNames(ns []chstore.NeighborStat, n int) string {
 // explain-problem because incidents bundle multiple firings —
 // the LLM needs the wider scope to call escalation correctly.
 func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	id := r.PathValue("id")
@@ -6937,8 +6953,8 @@ func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) 
 // operator decide whether to act, not assume something is
 // broken.
 func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	id := r.PathValue("id")
@@ -6994,8 +7010,8 @@ func truncate(s string, n int) string {
 // (which fires on a specific alert) because the chart may
 // look fine and the answer should say so plainly.
 func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	q := r.URL.Query()
@@ -7134,8 +7150,8 @@ func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Requ
 // Caps at 8 past instances to keep the prompt bounded — the
 // most-recent 8 carry the freshest pattern.
 func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	id := r.PathValue("id")
@@ -7227,8 +7243,8 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 //   • Both traces identical (same ID typed twice) → still
 //     valid; the model will say "essentially the same".
 func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	var body struct {
@@ -7286,8 +7302,8 @@ func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
 // numbers as a small chip row so the operator can
 // fact-check the model.
 func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	var body struct {
@@ -7440,8 +7456,8 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 // model whether the budget is on track, burning fast, or
 // already breached.
 func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	id := r.PathValue("id")
@@ -7504,8 +7520,8 @@ func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
 // data on the row) so the handler is a thin shaper — no
 // re-query of the spans table needed.
 func (s *Server) copilotExplainSlowQuery(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	var body struct {
@@ -7737,8 +7753,8 @@ func abs(f float64) float64 {
 //     "no suggestions available" rather than poisoning the
 //     form with non-JSON garbage.
 func (s *Server) copilotSuggestServiceTags(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	service := strings.TrimSpace(r.URL.Query().Get("service"))

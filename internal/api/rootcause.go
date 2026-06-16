@@ -388,8 +388,8 @@ func fmtDeployAge(sec int64) string {
 // a changed ranking. Read-only, viewer-readable; no audit (the copilotExplain
 // wrapper records the ai_calls row for /ai attribution).
 func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, anchorKind string) {
-	if !s.copilot.Configured() {
-		http.Error(w, "AI copilot not configured", http.StatusServiceUnavailable)
+	if !s.copilot.Active() {
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	id := r.PathValue("id")

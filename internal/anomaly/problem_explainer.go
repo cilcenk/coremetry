@@ -30,11 +30,14 @@ import (
 //   - Surface = "problem-auto-explain" so the /ai page shows
 //     a dedicated row for this background traffic alongside
 //     operator-clicked Explain calls.
-//   - Configurable: AI Copilot Configured() must return true.
-//     We don't gate on a separate "auto-explain enabled"
-//     setting yet — once the operator has an API key wired,
-//     they almost certainly want the auto-explain. A toggle is
-//     a follow-up if anyone asks.
+//   - Gated on AI Copilot Active() — true only when the Copilot
+//     is BOTH configured (creds wired) AND enabled (the Settings
+//     "Enable AI Copilot" toggle is on). wf: the operator can flip
+//     the toggle OFF to stop this background loop from hammering
+//     the provider (e.g. a TLS-proxied enterprise cluster spamming
+//     "x509: negative serial number" against the GitHub token
+//     endpoint) WITHOUT clearing the stored key. Re-enabling
+//     resumes the loop on the next tick.
 const explainerLockKey = "problem-explainer:lock"
 const explainerBatch = 16
 
@@ -84,8 +87,13 @@ func (e *ProblemExplainer) Start(ctx context.Context) {
 }
 
 func (e *ProblemExplainer) tickIfLeader(ctx context.Context) {
-	if !e.copilot.Configured() {
-		return // No API key wired — silently noop.
+	if !e.copilot.Active() {
+		// No API key wired OR the operator disabled AI Copilot in
+		// Settings — silently noop. THE fix for the disabled-but-
+		// creds-stored case: stops this loop from calling the
+		// provider (and spamming x509 errors) the moment the toggle
+		// flips off, without waiting for creds to be cleared. wf.
+		return
 	}
 	if !e.leader.IsLeader() {
 		return

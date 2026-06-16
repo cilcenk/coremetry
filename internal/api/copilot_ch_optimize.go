@@ -36,7 +36,7 @@ type chOptimizeResponse struct {
 }
 
 func (s *Server) copilotOptimizeCHQuery(w http.ResponseWriter, r *http.Request) {
-	if s.copilot == nil || !s.copilot.Configured() {
+	if s.copilot == nil || !s.copilot.Active() {
 		http.Error(w, `{"error":"AI Copilot not configured"}`, http.StatusServiceUnavailable)
 		return
 	}

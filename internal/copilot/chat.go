@@ -80,8 +80,8 @@ type ChatTurn struct {
 // message after the agentic loop settles (RecordUsage), summing
 // the per-turn token usage, so one chat exchange = one ai_calls row.
 func (s *Service) ChatWithTools(ctx context.Context, system string, msgs []ChatMessage, tools []ToolSpec) (ChatTurn, error) {
-	if !s.Configured() {
-		return ChatTurn{}, errors.New("AI copilot not configured (open Settings → AI Copilot)")
+	if !s.Active() {
+		return ChatTurn{}, errors.New("AI copilot not available (disabled or not configured — open Settings → AI Copilot)")
 	}
 	s.mu.RLock()
 	provider := s.provider

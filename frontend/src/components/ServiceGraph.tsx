@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import dagre from 'dagre';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { timeRangeToNs } from '@/lib/utils';
+import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui/Button';
+import { healthToken } from '@/lib/health';
 import { mapNumber, nodeSizeMetric } from '@/lib/topologyNodes';
 import type { NodeSizeMode, NodeSizeMetric } from '@/lib/topologyNodes';
 import type { TimeRange } from '@/lib/types';
@@ -66,6 +69,34 @@ function healthColor(errorRate: number, pal: Pal): string {
   if (errorRate >= 5) return pal.err;
   if (errorRate >= 1) return pal.warn;
   return pal.ok;
+}
+
+// fmtMs — compact latency label (mirrors FocusedNeighborhood.fmtMs so the
+// canvas edge label and the /topology inspector read identically).
+function fmtMs(ms: number): string {
+  if (!ms) return '—';
+  if (ms >= 1000) return (ms / 1000).toFixed(ms >= 10_000 ? 0 : 1) + 's';
+  return Math.round(ms) + 'ms';
+}
+
+// edgeLabel — the canvas chip text for one edge under the SELECTED size metric
+// (slice 4). Rate → calls/min (fmtNum is the codebase's compact int format);
+// Duration → p99Ms (Coremetry HAS per-edge p99, the operator-meaningful tail —
+// prefer it over avg for the on-canvas label).
+function edgeLabel(e: GraphEdge, metric: NodeSizeMetric): string {
+  return metric === 'rate' ? `${fmtNum(Math.round(e.rate))}/min` : fmtMs(e.p99Ms);
+}
+
+// Selected — additive single-click focus (slice 5). A NODE drives the ego-graph
+// dim (everything not incident to it fades) + a detail panel; an EDGE highlights
+// the spline + a per-edge detail panel. null = nothing selected (default).
+type Selected =
+  | { type: 'node'; id: string }
+  | { type: 'edge'; source: string; target: string }
+  | null;
+
+function sameEdge(s: Selected, e: GraphEdge): boolean {
+  return s?.type === 'edge' && s.source === e.source && s.target === e.target;
 }
 
 const KIND_BADGE: Record<GraphNodeKind, string> = {
@@ -194,7 +225,31 @@ export function ServiceGraph({
   // view transform: scale + translate (world → screen).
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
   const [hover, setHover] = useState<string | null>(null);
+  // Additive click-to-focus (slice 5). A selected NODE masks the canvas to its
+  // ego-graph (incident edges + their endpoints) via the existing dim path; a
+  // selected edge highlights that spline. Render-time only — NO refetch.
+  const [selected, setSelected] = useState<Selected>(null);
   const drag = useRef<{ px: number; py: number; tx: number; ty: number } | null>(null);
+
+  // Clear a stale selection if the payload changes underneath it (range/scope
+  // flip). Guards against a panel pointing at a node/edge no longer in the graph.
+  useEffect(() => { setSelected(null); }, [q.data]);
+
+  // ego set: the selected node + its direct neighbors. Non-ego nodes/edges dim.
+  const egoSet = useMemo(() => {
+    if (selected?.type !== 'node') return null;
+    const s = new Set<string>([selected.id]);
+    for (const nb of neighbors.get(selected.id) ?? []) s.add(nb);
+    return s;
+  }, [selected, neighbors]);
+
+  const selectedNode = selected?.type === 'node' ? nodeById.get(selected.id) ?? null : null;
+  // The selected edge's payload (looked up from the live layout so its RED stats
+  // come from the SAME data the canvas drew — no second fetch).
+  const selectedEdge = useMemo(() => {
+    if (selected?.type !== 'edge') return null;
+    return q.data?.edges.find(e => e.source === selected.source && e.target === selected.target) ?? null;
+  }, [selected, q.data]);
 
   const fit = useCallback(() => {
     const el = wrapRef.current;
@@ -238,7 +293,19 @@ export function ServiceGraph({
     ctx.scale(view.scale, view.scale);
 
     const hoverSet = hover ? (neighbors.get(hover) ?? new Set<string>()) : null;
-    const isLit = (id: string) => !hover || id === hover || (hoverSet?.has(id) ?? false);
+    // A node is LIT if: nothing focused, OR it's the hovered node / a hover
+    // neighbor, OR — when a NODE is selected — it's in the ego set (slice 5
+    // ego-graph mask reuses the SAME dim path as hover). The two combine: hover
+    // can still spotlight within a selected ego-graph.
+    const isLit = (id: string) =>
+      (!hover || id === hover || (hoverSet?.has(id) ?? false)) &&
+      (!egoSet || egoSet.has(id));
+    // An edge is LIT if either endpoint is hovered, OR (node selected) both
+    // endpoints sit in the ego set, OR it IS the selected edge.
+    const edgeLit = (e: GraphEdge) =>
+      (!hover || e.source === hover || e.target === hover) &&
+      (!egoSet || (egoSet.has(e.source) && egoSet.has(e.target))) ||
+      sameEdge(selected, e);
 
     // viewport bounds in world coords for culling. Pad by MAX_W so the widest
     // size-encoded cards aren't culled a frame early at the viewport edges.
@@ -247,19 +314,34 @@ export function ServiceGraph({
     const maxX = (vw - view.tx) / view.scale + MAX_W;
     const maxY = (vh - view.ty) / view.scale + NODE_H;
 
+    // Density gate (slice 4 — Uptrace's load-bearing rule). On a billing-grade
+    // graph, always-on edge labels become spaghetti; gate by edge count:
+    //   < 8  → label always   |   8–15 → label only on hover/highlight
+    //   ≥ 16 → label only on hover/highlight.
+    // (8–15 and ≥16 collapse to the same rule today — kept as separate bands so
+    // the thresholds read as the documented gate and a future "dim label" tier
+    // for the mid band is a one-line change.)
+    const edgeCount = layout.edges.length;
+    const labelAlways = edgeCount < 8;
+
     // edges first
+    ctx.font = '600 10px -apple-system, "Segoe UI", sans-serif';
+    ctx.textBaseline = 'middle';
     for (const { e, pts } of layout.edges) {
       if (pts.length < 2) continue;
-      const lit = !hover || e.source === hover || e.target === hover;
+      const lit = edgeLit(e);
       const col = healthColor(e.errorRate, pal);
+      const isSel = sameEdge(selected, e);
       ctx.globalAlpha = lit ? 0.85 : 0.12;
-      ctx.strokeStyle = col;
-      ctx.lineWidth = Math.max(0.6, Math.min(6, Math.log10(e.calls + 1)));
+      ctx.strokeStyle = isSel ? pal.accent : col;
+      // KEEP edge thickness = log10(calls) (Coremetry's instinct > Uptrace's
+      // flat width); the selected edge gets a +1px bump for affordance.
+      ctx.lineWidth = Math.max(0.6, Math.min(6, Math.log10(e.calls + 1))) + (isSel ? 1 : 0);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
       for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
-      // arrowhead at the target end
+      // arrowhead at the target end (always kept — slice 4)
       const a = pts[pts.length - 2], b = pts[pts.length - 1];
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
       ctx.beginPath();
@@ -267,12 +349,32 @@ export function ServiceGraph({
       ctx.lineTo(b.x - 7 * Math.cos(ang - 0.4), b.y - 7 * Math.sin(ang - 0.4));
       ctx.lineTo(b.x - 7 * Math.cos(ang + 0.4), b.y - 7 * Math.sin(ang + 0.4));
       ctx.closePath();
-      ctx.fillStyle = col;
+      ctx.fillStyle = isSel ? pal.accent : col;
       ctx.fill();
+
+      // density-gated metric chip at the spline midpoint (slice 4). Always when
+      // the graph is small; otherwise only when this edge is lit (hover/select).
+      if (labelAlways || lit) {
+        const mid = midpointOf(pts);
+        const text = edgeLabel(e, sizeMetric);
+        const padX = 4, padY = 2;
+        const tw = ctx.measureText(text).width;
+        const chipW = tw + padX * 2, chipH = 10 + padY * 2;
+        ctx.globalAlpha = lit ? 1 : 0.55;
+        ctx.fillStyle = pal.bg1;
+        ctx.strokeStyle = pal.border;
+        ctx.lineWidth = 1;
+        roundRect(ctx, mid.x - chipW / 2, mid.y - chipH / 2, chipW, chipH, 4);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = pal.text2;
+        ctx.fillText(text, mid.x - tw / 2, mid.y);
+      }
     }
     ctx.globalAlpha = 1;
 
     // nodes
+    const selId = selected?.type === 'node' ? selected.id : null;
     ctx.font = '600 12px -apple-system, "Segoe UI", sans-serif';
     ctx.textBaseline = 'middle';
     for (const [id, p] of layout.pos) {
@@ -280,12 +382,13 @@ export function ServiceGraph({
       const n = nodeById.get(id);
       if (!n) continue;
       const lit = isLit(id);
+      const focused = id === hover || id === selId;
       const x = p.x - p.w / 2, y = p.y - p.h / 2;
-      ctx.globalAlpha = lit ? 1 : 0.22;
+      ctx.globalAlpha = lit ? 1 : 0.12;
       // card
       ctx.fillStyle = pal.bg1;
-      ctx.strokeStyle = id === hover ? pal.accent : pal.border;
-      ctx.lineWidth = id === hover ? 2 : 1;
+      ctx.strokeStyle = focused ? pal.accent : pal.border;
+      ctx.lineWidth = focused ? 2 : 1;
       roundRect(ctx, x, y, p.w, p.h, 7);
       ctx.fill();
       ctx.stroke();
@@ -310,7 +413,7 @@ export function ServiceGraph({
     }
     ctx.restore();
     ctx.globalAlpha = 1;
-  }, [layout, view, hover, pal, nodeById, neighbors, height]);
+  }, [layout, view, hover, pal, nodeById, neighbors, height, selected, egoSet, sizeMetric]);
 
   // ── interaction ──────────────────────────────────────────────────────────
   const hitTest = useCallback((sx: number, sy: number): string | null => {
@@ -321,6 +424,24 @@ export function ServiceGraph({
       if (wx >= p.x - p.w / 2 && wx <= p.x + p.w / 2 && wy >= p.y - p.h / 2 && wy <= p.y + p.h / 2) return id;
     }
     return null;
+  }, [layout, view]);
+
+  // hitTestEdge — nearest spline within a screen-space tolerance, for click-to-
+  // select-an-edge (slice 5). Tolerance is divided by the live scale so the grab
+  // zone stays ~6px on screen regardless of zoom.
+  const hitTestEdge = useCallback((sx: number, sy: number): GraphEdge | null => {
+    if (!layout) return null;
+    const wx = (sx - view.tx) / view.scale;
+    const wy = (sy - view.ty) / view.scale;
+    const tol = 6 / view.scale;
+    let best: GraphEdge | null = null, bestD = tol;
+    for (const { e, pts } of layout.edges) {
+      for (let i = 1; i < pts.length; i++) {
+        const d = distToSeg(wx, wy, pts[i - 1], pts[i]);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+    }
+    return best;
   }, [layout, view]);
 
   const onPointerMove = (ev: React.PointerEvent) => {
@@ -338,7 +459,22 @@ export function ServiceGraph({
     (ev.target as HTMLElement).setPointerCapture?.(ev.pointerId);
   };
   const endDrag = () => { drag.current = null; };
+  // Single click is ADDITIVE (slice 5): select a node (→ ego-graph + detail
+  // panel) or an edge (→ edge detail panel) instead of navigating. Navigation
+  // stays reachable via the panel's "Open service →" button and double-click.
+  // A click on empty canvas clears the selection.
   const onClick = (ev: React.MouseEvent) => {
+    if (drag.current && (Math.abs(ev.clientX - drag.current.px) > 3 || Math.abs(ev.clientY - drag.current.py) > 3)) return; // a pan, not a click
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
+    const id = hitTest(sx, sy);
+    if (id) { setSelected({ type: 'node', id }); return; }
+    const e = hitTestEdge(sx, sy);
+    if (e) { setSelected({ type: 'edge', source: e.source, target: e.target }); return; }
+    setSelected(null);
+  };
+  // Double-click a service node = navigate (no muscle-memory regression).
+  const onDoubleClick = (ev: React.MouseEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const id = hitTest(ev.clientX - rect.left, ev.clientY - rect.top);
     if (!id) return;
@@ -379,6 +515,7 @@ export function ServiceGraph({
         onPointerUp={endDrag}
         onPointerLeave={() => { endDrag(); setHover(null); }}
         onClick={onClick}
+        onDoubleClick={onDoubleClick}
       />
       {/* health legend + fit */}
       <div style={{ position: 'absolute', left: 10, bottom: 10, display: 'flex', gap: 12, alignItems: 'center', background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 9px', fontSize: 11, color: 'var(--text2)' }}>
@@ -423,7 +560,35 @@ export function ServiceGraph({
         style={{ position: 'absolute', right: 10, top: 10, fontSize: 12, padding: '4px 10px', background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', cursor: 'pointer' }}>
         Fit
       </button>
-      {hover && nodeById.get(hover) && <HoverCard node={nodeById.get(hover)!} />}
+      {/* HoverCard suppressed while the detail panel is open — the panel owns
+          the right rail and a hover card behind it just flickers. */}
+      {!selected && hover && nodeById.get(hover) && <HoverCard node={nodeById.get(hover)!} />}
+
+      {/* ── detail panel (slice 5) — additive click-to-focus inspector. Ports
+          the FocusedNeighborhood inspector markup (health dot + RED Stat rows
+          + Recenter) into a right-rail panel. No refetch for the node/edge
+          stats (read from the live payload); only the edge-instances drill
+          fetches, lazily. ───────────────────────────────────────────────── */}
+      {selectedNode && (
+        <NodeDetail
+          node={selectedNode}
+          onClose={() => setSelected(null)}
+          onRecenter={() => { fit(); }}
+          onOpen={() => { if (selectedNode.kind === 'service' && onSelectService) onSelectService(selectedNode.name); }}
+        />
+      )}
+      {selected?.type === 'edge' && (
+        <EdgeDetail
+          edge={selectedEdge}
+          source={selected.source}
+          target={selected.target}
+          sourceNode={nodeById.get(selected.source) ?? null}
+          targetNode={nodeById.get(selected.target) ?? null}
+          from={from}
+          to={to}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </div>
   );
 }
@@ -449,6 +614,156 @@ function HoverCard({ node }: { node: GraphNode }) {
   );
 }
 
+// ── detail panel (slice 5) ───────────────────────────────────────────────────
+// Shared right-rail shell. Ports the FocusedNeighborhood inspector look (bg2
+// card, health-dot header, mono kind line, RED Stat grid) but as a sticky panel
+// instead of a hover popover. Uses the shared <Button> atom — NO hand-rolled
+// button CSS (v0.7.54 one-design-language rule).
+function PanelShell({ title, dot, sub, onClose, children }: {
+  title: React.ReactNode; dot?: string; sub?: React.ReactNode;
+  onClose: () => void; children: React.ReactNode;
+}) {
+  return (
+    <div style={{ position: 'absolute', right: 10, top: 10, bottom: 10, width: 264, zIndex: 6, display: 'flex', flexDirection: 'column', gap: 10, padding: 12, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', boxShadow: '0 6px 20px rgba(0,0,0,.28)', fontSize: 12, overflowY: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        {dot && <span style={{ width: 9, height: 9, borderRadius: '50%', background: dot, flex: '0 0 auto' }} />}
+        <span style={{ fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+        <Button variant="ghost" size="sm" onClick={onClose} title="Close (clears the ego-graph focus)" style={{ marginLeft: 'auto', lineHeight: 1 }}>✕</Button>
+      </div>
+      {sub && (
+        <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', marginTop: -4 }}>{sub}</div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+// NodeDetail — the selected-node inspector. Health/kind/RED + deep links
+// (Open service → existing nav; Explore traces → /traces?service=…). No
+// monitors link: /alerts has no service-scoped filter today, so shipping
+// /alerts?service= would be a dead no-op query. Stats read from the live
+// payload — no refetch.
+function NodeDetail({ node, onClose, onRecenter, onOpen }: {
+  node: GraphNode;
+  onClose: () => void; onRecenter: () => void; onOpen: () => void;
+}) {
+  const isService = node.kind === 'service';
+  return (
+    <PanelShell
+      title={node.name}
+      dot={healthToken(node.errorRate)}
+      sub={`${node.kind}${node.system ? ` · ${node.system}` : ''}${node.kind === 'database' && node.dbName ? ` · db.name=${node.dbName}` : ''}`}
+      onClose={onClose}
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
+        <Stat l="CALLS" v={fmtNum(node.calls)} />
+        <Stat l="RATE" v={`${fmtNum(Math.round(node.rate))}/min`} />
+        <Stat l="ERR" v={`${node.errorRate.toFixed(1)}%`} tone={healthToken(node.errorRate)} />
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <Button variant="secondary" size="sm" onClick={onRecenter} title="Re-frame the graph (Fit)">Recenter</Button>
+        {isService && <Button variant="primary" size="sm" onClick={onOpen}>Open service →</Button>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {isService && (
+          <Link to={`/traces?service=${encodeURIComponent(node.name)}`} style={linkStyle}>Explore traces →</Link>
+        )}
+      </div>
+    </PanelShell>
+  );
+}
+
+// EdgeDetail — the selected-edge inspector. "client → server" title, the RED
+// rows (calls / errRate / avgMs / p99Ms), a pair-filtered trace link, and the
+// "Edge instances" drill that REUSES the existing GET /api/topology/edge/
+// instances endpoint (infra edges only — service→db/queue, the only shape that
+// endpoint groups by peer_service). The drill fetches lazily on demand.
+function EdgeDetail({ edge, source, target, sourceNode, targetNode, from, to, onClose }: {
+  edge: GraphEdge | null; source: string; target: string;
+  sourceNode: GraphNode | null; targetNode: GraphNode | null;
+  from: number; to: number; onClose: () => void;
+}) {
+  const [showInstances, setShowInstances] = useState(false);
+  const srcName = sourceNode?.name ?? source;
+  const tgtName = targetNode?.name ?? target;
+  // The edge-instances endpoint groups a parent SERVICE's spans by peer_service
+  // filtered to a db/queue system — so it only applies when the target is a
+  // db/queue node and the source is a service. Otherwise the affordance hides.
+  const infraKind: 'db' | 'queue' | null =
+    targetNode?.kind === 'database' ? 'db' : targetNode?.kind === 'queue' ? 'queue' : null;
+  const canDrill = infraKind !== null && targetNode?.system != null && sourceNode?.kind === 'service';
+
+  const inst = useQuery({
+    queryKey: ['edge-instances', source, targetNode?.system ?? '', infraKind ?? '', from, to],
+    queryFn: () => api.topologyEdgeInstances({
+      parent: source, system: targetNode!.system!, kind: infraKind!, from, to,
+    }),
+    enabled: showInstances && canDrill,
+    staleTime: 30_000,
+  });
+
+  const errRate = edge?.errorRate ?? 0;
+  return (
+    <PanelShell
+      title={<span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>{srcName} <span style={{ color: 'var(--text3)' }}>→</span> {tgtName}</span>}
+      dot={healthToken(errRate)}
+      sub="CLIENT → SERVER edge"
+      onClose={onClose}
+    >
+      {!edge ? (
+        <Empty icon="⋔" title="Edge no longer in window" />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 6 }}>
+            <Stat l="CALLS" v={fmtNum(edge.calls)} />
+            <Stat l="ERR" v={`${errRate.toFixed(1)}%`} tone={healthToken(errRate)} />
+            <Stat l="AVG" v={fmtMs(edge.avgMs)} />
+            <Stat l="P99" v={fmtMs(edge.p99Ms)} />
+          </div>
+          <Link to={`/traces?services=${encodeURIComponent(source)},${encodeURIComponent(target)}`} style={linkStyle}>View traces (this pair) →</Link>
+          {canDrill && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {!showInstances ? (
+                <Button variant="secondary" size="sm" onClick={() => setShowInstances(true)}>
+                  Edge instances ▾
+                </Button>
+              ) : (
+                <>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+                    {targetNode?.system} instances
+                  </div>
+                  {inst.isLoading && <Spinner />}
+                  {!inst.isLoading && (inst.data?.instances.length ?? 0) === 0 && (
+                    <Empty icon="⋔" title="No instances in this window" />
+                  )}
+                  {(inst.data?.instances ?? []).map(i => (
+                    <div key={i.instance} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px', borderRadius: 5, background: 'var(--bg1)', border: '1px solid var(--border)' }}>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'ui-monospace, monospace', fontSize: 10.5 }} title={i.instance}>{i.instance}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text2)' }}>{fmtNum(i.calls)}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text3)' }}>{fmtMs(i.p99Ms)}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </PanelShell>
+  );
+}
+
+const linkStyle: React.CSSProperties = { fontSize: 11, color: 'var(--accent)', textDecoration: 'none' };
+
+function Stat({ l, v, tone }: { l: string; v: string; tone?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <span style={{ fontSize: 12, fontWeight: 700, color: tone ?? 'var(--text)', fontFamily: 'ui-monospace, monospace' }}>{v}</span>
+      <span style={{ fontSize: 8.5, color: 'var(--text3)', letterSpacing: '0.4px' }}>{l}</span>
+    </div>
+  );
+}
+
 // ── canvas helpers ───────────────────────────────────────────────────────────
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -468,4 +783,32 @@ function clip(ctx: CanvasRenderingContext2D, s: string, maxW: number): string {
     if (ctx.measureText(s.slice(0, mid) + '…').width <= maxW) lo = mid; else hi = mid - 1;
   }
   return s.slice(0, lo) + '…';
+}
+
+// midpointOf — the geometric midpoint of an edge polyline (the dagre spline
+// points), by arc length, so the metric chip (slice 4) sits at the visual
+// centre of the curve rather than the centre of its bounding box.
+function midpointOf(pts: Array<{ x: number; y: number }>): { x: number; y: number } {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  let half = total / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (half <= seg || i === pts.length - 1) {
+      const t = seg === 0 ? 0 : half / seg;
+      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t };
+    }
+    half -= seg;
+  }
+  return pts[Math.floor(pts.length / 2)];
+}
+
+// distToSeg — point→segment distance (world coords) for edge hit-testing.
+function distToSeg(px: number, py: number, a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - a.x, py - a.y);
+  let t = ((px - a.x) * dx + (py - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
 }

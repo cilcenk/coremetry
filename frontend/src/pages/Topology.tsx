@@ -3,14 +3,14 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
+import { ServiceGraph } from '@/components/ServiceGraph';
 import { infraNodeLabel, infraNodeSystem } from '@/lib/topologyNodes';
 import { useAuth } from '@/components/AuthProvider';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
-import { ServicePicker as TopoServicePicker } from '@/components/topology/ServicePicker';
-import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
 import { useUrlRange } from '@/lib/useUrlRange';
+import type { NodeSizeMode, NodeSizeMetric } from '@/lib/topologyNodes';
 import type {
   ServiceTopologyResponse, ServiceTopologyNode, ServiceTopologyEdge,
   TopologyResponse, TopologyNode,
@@ -42,39 +42,99 @@ type TopologyView = {
   local: boolean;
 };
 
-// v0.8.14 — topology rebuild Stage 3: /topology now renders the ONE canonical
-// OTel-native ServiceGraph (global scope). The previous multi-view page
-// (OldTopologyPage, below) is kept but unreachable until Stage 4 deletes it.
-// v0.8.x — PICKER-FIRST topology. At thousands of services the global graph is
-// an unreadable hairball; /topology now lands on a service PICKER (table) and
-// renders only the chosen service's focused neighborhood (callers + deps),
-// expandable by hops. focus/hops/errorsOnly ride the URL so views are shareable.
+// /topology — the ONE canonical OTel-native ServiceGraph (canvas+dagre, with the
+// Uptrace-adapt Slice 1-5 features: node-size encoding, Size-by/Metric toggles,
+// density-gated edge labels, click→focus ego-graph + detail panel).
+//
+// GLOBAL-FIRST (Datadog/Dynatrace service-map): the page lands on the WHOLE
+// service graph (scope=global). Click any node → Slice 5's ego-graph dim + detail
+// panel scopes the eye without a refetch. To jump to a scoped neighborhood, the
+// toolbar ServicePicker (server-side, reaches any service at 10k+ scale) sets
+// ?focus=<svc> → scope=neighborhood + focus; clearing returns to global.
+//
+// Shareable URL params (identical to /servicegraph-preview so both routes read
+// the same view): ?focus (scope+anchor), ?size=incoming|outgoing (node-size
+// dimension), ?metric=rate|duration (node-size + edge-label metric). Defaults
+// stay OUT of the URL so a shared link is clean; non-defaults persist.
+//
+// The legacy multi-view page (OldTopologyPage, below) is retained but
+// unreachable from /topology. The picker-first FocusedNeighborhood /
+// TopologyFlowGraph components still ship — the service-detail "Topology" tab
+// uses FocusedNeighborhood and /service-map uses TopologyFlowGraph (both out of
+// scope here).
 export default function TopologyPage() {
   const [range, setRange] = useUrlRange('24h');
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  // focus drives ServiceGraph's scope: a non-empty ?focus scopes to that
+  // service's neighborhood; empty = the global graph.
   const focus = params.get('focus') ?? '';
-  const hops = params.get('hops') === '2' ? 2 : 1;
-  const errorsOnly = params.get('err') === '1';
-  const merge = (patch: Record<string, string | null>) => {
+  const scope: 'global' | 'neighborhood' = focus ? 'neighborhood' : 'global';
+
+  // Node-size encoding (Slice 2-4) lifted to the URL so the global view is
+  // shareable. Re-rolls the SAME fetched payload client-side — writing these
+  // params does NOT change ServiceGraph's react-query key, so flipping a toggle
+  // never refetches.
+  const nodeSizeMode: NodeSizeMode = params.get('size') === 'incoming' ? 'incoming' : 'outgoing';
+  const nodeSizeMetric: NodeSizeMetric = params.get('metric') === 'duration' ? 'duration' : 'rate';
+  const onNodeSizeChange = (mode: NodeSizeMode, metric: NodeSizeMetric) => {
     const next = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
-    setParams(next);
+    if (mode === 'outgoing') next.delete('size'); else next.set('size', mode);
+    if (metric === 'rate') next.delete('metric'); else next.set('metric', metric);
+    setParams(next, { replace: true });
   };
+
+  // Picker draft (v0.7.27 first-keystroke guard): typing only updates the draft;
+  // focus commits to the URL on pick/Enter. Kept in step with the URL so a
+  // shared link, browser-back, or the in-graph "clear" reflect in the input.
+  const [focusDraft, setFocusDraft] = useState(focus);
+  useEffect(() => { setFocusDraft(focus); }, [focus]);
+
+  const setFocus = useCallback((svc: string) => {
+    const next = new URLSearchParams(params);
+    if (svc) next.set('focus', svc); else next.delete('focus');
+    setParams(next, { replace: true });
+  }, [params, setParams]);
+
   return (
     <>
       <Topbar title="Topology" range={range} onRangeChange={setRange} />
       <div id="content">
-        {focus ? (
-          <FocusedNeighborhood
-            range={range} focus={focus} hops={hops} errorsOnly={errorsOnly}
-            onHops={h => merge({ hops: String(h) })}
-            onErrorsOnly={v => merge({ err: v ? '1' : null })}
-            onRecenter={svc => merge({ focus: svc })}
-            onClear={() => merge({ focus: null, hops: null, err: null })}
+        <div className="controls" style={{ marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 12, color: 'var(--text2)' }}>Focus on</label>
+          {/* Server-side ServicePicker — reaches ANY service at 10k+ scale.
+              Picking sets ?focus → scope=neighborhood; the graph re-fetches the
+              scoped payload. Clearing returns to the global graph. */}
+          <ServicePicker
+            value={focusDraft}
+            onChange={setFocusDraft}
+            onEnter={v => setFocus(v ?? focusDraft)}
+            placeholder="— whole graph —"
+            width={220}
           />
-        ) : (
-          <TopoServicePicker range={range} onPick={svc => merge({ focus: svc })} />
-        )}
+          {focus && (
+            <Button type="button" variant="secondary" size="sm"
+              onClick={() => setFocus('')}
+              title="Clear focus, back to the global service graph">
+              ✕ global
+            </Button>
+          )}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
+            {focus ? <>Neighborhood of <strong>{focus}</strong> · click a node for its ego-graph</>
+                   : <>Global graph · click a node to focus · pick a service to scope</>}
+          </span>
+        </div>
+        <ServiceGraph
+          scope={scope}
+          focus={focus || undefined}
+          range={range}
+          height={680}
+          onSelectService={svc => navigate(`/service?service=${encodeURIComponent(svc)}`)}
+          nodeSizeMode={nodeSizeMode}
+          nodeSizeMetric={nodeSizeMetric}
+          onNodeSizeChange={onNodeSizeChange}
+        />
       </div>
     </>
   );

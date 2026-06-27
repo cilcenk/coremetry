@@ -211,7 +211,7 @@ func (s *Store) GetDatabaseDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND db_system = ? AND instance = ?
@@ -235,7 +235,7 @@ func (s *Store) GetDatabaseDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND db_system = ? AND instance = ?
@@ -371,7 +371,7 @@ func (s *Store) GetMessagingDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND msg_system = ? AND cluster = ? AND destination = ?
@@ -398,7 +398,7 @@ func (s *Store) GetMessagingDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND msg_system = ? AND cluster = ? AND destination = ?
@@ -515,7 +515,7 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		       countMerge(error_count_state)                                         AS error_count,
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0)                           AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY db_system, instance, db_name
@@ -730,7 +730,7 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 		       countMerge(error_count_state)                           AS error_count,
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0)             AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY msg_system, cluster, destination

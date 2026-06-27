@@ -97,7 +97,7 @@ func (s *Store) GetDBTrends(ctx context.Context, from, to time.Time) ([]DBTrend,
 		       toUnixTimestamp64Nano(toDateTime64(time_bucket, 9))                     AS bucket_ns,
 		       countMerge(span_count_state)                                            AS span_count,
 		       countIfMerge(error_count_state)                                         AS error_count,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY db_system, instance, db_name, time_bucket

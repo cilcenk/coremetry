@@ -221,13 +221,13 @@ func spanmetricStateAgg(agg string, stepSec int) (string, error) {
 	case "avg":
 		return wrap("sumMerge(duration_sum_state) / nullIf(countMerge(calls_state), 0) / 1e6"), nil
 	case "p50":
-		return wrap("arrayElement(quantilesMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 1) / 1e6"), nil
+		return wrap("arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 1) / 1e6"), nil
 	case "p90":
-		return wrap("arrayElement(quantilesMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 2) / 1e6"), nil
+		return wrap("arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 2) / 1e6"), nil
 	case "p95":
-		return wrap("arrayElement(quantilesMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 3) / 1e6"), nil
+		return wrap("arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 3) / 1e6"), nil
 	case "p99":
-		return wrap("arrayElement(quantilesMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 4) / 1e6"), nil
+		return wrap("arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 4) / 1e6"), nil
 	}
 	return "", fmt.Errorf("unknown aggregation %q", agg)
 }

@@ -141,7 +141,7 @@ func TestSpanmetricStateAgg(t *testing.T) {
 	// Percentile indices must match the stored histogram order (0.5,0.9,0.95,0.99).
 	for agg, idx := range map[string]string{"p50": ", 1)", "p90": ", 2)", "p95": ", 3)", "p99": ", 4)"} {
 		got, _ := spanmetricStateAgg(agg, step)
-		if !strings.Contains(got, "quantilesMerge(0.5, 0.9, 0.95, 0.99)") || !strings.Contains(got, idx) {
+		if !strings.Contains(got, "quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)") || !strings.Contains(got, idx) {
 			t.Errorf("spanmetricStateAgg(%q) = %q, histogram index/order wrong", agg, got)
 		}
 	}

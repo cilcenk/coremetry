@@ -1633,7 +1633,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                AS span_count_state,
 		   countIfState(status_code = 'error')         AS error_count_state,
 		   sumState(duration)                          AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
 		   countIfState(duration <= %d)                AS apdex_satisfied_state,
 		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
 		 FROM spans
@@ -1664,7 +1664,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                AS span_count_state,
 		   countIfState(status_code = 'error')         AS error_count_state,
 		   sumState(duration)                          AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
 		   countIfState(duration <= %d)                AS apdex_satisfied_state,
 		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
 		 FROM spans
@@ -1707,7 +1707,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                AS span_count_state,
 		   countIfState(status_code = 'error')         AS error_count_state,
 		   sumState(duration)                          AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)   AS duration_q_state,
 		   countIfState(duration <= %d)                AS apdex_satisfied_state,
 		   countIfState(duration > %d AND duration <= %d) AS apdex_tolerating_state
 		 FROM spans
@@ -1739,7 +1739,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                    AS calls_state,
 		   countIfState(status_code = 'error')             AS error_state,
 		   sumState(duration)                              AS duration_sum_state,
-		   quantilesState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
 		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
 		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
 		 FROM spans
@@ -1757,7 +1757,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                    AS calls_state,
 		   countIfState(status_code = 'error')             AS error_state,
 		   sumState(duration)                              AS duration_sum_state,
-		   quantilesState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
 		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
 		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
 		 FROM spans
@@ -1775,7 +1775,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                    AS calls_state,
 		   countIfState(status_code = 'error')             AS error_state,
 		   sumState(duration)                              AS duration_sum_state,
-		   quantilesState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
+		   quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration)  AS duration_q_state,
 		   argMaxState(trace_id, duration)                 AS slow_exemplar_state,
 		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
 		 FROM spans
@@ -1848,7 +1848,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                  AS span_count_state,
 		   countIfState(status_code = 'error')           AS error_count_state,
 		   sumState(duration)                            AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
 		 FROM spans
 		 WHERE db_system != ''
 		 GROUP BY db_system, instance, db_name, time_bucket`,
@@ -1890,7 +1890,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                  AS span_count_state,
 		   countIfState(status_code = 'error')           AS error_count_state,
 		   sumState(duration)                            AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)     AS duration_q_state
 		 FROM spans
 		 WHERE db_system != ''
 		 GROUP BY db_system, instance, db_name, service_name, host_name, time_bucket`,
@@ -2044,7 +2044,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                               AS span_count_state,
 		   countIfState(status_code = 'error')        AS error_count_state,
 		   sumState(duration)                         AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)  AS duration_q_state
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state
 		 FROM spans
 		 WHERE msg_system != ''
 		 GROUP BY msg_system, cluster, destination, time_bucket`,
@@ -2080,7 +2080,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countState()                                 AS span_count_state,
 		   countIfState(status_code = 'error')          AS error_count_state,
 		   sumState(duration)                           AS duration_sum_state,
-		   quantilesState(0.5, 0.95, 0.99)(duration)    AS duration_q_state
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)    AS duration_q_state
 		 FROM spans
 		 WHERE msg_system != ''
 		 GROUP BY msg_system, cluster, destination, service_name, host_name, kind, time_bucket`,
@@ -2370,6 +2370,63 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 			if err := s.execDDL(ctx, mvs[mvIdx]); err != nil {
 				return fmt.Errorf("recreate %s with fallback chain: %w", table, err)
+			}
+		}
+	}
+
+	// v0.8.194 — migrate duration_q_state from the reservoir quantilesState to
+	// quantilesTDigestState. At billion-span scale each 5-min bucket fills the
+	// 8192-sample reservoir (~64 KiB/row, measured on CH 24.8), so merging the
+	// column over a wide window scanned ~18 GiB and blew CH's per-query memory
+	// limit (code 241) + the execution timeout (code 159) — operator-reported
+	// PRODUCTION OOM that left /services + /service-ops rendering only the tiny
+	// self-obs service. TDigest state is ~4.3 KiB/row, fixed-size and
+	// parallel-safe (~15x smaller). The column NAME is unchanged, so probe the
+	// column TYPE: if it's still a reservoir 'quantiles' aggregate (no 'TDigest'
+	// in the type signature) drop + recreate with the new TDigest DDL.
+	// dropCombinedMV is the prod-proven (v0.8.190) guard-safe drop; recreate
+	// repopulates forward (same bounded trade-off as the MV upgrades above). A
+	// fresh install already CREATEd these as TDigest in the loop above, so the
+	// probe sees TDigest and skips — only an existing reservoir install migrates.
+	for _, mv := range []string{
+		"service_summary_5m", "operation_summary_5m", "operation_group_summary_5m",
+		"db_summary_5m", "db_caller_summary_5m", "messaging_summary_5m",
+		"messaging_caller_summary_5m", "spanmetrics_1m", "spanmetrics_10s", "spanmetrics_1s",
+	} {
+		// CRITICAL guard (mirrors the CREATE-loop + drop guards): the
+		// operation_group_summary_5m MV is DISABLED when the spans table lacks
+		// the op_group column (external Distributed cluster, cluster_name unset).
+		// It was never created, so system.columns returns 0 rows → the TDigest
+		// probe below would read isTDigest=0 and RECREATE it — re-adding an
+		// insert-trigger that references the missing op_group and failing every
+		// span INSERT with code 16, which blocks ALL ingest (the v0.8.186 prod
+		// incident). There's nothing to migrate when the MV doesn't exist; skip.
+		if mv == "operation_group_summary_5m" && !s.hasOpGroupCol {
+			continue
+		}
+		probeTarget := mv
+		if s.clusterMode() {
+			probeTarget = mv + "_local"
+		}
+		var isTDigest uint8
+		probe := fmt.Sprintf(`
+			SELECT count() > 0
+			FROM system.columns
+			WHERE database = currentDatabase()
+			  AND table    = '%s'
+			  AND name     = 'duration_q_state'
+			  AND positionUTF8(type, 'TDigest') > 0`, probeTarget)
+		if err := s.conn.QueryRow(ctx, probe).Scan(&isTDigest); err == nil && isTDigest == 0 {
+			log.Printf("[chstore] upgrading %s MV (reservoir quantilesState → quantilesTDigestState, ~15x smaller) — past buckets dropped", mv)
+			dropTarget := mv
+			if s.clusterMode() {
+				dropTarget = mv + "_local"
+			}
+			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
+				return fmt.Errorf("drop %s for TDigest upgrade: %w", mv, err)
+			}
+			if err := s.execDDL(ctx, findMV(mv)); err != nil {
+				return fmt.Errorf("recreate %s with TDigest state: %w", mv, err)
 			}
 		}
 	}

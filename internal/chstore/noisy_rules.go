@@ -67,8 +67,8 @@ func (s *Store) NoisyRules(ctx context.Context, from, to time.Time, limit int) (
 		ORDER BY open_count DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 30`,
-		from.Format(time.RFC3339Nano),
-		to.Format(time.RFC3339Nano),
+		chDateTime64Arg(from),
+		chDateTime64Arg(to),
 		limit,
 	)
 	if err != nil {

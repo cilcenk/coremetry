@@ -95,9 +95,9 @@ func (s *Store) ListAICalls(ctx context.Context, p ListAICallsParams) ([]AICall,
 	}
 	var wc whereClause
 	if !p.From.IsZero() {
-		wc.add("created_at >= toDateTime64(?, 9, 'UTC')", p.From.Format(time.RFC3339Nano))
+		wc.add("created_at >= toDateTime64(?, 9, 'UTC')", chDateTime64Arg(p.From))
 	}
-	wc.add("created_at < toDateTime64(?, 9, 'UTC')", p.To.Format(time.RFC3339Nano))
+	wc.add("created_at < toDateTime64(?, 9, 'UTC')", chDateTime64Arg(p.To))
 	if p.Surface != "" {
 		wc.add("surface = ?", p.Surface)
 	}
@@ -222,7 +222,7 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 		FROM ai_calls
 		WHERE created_at >= toDateTime64(?, 9, 'UTC')
 		  AND created_at <  toDateTime64(?, 9, 'UTC')`,
-		from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+		chDateTime64Arg(from), chDateTime64Arg(to))
 	var st AIStats
 	if err := row.Scan(&st.TotalCalls, &st.OkCalls, &st.ErrorCalls,
 		&st.AvgDurationMs, &st.P50DurationMs, &st.P99DurationMs,
@@ -246,7 +246,7 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 		GROUP BY surface
 		ORDER BY count() DESC
 		LIMIT 20`,
-		from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+		chDateTime64Arg(from), chDateTime64Arg(to))
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 		GROUP BY provider, model
 		ORDER BY count() DESC
 		LIMIT 20`,
-		from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+		chDateTime64Arg(from), chDateTime64Arg(to))
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +324,7 @@ func (s *Store) AICallsTimeseries(ctx context.Context, from, to time.Time, bucke
 		GROUP BY bucket
 		ORDER BY bucket`, bucketSec)
 	rows, err := s.conn.Query(ctx, q,
-		from.Format(time.RFC3339Nano), to.Format(time.RFC3339Nano))
+		chDateTime64Arg(from), chDateTime64Arg(to))
 	if err != nil {
 		return nil, err
 	}

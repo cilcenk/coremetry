@@ -329,6 +329,58 @@ func mvDDLByName(mvs []string, name string) string {
 	return ""
 }
 
+// innerDropStmt builds the guard-bypassing DROP for a combined
+// MaterializedView's hidden inner storage table (`.inner_id.<uuid>`,
+// a plain AggregatingMergeTree). It carries max_table_size_to_drop +
+// max_partition_size_to_drop = 0 so the drop succeeds no matter how
+// large the MV's inner storage has grown. Pure for testability.
+func innerDropStmt(uuid, onCluster string) string {
+	return "DROP TABLE IF EXISTS `.inner_id." + uuid + "`" + onCluster + " SYNC" +
+		" SETTINGS max_table_size_to_drop = 0, max_partition_size_to_drop = 0"
+}
+
+// dropCombinedMV drops a combined MaterializedView (created without an
+// explicit TO table, so its storage is a hidden `.inner_id.<uuid>`
+// table) at ANY accumulated size, then recreate is safe.
+//
+// v0.8.190 — operator-reported PRODUCTION boot abort (external
+// Distributed cluster): the trace_summary_5m entry_route_state upgrade
+// (v0.8.52) issued a bare `DROP TABLE <mv> ... SYNC`, which tripped
+// CH's max_table_size_to_drop guard (default 50 GB) on a 65 GB inner
+// table (`.inner_id.<uuid>`) → code 359 → migrate() error → crash loop.
+// These upgrades INTEND to drop past buckets and repopulate forward
+// (every call already logs "past buckets will be dropped"); the guard
+// exists only to catch an *accidental* DROP and is pure friction here.
+//
+// Verified against CH 24.8 (the prod version): a per-query
+// `SETTINGS max_table_size_to_drop=0` on `DROP TABLE <combined_mv>`
+// does NOT work — the override covers only the 0-byte MV object while
+// the internal inner-table drop still uses the SERVER default guard
+// and aborts with code 359. The override DOES apply when the inner
+// table is dropped DIRECTLY. So resolve the inner from system.tables
+// (uuid → `.inner_id.<uuid>`) and drop it first with the override,
+// then drop the now-empty MV object. Same override the explicit reset
+// path uses (reset.go, v0.5.382 — 171 GB partition tripped the guard).
+func (s *Store) dropCombinedMV(ctx context.Context, mv string) error {
+	onCluster := s.onCluster()
+	var uuid string
+	// uuid of the MV's hidden inner AggregatingMergeTree storage.
+	err := s.conn.QueryRow(ctx,
+		"SELECT toString(uuid) FROM system.tables "+
+			"WHERE database = currentDatabase() AND name = ?", mv).Scan(&uuid)
+	if err == nil && uuid != "" && uuid != "00000000-0000-0000-0000-000000000000" {
+		if e := s.conn.Exec(ctx, innerDropStmt(uuid, onCluster)); e != nil {
+			return fmt.Errorf("drop inner storage of %s: %w", mv, e)
+		}
+	}
+	// The MV object itself is metadata-only now (0 bytes) — a bare
+	// drop never trips the size guard.
+	if e := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+mv+onCluster+" SYNC"); e != nil {
+		return fmt.Errorf("drop mv %s: %w", mv, e)
+	}
+	return nil
+}
+
 func (s *Store) migrate(ctx context.Context) error {
 	sd, ld, md := s.ret.SpansDays, s.ret.LogsDays, s.ret.MetricsDays
 	if sd == 0 { sd = 30 }
@@ -2195,7 +2247,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		// REPLICA_ALREADY_EXISTS (error 253) because the ZK znode
 		// for the dropped Replicated*MergeTree hasn't been
 		// reaped yet. Single-node no-op (no ZK to wait for).
-		if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
+		if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
 			return fmt.Errorf("drop old MV for upgrade: %w", err)
 		}
 		// Re-run the create now that the old one is gone.
@@ -2228,7 +2280,7 @@ func (s *Store) migrate(ctx context.Context) error {
 				dropTarget = table + "_local"
 			}
 			// v0.5.436 — SYNC; see apdex upgrade above.
-			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
+			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
 				return fmt.Errorf("drop old %s for upgrade: %w", table, err)
 			}
 			if err := s.execDDL(ctx, findMV(table)); err != nil {
@@ -2262,7 +2314,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			dropTarget = "trace_summary_5m_local"
 		}
 		// v0.5.436 — SYNC; see apdex upgrade above.
-		if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
+		if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
 			return fmt.Errorf("drop old trace_summary_5m for upgrade: %w", err)
 		}
 		if err := s.execDDL(ctx, findMV("trace_summary_5m")); err != nil {
@@ -2313,7 +2365,7 @@ func (s *Store) migrate(ctx context.Context) error {
 				dropTarget = table + "_local"
 			}
 			// SYNC — see apdex upgrade above.
-			if err := s.conn.Exec(ctx, "DROP TABLE IF EXISTS "+dropTarget+s.onCluster()+" SYNC"); err != nil {
+			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
 				return fmt.Errorf("drop old %s for upgrade: %w", table, err)
 			}
 			if err := s.execDDL(ctx, mvs[mvIdx]); err != nil {

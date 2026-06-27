@@ -670,9 +670,9 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		       countMerge(error_count_state)                           AS error_count,
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0)             AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms,
 		       (countMerge(apdex_satisfied_state)
 		         + countMerge(apdex_tolerating_state) / 2)
 		         / nullIf(countMerge(span_count_state), 0)             AS apdex
@@ -735,7 +735,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		       intDiv(toUInt32(time_bucket) - toUInt32(?), ?) AS bidx,
 		       countMerge(span_count_state)                   AS c,
 		       countMerge(error_count_state)                  AS e,
-		       arrayElement(quantilesMerge(0.99)(duration_q_state), 1) / 1e6 AS p99
+		       arrayElement(quantilesTDigestMerge(0.99)(duration_q_state), 1) / 1e6 AS p99
 		FROM `+mvTable+`
 		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
 		GROUP BY `+nameCol+`, bidx

@@ -326,7 +326,7 @@ func metricValueExpr(metric string) (string, error) {
 	case "request_rate":
 		return "countMerge(span_count_state) / 300.0", nil
 	case "p99_ms":
-		return "quantilesMerge(0.5, 0.95, 0.99)(duration_q_state)[3] / 1e6", nil
+		return "quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state)[3] / 1e6", nil
 	}
 	return "", fmt.Errorf("unknown metric %q", metric)
 }

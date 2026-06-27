@@ -309,7 +309,7 @@ func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time
 		       countMerge(span_count_state)                                            AS spans,
 		       countIfMerge(error_count_state)                                         AS errs,
 		       sumMerge(duration_sum_state) / nullIf(spans, 0) / 1e6                   AS avg_ms,
-		       arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms,
 		       (countIfMerge(apdex_satisfied_state) + countIfMerge(apdex_tolerating_state) / 2)
 		         / nullIf(spans, 0)                                                     AS apdex
 		FROM service_summary_5m
@@ -373,9 +373,9 @@ func (s *Store) GetServiceSummary5mFor(ctx context.Context, services []string, f
 		  countMerge(span_count_state)                      AS spans,
 		  countIfMerge(error_count_state)                   AS errors,
 		  sumMerge(duration_sum_state) / nullIf(countMerge(span_count_state), 0) / 1e6 AS avg_ms,
-		  arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
-		  arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
-		  arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
+		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
+		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM service_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?`+svcFilter+`
 		GROUP BY service_name, time_bucket
@@ -420,9 +420,9 @@ func (s *Store) GetServiceSummary5m(ctx context.Context, service string, from, t
 		  countMerge(span_count_state)                      AS spans,
 		  countIfMerge(error_count_state)                   AS errors,
 		  sumMerge(duration_sum_state) / nullIf(countMerge(span_count_state), 0) / 1e6 AS avg_ms,
-		  arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
-		  arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
-		  arrayElement(quantilesMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
+		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
+		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM service_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?`+svcFilter+`
 		GROUP BY service_name, time_bucket

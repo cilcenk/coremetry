@@ -1090,17 +1090,17 @@ func (e *Evaluator) measure(ctx context.Context, service, metric string, window 
 				       WHERE service_name=? AND time_bucket>=?
 				       SETTINGS max_execution_time = 10`
 			case "p50_ms":
-				sql = `SELECT arrayElement(quantilesMerge(0.5,0.95,0.99)(duration_q_state), 1) / 1e6
+				sql = `SELECT arrayElement(quantilesTDigestMerge(0.5,0.95,0.99)(duration_q_state), 1) / 1e6
 				       FROM service_summary_5m
 				       WHERE service_name=? AND time_bucket>=?
 				       SETTINGS max_execution_time = 10`
 			case "p95_ms":
-				sql = `SELECT arrayElement(quantilesMerge(0.5,0.95,0.99)(duration_q_state), 2) / 1e6
+				sql = `SELECT arrayElement(quantilesTDigestMerge(0.5,0.95,0.99)(duration_q_state), 2) / 1e6
 				       FROM service_summary_5m
 				       WHERE service_name=? AND time_bucket>=?
 				       SETTINGS max_execution_time = 10`
 			case "p99_ms":
-				sql = `SELECT arrayElement(quantilesMerge(0.5,0.95,0.99)(duration_q_state), 3) / 1e6
+				sql = `SELECT arrayElement(quantilesTDigestMerge(0.5,0.95,0.99)(duration_q_state), 3) / 1e6
 				       FROM service_summary_5m
 				       WHERE service_name=? AND time_bucket>=?
 				       SETTINGS max_execution_time = 10`

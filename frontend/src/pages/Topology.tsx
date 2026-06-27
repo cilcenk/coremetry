@@ -67,10 +67,12 @@ export default function TopologyPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
 
-  // focus drives ServiceGraph's scope: a non-empty ?focus scopes to that
-  // service's neighborhood; empty = the global graph.
+  // v0.8.192 — operator-reported: focus-only at prod scale (1000s services,
+  // 10000s operations). /topology no longer renders the whole graph — a
+  // 1000+-node hairball is unreadable and expensive. Empty ?focus shows a
+  // pick-a-service prompt; picking scopes ServiceGraph to that service's
+  // neighborhood. ?focus=<svc> still deep-links straight to a service.
   const focus = params.get('focus') ?? '';
-  const scope: 'global' | 'neighborhood' = focus ? 'neighborhood' : 'global';
 
   // Node-size encoding (Slice 2-4) lifted to the URL so the global view is
   // shareable. Re-rolls the SAME fetched payload client-side — writing these
@@ -110,31 +112,41 @@ export default function TopologyPage() {
             value={focusDraft}
             onChange={setFocusDraft}
             onEnter={v => setFocus(v ?? focusDraft)}
-            placeholder="— whole graph —"
+            placeholder="Pick a service…"
             width={220}
           />
           {focus && (
             <Button type="button" variant="secondary" size="sm"
               onClick={() => setFocus('')}
-              title="Clear focus, back to the global service graph">
-              ✕ global
+              title="Clear the selected service">
+              ✕ clear
             </Button>
           )}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
             {focus ? <>Neighborhood of <strong>{focus}</strong> · click a node for its ego-graph</>
-                   : <>Global graph · click a node to focus · pick a service to scope</>}
+                   : <>Pick a service to view its dependency graph</>}
           </span>
         </div>
-        <ServiceGraph
-          scope={scope}
-          focus={focus || undefined}
-          range={range}
-          height={680}
-          onSelectService={svc => navigate(`/service?service=${encodeURIComponent(svc)}`)}
-          nodeSizeMode={nodeSizeMode}
-          nodeSizeMetric={nodeSizeMetric}
-          onNodeSizeChange={onNodeSizeChange}
-        />
+        {focus ? (
+          <ServiceGraph
+            scope="neighborhood"
+            focus={focus}
+            range={range}
+            height={680}
+            onSelectService={svc => navigate(`/service?service=${encodeURIComponent(svc)}`)}
+            nodeSizeMode={nodeSizeMode}
+            nodeSizeMetric={nodeSizeMetric}
+            onNodeSizeChange={onNodeSizeChange}
+          />
+        ) : (
+          <div style={{ height: 680, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Empty icon="◫" title="Pick a service to map its topology">
+              At this scale the whole-graph view isn’t useful. Use the
+              <strong> Pick a service</strong> box above to scope to a service
+              and its dependencies.
+            </Empty>
+          </div>
+        )}
       </div>
     </>
   );

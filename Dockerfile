@@ -1,3 +1,10 @@
+# WITH_CLICKHOUSE_CLIENT — GLOBAL build arg (declared before any FROM so it can
+# select the final stage). 0 (default) = lean image; the built-in
+# `coremetry ch "<SQL>"` subcommand covers in-pod ClickHouse debugging without
+# bloat. 1 = ALSO bundle the real ~460 MB clickhouse-client:
+#   docker build --build-arg WITH_CLICKHOUSE_CLIENT=1 -t coremetry:debug .
+ARG WITH_CLICKHOUSE_CLIENT=0
+
 # ── Stage 1: build Vite static SPA ────────────────────────────────────────────
 FROM node:22-alpine AS frontend-builder
 WORKDIR /app/frontend
@@ -30,8 +37,13 @@ COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X main.Version=${VERSION}" -o coremetry . && \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o demo ./cmd/demo
 
-# ── Stage 3: minimal runtime image ────────────────────────────────────────────
-FROM alpine:3.20
+# ── Optional source of the real clickhouse-client (only built when selected) ──
+# BuildKit builds a stage only if the chosen target depends on it, so this and
+# runtime-1 below are skipped entirely for the default WITH_CLICKHOUSE_CLIENT=0.
+FROM clickhouse/clickhouse-server:24.8-alpine AS chclient
+
+# ── Stage 3: minimal runtime base ─────────────────────────────────────────────
+FROM alpine:3.20 AS runtime-base
 # Re-declare VERSION inside this stage — Docker ARGs are
 # scoped per-stage, so the value passed into stage 2 isn't
 # visible here without this line.
@@ -52,6 +64,19 @@ COPY config.yaml .
 # remote pipeline. Defaults to "dev" so the file always exists.
 RUN echo "${VERSION:-dev}" > /app/VERSION
 RUN chown -R nonroot:0 /app && chmod -R g+rX /app
+
+# Variant 0 (default): lean — built-in `coremetry ch` only.
+FROM runtime-base AS runtime-0
+
+# Variant 1: also bundle the real clickhouse-client (~460 MB). The alpine
+# clickhouse binary is musl-linked, so it runs on alpine:3.20; 755 keeps it
+# executable by OpenShift's random UID. `clickhouse client …` or the symlink.
+FROM runtime-base AS runtime-1
+COPY --from=chclient /usr/bin/clickhouse /usr/local/bin/clickhouse
+RUN ln -sf /usr/local/bin/clickhouse /usr/local/bin/clickhouse-client
+
+# ── Final: pick the variant by the global build arg ───────────────────────────
+FROM runtime-${WITH_CLICKHOUSE_CLIENT} AS final
 USER 65532
 EXPOSE 4317 8088
 ENTRYPOINT ["./coremetry"]

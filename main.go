@@ -159,7 +159,42 @@ func init() {
 	}
 }
 
+// runCHSubcommand backs `coremetry ch [--config <path>] "<SQL>"`: load the
+// config, run the query against the configured ClickHouse, print tab-separated
+// rows, exit. Never starts the server / migrations.
+func runCHSubcommand(args []string) {
+	fs := flag.NewFlagSet("ch", flag.ExitOnError)
+	cfgPath := fs.String("config", "config.yaml", "path to config file")
+	_ = fs.Parse(args)
+	rest := fs.Args()
+	if len(rest) == 0 {
+		fmt.Fprintln(os.Stderr, `usage: coremetry ch [--config <path>] "<SQL>"`)
+		os.Exit(2)
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		log.Fatalf("ch: load config: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := chstore.RunQuery(ctx, cfg.ClickHouse, strings.Join(rest, " "), os.Stdout); err != nil {
+		log.Fatalf("ch: %v", err)
+	}
+}
+
 func main() {
+	// `coremetry ch "<SQL>"` — run a one-off query against the CONFIGURED
+	// ClickHouse from inside the pod and print tab-separated rows, then exit.
+	// A built-in alternative to bundling a 460 MB clickhouse-client: it reuses
+	// the running config's hosts/auth/database, so on an external CH the
+	// operator doesn't re-enter the seed list or credentials. Intercepted
+	// before flag parsing because `ch` is a positional subcommand, not a flag.
+	//   kubectl exec deploy/coremetry -- ./coremetry ch "SELECT count() FROM spans"
+	if len(os.Args) > 1 && os.Args[1] == "ch" {
+		runCHSubcommand(os.Args[2:])
+		return
+	}
+
 	cfgPath := flag.String("config", "config.yaml", "Path to config file")
 
 	// Phase-2 migration flags. When --migrate-from is set, run a

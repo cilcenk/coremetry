@@ -16,6 +16,24 @@ spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
   {{- end }}
+  # v0.8.193 — explicit rolling-update strategy. Kubernetes' default
+  # (maxUnavailable: 25%) lets the READY-endpoint set of the headless ingest
+  # Service (clusterIP:None) shrink while new pods boot — and coremetry boot is
+  # slow (CH connect retries + schema migrations). When the set drops toward
+  # zero, the OTel collector's gRPC dns:/// + round_robin exporter hits "zero
+  # addresses" and WEDGES: it doesn't re-resolve even after pods return, so the
+  # memory_limiter back-pressures and 503s every app's telemetry until the
+  # collector is manually restarted (operator-reported, recurring after every
+  # rollout). maxUnavailable: 0 keeps each old pod Ready until its replacement
+  # is Ready, so the headless Service never loses all endpoints and the exporter
+  # never sees zero-addresses. Pairs with the server MaxConnectionAge (v0.8.159)
+  # + retry_on_failure (otel-collector.yaml). Surge headroom is cheap — the pods
+  # are heavily under-utilised. Override via deployment.rollingUpdate.* .
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ (.Values.deployment.rollingUpdate | default dict).maxUnavailable | default 0 }}
+      maxSurge: {{ (.Values.deployment.rollingUpdate | default dict).maxSurge | default 1 }}
   # Selector includes `component: coremetry` so it doesn't accidentally adopt
   # ClickHouse / Redis / OTel-Collector pods (they share the chart-wide
   # name + instance labels). This selector is immutable post-create — see

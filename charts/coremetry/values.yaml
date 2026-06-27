@@ -55,6 +55,15 @@ replicaCount: 1         # safe to scale up — Redis lock arbitrates background 
 # upgrade.
 deployment:
   mode: monolithic      # monolithic | distributed
+  # Rolling-update strategy for the monolithic Deployment (v0.8.193).
+  # maxUnavailable: 0 keeps every pod Ready until its replacement is Ready, so
+  # the headless ingest Service never loses all endpoints during a roll — which
+  # is what wedged the OTel collector's gRPC exporter (zero-addresses) and made
+  # apps stop ingesting until the collector was manually restarted. Needs surge
+  # headroom for +1 pod; lower maxSurge / raise maxUnavailable on tight clusters.
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
   # Per-role config — only consulted in mode=distributed.
   roles:
     ingest:

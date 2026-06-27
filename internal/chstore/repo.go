@@ -681,10 +681,10 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		GROUP BY `+nameCol+`
 		ORDER BY span_count DESC
 		LIMIT 500
-		SETTINGS max_execution_time = 10,
+		SETTINGS max_execution_time = 30,
 		         optimize_read_in_order = 1,
 		         optimize_aggregation_in_order = 1,
-		         optimize_skip_unused_shards = 1`,
+		         optimize_skip_unused_shards = 1, `+mvQuantileMemSettings,
 		service, bucketStart, winEnd)
 	if err != nil {
 		return nil, err
@@ -739,8 +739,8 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		FROM `+mvTable+`
 		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
 		GROUP BY `+nameCol+`, bidx
-		SETTINGS max_execution_time = 10,
-		         optimize_skip_unused_shards = 1`,
+		SETTINGS max_execution_time = 30,
+		         optimize_skip_unused_shards = 1, `+mvQuantileMemSettings,
 		bucketStart, bucketSec, service, bucketStart, winEnd)
 	if err != nil {
 		// Sparkline failure non-fatal — return aggregates without.

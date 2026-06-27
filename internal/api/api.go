@@ -2414,14 +2414,14 @@ func attributeKeysSQL(extra string, sampleRows int) string {
 		SELECT scope, k, count() AS c FROM (
 			SELECT 'span' AS scope, arrayJoin(attr_keys) AS k
 			FROM (
-				SELECT attr_keys FROM coremetry.spans
+				SELECT attr_keys FROM spans
 				WHERE time >= now() - toIntervalSecond(?)%s
 				LIMIT %d
 			)
 			UNION ALL
 			SELECT 'resource' AS scope, arrayJoin(res_keys) AS k
 			FROM (
-				SELECT res_keys FROM coremetry.spans
+				SELECT res_keys FROM spans
 				WHERE time >= now() - toIntervalSecond(?)%s
 				LIMIT %d
 			)
@@ -2534,7 +2534,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 			// for uniform output even when the column is numeric.
 			sql = fmt.Sprintf(`
 				SELECT toString(%s) AS v, count() AS c
-				FROM coremetry.spans
+				FROM spans
 				WHERE %s
 				  AND %s != ''
 				GROUP BY v
@@ -2562,7 +2562,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 				sql = fmt.Sprintf(`
 					SELECT v, count() AS c FROM (
 					    SELECT %s[indexOf(%s, ?)] AS v
-					    FROM coremetry.spans
+					    FROM spans
 					    WHERE %s AND has(%s, ?)
 					    LIMIT %d
 					)
@@ -2579,7 +2579,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 				// high-cardinality key is always reachable.
 				sql = fmt.Sprintf(`
 					SELECT %s[indexOf(%s, ?)] AS v, count() AS c
-					FROM coremetry.spans
+					FROM spans
 					WHERE %s
 					  AND has(%s, ?)
 					GROUP BY v

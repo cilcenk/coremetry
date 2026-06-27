@@ -53,7 +53,7 @@ Single binary `main.go` wires `chstore.Store` (CH), `logstore.Store`
 for routes. No state management library — components own state +
 URL is source of truth for shareable views.
 
-**Versioning:** git tags `v0.6.X` (current series; see `VERSION.txt`).
+**Versioning:** git tags `v0.8.X` (current series; see `VERSION.txt`).
 Resolution order for runtime:
 `COREMETRY_VERSION` env > `-X main.Version=` ldflag > `/app/VERSION`
 file > `"dev"`.
@@ -257,7 +257,7 @@ rule.
 - `kuyruk` = "show the queue" — agent presents numbered prioritised
   pending items, ends with "Hangisi?".
 - `devam` = continue current in-progress item.
-- Operator-reported bugs are NEW priority — fix as `v0.6.X+1`
+- Operator-reported bugs are NEW priority — fix as `v0.8.X+1`
   immediately after the current release, don't batch.
 
 ### Release pattern — every functional change
@@ -270,7 +270,7 @@ rule.
  5. make audit                        (hard-constraint lint; v0.5.446)
  6. git add <touched files>
  7. git commit -m "<heredoc — see format below>"
- 8. git tag v0.6.X
+ 8. git tag v0.8.X
  9. git push && git push --tags        ← triggers Release workflow
 10. make docker-up                     (background — one at a time)
 ```
@@ -285,7 +285,7 @@ ship if known false positive.
 ### Commit message — multi-line heredoc
 
 ```
-v0.6.X — short title (≤ 70 chars)
+v0.8.X — short title (≤ 70 chars)
 
 Body: what changed, why, root cause if a bug fix. Wrap at 72 cols.
 Operator-reported bugs start with "Operator-reported: …".
@@ -312,8 +312,8 @@ guidance would miss.
 
 | Skill | Use when |
 |---|---|
-| `/release` | Cut a release — next v0.6.X tag, commit, push, rebuild |
-| `/bugfix` | Operator-reported bug — investigate, fix as v0.6.X+1, ship immediately |
+| `/release` | Cut a release — next v0.8.X tag, commit, push, rebuild |
+| `/bugfix` | Operator-reported bug — investigate, fix as v0.8.X+1, ship immediately |
 | `/spec` | Idea → implementation plan before edit phase. Use for any change spanning 3+ files |
 | `/kuyruk` | "What's next" — shows prioritised pending items, ends with "Hangisi?" |
 | `/scale-audit` | Quarterly perf regression sweep across 7 axes |
@@ -374,6 +374,46 @@ them.
   Never let `toDate()` wrap a sub-day calculation. See
   [internal/chstore/retention_test.go](internal/chstore/retention_test.go)
   for the canonical example.
+- **Combined-MV DROP at billion-row scale** — `DROP TABLE <mv>`
+  trips CH's `max_table_size_to_drop` guard (default 50 GB) once
+  the hidden `.inner_id.<uuid>` storage is large, and a per-query
+  `SETTINGS max_table_size_to_drop=0` on the MV does NOT reach the
+  inner drop (verified on 24.8). Drop the inner DIRECTLY with the
+  override, then the empty MV (`dropCombinedMV`, v0.8.190). Every
+  boot migration that recreates an MV routes through it.
+- **Reservoir `quantilesState` for `duration_q_state` at scale** —
+  the 8192-sample reservoir is ~64 KiB/row; merging a wide window
+  blows the per-query memory limit (code 241) + the timeout (code
+  159). The summary MVs use `quantilesTDigestState` (~4.3 KiB/row,
+  parallel-safe, ≤2% error, v0.8.194) — the concrete form of the
+  "quantile() past ~1M rows → TDigest" rule. Never put reservoir
+  `quantiles` in an MV state column.
+- **MV aggregate-type change = rolling-deploy read-error window** —
+  an atomic MV state-type swap at boot means OLD pods read the NEW
+  MV with the old finalizer (`quantilesMerge` on a TDigest column →
+  code 43) until they roll. `maxUnavailable:0` keeps the rollout
+  graceful but lengthens the window; finish the rollout fast (no
+  `dev`-tagged stragglers), or use a dual-column transition to
+  avoid it (v0.8.194).
+- **Hardcoded database name in SQL** — `FROM coremetry.spans`
+  breaks on any install whose CH database isn't literally
+  `coremetry` (e.g. `coremetry_prod`) → "Database coremetry does
+  not exist" (code 6, v0.8.195). The chstore conn defaults to
+  `cfg.Database`, so reference telemetry tables UNQUALIFIED.
+- **`toDateTime64('<RFC3339>', 9, 'UTC')` rejects the trailing
+  `Z`** — `time.RFC3339Nano` emits `…Z`; CH's DateTime64 string
+  parser errors at the Z (code 6, "Cannot parse string … as
+  DateTime64", parsed-just-`…714`). Format UTC with a space and NO
+  tz designator (`chDateTime64Arg`, v0.8.197). Any `toDateTime64(?)`
+  bind arg MUST be tz-less.
+- **Collector wedge after a coremetry rollout** — the OTel
+  collector's gRPC exporter resolves to "zero addresses" when the
+  headless ingest Service's ready endpoints drain during a roll
+  (default `maxUnavailable: 25%` + slow boot) and stays wedged
+  (503s every app's telemetry — only coremetry's own self-obs keeps
+  landing) until the collector is restarted. Fix: explicit
+  `maxUnavailable: 0` on the Deployment so endpoints never hit zero
+  (v0.8.193). Pre-fix installs: restart the collector once.
 
 ---
 

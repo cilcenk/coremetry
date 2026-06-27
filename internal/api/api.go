@@ -690,6 +690,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/status-page/subscribers",  auth.RequireRole(auth.RoleAdmin, s.statusPageListSubscribers))
 	mux.HandleFunc("DELETE /api/status-page/subscribers",  auth.RequireRole(auth.RoleAdmin, s.statusPageDeleteSubscriber))
 	mux.HandleFunc("PUT    /api/status-page/incidents/{id}/publish", auth.RequireRole(auth.RoleAdmin, s.statusPagePublishIncident))
+	// v0.8.196 — "factory reset" of observability data (admin-only, audited).
+	mux.HandleFunc("POST   /api/admin/purge-telemetry", auth.RequireRole(auth.RoleAdmin, s.purgeTelemetry))
 
 	// ── Runtime settings (admin) ───────────────────────────────────
 	mux.HandleFunc("GET /api/settings/retention", auth.RequireRole(auth.RoleAdmin, s.getRetention))

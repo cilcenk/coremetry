@@ -28,6 +28,7 @@ import { BrandingTab } from './settings/BrandingTab';
 import { CustomRolesTab } from './settings/RolesTab';
 import { PipelineTab } from './settings/PipelineTab';
 import { BackupTab } from './settings/BackupTab';
+import { DangerZoneTab } from './settings/DangerZoneTab';
 
 interface SettingsTab {
   slug: string;
@@ -52,6 +53,7 @@ const TABS: SettingsTab[] = [
   { slug: 'roles',       label: 'Custom roles',          Comp: CustomRolesTab },
   { slug: 'pipeline',    label: 'Pipeline',              Comp: PipelineTab },
   { slug: 'backup',      label: 'Backup / Restore',      Comp: BackupTab },
+  { slug: 'danger',      label: 'Danger zone',           Comp: DangerZoneTab },
 ];
 
 export default function SettingsPage() {

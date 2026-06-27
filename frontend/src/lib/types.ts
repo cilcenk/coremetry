@@ -2672,3 +2672,10 @@ export interface Feedback {
   message: string;
   createdAt: number; // unix ns
 }
+
+// Result of the admin "purge telemetry data" factory-reset.
+export interface PurgeResult {
+  tablesPurged: string[];
+  skipped?: string[]; // absent on this install (e.g. op_group MV)
+  errors?: string[];  // per-table failures (best-effort: purge continued)
+}

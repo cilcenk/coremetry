@@ -1,4 +1,5 @@
 import type {
+  PurgeResult,
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
   LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
@@ -1617,6 +1618,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
     }),
+  // Admin "factory reset" — TRUNCATE all observability data (config preserved).
+  purgeTelemetry: () =>
+    request<PurgeResult>('/api/admin/purge-telemetry', { method: 'POST' }),
   // setUserCustomRole assigns or clears the custom-role pointer
   // (v0.5.251). Only valid when the base role is viewer; server
   // rejects with 400 otherwise. Empty string clears.

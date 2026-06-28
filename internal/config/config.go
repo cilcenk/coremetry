@@ -367,6 +367,32 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("COREMETRY_GRPC_ADDR"); v != "" {
 		cfg.Listen.GRPC = v
 	}
+	// Ingest capacity (v0.8.204) — tunable WITHOUT a config file, for installs
+	// where apps push OTLP straight to :4317. The gRPC receiver returns
+	// ResourceExhausted ("buffer full") when the queue can't drain to CH fast
+	// enough; raise the buffer (burst headroom, default 500k) and/or workers
+	// (parallel CH inserts, default 8) here. If the buffer keeps filling, CH is
+	// the bottleneck — scale CH, don't just grow the buffer.
+	if v := os.Getenv("COREMETRY_INGEST_BUFFER_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Ingestion.BufferSize = n
+		}
+	}
+	if v := os.Getenv("COREMETRY_INGEST_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Ingestion.Workers = n
+		}
+	}
+	if v := os.Getenv("COREMETRY_INGEST_BATCH_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Ingestion.BatchSize = n
+		}
+	}
+	if v := os.Getenv("COREMETRY_INGEST_FLUSH_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.Ingestion.FlushInterval = d
+		}
+	}
 	if v := os.Getenv("COREMETRY_JWT_SECRET"); v != "" {
 		cfg.Auth.JWTSecret = v
 	}

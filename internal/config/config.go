@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -268,7 +269,11 @@ var defaults = Config{
 	Listen: ListenConfig{HTTP: ":8088", GRPC: ":4317"},
 	ClickHouse: CHConfig{
 		Addr: "127.0.0.1:9000", Database: "coremetry",
-		Username: "default", MaxOpenConns: 10, DialTimeout: "5s",
+		// MaxOpenConns 0 = "derive from the ingest flush fan-out" — see
+		// resolveMaxOpenConns. A non-zero value here would shadow that
+		// derivation; the v0.8.205 prod incident was exactly that (a
+		// hardcoded 10 starved 24+ flushers of connections).
+		Username: "default", MaxOpenConns: 0, DialTimeout: "5s",
 	},
 	Retention:  RetentionConfig{SpansDays: 30, LogsDays: 30, MetricsDays: 7},
 	// Defaults tuned for production-grade ingest at ~1B spans/day
@@ -354,6 +359,22 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_CH_SHARD_KEY"); v != "" {
 		cfg.ClickHouse.ShardKey = v
+	}
+	// CH connection pool — env knob (v0.8.205). The pool must exceed the
+	// ingest flush fan-out (3 signals × Ingestion.Workers goroutines, each
+	// holding a conn during INSERT) plus read-path headroom, or flushers
+	// starve each other → "acquire conn timeout" + dropped batches. Leave
+	// UNSET to auto-derive from Workers (resolveMaxOpenConns); set explicitly
+	// only to cap against the CH server's own max_connections.
+	if v := os.Getenv("COREMETRY_CH_MAX_OPEN_CONNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.ClickHouse.MaxOpenConns = n
+		}
+	}
+	if v := os.Getenv("COREMETRY_CH_DIAL_TIMEOUT"); v != "" {
+		if _, err := time.ParseDuration(v); err == nil {
+			cfg.ClickHouse.DialTimeout = v
+		}
 	}
 	if v := os.Getenv("COREMETRY_HTTP_ADDR"); v != "" {
 		cfg.Listen.HTTP = v
@@ -526,6 +547,45 @@ func Load(path string) (*Config, error) {
 	if cfg.Retention.MetricsDays == 0 {
 		cfg.Retention.MetricsDays = defaults.Retention.MetricsDays
 	}
+	// CH pool sizing — MUST run AFTER Ingestion.Workers is settled so the
+	// fan-out math uses the effective worker count (v0.8.205). An unset pool
+	// (0) derives to 3*workers + read headroom; an explicit value is honored
+	// but warned about when it's below the fan-out (the operator may be
+	// capping against CH max_connections, or may have a footgun).
+	fanout := 3 * cfg.Ingestion.Workers
+	cfg.ClickHouse.MaxOpenConns = resolveMaxOpenConns(cfg.ClickHouse.MaxOpenConns, cfg.Ingestion.Workers)
+	if cfg.ClickHouse.MaxOpenConns < fanout {
+		log.Printf("[config] WARNING: ch.max_open_conns=%d is below the ingest flush fan-out "+
+			"(3 signals × %d workers = %d). Flushers will contend for connections under load → "+
+			"'acquire conn timeout' + dropped batches. Raise COREMETRY_CH_MAX_OPEN_CONNS or lower COREMETRY_INGEST_WORKERS.",
+			cfg.ClickHouse.MaxOpenConns, cfg.Ingestion.Workers, fanout)
+	}
 	applyBackgroundDefaults(&cfg.Background)
 	return &cfg, nil
+}
+
+// resolveMaxOpenConns sizes the ClickHouse connection pool to the ingest
+// flush fan-out. Each of the 3 signal consumers (spans / logs / metrics)
+// runs `workers` flusher goroutines, and every flusher holds a pool
+// connection for the duration of its INSERT — sharing the pool with all
+// read-path queries. If the pool is smaller than that fan-out the flushers
+// starve each other (and the reads), surfacing as the clickhouse-go
+// "acquire conn timeout" error and dropped batches.
+//
+// v0.8.205 prod incident: the config default of 10 shadowed the intended
+// sizing, so 3×8=24 flushers fought over 10 connections even at default
+// Workers; bumping Workers to 16 made it 48-vs-10 and ~every flush was lost.
+//
+// An explicit operator value (COREMETRY_CH_MAX_OPEN_CONNS / yaml
+// max_open_conns) is honored as-is — the operator may be capping against
+// their CH server's max_connections ceiling. When unset (0), derive
+// 3*workers plus 8 connections of read-path headroom.
+func resolveMaxOpenConns(configured, workers int) int {
+	if configured > 0 {
+		return configured
+	}
+	if workers <= 0 {
+		workers = 8
+	}
+	return 3*workers + 8
 }

@@ -36,3 +36,33 @@ func TestExternalDistributedWarning(t *testing.T) {
 		}
 	})
 }
+
+// v0.8.213 — boot now HARD-ERRORS on the external-Distributed-unset state
+// (the root of the local-pass/prod-break class) instead of silently creating
+// MVs that never populate, with COREMETRY_CH_ALLOW_UNSET_CLUSTER as the escape
+// hatch. externalDistributedFatal is the pure gate: fatal ONLY when spans is an
+// external Distributed table AND the operator hasn't opted into degraded mode —
+// never for single-node or a Coremetry-owned cluster (both yield isExternal=false
+// upstream, but pin the gate's own truth table so a future refactor can't make a
+// healthy install fail to boot).
+func TestExternalDistributedFatal(t *testing.T) {
+	cases := []struct {
+		name       string
+		isExternal bool
+		allowUnset bool
+		want       bool
+	}{
+		{"external + not allowed => fatal", true, false, true},
+		{"external + opted into degraded => boots", true, true, false},
+		{"not external (single-node / owned cluster) => boots", false, false, false},
+		{"not external + allow (irrelevant) => boots", false, true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := externalDistributedFatal(c.isExternal, c.allowUnset); got != c.want {
+				t.Fatalf("externalDistributedFatal(%v, %v) = %v, want %v",
+					c.isExternal, c.allowUnset, got, c.want)
+			}
+		})
+	}
+}

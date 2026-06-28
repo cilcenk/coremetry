@@ -253,6 +253,14 @@ type CHConfig struct {
 	// spans of a trace to land on the same shard (faster joins,
 	// at the cost of slightly less even rows-per-shard).
 	ShardKey string `yaml:"shard_key"`
+	// AllowUnsetCluster (COREMETRY_CH_ALLOW_UNSET_CLUSTER) is the escape hatch
+	// for the genuinely-broken external-Distributed-unset state: `spans` is an
+	// external Distributed table but ClusterName is empty, so Coremetry can't
+	// own spans_local — MV insert-triggers never fire (empty dashboards) and
+	// op_group ALTERs can't reach the shards. By default boot HARD-ERRORS there
+	// with the cluster to set; set this true to run in degraded mode anyway
+	// (raw-spans reads only). v0.8.213.
+	AllowUnsetCluster bool `yaml:"allow_unset_cluster"`
 }
 
 // Hosts splits Addr on commas and trims surrounding whitespace, so
@@ -382,6 +390,9 @@ func Load(path string) (*Config, error) {
 		if _, err := time.ParseDuration(v); err == nil {
 			cfg.ClickHouse.DialTimeout = v
 		}
+	}
+	if v := os.Getenv("COREMETRY_CH_ALLOW_UNSET_CLUSTER"); v == "true" || v == "1" {
+		cfg.ClickHouse.AllowUnsetCluster = true
 	}
 	if v := os.Getenv("COREMETRY_HTTP_ADDR"); v != "" {
 		cfg.Listen.HTTP = v

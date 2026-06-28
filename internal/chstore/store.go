@@ -257,6 +257,18 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	if err := s.healBrokenReplicatedTables(ctx); err != nil {
 		log.Printf("[chstore] self-heal pass: %v", err)
 	}
+	// v0.8.213 — fail FAST (before creating MVs that will never populate) on the
+	// genuinely-broken external-Distributed-unset state: `spans` is an external
+	// Distributed table but cluster_name is empty, so Coremetry can't own
+	// spans_local. This is the root of the "local passes / prod-distributed
+	// breaks" class. Hard-error with the cluster to set; an operator who really
+	// wants degraded (raw-spans-only) mode opts in via COREMETRY_CH_ALLOW_UNSET_CLUSTER.
+	if externalDistributedFatal(s.spansIsExternalDistributed(ctx), cfg.AllowUnsetCluster) {
+		conn.Close()
+		return nil, fmt.Errorf("%s To boot anyway in degraded mode (raw-spans reads only, "+
+			"empty summary dashboards), set COREMETRY_CH_ALLOW_UNSET_CLUSTER=true",
+			externalDistributedWarning(s.discoverSpansCluster(ctx)))
+	}
 	if err := s.migrate(ctx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -2476,6 +2488,15 @@ func (s *Store) migrate(ctx context.Context) error {
 // unset, so MV insert-triggers never fire). cluster is the discovered cluster
 // name the external `spans` fans to (may be "" if unparseable). Pure so the
 // actionable fix string is unit-tested (v0.8.211).
+// externalDistributedFatal reports whether boot should HARD-ERROR on the
+// external-Distributed-unset state. Pure so the gate is unit-tested. Fatal when
+// `spans` is an external Distributed table (isExternal) AND the operator has NOT
+// opted into degraded mode (allowUnset). Never fatal otherwise — single-node and
+// Coremetry-owned-cluster installs are unaffected. v0.8.213.
+func externalDistributedFatal(isExternal, allowUnset bool) bool {
+	return isExternal && !allowUnset
+}
+
 func externalDistributedWarning(cluster string) string {
 	fix := "set COREMETRY_CH_CLUSTER_NAME to the cluster the external spans fans to"
 	if cluster != "" {

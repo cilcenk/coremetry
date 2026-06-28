@@ -2468,7 +2468,49 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	return out, rows.Err()
 }
 
+// traceTimeBound widens a trace's [start, end] window so the spans scan can be
+// time-bounded. start = minMerge(trace_start_state) (a DateTime), endNanos =
+// maxMerge(trace_end_state) (a UnixNano Int64) — see the trace_summary_5m MV at
+// store.go:2132-2133. ok is false when the summary had no row for the trace
+// (endNanos 0, e.g. fresh before MV sync) or the window is nonsensical; the
+// caller then falls back to an unbounded scan so a trace is never un-fetchable.
+// The 5-min margin absorbs clock skew / state approximation while still binding
+// the scan to ~1-2 daily partitions instead of all of them. (v0.8.210)
+func traceTimeBound(start time.Time, endNanos int64) (lo, hi time.Time, ok bool) {
+	if endNanos <= 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	end := time.Unix(0, endNanos)
+	if end.Before(start) {
+		return time.Time{}, time.Time{}, false
+	}
+	const margin = 5 * time.Minute
+	return start.Add(-margin), end.Add(margin), true
+}
+
 func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error) {
+	// v0.8.210 — derive the trace's time window from trace_summary_5m (the
+	// aggregate, far smaller than raw spans) so the spans scan is time-bounded
+	// to ~1-2 partitions instead of an unbounded full-partition fan-out across
+	// every shard. Best-effort: any lookup miss/error falls through to the
+	// original unbounded scan, so correctness is never traded for the speedup.
+	// Mirrors the OTel ClickHouse exporter's trace_id_ts lookup pattern, reusing
+	// the window Coremetry already aggregates.
+	where := "trace_id = ?"
+	args := []any{traceID}
+	var winStart time.Time
+	var winEndNanos int64
+	if err := s.conn.QueryRow(ctx, `
+		SELECT minMerge(trace_start_state), toInt64(maxMerge(trace_end_state))
+		FROM trace_summary_5m
+		WHERE trace_id = ?
+		SETTINGS max_execution_time = 10`, traceID).Scan(&winStart, &winEndNanos); err != nil {
+		log.Printf("[trace] %s window lookup failed (%v) — unbounded spans scan", traceID, err)
+	} else if lo, hi, ok := traceTimeBound(winStart, winEndNanos); ok {
+		where += " AND time >= ? AND time <= ?"
+		args = append(args, lo, hi)
+	}
+
 	rows, err := s.conn.Query(ctx, `
 		SELECT trace_id, span_id, parent_id, name, kind, service_name, host_name,
 		       time, duration, status_code, status_msg,
@@ -2476,10 +2518,10 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 		       events, scope_name,
 		       db_system, db_statement, http_method, http_route, http_status, peer_service
 		FROM spans
-		WHERE trace_id = ?
+		WHERE `+where+`
 		ORDER BY time ASC
 		LIMIT 50000
-		SETTINGS max_execution_time = 20`, traceID)
+		SETTINGS max_execution_time = 20`, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -47,7 +47,7 @@ func (s *Store) ServiceNeighbors(
 		ORDER BY count() DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 30,
-		         optimize_skip_unused_shards = 1`,
+		         `+s.shardSkipSetting(),
 		service, int64(since.Seconds()), sampleCount)
 	if err != nil {
 		return nil, nil, 0, 0, err

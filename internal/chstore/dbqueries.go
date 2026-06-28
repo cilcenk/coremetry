@@ -98,7 +98,7 @@ func (s *Store) GetSlowQueriesGlobal(
 		ORDER BY (cnt * avg_ms) DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 30,
-		         optimize_skip_unused_shards = 1`
+		         ` + s.shardSkipSetting()
 	args := append(wc.args, limit)
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
@@ -166,7 +166,7 @@ func (s *Store) GetTopDBQueries(
 	//     swapping it for `?` Go-side after scan so the
 	//     displayed query reads naturally.
 	const placeholder = "__P__"
-	const sql = `
+	sql := `
 		SELECT
 			replaceRegexpAll(
 				replaceRegexpAll(db_statement, '''[^'']*''', '__P__'),
@@ -188,7 +188,7 @@ func (s *Store) GetTopDBQueries(
 		ORDER BY (cnt * avg_ms) DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 30,
-		         optimize_skip_unused_shards = 1`
+		         ` + s.shardSkipSetting()
 	rows, err := s.conn.Query(ctx, sql, service, from, to, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query db queries: %w", err)

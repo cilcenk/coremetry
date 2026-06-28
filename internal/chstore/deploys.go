@@ -255,7 +255,7 @@ func (s *Store) ComputeDeployImpact(
 		FROM spans
 		WHERE service_name = ? AND time >= ? AND time <= ?
 		SETTINGS max_execution_time = 15,
-		         optimize_skip_unused_shards = 1`,
+		         `+s.shardSkipSetting(),
 		deployT, deployT,
 		deployT, deployT,
 		deployT, deployT,
@@ -323,7 +323,7 @@ func (s *Store) GetServiceDeploys(
 		ORDER BY first_seen_ns ASC
 		LIMIT 50
 		SETTINGS max_execution_time = 15,
-		         optimize_skip_unused_shards = 1`
+		         ` + s.shardSkipSetting()
 	rows, err := s.conn.Query(ctx, sql, service, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("query deploys: %w", err)
@@ -425,7 +425,7 @@ func (s *Store) GetServiceRollouts(
 		ORDER BY bucket ASC
 		LIMIT 2000
 		SETTINGS max_execution_time = 15,
-		         optimize_skip_unused_shards = 1`
+		         ` + s.shardSkipSetting()
 	rows, err := s.conn.Query(ctx, sql, service, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("query rollouts: %w", err)

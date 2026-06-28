@@ -23,6 +23,25 @@ import (
 // clusterMode reports whether Distributed-CH schema should be used.
 func (s *Store) clusterMode() bool { return strings.TrimSpace(s.cfg.ClusterName) != "" }
 
+// shardSkipSetting returns the optimize_skip_unused_shards SETTINGS value for a
+// service-scoped read. It is "= 1" (prune to the shard WHERE service_name=?
+// resolves to) ONLY in clusterMode, where Coremetry OWNS the Distributed
+// wrapper it created and therefore its shard key, so the prune is provably
+// correct. When cluster_name is unset against an EXTERNAL Distributed spans
+// table, Coremetry does NOT own the shard key — CH may prune to the wrong shard
+// and return only that shard's slice ("cluster returns no results"). "= 0"
+// forces a full fan-out (complete) and is a harmless no-op single-node. This
+// generalizes the rescue already proven at repo.go:905.
+func (s *Store) shardSkipSetting() string {
+	if s.clusterMode() {
+		return "optimize_skip_unused_shards = 1"
+	}
+	return "optimize_skip_unused_shards = 0"
+}
+
+// ShardSkipSetting is the exported form for callers in the api package.
+func (s *Store) ShardSkipSetting() string { return s.shardSkipSetting() }
+
 // spansIsExternalDistributed reports whether the connected `spans`
 // table is a Distributed wrapper that chstore does NOT own — i.e. the
 // operator pointed Coremetry at an existing Distributed CH but left

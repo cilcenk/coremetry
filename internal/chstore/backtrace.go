@@ -242,7 +242,7 @@ func (s *Store) ServiceCallers(
 		LIMIT ?
 		SETTINGS max_execution_time = 30,
 		         join_use_nulls = 0,
-		         optimize_skip_unused_shards = 1,
+		         `+s.shardSkipSetting()+`,
 		         distributed_product_mode = 'global'`,
 		service, from, to,
 		from, to, service,

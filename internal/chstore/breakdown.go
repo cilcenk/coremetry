@@ -64,7 +64,7 @@ func (s *Store) GetSpanBreakdown(
 		GROUP BY bucket, category
 		ORDER BY bucket
 		SETTINGS max_execution_time = 15,
-		         optimize_skip_unused_shards = 1`
+		         ` + s.shardSkipSetting()
 	rows, err := s.conn.Query(ctx, q, step, service, from, to)
 	if err != nil {
 		return nil, err

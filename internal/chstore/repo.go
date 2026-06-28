@@ -688,7 +688,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		SETTINGS max_execution_time = 30,
 		         optimize_read_in_order = 1,
 		         optimize_aggregation_in_order = 1,
-		         optimize_skip_unused_shards = 1, `+mvQuantileMemSettings,
+		         `+s.shardSkipSetting()+`, `+mvQuantileMemSettings,
 		service, bucketStart, winEnd)
 	if err != nil {
 		return nil, err
@@ -744,7 +744,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
 		GROUP BY `+nameCol+`, bidx
 		SETTINGS max_execution_time = 30,
-		         optimize_skip_unused_shards = 1, `+mvQuantileMemSettings,
+		         `+s.shardSkipSetting()+`, `+mvQuantileMemSettings,
 		bucketStart, bucketSec, service, bucketStart, winEnd)
 	if err != nil {
 		// Sparkline failure non-fatal — return aggregates without.
@@ -1879,7 +1879,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			  max_execution_time = 15,
 			  optimize_read_in_order = 1,
 			  optimize_aggregation_in_order = 1,
-			  optimize_skip_unused_shards = 1`,
+			  `+s.shardSkipSetting(),
 			f.Service, f.From, f.To, stage1Limit)
 		if err != nil {
 			return nil, 0, false, fmt.Errorf("stage1: %w", err)

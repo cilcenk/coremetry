@@ -7366,7 +7366,7 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 		FROM spans
 		WHERE service_name = ? AND time >= ? AND time <= ?
 		SETTINGS max_execution_time = 15,
-		         optimize_skip_unused_shards = 1`,
+		         `+s.store.ShardSkipSetting(),
 		deployT, deployT,
 		deployT, deployT,
 		deployT, deployT,
@@ -7406,7 +7406,7 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 		FROM spans
 		WHERE service_name = ? AND time >= ? AND time <= ?
 		SETTINGS max_execution_time = 10,
-		         optimize_skip_unused_shards = 1`,
+		         `+s.store.ShardSkipSetting(),
 		deployT, deployT, body.Service, beforeStart, afterEnd)
 	var newOps []string
 	if err == nil {

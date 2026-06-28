@@ -411,11 +411,11 @@ func (s *Store) migrate(ctx context.Context) error {
 			host_name     LowCardinality(String) DEFAULT '',
 			deploy_env    LowCardinality(String) DEFAULT '',
 			status_code   LowCardinality(String) DEFAULT 'unset',
-			status_msg    String       DEFAULT '',
+			status_msg    String       DEFAULT '' CODEC(ZSTD(3)),
 			time          DateTime64(9) CODEC(Delta, ZSTD(3)),
 			duration      Int64        CODEC(T64, ZSTD(3)),
 			db_system     LowCardinality(String) DEFAULT '',
-			db_statement  String       DEFAULT '',
+			db_statement  String       DEFAULT '' CODEC(ZSTD(3)),
 			http_method   LowCardinality(String) DEFAULT '',
 			http_route    LowCardinality(String) DEFAULT '',
 			http_status   UInt16       DEFAULT 0,
@@ -424,10 +424,10 @@ func (s *Store) migrate(ctx context.Context) error {
 			peer_service  LowCardinality(String) DEFAULT '',
 			msg_system    LowCardinality(String) DEFAULT '',
 			attr_keys     Array(LowCardinality(String)),
-			attr_values   Array(String),
+			attr_values   Array(String) CODEC(ZSTD(3)),
 			res_keys      Array(LowCardinality(String)),
-			res_values    Array(String),
-			events        String       DEFAULT '[]',
+			res_values    Array(String) CODEC(ZSTD(3)),
+			events        String       DEFAULT '[]' CODEC(ZSTD(3)),
 			scope_name    LowCardinality(String) DEFAULT '',
 			op_group      LowCardinality(String) DEFAULT '',
 			cluster       LowCardinality(String) MATERIALIZED %s,
@@ -1449,6 +1449,20 @@ func (s *Store) migrate(ctx context.Context) error {
 		// near-zero overhead and lets CH skip granules whose
 		// status set doesn't include 'error'.
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_status      status_code TYPE set(0)    GRANULARITY 4`,
+		// v0.8.214 — ZSTD(3) on the free-text columns that lacked an explicit
+		// codec. attr_values alone is ~25% of the spans table at only ~5.9x with
+		// the default LZ4; ZSTD(3) pushes free text to ~8-11x. db_statement (SQL)
+		// and events (JSON) compress especially well under ZSTD. Forward-only —
+		// MODIFY COLUMN codec is metadata-only (no rewrite of existing parts), so
+		// it's cheap + safe; new parts get the better ratio. Idempotent (re-applying
+		// the same codec is a no-op). Distributed-safe: execDDL→adaptDDL emits the
+		// MODIFY to spans_local ON CLUSTER + the Distributed wrapper (CH accepts a
+		// codec on the wrapper harmlessly — verified on 24.8).
+		`ALTER TABLE spans MODIFY COLUMN attr_values  Array(String) CODEC(ZSTD(3))`,
+		`ALTER TABLE spans MODIFY COLUMN res_values   Array(String) CODEC(ZSTD(3))`,
+		`ALTER TABLE spans MODIFY COLUMN db_statement String DEFAULT '' CODEC(ZSTD(3))`,
+		`ALTER TABLE spans MODIFY COLUMN status_msg   String DEFAULT '' CODEC(ZSTD(3))`,
+		`ALTER TABLE spans MODIFY COLUMN events       String DEFAULT '[]' CODEC(ZSTD(3))`,
 		// Apply the trace_snapshots TTL to installs that created
 		// the table before v0.5.91. MODIFY TTL is metadata-only;
 		// repeated applies are idempotent.

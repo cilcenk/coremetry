@@ -182,6 +182,20 @@ export default function AdminStatsPage() {
               </div>
             )}
 
+            {/* ── Duplicate-worker HA warning (v0.8.212) ────────────── */}
+            {data.health?.lockDegraded && (
+              <div style={{
+                border: '1px solid var(--err)', background: 'rgba(220,80,80,0.08)',
+                borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: 'var(--text)',
+              }}>
+                <strong>⚠ Distributed leader lock is degraded.</strong>{' '}
+                <code>COREMETRY_REDIS_URL</code> is set but Redis is unreachable, so this pod runs the
+                always-leader fallback. If you run more than one replica, background jobs (alerts,
+                notifications, topology aggregation, retention) are <strong>duplicated</strong> across
+                pods. Fix: restore Redis so exactly one pod holds leadership.
+              </div>
+            )}
+
             {/* ── Volume KPIs ──────────────────────────────────────── */}
             <div style={{
               display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',

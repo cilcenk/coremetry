@@ -38,6 +38,13 @@ type SystemHealth struct {
 	// fans to (parsed from its engine def) — set COREMETRY_CH_CLUSTER_NAME to
 	// this to make the MVs populate. Empty if unparseable.
 	SuggestedClusterName string `json:"suggestedClusterName,omitempty"`
+	// LockDegraded is true when COREMETRY_REDIS_URL was set (the operator wants
+	// a distributed leader lock for multi-pod HA) but the Redis connection
+	// failed, so the pod fell back to the always-leader Noop lock. In a
+	// multi-pod deployment EVERY pod then becomes leader and background jobs
+	// (alerts, notifications, topology aggregation, retention) run DUPLICATED.
+	// Populated by the API getSystemStats handler (main.go knows the lock state).
+	LockDegraded bool `json:"lockDegraded"`
 }
 
 // IngestDrops surfaces the in-process ingest data-loss counters (cumulative

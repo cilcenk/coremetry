@@ -52,6 +52,11 @@ type Server struct {
 	store       *chstore.Store
 	logs        logstore.Store    // read-side abstraction; CH or external ES
 	ing         *otlp.Ingester
+	// lockDegraded — Redis was configured but the leader lock fell back to the
+	// always-leader Noop (Redis down at boot). Surfaced on /admin/stats so a
+	// multi-pod operator sees that background jobs are duplicated. Set by
+	// SetLockDegraded from main.go. v0.8.212.
+	lockDegraded bool
 	webFS       embed.FS
 	auth        *auth.Service
 	oidc        *auth.OIDCService // nil when SSO disabled
@@ -301,6 +306,11 @@ func (s *Server) EnableDemoMode(email, password string) {
 	s.demoEmail = email
 	s.demoPassword = password
 }
+
+// SetLockDegraded records that the distributed leader lock fell back to the
+// always-leader Noop despite Redis being configured (Redis down at boot) — so
+// /admin/stats can warn that multi-pod background jobs are duplicated. v0.8.212.
+func (s *Server) SetLockDegraded(b bool) { s.lockDegraded = b }
 
 // editorRoles is the role bundle used by RequireAnyRole on routes
 // that admin + editor may both use (dashboards, monitors, alerts,
@@ -1261,6 +1271,9 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 				st.Drops.MetricsWriteFailed = s.ing.Metrics.WriteFailed()
 			}
 		}
+		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
+		// the lock fell back to always-leader Noop). main.go owns the lock state.
+		st.Health.LockDegraded = s.lockDegraded
 		return st, nil
 	})
 }

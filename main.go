@@ -391,14 +391,28 @@ func main() {
 	// always-leader lock so background workers still run on this single
 	// instance.
 	cacheImpl, lockImpl := cache.NewNoop()
+	redisConnected := false
 	if cfg.Redis.URL != "" {
 		c, l, err := cache.New(cfg.Redis.URL)
 		if err != nil {
 			log.Printf("[cache] redis unavailable — running without cache + always-leader: %v", err)
 		} else {
 			cacheImpl, lockImpl = c, l
+			redisConnected = true
 			log.Printf("[cache] redis ready at %s", cfg.Redis.URL)
 		}
+	}
+	// v0.8.212 — multi-pod HA hazard: Redis was configured (operator wants a
+	// distributed leader lock) but the connection failed, so this pod runs the
+	// always-leader Noop. In a multi-pod deployment EVERY pod becomes leader →
+	// alerts / notifications / topology aggregation / retention run DUPLICATED.
+	// Loud boot warning + a /admin/stats flag (SetLockDegraded below).
+	lockDegraded := isLockDegraded(cfg.Redis.URL != "", redisConnected)
+	if lockDegraded {
+		log.Printf("[leader] WARNING: COREMETRY_REDIS_URL is set but Redis is unreachable — " +
+			"this pod runs the ALWAYS-LEADER fallback lock. If you run more than one replica, " +
+			"background jobs (alerts, notifications, aggregation, retention) are DUPLICATED across " +
+			"pods. Restore Redis so exactly one pod holds leadership.")
 	}
 
 	// ── Notifier (SMTP-driven email; slack/webhook stubs) ────────────────────
@@ -720,6 +734,7 @@ func main() {
 	log.Printf("[cluster] pod id %s", clusterSvc.MyID())
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
+	srv.SetLockDegraded(lockDegraded) // v0.8.212 — duplicate-worker HA warning on /admin/stats
 	srv.SetCluster(clusterSvc)
 	srv.SetAutocomplete(acStore) // v0.8.80 — picker fast path; nil-safe, falls back to CH
 	// v0.6.4 — Model Context Protocol server. Wired on api/all
@@ -957,6 +972,15 @@ func bootstrapAdminID(email string) string {
 // forever (CrashLoopBackOff, DB never recreated — v0.8.207 incident).
 func resetExitsAfterDrop(viaEnv bool) bool {
 	return !viaEnv
+}
+
+// isLockDegraded reports the multi-pod HA hazard: Redis was configured (the
+// operator wants a distributed leader lock) but the connection failed, so the
+// pod runs the always-leader Noop lock. Pure so the warning condition is
+// unit-tested. NOT degraded when Redis was never configured (single-pod /
+// dev — always-leader is correct there) nor when Redis connected. v0.8.212.
+func isLockDegraded(redisConfigured, redisConnected bool) bool {
+	return redisConfigured && !redisConnected
 }
 
 // shouldWriteBootstrapAdmin decides whether seedInitialAdmin writes the admin

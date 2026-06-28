@@ -183,8 +183,15 @@ export function TraceWaterfall({
   // initial collapsed Set; otherwise we start with an empty Set.
   // Keys depend on spans only — re-renders that just change
   // selectedId / nameWidth don't reset the user's expansions.
+  // v0.8.199 (scale-audit) — auto-collapse a LARGE trace even when the caller
+  // didn't pass defaultCollapsed. A batch/fan-out trace of thousands–tens of
+  // thousands of spans (GetTrace returns up to 50k) painted FULLY EXPANDED locks
+  // the main thread on first paint. content-visibility (row style below) lets the
+  // browser skip off-screen rows, but at the worst case the DOM-node count alone
+  // is too much, so collapse the parent subtrees and let the operator expand in.
   const initialCollapsed = useMemo(() => {
-    if (!defaultCollapsed) return new Set<string>();
+    const LARGE_TRACE = 1500;
+    if (!defaultCollapsed && spans.length <= LARGE_TRACE) return new Set<string>();
     const parents = new Set<string>();
     for (const s of spans) if (s.parentSpanId) parents.add(s.parentSpanId);
     return parents;
@@ -497,7 +504,8 @@ export function TraceWaterfall({
         const labelInside = parseFloat(widthPct) > 6;
 
         return (
-          <div key={s.spanId} className={cls} onClick={() => onSelect(s.spanId)}>
+          <div key={s.spanId} className={cls} onClick={() => onSelect(s.spanId)}
+            style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
             {/* Left stripe — solid 3px service-color marker so the eye
                 can scan service handoffs down the trace. Selected row
                 gets a brighter, wider stripe to mark focus. */}

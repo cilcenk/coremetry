@@ -5012,6 +5012,7 @@ func (s *Server) provisionLDAPUser(w http.ResponseWriter, r *http.Request) {
 	if saved == nil {
 		saved = &u
 	}
+	s.audit(r, "user.provision_ldap", "user", u.ID, fmt.Sprintf(`{"email":%q,"role":%q}`, body.Email, body.Role))
 	writeJSON(w, saved)
 }
 
@@ -5652,6 +5653,7 @@ func (s *Server) createMaintenanceWindow(w http.ResponseWriter, r *http.Request)
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "maintenance_window.create", "maintenance_window", mw.ID, fmt.Sprintf(`{"service":%q,"severity":%q}`, mw.Service, mw.Severity))
 	writeJSON(w, mw)
 }
 
@@ -5661,6 +5663,7 @@ func (s *Server) deleteMaintenanceWindow(w http.ResponseWriter, r *http.Request)
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "maintenance_window.delete", "maintenance_window", id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -5987,6 +5990,7 @@ func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) 
 	if err := s.store.SetExceptionGroupState(r.Context(), r.PathValue("fp"), body.State); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "exception_group.set_state", "exception_group", r.PathValue("fp"), fmt.Sprintf(`{"state":%q}`, body.State))
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -5998,6 +6002,7 @@ func (s *Server) assignExceptionGroup(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.AssignExceptionGroup(r.Context(), r.PathValue("fp"), body.Assignee); err != nil {
 		writeErr(w, err); return
 	}
+	s.audit(r, "exception_group.assign", "exception_group", r.PathValue("fp"), fmt.Sprintf(`{"assignee":%q}`, body.Assignee))
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -6554,6 +6559,7 @@ func (s *Server) putAnomalyPromotion(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "settings.anomaly_promotion.update", "settings", "anomaly_promotion", fmt.Sprintf(`{"minPeakRatio":%v,"minSustainedSec":%v,"minCount":%v}`, c.MinPeakRatio, c.MinSustainedSec, c.MinCount))
 	writeJSON(w, c)
 }
 

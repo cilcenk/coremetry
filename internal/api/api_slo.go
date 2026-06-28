@@ -155,13 +155,16 @@ func (s *Server) createSLO(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "slo.create", "slo", o.ID, fmt.Sprintf(`{"name":%q,"service":%q}`, o.Name, o.Service))
 	writeJSON(w, o)
 }
 
 func (s *Server) deleteSLO(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteSLO(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteSLO(r.Context(), id); err != nil {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "slo.delete", "slo", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }

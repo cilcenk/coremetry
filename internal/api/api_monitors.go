@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -89,6 +90,7 @@ func (s *Server) createMonitor(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "monitor.create", "monitor", m.ID, fmt.Sprintf(`{"name":%q,"type":%q}`, m.Name, m.Type))
 	// UpsertMonitor stamped the new id + heartbeat token onto m;
 	// echo it back directly. Re-reading via FINAL would race the
 	// MergeTree merge cycle and sometimes return null.
@@ -107,14 +109,17 @@ func (s *Server) updateMonitor(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "monitor.update", "monitor", id, "")
 	writeJSON(w, m)
 }
 
 func (s *Server) deleteMonitor(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteMonitor(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if err := s.store.DeleteMonitor(r.Context(), id); err != nil {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "monitor.delete", "monitor", id, "")
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
 

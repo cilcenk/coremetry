@@ -6,6 +6,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -61,6 +62,7 @@ func (s *Server) createIncident(w http.ResponseWriter, r *http.Request) {
 		IncidentID: inc.ID, Kind: "created", Actor: actor,
 		Body: "Manually created",
 	})
+	s.audit(r, "incident.create", "incident", inc.ID, fmt.Sprintf(`{"title":%q}`, inc.Title))
 	writeJSON(w, inc)
 }
 
@@ -76,6 +78,7 @@ func (s *Server) updateIncident(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.audit(r, "incident.update", "incident", id, "")
 	writeJSON(w, inc)
 }
 
@@ -104,6 +107,7 @@ func (s *Server) ackIncident(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.AppendIncidentEvent(r.Context(), chstore.IncidentEvent{
 		IncidentID: id, Kind: "ack", Actor: actor, Body: "Incident acknowledged",
 	})
+	s.audit(r, "incident.ack", "incident", id, "")
 	writeJSON(w, inc)
 }
 
@@ -128,6 +132,7 @@ func (s *Server) resolveIncident(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.AppendIncidentEvent(r.Context(), chstore.IncidentEvent{
 		IncidentID: id, Kind: "resolved", Actor: actorOf(r), Body: "Incident resolved",
 	})
+	s.audit(r, "incident.resolve", "incident", id, "")
 	writeJSON(w, inc)
 }
 

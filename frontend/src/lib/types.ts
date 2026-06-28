@@ -2446,6 +2446,9 @@ export interface SystemStats {
     // The cluster the external `spans` fans to — set COREMETRY_CH_CLUSTER_NAME
     // to this to fix the empty-MV state.
     suggestedClusterName?: string;
+    // Redis configured but unreachable → always-leader fallback. In a multi-pod
+    // deployment every pod becomes leader → duplicate alerts/notifications.
+    lockDegraded: boolean;
   };
 }
 

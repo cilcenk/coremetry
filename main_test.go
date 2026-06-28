@@ -59,6 +59,23 @@ func TestShouldWriteBootstrapAdmin(t *testing.T) {
 	}
 }
 
+// v0.8.207 — operator-reported: COREMETRY_CH_RESET_SCHEMA=1 set on the
+// long-running Deployment dropped the database, exited, and restarted into
+// another drop forever (CrashLoopBackOff) — the DB was never recreated. The
+// reset path was designed for a one-shot Helm Job (drop + exit), but the env
+// alias lands on the Deployment. resetExitsAfterDrop is the minimal pure gate
+// the fix touches: the --reset-schema flag (Job) exits, the env (Deployment)
+// falls through to recreate + run. This pins both so the crash-loop can't
+// silently return.
+func TestResetExitsAfterDrop(t *testing.T) {
+	if !resetExitsAfterDrop(false) {
+		t.Fatal("--reset-schema flag (one-shot Job) must exit after the drop")
+	}
+	if resetExitsAfterDrop(true) {
+		t.Fatal("COREMETRY_CH_RESET_SCHEMA env (Deployment) must NOT exit — it recreates + runs")
+	}
+}
+
 // v0.7.5 — the seeded example runbooks. They must be well-formed (unique
 // runbook + step ids, valid step kinds, order = position) and collectively
 // demonstrate all five step kinds, since they're a fresh install's first

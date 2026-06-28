@@ -222,8 +222,16 @@ func main() {
 	// container args. Idempotent — DROP DATABASE IF EXISTS.
 	resetSchema     := flag.Bool("reset-schema", false, "DROP the configured CH database and exit. Destroys ALL coremetry data — use only for fresh install hooks.")
 	flag.Parse()
+	// The --reset-schema FLAG is a one-shot Job (drop + exit; the Helm
+	// pre-install hook). The COREMETRY_CH_RESET_SCHEMA ENV is set on the
+	// long-running Deployment, so it must drop THEN boot normally to recreate
+	// — exiting there just restarts into another drop (CrashLoopBackOff, DB
+	// never recreated; v0.8.207 operator-reported). resetViaEnv distinguishes
+	// the two so the env path falls through to chstore.New().
+	resetViaEnv := false
 	if v := os.Getenv("COREMETRY_CH_RESET_SCHEMA"); v == "1" || v == "true" {
 		*resetSchema = true
+		resetViaEnv = true
 	}
 
 	cfg, err := config.Load(*cfgPath)
@@ -268,7 +276,16 @@ func main() {
 		if err := chstore.ResetSchema(ctx, cfg.ClickHouse); err != nil {
 			log.Fatalf("[reset-schema] %v", err)
 		}
-		return
+		if resetExitsAfterDrop(resetViaEnv) {
+			// --reset-schema flag = one-shot Job: drop + exit, the regular
+			// Deployment pod boots next and recreates the schema.
+			return
+		}
+		// COREMETRY_CH_RESET_SCHEMA env on a long-running Deployment: fall
+		// through to chstore.New() below so THIS pod recreates the schema and
+		// runs. Exiting here would just restart into another drop forever.
+		log.Printf("[reset-schema] database dropped — continuing boot to recreate it. " +
+			"⚠️  REMOVE COREMETRY_CH_RESET_SCHEMA now, or every pod restart will wipe all data.")
 	}
 
 	// ── ClickHouse ────────────────────────────────────────────────────────────
@@ -929,6 +946,17 @@ func runServiceTeamDeriver(ctx context.Context, store *chstore.Store, lock cache
 func bootstrapAdminID(email string) string {
 	sum := sha256.Sum256([]byte(email))
 	return hex.EncodeToString(sum[:8]) // 16 hex chars — same width as the old random id
+}
+
+// resetExitsAfterDrop decides whether the process exits after a schema reset.
+// Pure so it's unit-tested. The --reset-schema FLAG path is a one-shot Job
+// (drop + exit; the next Deployment pod recreates). The
+// COREMETRY_CH_RESET_SCHEMA ENV path is set on the long-running Deployment, so
+// it must NOT exit — it falls through to chstore.New() and recreates the
+// schema in the same boot. Exiting on the env path restarts into another drop
+// forever (CrashLoopBackOff, DB never recreated — v0.8.207 incident).
+func resetExitsAfterDrop(viaEnv bool) bool {
+	return !viaEnv
 }
 
 // shouldWriteBootstrapAdmin decides whether seedInitialAdmin writes the admin

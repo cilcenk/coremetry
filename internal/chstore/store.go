@@ -99,12 +99,13 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	}
 	maxConns := cfg.MaxOpenConns
 	if maxConns == 0 {
-		// Default sized to the ingest flusher fan-out: 3 signals (spans /
-		// logs / metrics) × Ingestion.Workers (8) = 24 concurrent batch
-		// inserts, all sharing this pool with read-path queries. At the old
-		// default of 10 the flushers contended for connections under load
-		// (Phase-2 #2). The driver opens lazily, so api-only pods that never
-		// flush pay nothing for the higher ceiling.
+		// Fallback only — config.Load (resolveMaxOpenConns, v0.8.205) is the
+		// primary sizer and derives this from Ingestion.Workers (3 signals ×
+		// workers + read headroom) before New is ever called. This branch
+		// just guards callers that build a CHConfig directly (tests, tooling)
+		// without going through Load. 24 = the fan-out at the default 8
+		// workers. The driver opens lazily, so api-only pods that never flush
+		// pay nothing for the higher ceiling.
 		maxConns = 24
 	}
 

@@ -931,19 +931,34 @@ func bootstrapAdminID(email string) string {
 	return hex.EncodeToString(sum[:8]) // 16 hex chars — same width as the old random id
 }
 
-// seedInitialAdmin creates the bootstrap admin if the users table is empty.
-// Subsequent runs are no-ops, so changing initial_password in config has no
-// effect once a user exists — that's intentional, real password rotation
-// goes through a future user-management UI.
+// shouldWriteBootstrapAdmin decides whether seedInitialAdmin writes the admin
+// row. Pure so it's unit-tested. Normally we only seed when the users table is
+// EMPTY (seed-once; UI password rotation then survives restarts). When `force`
+// is set the env creds are authoritative — we reconcile the bootstrap admin's
+// password on every boot regardless of existing rows. force is true when
+// COREMETRY_ADMIN_RESET is set (operator recovering a locked-out admin or
+// managing creds via a secret) OR when demo mode is on (the published demo
+// creds must stay valid so the login page can auto-sign-in — otherwise a stale
+// DB password breaks the "open straight in" demo flow).
+func shouldWriteBootstrapAdmin(userCount int64, force bool) bool {
+	return userCount == 0 || force
+}
+
+// seedInitialAdmin creates the bootstrap admin when the users table is empty,
+// or — when COREMETRY_ADMIN_RESET or demo mode is set — force-reconciles its
+// password from the env on every boot. The id is derived from the email
+// (bootstrapAdminID) so the reset UPSERTs the SAME row, never a duplicate.
 func seedInitialAdmin(ctx context.Context, store *chstore.Store, ac config.AuthConfig) error {
 	if ac.InitialAdmin == "" || ac.InitialPassword == "" {
 		return nil
 	}
+	// Demo mode publishes these creds for auto-login, so they must match the DB.
+	force := ac.AdminReset || ac.DemoMode
 	n, err := store.CountUsers(ctx)
 	if err != nil {
 		return err
 	}
-	if n > 0 {
+	if !shouldWriteBootstrapAdmin(n, force) {
 		return nil
 	}
 	hash, err := auth.HashPassword(ac.InitialPassword)
@@ -959,7 +974,15 @@ func seedInitialAdmin(ctx context.Context, store *chstore.Store, ac config.AuthC
 	if err := store.UpsertUser(ctx, u); err != nil {
 		return err
 	}
-	log.Printf("[auth] seeded initial admin %q (change the password via API after first login)", ac.InitialAdmin)
+	switch {
+	case n > 0 && ac.DemoMode:
+		log.Printf("[auth] demo mode — reconciled demo admin %q password from env so the login page can auto-sign-in", ac.InitialAdmin)
+	case n > 0 && ac.AdminReset:
+		log.Printf("[auth] COREMETRY_ADMIN_RESET — reconciled admin %q password from env "+
+			"(remove the flag once you can log in, or keep it for env-managed creds)", ac.InitialAdmin)
+	default:
+		log.Printf("[auth] seeded initial admin %q (change the password via API after first login)", ac.InitialAdmin)
+	}
 	return nil
 }
 

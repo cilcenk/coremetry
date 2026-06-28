@@ -17,26 +17,31 @@ import (
 )
 
 func (s *Server) listSLOs(w http.ResponseWriter, r *http.Request) {
-	out, err := s.store.ListSLOs(r.Context())
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	// For the list page, pre-compute status alongside each SLO so the UI
-	// can show health badges without N round-trips.
-	type row struct {
-		chstore.SLO
-		Status *chstore.SLOStatus `json:"status,omitempty"`
-	}
-	rows := make([]row, 0, len(out))
-	for _, o := range out {
-		st, err := s.store.ComputeSLOStatus(r.Context(), o)
+	// v0.8.200 (scale-audit) — cache the list: each SLO's status is its own CH
+	// query (now MV-backed for availability) and this fans out over ALL of them.
+	// Uncached, every /api/slos load (and every operator viewing it) re-ran N
+	// status queries. A 30s TTL collapses that to one fan-out per window.
+	s.serveCached(w, r, "slos:status", 30*time.Second, func() (any, error) {
+		out, err := s.store.ListSLOs(r.Context())
 		if err != nil {
-			log.Printf("[slo] status %s: %v", o.ID, err)
+			return nil, err
 		}
-		rows = append(rows, row{SLO: o, Status: st})
-	}
-	writeJSON(w, rows)
+		// Pre-compute status alongside each SLO so the UI shows health badges
+		// without N round-trips.
+		type row struct {
+			chstore.SLO
+			Status *chstore.SLOStatus `json:"status,omitempty"`
+		}
+		rows := make([]row, 0, len(out))
+		for _, o := range out {
+			st, err := s.store.ComputeSLOStatus(r.Context(), o)
+			if err != nil {
+				log.Printf("[slo] status %s: %v", o.ID, err)
+			}
+			rows = append(rows, row{SLO: o, Status: st})
+		}
+		return rows, nil
+	})
 }
 
 func (s *Server) getSLO(w http.ResponseWriter, r *http.Request) {

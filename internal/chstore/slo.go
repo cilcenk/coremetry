@@ -97,40 +97,56 @@ func (s *Store) DeleteSLO(ctx context.Context, id string) error {
 	return s.conn.Exec(ctx, `ALTER TABLE slos DELETE WHERE id = ?`, id)
 }
 
-// ComputeSLOStatus runs a single ClickHouse query over the spans table to
-// derive total/good counts within the SLO's rolling window. Cheap because
-// the WHERE pushes down to the partitioned `time` column.
+// ComputeSLOStatus derives total/good counts within the SLO's rolling window.
+// Availability reads the summary MV (count + error per 5m bucket — no raw-spans
+// scan); latency needs a per-span threshold compare so it reads `spans`, bounded
+// by max_execution_time. Called once per SLO by the (cached) /api/slos list.
 func (s *Store) ComputeSLOStatus(ctx context.Context, o SLO) (*SLOStatus, error) {
 	if o.Service == "" {
 		return nil, fmt.Errorf("slo service is required")
 	}
 	since := time.Now().Add(-time.Duration(o.WindowDays) * 24 * time.Hour)
 
-	var goodExpr string
+	var total, good uint64
 	switch o.SLIType {
 	case SLITypeAvailability:
-		// "good" = span did not error out
-		goodExpr = "countIf(status_code != 'error')"
+		// v0.8.200 (scale-audit) — availability = (count - errors)/count, which
+		// the summary MVs already pre-aggregate per (service[, operation], 5m).
+		// Reading the MV instead of raw `spans` turns what was a 30-day
+		// billion-span scan — looped over EVERY SLO on each /api/slos load — into
+		// a cheap state merge over a few thousand bucket rows.
+		mv := "service_summary_5m"
+		nameClause := ""
+		args := []any{o.Service, since}
+		if o.Operation != "" {
+			mv = "operation_summary_5m"
+			nameClause = " AND name = ?"
+			args = append(args, o.Operation)
+		}
+		q := "SELECT countMerge(span_count_state) AS total, " +
+			"countMerge(span_count_state) - countIfMerge(error_count_state) AS good " +
+			"FROM " + mv + " WHERE service_name = ? AND time_bucket >= ?" + nameClause +
+			" SETTINGS max_execution_time = 20"
+		if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {
+			return nil, err
+		}
 	case SLITypeLatency:
-		// "good" = duration (ns) under threshold (ms)
-		goodExpr = fmt.Sprintf("countIf(duration <= %f)", o.ThresholdMs*1e6)
+		// "good" = duration under the threshold — a per-span compare the MVs
+		// don't pre-compute, so raw spans, but BOUNDED (this was an uncapped
+		// 30-day scan before v0.8.200). service_name + time prefix-prunes.
+		q := "SELECT count() AS total, countIf(duration <= ?) AS good FROM spans " +
+			"WHERE service_name = ? AND time >= ?"
+		args := []any{o.ThresholdMs * 1e6, o.Service, since}
+		if o.Operation != "" {
+			q += " AND name = ?"
+			args = append(args, o.Operation)
+		}
+		q += " SETTINGS max_execution_time = 20"
+		if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("unknown sli_type: %s", o.SLIType)
-	}
-
-	q := `
-		SELECT count() AS total, ` + goodExpr + ` AS good
-		FROM spans
-		WHERE service_name = ? AND time >= ?`
-	args := []any{o.Service, since}
-	if o.Operation != "" {
-		q += ` AND name = ?`
-		args = append(args, o.Operation)
-	}
-
-	var total, good uint64
-	if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {
-		return nil, err
 	}
 
 	st := &SLOStatus{Total: total, Good: good}

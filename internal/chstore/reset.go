@@ -116,5 +116,100 @@ func ResetSchema(ctx context.Context, cfg config.CHConfig) error {
 		return fmt.Errorf("drop database: %w", err)
 	}
 	log.Printf("[reset-schema] database %q dropped — next boot will recreate the schema", cfg.Database)
+
+	// v0.8.208 — on a Distributed cluster, DROP DATABASE only cleans the
+	// ZooKeeper znodes of Replicated tables that still exist LOCALLY on the
+	// node it runs through. A node whose local replica was already gone (a
+	// partial earlier reset, a removed/re-added node, an aborted boot) leaves
+	// an ORPHAN znode at <replica_path>/<shard>/<table> carrying the old table
+	// metadata. The next fresh CREATE TABLE then trips
+	// METADATA_MISMATCH (code 342) — e.g. the stored skip-index set differs —
+	// and boot crashes. Operator-reported on an external 4-node cluster.
+	// Sweep those orphan znodes so "reset = truly from scratch".
+	if name := strings.TrimSpace(cfg.ClusterName); name != "" {
+		cleanOrphanReplicatedZnodes(ctx, conn, cfg)
+	}
 	return nil
+}
+
+// cleanOrphanReplicatedZnodes removes leftover ZooKeeper znodes for Coremetry's
+// sharded Replicated tables after a database drop, so a fresh schema create
+// can't hit METADATA_MISMATCH against stale metadata. Best-effort: a cluster
+// may run with system.zookeeper access disabled, or a path may already be
+// clean — every failure is logged and skipped, never fatal (the reset already
+// dropped the data; this is belt-and-suspenders). Scoped to the known
+// highVolumeTables names under the configured replica_path so it can't touch
+// another application's znodes that happen to share the prefix.
+func cleanOrphanReplicatedZnodes(ctx context.Context, conn clickhouse.Conn, cfg config.CHConfig) {
+	zkPrefix := strings.TrimRight(cfg.ReplicaPath, "/")
+	if zkPrefix == "" {
+		zkPrefix = "/clickhouse/tables"
+	}
+
+	// children of the prefix = per-shard dirs ({shard} macro values, e.g. 01/02)
+	shards, err := zkChildren(ctx, conn, zkPrefix)
+	if err != nil {
+		log.Printf("[reset-schema] zk orphan sweep: cannot list %q (%v) — skipping (data already dropped)", zkPrefix, err)
+		return
+	}
+	dropped := 0
+	for _, shard := range shards {
+		shardPath := zkPrefix + "/" + shard
+		tables, err := zkChildren(ctx, conn, shardPath)
+		if err != nil {
+			continue
+		}
+		for _, tbl := range tables {
+			if !highVolumeTables[tbl] {
+				continue // only Coremetry's sharded Replicated tables
+			}
+			tablePath := shardPath + "/" + tbl
+			replicas, err := zkChildren(ctx, conn, tablePath+"/replicas")
+			if err != nil || len(replicas) == 0 {
+				continue
+			}
+			for _, rep := range replicas {
+				// FROM ZKPATH targets the znode directly, so it works even
+				// when no local table references it (the orphan case).
+				stmt := dropReplicaZkStmt(rep, tablePath)
+				if err := conn.Exec(ctx, stmt); err != nil {
+					log.Printf("[reset-schema] zk orphan sweep: %s failed: %v", stmt, err)
+					continue
+				}
+				dropped++
+			}
+			log.Printf("[reset-schema] zk orphan sweep: cleared stale replicas of %s", tablePath)
+		}
+	}
+	log.Printf("[reset-schema] zk orphan sweep complete — %d stale replica znode(s) removed under %s", dropped, zkPrefix)
+}
+
+// dropReplicaZkStmt builds the SYSTEM DROP REPLICA … FROM ZKPATH statement that
+// removes one replica's metadata from a Replicated table's ZooKeeper path. The
+// ZKPATH form is what makes orphan cleanup possible — it targets the znode
+// directly, with no local table required. Single quotes in the replica name are
+// escaped so a hostile/odd macro value can't break out of the literal.
+func dropReplicaZkStmt(replica, tablePath string) string {
+	return fmt.Sprintf("SYSTEM DROP REPLICA '%s' FROM ZKPATH '%s'",
+		strings.ReplaceAll(replica, "'", "''"), tablePath)
+}
+
+// zkChildren lists the immediate child node names of a ZooKeeper path via
+// system.zookeeper. Returns an error if the path doesn't exist (ZNONODE) so the
+// caller can skip — that's the normal "already clean" signal.
+func zkChildren(ctx context.Context, conn clickhouse.Conn, path string) ([]string, error) {
+	rows, err := conn.Query(ctx, "SELECT name FROM system.zookeeper WHERE path = ?", path)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }

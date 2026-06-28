@@ -2189,8 +2189,13 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	wantSvcs = cleaned
-	key := fmt.Sprintf("services-spark:from=%s:to=%s:svcs=%s",
-		q.Get("from"), q.Get("to"), strings.Join(wantSvcs, ","))
+	// Sort the service set (display order is result-irrelevant — an unsorted
+	// join fragments the cache) and bucket the window so the now()-anchored
+	// range can't defeat the 30s TTL. (scale-audit v0.8.201)
+	sortedSvcs := append([]string(nil), wantSvcs...)
+	sort.Strings(sortedSvcs)
+	key := fmt.Sprintf("services-spark:window=%s:svcs=%s",
+		cacheBucket(from, to), strings.Join(sortedSvcs, ","))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		rows, err := s.store.GetServiceSummary5mFor(r.Context(), wantSvcs, from, to)
 		if err != nil {
@@ -3818,9 +3823,9 @@ func (s *Server) spanFacets(w http.ResponseWriter, r *http.Request) {
 		from = to.Add(-1 * time.Hour)
 	}
 	topValues := parseInt(q.Get("topValues"), 8)
-	key := fmt.Sprintf("facets:%s:%d:%d:%d",
+	key := fmt.Sprintf("facets:%s:%s:%d",
 		q.Get("dsl")+"|"+q.Get("filters")+"|"+q.Get("filterGroup"),
-		from.UnixNano(), to.UnixNano(), topValues)
+		cacheBucket(from, to), topValues)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.GetSpanFacets(r.Context(), filters, root, from, to, topValues)
 	})
@@ -3846,9 +3851,9 @@ func (s *Server) spanRepeats(w http.ResponseWriter, r *http.Request) {
 	groupBy := splitNonEmpty(q.Get("groupBy"), ',')
 	minRepeats := parseInt(q.Get("minRepeats"), 5)
 	limit := parseInt(q.Get("limit"), 200)
-	key := fmt.Sprintf("repeats:%s:%s:%s:%d:%d:%d:%d",
+	key := fmt.Sprintf("repeats:%s:%s:%s:%d:%d:%s",
 		q.Get("dsl"), q.Get("filters"), strings.Join(groupBy, ","),
-		minRepeats, limit, from.UnixNano(), to.UnixNano())
+		minRepeats, limit, cacheBucket(from, to))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.QueryRepeatedSpans(r.Context(), chstore.RepeatedSpanFilter{
 			Filters: filters, GroupBy: groupBy, MinRepeats: minRepeats,
@@ -4160,8 +4165,8 @@ func (s *Server) spanHeatmap(w http.ResponseWriter, r *http.Request) {
 	// dashboard or the same operator scrolling between viz
 	// modes hit the cached payload instead of re-firing the
 	// CH GROUP BY at billion-span scale.
-	key := fmt.Sprintf("span-heatmap:from=%d:to=%d:buckets=%d:filters=%s:dsl=%s",
-		from.UnixNano(), to.UnixNano(), timeBuckets,
+	key := fmt.Sprintf("span-heatmap:window=%s:buckets=%d:filters=%s:dsl=%s",
+		cacheBucket(from, to), timeBuckets,
 		q.Get("filters"), q.Get("dsl"))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.GetLatencyHeatmap(r.Context(), filters, from, to, timeBuckets)
@@ -4197,8 +4202,8 @@ func (s *Server) spanBubbleUp(w http.ResponseWriter, r *http.Request) {
 		to = time.Now()
 		from = to.Add(-15 * time.Minute)
 	}
-	key := fmt.Sprintf("span-bubbleup:from=%d:to=%d:f=%s:d=%s:sf=%s:sd=%s",
-		from.UnixNano(), to.UnixNano(),
+	key := fmt.Sprintf("span-bubbleup:window=%s:f=%s:d=%s:sf=%s:sd=%s",
+		cacheBucket(from, to),
 		q.Get("filters"), q.Get("dsl"),
 		q.Get("selFilters"), q.Get("selDsl"))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
@@ -6029,7 +6034,7 @@ func (s *Server) svcSpanBreakdown(w http.ResponseWriter, r *http.Request) {
 	if from.IsZero() {
 		from = to.Add(-1 * time.Hour)
 	}
-	key := fmt.Sprintf("svc-breakdown:svc=%s:from=%d:to=%d", svc, from.UnixNano(), to.UnixNano())
+	key := fmt.Sprintf("svc-breakdown:svc=%s:window=%s", svc, cacheBucket(from, to))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		return s.store.GetSpanBreakdown(r.Context(), svc, from, to)
 	})

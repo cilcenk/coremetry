@@ -561,7 +561,10 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 		// the indexOf scan until they age out.
 		wc.add(s.clusterExpr()+" = ?", cluster)
 	}
-	limitClause := ""
+	// scale-audit v0.8.201 — defensive cap on the limit<=0 wrapper path
+	// (GetServices passes limit=0) so this raw-spans GROUP BY can't return an
+	// unbounded result at billion-span scale.
+	limitClause := " LIMIT 5000"
 	if limit > 0 {
 		limitClause = fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
 	}
@@ -578,7 +581,8 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 		         / nullIf(count(), 0)                   AS apdex
 		FROM spans `+wc.sql()+`
 		GROUP BY service_name
-		ORDER BY `+servicesSortExpr(sort, dir)+limitClause,
+		ORDER BY `+servicesSortExpr(sort, dir)+limitClause+`
+		SETTINGS max_execution_time = 20`,
 		append([]any{apdexT, apdexT, apdexT * 4}, wc.args...)...)
 	if err != nil {
 		return nil, err

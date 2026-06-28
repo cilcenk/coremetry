@@ -140,6 +140,13 @@ type AuthConfig struct {
 	TokenTTL        time.Duration `yaml:"token_ttl"`         // session lifetime (default 24h)
 	InitialAdmin    string        `yaml:"initial_admin"`     // email — seeded if users table is empty
 	InitialPassword string        `yaml:"initial_password"`  // bcrypted on first boot
+	// AdminReset (COREMETRY_ADMIN_RESET) makes the env creds authoritative for
+	// the bootstrap admin: when true, InitialAdmin's password is reconciled
+	// from InitialPassword on EVERY boot, even if the users table already has
+	// rows. Set once to recover a locked-out admin (then remove), or leave on
+	// for GitOps installs where the secret is the source of truth. Default off
+	// preserves the seed-once behaviour (UI password rotation survives restart).
+	AdminReset      bool          `yaml:"admin_reset"`
 	OIDC            OIDCConfig    `yaml:"oidc"`
 	TrustedHeader   TrustedHeaderConfig `yaml:"trusted_header"`
 
@@ -465,6 +472,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_DEMO_MODE"); v == "true" || v == "1" {
 		cfg.Auth.DemoMode = true
+	}
+	if v := os.Getenv("COREMETRY_ADMIN_RESET"); v == "true" || v == "1" {
+		cfg.Auth.AdminReset = true
 	}
 	if v := os.Getenv("COREMETRY_REDIS_URL"); v != "" {
 		cfg.Redis.URL = v

@@ -28,6 +28,37 @@ func TestBootstrapAdminID(t *testing.T) {
 	}
 }
 
+// v0.8.206 — operator-reported: setting COREMETRY_INITIAL_ADMIN/PASSWORD via
+// env did not let them log in — the DB stayed authoritative because
+// seedInitialAdmin was a no-op once any user existed. shouldWriteBootstrapAdmin
+// is the minimal pure gate the fix touches: seed when the table is empty, OR
+// when COREMETRY_ADMIN_RESET makes the env creds authoritative (reconcile every
+// boot). This pins both branches so a future tweak can't silently re-break the
+// env-managed-creds / locked-out-admin recovery path.
+func TestShouldWriteBootstrapAdmin(t *testing.T) {
+	cases := []struct {
+		name      string
+		userCount int64
+		reset     bool
+		want      bool
+	}{
+		{"empty table seeds", 0, false, true},
+		{"empty table seeds even without reset", 0, false, true},
+		{"populated table is a no-op (seed-once)", 5, false, false},
+		{"reset reconciles a populated table", 5, true, true},
+		{"reset on empty table still writes", 0, true, true},
+		{"one existing user, no reset, skip", 1, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shouldWriteBootstrapAdmin(c.userCount, c.reset); got != c.want {
+				t.Fatalf("shouldWriteBootstrapAdmin(%d, %v) = %v, want %v",
+					c.userCount, c.reset, got, c.want)
+			}
+		})
+	}
+}
+
 // v0.7.5 — the seeded example runbooks. They must be well-formed (unique
 // runbook + step ids, valid step kinds, order = position) and collectively
 // demonstrate all five step kinds, since they're a fresh install's first

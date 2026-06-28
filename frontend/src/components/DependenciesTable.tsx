@@ -275,6 +275,10 @@ export function DependenciesTable({
                 <Fragment key={`${rowKey}|${i}`}>
                   <tr onClick={() => setOpenKey(isOpen ? null : rowKey)}
                       style={{ cursor: 'pointer',
+                               // scale-audit v0.8.203 — skip off-screen rows
+                               // (matches the instance table below); at a bank
+                               // with many DB schemas this list reaches 1000s.
+                               contentVisibility: 'auto', containIntrinsicSize: 'auto 32px',
                                background: isOpen ? 'var(--bg2)' : undefined }}>
                     <td style={{ color: 'var(--text3)', width: 24, textAlign: 'center' }}>
                       {isOpen ? '▾' : '▸'}

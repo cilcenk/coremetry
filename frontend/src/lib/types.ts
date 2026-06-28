@@ -2437,6 +2437,16 @@ export interface SystemStats {
     logsWriteFailed: number;
     metricsWriteFailed: number;
   };
+  // Config/boot conditions that silently degrade reads (v0.8.211).
+  health: {
+    // `spans` is an external Distributed table but COREMETRY_CH_CLUSTER_NAME is
+    // unset → MV insert-triggers never fire, summary MVs stay EMPTY, reads
+    // return no/partial results.
+    externalDistributedSpansUnset: boolean;
+    // The cluster the external `spans` fans to — set COREMETRY_CH_CLUSTER_NAME
+    // to this to fix the empty-MV state.
+    suggestedClusterName?: string;
+  };
 }
 
 export interface AggSpanNode {

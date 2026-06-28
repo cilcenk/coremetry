@@ -165,6 +165,23 @@ export default function AdminStatsPage() {
         {data === null && <Empty icon="⚠" title="Failed to load system stats" />}
         {data && (
           <>
+            {/* ── Empty-MV health warning (v0.8.211) ────────────────── */}
+            {data.health?.externalDistributedSpansUnset && (
+              <div style={{
+                border: '1px solid var(--err)', background: 'rgba(220,80,80,0.08)',
+                borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: 'var(--text)',
+              }}>
+                <strong>⚠ Materialized views are not populating.</strong>{' '}
+                <code>spans</code> is an external Distributed table but{' '}
+                <code>COREMETRY_CH_CLUSTER_NAME</code> is unset — MV insert-triggers never fire, so the
+                summary MVs (service_summary_5m, trace_service_index_5m, …) stay empty and reads return
+                no / partial results.{' '}
+                {data.health.suggestedClusterName
+                  ? <>Fix: set <code>COREMETRY_CH_CLUSTER_NAME={data.health.suggestedClusterName}</code> and restart.</>
+                  : <>Fix: set <code>COREMETRY_CH_CLUSTER_NAME</code> to the cluster the external spans fans to, and restart.</>}
+              </div>
+            )}
+
             {/* ── Volume KPIs ──────────────────────────────────────── */}
             <div style={{
               display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',

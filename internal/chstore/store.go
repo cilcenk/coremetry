@@ -2456,8 +2456,35 @@ func (s *Store) migrate(ctx context.Context) error {
 		log.Printf("[chstore] `cluster` column not resolvable on spans (%v) — cluster filter queries use the res/attr derive (expected on an external Distributed cluster with cluster_name unset)", probeErr)
 	}
 
+	// v0.8.211 — surface the silent empty-MV state: when `spans` is an external
+	// Distributed table but cluster_name is unset, adaptDDL can't rewrite MV
+	// bodies to FROM spans_local ON CLUSTER, so their per-shard insert trigger
+	// never fires and every summary MV stays EMPTY → reads return no/partial
+	// results. Previously this only manifested as mysteriously empty dashboards;
+	// now it's a loud boot WARNING (with the cluster to set) + a /admin/stats
+	// health flag (SystemHealth.ExternalDistributedSpansUnset).
+	if s.spansIsExternalDistributed(ctx) {
+		log.Printf("[chstore] WARNING: %s", externalDistributedWarning(s.discoverSpansCluster(ctx)))
+	}
+
 	log.Println("[chstore] migrations complete")
 	return nil
+}
+
+// externalDistributedWarning builds the operator-facing guidance for the
+// empty-MV-risk state (spans is an external Distributed table with cluster_name
+// unset, so MV insert-triggers never fire). cluster is the discovered cluster
+// name the external `spans` fans to (may be "" if unparseable). Pure so the
+// actionable fix string is unit-tested (v0.8.211).
+func externalDistributedWarning(cluster string) string {
+	fix := "set COREMETRY_CH_CLUSTER_NAME to the cluster the external spans fans to"
+	if cluster != "" {
+		fix = "set COREMETRY_CH_CLUSTER_NAME=" + cluster
+	}
+	return "external Distributed `spans` detected but COREMETRY_CH_CLUSTER_NAME is unset — " +
+		"materialized views read FROM the Distributed wrapper, so their per-shard insert trigger " +
+		"never fires and summary MVs (service_summary_5m, trace_service_index_5m, …) stay EMPTY, " +
+		"making reads return no/partial results. Fix: " + fix + "."
 }
 
 // rowsCloser is the Close half of driver.Rows — narrowed so maybeCloseRows is

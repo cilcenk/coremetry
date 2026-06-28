@@ -21,6 +21,23 @@ type SystemStats struct {
 	History  []DayStat      `json:"history"`
 	Ingest   IngestRates    `json:"ingest"`
 	Drops    IngestDrops    `json:"drops"`
+	Health   SystemHealth   `json:"health"`
+}
+
+// SystemHealth surfaces config/boot conditions that silently degrade reads, so
+// the operator sees them on /admin/stats instead of debugging empty dashboards.
+// v0.8.211.
+type SystemHealth struct {
+	// ExternalDistributedSpansUnset is true when `spans` is an external
+	// Distributed table but COREMETRY_CH_CLUSTER_NAME is unset — so adaptDDL
+	// can't rewrite MV bodies to FROM spans_local ON CLUSTER, their per-shard
+	// insert trigger never fires, and every summary MV (service_summary_5m,
+	// trace_service_index_5m, …) stays EMPTY → reads return no/partial results.
+	ExternalDistributedSpansUnset bool `json:"externalDistributedSpansUnset"`
+	// SuggestedClusterName is the cluster the external `spans` Distributed table
+	// fans to (parsed from its engine def) — set COREMETRY_CH_CLUSTER_NAME to
+	// this to make the MVs populate. Empty if unparseable.
+	SuggestedClusterName string `json:"suggestedClusterName,omitempty"`
 }
 
 // IngestDrops surfaces the in-process ingest data-loss counters (cumulative
@@ -103,6 +120,13 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 	// the slice empty, but the page renders. Operator sees the
 	// panels that succeeded + a 0 where CH couldn't finish in
 	// the budget, instead of a blanket error card.
+
+	// v0.8.211 — empty-MV-risk health flag (soft, best-effort): external
+	// Distributed spans + cluster_name unset = MVs never populate.
+	if s.spansIsExternalDistributed(ctx) {
+		out.Health.ExternalDistributedSpansUnset = true
+		out.Health.SuggestedClusterName = s.discoverSpansCluster(ctx)
+	}
 
 	// ── Storage (system.parts is metadata-only, instant) ────────
 	// v0.8.165 — system.parts is a LOCAL system table. In an external

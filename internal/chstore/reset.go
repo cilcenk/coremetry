@@ -137,14 +137,36 @@ func ResetSchema(ctx context.Context, cfg config.CHConfig) error {
 // can't hit METADATA_MISMATCH against stale metadata. Best-effort: a cluster
 // may run with system.zookeeper access disabled, or a path may already be
 // clean — every failure is logged and skipped, never fatal (the reset already
-// dropped the data; this is belt-and-suspenders). Scoped to the known
-// highVolumeTables names under the configured replica_path so it can't touch
-// another application's znodes that happen to share the prefix.
+// dropped the data; this is belt-and-suspenders).
+//
+// SAFETY (v0.8.222): the znode path is <replica_path>/<shard>/<table> with NO
+// database/uuid component, and the sweep matches purely by table NAME. On the
+// SHARED default prefix "/clickhouse/tables" a co-tenant (another Coremetry DB
+// or a foreign app) whose Replicated table happens to share a name — spans,
+// logs, … — would have its LIVE replica dropped. We can't tell those apart by
+// name, so the sweep runs ONLY when the operator set a DEDICATED replica_path
+// (not the shared default). On the default we skip + tell them to set
+// COREMETRY_CH_REPLICA_PATH (e.g. /clickhouse/tables/coremetry) — which they
+// should anyway, since two apps can't share a bare table-name path without
+// colliding.
+// zkSweepEnabled reports whether the orphan-znode sweep may run for a given
+// replica_path. It refuses the SHARED default (empty or "/clickhouse/tables")
+// where a name-only match could DROP REPLICA a co-tenant's table. Pure so the
+// safety gate is unit-tested. v0.8.222.
+func zkSweepEnabled(replicaPath string) bool {
+	p := strings.TrimRight(replicaPath, "/")
+	return p != "" && p != "/clickhouse/tables"
+}
+
 func cleanOrphanReplicatedZnodes(ctx context.Context, conn clickhouse.Conn, cfg config.CHConfig) {
-	zkPrefix := strings.TrimRight(cfg.ReplicaPath, "/")
-	if zkPrefix == "" {
-		zkPrefix = "/clickhouse/tables"
+	if !zkSweepEnabled(cfg.ReplicaPath) {
+		log.Printf("[reset-schema] zk orphan sweep SKIPPED — replica_path is the shared default " +
+			"\"/clickhouse/tables\". On a shared/external cluster, sweeping it by table-name could " +
+			"DROP REPLICA a co-tenant's live table. Set COREMETRY_CH_REPLICA_PATH to a dedicated prefix " +
+			"(e.g. /clickhouse/tables/coremetry) to enable safe orphan cleanup.")
+		return
 	}
+	zkPrefix := strings.TrimRight(cfg.ReplicaPath, "/")
 
 	// children of the prefix = per-shard dirs ({shard} macro values, e.g. 01/02)
 	shards, err := zkChildren(ctx, conn, zkPrefix)

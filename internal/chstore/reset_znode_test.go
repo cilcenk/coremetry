@@ -64,3 +64,24 @@ func TestZnodeSweepScope(t *testing.T) {
 		}
 	}
 }
+
+// v0.8.222 — scale-audit risk: the orphan-znode sweep matched purely by table
+// NAME under <replica_path>/<shard>/<table> (no DB/uuid component), so on the
+// SHARED default "/clickhouse/tables" a co-tenant's same-named Replicated table
+// could have its live replica DROP REPLICA'd. zkSweepEnabled is the gate: only
+// a DEDICATED, operator-set replica_path is swept. Pin it so the safety can't
+// silently regress.
+func TestZkSweepEnabled(t *testing.T) {
+	cases := map[string]bool{
+		"":                            false, // unset → defaults to the shared prefix
+		"/clickhouse/tables":          false, // the shared default
+		"/clickhouse/tables/":         false, // trailing slash normalised
+		"/clickhouse/tables/coremetry": true, // dedicated → safe
+		"/ch/coremetry":               true,
+	}
+	for path, want := range cases {
+		if got := zkSweepEnabled(path); got != want {
+			t.Errorf("zkSweepEnabled(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

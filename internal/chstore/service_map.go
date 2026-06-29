@@ -87,7 +87,61 @@ type ServiceMap struct {
 	SampledFrom   int              `json:"sampledFrom"`  // traces actually inspected
 	TotalSpans    int              `json:"totalSpans"`   // span count across them
 	BaselineAgo   string           `json:"baselineAgo,omitempty"` // e.g. "24h" — echoed for UI labelling
+	// TotalNodes / ShownNodes (v0.8.215) — set by pruneServiceMapTopN. When the
+	// overview top-N cap trims a large graph, ShownNodes < TotalNodes and the UI
+	// shows "showing X of Y services" so the operator knows the map is pruned,
+	// not the whole truth.
+	TotalNodes    int              `json:"totalNodes"`
+	ShownNodes    int              `json:"shownNodes"`
 }
+
+// pruneServiceMapTopN bounds the overview graph to the topN heaviest nodes so a
+// 1000s-service production map renders as a readable graph instead of a hairball
+// (topology-viz research: don't draw the whole power-law graph — show the heavy
+// subgraph). Nodes are ranked by SpanCount desc with ErrorRate as the tiebreak,
+// so a high-error node survives the cut even when it isn't the busiest. Edges are
+// kept only when BOTH endpoints survive. TotalNodes/ShownNodes are always set so
+// the UI can render "showing X of Y". topN<=0 or an already-within-budget graph
+// is returned unpruned (existing /service-map behaviour). Pure + order-stable so
+// it's unit-tested. v0.8.215.
+func pruneServiceMapTopN(m *ServiceMap, topN int) {
+	if m == nil {
+		return
+	}
+	m.TotalNodes = len(m.Nodes)
+	if topN <= 0 || len(m.Nodes) <= topN {
+		m.ShownNodes = len(m.Nodes)
+		return
+	}
+	ranked := append([]ServiceMapNode(nil), m.Nodes...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].SpanCount != ranked[j].SpanCount {
+			return ranked[i].SpanCount > ranked[j].SpanCount
+		}
+		if ranked[i].ErrorRate != ranked[j].ErrorRate {
+			return ranked[i].ErrorRate > ranked[j].ErrorRate
+		}
+		return ranked[i].Service < ranked[j].Service
+	})
+	kept := ranked[:topN]
+	keepSet := make(map[string]bool, topN)
+	for _, n := range kept {
+		keepSet[n.Service] = true
+	}
+	edges := make([]ServiceMapEdge, 0, len(m.Edges))
+	for _, e := range m.Edges {
+		if keepSet[e.Caller] && keepSet[e.Callee] {
+			edges = append(edges, e)
+		}
+	}
+	m.Nodes = kept
+	m.Edges = edges
+	m.ShownNodes = topN
+}
+
+// PruneServiceMapTopN is the exported wrapper the api package calls; the logic
+// lives in the pure pruneServiceMapTopN so the cap is unit-tested without a Store.
+func (s *Store) PruneServiceMapTopN(m *ServiceMap, topN int) { pruneServiceMapTopN(m, topN) }
 
 // spanStatusIsError reports whether a span's status_code column value
 // denotes an error. The ingest path (internal/otlp/convert.go) maps

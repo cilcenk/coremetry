@@ -36,8 +36,8 @@ export const keys = {
                    ['services', 'infra', svc, since] as const,
     runtime:     (svc: string) =>
                    ['services', 'runtime', svc] as const,
-    map:         (since: string, samples: number, diff?: string) =>
-                   ['services', 'map', since, samples, diff ?? ''] as const,
+    map:         (since: string, samples: number, diff?: string, topN = 0) =>
+                   ['services', 'map', since, samples, diff ?? '', topN] as const,
     backtrace:   (svc: string, opts: { since?: string; from?: number; to?: number; limit?: number }) =>
                    ['services', 'backtrace', svc, opts] as const,
     // group_id rel C — per-operation aggregate keyed on the normalized

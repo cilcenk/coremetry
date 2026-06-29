@@ -211,11 +211,15 @@ export const api = {
   // Global service-level topology graph — nodes + directed edges
   // derived from sampled recent traces. Powers the /service-map
   // page; 30s server-side cache.
-  serviceMap: (since = '15m', samples = 200, diff?: string) => {
+  serviceMap: (since = '15m', samples = 200, diff?: string, topN = 0) => {
     // diff is an optional "compare-to" duration (e.g. "24h"). When
     // set, the backend returns the current topology with new /
     // removed nodes/edges flagged against that baseline window.
-    const qs = `since=${since}&samples=${samples}` + (diff ? `&diff=${diff}` : '');
+    // topN > 0 caps the graph to the heaviest N services (overview mode);
+    // 0 = the full sampled graph (default).
+    const qs = `since=${since}&samples=${samples}`
+      + (diff ? `&diff=${diff}` : '')
+      + (topN > 0 ? `&topN=${topN}` : '');
     return get<import('./types').ServiceMap>(`/api/service-map?${qs}`);
   },
 

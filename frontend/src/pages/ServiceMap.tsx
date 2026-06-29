@@ -58,9 +58,13 @@ export default function ServiceMapPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [diff, setDiff] = useState<string>('');
+  // Overview cap (v0.8.215): bound the rendered graph to the heaviest N services
+  // so the whole-production map isn't an unreadable hairball. 0 = no cap (full
+  // sampled graph). Server-side prune — the browser never receives the long tail.
+  const [topN, setTopN] = useState(0);
   const since = (PRESETS.find(p => p.key === range.preset)?.secs ?? 900) + 's';
 
-  const mapQ = useServiceMap(since, samples, diff || undefined);
+  const mapQ = useServiceMap(since, samples, diff || undefined, topN);
   // Picker datalist source — pre-v0.5.0 the dropdown listed
   // only services that appeared in the sampled traces. With
   // sampleCount=200 this often dropped low-volume but
@@ -296,6 +300,21 @@ export default function ServiceMapPage() {
             <option value={500}>500 traces</option>
           </select>
 
+          {/* Overview cap (v0.8.215) — bound the graph to the heaviest N
+              services so a 1000s-service prod map renders readably instead of
+              a hairball. Server-side prune; "Top" = no cap (full sampled graph). */}
+          <span style={{ fontSize: 12, color: 'var(--text2)' }}>Show</span>
+          <select value={topN}
+                  onChange={e => setTopN(Number(e.target.value))}
+                  style={{ fontSize: 12 }}
+                  title="Cap the map to the heaviest N services (overview); fewer nodes = readable graph">
+            <option value={0}>All services</option>
+            <option value={50}>Top 50</option>
+            <option value={100}>Top 100</option>
+            <option value={250}>Top 250</option>
+            <option value={500}>Top 500</option>
+          </select>
+
           {/* Cluster filter — narrows the rendered graph to a
               single k8s/openshift cluster's nodes (multi-cluster
               services are kept on every view since their slice
@@ -348,6 +367,16 @@ export default function ServiceMapPage() {
               }} />
               multi-cluster
             </span>
+          </div>
+        )}
+
+        {/* Overview cap indicator (v0.8.215) — the map is pruned to the
+            heaviest N services; tell the operator it's not the whole truth. */}
+        {data && (data.shownNodes ?? 0) < (data.totalNodes ?? 0) && (
+          <div style={{ fontSize: 12, color: 'var(--text2)', margin: '4px 0 8px' }}>
+            Showing the <strong>{data.shownNodes}</strong> heaviest of{' '}
+            <strong>{data.totalNodes}</strong> services. Raise “Show” or use the
+            service picker to focus a specific area.
           </div>
         )}
 

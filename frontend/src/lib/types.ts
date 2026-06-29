@@ -2335,6 +2335,11 @@ export interface ServiceMap {
   // label "vs yesterday" / "vs 1h ago" without the page tracking
   // it separately.
   baselineAgo?: string;
+  // Overview top-N cap (v0.8.215). totalNodes = services in the full sampled
+  // graph; shownNodes = how many survived the cap. shownNodes < totalNodes ⇒
+  // the map is the heaviest subgraph, not the whole truth — UI shows "X of Y".
+  totalNodes?: number;
+  shownNodes?: number;
 }
 
 // CardinalityReport powers /admin/cardinality — answers "what

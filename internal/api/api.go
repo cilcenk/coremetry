@@ -2158,13 +2158,25 @@ func (s *Server) getServiceMap(w http.ResponseWriter, r *http.Request) {
 	// or unparseable → no diff.
 	diffStr := r.URL.Query().Get("diff")
 	diff := parseDuration(diffStr, 0)
+	// topN (v0.8.215) — overview cap: bound the rendered graph to the heaviest N
+	// services so a 1000s-service prod map isn't an unreadable hairball. 0 = no
+	// cap (the full sampled graph, unchanged default).
+	topN := parseInt(r.URL.Query().Get("topN"), 0)
 
-	key := fmt.Sprintf("service-map:since=%s:samples=%d:diff=%s", since, samples, diffStr)
+	key := fmt.Sprintf("service-map:since=%s:samples=%d:diff=%s:topN=%d", since, samples, diffStr, topN)
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+		var m *chstore.ServiceMap
+		var err error
 		if diff > 0 {
-			return s.store.GetServiceMapWithDiff(r.Context(), since, samples, diff, diffStr)
+			m, err = s.store.GetServiceMapWithDiff(r.Context(), since, samples, diff, diffStr)
+		} else {
+			m, err = s.store.GetServiceMap(r.Context(), since, samples)
 		}
-		return s.store.GetServiceMap(r.Context(), since, samples)
+		if err != nil {
+			return nil, err
+		}
+		s.store.PruneServiceMapTopN(m, topN)
+		return m, nil
 	})
 }
 

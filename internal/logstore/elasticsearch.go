@@ -323,6 +323,14 @@ func NewES(cfg ESConfig) (*ESStore, error) {
 		"(Coremetry only QUERIES Elasticsearch for logs; the write path is ClickHouse — it never "+
 		"indexes/updates/deletes in ES)",
 		info.Version.Number, info.ClusterName, cfg.Index, esAuthMode(apiKey, cfg.Username), cfg.Addresses)
+	// Echo the resolved document field map so the operator can confirm
+	// Coremetry is querying the right paths for their mapping (v0.8.228).
+	// trace_id lookups additionally fall back across trace.id/trace_id/
+	// traceId/TraceId, but everything else uses exactly these paths.
+	log.Printf("[logstore-es] field map — timestamp=%q trace_id=%q span_id=%q service=%q message=%q severity_text=%q severity_number=%q "+
+		"(override via COREMETRY_ES_FIELD_* to match your log mapping)",
+		cfg.Fields.Timestamp, cfg.Fields.TraceID, cfg.Fields.SpanID, cfg.Fields.Service,
+		cfg.Fields.Body, cfg.Fields.SeverityTx, cfg.Fields.SeverityNo)
 	return &ESStore{cli: cli, cfg: cfg, fields: cfg.Fields}, nil
 }
 

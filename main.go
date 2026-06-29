@@ -852,6 +852,19 @@ func buildLogStore(cfg *config.Config, ch *chstore.Store) (logstore.Store, error
 			APIKey:             es.APIKey,
 			InsecureSkipVerify: es.InsecureSkipVerify,
 			Index:              es.Index,
+			// v0.8.228 — operator-configurable document field map. Empty
+			// members fall back to the logstore ECS-ish defaults via
+			// ESConfig.defaults(); set them to match the local mapping
+			// (e.g. trace_id / @timestamp / message) without re-indexing.
+			Fields: logstore.ESFieldMap{
+				Timestamp:  es.Fields.Timestamp,
+				TraceID:    es.Fields.TraceID,
+				SpanID:     es.Fields.SpanID,
+				Service:    es.Fields.Service,
+				Body:       es.Fields.Message,
+				SeverityTx: es.Fields.SeverityText,
+				SeverityNo: es.Fields.SeverityNumber,
+			},
 		})
 	default:
 		return nil, fmt.Errorf("unknown logs backend %q (want clickhouse|elasticsearch)", cfg.Logs.Backend)

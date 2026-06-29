@@ -130,6 +130,27 @@ type ESConfig struct {
 	// MLMinScore overrides the per-record score threshold (default
 	// 75 — Elastic's "critical" band; lower brings more noise).
 	MLMinScore float64 `yaml:"ml_min_score"`
+	// Fields pins Coremetry's ES query to the operator's document
+	// mapping (field paths). Empty members fall back to the ECS-ish
+	// defaults in logstore (@timestamp / trace.id / span.id /
+	// service.name / message / log.level). Set these when the log
+	// pipeline uses different paths so Coremetry queries the right
+	// fields WITHOUT re-indexing — e.g. trace_id instead of trace.id.
+	Fields ESFieldsConfig `yaml:"fields"`
+}
+
+// ESFieldsConfig is the env/yaml binding for the ES document field
+// map. Mirrors logstore.ESFieldMap; main.go copies it across at
+// construction. Each member maps to a COREMETRY_ES_FIELD_<NAME> env
+// var (see Load). Leaving one empty keeps the logstore default.
+type ESFieldsConfig struct {
+	Timestamp      string `yaml:"timestamp"`       // env: COREMETRY_ES_FIELD_TIMESTAMP   (default @timestamp)
+	TraceID        string `yaml:"trace_id"`        // env: COREMETRY_ES_FIELD_TRACE_ID    (default trace.id)
+	SpanID         string `yaml:"span_id"`         // env: COREMETRY_ES_FIELD_SPAN_ID     (default span.id)
+	Service        string `yaml:"service"`         // env: COREMETRY_ES_FIELD_SERVICE     (default service.name)
+	Message        string `yaml:"message"`         // env: COREMETRY_ES_FIELD_MESSAGE     (default message)
+	SeverityText   string `yaml:"severity_text"`   // env: COREMETRY_ES_FIELD_SEVERITY_TEXT   (default log.level)
+	SeverityNumber string `yaml:"severity_number"` // env: COREMETRY_ES_FIELD_SEVERITY_NUMBER (default "" — skipped)
 }
 
 // RedisConfig is fully optional. When URL is empty Coremetry runs in
@@ -549,6 +570,31 @@ func Load(path string) (*Config, error) {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.Logs.Elasticsearch.MLMinScore = f
 		}
+	}
+	// ES document field mapping (v0.8.228). Override the per-document
+	// field paths so Coremetry queries whatever the operator's log
+	// pipeline produces (e.g. trace_id, @timestamp, message) without
+	// re-indexing. Empty → logstore default.
+	if v := os.Getenv("COREMETRY_ES_FIELD_TIMESTAMP"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.Timestamp = v
+	}
+	if v := os.Getenv("COREMETRY_ES_FIELD_TRACE_ID"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.TraceID = v
+	}
+	if v := os.Getenv("COREMETRY_ES_FIELD_SPAN_ID"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.SpanID = v
+	}
+	if v := os.Getenv("COREMETRY_ES_FIELD_SERVICE"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.Service = v
+	}
+	if v := os.Getenv("COREMETRY_ES_FIELD_MESSAGE"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.Message = v
+	}
+	if v := os.Getenv("COREMETRY_ES_FIELD_SEVERITY_TEXT"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.SeverityText = v
+	}
+	if v := os.Getenv("COREMETRY_ES_FIELD_SEVERITY_NUMBER"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.SeverityNumber = v
 	}
 	if v := os.Getenv("COREMETRY_AI_PROVIDER"); v != "" {
 		cfg.AI.Provider = v

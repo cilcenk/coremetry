@@ -96,7 +96,7 @@ function quoteIfNeeded(v: string): string {
 export function KqlSearchInput({
   value, onChange, onSubmit, placeholder, title, width = 380,
 }: KqlSearchInputProps) {
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [cursor, setCursor] = useState(0);
   const [open, setOpen] = useState(false);
   const [values, setValues] = useState<string[]>([]);
@@ -155,7 +155,7 @@ export function KqlSearchInput({
     });
   };
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (open && values.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -184,16 +184,14 @@ export function KqlSearchInput({
         return;
       }
     }
-    if (e.key === 'Enter' && onSubmit && !e.shiftKey) {
-      // Textarea would otherwise insert a newline — a KQL query is one logical
-      // line, so Enter submits. Shift+Enter still adds a newline for the rare
-      // operator who wants to visually break a very long query.
+    if (e.key === 'Enter' && onSubmit) {
+      // Single-line input: Enter runs the search.
       e.preventDefault();
       onSubmit();
     }
   };
 
-  const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+  const onSelect = (e: React.SyntheticEvent<HTMLInputElement>) => {
     setCursor(e.currentTarget.selectionStart ?? 0);
   };
 
@@ -207,12 +205,13 @@ export function KqlSearchInput({
           color: 'var(--text3)', pointerEvents: 'none' }}>
         <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
-      {/* v0.8.217 — single-line: the textarea (kept for autocomplete + Enter-to-
-          submit) renders as ONE line with horizontal scroll (whiteSpace nowrap +
-          overflowX auto) instead of wrapping/growing. Enter submits (onKeyDown). */}
-      <textarea ref={inputRef}
+      {/* v0.8.221 — a real single-line <input> (was a <textarea> that grew /
+          wrapped): inherently one line + horizontal scroll, and it picks up the
+          global `input, select` style so the bar matches every other field in
+          the app (Kibana-like). Kept for autocomplete + Enter-to-submit. */}
+      <input ref={inputRef}
+        type="text"
         value={value}
-        rows={1}
         onChange={e => { onChange(e.target.value); setCursor(e.target.selectionStart ?? e.target.value.length); }}
         onSelect={onSelect}
         onClick={onSelect}
@@ -221,12 +220,8 @@ export function KqlSearchInput({
         placeholder={placeholder}
         title={title}
         spellCheck={false}
-        style={{
-          width: '100%', resize: 'none',
-          height: 32, lineHeight: '20px', padding: '5px 10px 5px 28px',
-          whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden',
-          fontFamily: 'inherit', fontSize: 'inherit', verticalAlign: 'top',
-        }} />
+        autoComplete="off"
+        style={{ width: '100%', paddingLeft: 28 }} />
       {open && values.length > 0 && (
         <div style={{
           position: 'absolute', top: '100%', left: 0,

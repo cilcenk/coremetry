@@ -76,3 +76,29 @@ func TestPolicyFor_DefaultsToBoth(t *testing.T) {
 		t.Errorf("default policy = %+v, want {both, >0}", p)
 	}
 }
+
+// v0.8.220 — operator-reported: too many anomalies + transient spikes that
+// opened then never resolved. The fix is a Davis-style asymmetry: HARD to open
+// (3.5σ AND a 3-bucket / 15-min dwell, so an instant blip never opens) and FAST
+// to resolve (the most-recent bucket back inside the band clears it). Guard the
+// tuned floors + the asymmetry so a future tweak can't silently revert them.
+func TestAnomalyTuning_StrictOpenFastResolve(t *testing.T) {
+	if openZ < 3.5 {
+		t.Errorf("openZ %.2f loosened below the tuned 3.5σ floor — would re-introduce noise", openZ)
+	}
+	if dwellBuckets < 3 {
+		t.Errorf("dwellBuckets %d below the tuned 3 (15-min sustained) — instant spikes would open again", dwellBuckets)
+	}
+	if resolveZ >= openZ {
+		t.Errorf("resolveZ %.2f must stay below openZ %.2f (open/resolve hysteresis)", resolveZ, openZ)
+	}
+	// Fast-resolve: a recovered most-recent bucket satisfies the resolve band for
+	// an 'up' metric (the detector resolves on resolvedFor(metric, z) of the
+	// latest bucket, not all dwell buckets).
+	if !resolvedFor("p99_ms", resolveZ-0.1) {
+		t.Error("a recovered p99 bucket (z just under resolveZ) must satisfy resolve")
+	}
+	if resolvedFor("p99_ms", openZ) {
+		t.Error("a still-spiking p99 bucket (z at openZ) must NOT resolve")
+	}
+}

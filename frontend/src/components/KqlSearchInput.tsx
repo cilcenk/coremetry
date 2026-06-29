@@ -105,14 +105,10 @@ export function KqlSearchInput({
 
   const token = useMemo(() => detectFieldToken(value, cursor), [value, cursor]);
 
-  // v0.7.46 — auto-grow the textarea to fit wrapped content (long KQL AND/OR
-  // queries), capped at ~5 rows then scroll. Keeps short queries one line tall.
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-  }, [value]);
+  // v0.8.217 — single-line Kibana-style bar (was an auto-growing textarea): the
+  // KQL query stays on ONE line and scrolls horizontally instead of wrapping +
+  // pushing the page down, matching Elastic/Kibana and the app's single-row
+  // toolbar chrome. The auto-grow effect is gone; height is fixed below.
 
   // Debounced fetch when the token changes. 180ms is short
   // enough for keystroke responsiveness; the 30s server cache
@@ -203,10 +199,17 @@ export function KqlSearchInput({
 
   return (
     <span style={{ position: 'relative', display: 'inline-block', width }}>
-      {/* v0.7.46 — textarea (was <input>) so long KQL AND/OR queries WRAP and
-          the box grows to fit instead of scrolling off the right edge.
-          Auto-resized to content (capped) by the effect above; resize:none
-          since height is automatic. Enter submits (see onKeyDown). */}
+      {/* Leading magnifier (Kibana-style). Decorative — clicks fall through to
+          the input so the operator can click anywhere in the bar to focus. */}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2.2" strokeLinecap="round"
+        style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)',
+          color: 'var(--text3)', pointerEvents: 'none' }}>
+        <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+      {/* v0.8.217 — single-line: the textarea (kept for autocomplete + Enter-to-
+          submit) renders as ONE line with horizontal scroll (whiteSpace nowrap +
+          overflowX auto) instead of wrapping/growing. Enter submits (onKeyDown). */}
       <textarea ref={inputRef}
         value={value}
         rows={1}
@@ -219,10 +222,10 @@ export function KqlSearchInput({
         title={title}
         spellCheck={false}
         style={{
-          width: '100%', resize: 'none', overflow: 'hidden',
-          minHeight: 30, lineHeight: 1.4, whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word', fontFamily: 'inherit', fontSize: 'inherit',
-          verticalAlign: 'top',
+          width: '100%', resize: 'none',
+          height: 32, lineHeight: '20px', padding: '5px 10px 5px 28px',
+          whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden',
+          fontFamily: 'inherit', fontSize: 'inherit', verticalAlign: 'top',
         }} />
       {open && values.length > 0 && (
         <div style={{

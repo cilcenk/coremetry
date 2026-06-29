@@ -189,10 +189,20 @@ func oracleReceiverMetrics(startNs, nowNs uint64) []*metricspb.ResourceMetrics {
 	oracleRX.mu.Lock()
 	defer oracleRX.mu.Unlock()
 
+	// Read the live load factors ONCE per flush (mirrors main.go flush) so the
+	// Oracle receiver breathes with the diurnal curve + incidents like every
+	// other signal, instead of staying flat on the static inst.load. (drift fix)
+	//   rateFactor   → throughput counters (execs, reads, commits …)
+	//   latencyFactor→ wait-time + SQL-elapsed (saturation stretches waits)
+	//   errorBump    → deadlock probability (correlated failures)
+	rf := L.rateFactor()
+	lf := L.latencyFactor()
+	dlMult := oracleDeadlockMult(L.errorBump(), L.incidentLabel() == "oracle-row-lock-contention")
+
 	var rms []*metricspb.ResourceMetrics
 	for _, inst := range oracleInstances {
 		c := oracleRX.get(inst.name)
-		advanceOracleCounters(c, inst.load)
+		advanceOracleCounters(c, inst.load*rf, lf, dlMult)
 
 		metrics := buildOracleMetrics(inst, c, startNs, nowNs)
 		// service.instance.id in the receiver's documented
@@ -222,7 +232,25 @@ func oracleReceiverMetrics(startNs, nowNs uint64) []*metricspb.ResourceMetrics {
 // read positive and lifelike across the run. Internally consistent: logical
 // reads >> physical reads (~99% cache hit), deadlocks grow rarely/slowly,
 // commits >> rollbacks.
-func advanceOracleCounters(c *oracleCounters, load float64) {
+// oracleDeadlockMult amplifies the per-flush deadlock probability. Any incident
+// nudges it up via the error-bump (correlated failures across the mesh), and the
+// oracle-row-lock-contention incident — for which deadlocks ARE the symptom —
+// spikes it hard so the operator sees the deadlock metrics move together with the
+// row-lock trace incident, not stay flat. Pure so the realism stays tested.
+func oracleDeadlockMult(errBump float64, rowLock bool) float64 {
+	m := 1 + errBump*12
+	if rowLock {
+		m *= 5
+	}
+	return m
+}
+
+// advanceOracleCounters bumps the monotonic counters for one instance. `load`
+// is the EFFECTIVE rate (inst.load × rateFactor) so throughput breathes with the
+// diurnal curve + incidents; `latFactor` stretches wait-time / SQL-elapsed under
+// saturation; `dlMult` amplifies deadlocks during incidents (see
+// oracleDeadlockMult). (drift fix — previously read only the static inst.load.)
+func advanceOracleCounters(c *oracleCounters, load, latFactor, dlMult float64) {
 	jit := func(base float64) float64 { return base * load * (0.8 + mrand.Float64()*0.4) }
 
 	c.cpuTime += jit(2.5) // ~2.5 CPU-sec per 10s flush at full load
@@ -238,10 +266,10 @@ func advanceOracleCounters(c *oracleCounters, load float64) {
 	// Deadlocks are rare: only occasionally tick up, and slowly. At full
 	// load roughly one enqueue-deadlock every few minutes; exchange even
 	// rarer. Keeps them monotonic without an unrealistic flood.
-	if mrand.Float64() < 0.15*load {
+	if mrand.Float64() < 0.15*load*dlMult {
 		c.enqueueDeadlks += 1
 	}
-	if mrand.Float64() < 0.05*load {
+	if mrand.Float64() < 0.05*load*dlMult {
 		c.exchangeDeadlk += 1
 	}
 
@@ -253,12 +281,16 @@ func advanceOracleCounters(c *oracleCounters, load float64) {
 	c.dbBlockGets += jit(95_000)
 	c.consistentGets += jit(275_000) // db_block_gets + consistent_gets ≈ logical_reads
 
+	// Wait time stretches with saturation: delta ∝ load (how many waits) ×
+	// latFactor (how long each wait blocks). The row-lock incident (latFactor
+	// 2.4) thus visibly inflates the Concurrency/enqueue waits with the trace
+	// incident instead of staying flat.
 	for _, wc := range oracleWaitClasses {
-		c.waitTime[wc] += jit(oracleWaitClassWeight(wc))
+		c.waitTime[wc] += jit(oracleWaitClassWeight(wc)) * latFactor
 	}
 
 	for _, sq := range oracleTopSQL {
-		c.topSQLElapsed[sq.sqlID] += sq.elapsedPerFlush * load * (0.85 + mrand.Float64()*0.3)
+		c.topSQLElapsed[sq.sqlID] += sq.elapsedPerFlush * load * latFactor * (0.85 + mrand.Float64()*0.3)
 		c.topSQLExecs[sq.sqlID] += uint64(float64(sq.execsPerFlush) * load)
 	}
 }

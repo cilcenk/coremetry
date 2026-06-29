@@ -49,3 +49,33 @@ func TestApplyBackgroundDefaults(t *testing.T) {
 		}
 	})
 }
+
+// TestResolveLogAnomalyEnabled guards the v0.8.227 COREMETRY_LOG_ANOMALY_ENABLED
+// gate. Operator-reported: the worker-role log-pattern detector + Drain
+// templater hammer ES with curated-pattern _msearch / significant_text /
+// sample pulls; the operator wanted to switch that traffic off. The detector
+// MUST default ON (current preserved) and flip OFF only on an explicit
+// "false"/"0" — never silently disable on an unset or garbage value, which
+// would drop log anomalies for installs that never set the var.
+func TestResolveLogAnomalyEnabled(t *testing.T) {
+	cases := []struct {
+		env     string
+		current bool
+		want    bool
+	}{
+		{"", true, true},          // unset → keep default ON
+		{"", false, false},        // unset → keep an already-off value
+		{"false", true, false},    // explicit disable
+		{"0", true, false},        // explicit disable (numeric)
+		{"true", true, true},      // explicit enable
+		{"1", false, true},        // explicit enable flips an off default back on
+		{"yes", true, true},       // garbage → leave current untouched (don't disable)
+		{"FALSE", true, true},     // case-sensitive: not a recognised disable token → keep ON
+		{"off", false, false},     // garbage → leave current (off) untouched
+	}
+	for _, c := range cases {
+		if got := resolveLogAnomalyEnabled(c.env, c.current); got != c.want {
+			t.Errorf("resolveLogAnomalyEnabled(%q, %v) = %v, want %v", c.env, c.current, got, c.want)
+		}
+	}
+}

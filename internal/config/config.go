@@ -68,6 +68,14 @@ type BackgroundConfig struct {
 	// stuck CH/Redis client driver doesn't park the goroutine
 	// forever. Default 5s, well above the per-probe 2s timeout.
 	StatusProbeTimeout time.Duration `yaml:"status_probe_timeout"`
+	// LogAnomalyEnabled gates the worker-role log-pattern anomaly
+	// recorder + Drain template puller — the jobs that periodically
+	// QUERY the logstore (ES at billion-doc scale: curated-pattern
+	// _msearch, significant_text, sample pulls). Default true. Set
+	// COREMETRY_LOG_ANOMALY_ENABLED=false to silence that ES traffic
+	// when the operator doesn't want log-based anomalies. Metric
+	// anomaly detection (CH-backed) is unaffected.
+	LogAnomalyEnabled bool `yaml:"log_anomaly_enabled"`
 }
 
 // AIConfig wires the optional AI Copilot. Three providers supported:
@@ -308,6 +316,7 @@ var defaults = Config{
 		AnomalyRecordBackfill: 5 * time.Minute,
 		SMTPCacheTTL:          30 * time.Second,
 		StatusProbeTimeout:    5 * time.Second,
+		LogAnomalyEnabled:     true,
 	},
 }
 
@@ -330,6 +339,23 @@ func applyBackgroundDefaults(b *BackgroundConfig) {
 	}
 	if b.StatusProbeTimeout == 0 {
 		b.StatusProbeTimeout = defaults.Background.StatusProbeTimeout
+	}
+}
+
+// resolveLogAnomalyEnabled applies the COREMETRY_LOG_ANOMALY_ENABLED
+// override on top of the current (default-true) value. The detector
+// defaults ON; only an explicit "false"/"0" silences the worker-role
+// log-pattern recorder + Drain templater (the periodic logstore/ES
+// traffic). Anything else — unset, "true", "1", or garbage — leaves
+// the current value untouched, so the default stays on.
+func resolveLogAnomalyEnabled(env string, current bool) bool {
+	switch env {
+	case "false", "0":
+		return false
+	case "true", "1":
+		return true
+	default:
+		return current
 	}
 }
 
@@ -487,6 +513,10 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("COREMETRY_ADMIN_RESET"); v == "true" || v == "1" {
 		cfg.Auth.AdminReset = true
 	}
+	// Default-ON gate; only an explicit "false"/"0" disables the
+	// worker-role log-pattern detector + Drain templater.
+	cfg.Background.LogAnomalyEnabled = resolveLogAnomalyEnabled(
+		os.Getenv("COREMETRY_LOG_ANOMALY_ENABLED"), cfg.Background.LogAnomalyEnabled)
 	if v := os.Getenv("COREMETRY_REDIS_URL"); v != "" {
 		cfg.Redis.URL = v
 	}

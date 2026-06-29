@@ -635,7 +635,13 @@ func main() {
 	// which api pods read from. Splitting the write side off the
 	// read fleet means an api-pod hot-reload doesn't blink the
 	// detector clock.
-	if mode.worker {
+	// v0.8.227 — the log-anomaly side (recorder + Drain templater) is the
+	// only worker job that QUERIES the logstore on a tick. At billion-doc ES
+	// scale those curated-pattern _msearch / significant_text / sample pulls
+	// are the bulk of Coremetry's ES read traffic, so the operator can switch
+	// them off with COREMETRY_LOG_ANOMALY_ENABLED=false. Metric anomaly
+	// detection (anomaly.New, CH-backed) is unaffected — it never touches ES.
+	if mode.worker && cfg.Background.LogAnomalyEnabled {
 		// ── Anomaly recorder (v0.5.241 — needs logsStore) ───────────────
 		// Persists log-pattern + trace-op detections into anomaly_events.
 		// log-pattern detector runs through the logstore abstraction so
@@ -646,6 +652,8 @@ func main() {
 
 		// ── Drain-3 log template puller (v0.5.244) ───────────────────────
 		go templater.New(store, logsStore, 5*time.Minute, 1000, lockImpl).Start(ctx)
+	} else if mode.worker {
+		log.Printf("[anomaly] log-pattern recorder + Drain templater DISABLED (COREMETRY_LOG_ANOMALY_ENABLED=false) — no periodic logstore queries; metric anomaly detection unaffected")
 	}
 
 	// ── AI Copilot (optional) ────────────────────────────────────────────────

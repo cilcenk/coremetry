@@ -163,6 +163,24 @@ func evalWindow(metric string, median, mad float64, window []float64) (allOpen, 
 	return allOpen, allResolved, cur
 }
 
+// anomalyAction is the pure open/resolve/none decision for one (service, metric)
+// check: open/refresh when ALL dwell buckets fire (allOpen), else RESOLVE an
+// already-open problem the moment the MOST-RECENT bucket is back inside the band
+// (resolvedFor(metric, latestZ)). Extracted from checkOne so the v0.8.220
+// asymmetry (hard open / fast resolve) is unit-tested — a silent revert to the
+// old all-dwell-buckets `allResolved` resolve condition changes this function
+// and fails TestAnomalyAction. Returns "open" | "resolve" | "none".
+func anomalyAction(hasOpen, allOpen bool, metric string, latestZ float64) string {
+	switch {
+	case allOpen:
+		return "open"
+	case hasOpen && resolvedFor(metric, latestZ):
+		return "resolve"
+	default:
+		return "none"
+	}
+}
+
 type Detector struct {
 	store    *chstore.Store
 	interval time.Duration
@@ -266,10 +284,12 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 	open, _ := d.store.FindOpenProblem(ctx, ruleID, service)
 	hasOpen := open != nil && open.ID != ""
 
-	// Open only when ALL dwell buckets fire (same direction); resolve only
-	// when ALL are back inside the band. cur is the most-recent verdict.
-	allOpen, allResolved, cur := evalWindow(metric, median, mad, window)
-	if allOpen {
+	// Open only when ALL dwell buckets fire (same direction); resolve as soon as
+	// the most-recent bucket is back inside the band (v0.8.220 fast-resolve). cur
+	// is the most-recent verdict; the pure anomalyAction decides open/resolve/none.
+	allOpen, _, cur := evalWindow(metric, median, mad, window)
+	action := anomalyAction(hasOpen, allOpen, metric, z)
+	if action == "open" {
 		severity := cur.severity
 		desc := fmt.Sprintf("%s %s on %s — current %.2f%s vs baseline %.2f%s (%.1fσ, sustained %d buckets).",
 			displayMetric(metric), cur.direction, service, current, unitOf(metric), median, unitOf(metric), z, dwellBuckets)
@@ -308,15 +328,13 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 		if d.notifier != nil {
 			go d.notifier.SendProblemAlert(context.Background(), p)
 		}
-	} else if hasOpen && resolvedFor(metric, z) {
-		// v0.8.220 — FAST resolve: the most-recent bucket (z) is back inside the
-		// band. Asymmetric vs the 3-bucket open dwell — this clears a recovered
-		// problem immediately (incl. the "transient spike that opened then never
-		// resolved" report) instead of waiting for ALL dwell buckets to align,
-		// which left problems stuck open when recovery was gradual or the source
-		// went quiet. The 3-bucket open dwell still prevents re-open flapping.
-		// allResolved retained in evalWindow for the dwell unit tests.
-		_ = allResolved
+	} else if action == "resolve" {
+		// v0.8.220 — FAST resolve (anomalyAction): the most-recent bucket is back
+		// inside the band, so clear a recovered problem immediately (incl. the
+		// "transient spike that opened then never resolved" report) instead of
+		// waiting for ALL dwell buckets to align — which left problems stuck open
+		// on gradual recovery / silent sources. The 3-bucket open dwell still
+		// prevents re-open flapping.
 		now := time.Now().UnixNano()
 		open.Status = "resolved"
 		open.ResolvedAt = &now

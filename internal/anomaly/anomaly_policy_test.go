@@ -102,3 +102,32 @@ func TestAnomalyTuning_StrictOpenFastResolve(t *testing.T) {
 		t.Error("a still-spiking p99 bucket (z at openZ) must NOT resolve")
 	}
 }
+
+// v0.8.224 (scale-audit nit) — pin the v0.8.220 fast-resolve so a silent revert
+// to the old all-dwell-buckets `allResolved` condition is caught. checkOne isn't
+// unit-testable without a store interface, so the open/resolve/none decision was
+// extracted into the pure anomalyAction; this asserts: open iff allOpen; resolve
+// an OPEN problem the moment the latest bucket recovers (NOT all buckets); never
+// resolve a non-open one.
+func TestAnomalyAction(t *testing.T) {
+	const m = "p99_ms"
+	recovered := resolveZ - 0.1 // latest bucket back inside the band
+	stillHot := openZ           // latest bucket still spiking
+
+	if got := anomalyAction(false, true, m, stillHot); got != "open" {
+		t.Errorf("allOpen → open, got %q", got)
+	}
+	// THE fast-resolve contract: hasOpen + NOT allOpen + latest recovered = resolve.
+	// (Under the reverted `allResolved` an earlier elevated bucket would block this.)
+	if got := anomalyAction(true, false, m, recovered); got != "resolve" {
+		t.Errorf("open problem + recovered latest bucket → resolve (fast), got %q", got)
+	}
+	// A recovered latest bucket with NO open problem must do nothing (no phantom resolve).
+	if got := anomalyAction(false, false, m, recovered); got != "none" {
+		t.Errorf("no open problem → none, got %q", got)
+	}
+	// Open problem, latest still hot, not all-open → hold (none), don't resolve.
+	if got := anomalyAction(true, false, m, stillHot); got != "none" {
+		t.Errorf("open problem + still-hot latest → none, got %q", got)
+	}
+}

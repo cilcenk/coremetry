@@ -2491,11 +2491,16 @@ func traceTimeBound(start time.Time, endNanos int64) (lo, hi time.Time, ok bool)
 func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error) {
 	// v0.8.210 — derive the trace's time window from trace_summary_5m (the
 	// aggregate, far smaller than raw spans) so the spans scan is time-bounded
-	// to ~1-2 partitions instead of an unbounded full-partition fan-out across
-	// every shard. Best-effort: any lookup miss/error falls through to the
-	// original unbounded scan, so correctness is never traded for the speedup.
-	// Mirrors the OTel ClickHouse exporter's trace_id_ts lookup pattern, reusing
-	// the window Coremetry already aggregates.
+	// to ~1-2 partitions instead of a 30-partition fan-out. Best-effort: any
+	// lookup miss/error falls through to the original scan (correctness is never
+	// traded for the speedup).
+	//
+	// v0.8.223 — trace_id is the TRAILING ORDER BY column of trace_summary_5m and
+	// it's a combined MaterializedView (ADD INDEX unsupported, code 48), so this
+	// pre-query can't granule-prune by trace_id → it's a full scan of the (small)
+	// aggregate. Capped at max_execution_time = 3 (was 10) so the worst case — a
+	// large MV where the scan times out — costs ≤3s before falling back to the
+	// bloom-pruned spans path (spans.idx_trace), instead of up to +10s.
 	where := "trace_id = ?"
 	args := []any{traceID}
 	var winStart time.Time
@@ -2504,7 +2509,7 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 		SELECT minMerge(trace_start_state), toInt64(maxMerge(trace_end_state))
 		FROM trace_summary_5m
 		WHERE trace_id = ?
-		SETTINGS max_execution_time = 10`, traceID).Scan(&winStart, &winEndNanos); err != nil {
+		SETTINGS max_execution_time = 3`, traceID).Scan(&winStart, &winEndNanos); err != nil {
 		log.Printf("[trace] %s window lookup failed (%v) — unbounded spans scan", traceID, err)
 	} else if lo, hi, ok := traceTimeBound(winStart, winEndNanos); ok {
 		where += " AND time >= ? AND time <= ?"

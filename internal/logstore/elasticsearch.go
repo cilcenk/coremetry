@@ -250,6 +250,20 @@ func resolveESAuth(cfg ESConfig) (apiKey, username, password string) {
 	return "", cfg.Username, cfg.Password
 }
 
+// esAuthMode names the auth method actually in effect, for the boot log. The API
+// key takes precedence (resolveESAuth) and makes username/password unnecessary —
+// an api-key install needs no basic-auth at all. Pure so it's unit-tested.
+func esAuthMode(apiKey, username string) string {
+	switch {
+	case apiKey != "":
+		return "api-key"
+	case username != "":
+		return "basic"
+	default:
+		return "none"
+	}
+}
+
 func NewES(cfg ESConfig) (*ESStore, error) {
 	cfg.defaults()
 
@@ -271,14 +285,44 @@ func NewES(cfg ESConfig) (*ESStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create ES client: %w", err)
 	}
+	// When BOTH an API key and basic-auth are configured the API key wins
+	// (resolveESAuth) and the username/password are IGNORED — so an api-key
+	// install needs neither. Warn (don't fail) so the operator isn't confused
+	// about why their username/password "did nothing".
+	if cfg.APIKey != "" && (cfg.Username != "" || cfg.Password != "") {
+		log.Printf("[logstore-es] both COREMETRY_ES_API_KEY and a username/password are set — " +
+			"the API key is used and the username/password are IGNORED (api-key auth needs neither).")
+	}
+
 	// Ping early so a misconfigured ES surfaces at startup rather than
 	// at the first user query. 5s budget — ES clusters under load can
 	// be slow but not seconds-slow on a no-op endpoint.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := cli.Info(cli.Info.WithContext(ctx)); err != nil {
-		return nil, fmt.Errorf("ES ping: %w", err)
+	infoRes, err := cli.Info(cli.Info.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("ES ping (addresses=%v): %w", cfg.Addresses, err)
 	}
+	defer infoRes.Body.Close()
+	// cli.Info() returns a nil error on an HTTP 401/403 — a BAD API KEY would
+	// otherwise pass this ping and then 401 every user query. Check the status
+	// so a bad key fails boot LOUDLY with an actionable message. (v0.8.226)
+	if infoRes.IsError() {
+		return nil, fmt.Errorf("ES ping rejected (auth=%s addresses=%v): %s — "+
+			"verify COREMETRY_ES_API_KEY (or username/password) + the addresses",
+			esAuthMode(apiKey, cfg.Username), cfg.Addresses, infoRes.String())
+	}
+	var info struct {
+		ClusterName string `json:"cluster_name"`
+		Version     struct {
+			Number string `json:"number"`
+		} `json:"version"`
+	}
+	_ = json.NewDecoder(infoRes.Body).Decode(&info)
+	log.Printf("[logstore-es] connected READ-ONLY — es=%s cluster=%q index=%q auth=%s addresses=%v "+
+		"(Coremetry only QUERIES Elasticsearch for logs; the write path is ClickHouse — it never "+
+		"indexes/updates/deletes in ES)",
+		info.Version.Number, info.ClusterName, cfg.Index, esAuthMode(apiKey, cfg.Username), cfg.Addresses)
 	return &ESStore{cli: cli, cfg: cfg, fields: cfg.Fields}, nil
 }
 

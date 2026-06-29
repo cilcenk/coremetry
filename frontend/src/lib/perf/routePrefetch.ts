@@ -19,8 +19,12 @@ const importers: Record<string, () => Promise<unknown>> = {
   '/trace':      () => import('@/pages/Trace'),
   '/metrics':    () => import('@/pages/Metrics'),
   '/logs':       () => import('@/pages/Logs'),
-  '/topology':   () => import('@/pages/Topology'),
-  '/service-map':() => import('@/pages/Topology'),
+  // v0.8.224 — /topology retired (redirects to /service-map); warm the chunk the
+  // route ACTUALLY loads. Both point at ServiceMap so the sidebar "Topology"
+  // link (now → /service-map) prefetches the right chunk and the orphaned
+  // Topology page drops out of the bundle.
+  '/topology':   () => import('@/pages/ServiceMap'),
+  '/service-map':() => import('@/pages/ServiceMap'),
   '/endpoints':  () => import('@/pages/Endpoints'),
   '/databases':  () => import('@/pages/Databases'),
   '/messaging':  () => import('@/pages/Messaging'),

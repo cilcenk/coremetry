@@ -44,3 +44,22 @@ func TestResolveESAuth(t *testing.T) {
 		})
 	}
 }
+
+// v0.8.226 — operator wants api-key alone to suffice (no username/password) and
+// clear boot logging. esAuthMode names the method the boot log reports; pin that
+// an API key reads "api-key" (and thus needs no basic-auth), basic-auth reads
+// "basic", and nothing reads "none".
+func TestESAuthMode(t *testing.T) {
+	if got := esAuthMode("ZW5jb2RlZA==", ""); got != "api-key" {
+		t.Errorf("api-key only → %q, want api-key", got)
+	}
+	if got := esAuthMode("ZW5jb2RlZA==", "coremetry"); got != "api-key" {
+		t.Errorf("api-key wins over username → %q, want api-key", got)
+	}
+	if got := esAuthMode("", "coremetry"); got != "basic" {
+		t.Errorf("username only → %q, want basic", got)
+	}
+	if got := esAuthMode("", ""); got != "none" {
+		t.Errorf("neither → %q, want none", got)
+	}
+}

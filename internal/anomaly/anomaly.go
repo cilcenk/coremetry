@@ -31,10 +31,16 @@ const lockKey = "coremetry:lock:anomaly"
 const (
 	bucketSeconds = 300            // 5-minute buckets
 	historyHours  = 24             // window used to learn the baseline
-	openZ         = 3.0            // |z| above this opens an anomaly
+	// v0.8.220 — operator-reported too many anomalies + transient spikes that
+	// don't clear. Davis-style asymmetry: HARD to open (3.5σ AND 3 sustained
+	// 5-min buckets = 15 min, so an instant blip never opens), FAST to resolve
+	// (the most-recent bucket back inside the band clears it — see the detector;
+	// a single-bucket dip can't re-open thanks to the 3-bucket dwell, so it
+	// doesn't flap).
+	openZ         = 3.5            // |z| above this opens an anomaly
 	resolveZ      = 1.5            // and below this clears it
 	criticalZ     = 5.0            // |z| above this escalates warning → critical
-	dwellBuckets  = 2              // consecutive buckets that must all fire to open (anti-flap)
+	dwellBuckets  = 3              // consecutive buckets that must all fire to open (anti-flap)
 	minSamples    = 12             // need at least this many baseline buckets
 	madScale      = 0.6745         // scales MAD to a normal-dist stdev (modified z-score)
 	magnitudeEps  = 1e-9           // denominator guard for the relative-change floor
@@ -302,7 +308,15 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 		if d.notifier != nil {
 			go d.notifier.SendProblemAlert(context.Background(), p)
 		}
-	} else if hasOpen && allResolved {
+	} else if hasOpen && resolvedFor(metric, z) {
+		// v0.8.220 — FAST resolve: the most-recent bucket (z) is back inside the
+		// band. Asymmetric vs the 3-bucket open dwell — this clears a recovered
+		// problem immediately (incl. the "transient spike that opened then never
+		// resolved" report) instead of waiting for ALL dwell buckets to align,
+		// which left problems stuck open when recovery was gradual or the source
+		// went quiet. The 3-bucket open dwell still prevents re-open flapping.
+		// allResolved retained in evalWindow for the dwell unit tests.
+		_ = allResolved
 		now := time.Now().UnixNano()
 		open.Status = "resolved"
 		open.ResolvedAt = &now
@@ -311,7 +325,7 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 			log.Printf("[anomaly] resolve %s: %v", ruleID, err)
 			return
 		}
-		log.Printf("[anomaly] RESOLVED %s · %s (back to z=%.1f)", service, metric, z)
+		log.Printf("[anomaly] RESOLVED %s · %s (recovered, z=%.1f)", service, metric, z)
 	}
 }
 

@@ -43,7 +43,10 @@ type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 't
 
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const svc = searchParams.get('name') ?? '';
+  // Canonical key is `name` (every in-app link uses /service?name=…); also accept
+  // `service` so a hand-typed /service?service=X resolves instead of showing
+  // "Missing service name" (operator-reported, v0.8.219).
+  const svc = searchParams.get('name') ?? searchParams.get('service') ?? '';
   // Runtime fingerprint (e.g. "Java OpenJDK 21") for the service-header badge.
   const runtimeQ = useQuery({ queryKey: ['svc-runtime', svc], queryFn: () => api.serviceRuntime(svc), enabled: !!svc, staleTime: 300_000 });
 

@@ -65,7 +65,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/services',    label: 'nav.services',   icon: Boxes },
       { href: '/endpoints',   label: 'nav.endpoints',  icon: Webhook },
-      { href: '/topology',    label: 'nav.topology',   icon: Workflow },
+      { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
       { href: '/databases',   label: 'nav.databases',  icon: Database },
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
     ],

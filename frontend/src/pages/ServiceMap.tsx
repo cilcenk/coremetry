@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
@@ -45,7 +45,11 @@ const DIFF_PRESETS: { key: string; label: string }[] = [
 export default function ServiceMapPage() {
   const [range, setRange] = useUrlRange('30m');
   const [samples, setSamples] = useState(200);
-  const [focus, setFocus] = useState<string>('');
+  // v0.8.219 — /topology was folded into /service-map; honour its ?focus=<svc>
+  // deep-link (from Endpoints / service tabs / the redirect) by seeding focus
+  // from the URL. The auto-pick effect below skips when focus is already set.
+  const [searchParams] = useSearchParams();
+  const [focus, setFocus] = useState<string>(() => searchParams.get('focus') ?? '');
   // Picker input has its own state separate from focus so the
   // user can type to filter the datalist without immediately
   // re-focusing the graph on a partial match. Commit to focus

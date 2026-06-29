@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -17,9 +17,8 @@ const Login             = lazy(() => import('./pages/Login'));
 const Services          = lazy(() => import('./pages/Services'));
 const Service           = lazy(() => import('./pages/Service'));
 const ServiceBacktrace  = lazy(() => import('./pages/ServiceBacktrace'));
-const Topology          = lazy(() => import('./pages/Topology'));
-// v0.8.104 — flow-graph preview: /service-map revived to evaluate
-// TopologyFlowGraph side-by-side with /topology before a swap call.
+// v0.8.219 — /topology retired; /service-map is the single topology surface
+// (it carries the focus deep-link via ?focus=). /topology redirects to it.
 const ServiceMap        = lazy(() => import('./pages/ServiceMap'));
 // v0.8.12 — topology rebuild Stage 2 scratch route (removed in Stage 4).
 const ServiceGraphPreview = lazy(() => import('./pages/ServiceGraphPreview'));
@@ -78,6 +77,13 @@ function AdminRedirect() {
   return <Navigate to={`/system/${tab ?? 'stats'}`} replace />;
 }
 
+// v0.8.219 — /topology was retired in favour of /service-map. Redirect preserves
+// the query string so /topology?focus=<svc> lands focused on the new surface.
+function TopologyRedirect() {
+  const loc = useLocation();
+  return <Navigate to={`/service-map${loc.search}`} replace />;
+}
+
 export default function App() {
   // Intent-prefetch: warm a route's code-split chunk when the operator hovers
   // any internal link (one delegated listener; no nav markup touched). v0.8.6.
@@ -94,10 +100,10 @@ export default function App() {
             <Route path="/services"       element={<Services />} />
             <Route path="/service"        element={<Service />} />
             <Route path="/service/backtrace" element={<ServiceBacktrace />} />
-            {/* v0.8.14 folded /service-map into /topology; v0.8.104 revives it
-                as the TopologyFlowGraph preview surface (not in sidebar). */}
             <Route path="/service-map"    element={<ServiceMap />} />
-            <Route path="/topology"       element={<Topology />} />
+            {/* v0.8.219 — /topology retired; redirect to the single /service-map
+                surface, preserving ?focus= so deep-links land focused. */}
+            <Route path="/topology"       element={<TopologyRedirect />} />
             <Route path="/servicegraph-preview" element={<ServiceGraphPreview />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />

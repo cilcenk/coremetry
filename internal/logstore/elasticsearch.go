@@ -507,6 +507,16 @@ var tsLayouts = []string{
 	"2006-01-02T15:04:05.999999999",
 	"2006-01-02 15:04:05.999999999",
 	"2006-01-02 15:04:05",
+	// logback / log4j2 default `yyyy-MM-dd HH:mm:ss,SSS` — comma-millis is
+	// the common Java banking-stack shape and was the residual gap behind
+	// "histogram shows bars but the log LIST is empty" (v0.8.229). Go treats
+	// a comma like a period for fractional seconds, so these parse cleanly.
+	"2006-01-02 15:04:05,999999999",
+	"2006-01-02T15:04:05,999999999",
+	// space-separated with a numeric tz offset (some shippers omit the 'T').
+	"2006-01-02 15:04:05.999999999Z07:00",
+	"2006-01-02 15:04:05,999999999Z07:00",
+	"2006-01-02 15:04:05Z07:00",
 }
 
 // epochToNs magnitude-detects the unit of an integer epoch timestamp
@@ -586,6 +596,34 @@ func timestampNs(src map[string]any) int64 {
 		}
 	}
 	return 0
+}
+
+// docValueTimestampNs reads the ES docvalue_fields timestamp (requested as
+// epoch_millis). This is the value ES itself derived from the indexed `date`
+// field via its mapping — the SAME server-side parse the date_histogram uses
+// — so the log LIST's time becomes format-agnostic just like the histogram.
+// It closes the residual v0.8.163 gap: a non-RFC _source string (e.g. logback
+// "yyyy-MM-dd HH:mm:ss,SSS") can no longer zero the row and drop it from the
+// time-windowed list. docvalue_fields returns each field as an array; we take
+// the first parseable element. Returns 0 when absent so mapHit falls back to
+// the raw _source value. No extra ES privilege — doc values ride `read`.
+func docValueTimestampNs(dv map[string]any, field string) int64 {
+	if dv == nil || field == "" {
+		return 0
+	}
+	v, ok := dv[field]
+	if !ok {
+		return 0
+	}
+	if arr, ok := v.([]any); ok {
+		for _, e := range arr {
+			if ns := parseLogTimestampNs(e); ns != 0 {
+				return ns
+			}
+		}
+		return 0
+	}
+	return parseLogTimestampNs(v)
 }
 
 // Indices surfaces per-index health + ILM lifecycle for the
@@ -991,6 +1029,14 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			map[string]any{tiebreak: sortDir},
 		},
 		"size": limit,
+		// Ask ES for the timestamp pre-parsed to epoch_millis off the indexed
+		// `date` field (v0.8.229). mapHit prefers this over the raw _source
+		// string so a non-RFC source shape (logback comma-millis, custom
+		// format) can't zero the row — the list now matches the format-
+		// agnostic histogram. No extra privilege; doc values ride `read`.
+		"docvalue_fields": []any{
+			map[string]any{"field": s.fields.Timestamp, "format": "epoch_millis"},
+		},
 		// track_total_hits capped (was `true` = an all-shard exact count of
 		// EVERY matching doc, catastrophic at billion-doc scale). 10000 is the
 		// ES default bound — the UI shows "10000+" and keyset/search_after
@@ -1080,6 +1126,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			Hits []struct {
 				ID     string         `json:"_id"`
 				Source map[string]any `json:"_source"`
+				Fields map[string]any `json:"fields"`
 				Sort   []any          `json:"sort"`
 			} `json:"hits"`
 		} `json:"hits"`
@@ -1091,7 +1138,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	out := make([]*LogRecord, 0, len(raw.Hits.Hits))
 	var lastSort []any
 	for _, h := range raw.Hits.Hits {
-		out = append(out, s.mapHit(h.ID, h.Source))
+		out = append(out, s.mapHit(h.ID, h.Source, h.Fields))
 		lastSort = h.Sort
 	}
 	// Carry the PIT id forward — ES may refresh it per request, and the
@@ -1155,7 +1202,12 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 			},
 			map[string]any{"_doc": "asc"},
 		},
-		"size":             limit,
+		"size": limit,
+		// Same docvalue epoch_millis timestamp as the main Search (v0.8.229)
+		// so live-tail rows are format-agnostic too.
+		"docvalue_fields": []any{
+			map[string]any{"field": s.fields.Timestamp, "format": "epoch_millis"},
+		},
 		"track_total_hits": false,
 		"timeout":          esTimeoutFromEnv("10s"),
 	}
@@ -1185,6 +1237,7 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 			Hits []struct {
 				ID     string         `json:"_id"`
 				Source map[string]any `json:"_source"`
+				Fields map[string]any `json:"fields"`
 			} `json:"hits"`
 		} `json:"hits"`
 	}
@@ -1193,7 +1246,7 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 	}
 	out := make([]*LogRecord, 0, len(raw.Hits.Hits))
 	for _, h := range raw.Hits.Hits {
-		out = append(out, s.mapHit(h.ID, h.Source))
+		out = append(out, s.mapHit(h.ID, h.Source, h.Fields))
 	}
 	return &Page{Total: len(out), Logs: out}, nil
 }
@@ -1909,22 +1962,29 @@ func (s *ESStore) expandShorthand(q string) string {
 // (which can be dotted, e.g. "trace.id") and pulls each value into the
 // canonical LogRecord shape. Anything not under a known path falls into
 // the Attributes map so it's still inspectable in the UI.
-func (s *ESStore) mapHit(id string, src map[string]any) *LogRecord {
+func (s *ESStore) mapHit(id string, src map[string]any, dv map[string]any) *LogRecord {
 	r := &LogRecord{
 		Attributes:         map[string]string{},
 		ResourceAttributes: map[string]string{},
 	}
 
-	// Robust per-value parse (epoch number/string, RFC3339, or a non-RFC
-	// shipper format) — NOT a strict RFC3339Nano parse, which silently
-	// dropped epoch/non-RFC timestamps to 0 and blanked the time-windowed
-	// list while the server-side histogram still rendered (v0.8.163).
-	if raw := dotGet(src, s.fields.Timestamp); raw != nil {
-		r.Timestamp = parseLogTimestampNs(raw)
+	// Timestamp resolution, most-authoritative first (v0.8.229):
+	//  1. docvalue_fields epoch_millis — ES parsed it from the indexed
+	//     `date` field via its mapping, the SAME engine the histogram uses,
+	//     so any source string shape works (logback comma-millis, offset,
+	//     custom format). This is why the list now matches the histogram.
+	//  2. the configured _source field, robust-parsed (epoch num/string,
+	//     RFC3339, or a non-RFC shipper layout in tsLayouts).
+	//  3. the common @timestamp/timestamp/time shapes as a last resort.
+	// Strict RFC3339-only parsing silently zeroed epoch/non-RFC timestamps,
+	// landing rows at 1970 and dropping them from the time-windowed list
+	// while the server-side histogram still rendered (v0.8.163 + tail).
+	r.Timestamp = docValueTimestampNs(dv, s.fields.Timestamp)
+	if r.Timestamp == 0 {
+		if raw := dotGet(src, s.fields.Timestamp); raw != nil {
+			r.Timestamp = parseLogTimestampNs(raw)
+		}
 	}
-	// Configured field missing or unparseable → fall back to the common
-	// @timestamp/timestamp/time shapes so a mis-set timestamp field doesn't
-	// zero the row's time (which would drop it from a time-windowed view).
 	if r.Timestamp == 0 {
 		r.Timestamp = timestampNs(src)
 	}

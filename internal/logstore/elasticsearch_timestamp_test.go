@@ -33,6 +33,12 @@ func TestParseLogTimestampNs_ShipperShapes(t *testing.T) {
 		{"rfc3339", "2026-06-15T10:11:19Z", want},
 		{"rfc3339nano", "2026-06-15T10:11:19.000000000Z", want},
 		{"log4j space form", "2026-06-15 10:11:19", want},
+		// v0.8.229 — logback / log4j2 default `yyyy-MM-dd HH:mm:ss,SSS`
+		// (comma millis). The common Java banking-stack shape; was the
+		// residual gap behind "histogram bars but empty log list".
+		{"logback comma-millis", "2026-06-15 10:11:19,000", want},
+		{"logback comma-millis nonzero", "2026-06-15 10:11:19,123", want + 123*int64(time.Millisecond)},
+		{"space form numeric offset", "2026-06-15 13:11:19+03:00", want},
 		{"epoch millis float64 (ES default)", float64(ms), want},
 		{"epoch millis int64", int64(ms), want},
 		{"epoch millis numeric string", itoa(ms), want},
@@ -89,6 +95,63 @@ func TestCountPatternsSampleTimestamp_RobustOnFloat64(t *testing.T) {
 		t.Fatalf("CountPatterns float64 epoch_millis sample → %d, want %d "+
 			"(regressed to a strict string parse?)", got, want)
 	}
+}
+
+// v0.8.229 — operator-reported (read-only api-key on app-*): the /logs
+// histogram rendered but the log LIST was empty. Root cause class: the list
+// parsed each hit's _source @timestamp string CLIENT-side, so a non-RFC shape
+// (logback comma-millis, custom format) zeroed the row → dropped from the
+// time-windowed list, while the server-side date_histogram (format-agnostic
+// via the field's `date` mapping) still showed bars. The fix asks ES for the
+// timestamp pre-parsed to epoch_millis via docvalue_fields — the SAME engine
+// the histogram uses — and mapHit prefers it over the raw _source value.
+//
+// This guards: (1) docValueTimestampNs extracts epoch_millis from the
+// docvalue array shape, and (2) mapHit prefers the docvalue timestamp even
+// when the _source string is unparseable — so the row is no longer zeroed.
+func TestDocValueTimestampNs_And_MapHitPrecedence(t *testing.T) {
+	want := time.Date(2026, 6, 15, 10, 11, 19, 0, time.UTC).UnixNano()
+	ms := want / 1_000_000
+
+	t.Run("docvalue array epoch_millis", func(t *testing.T) {
+		dv := map[string]any{"@timestamp": []any{itoa(ms)}}
+		if got := docValueTimestampNs(dv, "@timestamp"); got != want {
+			t.Fatalf("docValueTimestampNs = %d, want %d", got, want)
+		}
+		// Absent field / nil map → 0 so mapHit falls back to _source.
+		if got := docValueTimestampNs(dv, "missing"); got != 0 {
+			t.Fatalf("missing docvalue field should be 0, got %d", got)
+		}
+		if got := docValueTimestampNs(nil, "@timestamp"); got != 0 {
+			t.Fatalf("nil docvalue map should be 0, got %d", got)
+		}
+	})
+
+	t.Run("mapHit prefers docvalue over an unparseable _source string", func(t *testing.T) {
+		cfg := ESConfig{}
+		cfg.defaults()
+		s := &ESStore{fields: cfg.Fields, cfg: cfg}
+		// _source carries a shape that (pre-tsLayouts-widening) would not
+		// parse; docvalue carries the canonical epoch_millis ES derived from
+		// the date mapping. The row MUST take the docvalue time, not 0.
+		src := map[string]any{"@timestamp": "definitely not a date"}
+		dv := map[string]any{"@timestamp": []any{itoa(ms)}}
+		rec := s.mapHit("doc-1", src, dv)
+		if rec.Timestamp != want {
+			t.Fatalf("mapHit Timestamp = %d, want %d (docvalue must win over a bad _source string)", rec.Timestamp, want)
+		}
+	})
+
+	t.Run("mapHit still works with no docvalue (falls back to _source)", func(t *testing.T) {
+		cfg := ESConfig{}
+		cfg.defaults()
+		s := &ESStore{fields: cfg.Fields, cfg: cfg}
+		src := map[string]any{"@timestamp": "2026-06-15 10:11:19,000"} // logback comma-millis
+		rec := s.mapHit("doc-2", src, nil)
+		if rec.Timestamp != want {
+			t.Fatalf("mapHit no-docvalue fallback = %d, want %d", rec.Timestamp, want)
+		}
+	})
 }
 
 func itoa(n int64) string {

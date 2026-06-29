@@ -257,6 +257,16 @@ func main() {
 	if mode.ingest && !mode.api && !mode.worker {
 		// pure-ingest pod: leave the SDK off entirely.
 		_ = os.Setenv("COREMETRY_SELF_OBS_OTLP_ENDPOINT", "")
+	} else if mode.name == "all" && strings.TrimSpace(os.Getenv("COREMETRY_SELF_OBS_OTLP_ENDPOINT")) == "" {
+		// v0.8.218 — self-observability ON by default in monolithic mode: when
+		// the operator sets no endpoint, point it at the pod's OWN OTLP receiver
+		// so a single-binary install observes itself with zero config. Only in
+		// `all` mode (which runs the receiver locally); api/worker-only pods have
+		// no local receiver and pure-ingest is excluded above. The default
+		// sampler (0.1) bounds the tiny self-loop where tracing the ingest INSERT
+		// re-emits a span. Operators ship to an external collector by setting the
+		// env explicitly.
+		_ = os.Setenv("COREMETRY_SELF_OBS_OTLP_ENDPOINT", selfObsDefaultEndpoint(cfg.Listen.GRPC))
 	}
 	selfobsShutdown := selfobs.Init(ctx, selfobsMode, Version)
 	defer func() {
@@ -981,6 +991,17 @@ func resetExitsAfterDrop(viaEnv bool) bool {
 // dev — always-leader is correct there) nor when Redis connected. v0.8.212.
 func isLockDegraded(redisConfigured, redisConnected bool) bool {
 	return redisConfigured && !redisConnected
+}
+
+// selfObsDefaultEndpoint turns the gRPC listen address into the self-observability
+// OTLP target on localhost — ":4317" → "localhost:4317", "0.0.0.0:4317" →
+// "localhost:4317". Pure so the default-on wiring is unit-tested. v0.8.218.
+func selfObsDefaultEndpoint(grpcListen string) string {
+	port := "4317"
+	if i := strings.LastIndex(grpcListen, ":"); i >= 0 && i+1 < len(grpcListen) {
+		port = grpcListen[i+1:]
+	}
+	return "localhost:" + port
 }
 
 // shouldWriteBootstrapAdmin decides whether seedInitialAdmin writes the admin

@@ -59,6 +59,25 @@ func TestShouldWriteBootstrapAdmin(t *testing.T) {
 	}
 }
 
+// v0.8.218 — self-observability is ON by default in monolithic mode (no env),
+// pointing at the pod's own OTLP receiver. selfObsDefaultEndpoint derives that
+// localhost target from the gRPC listen address; pin the parse so a non-default
+// COREMETRY_GRPC_ADDR still resolves to the right self-ingest port.
+func TestSelfObsDefaultEndpoint(t *testing.T) {
+	cases := map[string]string{
+		":4317":          "localhost:4317",
+		"0.0.0.0:4317":   "localhost:4317",
+		":14317":         "localhost:14317",
+		"4317":           "localhost:4317", // no colon → default port
+		"":               "localhost:4317",
+	}
+	for in, want := range cases {
+		if got := selfObsDefaultEndpoint(in); got != want {
+			t.Errorf("selfObsDefaultEndpoint(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // v0.8.207 — operator-reported: COREMETRY_CH_RESET_SCHEMA=1 set on the
 // long-running Deployment dropped the database, exited, and restarted into
 // another drop forever (CrashLoopBackOff) — the DB was never recreated. The

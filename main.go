@@ -1038,8 +1038,21 @@ func seedInitialAdmin(ctx context.Context, store *chstore.Store, ac config.AuthC
 	if err != nil {
 		return err
 	}
+	// v0.8.224 — on a force reconcile, reuse the EXISTING admin row's id
+	// (resolved by EMAIL) so a pre-v0.7.3 install — whose admin was seeded with
+	// a RANDOM id, never migrated — gets its password updated IN PLACE rather
+	// than a SECOND row keyed by the deterministic bootstrapAdminID. users is
+	// ReplacingMergeTree dedup-by-id, so two ids = two admin rows for one email,
+	// and GetUserByEmail (FINAL, LIMIT 1, no ORDER BY) could then keep returning
+	// the stale-password row — the exact duplicate-admin symptom v0.7.3 killed.
+	adminID := bootstrapAdminID(ac.InitialAdmin)
+	if force {
+		if existing, lookupErr := store.GetUserByEmail(ctx, ac.InitialAdmin); lookupErr == nil && existing != nil && existing.ID != "" {
+			adminID = existing.ID
+		}
+	}
 	u := chstore.User{
-		ID:           bootstrapAdminID(ac.InitialAdmin),
+		ID:           adminID,
 		Email:        ac.InitialAdmin,
 		PasswordHash: hash,
 		Role:         auth.RoleAdmin,

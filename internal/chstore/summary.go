@@ -57,8 +57,9 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 	if service != "" {
 		wc.add("service_name = ?", service)
 	}
+	like := ""
 	if pattern != "" {
-		like := strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
+		like = strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
 		if !strings.ContainsAny(pattern, "*?") {
 			like = "%" + like + "%"
 		}
@@ -71,6 +72,12 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 			" SETTINGS max_execution_time = 30",
 		wc.args...).Scan(&total); err != nil {
 		return nil, 0, err
+	}
+	if total == 0 {
+		// v0.8.234 — same MV-empty fallback as ListServiceNames (see the
+		// comment there): degraded external-Distributed installs keep
+		// their OperationPicker instead of an empty dropdown.
+		return s.operationNamesFromSpans(ctx, service, like, limit, offset)
 	}
 
 	args := append(append([]any{}, wc.args...), limit, offset)
@@ -98,6 +105,7 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 	if limit <= 0 {
 		limit = 200
 	}
+	like := ""
 	args := []any{}
 	where := ""
 	if pattern != "" {
@@ -106,7 +114,7 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 		// chars (%, _) almost never appear literally; we accept the
 		// edge case rather than escape (CH doesn't support ESCAPE
 		// on ILIKE anyway).
-		like := strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
+		like = strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
 		// If the user didn't include any wildcards, default to a
 		// substring match — that's what they expect when typing into a
 		// picker, not an exact equality.
@@ -124,6 +132,17 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 		args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	if total == 0 {
+		// v0.8.234 — operator-reported (external Distributed test env,
+		// degraded ALLOW_UNSET_CLUSTER mode): the summary MVs are empty BY
+		// DESIGN there, but this lookup read ONLY the MV — so the /traces
+		// ServicePicker listed nothing while raw spans held fresh data,
+		// violating the v0.8.213 "raw-spans reads only" degraded contract.
+		// Empty MV (also: first 5 minutes of a fresh install, MV-recreate
+		// window) → bounded raw-spans fallback. Zero cost when the MV has
+		// rows (this branch never runs).
+		return s.serviceNamesFromSpans(ctx, like, limit, offset)
+	}
 
 	args = append(args, limit, offset)
 	rows, err := s.conn.Query(ctx,
@@ -131,6 +150,103 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 			" ORDER BY service_name LIMIT ? OFFSET ?"+
 			" SETTINGS max_execution_time = 30",
 		args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, n)
+	}
+	return out, int(total), rows.Err()
+}
+
+// rawPickerSQL builds the bounded raw-spans fallback queries (count +
+// page) for the name pickers. Pure so the CH hard-constraint bounds —
+// time-bounded WHERE on the indexed prefix, LIMIT, max_execution_time —
+// can't silently drop off a branch (v0.8.234 regression guard).
+// `col` is the picked column; `extraWhere` is zero or more " AND …"
+// clauses appended after the time bound. uniq() (approximate) for the
+// count: the picker total is a "+N more" hint, and an exact
+// count(DISTINCT) would be a second full pass over the window.
+func rawPickerSQL(col, extraWhere string) (countQ, pageQ string) {
+	base := " FROM spans WHERE time >= ?" + extraWhere
+	countQ = "SELECT uniq(" + col + ")" + base +
+		" SETTINGS max_execution_time = 10"
+	pageQ = "SELECT " + col + base +
+		" GROUP BY " + col +
+		" ORDER BY " + col +
+		" LIMIT ? OFFSET ?" +
+		" SETTINGS max_execution_time = 10"
+	return countQ, pageQ
+}
+
+// rawPickerWindow bounds the raw-spans picker fallback: "what can I
+// filter by lately" is a 24h question, and the GROUP BY streams over
+// the (service_name, …) primary-key prefix so the window mostly guards
+// the pathological case.
+const rawPickerWindow = 24 * time.Hour
+
+// serviceNamesFromSpans is ListServiceNames' bounded raw-spans fallback
+// (v0.8.234) — used only when service_summary_5m has no rows for the
+// filter (degraded external-Distributed mode, fresh install's first
+// bucket, MV-recreate window). `like` is the pre-built ILIKE argument
+// ("" = no pattern filter).
+func (s *Store) serviceNamesFromSpans(ctx context.Context, like string, limit, offset int) ([]string, int, error) {
+	extra := ""
+	args := []any{time.Now().Add(-rawPickerWindow)}
+	if like != "" {
+		extra = " AND service_name ILIKE ?"
+		args = append(args, like)
+	}
+	countQ, pageQ := rawPickerSQL("service_name", extra)
+	var total uint64
+	if err := s.conn.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	pargs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.conn.Query(ctx, pageQ, pargs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, n)
+	}
+	return out, int(total), rows.Err()
+}
+
+// operationNamesFromSpans is ListOperationNames' raw-spans sibling of
+// serviceNamesFromSpans (v0.8.234). The optional service filter rides
+// the (service_name, time) primary-key prefix, so even at billions of
+// rows the scan is service-scoped.
+func (s *Store) operationNamesFromSpans(ctx context.Context, service, like string, limit, offset int) ([]string, int, error) {
+	extra := ""
+	args := []any{time.Now().Add(-rawPickerWindow)}
+	if service != "" {
+		extra += " AND service_name = ?"
+		args = append(args, service)
+	}
+	if like != "" {
+		extra += " AND name ILIKE ?"
+		args = append(args, like)
+	}
+	countQ, pageQ := rawPickerSQL("name", extra)
+	var total uint64
+	if err := s.conn.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	pargs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.conn.Query(ctx, pageQ, pargs...)
 	if err != nil {
 		return nil, 0, err
 	}

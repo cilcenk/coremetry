@@ -45,6 +45,12 @@ type SystemHealth struct {
 	// (alerts, notifications, topology aggregation, retention) run DUPLICATED.
 	// Populated by the API getSystemStats handler (main.go knows the lock state).
 	LockDegraded bool `json:"lockDegraded"`
+	// ESQueryErrors — cumulative failed Elasticsearch queries since process
+	// start (transport + non-2xx), when the logs backend is external ES.
+	// Non-zero = check /admin/elastic → Recent query errors for the exact
+	// requests Coremetry sent. Populated by the API getSystemStats handler
+	// (chstore stays free of any logstore dependency). v0.8.230.
+	ESQueryErrors int64 `json:"esQueryErrors,omitempty"`
 }
 
 // IngestDrops surfaces the in-process ingest data-loss counters (cumulative

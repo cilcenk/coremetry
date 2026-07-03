@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v8"
@@ -236,6 +238,68 @@ type ESStore struct {
 	// idxCache backs queryIndices (es_indices.go) — concrete index
 	// names for the configured pattern, refreshed every 5 min.
 	idxCache esIndexCache
+	// errs tracks failed queries for /admin/elastic + /admin/stats
+	// self-observation (v0.8.230). Every query path funnels its
+	// transport / non-2xx failures through recordQueryError.
+	errs esErrRing
+}
+
+// esErrRing is a small bounded buffer of the most recent failed
+// queries plus a cumulative counter. Mutex (not lock-free) is fine:
+// it's only touched on the failure path.
+type esErrRing struct {
+	mu    sync.Mutex
+	buf   []ESQueryError
+	total atomic.Int64
+}
+
+// esErrRingCap bounds the in-memory recent-error buffer surfaced on
+// /admin/elastic. 20 is enough to see a failure pattern without ever
+// mattering for pod memory.
+const esErrRingCap = 20
+
+// esErrQueryCap truncates the captured request body. An _msearch
+// ndjson over dozens of patterns runs to tens of KB; 4 KiB is plenty
+// to reproduce the call with curl.
+const esErrQueryCap = 4096
+
+// recordQueryError is the single funnel for failed ES queries
+// (v0.8.230, operator-requested): every transport error or non-2xx
+// response on a query path lands here so the exact request Coremetry
+// sent is visible BOTH in the console log (grep "[logstore-es] query
+// FAILED") and on /admin/elastic via Diagnostics(). Returns the error
+// unchanged so call sites stay one-line.
+func (s *ESStore) recordQueryError(op string, indices []string, query []byte, status int, err error) error {
+	q := string(query)
+	if len(q) > esErrQueryCap {
+		q = q[:esErrQueryCap] + "…(truncated)"
+	}
+	idx := strings.Join(indices, ",")
+	log.Printf("[logstore-es] query FAILED op=%s status=%d index=%q err=%v query=%s",
+		op, status, idx, err, q)
+	s.errs.total.Add(1)
+	s.errs.mu.Lock()
+	s.errs.buf = append(s.errs.buf, ESQueryError{
+		At: time.Now().UnixMilli(), Op: op, Index: idx, Query: q,
+		Status: status, Error: err.Error(),
+	})
+	if len(s.errs.buf) > esErrRingCap {
+		s.errs.buf = s.errs.buf[len(s.errs.buf)-esErrRingCap:]
+	}
+	s.errs.mu.Unlock()
+	return err
+}
+
+// Diagnostics returns the failure counter + recent failed queries,
+// newest-first. Implements logstore.Diagnoser.
+func (s *ESStore) Diagnostics() ESDiagnostics {
+	s.errs.mu.Lock()
+	recent := make([]ESQueryError, len(s.errs.buf))
+	for i := range s.errs.buf {
+		recent[len(s.errs.buf)-1-i] = s.errs.buf[i]
+	}
+	s.errs.mu.Unlock()
+	return ESDiagnostics{QueryErrors: s.errs.total.Load(), RecentErrors: recent}
 }
 
 // resolveESAuth selects exactly ONE auth method for the ES client. API key
@@ -423,17 +487,19 @@ func (s *ESStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, err
 	if err != nil {
 		return nil, err
 	}
+	eqlIdx := s.queryIndices(ctx, q.From, q.To)
 	req := esapi.EqlSearchRequest{
-		Index: strings.Join(s.queryIndices(ctx, q.From, q.To), ","),
+		Index: strings.Join(eqlIdx, ","),
 		Body:  bytes.NewReader(raw),
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
-		return nil, err
+		return nil, s.recordQueryError("eql search", eqlIdx, raw, 0, err)
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, fmt.Errorf("eql search: %s", res.String())
+		return nil, s.recordQueryError("eql search", eqlIdx, raw, res.StatusCode,
+			fmt.Errorf("eql search: %s", res.String()))
 	}
 	var decoded struct {
 		Hits struct {
@@ -1110,11 +1176,12 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
-		return nil, fmt.Errorf("ES search: %w", err)
+		return nil, s.recordQueryError("search", queryIdx, body, 0, fmt.Errorf("ES search: %w", err))
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, parseESError("search", res, s.cfg.Index)
+		return nil, s.recordQueryError("search", queryIdx, body, res.StatusCode,
+			parseESError("search", res, s.cfg.Index))
 	}
 
 	var raw struct {
@@ -1226,11 +1293,12 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
-		return nil, fmt.Errorf("ES tail search: %w", err)
+		return nil, s.recordQueryError("tail search", queryIdx, body, 0, fmt.Errorf("ES tail search: %w", err))
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, parseESError("tail search", res, s.cfg.Index)
+		return nil, s.recordQueryError("tail search", queryIdx, body, res.StatusCode,
+			parseESError("tail search", res, s.cfg.Index))
 	}
 	var raw struct {
 		Hits struct {
@@ -1364,8 +1432,9 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		return nil, err
 	}
 	tru := true
+	histIdx := s.queryIndices(ctx, f.From, f.To)
 	req := esapi.SearchRequest{
-		Index: s.queryIndices(ctx, f.From, f.To),
+		Index: histIdx,
 		Body:  bytes.NewReader(body),
 		// Same forgiveness as Search — no matching index → 0
 		// buckets rather than a 404. Keeps the panel rendering
@@ -1380,11 +1449,12 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
-		return nil, fmt.Errorf("ES histogram: %w", err)
+		return nil, s.recordQueryError("histogram", histIdx, body, 0, fmt.Errorf("ES histogram: %w", err))
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, parseESError("histogram", res, s.cfg.Index)
+		return nil, s.recordQueryError("histogram", histIdx, body, res.StatusCode,
+			parseESError("histogram", res, s.cfg.Index))
 	}
 
 	var raw struct {
@@ -1544,11 +1614,13 @@ func (s *ESStore) CountPatterns(
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
-		return out, fmt.Errorf("ES msearch count-patterns: %w", err)
+		return out, s.recordQueryError("msearch count-patterns", msearchIdx, []byte(ndjson.String()), 0,
+			fmt.Errorf("ES msearch count-patterns: %w", err))
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return out, parseESError("msearch count-patterns", res, s.cfg.Index)
+		return out, s.recordQueryError("msearch count-patterns", msearchIdx, []byte(ndjson.String()), res.StatusCode,
+			parseESError("msearch count-patterns", res, s.cfg.Index))
 	}
 
 	var raw struct {

@@ -187,6 +187,34 @@ type PatternServiceHit struct {
 	Count   uint64 `json:"count"`
 }
 
+// ESQueryError is one failed ES query, captured for the /admin/elastic
+// "recent query errors" panel (v0.8.230, operator-requested: "when ES
+// has a problem I want to see the queries it sent"). Query is the exact
+// request body sent (truncated at 4 KiB) so the operator can replay it
+// with curl against their cluster.
+type ESQueryError struct {
+	At     int64  `json:"at"` // unix ms
+	Op     string `json:"op"`
+	Index  string `json:"index"`
+	Query  string `json:"query"`
+	Status int    `json:"status"` // HTTP status; 0 = transport error
+	Error  string `json:"error"`
+}
+
+// ESDiagnostics is the ES backend's self-observation snapshot: total
+// failed queries since process start + the most recent failures.
+type ESDiagnostics struct {
+	QueryErrors  int64          `json:"queryErrors"`
+	RecentErrors []ESQueryError `json:"recentErrors"` // newest-first, ≤20
+}
+
+// Diagnoser is implemented by backends that track per-query failure
+// diagnostics (currently only ES). The API layer type-asserts — the CH
+// backend doesn't implement it and the endpoint reports an empty set.
+type Diagnoser interface {
+	Diagnostics() ESDiagnostics
+}
+
 // Store is the read interface every backend implements.
 type Store interface {
 	Search(ctx context.Context, f Filter) (*Page, error)

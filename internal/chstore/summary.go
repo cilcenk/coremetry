@@ -247,30 +247,25 @@ func (s *Store) CountServicesAgg(ctx context.Context, from, to time.Time, nameMa
 	return int(n), nil
 }
 
-// mvQuantileMemSettings bounds the memory + time of summary-MV reads that
-// merge the duration_q_state reservoir quantile state.
+// mvQuantileMemSettings bounds the memory of summary-MV reads that merge
+// the duration_q_state quantile state.
 //
-// v0.8.191 — operator-reported PRODUCTION (external Distributed cluster):
-// merging full 8192-sample reservoir quantilesState (measured ~64 KiB/row)
-// over a wide window blew CH's per-query memory limit (3.73 GiB → code 241,
-// "while reading column duration_q_state") AND the execution timeout
-// (code 159). Big services errored out, so /services and the /service
-// operations table rendered only the tiny self-obs service. Two memory-only
-// levers, neither of which can worsen behaviour (single-node ignores the
-// distributed one):
-//   - max_threads = 2 caps the parallel per-granule read buffers (each
-//     granule of 64 KiB states is large; 8 concurrent = ~8x the peak).
-//   - distributed_aggregation_memory_efficient streams the cross-shard
-//     merge instead of pulling every shard's partial states onto the
-//     initiator (the real sink on the 4-shard cluster).
-// max_execution_time is raised to 30 on the ops reads (was 10) so the
-// less-parallel scan still finishes.
+// History: v0.8.191 (operator-reported PRODUCTION code-241 OOM + code-159
+// timeout on the external Distributed cluster) added `max_threads = 2` +
+// `distributed_aggregation_memory_efficient = 1` as a band-aid while the
+// MVs still stored 8192-sample reservoir quantilesState (~64 KiB/row —
+// parallel per-granule read buffers of that state were the memory sink).
+// v0.8.194 migrated every duration_q_state to quantilesTDigestState
+// (~4.3 KiB/row, ~15x smaller, parallel-safe; verified full-parallelism
+// read fits where the reservoir OOM'd).
 //
-// PROPER fix (queued): migrate duration_q_state to quantilesTDigestState —
-// measured 4.3 KiB/row, ~15x smaller and parallel-safe. Reservoir
-// quantilesState at billion-span scale is exactly CLAUDE.md's documented
-// anti-pattern ("quantile() past ~1M rows → quantileTDigest").
-const mvQuantileMemSettings = `max_threads = 2, distributed_aggregation_memory_efficient = 1`
+// v0.8.233 — with TDigest in place the `max_threads = 2` throttle only
+// slowed the hottest reads (/services agg + /service ops tables) with no
+// remaining memory justification, so it's removed: CH's default read
+// parallelism applies again. The streaming cross-shard merge stays — it
+// bounds the initiator's peak on wide Distributed reads regardless of
+// state size, and single-node installs ignore it.
+const mvQuantileMemSettings = `distributed_aggregation_memory_efficient = 1`
 
 func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
 	if from.IsZero() {

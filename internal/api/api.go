@@ -54,6 +54,9 @@ type Server struct {
 	// logsMgr owns the UI-managed logstore config (Settings →
 	// Elasticsearch, v0.8.232). Nil-safe: handlers 503 without it.
 	logsMgr     *logstore.ESManager
+	// tails is the shared live-tail broadcaster (v0.8.236): one poll
+	// loop per distinct /logs filter, fanned out to every SSE tab.
+	tails       *tailBroker
 	ing         *otlp.Ingester
 	// lockDegraded — Redis was configured but the leader lock fell back to the
 	// always-leader Noop (Redis down at boot). Surfaced on /admin/stats so a
@@ -233,7 +236,7 @@ type rateSample struct {
 
 func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, ldapSvc *ldap.Service, c cache.Cache, n *notify.Notifier, cop *copilot.Service, bus *sse.Broker) *Server {
 	return &Server{
-		addr: addr, store: store, logs: logs, ing: ing, webFS: webFS,
+		addr: addr, store: store, logs: logs, tails: newTailBroker(logs), ing: ing, webFS: webFS,
 		auth: authSvc, oidc: oidcSvc, ldap: ldapSvc, cache: c, notify: n, copilot: cop,
 		bus: bus,
 		rateSamples: map[string]rateSample{},

@@ -122,15 +122,41 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, ": ok\n\n")
 	flusher.Flush()
 
-	// Cursor: seed from the client's newest row (reconnect catch-up) or now.
-	sinceNs := time.Now().UnixNano()
-	if v, err := strconv.ParseInt(q.Get("since"), 10, 64); err == nil && v > 0 {
-		sinceNs = v
-	}
-	boundaryIDs := map[int64]struct{}{} // ids already emitted at exactly sinceNs
+	// v0.8.236 — shared broadcaster. Subscribe FIRST so tick batches
+	// buffer in the bounded mailbox while the one-shot catch-up below
+	// fills the [client since → group cursor] hole; nothing is lost in
+	// between. The group owns the forward cursor + tailStep semantics
+	// (inclusive >= re-read, boundary dedup, gap on saturation) — one
+	// backend query per tick per DISTINCT filter, not per tab.
+	sub, cursor, detach := s.tails.subscribe(base)
+	defer detach()
 
-	tick := time.NewTicker(logsTailCadence)
-	defer tick.Stop()
+	// Reconnect catch-up: one bounded read from the client's newest row
+	// up to where the shared stream resumes. Same 1-dup edge at the
+	// exact boundary ns as the old per-connection loop (which also
+	// seeded an empty boundary set from ?since) — the UI keys rows by id.
+	if v, err := strconv.ParseInt(q.Get("since"), 10, 64); err == nil && v > 0 && v < cursor {
+		cctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		cf := base
+		cf.SinceNs = v
+		cf.To = time.Unix(0, cursor)
+		page, err := s.logs.Search(cctx, cf)
+		cancel()
+		if err != nil {
+			log.Printf("[logs-stream] catch-up failed (backend=%s): %v", s.logs.Backend(), err)
+		} else {
+			for _, lg := range page.Logs {
+				if data, err := json.Marshal(lg); err == nil {
+					fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
+				}
+			}
+			if len(page.Logs) >= logstore.LogsTailMax {
+				fmt.Fprint(w, "event: gap\ndata: {\"dropped\":true}\n\n")
+			}
+			flusher.Flush()
+		}
+	}
+
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 
@@ -142,31 +168,18 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
-		case <-tick.C:
-			tickCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
-			f := base
-			f.SinceNs = sinceNs
-			page, err := s.logs.Search(tickCtx, f)
-			cancel()
-			if err != nil {
-				// Transient backend error — keep the stream open, retry next
-				// tick. Logged for the operator; not surfaced to the client.
-				log.Printf("[logs-stream] tail failed (backend=%s): %v", s.logs.Backend(), err)
-				continue
-			}
-			emit, nextSince, nextBoundary, gap := tailStep(sinceNs, boundaryIDs, page.Logs, logstore.LogsTailMax)
-			for _, lg := range emit {
+		case ev := <-sub.ch:
+			for _, lg := range ev.logs {
 				if data, err := json.Marshal(lg); err == nil {
 					fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
 				}
 			}
-			if gap {
-				// Hit the per-tick cap — a busy service may have produced more
-				// than we read. Signal "fell behind" rather than silently drop.
+			if ev.gap {
+				// Fell behind (tick cap or a slow connection's dropped
+				// batch) — signal rather than silently omit lines.
 				fmt.Fprint(w, "event: gap\ndata: {\"dropped\":true}\n\n")
 			}
 			flusher.Flush()
-			sinceNs, boundaryIDs = nextSince, nextBoundary
 		}
 	}
 }

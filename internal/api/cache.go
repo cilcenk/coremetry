@@ -446,6 +446,12 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload pipeline: %v", err)
 			}
 		}
+	case "logstore":
+		if s.logsMgr != nil {
+			if err := s.logsMgr.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload logstore: %v", err)
+			}
+		}
 	default:
 		// Unknown service — silently ignore so a forward-compat
 		// peer publishing a config key the older pod doesn't

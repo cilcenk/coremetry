@@ -261,7 +261,10 @@ func (s *Server) execElasticSQL(w http.ResponseWriter, r *http.Request) {
 	type esSQLRunner interface {
 		ExecSQL(ctx context.Context, query string, fetchSize int) (*logstore.SQLResult, error)
 	}
-	runner, ok := s.logs.(interface {
+	// Unwrap (v0.8.232): assert on the live inner store — the
+	// Switchable wrapper doesn't forward optional capabilities, so a
+	// CH-backed install keeps getting the clean 400 below.
+	runner, ok := logstore.Unwrap(s.logs).(interface {
 		ExecSQL(ctx context.Context, query string, fetchSize int) (*logstore.SQLResult, error)
 	})
 	_ = esSQLRunner(nil) // doc: which interface shape; suppresses unused name

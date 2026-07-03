@@ -203,14 +203,17 @@ type ESConfig struct {
 	Fields ESFieldMap
 }
 
+// ESFieldMap carries the document field paths. JSON tags (v0.8.232)
+// are the wire shape for the UI-managed settings blob + the Settings
+// tab form — keep them stable.
 type ESFieldMap struct {
-	Timestamp  string // default "@timestamp"
-	TraceID    string // default "trace.id"
-	SpanID     string // default "span.id"
-	Service    string // default "service.name"
-	Body       string // default "message"
-	SeverityNo string // numeric, default "" (skip if absent)
-	SeverityTx string // text, default "log.level"
+	Timestamp  string `json:"timestamp,omitempty"`  // default "@timestamp"
+	TraceID    string `json:"traceId,omitempty"`    // default "trace.id"
+	SpanID     string `json:"spanId,omitempty"`     // default "span.id"
+	Service    string `json:"service,omitempty"`    // default "service.name"
+	Body       string `json:"body,omitempty"`       // default "message"
+	SeverityNo string `json:"severityNo,omitempty"` // numeric, default "" (skip if absent)
+	SeverityTx string `json:"severityTx,omitempty"` // text, default "log.level"
 }
 
 func (c *ESConfig) defaults() {

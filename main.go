@@ -621,10 +621,22 @@ func main() {
 	// Ingest still always writes to CH; this only changes /api/logs's read
 	// path. ES failure here is fatal so a misconfigured external cluster
 	// surfaces at boot, not at the first user query.
-	logsStore, err := buildLogStore(cfg, store)
+	logsInner, err := buildLogStore(cfg, store)
 	if err != nil {
 		log.Fatalf("logs backend: %v", err)
 	}
+	// v0.8.232 — every consumer holds the Switchable so an admin save on
+	// Settings → Elasticsearch swaps the live backend for all of them
+	// (API, evaluator, anomaly recorder, templater) without a restart.
+	// Env/YAML seeds the manager (the tab shows the effective config);
+	// LoadPersisted below overlays any UI-saved blob on top — UI wins.
+	logsStore := logstore.NewSwitchable(logsInner)
+	logsMgr := logstore.NewESManager(logsStore, logstore.NewCH(store),
+		newNamespaceResolver(store), esSettingsFromConfig(cfg))
+	if err := logsMgr.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[logs] persisted settings load failed (env config stays active): %v", err)
+	}
+	go logsMgr.StartConfigRefresh(ctx, store, 30*time.Second)
 	log.Printf("[logs] read backend: %s", logsStore.Backend())
 
 	// Wire the log backend into the evaluator so saved-search
@@ -754,6 +766,7 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetLockDegraded(lockDegraded) // v0.8.212 — duplicate-worker HA warning on /admin/stats
+	srv.SetLogstoreESManager(logsMgr) // v0.8.232 — Settings → Elasticsearch (UI-managed logs backend)
 	srv.SetCluster(clusterSvc)
 	srv.SetAutocomplete(acStore) // v0.8.80 — picker fast path; nil-safe, falls back to CH
 	// v0.6.4 — Model Context Protocol server. Wired on api/all
@@ -880,6 +893,37 @@ func buildLogStore(cfg *config.Config, ch *chstore.Store) (logstore.Store, error
 		return store, nil
 	default:
 		return nil, fmt.Errorf("unknown logs backend %q (want clickhouse|elasticsearch)", cfg.Logs.Backend)
+	}
+}
+
+// esSettingsFromConfig maps the env/YAML logs config to the manager's
+// boot seed (v0.8.232) so Settings → Elasticsearch shows the effective
+// config before any UI save, and an empty secret on PUT preserves the
+// env-supplied credential the same way it preserves a UI-saved one.
+func esSettingsFromConfig(cfg *config.Config) logstore.ESSettings {
+	es := cfg.Logs.Elasticsearch
+	backend := cfg.Logs.Backend
+	if backend == "" {
+		backend = "clickhouse"
+	}
+	return logstore.ESSettings{
+		Backend:            backend,
+		Addresses:          es.Addresses,
+		Username:           es.Username,
+		Password:           es.Password,
+		APIKey:             es.APIKey,
+		InsecureSkipVerify: es.InsecureSkipVerify,
+		Index:              es.Index,
+		IndexTemplate:      es.IndexTemplate,
+		Fields: logstore.ESFieldMap{
+			Timestamp:  es.Fields.Timestamp,
+			TraceID:    es.Fields.TraceID,
+			SpanID:     es.Fields.SpanID,
+			Service:    es.Fields.Service,
+			Body:       es.Fields.Message,
+			SeverityTx: es.Fields.SeverityText,
+			SeverityNo: es.Fields.SeverityNumber,
+		},
 	}
 }
 

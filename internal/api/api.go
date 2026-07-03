@@ -51,6 +51,9 @@ type Server struct {
 	addr        string
 	store       *chstore.Store
 	logs        logstore.Store    // read-side abstraction; CH or external ES
+	// logsMgr owns the UI-managed logstore config (Settings →
+	// Elasticsearch, v0.8.232). Nil-safe: handlers 503 without it.
+	logsMgr     *logstore.ESManager
 	ing         *otlp.Ingester
 	// lockDegraded — Redis was configured but the leader lock fell back to the
 	// always-leader Noop (Redis down at boot). Surfaced on /admin/stats so a
@@ -311,6 +314,12 @@ func (s *Server) EnableDemoMode(email, password string) {
 // always-leader Noop despite Redis being configured (Redis down at boot) — so
 // /admin/stats can warn that multi-pod background jobs are duplicated. v0.8.212.
 func (s *Server) SetLockDegraded(b bool) { s.lockDegraded = b }
+
+// SetLogstoreESManager wires the UI-managed logstore config owner
+// (v0.8.232). main() constructs the manager alongside the Switchable
+// logstore; the Settings → Elasticsearch handlers are 503 no-ops
+// without it (partial init / tests).
+func (s *Server) SetLogstoreESManager(m *logstore.ESManager) { s.logsMgr = m }
 
 // editorRoles is the role bundle used by RequireAnyRole on routes
 // that admin + editor may both use (dashboards, monitors, alerts,
@@ -715,6 +724,9 @@ func (s *Server) Start() error {
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
 	mux.HandleFunc("PUT /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.putTempoSettings))
+	mux.HandleFunc("GET  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.getLogstoreESSettings))
+	mux.HandleFunc("PUT  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.putLogstoreESSettings))
+	mux.HandleFunc("POST /api/settings/logstore/test", auth.RequireRole(auth.RoleAdmin, s.testLogstoreESSettings))
 	// External Kibana deep-link config (v0.5.236). GET is open
 	// to any signed-in user — the Logs page renders the link
 	// for everyone; only the admin can change the base URL.
@@ -1278,7 +1290,7 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 		// v0.8.230 — ES query-failure visibility. The ES logstore counts its
 		// failed queries; non-zero here points the operator at
 		// /admin/elastic → Recent query errors for the exact requests.
-		if diag, ok := s.logs.(logstore.Diagnoser); ok {
+		if diag, ok := logstore.Unwrap(s.logs).(logstore.Diagnoser); ok {
 			st.Health.ESQueryErrors = diag.Diagnostics().QueryErrors
 		}
 		return st, nil

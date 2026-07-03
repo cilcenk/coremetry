@@ -2691,6 +2691,44 @@ export interface Feedback {
   createdAt: number; // unix ns
 }
 
+// v0.8.232 — UI-managed logstore (Settings → Elasticsearch). Snapshot
+// is the secret-free GET view; input's empty password/apiKey preserves
+// the stored value (tempo-token contract).
+export interface ESLogstoreFieldMap {
+  timestamp?: string;
+  traceId?: string;
+  spanId?: string;
+  service?: string;
+  body?: string;
+  severityNo?: string;
+  severityTx?: string;
+}
+
+export interface ESLogstoreSnapshot {
+  backend: 'clickhouse' | 'elasticsearch';
+  addresses: string[];
+  username: string;
+  hasPassword: boolean;
+  hasApiKey: boolean;
+  insecureSkipVerify: boolean;
+  index: string;
+  indexTemplate: string;
+  fields: ESLogstoreFieldMap;
+  source: 'env' | 'ui'; // env/YAML bootstrap vs persisted UI override
+}
+
+export interface ESLogstoreInput {
+  backend: string;
+  addresses: string[];
+  username?: string;
+  password?: string;
+  apiKey?: string;
+  insecureSkipVerify?: boolean;
+  index?: string;
+  indexTemplate?: string;
+  fields?: ESLogstoreFieldMap;
+}
+
 // v0.8.230 — one failed ES query captured by the logstore diagnostics
 // ring (backend `recordQueryError`). `query` is the exact request body
 // Coremetry sent (truncated at 4 KiB) so the operator can replay it

@@ -232,7 +232,9 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 		ListFields(ctx context.Context) ([]string, error)
 	}
 	s.serveCached(w, r, "logs-fields", 60*time.Second, func() (any, error) {
-		f, ok := s.logs.(fielder)
+		// Unwrap (v0.8.232): the Switchable wrapper doesn't forward
+		// optional capabilities — assert on the live inner store.
+		f, ok := logstore.Unwrap(s.logs).(fielder)
 		if !ok {
 			return map[string]any{"fields": []string{}, "backend": s.logs.Backend()}, nil
 		}
@@ -295,7 +297,7 @@ func (s *Server) adminElasticIndices(w http.ResponseWriter, r *http.Request) {
 // renders its empty state.
 func (s *Server) adminElasticErrors(w http.ResponseWriter, r *http.Request) {
 	d := logstore.ESDiagnostics{RecentErrors: []logstore.ESQueryError{}}
-	if diag, ok := s.logs.(logstore.Diagnoser); ok {
+	if diag, ok := logstore.Unwrap(s.logs).(logstore.Diagnoser); ok {
 		d = diag.Diagnostics()
 		if d.RecentErrors == nil {
 			d.RecentErrors = []logstore.ESQueryError{}

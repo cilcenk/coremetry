@@ -19,6 +19,7 @@ import { ChannelsTab } from './settings/ChannelsTab';
 import { MaintenanceTab } from './settings/MaintenanceTab';
 import { AITab } from './settings/AiTab';
 import { TempoTab } from './settings/TempoTab';
+import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
 import { LDAPTab } from './settings/LdapTab';
 import { SSOPresetsTab } from './settings/SsoTab';
@@ -44,6 +45,7 @@ const TABS: SettingsTab[] = [
   { slug: 'maintenance', label: 'Maintenance windows',   Comp: MaintenanceTab },
   { slug: 'ai',          label: 'AI Copilot',            Comp: AITab },
   { slug: 'tempo',       label: 'Tempo backend',         Comp: TempoTab },
+  { slug: 'elastic',     label: 'Elasticsearch logs',    Comp: ElasticTab },
   { slug: 'kibana',      label: 'Kibana link',           Comp: KibanaTab },
   { slug: 'ldap',        label: 'LDAP / AD',             Comp: LDAPTab },
   { slug: 'sso',         label: 'SSO presets',           Comp: SSOPresetsTab },

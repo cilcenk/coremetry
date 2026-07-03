@@ -22,7 +22,7 @@ import type {
   Role, LDAPConfig, LDAPDirectoryUser,
   Feedback,
   RelationResponse, RelationKind, FilterExpr,
-  ESQueryError,
+  ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
 } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 
@@ -798,6 +798,20 @@ export const api = {
   putTempoSettings: (s: TempoSettingsInput) =>
     request<TempoSnapshot>(`/api/settings/tempo`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  // UI-managed logstore backend (v0.8.232, admin). Test builds +
+  // pings a candidate config WITHOUT touching the live backend —
+  // the response carries the real ES error for the operator.
+  getLogstoreSettings: () => get<ESLogstoreSnapshot>(`/api/settings/logstore`),
+  putLogstoreSettings: (s: ESLogstoreInput) =>
+    request<ESLogstoreSnapshot>(`/api/settings/logstore`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  testLogstoreSettings: (s: ESLogstoreInput) =>
+    request<{ ok: boolean; error?: string }>(`/api/settings/logstore/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),
   // External Kibana deep-link (v0.5.236). GET is open to every

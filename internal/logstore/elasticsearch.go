@@ -2303,6 +2303,25 @@ func traceTermsAny(configured, body, value, kind string) map[string]any {
 			"match": map[string]any{body: value},
 		})
 	}
+	// v0.8.235 — operator-supplied Kibana repro: on their cluster the
+	// trace id lives in a field NONE of the candidate shapes above
+	// cover, and Kibana Discover's free-text search — a bare
+	// multi_match (best_fields, lenient, no field list → all eligible
+	// fields) — DOES return the rows. Mirror that exact clause as the
+	// catch-all should-branch so the lookup matches wherever the
+	// pipeline put the id: a dedicated field under any name, or raw
+	// body text. The cheap term clauses stay first; the id is a single
+	// hex token so analyzed-field matching stays exact. Cost is the
+	// same query shape Kibana runs routinely on the same cluster, and
+	// the surrounding search keeps its timeout + track_total_hits
+	// guards.
+	should = append(should, map[string]any{
+		"multi_match": map[string]any{
+			"query":   value,
+			"type":    "best_fields",
+			"lenient": true,
+		},
+	})
 	return map[string]any{
 		"bool": map[string]any{
 			"should":               should,

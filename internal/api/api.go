@@ -878,9 +878,6 @@ func (s *Server) Start() error {
 	// (15s cache); polled from the global AppShell.
 	mux.HandleFunc("GET    /api/recent-changes",          s.getRecentChanges)
 
-	// User feedback (any authenticated role can read and write)
-	mux.HandleFunc("GET    /api/feedbacks", s.listFeedbacks)
-	mux.HandleFunc("POST   /api/feedbacks", s.submitFeedback)
 
 	// Ingest pipeline (v0.5.263) — admin-managed drop / enrich
 	// rules applied before the sampler. List + upsert + delete.

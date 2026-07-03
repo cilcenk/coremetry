@@ -57,7 +57,7 @@ var configPreserveTables = []string{
 	"dashboards", "audit_log", "notification_channels", "anomaly_silences",
 	"maintenance_windows", "monitors", "runbooks", "slos", "service_contracts",
 	"status_page_components", "status_page_config", "status_page_published",
-	"status_page_subscribers", "log_templates", "feedbacks",
+	"status_page_subscribers", "log_templates",
 	// operator-authored analysis content (manual records / notes / acks / triage)
 	"problems", "incidents", "incident_events", "incident_problems",
 	"exception_groups", "events", "runbook_executions",

@@ -8,7 +8,7 @@ import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Flame, Compass, BookText,
   LayoutDashboard, Bell, Gauge, Target, CalendarClock, CircleGauge, Search, Hash,
-  Server, Sparkles, LayoutGrid, FileClock, Terminal, Code, Globe, MessageCircle, type LucideIcon,
+  Server, Sparkles, LayoutGrid, FileClock, Terminal, Code, Globe, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -115,7 +115,6 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: 'navGroup.community',
     items: [
-      { href: '/feedback', label: 'nav.feedback', icon: MessageCircle },
     ],
   },
 ];

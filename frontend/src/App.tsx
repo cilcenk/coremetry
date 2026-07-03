@@ -62,7 +62,6 @@ const PublicTrace       = lazy(() => import('./pages/PublicTrace'));
 // v0.8.9 — the ten /admin/* pages are consolidated into one System area
 // (lazy-loaded per-tab inside pages/System.tsx, not routed individually here).
 const System            = lazy(() => import('./pages/System'));
-const FeedbackPage      = lazy(() => import('./pages/Feedback'));
 
 // Each lazy module's default export is the page component.
 // React Router doesn't enforce any naming convention beyond
@@ -143,7 +142,6 @@ export default function App() {
             <Route path="/public/trace"   element={<PublicTrace />} />
             {/* Consolidated System area (v0.8.9). Ten former /admin/*
                 pages are now tabs inside <System>; old links redirect. */}
-            <Route path="/feedback"    element={<FeedbackPage />} />
             <Route path="/system"      element={<Navigate to="/system/stats" replace />} />
             <Route path="/system/:tab" element={<System />} />
             <Route path="/admin/:tab"  element={<AdminRedirect />} />

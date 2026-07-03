@@ -60,7 +60,6 @@ const EN: Catalog = {
   'nav.sql':         'SQL playground',
   'nav.query':       'Query (DQL)',
   'nav.statusPage':  'Public Status Page',
-  'nav.feedback':    'Feedback',
 
   // Login
   'login.signIn':      'Sign in',
@@ -161,7 +160,6 @@ const TR: Catalog = {
   'nav.sql':         'SQL editörü',
   'nav.query':       'Sorgu (DQL)',
   'nav.statusPage':  'Genel Durum Sayfası',
-  'nav.feedback':    'Geri bildirim',
   'navGroup.community': 'Topluluk',
 
   // Login

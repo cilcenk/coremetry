@@ -2683,14 +2683,6 @@ export interface SpanExemplar {
   timeUnixNs: number;
 }
 
-export interface Feedback {
-  id: string;
-  userId: string;
-  userEmail: string;
-  message: string;
-  createdAt: number; // unix ns
-}
-
 // v0.8.232 — UI-managed logstore (Settings → Elasticsearch). Snapshot
 // is the secret-free GET view; input's empty password/apiKey preserves
 // the stored value (tempo-token contract).

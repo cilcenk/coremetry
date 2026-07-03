@@ -453,7 +453,7 @@ function DashboardGrid({
                    onClick={() => {
                      if (!g.rowPanel) return;
                      const next = new Set(collapsed);
-                     next.has(g.rowPanel.id) ? next.delete(g.rowPanel.id) : next.add(g.rowPanel.id);
+                     if (next.has(g.rowPanel.id)) next.delete(g.rowPanel.id); else next.add(g.rowPanel.id);
                      setCollapsed(next);
                    }}
                    onKeyDown={e => {
@@ -463,7 +463,7 @@ function DashboardGrid({
                      if (e.key === 'Enter' || e.key === ' ') {
                        e.preventDefault();
                        const next = new Set(collapsed);
-                       next.has(g.rowPanel.id) ? next.delete(g.rowPanel.id) : next.add(g.rowPanel.id);
+                       if (next.has(g.rowPanel.id)) next.delete(g.rowPanel.id); else next.add(g.rowPanel.id);
                        setCollapsed(next);
                      }
                    }}

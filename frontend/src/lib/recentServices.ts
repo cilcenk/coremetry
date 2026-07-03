@@ -9,26 +9,19 @@
 // Both lists are plain string[] of service names; the consumer builds
 // the /service?name= deep-link.
 
+import { getItem, setItem } from './storage';
+
 const RECENT_KEY = 'coremetry.recentServices';
 const PINNED_KEY = 'coremetry.pinnedServices';
 const RECENT_CAP = 12;
 
 function read(key: string): string[] {
-  try {
-    const s = localStorage.getItem(key);
-    const v = s ? JSON.parse(s) : [];
-    return Array.isArray(v) ? v.filter(x => typeof x === 'string') : [];
-  } catch {
-    return [];
-  }
+  const v = getItem<unknown>(key, []);
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
 function write(key: string, v: string[]): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(v));
-  } catch {
-    /* quota / disabled storage — recents are best-effort */
-  }
+  setItem(key, v);
 }
 
 // recordServiceVisit pushes a service to the front of the MRU list

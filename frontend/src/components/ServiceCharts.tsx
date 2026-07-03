@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
 import { metricQuery } from '@/lib/metricQuery';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 
 // ServiceCharts — three core trend panels for the focused
@@ -63,16 +64,13 @@ export function ServiceCharts({ service, range, onZoom }: {
   // shifted from/to. Persisted in localStorage so an operator
   // who likes the comparison view keeps it across reloads.
   const [compare, setCompare] = useState<CompareMode>(() => {
-    try {
-      const v = localStorage.getItem('svc.charts.compare') as CompareMode | null;
-      if (v === '24h' || v === '7d' || v === 'prev') return v;
-    } catch { /* private browsing — best-effort */ }
+    const v = getRaw(STORAGE_KEYS.svcChartsCompare) as CompareMode | null;
+    if (v === '24h' || v === '7d' || v === 'prev') return v;
     return 'off';
   });
   const setCompareAndPersist = (m: CompareMode) => {
     setCompare(m);
-    try { localStorage.setItem('svc.charts.compare', m); }
-    catch { /* best-effort */ }
+    setRaw(STORAGE_KEYS.svcChartsCompare, m);
   };
   const [rpsPrev, setRpsPrev] = useState<SpanMetricSeries[] | null>(null);
   const [errPrev, setErrPrev] = useState<SpanMetricSeries[] | null>(null);

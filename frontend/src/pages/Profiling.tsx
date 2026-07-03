@@ -516,12 +516,12 @@ set -euo pipefail
 
 ENDPOINT="${endpoint}/v1/profiles"
 SVC="\${OTEL_SERVICE_NAME}"
-HOST="\$(hostname)"
+HOST="$(hostname)"
 TARGET="\${TARGET_PID}"
 WINDOW=30
 
 while true; do
-  START_NS="\$(date +%s%N)"
+  START_NS="$(date +%s%N)"
   OUT=/tmp/java.pprof
   /opt/async-profiler/profiler.sh \\
       -e cpu -d "\${WINDOW}" -o pprof -f "\${OUT}" "\${TARGET}"
@@ -532,7 +532,7 @@ while true; do
     -H "X-Coremetry-Host: \${HOST}" \\
     -H "X-Coremetry-Profile-Type: cpu" \\
     -H "X-Coremetry-Start-Time-Ns: \${START_NS}" \\
-    -H "X-Coremetry-Duration-Ns: \$((WINDOW * 1000000000))" \\
+    -H "X-Coremetry-Duration-Ns: $((WINDOW * 1000000000))" \\
     --data-binary "@\${OUT}"
 
   sleep 30

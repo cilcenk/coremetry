@@ -9,6 +9,7 @@ import {
   nextSort, sortRows,
   type DataTableColumn, type SortDir, type SortState,
 } from '@/lib/dataTable';
+import { getItem, setItem, dtSortKey, dtWidthKey } from '@/lib/storage';
 
 // parseSortParam — decode the URL sort param "<colId>.<dir>" → SortState.
 // Returns null for a missing / malformed value so the caller falls back to
@@ -59,15 +60,6 @@ export interface DataTable<T> {
   rowProps: (index: number) => { 'data-row-idx': number; className?: string };
 }
 
-function loadJSON<T>(key: string, fallback: T): T {
-  try {
-    const s = localStorage.getItem(key);
-    return s ? (JSON.parse(s) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen, searchRef }: {
   storageKey: string;
   columns: DataTableColumn<T>[];
@@ -79,8 +71,8 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen
   onOpen?: (row: T, index: number) => void;
   searchRef?: RefObject<HTMLInputElement | null>;
 }): DataTable<T> {
-  const sortLSKey = `dt.${storageKey}.sort`;
-  const widthLSKey = `dt.${storageKey}.widths`;
+  const sortLSKey = dtSortKey(storageKey);
+  const widthLSKey = dtWidthKey(storageKey);
   // Sort is shareable (UX#3): the URL param `s_<storageKey>` wins so a copied
   // link reproduces the exact sort; else the operator's personal localStorage
   // default; else initialSort. Namespaced by storageKey so two tables on one
@@ -91,15 +83,15 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen
   const urlKey = `s_${storageKey}`;
   const urlSort = searchParams.get(urlKey);
   const [sort, setSortState] = useState<SortState>(() =>
-    parseSortParam(urlSort) ?? loadJSON(sortLSKey, initialSort ?? { id: null, dir: 'desc' }));
+    parseSortParam(urlSort) ?? getItem(sortLSKey, initialSort ?? { id: null, dir: 'desc' }));
   const [colWidths, setColWidths] = useState<Record<string, number>>(() =>
-    loadJSON(widthLSKey, {}));
+    getItem(widthLSKey, {}));
 
   useEffect(() => {
-    try { localStorage.setItem(sortLSKey, JSON.stringify(sort)); } catch { /* private mode */ }
+    setItem(sortLSKey, sort);
   }, [sort, sortLSKey]);
   useEffect(() => {
-    try { localStorage.setItem(widthLSKey, JSON.stringify(colWidths)); } catch { /* private mode */ }
+    setItem(widthLSKey, colWidths);
   }, [colWidths, widthLSKey]);
 
   // Apply a sort to state + URL.

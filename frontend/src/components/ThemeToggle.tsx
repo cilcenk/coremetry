@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { setRaw } from '@/lib/storage';
 
 type Theme = 'dark' | 'light';
 
@@ -22,7 +23,7 @@ export function ThemeToggle() {
     const next: Theme = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
     document.documentElement.setAttribute('data-theme', next);
-    try { localStorage.setItem(STORAGE_KEY, next); } catch {}
+    setRaw(STORAGE_KEY, next);
   };
 
   return (

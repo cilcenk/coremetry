@@ -375,7 +375,7 @@ export function TraceWaterfall({
   const toggle = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     const next = new Set(collapsed);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) next.delete(id); else next.add(id);
     setCollapsed(next);
   };
 

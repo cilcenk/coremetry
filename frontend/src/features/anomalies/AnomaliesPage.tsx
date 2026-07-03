@@ -17,6 +17,7 @@ import { useProblems, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
+import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
 } from '@/lib/types';
@@ -471,26 +472,16 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // "critical only" filter stays at that scope across page
   // reloads (typical incident workflow). Default: all three on.
   const [sevSet, setSevSet] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem('problems.sev');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-      }
-    } catch { /* ignore */ }
+    const arr = getItem<string[] | null>(STORAGE_KEYS.problemsSev, null);
+    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
     return new Set(['critical', 'warning', 'info']);
   });
   // Priority filter — defaults to P1+P2 so the operator's inbox
   // surfaces signal first. P3 (steady warnings) is one click
   // away. Persisted alongside the severity set.
   const [prioSet, setPrioSet] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem('problems.prio');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-      }
-    } catch { /* ignore */ }
+    const arr = getItem<string[] | null>(STORAGE_KEYS.problemsPrio, null);
+    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
     return new Set(['P1', 'P2']);
   });
   const togglePrio = (p: string) => {
@@ -502,7 +493,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
       } else {
         next.add(p);
       }
-      try { localStorage.setItem('problems.prio', JSON.stringify([...next])); } catch { /* ignore */ }
+      setItem(STORAGE_KEYS.problemsPrio, [...next]);
       return next;
     });
   };
@@ -518,7 +509,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
       } else {
         next.add(s);
       }
-      try { localStorage.setItem('problems.sev', JSON.stringify([...next])); } catch { /* ignore */ }
+      setItem(STORAGE_KEYS.problemsSev, [...next]);
       return next;
     });
   };

@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { TimeRange } from './types';
 import { encodeRange, decodeRange } from './urlState';
+import { getRaw, setRaw } from './storage';
 
 // useUrlRange (v0.7.87) — the SINGLE source of truth for a page's time
 // range: the URL `?range=` param, not component-local state.
@@ -39,10 +40,10 @@ import { encodeRange, decodeRange } from './urlState';
 // actually changes (the v0.5.184 infinite-refetch trap).
 const RANGE_STORE_KEY = 'coremetry-range';
 function readStoredRange(): string | null {
-  try { return localStorage.getItem(RANGE_STORE_KEY); } catch { return null; }
+  return getRaw(RANGE_STORE_KEY);
 }
 function writeStoredRange(enc: string): void {
-  try { localStorage.setItem(RANGE_STORE_KEY, enc); } catch { /* private mode / quota */ }
+  setRaw(RANGE_STORE_KEY, enc);
 }
 
 // storedRangeString — public read of the persisted global range, for pages

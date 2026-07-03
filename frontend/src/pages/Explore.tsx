@@ -19,6 +19,7 @@ import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TimeRange, FilterExpr, LatencyHeatmap as Heatmap } from '@/lib/types';
 import {
   REPEAT_PRESETS, STEP_OPTIONS,
@@ -132,11 +133,10 @@ function ExploreInner() {
   // Facets panel — traces mode only (D5). Persisted preference.
   const [showFacets, setShowFacets] = useState(() => {
     if (typeof window === 'undefined') return true;
-    return localStorage.getItem('coremetry-explore-facets') !== '0';
+    return getRaw(STORAGE_KEYS.exploreFacets) !== '0';
   });
   useEffect(() => {
-    try { localStorage.setItem('coremetry-explore-facets', showFacets ? '1' : '0'); }
-    catch { /* ignore */ }
+    setRaw(STORAGE_KEYS.exploreFacets, showFacets ? '1' : '0');
   }, [showFacets]);
 
   const [services, setServices] = useState<string[]>([]);

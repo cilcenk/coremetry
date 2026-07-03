@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, keepPreviousData } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
+import { getRaw, STORAGE_KEYS } from './lib/storage';
 import './styles/globals.css';
 
 // Defer AND gate the OpenTelemetry browser SDK off the critical path
@@ -31,16 +32,13 @@ import './styles/globals.css';
 //   4. default                        → on
 function rumEnabled(): boolean {
   if (import.meta.env.VITE_OTEL_DISABLE === '1') return false;
-  try {
-    const injected = (window as { __COREMETRY_RUM__?: boolean }).__COREMETRY_RUM__;
-    if (typeof injected === 'boolean') return injected;
-    const ls = window.localStorage?.getItem('coremetry-rum');
-    if (ls === 'off' || ls === '0' || ls === 'false') return false;
-    if (ls === 'on' || ls === '1' || ls === 'true') return true;
-  } catch {
-    // localStorage can throw in locked-down/private contexts — fall
-    // through to the default rather than blocking RUM init.
-  }
+  const injected = (window as { __COREMETRY_RUM__?: boolean }).__COREMETRY_RUM__;
+  if (typeof injected === 'boolean') return injected;
+  // getRaw yields null in locked-down/private contexts — falls
+  // through to the default rather than blocking RUM init.
+  const ls = getRaw(STORAGE_KEYS.rum);
+  if (ls === 'off' || ls === '0' || ls === 'false') return false;
+  if (ls === 'on' || ls === '1' || ls === 'true') return true;
   return true;
 }
 

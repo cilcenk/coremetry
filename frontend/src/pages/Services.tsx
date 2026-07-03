@@ -16,6 +16,7 @@ import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { getItem, setItem } from '@/lib/storage';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 
 type SortKey = 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99' | 'apdex';
@@ -74,20 +75,15 @@ export default function ServicesPage() {
   // operator, basically) — no server state needed.
   const PINNED_KEY = 'coremetry-pinned-services';
   const [pinned, setPinned] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem(PINNED_KEY);
-      if (!raw) return new Set();
-      const arr = JSON.parse(raw);
-      return new Set(Array.isArray(arr) ? arr : []);
-    } catch { return new Set(); }
+    const arr = getItem<string[] | null>(PINNED_KEY, null);
+    return new Set(Array.isArray(arr) ? arr : []);
   });
   const togglePin = (name: string) => {
     setPinned(prev => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
-      try { localStorage.setItem(PINNED_KEY, JSON.stringify([...next])); }
-      catch { /* quota / private mode — silently no-op */ }
+      setItem(PINNED_KEY, [...next]);
       return next;
     });
   };

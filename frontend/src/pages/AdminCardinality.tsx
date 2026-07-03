@@ -6,6 +6,7 @@ import { Card, Badge, Stack, Row } from '@/components/ui';
 import { useCardinality, useSystemStats, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { fmtBytes, fmtNum } from '@/lib/utils';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
@@ -257,16 +258,13 @@ function FinOpsPanel({ services }: {
 }) {
   const sysQ = useSystemStats();
   const [costPerTbMo, setCostPerTbMo] = useState<number>(() => {
-    try {
-      const v = parseFloat(localStorage.getItem('coremetry.finops.costPerTbMo') ?? '');
-      if (isFinite(v) && v > 0) return v;
-    } catch { /* private browsing — best-effort */ }
+    const v = parseFloat(getRaw(STORAGE_KEYS.finopsCostPerTbMo) ?? '');
+    if (isFinite(v) && v > 0) return v;
     return 50;
   });
   const updateRate = (n: number) => {
     setCostPerTbMo(n);
-    try { localStorage.setItem('coremetry.finops.costPerTbMo', String(n)); }
-    catch { /* best-effort */ }
+    setRaw(STORAGE_KEYS.finopsCostPerTbMo, String(n));
   };
 
   const stats = sysQ.data;

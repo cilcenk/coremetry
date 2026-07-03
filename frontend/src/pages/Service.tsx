@@ -25,6 +25,7 @@ import { ServiceProfilingPanel } from '@/components/ServiceProfilingPanel';
 import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
@@ -1318,10 +1319,8 @@ function ServiceLatencyHeatmap({ service, range }: {
   // Collapse state — defaults open. Persisted to localStorage so an operator
   // who'd rather hide the panel doesn't fight it on every reload. Keyed
   // globally (not per-service) so the preference is a one-time setting.
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem('svc.heatmap.collapsed') === '1'; }
-    catch { return false; }
-  });
+  const [collapsed, setCollapsed] = useState<boolean>(
+    () => getRaw(STORAGE_KEYS.svcHeatmapCollapsed) === '1');
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
   // v0.8.116 — the parent already wraps this panel in <LazyMount> (mounts
@@ -1369,8 +1368,7 @@ function ServiceLatencyHeatmap({ service, range }: {
   const toggle = () => {
     const next = !collapsed;
     setCollapsed(next);
-    try { localStorage.setItem('svc.heatmap.collapsed', next ? '1' : '0'); }
-    catch { /* private browsing — best-effort only */ }
+    setRaw(STORAGE_KEYS.svcHeatmapCollapsed, next ? '1' : '0');
   };
 
   return (

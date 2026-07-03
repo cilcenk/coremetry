@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { useHealth, useOpenProblemCount } from '@/lib/queries';
 import { useT } from '@/lib/i18n';
+import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { TelescopeIcon } from './TelescopeIcon';
 import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
@@ -166,27 +167,21 @@ export function Sidebar() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(['navGroup.triage', 'navGroup.services', 'navGroup.signals']));
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('coremetry-sidebar-groups');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) setExpandedGroups(new Set(arr));
-      }
-    } catch { /* ignore */ }
+    const arr = getItem<string[] | null>(STORAGE_KEYS.sidebarGroups, null);
+    if (Array.isArray(arr)) setExpandedGroups(new Set(arr));
   }, []);
   const toggleGroup = (k: string) => {
     setExpandedGroups(prev => {
       const next = new Set(prev);
       if (next.has(k)) next.delete(k); else next.add(k);
-      try { localStorage.setItem('coremetry-sidebar-groups', JSON.stringify([...next])); }
-      catch { /* ignore */ }
+      setItem(STORAGE_KEYS.sidebarGroups, [...next]);
       return next;
     });
   };
   useEffect(() => {
-    const w = parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? '', 10);
+    const w = parseInt(getRaw(SIDEBAR_WIDTH_KEY) ?? '', 10);
     if (Number.isFinite(w) && w >= MIN_W && w <= MAX_W) setWidth(w);
-    setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
+    setCollapsed(getRaw(SIDEBAR_COLLAPSED_KEY) === '1');
   }, []);
   // Track viewport so we can switch to mobile drawer mode below the breakpoint.
   useEffect(() => {
@@ -217,7 +212,7 @@ export function Sidebar() {
       dragRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+      setRaw(SIDEBAR_WIDTH_KEY, String(width));
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -229,7 +224,7 @@ export function Sidebar() {
   const toggleCollapsed = () => {
     setCollapsed(c => {
       const next = !c;
-      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      setRaw(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
       return next;
     });
     setMenuOpen(false);

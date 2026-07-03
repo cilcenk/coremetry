@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getRaw, setItem } from '@/lib/storage';
 
 // useQueryHistory — Explore's "Son sorgular" (recent queries) ring.
 //
@@ -78,11 +79,9 @@ export function parseHistory(raw: string | null): QueryHistoryEntry[] {
 
 function readHistory(): QueryHistoryEntry[] {
   if (typeof window === 'undefined') return [];
-  try {
-    return parseHistory(localStorage.getItem(HISTORY_KEY));
-  } catch {
-    return [];
-  }
+  // getRaw absorbs disabled-storage throws; parseHistory absorbs
+  // corrupt JSON — neither path can break the page.
+  return parseHistory(getRaw(HISTORY_KEY));
 }
 
 export interface UseQueryHistory {
@@ -110,8 +109,7 @@ export function useQueryHistory(): UseQueryHistory {
     if (!p || !p.desc) return;
     const next = mergeHistory(historyRef.current, { desc: p.desc, state: p.state, tm: Date.now() });
     historyRef.current = next;
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); }
-    catch { /* storage full / disabled — keep in-memory only */ }
+    setItem(HISTORY_KEY, next); // storage full / disabled → helper no-ops; ring stays in-memory
     setHistory(next); // no-op after unmount; localStorage already written
   }, []);
 

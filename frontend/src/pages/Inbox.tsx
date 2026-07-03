@@ -6,6 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
+import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
@@ -42,23 +43,13 @@ export default function InboxPage() {
   // operator's view sticks across page reloads. Default: P1+P2
   // (signal-first) across all kinds.
   const [prioSet, setPrioSet] = useState<Set<string>>(() => {
-    try {
-      const raw = localStorage.getItem('inbox.prio');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-      }
-    } catch { /* ignore */ }
+    const arr = getItem<string[] | null>(STORAGE_KEYS.inboxPrio, null);
+    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
     return new Set(['P1', 'P2']);
   });
   const [kindSet, setKindSet] = useState<Set<InboxKind>>(() => {
-    try {
-      const raw = localStorage.getItem('inbox.kind');
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-      }
-    } catch { /* ignore */ }
+    const arr = getItem<InboxKind[] | null>(STORAGE_KEYS.inboxKind, null);
+    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
     return new Set<InboxKind>(['problem', 'exception', 'anomaly']);
   });
   const [serviceFilter, setServiceFilter] = useState('');
@@ -76,7 +67,7 @@ export default function InboxPage() {
       } else {
         next.add(p);
       }
-      try { localStorage.setItem('inbox.prio', JSON.stringify([...next])); } catch { /* ignore */ }
+      setItem(STORAGE_KEYS.inboxPrio, [...next]);
       return next;
     });
   };
@@ -89,7 +80,7 @@ export default function InboxPage() {
       } else {
         next.add(k);
       }
-      try { localStorage.setItem('inbox.kind', JSON.stringify([...next])); } catch { /* ignore */ }
+      setItem(STORAGE_KEYS.inboxKind, [...next]);
       return next;
     });
   };

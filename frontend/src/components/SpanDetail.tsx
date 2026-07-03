@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/types';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { getRaw, setRaw } from '@/lib/storage';
 import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
 import { CopilotExplain } from './CopilotExplain';
@@ -118,7 +119,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
   // first paint to avoid a flash from default → restored size.
   const [panelW, setPanelW] = useState<number>(() => {
     if (typeof window === 'undefined') return 340;
-    const raw = parseInt(window.localStorage.getItem(PANEL_STORAGE_KEY) ?? '', 10);
+    const raw = parseInt(getRaw(PANEL_STORAGE_KEY) ?? '', 10);
     return Number.isFinite(raw) && raw >= PANEL_MIN && raw <= PANEL_MAX ? raw : 340;
   });
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -143,7 +144,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
       dragRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      window.localStorage.setItem(PANEL_STORAGE_KEY, String(panelW));
+      setRaw(PANEL_STORAGE_KEY, String(panelW));
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -154,7 +155,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
   }, [panelW]);
   const onResetWidth = () => {
     setPanelW(340);
-    window.localStorage.setItem(PANEL_STORAGE_KEY, '340');
+    setRaw(PANEL_STORAGE_KEY, '340');
   };
 
   // Esc closes the drawer (v0.8.112 — it floats over the waterfall now,

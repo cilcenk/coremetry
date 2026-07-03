@@ -11,6 +11,7 @@ import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { getItem, setItem, removeRaw } from '@/lib/storage';
 import type { NodeSizeMode, NodeSizeMetric } from '@/lib/topologyNodes';
 import type {
   ServiceTopologyResponse, ServiceTopologyNode, ServiceTopologyEdge,
@@ -200,8 +201,9 @@ function OldTopologyPage() {
     let cancelled = false;
     if (!user) {
       try {
-        const raw = localStorage.getItem(LEGACY_LS_KEY);
-        const arr: Array<{ name: string; qs: string }> = raw ? JSON.parse(raw) : [];
+        // try/catch stays: getItem tolerates corrupt JSON, but a poisoned
+        // array entry (null row) would still throw in the map below.
+        const arr = getItem<Array<{ name: string; qs: string }>>(LEGACY_LS_KEY, []);
         if (!cancelled) setSaved(arr.map(v => ({
           id: 'ls:' + v.name, name: v.name, queryString: v.qs,
           ownerId: '', shared: false, local: true,
@@ -224,8 +226,7 @@ function OldTopologyPage() {
         // their localStorage copy to re-save manually.
         if (remote.length === 0) {
           try {
-            const raw = localStorage.getItem(LEGACY_LS_KEY);
-            const legacy: Array<{ name: string; qs: string }> = raw ? JSON.parse(raw) : [];
+            const legacy = getItem<Array<{ name: string; qs: string }>>(LEGACY_LS_KEY, []);
             if (legacy.length > 0) {
               Promise.allSettled(legacy.map(v =>
                 api.createSavedView({ name: v.name, page: 'topology', queryString: v.qs })
@@ -239,7 +240,7 @@ function OldTopologyPage() {
                   })));
                   // Migration succeeded — drop the legacy blob so
                   // we don't keep re-migrating on every mount.
-                  try { localStorage.removeItem(LEGACY_LS_KEY); } catch {}
+                  removeRaw(LEGACY_LS_KEY);
                 });
               });
             }
@@ -284,9 +285,8 @@ function OldTopologyPage() {
       setSaved(prev => prev.filter(v => v.id !== id));
       try {
         const name = id.slice(3);
-        const raw = localStorage.getItem(LEGACY_LS_KEY);
-        const arr: Array<{ name: string; qs: string }> = raw ? JSON.parse(raw) : [];
-        localStorage.setItem(LEGACY_LS_KEY, JSON.stringify(arr.filter(v => v.name !== name)));
+        const arr = getItem<Array<{ name: string; qs: string }>>(LEGACY_LS_KEY, []);
+        setItem(LEGACY_LS_KEY, arr.filter(v => v.name !== name));
       } catch { /* ignore */ }
       return;
     }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getRaw, setRaw } from '@/lib/storage';
 
 // Density toggle — global UI density level. Datadog has 2 levels
 // (compact/comfortable), Grafana has 3, Salesforce has 4. The
@@ -40,10 +41,7 @@ export function DensityToggle() {
   const [density, setDensity] = useState<Density>('comfortable');
 
   useEffect(() => {
-    const stored = (() => {
-      try { return localStorage.getItem(STORAGE_KEY) as Density | null; }
-      catch { return null; }
-    })();
+    const stored = getRaw(STORAGE_KEY) as Density | null;
     // Tolerate legacy 2-level values from pre-v0.4.85 by mapping
     // them onto the new scale.
     const initial: Density = (() => {
@@ -59,7 +57,7 @@ export function DensityToggle() {
     const next = STEPS[(i + 1) % STEPS.length];
     setDensity(next);
     document.documentElement.setAttribute('data-density', next);
-    try { localStorage.setItem(STORAGE_KEY, next); } catch { /* noop */ }
+    setRaw(STORAGE_KEY, next);
   };
 
   const tip = `Density: ${LABEL[density]} — click to cycle`;

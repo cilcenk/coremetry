@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useBranding } from './branding';
+import { getRaw, setRaw, removeRaw } from './storage';
 
 // Tiny in-repo i18n. No external dependency — the SPA's
 // branding settings carry a `language` field that picks one of
@@ -230,10 +231,8 @@ const USER_LANG_EVENT = 'coremetry:lang-change';
 
 function readUserLang(): Lang | null {
   if (typeof window === 'undefined') return null;
-  try {
-    const v = window.localStorage.getItem(USER_LANG_KEY);
-    if (v === 'tr' || v === 'en') return v;
-  } catch { /* private mode etc. — silent */ }
+  const v = getRaw(USER_LANG_KEY);
+  if (v === 'tr' || v === 'en') return v;
   return null;
 }
 
@@ -262,11 +261,9 @@ export function useUserLang(): Lang | null {
 // branding).
 export function setUserLang(lang: Lang | null): void {
   if (typeof window === 'undefined') return;
-  try {
-    if (lang) window.localStorage.setItem(USER_LANG_KEY, lang);
-    else window.localStorage.removeItem(USER_LANG_KEY);
-    window.dispatchEvent(new Event(USER_LANG_EVENT));
-  } catch { /* private mode etc. — silent */ }
+  if (lang) setRaw(USER_LANG_KEY, lang);
+  else removeRaw(USER_LANG_KEY);
+  window.dispatchEvent(new Event(USER_LANG_EVENT));
 }
 
 // useT returns a translator scoped to the effective language.

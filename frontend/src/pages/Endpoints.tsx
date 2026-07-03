@@ -126,7 +126,7 @@ export default function EndpointsPage() {
   const onToggleExpand = (rowKey: string, service: string) => {
     setExpandedRows(prev => {
       const next = new Set(prev);
-      next.has(rowKey) ? next.delete(rowKey) : next.add(rowKey);
+      if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
       return next;
     });
     // Lazy-fetch dependencies the first time we expand this svc.

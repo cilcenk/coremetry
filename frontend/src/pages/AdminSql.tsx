@@ -7,6 +7,7 @@ import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import type { SQLResult, SchemaTable } from '@/lib/types';
+import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 
 // Embedded SQL playground — admin-only ad-hoc CH query interface.
 // Three layers of defence (server allow-list, server readonly=2,
@@ -89,10 +90,8 @@ export default function SQLPlaygroundPage() {
   const [openTables, setOpenTables] = useState<Set<string>>(new Set());
 
   const [backend, setBackend] = useState<Backend>(() => {
-    try {
-      const v = localStorage.getItem('coremetry-sql-backend') as Backend | null;
-      return v === 'elasticsearch' ? 'elasticsearch' : 'clickhouse';
-    } catch { return 'clickhouse'; }
+    const v = getRaw(STORAGE_KEYS.sqlBackend) as Backend | null;
+    return v === 'elasticsearch' ? 'elasticsearch' : 'clickhouse';
   });
   const [query, setQuery] = useState<string>(
     'SELECT count() FROM spans WHERE time >= now() - INTERVAL 5 MINUTE');
@@ -101,7 +100,7 @@ export default function SQLPlaygroundPage() {
 
   const switchBackend = (next: Backend) => {
     setBackend(next);
-    try { localStorage.setItem('coremetry-sql-backend', next); } catch {}
+    setRaw(STORAGE_KEYS.sqlBackend, next);
     setResult(undefined);
     // Swap the starter query so the operator doesn't try to run
     // CH SQL against ES (or vice-versa) and hit a parse error.
@@ -118,10 +117,8 @@ export default function SQLPlaygroundPage() {
   useEffect(() => {
     if (!isAdmin) return;
     api.sqlSchema().then(setSchema).catch(() => setSchema([]));
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY);
-      if (raw) setHistory(JSON.parse(raw));
-    } catch {}
+    const h = getItem<string[] | null>(HISTORY_KEY, null);
+    if (h) setHistory(h);
   }, [isAdmin]);
 
   const run = async () => {
@@ -138,7 +135,7 @@ export default function SQLPlaygroundPage() {
       // Push to history (dedupe + cap)
       const next = [q, ...history.filter(h => h !== q)].slice(0, HISTORY_MAX);
       setHistory(next);
-      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch {}
+      setItem(HISTORY_KEY, next);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setResult({ columns: [], rows: [], rowCount: 0, tookMs: 0, error: msg });

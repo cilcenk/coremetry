@@ -75,6 +75,11 @@ type Store struct {
 	smCovMu  sync.RWMutex
 	smCovAt  time.Time // when smCovVal was last probed
 	smCovVal time.Time // earliest available spanmetrics bucket
+	// metricIv caches each metric's observed export interval (v0.8.243,
+	// granularity slice B) so the per-query min-step clamp costs one
+	// bounded probe per metric per minute, not per chart refresh.
+	metricIvMu sync.RWMutex
+	metricIv   map[string]metricIvEntry
 
 	// alertRules* (v0.8.x) — in-process cache of the tiny alert_rules
 	// ReplacingMergeTree. The load-test profile showed ListAlertRules

@@ -112,7 +112,26 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		return nil, fmt.Errorf("metric name required")
 	}
 
-	sql, args, err := buildMetricQuerySQL(f, time.Now())
+	// v0.8.243 — min-step clamp: never bucket finer than the metric's
+	// observed export cadence (Grafana's $__rate_interval equivalent —
+	// see metric_export_interval.go). Normalize the window + auto-step
+	// HERE with the same rules buildMetricQuerySQL applies internally,
+	// so the clamp sees the effective step, not the raw 0=auto.
+	now := time.Now()
+	if f.To.IsZero() {
+		f.To = now
+	}
+	if f.From.IsZero() {
+		f.From = f.To.Add(-24 * time.Hour)
+	}
+	if f.StepSeconds <= 0 {
+		f.StepSeconds = metricAutoStep(f.From, f.To)
+	}
+	if iv := s.metricExportInterval(ctx, f.Name, f.Service); iv > 0 {
+		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
+	}
+
+	sql, args, err := buildMetricQuerySQL(f, now)
 	if err != nil {
 		return nil, err
 	}

@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"hash/fnv"
 	"html"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,13 +66,26 @@ func (s *Server) getTopology(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
 	const edgeCap = 50000
-	key := fmt.Sprintf("topology-op:root=%s:op=%s:depth=%d:from=%d:to=%d", root, rootOp, depth, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	// v0.8.241 — hidden-pattern policy rides the cache key (an edit
+	// must not serve the pre-edit graph for the TTL).
+	hidPats := s.topologyHiddenPatterns(r.Context())
+	key := fmt.Sprintf("topology-op:root=%s:op=%s:depth=%d:from=%d:to=%d:hid=%s", root, rootOp, depth, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the pre-aggregated op-edges table instead of
 		// the live spans self-join. Same shape, 1000× cheaper.
 		allEdges, err := s.store.ReadTopologyOpEdgesAgg(r.Context(), from, to, edgeCap)
 		if err != nil {
 			return nil, err
+		}
+		if hidden := hiddenNodeMatcher(hidPats); len(hidPats) > 0 {
+			kept := allEdges[:0]
+			for _, e := range allEdges {
+				if hidden(e.ParentService) || hidden(e.ChildService) {
+					continue
+				}
+				kept = append(kept, e)
+			}
+			allEdges = kept
 		}
 		// Index edges by parent service so BFS only scans relevant
 		// rows per frontier expansion. Map of parent_service → []edge.
@@ -227,6 +243,119 @@ type ServiceTopologyNode struct {
 	// shows "→ N services (broadcast)" on the node instead of N edges. Only set
 	// on queue nodes whose consumer count exceeded the broadcast threshold.
 	BroadcastFanout int `json:"broadcastFanout,omitempty"`
+}
+
+// ── Topology hidden patterns (v0.8.241, operator-requested) ────────────────
+// Nodes matching an operator-defined glob list ("kafka:log*",
+// "kafka:bsa*", …) never render in any topology view — a GLOBAL
+// policy, not a per-user toggle ("hiç gözükmesin"). Persisted under
+// system_settings "topology_hidden"; unset installs use the seeded
+// defaults below (the operator's two standing noise sources).
+
+type topologyHidden struct {
+	Patterns []string `json:"patterns"`
+}
+
+var defaultTopologyHiddenPatterns = []string{"kafka:log*", "kafka:bsa*"}
+
+// topologyHiddenPatterns loads the persisted list; unset or corrupt →
+// defaults. One tiny FINAL read per topology request — the graph reads
+// beside it are orders of magnitude heavier.
+func (s *Server) topologyHiddenPatterns(ctx context.Context) []string {
+	raw, err := s.store.GetTopologyHiddenRaw(ctx)
+	if err != nil || len(raw) == 0 {
+		return defaultTopologyHiddenPatterns
+	}
+	var th topologyHidden
+	if json.Unmarshal(raw, &th) != nil || th.Patterns == nil {
+		return defaultTopologyHiddenPatterns
+	}
+	return th.Patterns
+}
+
+// hiddenNodeMatcher compiles the glob list (*, ? wildcards) into one
+// predicate over a topology node identifier. The "queue:" prefix is
+// stripped before matching so patterns are written the way the UI
+// labels queue nodes ("kafka:log.orders"). Pure for tests.
+func hiddenNodeMatcher(patterns []string) func(string) bool {
+	res := make([]*regexp.Regexp, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		expr := "^" + strings.ReplaceAll(strings.ReplaceAll(regexp.QuoteMeta(p), `\*`, ".*"), `\?`, ".") + "$"
+		if re, err := regexp.Compile(expr); err == nil {
+			res = append(res, re)
+		}
+	}
+	if len(res) == 0 {
+		return func(string) bool { return false }
+	}
+	return func(id string) bool {
+		id = strings.TrimPrefix(id, "queue:")
+		for _, re := range res {
+			if re.MatchString(id) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// hiddenDigest is the cache-key fragment for the active pattern set —
+// every topology cache key MUST carry it (v0.5.187 rule) or a pattern
+// edit would keep serving the pre-edit graph for the TTL.
+func hiddenDigest(patterns []string) string {
+	m := make(map[string]bool, len(patterns))
+	for _, p := range patterns {
+		m[p] = true
+	}
+	return excludeKeyDigest(m)
+}
+
+// getTopologyHidden returns the active pattern list (any authenticated
+// role — the Topology page shows it read-only to viewers).
+func (s *Server) getTopologyHidden(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, topologyHidden{Patterns: s.topologyHiddenPatterns(r.Context())})
+}
+
+// putTopologyHidden persists a new pattern list (editor+). An empty
+// list is valid — it disables hiding entirely (including the seeded
+// defaults, which only apply while NOTHING has ever been saved).
+func (s *Server) putTopologyHidden(w http.ResponseWriter, r *http.Request) {
+	var in topologyHidden
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if in.Patterns == nil {
+		in.Patterns = []string{}
+	}
+	if len(in.Patterns) > 100 {
+		http.Error(w, "at most 100 patterns", http.StatusBadRequest)
+		return
+	}
+	cleaned := make([]string, 0, len(in.Patterns))
+	for _, p := range in.Patterns {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if len(p) > 200 {
+			http.Error(w, "pattern too long (max 200 chars)", http.StatusBadRequest)
+			return
+		}
+		cleaned = append(cleaned, p)
+	}
+	raw, _ := json.Marshal(topologyHidden{Patterns: cleaned})
+	if err := s.store.PutTopologyHiddenRaw(r.Context(), raw); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	details, _ := json.Marshal(map[string]any{"patterns": cleaned})
+	s.audit(r, "topology.hidden.update", "settings", "topology_hidden", string(details))
+	writeJSON(w, topologyHidden{Patterns: cleaned})
 }
 
 // excludeKeyDigest produces a short stable cache-key fragment for a
@@ -401,9 +530,10 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	// consumers (e.g. config-server's kafka cache.refresh to thousands of
 	// services) renders as one collapsed hub instead of N edges.
 	broadcastShow := r.URL.Query().Get("broadcast") == "show"
-	key := fmt.Sprintf("topology-service:from=%d:to=%d:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d:bc=%v",
+	hidPats := s.topologyHiddenPatterns(r.Context())
+	key := fmt.Sprintf("topology-service:from=%d:to=%d:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d:bc=%v:hid=%s",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
-		noiseShow, minCallPct, comparePrior, topN, focusSvc, focusHops, broadcastShow)
+		noiseShow, minCallPct, comparePrior, topN, focusSvc, focusHops, broadcastShow, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
@@ -413,6 +543,19 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, edgeCap)
 		if err != nil {
 			return nil, err
+		}
+		// v0.8.241 — hidden-pattern policy: drop edges touching a
+		// hidden node BEFORE noise/topN/broadcast processing so a
+		// hidden hub can't influence ranking either.
+		if hidden := hiddenNodeMatcher(hidPats); len(hidPats) > 0 {
+			kept := edges[:0]
+			for _, e := range edges {
+				if hidden(e.ParentService) || hidden(e.ChildNode) {
+					continue
+				}
+				kept = append(kept, e)
+			}
+			edges = kept
 		}
 		// v0.5.414 — prior-window enrichment. Same query against
 		// the immediately-preceding equal-length window; values
@@ -877,13 +1020,25 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
-	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d",
+	hidPats := s.topologyHiddenPatterns(r.Context())
+	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d:hid=%s",
 		rootService, rootOp,
-		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
 		if err != nil {
 			return nil, err
+		}
+		// v0.8.241 — hidden-pattern policy (same as the global views).
+		if hidden := hiddenNodeMatcher(hidPats); len(hidPats) > 0 {
+			kept := edges[:0]
+			for _, e := range edges {
+				if hidden(e.ParentService) || hidden(e.ChildNode) {
+					continue
+				}
+				kept = append(kept, e)
+			}
+			edges = kept
 		}
 		// Same external-peer filter as the global topology — drop
 		// peers that already exist as instrumented services so the

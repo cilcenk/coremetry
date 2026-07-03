@@ -5,6 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { ServiceGraph } from '@/components/ServiceGraph';
 import { infraNodeLabel, infraNodeSystem } from '@/lib/topologyNodes';
+import { TopologyHiddenControl } from '@/components/TopologyHiddenControl';
 import { useAuth } from '@/components/AuthProvider';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
@@ -755,6 +756,8 @@ function ServiceView({ range }: { range: TimeRange }) {
             onChange={e => setNoiseShow(e.target.checked)} />
           Show noise
         </label>
+        {/* v0.8.241 — global hidden-pattern policy (kafka:log* etc). */}
+        <TopologyHiddenControl />
         {/* v0.7.19 — namespace outline toggle. OFF by default (the dashed
             per-namespace frame is noise on most graphs); operator opts in. */}
         <label style={{

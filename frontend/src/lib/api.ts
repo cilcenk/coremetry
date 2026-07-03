@@ -510,6 +510,14 @@ export const api = {
         ilmPhase: string;
       }>;
     }>(`/api/admin/elastic/indices`),
+  // Topology hidden patterns (v0.8.241) — global glob list; matching
+  // nodes never render in any topology view. GET any role, PUT editor+.
+  getTopologyHidden: () => get<{ patterns: string[] }>(`/api/topology/hidden`),
+  putTopologyHidden: (patterns: string[]) =>
+    request<{ patterns: string[] }>(`/api/topology/hidden`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patterns }),
+    }),
   // Recent failed ES queries + cumulative counter (v0.8.230). Per-pod
   // in-memory ring; uncached so the panel reflects the error the
   // operator just triggered. CH backend returns an empty list.

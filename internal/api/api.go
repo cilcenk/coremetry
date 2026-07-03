@@ -399,6 +399,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/topology/service",          s.getServiceTopology)
 	mux.HandleFunc("GET /api/topology/flows",            s.getRootFlows)
 	mux.HandleFunc("GET /api/topology/flow",             s.getFlowTopology)
+	mux.HandleFunc("GET /api/topology/hidden",           s.getTopologyHidden)
+	mux.HandleFunc("PUT /api/topology/hidden",           auth.RequireAnyRole(editorRoles, s.putTopologyHidden))
 	mux.HandleFunc("GET /api/topology/drawio",           s.exportTopologyDrawIO)
 	mux.HandleFunc("GET /api/topology/edge/instances",   s.getTopologyEdgeInstances)
 	mux.HandleFunc("POST /api/slos/autocreate",          auth.RequireRole(auth.RoleAdmin, s.autoCreateSLOs))
@@ -2184,7 +2186,8 @@ func (s *Server) getServiceMap(w http.ResponseWriter, r *http.Request) {
 	// cap (the full sampled graph, unchanged default).
 	topN := parseInt(r.URL.Query().Get("topN"), 0)
 
-	key := fmt.Sprintf("service-map:since=%s:samples=%d:diff=%s:topN=%d", since, samples, diffStr, topN)
+	hidPats := s.topologyHiddenPatterns(r.Context())
+	key := fmt.Sprintf("service-map:since=%s:samples=%d:diff=%s:topN=%d:hid=%s", since, samples, diffStr, topN, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		var m *chstore.ServiceMap
 		var err error
@@ -2195,6 +2198,25 @@ func (s *Server) getServiceMap(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		// v0.8.241 — hidden-pattern policy on the legacy map too.
+		if hidden := hiddenNodeMatcher(hidPats); len(hidPats) > 0 {
+			nodes := m.Nodes[:0]
+			for _, n := range m.Nodes {
+				if hidden(n.Service) {
+					continue
+				}
+				nodes = append(nodes, n)
+			}
+			m.Nodes = nodes
+			edges := m.Edges[:0]
+			for _, e := range m.Edges {
+				if hidden(e.Caller) || hidden(e.Callee) {
+					continue
+				}
+				edges = append(edges, e)
+			}
+			m.Edges = edges
 		}
 		s.store.PruneServiceMapTopN(m, topN)
 		return m, nil

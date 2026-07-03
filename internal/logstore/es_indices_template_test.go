@@ -3,6 +3,7 @@ package logstore
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // v0.8.231 — operator's ES layout is per-service indices
@@ -42,7 +43,11 @@ func TestQueryIndicesTemplateShortCircuit(t *testing.T) {
 	ctx := context.Background()
 
 	// Service-pinned + template + resolver → the one concrete index.
+	// idxCache seeded EMPTY-but-fresh: the v0.8.239 existence check
+	// skips on an empty inventory, and a stale cache would otherwise
+	// hit the network (nil client) in this unit test.
 	s := &ESStore{cfg: ESConfig{Index: "app-*", IndexTemplate: "app-{service}.{namespace}"}}
+	s.idxCache.fetched = time.Now()
 	s.NamespaceResolver = func(_ context.Context, svc string) string {
 		if svc == "checkout" {
 			return "prod"

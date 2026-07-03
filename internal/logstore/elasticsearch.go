@@ -1290,9 +1290,13 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// without us blindly shipping more candidate field names.
 	// Only logs the empty-result case so steady-state traffic
 	// stays quiet.
-	if raw.Hits.Total.Value == 0 && (f.TraceID != "" || f.SpanID != "") {
-		log.Printf("[es-debug] zero hits for trace_id=%q span_id=%q index=%q query=%s",
-			f.TraceID, f.SpanID, s.cfg.Index, string(body))
+	if raw.Hits.Total.Value == 0 && (f.TraceID != "" || f.SpanID != "" || f.Service != "") {
+		// v0.8.239 — service-scoped queries joined the diagnostic: the
+		// service-detail Logs tab going empty was silent (0 hits is not
+		// an ES error, so /admin/elastic showed nothing). Now the exact
+		// query + resolved index is one grep away.
+		log.Printf("[es-debug] zero hits for trace_id=%q span_id=%q service=%q index=%v query=%s",
+			f.TraceID, f.SpanID, f.Service, queryIdx, string(body))
 	}
 	return &Page{Total: raw.Hits.Total.Value, Logs: out, NextCursor: next}, nil
 }
@@ -1855,6 +1859,26 @@ func withKeywordVariants(names ...string) []string {
 }
 
 // buildQuery constructs the ES bool/must query corresponding to a Filter.
+// exactTermsBothShapes returns the two exact-value clauses for one
+// candidate field: a term on the `.keyword` sub-field (dynamic text
+// mappings) plus an exists-GUARDED term on the bare field (ECS/managed
+// templates type paths as keyword directly — no .keyword sub-field
+// exists there, so the plain .keyword term matches nothing; the
+// v0.8.239 service-detail Logs-tab incident). The must_not exists
+// guard keeps the bare branch DEAD on dynamic mappings, where a term
+// against the analyzed text field would token-match (service
+// "payment" hitting "payment-gateway" docs) — preserving the v0.7.16
+// exact-value guarantee on both mapping styles.
+func exactTermsBothShapes(field, value string) []any {
+	return []any{
+		map[string]any{"term": map[string]any{field + ".keyword": value}},
+		map[string]any{"bool": map[string]any{
+			"must":     []any{map[string]any{"term": map[string]any{field: value}}},
+			"must_not": []any{map[string]any{"exists": map[string]any{"field": field + ".keyword"}}},
+		}},
+	}
+}
+
 func (s *ESStore) buildQuery(f Filter) map[string]any {
 	must := []any{}
 
@@ -1944,8 +1968,37 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// matches NOTHING and the service filter silently returned 0 (surfaced
 		// once we read collector-written, dynamically-mapped ES indices). The
 		// histogram + pattern aggs at lines ~830/1057 already use `.keyword`.
+		//
+		// v0.8.239 — operator-reported: the service-detail Logs tab was the
+		// ONLY empty log surface on an ECS-template-mapped cluster. Two
+		// gaps closed here:
+		//   1. ECS templates type service.name as `keyword` DIRECTLY (no
+		//      .keyword sub-field — that only exists on dynamic text
+		//      mappings), so the single .keyword term matched nothing.
+		//      Every candidate field is tried in BOTH shapes.
+		//   2. Operator-directed fallback: their shipping pipeline stamps
+		//      the workload name on kubernetes.container_name — when the
+		//      primary field doesn't carry the service, the container
+		//      name does. Both spellings tried (ECS dots + underscore).
+		// Wrong branches are no-ops (term on a missing path matches
+		// nothing; term on an analyzed text field can't match a
+		// hyphenated value), so this stays an exact-value filter — no
+		// free-text looseness.
+		svcFields := []string{s.fields.Service, "kubernetes.container.name", "kubernetes.container_name"}
+		seen := map[string]bool{}
+		svcShould := make([]any, 0, len(svcFields)*2)
+		for _, fld := range svcFields {
+			if fld == "" || seen[fld] {
+				continue
+			}
+			seen[fld] = true
+			svcShould = append(svcShould, exactTermsBothShapes(fld, f.Service)...)
+		}
 		must = append(must, map[string]any{
-			"term": map[string]any{s.fields.Service + ".keyword": f.Service},
+			"bool": map[string]any{
+				"should":               svcShould,
+				"minimum_should_match": 1,
+			},
 		})
 	}
 	// v0.5.471 — cluster filter. Match any of the three known
@@ -1960,13 +2013,20 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// would be tokenized by the analyzer and never match an analyzed-field
 		// term. Harmless on indices where the field is absent (the should
 		// clause just doesn't match).
+		// v0.8.239 — exists-guarded bare-field siblings for ECS/managed
+		// mappings where the path is typed keyword directly (same class
+		// as the service filter fix above).
+		clShould := []any{}
+		for _, fld := range []string{
+			"resource_attributes.k8s.cluster.name",
+			"resource_attributes.openshift.cluster.name",
+			"resource_attributes.cluster",
+		} {
+			clShould = append(clShould, exactTermsBothShapes(fld, f.Cluster)...)
+		}
 		must = append(must, map[string]any{
 			"bool": map[string]any{
-				"should": []any{
-					map[string]any{"term": map[string]any{"resource_attributes.k8s.cluster.name.keyword":       f.Cluster}},
-					map[string]any{"term": map[string]any{"resource_attributes.openshift.cluster.name.keyword": f.Cluster}},
-					map[string]any{"term": map[string]any{"resource_attributes.cluster.keyword":                f.Cluster}},
-				},
+				"should":               clShould,
 				"minimum_should_match": 1,
 			},
 		})

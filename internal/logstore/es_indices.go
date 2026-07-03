@@ -14,6 +14,7 @@ package logstore
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"regexp"
 	"strings"
 	"sync"
@@ -127,9 +128,53 @@ func (s *ESStore) templateIndex(ctx context.Context, service string) string {
 // whole pattern fan-out, and no _cat listing needed. A not-yet-created
 // resolved index answers 0 hits (allow_no_indices/ignore_unavailable
 // ride every request), not a 404.
+// rolloverRemainder matches what may follow "<stream-name>-" in a
+// rollover / dated child: digits, dots, dashes only ("000079",
+// "2026.07.03-000391"). Anything else means the prefix cut a LONGER
+// stream name mid-way (app-identityhub vs app-identityhub-int) — that
+// must NOT count as a match.
+var rolloverRemainder = regexp.MustCompile(`^[0-9][0-9.\-]*$`)
+
+// indexKnown reports whether a template-resolved CONCRETE index name is
+// backed by anything the cluster actually has: an exact index match, a
+// rollover/dated child ("<name>-000123", "<name>-2026.07.03"), or a
+// data-stream backing index (".ds-<name>-<date>-<seq>"). Pure
+// (v0.8.239) so the misconfigured-template fallback is unit-tested.
+func indexKnown(names []string, resolved string) bool {
+	child := func(n, prefix string) bool {
+		return strings.HasPrefix(n, prefix) && rolloverRemainder.MatchString(n[len(prefix):])
+	}
+	for _, n := range names {
+		if n == resolved ||
+			child(n, resolved+"-") ||
+			child(n, ".ds-"+resolved+"-") {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ESStore) queryIndices(ctx context.Context, f Filter) []string {
 	if idx := s.templateIndex(ctx, f.Service); idx != "" {
-		return []string{idx}
+		// v0.8.239 — operator-reported (service-detail Logs tab empty):
+		// a template whose separator doesn't match the real index naming
+		// (e.g. app-{service}.{namespace} configured, cluster uses
+		// app-<service>-<env>) resolves to a name that matches NOTHING —
+		// and allow_no_indices turns that into a silent 0. When the
+		// resolved name is concrete (no wildcard), verify it against the
+		// cached index inventory; unknown → fall back to the pattern
+		// (wider but correct — the service term still filters).
+		// Wildcarded resolutions (unresolved {namespace} → "*") skip the
+		// check: ES expands them server-side. Empty inventory (listing
+		// failed / no _cat privilege) also skips — the check must never
+		// be the reason a working template stops working.
+		if strings.ContainsAny(idx, "*?") {
+			return []string{idx}
+		}
+		if names := s.cachedIndexNames(ctx); len(names) == 0 || indexKnown(names, idx) {
+			return []string{idx}
+		}
+		log.Printf("[logstore-es] index template resolved %q but no such index/data-stream exists — falling back to pattern %q (check the template separator vs your index naming)", idx, s.cfg.Index)
 	}
 	fallback := []string{s.cfg.Index}
 	if f.From.IsZero() || f.To.IsZero() {

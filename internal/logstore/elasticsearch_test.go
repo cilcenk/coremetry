@@ -102,30 +102,44 @@ func TestBuildQueryUsesKeywordForExactFilters(t *testing.T) {
 	}
 	q := string(raw)
 
+	// v0.8.239 UPDATE — the exactness contract evolved: bare-field terms
+	// are now ALLOWED (ECS templates type paths keyword directly, no
+	// .keyword sub-field — the service-detail Logs tab returned 0 there)
+	// but ONLY behind a must_not exists(<field>.keyword) guard, which
+	// keeps the analyzed-field branch dead on dynamic mappings. So the
+	// invariant this test pins is: every bare term rides with its
+	// exists-guard; the .keyword term stays primary.
 	cases := []struct {
 		name      string
-		mustHave  string // substring that MUST be present
-		mustNotHave string // substring that MUST be absent ("" = skip)
+		keywordTerm string
+		guard       string
 	}{
 		{
-			name:        "service filter targets the keyword sub-field",
-			mustHave:    `"service.name.keyword":"java-demo"`,
-			mustNotHave: `"service.name":"java-demo"`, // the analyzed-field term that returned 0
+			name:        "service filter — keyword term + guarded bare term",
+			keywordTerm: `"service.name.keyword":"java-demo"`,
+			guard:       `"must_not":[{"exists":{"field":"service.name.keyword"}}]`,
 		},
 		{
-			name:     "cluster filter targets the keyword sub-field",
-			mustHave:  `"resource_attributes.k8s.cluster.name.keyword":"prod-eu"`,
-			mustNotHave: `"resource_attributes.k8s.cluster.name":"prod-eu"`,
+			name:        "cluster filter — keyword term + guarded bare term",
+			keywordTerm: `"resource_attributes.k8s.cluster.name.keyword":"prod-eu"`,
+			guard:       `"must_not":[{"exists":{"field":"resource_attributes.k8s.cluster.name.keyword"}}]`,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if !strings.Contains(q, c.mustHave) {
-				t.Errorf("query missing %q\n%s", c.mustHave, q)
+			if !strings.Contains(q, c.keywordTerm) {
+				t.Errorf("query missing keyword term %q\n%s", c.keywordTerm, q)
 			}
-			if c.mustNotHave != "" && strings.Contains(q, c.mustNotHave) {
-				t.Errorf("query must NOT term-match the analyzed field %q\n%s", c.mustNotHave, q)
+			if !strings.Contains(q, c.guard) {
+				t.Errorf("bare-field term must carry the exists guard %q\n%s", c.guard, q)
 			}
 		})
+	}
+	// The v0.7.16 false-positive guarantee, restated: a bare analyzed-
+	// field term may ONLY appear inside a guarded bool. Count naked
+	// occurrences by requiring every bare term to be immediately inside
+	// the guarded shape emitted by exactTermsBothShapes.
+	if strings.Count(q, `"service.name":"java-demo"`) != strings.Count(q, `{"bool":{"must":[{"term":{"service.name":"java-demo"}}]`) {
+		t.Errorf("unguarded bare service term found:\n%s", q)
 	}
 }

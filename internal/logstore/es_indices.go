@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,6 +79,39 @@ type esIndexCache struct {
 	fetched time.Time
 }
 
+// resolveIndexTemplate substitutes the {service} / {namespace}
+// placeholders of an operator-configured index template. Pure so the
+// v0.8.231 tests exercise every placeholder combination. Returns ""
+// (caller falls back to the pattern path) when the template is unset
+// or the query isn't pinned to one service; an empty namespace
+// substitutes "*" so the resolved name still covers the family.
+func resolveIndexTemplate(tpl, service, ns string) string {
+	if tpl == "" || service == "" {
+		return ""
+	}
+	out := strings.ReplaceAll(tpl, "{service}", service)
+	if ns == "" {
+		ns = "*"
+	}
+	return strings.ReplaceAll(out, "{namespace}", ns)
+}
+
+// templateIndex resolves cfg.IndexTemplate for a service-scoped query,
+// consulting the NamespaceResolver for the {namespace} placeholder
+// only when the template actually contains it (skips the CH-backed
+// lookup otherwise). "" = template path not applicable.
+func (s *ESStore) templateIndex(ctx context.Context, service string) string {
+	tpl := s.cfg.IndexTemplate
+	if tpl == "" || service == "" {
+		return ""
+	}
+	ns := ""
+	if strings.Contains(tpl, "{namespace}") && s.NamespaceResolver != nil {
+		ns = s.NamespaceResolver(ctx, service)
+	}
+	return resolveIndexTemplate(tpl, service, ns)
+}
+
 // queryIndices returns the concrete, window-narrowed index list for a
 // query. Falls back to the raw pattern when the window is unbounded
 // (trace-id correlation lookups), the listing fails, the cluster uses
@@ -86,16 +120,26 @@ type esIndexCache struct {
 // list means "all" to ES — never send that). One day of slack is applied
 // before `from`: an event timestamped 00:05 can sit in yesterday's index
 // when the shipper rotates on ingest date.
-func (s *ESStore) queryIndices(ctx context.Context, from, to time.Time) []string {
+//
+// v0.8.231 — service-pinned queries short-circuit to the operator's
+// index template (e.g. app-{service}.{namespace} → app-checkout.prod)
+// when one is configured: one concrete index family instead of the
+// whole pattern fan-out, and no _cat listing needed. A not-yet-created
+// resolved index answers 0 hits (allow_no_indices/ignore_unavailable
+// ride every request), not a 404.
+func (s *ESStore) queryIndices(ctx context.Context, f Filter) []string {
+	if idx := s.templateIndex(ctx, f.Service); idx != "" {
+		return []string{idx}
+	}
 	fallback := []string{s.cfg.Index}
-	if from.IsZero() || to.IsZero() {
+	if f.From.IsZero() || f.To.IsZero() {
 		return fallback
 	}
 	names := s.cachedIndexNames(ctx)
 	if len(names) == 0 {
 		return fallback
 	}
-	narrowed, ok := narrowIndices(names, from.Add(-24*time.Hour), to)
+	narrowed, ok := narrowIndices(names, f.From.Add(-24*time.Hour), f.To)
 	if !ok || len(narrowed) == 0 {
 		return fallback
 	}

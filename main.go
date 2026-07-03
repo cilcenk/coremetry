@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -845,13 +846,14 @@ func buildLogStore(cfg *config.Config, ch *chstore.Store) (logstore.Store, error
 		return logstore.NewCH(ch), nil
 	case "elasticsearch":
 		es := cfg.Logs.Elasticsearch
-		return logstore.NewES(logstore.ESConfig{
+		store, err := logstore.NewES(logstore.ESConfig{
 			Addresses:          es.Addresses,
 			Username:           es.Username,
 			Password:           es.Password,
 			APIKey:             es.APIKey,
 			InsecureSkipVerify: es.InsecureSkipVerify,
 			Index:              es.Index,
+			IndexTemplate:      es.IndexTemplate,
 			// v0.8.228 — operator-configurable document field map. Empty
 			// members fall back to the logstore ECS-ish defaults via
 			// ESConfig.defaults(); set them to match the local mapping
@@ -866,8 +868,48 @@ func buildLogStore(cfg *config.Config, ch *chstore.Store) (logstore.Store, error
 				SeverityNo: es.Fields.SeverityNumber,
 			},
 		})
+		if err != nil {
+			return nil, err
+		}
+		// v0.8.231 — service→namespace resolver for the {namespace}
+		// index-template placeholder, backed by the same span resource
+		// attrs the topology soft-clustering uses. TTL-cached so the
+		// hot /logs path costs one CH query per 5 minutes, not per
+		// request.
+		store.NamespaceResolver = newNamespaceResolver(ch)
+		return store, nil
 	default:
 		return nil, fmt.Errorf("unknown logs backend %q (want clickhouse|elasticsearch)", cfg.Logs.Backend)
+	}
+}
+
+// newNamespaceResolver returns a TTL-cached service→namespace lookup
+// (5 min) over chstore.GetServiceNamespaces for the ES index-template
+// {namespace} placeholder (v0.8.231). 24h attribution window so a
+// service quiet for a few hours keeps resolving; the query itself is
+// bounded (GROUP BY over LowCardinality service_name, LIMIT 5000,
+// max_execution_time 10). On a CH error the previous map is kept and
+// the retry waits out the TTL — a resolver hiccup must never hammer CH
+// per log query. Unknown service → "" (logstore substitutes "*").
+func newNamespaceResolver(ch *chstore.Store) func(context.Context, string) string {
+	var (
+		mu      sync.Mutex
+		m       map[string]string
+		fetched time.Time
+	)
+	return func(ctx context.Context, service string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		if m == nil || time.Since(fetched) > 5*time.Minute {
+			nm, err := ch.GetServiceNamespaces(ctx, 24*time.Hour)
+			if err != nil {
+				log.Printf("[logstore-es] namespace resolve failed (index template uses * until retry): %v", err)
+			} else {
+				m = nm
+			}
+			fetched = time.Now()
+		}
+		return m[service]
 	}
 }
 

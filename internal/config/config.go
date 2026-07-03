@@ -121,6 +121,13 @@ type ESConfig struct {
 	APIKey             string   `yaml:"api_key"`
 	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"`
 	Index              string   `yaml:"index"`
+	// IndexTemplate (v0.8.231) narrows service-scoped queries to the
+	// concrete per-service index instead of fanning out over Index.
+	// Placeholders: {service} = the queried service name verbatim,
+	// {namespace} = the service's namespace resolved from span resource
+	// attributes (k8s.namespace.name / service.namespace); unresolved →
+	// "*". Example: "app-{service}.{namespace}". Empty = disabled.
+	IndexTemplate string `yaml:"index_template"` // env: COREMETRY_ES_INDEX_TEMPLATE
 	// MLEnabled turns on the v0.5.120 read-only ML anomaly job
 	// poller — Coremetry calls /_ml/anomaly_detectors and ingests
 	// significant records into anomaly_events so existing Elastic
@@ -559,6 +566,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_ES_INDEX"); v != "" {
 		cfg.Logs.Elasticsearch.Index = v
+	}
+	if v := os.Getenv("COREMETRY_ES_INDEX_TEMPLATE"); v != "" {
+		cfg.Logs.Elasticsearch.IndexTemplate = v
 	}
 	if v := os.Getenv("COREMETRY_ES_INSECURE"); v == "true" || v == "1" {
 		cfg.Logs.Elasticsearch.InsecureSkipVerify = true

@@ -187,6 +187,16 @@ type ESConfig struct {
 	// the concrete dailies covering the queried window (v0.8.109).
 	Index string
 
+	// IndexTemplate (v0.8.231, operator-requested) — when set and a
+	// query is pinned to a single service, the store resolves this to
+	// the concrete per-service index instead of searching Index.
+	// Placeholders: {service} = Filter.Service verbatim; {namespace} =
+	// the service's namespace via ESStore.NamespaceResolver (span
+	// resource attrs). Unresolved {namespace} substitutes "*" so the
+	// query still covers the family. Example operator convention:
+	// "app-{service}.{namespace}". Empty = disabled (pattern path).
+	IndexTemplate string
+
 	// Field paths inside each ES document. Override per-deployment via
 	// config so any shipping pipeline (Filebeat, Logstash, OTel
 	// Collector → ES exporter) can be queried without re-indexing.
@@ -242,6 +252,12 @@ type ESStore struct {
 	// self-observation (v0.8.230). Every query path funnels its
 	// transport / non-2xx failures through recordQueryError.
 	errs esErrRing
+	// NamespaceResolver maps a service name to its namespace for the
+	// {namespace} placeholder in cfg.IndexTemplate (v0.8.231). Wired by
+	// main.go to a TTL-cached chstore.GetServiceNamespaces lookup — the
+	// same span-resource-attr derivation the topology grouping uses.
+	// Nil resolver or "" result → the placeholder substitutes "*".
+	NamespaceResolver func(ctx context.Context, service string) string
 }
 
 // esErrRing is a small bounded buffer of the most recent failed
@@ -487,7 +503,7 @@ func (s *ESStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, err
 	if err != nil {
 		return nil, err
 	}
-	eqlIdx := s.queryIndices(ctx, q.From, q.To)
+	eqlIdx := s.queryIndices(ctx, Filter{From: q.From, To: q.To})
 	req := esapi.EqlSearchRequest{
 		Index: strings.Join(eqlIdx, ","),
 		Body:  bytes.NewReader(raw),
@@ -1004,7 +1020,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	if f.TraceID == "" && len(f.TraceIDs) == 0 && f.SpanID == "" {
 		f.From, f.To = clampWindow(f.From, f.To)
 	}
-	queryIdx := s.queryIndices(ctx, f.From, f.To)
+	queryIdx := s.queryIndices(ctx, f)
 
 	query := s.buildQuery(f)
 	// `unmapped_type` makes the sort fail-safe: if the
@@ -1260,7 +1276,7 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 	if f.To.IsZero() {
 		f.To = time.Now()
 	}
-	queryIdx := s.queryIndices(ctx, f.From, f.To)
+	queryIdx := s.queryIndices(ctx, f)
 	searchBody := map[string]any{
 		"query": s.buildQuery(f),
 		"sort": []any{
@@ -1432,7 +1448,7 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		return nil, err
 	}
 	tru := true
-	histIdx := s.queryIndices(ctx, f.From, f.To)
+	histIdx := s.queryIndices(ctx, f)
 	req := esapi.SearchRequest{
 		Index: histIdx,
 		Body:  bytes.NewReader(body),
@@ -1579,7 +1595,9 @@ func (s *ESStore) CountPatterns(
 	patTimeout := esTimeoutFromEnv("10s")
 	// One narrowed index list for the whole batch — every per-pattern
 	// query is bounded by [baseStart, now] (v0.8.109).
-	msearchIdx := s.queryIndices(ctx, baseStart, now)
+	// No Filter.Service here on purpose: patterns are evaluated across
+	// ALL services, so the template short-circuit must not apply.
+	msearchIdx := s.queryIndices(ctx, Filter{From: baseStart, To: now})
 	for _, pat := range pats {
 		header := map[string]any{
 			"index":               msearchIdx,

@@ -795,6 +795,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /api/auth/login",    s.login)
 	mux.HandleFunc("POST /api/auth/logout",   s.logout)
 	mux.HandleFunc("GET  /api/auth/me",       s.me)
+	mux.HandleFunc("GET  /api/auth/me/photo", s.mePhoto)
 	mux.HandleFunc("POST /api/auth/password", s.changeOwnPassword)
 	mux.HandleFunc("GET  /api/auth/oidc/start",    s.oidcStart)
 	mux.HandleFunc("GET  /api/auth/oidc/callback", s.oidcCallback)
@@ -854,6 +855,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/users/by-team",          s.listUsersByTeam)
 	mux.HandleFunc("POST   /api/users",                  auth.RequireRole(auth.RoleAdmin, s.createUser))
 	mux.HandleFunc("DELETE /api/users/{id}",             auth.RequireRole(auth.RoleAdmin, s.deleteUser))
+	mux.HandleFunc("GET    /api/users/{id}/photo",       auth.RequireRole(auth.RoleAdmin, s.userPhoto))
 	mux.HandleFunc("POST   /api/users/{id}/password",    auth.RequireRole(auth.RoleAdmin, s.resetUserPassword))
 	mux.HandleFunc("PUT    /api/users/{id}/role",        auth.RequireRole(auth.RoleAdmin, s.setUserRole))
 	mux.HandleFunc("PUT    /api/users/{id}/team",        auth.RequireRole(auth.RoleAdmin, s.setUserTeam))
@@ -4782,6 +4784,9 @@ func (s *Server) userPayload(u *chstore.User) map[string]any {
 		"id":    u.ID,
 		"email": u.Email,
 		"role":  u.Role,
+		// v0.8.238 — lets the SPA skip the guaranteed-404 <img> request
+		// for local/OIDC accounts and render the initials fallback.
+		"hasPhoto": u.HasPhoto,
 	}
 	// Only viewers get a custom-role restriction. Defensive guard
 	// mirrors UpsertUser — a stale pointer on an admin/editor row
@@ -4794,6 +4799,42 @@ func (s *Server) userPayload(u *chstore.User) map[string]any {
 		}
 	}
 	return out
+}
+
+// mePhoto serves the signed-in user's own directory photo (v0.8.238).
+// Any authenticated role — it's their own picture.
+func (s *Server) mePhoto(w http.ResponseWriter, r *http.Request) {
+	c := auth.FromContext(r.Context())
+	if c == nil {
+		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		return
+	}
+	s.serveUserPhoto(w, r, c.UserID)
+}
+
+// userPhoto serves any user's photo for the admin user-management
+// list's avatar column (route is admin-gated — same as the list).
+func (s *Server) userPhoto(w http.ResponseWriter, r *http.Request) {
+	s.serveUserPhoto(w, r, r.PathValue("id"))
+}
+
+// serveUserPhoto streams the stored LDAP photo bytes. Not serveCached:
+// the response is per-user binary behind auth; the browser caches it
+// via Cache-Control instead (1h — a re-login refreshes the row, the
+// avatar catches up on the next hard load).
+func (s *Server) serveUserPhoto(w http.ResponseWriter, r *http.Request, userID string) {
+	u, err := s.store.GetUserByID(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if u == nil || len(u.Photo) == 0 {
+		http.Error(w, "no photo", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(u.Photo))
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_, _ = w.Write(u.Photo)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -4901,11 +4942,21 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 		Email:        finalEmail,
 		Role:         role,
 		AuthProvider: "ldap",
+		// v0.8.238 — persist the directory photo on every login so the
+		// avatar tracks the directory (removed there = cleared here).
+		Photo: res.User.Photo,
 	}
 	firstLogin := existing == nil
 	if existing != nil {
 		u.ID = existing.ID
 		u.CreatedAt = existing.CreatedAt
+		// v0.8.238 — ReplacingMergeTree replaces the WHOLE row: carry
+		// the admin-managed fields forward or this login would silently
+		// wipe them (latent bug: every LDAP re-login cleared team +
+		// custom role + any stored password hash).
+		u.Team = existing.Team
+		u.CustomRole = existing.CustomRole
+		u.PasswordHash = existing.PasswordHash
 	} else {
 		idBytes := make([]byte, 8)
 		_, _ = rand.Read(idBytes)

@@ -175,6 +175,35 @@ type LDAPUser struct {
 	Email       string   `json:"email"`
 	DisplayName string   `json:"displayName"`
 	Groups      []string `json:"groups,omitempty"`
+	// Photo — raw thumbnailPhoto (AD) / jpegPhoto (inetOrgPerson) bytes
+	// (v0.8.238). Never serialized: the directory-search UI JSON must
+	// not ship images; the login path persists it to the users row and
+	// the photo endpoints serve it from there.
+	Photo []byte `json:"-"`
+}
+
+// maxPhotoBytes caps what we take from the directory. AD's
+// thumbnailPhoto convention is ≤100 KB; jpegPhoto can be arbitrary —
+// half a megabyte is plenty for an avatar and keeps the users row
+// (whole-row-replaced on every upsert) small.
+const maxPhotoBytes = 512 * 1024
+
+// photoFromEntry pulls the profile-photo bytes off a directory entry:
+// thumbnailPhoto (AD, small by convention) wins over jpegPhoto
+// (inetOrgPerson). Oversized values are DROPPED, not truncated — a
+// truncated JPEG renders as a broken image, no photo renders as the
+// initials fallback. nil when neither attribute is present.
+func photoFromEntry(e *goldap.Entry) []byte {
+	for _, attr := range []string{"thumbnailPhoto", "jpegPhoto"} {
+		if v := e.GetRawAttributeValue(attr); len(v) > 0 {
+			if len(v) > maxPhotoBytes {
+				log.Printf("[ldap] %s on %q is %d bytes (> %d cap) — skipping photo", attr, e.DN, len(v), maxPhotoBytes)
+				continue
+			}
+			return v
+		}
+	}
+	return nil
 }
 
 // AuthResult bundles the authenticated user + the role we resolved
@@ -424,6 +453,11 @@ func findUser(conn *goldap.Conn, c Config, username string) (*LDAPUser, error) {
 	if !c.SkipMemberOfFetch {
 		attrs = append(attrs, "memberOf")
 	}
+	// v0.8.238 — profile photo. AD stores it in thumbnailPhoto,
+	// OpenLDAP inetOrgPerson in jpegPhoto. Requested unconditionally:
+	// an absent attribute costs nothing on the wire, and photoFromEntry
+	// caps what we keep (maxPhotoBytes).
+	attrs = append(attrs, "thumbnailPhoto", "jpegPhoto")
 	log.Printf("[ldap] user search baseDN=%q filter=%s attrs=%v", c.BaseDN, filter, attrs)
 	req := goldap.NewSearchRequest(
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
@@ -467,6 +501,7 @@ func findUser(conn *goldap.Conn, c Config, username string) (*LDAPUser, error) {
 		Username:    firstNonEmpty(e.GetAttributeValue(c.UserAttribute), username),
 		Email:       e.GetAttributeValue(c.EmailAttribute),
 		DisplayName: e.GetAttributeValue(c.DisplayAttribute),
+		Photo:       photoFromEntry(e),
 		Groups:      groups,
 	}, nil
 }

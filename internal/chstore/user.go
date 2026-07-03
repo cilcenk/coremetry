@@ -24,6 +24,14 @@ type User struct {
 	// role, unrestricted viewer.
 	CustomRole string `json:"customRole,omitempty"`
 	CreatedAt int64  `json:"createdAt"` // unix nanoseconds
+	// Photo — LDAP thumbnailPhoto/jpegPhoto bytes (v0.8.238), refreshed
+	// on each directory login; empty for local/OIDC accounts. Never
+	// serialized into user JSON — served by the dedicated photo
+	// endpoints. Get* loads the bytes (read-modify-write paths must
+	// carry them through UpsertUser or the ReplacingMergeTree row
+	// replace would wipe the photo); List* loads only HasPhoto.
+	Photo    []byte `json:"-"`
+	HasPhoto bool   `json:"hasPhoto"`
 }
 
 // GetUserByEmail returns the latest version of a user (ReplacingMergeTree FINAL).
@@ -31,13 +39,14 @@ type User struct {
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at)
+		       toUnixTimestamp64Nano(created_at), photo
 		FROM users FINAL
 		WHERE email = ? AND disabled = 0
 		LIMIT 1`, email)
 	var u User
 	var disabled uint8
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
+	var photo string
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo); err != nil {
 		// clickhouse-go returns sql.ErrNoRows analogue; surface as nil/nil.
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
@@ -45,25 +54,28 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error)
 		return nil, err
 	}
 	u.Disabled = disabled != 0
+	u.Photo, u.HasPhoto = []byte(photo), photo != ""
 	return &u, nil
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at)
+		       toUnixTimestamp64Nano(created_at), photo
 		FROM users FINAL
 		WHERE id = ? AND disabled = 0
 		LIMIT 1`, id)
 	var u User
 	var disabled uint8
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
+	var photo string
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
 		return nil, err
 	}
 	u.Disabled = disabled != 0
+	u.Photo, u.HasPhoto = []byte(photo), photo != ""
 	return &u, nil
 }
 
@@ -77,7 +89,7 @@ func (s *Store) CountUsers(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) UpsertUser(ctx context.Context, u User) error {
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users (id, email, password_hash, role, disabled, auth_provider, team, custom_role)")
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users (id, email, password_hash, role, disabled, auth_provider, team, custom_role, photo)")
 	if err != nil {
 		return fmt.Errorf("prepare users: %w", err)
 	}
@@ -96,7 +108,7 @@ func (s *Store) UpsertUser(ctx context.Context, u User) error {
 	if u.Role != "viewer" {
 		custom = ""
 	}
-	if err := batch.Append(u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team, custom); err != nil {
+	if err := batch.Append(u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team, custom, string(u.Photo)); err != nil {
 		return fmt.Errorf("append user: %w", err)
 	}
 	return batch.Send()
@@ -107,7 +119,7 @@ func (s *Store) UpsertUser(ctx context.Context, u User) error {
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at)
+		       toUnixTimestamp64Nano(created_at), length(photo) > 0 AS has_photo
 		FROM users FINAL
 		WHERE disabled = 0
 		ORDER BY created_at DESC`)
@@ -118,11 +130,12 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		var disabled uint8
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
+		var disabled, hasPhoto uint8
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &hasPhoto); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0
+		u.HasPhoto = hasPhoto != 0
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -140,7 +153,7 @@ func (s *Store) ListUsersByTeam(ctx context.Context, team string) ([]User, error
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at)
+		       toUnixTimestamp64Nano(created_at), length(photo) > 0 AS has_photo
 		FROM users FINAL
 		WHERE disabled = 0 AND lower(team) = lower(?)
 		ORDER BY email`, team)
@@ -151,11 +164,12 @@ func (s *Store) ListUsersByTeam(ctx context.Context, team string) ([]User, error
 	var out []User
 	for rows.Next() {
 		var u User
-		var disabled uint8
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt); err != nil {
+		var disabled, hasPhoto uint8
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &hasPhoto); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0
+		u.HasPhoto = hasPhoto != 0
 		out = append(out, u)
 	}
 	return out, rows.Err()

@@ -349,14 +349,26 @@ export function Sidebar() {
             justifyContent: showLabels ? 'flex-start' : 'center',
             gap: 8, cursor: 'pointer',
           }} onClick={() => setMenuOpen(o => !o)}>
-            <div style={{
-              width: 26, height: 26, borderRadius: '50%',
-              background: 'var(--accent)', color: '#fff',
-              display: 'grid', placeItems: 'center', flexShrink: 0,
-              fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
-            }} title={!showLabels ? user.email : undefined}>
-              {user.email[0]}
-            </div>
+            {/* v0.8.238 — LDAP directory photo when stored; initials
+                fallback otherwise (and on a broken image byte-stream). */}
+            {user.hasPhoto ? (
+              <img src="/api/auth/me/photo" alt=""
+                style={{
+                  width: 26, height: 26, borderRadius: '50%',
+                  objectFit: 'cover', flexShrink: 0,
+                }}
+                title={!showLabels ? user.email : undefined}
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            ) : (
+              <div style={{
+                width: 26, height: 26, borderRadius: '50%',
+                background: 'var(--accent)', color: '#fff',
+                display: 'grid', placeItems: 'center', flexShrink: 0,
+                fontSize: 12, fontWeight: 600, textTransform: 'uppercase',
+              }} title={!showLabels ? user.email : undefined}>
+                {user.email[0]}
+              </div>
+            )}
             {showLabels && (
               <>
                 <div style={{ flex: 1, minWidth: 0 }}>

@@ -1250,6 +1250,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// role's `pages` list further restricts which sidebar
 		// entries the user sees. Empty = use base role unrestricted.
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_role LowCardinality(String) DEFAULT ''`,
+		// v0.8.238 — LDAP profile photo (thumbnailPhoto/jpegPhoto bytes,
+		// ≤512 KB, refreshed each login). CH String is binary-safe; ZSTD
+		// because JPEG headers still squeeze a little and the column is
+		// cold (read only by the photo endpoints).
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo String DEFAULT '' CODEC(ZSTD(3))`,
 		// v0.5.254 — Problem AI auto-explain. The background
 		// problemExplainer goroutine fills these for open critical
 		// problems within ~30s of opening; the UI surfaces the

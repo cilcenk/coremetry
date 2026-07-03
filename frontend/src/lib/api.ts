@@ -1805,6 +1805,10 @@ export interface AuthUser {
   // route guard without a second fetch.
   customRole?: string;
   customRolePages?: string[];
+  // v0.8.238 — true when an LDAP directory photo is stored for this
+  // user; gates the <img src=".../photo"> so local/OIDC accounts
+  // render the initials fallback without a guaranteed-404 request.
+  hasPhoto?: boolean;
 }
 export interface UserRow extends AuthUser {
   disabled: boolean;

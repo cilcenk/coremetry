@@ -144,6 +144,24 @@ export default function UsersPage() {
                   return (
                     <tr key={u.id}>
                       <td>
+                        {/* v0.8.238 — LDAP photo avatar; initials chip
+                            fallback keeps rows aligned. */}
+                        {u.hasPhoto ? (
+                          <img src={`/api/users/${u.id}/photo`} alt=""
+                            style={{
+                              width: 20, height: 20, borderRadius: '50%',
+                              objectFit: 'cover', verticalAlign: 'middle', marginRight: 8,
+                            }}
+                            onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        ) : (
+                          <span style={{
+                            display: 'inline-grid', placeItems: 'center',
+                            width: 20, height: 20, borderRadius: '50%',
+                            background: 'var(--accent)', color: '#fff',
+                            fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                            verticalAlign: 'middle', marginRight: 8,
+                          }}>{u.email[0]}</span>
+                        )}
                         <span style={{ fontWeight: 600 }}>{u.email}</span>
                         {isMe && (
                           <span style={{

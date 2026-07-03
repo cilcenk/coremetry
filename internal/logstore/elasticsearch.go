@@ -66,6 +66,14 @@ func decodeESCursor(tok string) (pit string, sortVals []any, ok bool) {
 	return c.Pit, c.Sort, true
 }
 
+// retryPlainOnPITDenial reports whether a failed PIT-mode search should
+// flip the store to plain paging and retry: auth denials only (401/403
+// — the data-stream backing-index RBAC shape, v0.8.237), and only when
+// a PIT was actually in use. Pure so the gate is unit-tested.
+func retryPlainOnPITDenial(usePIT bool, status int) bool {
+	return usePIT && (status == http.StatusUnauthorized || status == http.StatusForbidden)
+}
+
 // esPITKeepAlive bounds how long a Point-in-Time lives between paged
 // requests. Long enough for an operator to page interactively, short
 // enough that abandoned PITs (and the segment readers they pin) are
@@ -255,6 +263,14 @@ type ESStore struct {
 	// self-observation (v0.8.230). Every query path funnels its
 	// transport / non-2xx failures through recordQueryError.
 	errs esErrRing
+	// pitDenied — v0.8.237, operator-reported 403. On data-stream
+	// clusters a PIT pins the CONCRETE .ds-* backing indices, and a
+	// credential granted read on the stream pattern (e.g. "app*") can
+	// still be denied direct backing-index reads — the PIT search
+	// 403s while a Kibana-style pattern query works. Once seen, stay
+	// on plain paging for the life of the process (openPIT is skipped)
+	// instead of burning a doomed PIT round-trip per search.
+	pitDenied atomic.Bool
 	// NamespaceResolver maps a service name to its namespace for the
 	// {namespace} placeholder in cfg.IndexTemplate (v0.8.231). Wired by
 	// main.go to a TTL-cached chstore.GetServiceNamespaces lookup — the
@@ -1071,7 +1087,11 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	pitID, afterSort, hasCursor := decodeESCursor(f.Cursor)
 	if !hasCursor {
 		afterSort = nil
-		if pid, err := s.openPIT(ctx, esPITKeepAlive, queryIdx); err == nil {
+		if s.pitDenied.Load() {
+			// v0.8.237 — PIT reads 403'd on this cluster earlier; stay
+			// on plain paging rather than re-attempting a doomed PIT.
+			pitID = ""
+		} else if pid, err := s.openPIT(ctx, esPITKeepAlive, queryIdx); err == nil {
 			pitID = pid
 		} else {
 			pitID = ""
@@ -1199,8 +1219,25 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, s.recordQueryError("search", queryIdx, body, res.StatusCode,
+		qErr := s.recordQueryError("search", queryIdx, body, res.StatusCode,
 			parseESError("search", res, s.cfg.Index))
+		if retryPlainOnPITDenial(usePIT, res.StatusCode) {
+			// v0.8.237 — operator-reported: PIT search 403'd on a
+			// data-stream cluster (credential covers the "app*"
+			// pattern, not direct .ds-* backing-index reads that the
+			// PIT pins). Flip to plain paging permanently for this
+			// process and retry once — /logs must degrade to the
+			// Kibana-equivalent pattern query, not error out. The
+			// recorded error above keeps the 403 visible on
+			// /admin/elastic. A PIT-mode cursor can't page in plain
+			// mode: restart from the first page.
+			if s.pitDenied.CompareAndSwap(false, true) {
+				log.Printf("[logstore-es] PIT search denied (status %d) — switching to plain paging for this process; grant the credential read on the .ds-* backing indices to re-enable stable deep paging", res.StatusCode)
+			}
+			f.Cursor = ""
+			return s.Search(ctx, f)
+		}
+		return nil, qErr
 	}
 
 	var raw struct {

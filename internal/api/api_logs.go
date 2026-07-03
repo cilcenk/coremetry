@@ -285,6 +285,29 @@ func (s *Server) adminElasticIndices(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// adminElasticErrors returns the ES backend's recent failed queries +
+// cumulative error counter (v0.8.230, operator-requested: "when ES has
+// a problem I want to see the queries it sent"). In-memory per-pod
+// snapshot — deliberately NOT cached: it must reflect the error the
+// operator just triggered, and the read is a mutex-guarded copy of ≤20
+// entries (no CH/ES round-trip, so serveCached would add nothing). The
+// CH backend (no Diagnoser) returns an empty payload so the panel
+// renders its empty state.
+func (s *Server) adminElasticErrors(w http.ResponseWriter, r *http.Request) {
+	d := logstore.ESDiagnostics{RecentErrors: []logstore.ESQueryError{}}
+	if diag, ok := s.logs.(logstore.Diagnoser); ok {
+		d = diag.Diagnostics()
+		if d.RecentErrors == nil {
+			d.RecentErrors = []logstore.ESQueryError{}
+		}
+	}
+	writeJSON(w, map[string]any{
+		"backend":      s.logs.Backend(),
+		"queryErrors":  d.QueryErrors,
+		"recentErrors": d.RecentErrors,
+	})
+}
+
 func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	field := strings.TrimSpace(q.Get("field"))

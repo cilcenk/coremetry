@@ -2691,6 +2691,19 @@ export interface Feedback {
   createdAt: number; // unix ns
 }
 
+// v0.8.230 — one failed ES query captured by the logstore diagnostics
+// ring (backend `recordQueryError`). `query` is the exact request body
+// Coremetry sent (truncated at 4 KiB) so the operator can replay it
+// with curl against their cluster.
+export interface ESQueryError {
+  at: number;     // unix ms
+  op: string;     // search | tail search | histogram | msearch count-patterns | eql search
+  index: string;  // resolved concrete index list the query targeted
+  query: string;
+  status: number; // HTTP status; 0 = transport error (ES unreachable)
+  error: string;
+}
+
 // Result of the admin "purge telemetry data" factory-reset.
 export interface PurgeResult {
   tablesPurged: string[];

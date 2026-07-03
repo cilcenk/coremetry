@@ -22,6 +22,7 @@ import type {
   Role, LDAPConfig, LDAPDirectoryUser,
   Feedback,
   RelationResponse, RelationKind, FilterExpr,
+  ESQueryError,
 } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 
@@ -510,6 +511,12 @@ export const api = {
         ilmPhase: string;
       }>;
     }>(`/api/admin/elastic/indices`),
+  // Recent failed ES queries + cumulative counter (v0.8.230). Per-pod
+  // in-memory ring; uncached so the panel reflects the error the
+  // operator just triggered. CH backend returns an empty list.
+  adminElasticErrors: () =>
+    get<{ backend: string; queryErrors: number; recentErrors: ESQueryError[] }>(
+      `/api/admin/elastic/errors`),
   // Kibana saved-search interop URLs — used as download / upload
   // anchors in /admin/elastic. v0.5.467.
   kibanaExportURL: () => `/api/admin/elastic/saved-search-export`,

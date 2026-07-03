@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
@@ -6,6 +6,7 @@ import { toast } from '@/lib/toast';
 import { fmtNum, fmtBytes } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import type { ESQueryError } from '@/lib/types';
 
 // AdminElastic (v0.5.466) — operator-facing inventory of the
 // logs backend's indices: name, doc count, size, health, ILM
@@ -56,6 +57,83 @@ const ELASTIC_COLS: DataTableColumn<Row>[] = [
   { id: 'ilmPhase',  label: 'ILM phase', sortValue: r => r.ilmPhase,  naturalDir: 'asc',  width: 120 },
   { id: 'ilmPolicy', label: 'Policy',    sortValue: r => r.ilmPolicy, naturalDir: 'asc',  width: 200 },
 ];
+
+// Recent failed ES queries (v0.8.230, operator-requested). Polls every
+// 30s (pauses on document.hidden per the polling rule) so an error the
+// operator just triggered on /logs shows up here without a manual
+// refresh. Expandable rows reveal the exact query body for curl replay.
+function QueryErrorsPanel() {
+  const [diag, setDiag] = useState<{ queryErrors: number; recentErrors: ESQueryError[] } | undefined>(undefined);
+  const [open, setOpen] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchOnce = () =>
+      api.adminElasticErrors()
+        .then(d => { if (!cancelled) setDiag(d); })
+        .catch(() => { /* panel is best-effort; the indices error banner covers hard failures */ });
+    fetchOnce();
+    const t = setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  if (!diag) return null;
+  const errs = diag.recentErrors ?? [];
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 14 }}>Recent query errors</h3>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          {fmtNum(diag.queryErrors)} since boot · last {errs.length} shown · also in pod log as “[logstore-es] query FAILED”
+        </span>
+      </div>
+      {errs.length === 0 ? (
+        <Empty icon="✓" title="No failed queries since boot" />
+      ) : (
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            <col style={{ width: 150 }} /><col style={{ width: 170 }} />
+            <col style={{ width: 70 }} /><col style={{ width: 260 }} /><col />
+          </colgroup>
+          <thead>
+            <tr><th>Time</th><th>Op</th><th className="num">Status</th><th>Index</th><th>Error</th></tr>
+          </thead>
+          <tbody>
+            {errs.map((e, i) => (
+              <Fragment key={i}>
+                <tr onClick={() => setOpen(open === i ? null : i)}
+                  style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+                  title="Click to show the exact query body sent">
+                  <td className="mono" style={{ fontSize: 11 }}>{new Date(e.at).toLocaleTimeString()}</td>
+                  <td>{e.op}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>
+                    <span className="badge" style={{ background: 'rgba(220,38,38,0.22)' }}>
+                      {e.status || 'net'}
+                    </span>
+                  </td>
+                  <td className="mono" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.index}>{e.index}</td>
+                  <td style={{ fontSize: 12, color: 'var(--err)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.error}>{e.error}</td>
+                </tr>
+                {open === i && (
+                  <tr>
+                    <td colSpan={5}>
+                      <pre style={{
+                        margin: '4px 0 8px', padding: 8, fontSize: 11, maxHeight: 240,
+                        overflow: 'auto', background: 'var(--bg2)',
+                        border: '1px solid var(--border)', borderRadius: 4,
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                      }}>{e.query}</pre>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
 
 export default function AdminElasticPage() {
   const [data, setData] = useState<Payload | undefined>(undefined);
@@ -201,6 +279,11 @@ export default function AdminElasticPage() {
             </table>
           </>
         )}
+
+        {/* v0.8.230 — failed-query diagnostics. Rendered whenever the
+            backend is ES OR the inventory itself errored (the exact
+            situation the panel exists for). */}
+        {(err || (data && data.backend === 'elasticsearch')) && <QueryErrorsPanel />}
       </div>
     </>
   );

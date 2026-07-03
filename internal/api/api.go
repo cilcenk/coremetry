@@ -653,6 +653,7 @@ func (s *Server) Start() error {
 	// v0.5.466 — ES index inventory: name, docs, size, health,
 	// ILM phase/policy. Admin-only (read of cluster metadata).
 	mux.HandleFunc("GET  /api/admin/elastic/indices", auth.RequireRole(auth.RoleAdmin, s.adminElasticIndices))
+	mux.HandleFunc("GET  /api/admin/elastic/errors", auth.RequireRole(auth.RoleAdmin, s.adminElasticErrors))
 	// v0.5.467 — Kibana saved-search interop. Export streams an
 	// .ndjson the operator can import into Kibana Discover;
 	// import accepts the same format and turns each saved search
@@ -1274,6 +1275,12 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state.
 		st.Health.LockDegraded = s.lockDegraded
+		// v0.8.230 — ES query-failure visibility. The ES logstore counts its
+		// failed queries; non-zero here points the operator at
+		// /admin/elastic → Recent query errors for the exact requests.
+		if diag, ok := s.logs.(logstore.Diagnoser); ok {
+			st.Health.ESQueryErrors = diag.Diagnostics().QueryErrors
+		}
 		return st, nil
 	})
 }

@@ -684,6 +684,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/operator-events",      s.listEvents)
 	mux.HandleFunc("POST   /api/operator-events",      auth.RequireAnyRole(editorRoles, s.createEvent))
 	mux.HandleFunc("DELETE /api/operator-events/{id}", auth.RequireAnyRole(editorRoles, s.deleteEvent))
+	// v0.8.241 — notification dispatch history (email/slack/teams/
+	// zoom/webhook/whatsapp sends, success + failure). Read-only;
+	// any signed-in role (targets are masked at write time).
+	mux.HandleFunc("GET    /api/notifications/log",    s.listNotificationLog)
 	// Saved views — per-user CRUD (server scopes by session).
 	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
 	mux.HandleFunc("POST   /api/views",     s.createSavedView)

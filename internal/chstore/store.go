@@ -1375,6 +1375,44 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		PARTITION BY toYYYYMM(started_at)
 		ORDER BY id`,
+
+		// v0.8.241 — notification dispatch history. Append-only audit
+		// trail of every channel send (email / slack / teams / zoom /
+		// webhook / whatsapp) fanned out by internal/notify — success
+		// AND failure. The row is IMMUTABLE (a send happened at an
+		// instant), so this is a PLAIN MergeTree, NOT ReplacingMergeTree:
+		// there is no state to dedup and reads never need FINAL. Powers
+		// the /events "Notifications sent" surface so an operator can
+		// answer "did the 03:00 page actually go out, and to whom?"
+		// without SSHing into the box.
+		//
+		// target is stored PRE-MASKED by the notifier (email local-part
+		// shortened, webhook URL reduced to host) — the log is an
+		// operational record, not a recipient directory.
+		//
+		// Low-volume long-retention → PARTITION BY month (day would make
+		// near-empty partitions). ORDER BY (sent_at, id) so the
+		// time-bounded /api/notifications/log read prunes via the
+		// primary index. 90-day day-granularity TTL is partition-aligned
+		// (toDate wrap on a DAY interval — the correct form per the
+		// v0.6.36 unit-mixing rule; NEVER wrap a sub-day calc).
+		`CREATE TABLE IF NOT EXISTS notification_log (
+			id            String,
+			sent_at       DateTime64(9) DEFAULT now64(9),
+			channel_kind  LowCardinality(String),           -- email|slack|mattermost|teams|zoomchat|webhook|whatsapp
+			channel_name  String,
+			target        String,                            -- MASKED recipient / webhook host
+			subject       String        DEFAULT '',
+			body_preview  String        DEFAULT '',          -- first ~200 chars of the body
+			related_kind  LowCardinality(String) DEFAULT '', -- problem|incident|alert|monitor|test|runbook
+			related_id    String        DEFAULT '',
+			ok            UInt8         DEFAULT 0,
+			error         String        DEFAULT ''
+		) ENGINE = MergeTree()
+		PARTITION BY toYYYYMM(sent_at)
+		ORDER BY (sent_at, id)
+		TTL toDate(sent_at) + INTERVAL 90 DAY`,
+
 		// v0.5.209 — triage assignee. Populated from service
 		// metadata's owner_team when the problem opens, then
 		// overridable by an operator claim via PATCH

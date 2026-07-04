@@ -453,7 +453,7 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		if !c.MatchRules.MatchesProblem(in) {
 			continue
 		}
-		if err := n.sendOne(ctx, c, p); err != nil {
+		if err := n.sendOne(ctx, c, p, "problem", p.ID); err != nil {
 			log.Printf("[notify] %s (%s): %v", c.Name, c.Type, err)
 		}
 	}
@@ -494,7 +494,7 @@ func (n *Notifier) SendRunbookComplete(ctx context.Context, e chstore.RunbookExe
 		if !want[strings.ToLower(c.Type)] {
 			continue // runbook opted out of this channel type
 		}
-		if err := n.sendOne(ctx, c, p); err != nil {
+		if err := n.sendOne(ctx, c, p, "runbook", e.ID); err != nil {
 			log.Printf("[notify] runbook-complete %s (%s): %v", c.Name, c.Type, err)
 		}
 	}
@@ -534,10 +534,25 @@ func (n *Notifier) SendTest(ctx context.Context, c chstore.NotificationChannel) 
 		Description: "This is a test notification — your channel is configured correctly.",
 		StartedAt:   time.Now().UnixNano(),
 	}
-	return n.sendOne(ctx, c, test)
+	return n.sendOne(ctx, c, test, "test", "")
 }
 
-func (n *Notifier) sendOne(ctx context.Context, c chstore.NotificationChannel, p chstore.Problem) error {
+// sendOne is the single funnel every channel dispatch routes through
+// (problem alerts, runbook-complete notices, "send test"). It records
+// the outcome — success AND failure — to the append-only
+// notification_log (v0.8.241) before returning, so the /events history
+// captures every send from ONE place instead of per-channel sprinkling.
+// relKind/relID describe the originating entity (problem|runbook|test).
+func (n *Notifier) sendOne(ctx context.Context, c chstore.NotificationChannel, p chstore.Problem, relKind, relID string) error {
+	err := n.dispatch(ctx, c, p)
+	n.recordNotification(ctx, c, p, relKind, relID, err)
+	return err
+}
+
+// dispatch performs the actual per-channel send. Kept separate from
+// sendOne so the notification_log record wraps every branch (including
+// the unknown-type error) exactly once.
+func (n *Notifier) dispatch(ctx context.Context, c chstore.NotificationChannel, p chstore.Problem) error {
 	switch c.Type {
 	case "email":
 		return n.sendEmail(ctx, c, p)

@@ -85,6 +85,10 @@ func (s *Switchable) FieldValues(ctx context.Context, field, prefix string, limi
 	return s.Current().FieldValues(ctx, field, prefix, limit)
 }
 
+func (s *Switchable) FieldStats(ctx context.Context, f Filter, field string, limit int) (*FieldStatsResult, error) {
+	return s.Current().FieldStats(ctx, f, field, limit)
+}
+
 func (s *Switchable) Backend() string { return s.Current().Backend() }
 
 func (s *Switchable) Ping(ctx context.Context) error { return s.Current().Ping(ctx) }

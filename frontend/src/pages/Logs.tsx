@@ -15,6 +15,7 @@ import { LogTable, DEFAULT_LOG_COLUMNS } from '@/components/LogTable';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
+import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
@@ -282,6 +283,8 @@ function LogsInner() {
     writeUrl(filter, filters, next);
   };
   const removeColumn = (id: string) => changeCols(logCols.filter(c => c !== id));
+  const toggleColumn = (id: string) =>
+    changeCols(logCols.includes(id) ? logCols.filter(c => c !== id) : [...logCols, id]);
 
   // Build the params for the static-window query. When live
   // tail is on, we don't run this query (the live useQuery
@@ -308,6 +311,17 @@ function LogsInner() {
     () => compileSearch(filters, filter.search),
     [filters, filter.search],
   );
+  // Slice for the fields-panel accordion fetches — stable identity
+  // so the panel's useQuery keys only change when the slice does.
+  const fieldStatsScope = useMemo(() => ({
+    from, to,
+    service: filter.service || undefined,
+    cluster: filter.cluster || undefined,
+    search: compiledSearch || undefined,
+    severity: filter.severity > 0 ? filter.severity : undefined,
+    traceId: filter.traceId || undefined,
+    spanId: filter.spanId || undefined,
+  }), [from, to, filter.service, filter.cluster, compiledSearch, filter.severity, filter.traceId, filter.spanId]);
   const staticQ = useLogs({
     limit: 100, after: cursor || undefined, from, to,
     service: filter.service || undefined,
@@ -425,13 +439,10 @@ function LogsInner() {
   // to the next. `cursor` stands in for the page identity now.
   useEffect(() => { setExpanded(new Set()); }, [range, filter, filters, cursor]);
 
-  // Field-mapping hint (v0.5.136 / v0.5.137). On the Elastic
-  // backend, surface what fields are queryable so the operator
-  // doesn't have to guess what their index mapping exposes. CH
-  // backend returns an empty list (its shape is fixed and
-  // already documented in the placeholder).
+  // Backend mapping fields (v0.5.136 → fields panel v0.8.255).
+  // Feeds the left LogFieldsPanel's "Available fields" group. CH
+  // backend returns an empty list (its shape is fixed).
   const [fields, setFields] = useState<string[]>([]);
-  const [showFieldsHint, setShowFieldsHint] = useState(false);
 
   // Kibana deep-link config (v0.5.236). Loaded once on mount;
   // when disabled or unconfigured, buildKibanaURL returns null
@@ -447,21 +458,6 @@ function LogsInner() {
       .then(d => { setFields(d.fields ?? []); })
       .catch(() => { setFields([]); });
   }, []);
-  // Insert "field:" into the search box at cursor / end. Auto-
-  // focuses so the operator can type the value immediately.
-  const insertField = (f: string) => {
-    const cur = draft.search;
-    const sep = cur && !cur.endsWith(' ') ? ' AND ' : '';
-    setDraft({ ...draft, search: `${cur}${sep}${f}:` });
-    // Move keyboard focus back to the search box. v0.7.46 — KqlSearchInput is
-    // now a <textarea> (wraps long KQL queries), so select the textarea.
-    requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLTextAreaElement>('textarea[placeholder^="Search…"]');
-      el?.focus();
-      el?.setSelectionRange(el.value.length, el.value.length);
-    });
-  };
-
   const apply = () => { resetPaging(); setFilter(draft); writeUrl(draft, filters); };
   const reset = () => {
     const empty = { service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '' };
@@ -562,14 +558,6 @@ function LogsInner() {
               '  message:"connection refused" AND k8s.namespace:prod\n\n' +
               'Plain words match the body. Use double quotes for exact phrases.\n\n' +
               'Field-aware autocomplete (v0.5.464): type `field:` and pick from the dropdown.'} />
-          {fields.length > 0 && (
-            <button type="button" className="sec"
-              onClick={() => setShowFieldsHint(v => !v)}
-              title={`${fields.length} indexable field${fields.length === 1 ? '' : 's'} discovered from the Elasticsearch mapping. Click to browse + auto-insert into the search.`}
-              style={{ fontSize: 11, padding: '3px 8px' }}>
-              {showFieldsHint ? '× Fields' : 'ƒ Fields'}
-            </button>
-          )}
           {/* Trace ID filter — dedicated input next to search so
               operators can paste a trace ID from a problem /
               incident and see only its log lines. Mirrors the
@@ -769,41 +757,22 @@ function LogsInner() {
           );
         })()}
 
-        {/* Field-mapping chips (v0.5.137). Toggled via the ƒ
-            Fields button next to the search input. Discovered
-            from the Elasticsearch _mapping; clicking a chip
-            inserts "field:" at the end of the current search
-            with the right AND glue + auto-focuses the input. */}
-        {showFieldsHint && fields.length > 0 && (
-          <div style={{
-            background: 'var(--bg2)', border: '1px solid var(--border)',
-            borderRadius: 6, padding: 8, marginBottom: 10,
-            fontSize: 11,
-          }}>
-            <div style={{
-              fontWeight: 600, color: 'var(--text2)', marginBottom: 6,
-              display: 'flex', alignItems: 'baseline', gap: 8,
-            }}>
-              <span>Discovered fields</span>
-              <span style={{ color: 'var(--text3)', fontWeight: 400 }}>
-                {fields.length} field{fields.length === 1 ? '' : 's'} · click to insert "field:" into the search
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {fields.map(f => (
-                <button key={f} type="button"
-                  onClick={() => insertField(f)}
-                  className="sec"
-                  style={{
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    fontSize: 11, padding: '2px 6px',
-                  }}>
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Fields panel (Discover revamp step 2) to the left of the
+            histogram + table. Replaces the old "ƒ Fields" chip row —
+            same discovery source (/api/logs/fields), but with
+            Selected/Available grouping, per-field top-5 accordion
+            (lazy fieldstats fetch on expand only), pill actions and
+            add/remove-column. The right side keeps everything that
+            was here before, unchanged. */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <LogFieldsPanel
+            fields={fields}
+            columns={logCols}
+            scope={fieldStatsScope}
+            onToggleColumn={toggleColumn}
+            onPillAdd={addFromRow}
+            onPillExclude={excludeFromRow} />
+          <div style={{ flex: 1, minWidth: 0 }}>
 
         {/* Severity-stacked histogram (v0.5.235) — spike of errors
             stands out against the background INFO traffic without
@@ -884,6 +853,8 @@ function LogsInner() {
             )}
           </>
         )}
+          </div>
+        </div>
       </div>
       <CorrelationContextDrawer
         anchor={peekTraceId ? { kind: 'trace', traceId: peekTraceId } : null}

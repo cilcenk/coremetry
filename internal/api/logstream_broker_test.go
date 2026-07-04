@@ -35,6 +35,9 @@ func (stubLogStore) Indices(context.Context) ([]logstore.IndexInfo, error) { ret
 func (stubLogStore) FieldValues(context.Context, string, string, int) ([]string, error) {
 	return nil, nil
 }
+func (stubLogStore) FieldStats(context.Context, logstore.Filter, string, int) (*logstore.FieldStatsResult, error) {
+	return nil, nil
+}
 func (stubLogStore) Backend() string            { return "stub" }
 func (stubLogStore) Ping(context.Context) error { return nil }
 

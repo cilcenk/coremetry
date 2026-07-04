@@ -1209,6 +1209,15 @@ export interface LogsResponse {
   nextCursor?: string;
 }
 
+// /api/logs/fieldstats (v0.8.255) — top values of one field in the
+// current slice, for the fields-panel accordion. total = docs the
+// top values were drawn from (buckets + remainder) → % denominators.
+export interface LogFieldStats {
+  field: string;
+  total: number;
+  values: { value: string; count: number }[];
+}
+
 export interface MetricInfo {
   name: string;
   description: string;

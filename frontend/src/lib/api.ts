@@ -1,7 +1,7 @@
 import type {
   PurgeResult,
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
-  LogsResponse, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
+  LogsResponse, LogFieldStats, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
@@ -395,6 +395,22 @@ export const api = {
   }) =>
     get<{ name: string; points: { t: number; v: number }[] }[]>(
       `/api/logs/timeseries?${qs(params)}`),
+
+  // Fields-panel accordion (v0.8.255): top-5 values of one field
+  // in the current slice, with counts for the % bars. Expand-
+  // triggered only — never poll this (60s server-side cache).
+  logsFieldStats: (params: {
+    field: string;
+    service?: string;
+    cluster?: string;
+    search?: string;
+    from?: number;
+    to?: number;
+    severity?: number;
+    traceId?: string;
+    spanId?: string;
+  }) =>
+    get<LogFieldStats>(`/api/logs/fieldstats?${qs(params)}`),
 
   health: ()                         => get<HealthInfo>(`/api/health`),
   status: ()                         => get<SystemStatus>(`/api/status`),

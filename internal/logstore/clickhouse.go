@@ -330,3 +330,100 @@ func (s *CHStore) FieldValues(ctx context.Context, field, prefix string, limit i
 	return nil, nil
 }
 
+// FieldStats — top-N values of one field in the filtered window
+// (fields-panel accordion, v0.8.255). Well-known ids resolve to
+// their indexed columns; anything else is looked up in the
+// attributes map first, then resource_attributes. Grouping is
+// capped (max_rows_to_group_by + 'any' overflow) so a pathological
+// high-cardinality field (trace_id…) degrades to approximate
+// counts instead of blowing memory at billion-row scale.
+func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit int) (*FieldStatsResult, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	valueExpr := ""
+	switch field {
+	case "service", "service.name", "service_name":
+		valueExpr = "service_name"
+	case "severity", "level", "log.level", "severity_text":
+		valueExpr = "if(severity_text != '', severity_text, toString(severity_num))"
+	default:
+		valueExpr = "coalesce(nullIf(attributes[?], ''), nullIf(resource_attributes[?], ''), '')"
+	}
+
+	from, to := f.From, f.To
+	if from.IsZero() {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	args := []any{}
+	if strings.Contains(valueExpr, "?") {
+		args = append(args, field, field)
+	}
+	args = append(args, from, to)
+	wc := "time >= ? AND time <= ?"
+	if f.Cluster != "" {
+		wc += ` AND coalesce(
+			nullIf(resource_attributes['k8s.cluster.name'], ''),
+			nullIf(resource_attributes['openshift.cluster.name'], ''),
+			nullIf(resource_attributes['cluster'], ''),
+			''
+		) = ?`
+		args = append(args, f.Cluster)
+	}
+	if f.Service != "" {
+		wc += " AND service_name = ?"
+		args = append(args, f.Service)
+	}
+	if f.Search != "" {
+		wc += " AND multiSearchAnyCaseInsensitive(body, [?])"
+		args = append(args, f.Search)
+	}
+	if f.SeverityMin > 0 {
+		wc += " AND severity_num >= ?"
+		args = append(args, f.SeverityMin)
+	}
+	if f.TraceID != "" {
+		wc += " AND trace_id = ?"
+		args = append(args, f.TraceID)
+	}
+	args = append(args, limit)
+
+	// Window function over the grouped subquery: one scan yields both
+	// the top-N rows and the all-values total for the % denominator.
+	sql := fmt.Sprintf(`
+		SELECT v, c, tot FROM (
+		  SELECT v, c, sum(c) OVER () AS tot FROM (
+		    SELECT %s AS v, count() AS c
+		    FROM logs
+		    WHERE %s
+		    GROUP BY v
+		    HAVING v != ''
+		  )
+		)
+		ORDER BY c DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 15,
+		         max_rows_to_group_by = 100000,
+		         group_by_overflow_mode = 'any'`, valueExpr, wc)
+
+	rows, err := s.store.Conn().Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := &FieldStatsResult{Field: field, Values: []FieldValueCount{}}
+	for rows.Next() {
+		var v string
+		var c, tot uint64
+		if err := rows.Scan(&v, &c, &tot); err != nil {
+			return nil, err
+		}
+		out.Total = int64(tot)
+		out.Values = append(out.Values, FieldValueCount{Value: v, Count: int64(c)})
+	}
+	return out, rows.Err()
+}
+

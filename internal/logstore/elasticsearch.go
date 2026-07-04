@@ -882,6 +882,115 @@ func (s *ESStore) FieldValues(ctx context.Context, field, prefix string, limit i
 	return try(field)
 }
 
+// buildFieldStatsBody constructs the ES _search body for the
+// fields-panel top-values accordion (v0.8.255). PURE — unit-tested
+// without a live ES (elasticsearch_fieldstats_test.go). Cost guards
+// mirror buildHistogramBody's v0.8.3 lessons: size:0, bounded terms
+// agg, soft timeout, no total-hits tracking; the caller also sets
+// request_cache so identical expands within the ES cache window are
+// free. This endpoint is expand-triggered + 60s-cached at the API
+// layer — the "don't grow ES usage" contract.
+func buildFieldStatsBody(query any, aggField string, size int, esTimeout string) map[string]any {
+	return map[string]any{
+		"size":  0,
+		"query": query,
+		"aggs": map[string]any{
+			"vals": map[string]any{
+				"terms": map[string]any{
+					"field": aggField,
+					"size":  size,
+					// Enough shard-level headroom that the top-N is
+					// accurate on multi-shard indices without paying
+					// the histogram's 500 (we only render N values).
+					"shard_size": size * 10,
+				},
+			},
+		},
+		"track_total_hits": false,
+		"timeout":          esTimeout,
+	}
+}
+
+// FieldStats — top-N values of one field in the filtered window.
+// keyword-preferring: a text field needs its .keyword subfield for
+// a terms agg (bare text → 400 fielddata error), while a
+// pure-keyword field has no .keyword subfield and returns EMPTY
+// buckets (unmapped — not an error). So: try <field>.keyword first;
+// an empty result retries the bare field once (covers keyword /
+// numeric / boolean / date mappings). Worst case 2 bounded round
+// trips, and only when the .keyword shape came back empty.
+func (s *ESStore) FieldStats(ctx context.Context, f Filter, field string, limit int) (*FieldStatsResult, error) {
+	if field == "" {
+		return &FieldStatsResult{Field: field, Values: []FieldValueCount{}}, nil
+	}
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+	// Well-known UI ids → the configured field map.
+	switch field {
+	case "service":
+		field = s.fields.Service
+	case "severity", "level":
+		field = s.fields.SeverityTx
+	}
+	f.From, f.To = clampWindow(f.From, f.To)
+	query := s.buildQuery(f)
+	idx := s.queryIndices(ctx, f)
+
+	try := func(aggField string) (*FieldStatsResult, error) {
+		body, err := json.Marshal(buildFieldStatsBody(query, aggField, limit,
+			esTimeseriesTimeoutFromEnv("10s")))
+		if err != nil {
+			return nil, err
+		}
+		tru := true
+		req := esapi.SearchRequest{
+			Index:             idx,
+			Body:              bytes.NewReader(body),
+			AllowNoIndices:    &tru,
+			IgnoreUnavailable: &tru,
+			RequestCache:      &tru,
+		}
+		res, err := req.Do(ctx, s.cli)
+		if err != nil {
+			return nil, s.recordQueryError("fieldstats", idx, body, 0, fmt.Errorf("ES fieldstats: %w", err))
+		}
+		defer res.Body.Close()
+		if res.IsError() {
+			return nil, s.recordQueryError("fieldstats", idx, body, res.StatusCode,
+				parseESError("fieldstats", res, s.cfg.Index))
+		}
+		var decoded struct {
+			Aggregations struct {
+				Vals struct {
+					SumOther int64 `json:"sum_other_doc_count"`
+					Buckets  []struct {
+						Key      any   `json:"key"` // string / number / bool depending on mapping
+						DocCount int64 `json:"doc_count"`
+					} `json:"buckets"`
+				} `json:"vals"`
+			} `json:"aggregations"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&decoded); err != nil {
+			return nil, err
+		}
+		out := &FieldStatsResult{Field: field, Values: []FieldValueCount{}}
+		out.Total = decoded.Aggregations.Vals.SumOther
+		for _, b := range decoded.Aggregations.Vals.Buckets {
+			out.Total += b.DocCount
+			out.Values = append(out.Values, FieldValueCount{Value: fmt.Sprintf("%v", b.Key), Count: b.DocCount})
+		}
+		return out, nil
+	}
+
+	if !strings.HasSuffix(field, ".keyword") {
+		if res, err := try(field + ".keyword"); err != nil || len(res.Values) > 0 {
+			return res, err
+		}
+	}
+	return try(field)
+}
+
 // walkProperties recurses into ES mapping properties to flatten
 // nested types (object / nested) into dot paths. Skips internal
 // fields starting with "_". Only emits leaf paths whose type

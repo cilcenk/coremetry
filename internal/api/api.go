@@ -490,6 +490,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs) // v0.8.x — live-tail SSE
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
+	// v0.8.255 — fields-panel accordion: top-5 values of one field
+	// in the current window. Expand-triggered + 60s cached; single
+	// bounded terms agg (ES) / capped GROUP BY (CH).
+	mux.HandleFunc("GET /api/logs/fieldstats", s.getLogsFieldStats)
 	// v0.5.464 — field-aware autocomplete on the /logs search
 	// box. ES _terms_enum on keyword subfields for sub-ms prefix
 	// lookups; CH backend returns [] (handler degrades silently).

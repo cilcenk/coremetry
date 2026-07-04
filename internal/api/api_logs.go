@@ -474,6 +474,43 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 // per service / per severity), routed through whichever logstore
 // backend is wired in (CH or external ES). 30s cache absorbs
 // chart-rerender bursts as the operator tweaks dimensions.
+// getLogsFieldStats — top-5 values of one field for the /logs
+// fields-panel accordion (v0.8.255, Discover revamp 2/7). ES-usage
+// contract (operator: "elastic api kullanımını çok artırma"):
+// fetch fires ONLY on accordion expand (never polled, never
+// prefetched for the whole field list), 60s cache absorbs repeat
+// expands, and the backend runs a single bounded terms agg
+// (request_cache, soft timeout, size:0) — or a capped GROUP BY on
+// the CH backend. Reuses s.logs — the same ES client + API-key auth
+// as every other logs query; no new connection/credential config.
+func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	field := strings.TrimSpace(q.Get("field"))
+	if field == "" {
+		http.Error(w, "field required", http.StatusBadRequest)
+		return
+	}
+	sev, _ := strconv.Atoi(q.Get("severity"))
+	f := logstore.Filter{
+		Service:     q.Get("service"),
+		Cluster:     q.Get("cluster"),
+		Search:      q.Get("search"),
+		From:        parseTime(q.Get("from")),
+		To:          parseTime(q.Get("to")),
+		SeverityMin: uint8(sev),
+		TraceID:     q.Get("traceId"),
+		SpanID:      q.Get("spanId"),
+	}
+	key := fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s",
+		field, f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
+		q.Get("from"), q.Get("to"), q.Get("search"))
+	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		return s.logs.FieldStats(ctx, f, field, 5)
+	})
+}
+
 func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sev, _ := strconv.Atoi(q.Get("severity"))

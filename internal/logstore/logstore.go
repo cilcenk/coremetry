@@ -268,6 +268,16 @@ type Store interface {
 	// box is Kibana-flavoured already, less urgent on CH).
 	FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error)
 
+	// FieldStats returns the top-N values of one field within the
+	// filtered window, with per-value counts and the total doc count
+	// they were drawn from (Discover fields-panel accordion,
+	// v0.8.255). Called lazily — only when the operator expands a
+	// field — and cached 60s at the API layer, so it must never be
+	// polled. ES: single bounded terms agg (keyword-preferring, one
+	// bare-field retry when unmapped); CH: GROUP BY over the resolved
+	// column/attribute with grouping caps.
+	FieldStats(ctx context.Context, f Filter, field string, limit int) (*FieldStatsResult, error)
+
 	// Backend returns a short identifier shown in /api/health so an operator
 	// can tell at a glance which log source is wired in.
 	Backend() string
@@ -276,6 +286,22 @@ type Store interface {
 	// to surface "logs backend is down" before the user runs into an
 	// empty-result query.
 	Ping(ctx context.Context) error
+}
+
+// FieldValueCount pairs one field value with its doc count in the
+// window. Part of the FieldStats result (fields-panel accordion).
+type FieldValueCount struct {
+	Value string `json:"value"`
+	Count int64  `json:"count"`
+}
+
+// FieldStatsResult — top values of one field plus the total docs
+// they were counted from (top buckets + remainder), so the UI can
+// render percentage bars without a second query.
+type FieldStatsResult struct {
+	Field  string            `json:"field"`
+	Total  int64             `json:"total"`
+	Values []FieldValueCount `json:"values"`
 }
 
 // LogSeries is one bucketed timeseries returned by Histogram. Name

@@ -24,6 +24,7 @@ import {
   useBulkDeleteAnomalySilences,
 } from '@/lib/queries';
 import { fmtNum, tsLong } from '@/lib/utils';
+import { AnomalyDetailDrawer } from './AnomalyDetailDrawer';
 import type {
   LogPatternAnomaly, TraceOpAnomaly, Problem, AnomalyEvent,
   AnomalySilence,
@@ -272,7 +273,7 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
 }
 
 function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // ?event=<id> deep-link target. We scroll + flash the matching
   // row when it appears so inbox navigation lands the operator
   // on the right row visually, not just at the top of the list.
@@ -285,6 +286,21 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
   }, [highlight, items]);
+
+  // Detail drawer (v0.8.267, operator-requested "problems gibi").
+  // Row click ↔ ?event= move together (the v0.8.256 URL-param
+  // class) so a copied link opens the same drawer; the existing
+  // scroll+flash deep-link now also opens the detail.
+  const openDetail = (id: string | null) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (id) p.set('event', id); else p.delete('event');
+      return p;
+    }, { replace: true });
+  };
+  const detailEvent = highlight
+    ? (items ?? []).find(e => e.id === highlight) ?? null
+    : null;
 
   // v0.5.279 — split active vs cleared. Operator-reported:
   // "çok fazla anomali gözüküyor aktif/cleared birlikte" —
@@ -306,9 +322,13 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
       title="Anomaly history (last 24h)"
       hint={`${active.length} active · ${cleared.length} cleared`}
       count={items.length}>
+      {detailEvent && (
+        <AnomalyDetailDrawer event={detailEvent} onClose={() => openDetail(null)} />
+      )}
       {active.length > 0 && (
         <AnomalyTable rows={active}
           rowRefs={rowRefs} highlight={highlight}
+          onOpen={openDetail}
           title={`Active (${active.length})`} />
       )}
       {active.length === 0 && (
@@ -344,7 +364,8 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
           {expanded && (
             <div style={{ marginTop: 6, opacity: 0.85 }}>
               <AnomalyTable rows={cleared}
-                rowRefs={rowRefs} highlight={highlight} />
+                rowRefs={rowRefs} highlight={highlight}
+                onOpen={openDetail} />
             </div>
           )}
         </div>
@@ -357,10 +378,14 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
 // cleared groups share one render path (v0.5.279). Same
 // columns / styling as before; only the title row above the
 // table is optional now.
-function AnomalyTable({ rows, rowRefs, highlight, title }: {
+function AnomalyTable({ rows, rowRefs, highlight, onOpen, title }: {
   rows: AnomalyEvent[];
   rowRefs: React.MutableRefObject<Record<string, HTMLTableRowElement | null>>;
   highlight: string;
+  // Row click → detail drawer (v0.8.267). Clicks on interactive
+  // children (links, buttons, the AI/ribbon cells) are ignored so
+  // the existing affordances keep working unchanged.
+  onOpen: (id: string) => void;
   title?: string;
 }) {
   return (
@@ -401,6 +426,13 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
             {rows.map(e => (
               <tr key={e.id}
                 ref={el => { rowRefs.current[e.id] = el; }}
+                onClick={ev => {
+                  // Interactive children keep their own behaviour —
+                  // only a plain row click opens the drawer.
+                  if ((ev.target as HTMLElement).closest('a,button')) return;
+                  onOpen(e.id);
+                }}
+                title="Click for spike details"
                 // content-visibility skips off-screen rows on paint — the
                 // 24h history can run long. Not virtualized: the ?event=<id>
                 // deep-link scrolls a specific row into view, which needs the
@@ -411,9 +443,11 @@ function AnomalyTable({ rows, rowRefs, highlight, title }: {
                   outline: '1px solid var(--accent2)',
                   contentVisibility: 'auto',
                   containIntrinsicSize: 'auto 36px',
+                  cursor: 'pointer',
                 } : {
                   contentVisibility: 'auto',
                   containIntrinsicSize: 'auto 36px',
+                  cursor: 'pointer',
                 }}>
                 <td>
                   <span className={`badge ${e.status === 'active' ? 'b-err' : 'b-ok'}`}>

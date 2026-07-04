@@ -95,7 +95,28 @@ file changes), `/kuyruk`, `/scale-audit` (quarterly),
 `/helm-chart-coremetry` (BEFORE `charts/coremetry/` changes),
 `/otel-conventions` (BEFORE OTel-shaped data changes), `/mcp-tools`
 (BEFORE MCP server changes), `/frontend-dashboard-panel` (BEFORE new
-dashboard panel types).
+dashboard panel types), `/frontend-conventions` (BEFORE any frontend
+change adding a component/table/filter/drawer/theme/polling loop).
+
+## Frontend UI conventions
+
+Full rules in `/frontend-conventions`. The one-liners:
+
+- One design language: `<Button>`/`<Field>`/`<Badge>` atoms +
+  `.tab-strip`; never hand-rolled button styles.
+- Every table = `useDataTable` (sort+resize, persisted widths);
+  server-paged tables resize-only; >100 rows `content-visibility`.
+- Pickers server-debounced; never validate a pick against a sampled
+  subset (v0.8.265).
+- URL = source of truth for every selection (drawer/focus/filters/
+  tab/range) — write with replace:true; sig-guard URL→state imports
+  (v0.8.253); one-way-read is a recurring bug class (256/265/267).
+- Themes are token-level CSS vars only (dark/light/redhat v0.8.268);
+  chrome variants via scoped token remap; charts re-resolve on
+  data-theme; uPlot only.
+- ES-cost UI discipline: fetch on expand/open only, no list
+  prefetch, staleTime ≥ server TTL, cache-key params snapped to
+  bounded rungs (v0.8.270).
 
 ## Pitfall rules — full incident stories in [docs/INCIDENTS.md](docs/INCIDENTS.md)
 

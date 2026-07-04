@@ -91,3 +91,66 @@ export function sortRows<T>(
     })
     .map(x => x.r);
 }
+
+// ---------------------------------------------------------------------------
+// v0.8.251 — serverSort support. The hook (components/DataTable.tsx) gained
+// an optional serverSort mode for server-paged tables (Services first): the
+// sort STATE machinery — URL `s_<storageKey>` param, localStorage
+// persistence, header click semantics — is shared with client mode, but the
+// ordering itself is the backend's ORDER BY. The pure halves live below so
+// both modes stay unit-tested in the node vitest harness; nextSort/sortRows
+// above are untouched (contract unchanged) — mode selection COMPOSES them.
+
+// parseSortParam — decode the URL sort param "<colId>.<dir>" → SortState.
+// Returns null for a missing / malformed value so the caller falls back to
+// localStorage. colId may itself contain dots, so split on the LAST one.
+// (Moved here from components/DataTable.tsx in v0.8.251 so the URL codec
+// round-trip is pinned by unit tests.)
+export function parseSortParam(s: string | null): SortState | null {
+  if (!s) return null;
+  const i = s.lastIndexOf('.');
+  if (i <= 0) return null;
+  const dir = s.slice(i + 1);
+  if (dir !== 'asc' && dir !== 'desc') return null;
+  return { id: s.slice(0, i), dir: dir as SortDir };
+}
+
+// formatSortParam — SortState → "<colId>.<dir>" URL value; null when no
+// column is active (the hook deletes the param instead of writing it).
+// Inverse of parseSortParam for every non-empty id, including ids that
+// themselves contain dots.
+export function formatSortParam(s: SortState): string | null {
+  return s.id ? `${s.id}.${s.dir}` : null;
+}
+
+// resolveToggle — the pure half of the hook's toggleSort: look up the
+// clicked column and produce the next sort state, or null when the column
+// is unknown / not sortable (the hook no-ops and onSortChange never fires).
+// Mode-independent: in serverSort mode this exact value is what the hook
+// reports via onSortChange / the returned `sort`, so the page re-fetches
+// with the new ORDER BY.
+export function resolveToggle<T>(
+  columns: DataTableColumn<T>[],
+  cur: SortState,
+  id: string,
+): SortState | null {
+  const col = columns.find(c => c.id === id);
+  if (!col || !col.sortValue) return null;
+  return nextSort(cur, col);
+}
+
+// computeSortedRows — the row pipeline behind the hook's sortedRows memo.
+// serverSort=true returns `rows` VERBATIM (reference-equal): the backend
+// already applied its ORDER BY, and any client-side reorder — or even a
+// defensive copy — would contradict the server page and defeat memoized
+// children. Client mode is the existing sortRows path, contract unchanged.
+export function computeSortedRows<T>(
+  rows: T[],
+  columns: DataTableColumn<T>[],
+  sort: SortState,
+  serverSort: boolean,
+): T[] {
+  if (serverSort) return rows;
+  const col = sort.id ? columns.find(c => c.id === sort.id) : undefined;
+  return sortRows(rows, col, sort.dir);
+}

@@ -6,22 +6,10 @@ import { useSearchParams } from 'react-router-dom';
 import { useTableNav, type TableNav } from '@/lib/useTableNav';
 import { useShortcuts } from '@/lib/keyboard';
 import {
-  nextSort, sortRows,
-  type DataTableColumn, type SortDir, type SortState,
+  computeSortedRows, formatSortParam, parseSortParam, resolveToggle,
+  type DataTableColumn, type SortState,
 } from '@/lib/dataTable';
 import { getItem, setItem, dtSortKey, dtWidthKey } from '@/lib/storage';
-
-// parseSortParam — decode the URL sort param "<colId>.<dir>" → SortState.
-// Returns null for a missing / malformed value so the caller falls back to
-// localStorage. colId may itself contain dots, so split on the LAST one.
-function parseSortParam(s: string | null): SortState | null {
-  if (!s) return null;
-  const i = s.lastIndexOf('.');
-  if (i <= 0) return null;
-  const dir = s.slice(i + 1);
-  if (dir !== 'asc' && dir !== 'desc') return null;
-  return { id: s.slice(0, i), dir: dir as SortDir };
-}
 
 // DataTable — Coremetry's shared sortable + column-resizable table
 // primitive (v0.7.53). Project principle: EVERY data table is
@@ -35,11 +23,14 @@ function parseSortParam(s: string | null): SortState | null {
 //     <tbody>{dt.sortedRows.map(renderRow)}</tbody>
 //   </table>
 //
-// Sort is CLIENT-SIDE (for the common "fetched array of ≤ a few k
-// rows" table). Server-paged tables (Services/Traces) keep their
-// server sort but can still adopt the resize half. Sort + width state
-// persist to localStorage under the storageKey, so the operator's
-// layout survives reloads — same contract as the Traces v0.7.47 cols.
+// Sort is CLIENT-SIDE by default (for the common "fetched array of
+// ≤ a few k rows" table). Server-paged tables have two options:
+// enable `serverSort` (v0.8.251 — the hook keeps the full sort UX +
+// URL/localStorage state but the page forwards `sort` to its fetch;
+// Services is the template) or keep their own headers and adopt only
+// the resize half (Traces). Sort + width state persist to
+// localStorage under the storageKey, so the operator's layout
+// survives reloads — same contract as the Traces v0.7.47 cols.
 
 const DEFAULT_W = 120;
 const DEFAULT_MIN = 48;
@@ -60,11 +51,31 @@ export interface DataTable<T> {
   rowProps: (index: number) => { 'data-row-idx': number; className?: string };
 }
 
-export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen, searchRef }: {
+export function useDataTable<T>({ storageKey, columns, rows, initialSort, serverSort, onSortChange, urlSortFallback, onOpen, searchRef }: {
   storageKey: string;
   columns: DataTableColumn<T>[];
   rows: T[];
   initialSort?: SortState;
+  // serverSort (v0.8.251) — for server-paged tables (Services first): the
+  // ORDER BY runs on the backend, so the hook keeps EVERY piece of the sort
+  // UX — URL `s_<storageKey>` param, localStorage persistence, header click /
+  // arrow semantics, all identical to client mode — but never reorders rows
+  // itself: `sortedRows` is the `rows` prop verbatim. The page watches the
+  // returned `sort` (or supplies onSortChange) and re-fetches with it. A
+  // column still needs `sortValue` to be click-sortable; in this mode the
+  // accessor is never invoked — it's the sortable marker + naturalDir carrier.
+  serverSort?: boolean;
+  // Fired with the new state on every sort change the hook applies — header
+  // click, programmatic setSort, or an inbound URL (back/forward) restore.
+  // Alternative to watching the returned `sort` in an effect dep; both see
+  // the same state.
+  onSortChange?: (s: SortState) => void;
+  // Back-compat URL bridge: treated as an inbound URL sort when the
+  // `s_<storageKey>` param is absent — ranks ABOVE localStorage (a shared
+  // link's intent beats the viewer's personal default) but BELOW
+  // `s_<storageKey>`. Services feeds decodeLegacyServicesSort() through this
+  // so pre-v0.8.251 `?sort=&dir=` links keep landing on the sender's sort.
+  urlSortFallback?: SortState | null;
   // When provided, the table gains app-wide keyboard nav: j/k move row
   // selection, Enter/o open the row (calls onOpen), gg/G jump, Esc clears,
   // and "/" focuses searchRef. Omit for a plain display table. (UX#4)
@@ -74,16 +85,18 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen
   const sortLSKey = dtSortKey(storageKey);
   const widthLSKey = dtWidthKey(storageKey);
   // Sort is shareable (UX#3): the URL param `s_<storageKey>` wins so a copied
-  // link reproduces the exact sort; else the operator's personal localStorage
-  // default; else initialSort. Namespaced by storageKey so two tables on one
-  // page never collide. Writes hit BOTH the URL (replace — no history spam)
-  // and localStorage. Widths stay localStorage-only (per-browser ergonomics,
-  // not view state worth sharing).
+  // link reproduces the exact sort; else the urlSortFallback bridge (an OLD
+  // URL schema decoded by the page — still link intent, so it outranks the
+  // viewer's own default); else the operator's personal localStorage default;
+  // else initialSort. Namespaced by storageKey so two tables on one page
+  // never collide. Writes hit BOTH the URL (replace — no history spam) and
+  // localStorage. Widths stay localStorage-only (per-browser ergonomics, not
+  // view state worth sharing).
   const [searchParams, setSearchParams] = useSearchParams();
   const urlKey = `s_${storageKey}`;
   const urlSort = searchParams.get(urlKey);
   const [sort, setSortState] = useState<SortState>(() =>
-    parseSortParam(urlSort) ?? getItem(sortLSKey, initialSort ?? { id: null, dir: 'desc' }));
+    parseSortParam(urlSort) ?? urlSortFallback ?? getItem(sortLSKey, initialSort ?? { id: null, dir: 'desc' }));
   const [colWidths, setColWidths] = useState<Record<string, number>>(() =>
     getItem(widthLSKey, {}));
 
@@ -94,32 +107,38 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen
     setItem(widthLSKey, colWidths);
   }, [colWidths, widthLSKey]);
 
-  // Apply a sort to state + URL.
+  // Apply a sort to state + URL, then notify the page (serverSort pages
+  // re-fetch off this — or off the returned `sort`, same thing).
   const setSort = useCallback((s: SortState) => {
     setSortState(s);
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
-      if (s.id) next.set(urlKey, `${s.id}.${s.dir}`);
+      const v = formatSortParam(s);
+      if (v) next.set(urlKey, v);
       else next.delete(urlKey);
       return next;
     }, { replace: true });
-  }, [setSearchParams, urlKey]);
+    onSortChange?.(s);
+  }, [setSearchParams, urlKey, onSortChange]);
 
   // Back/forward — or an inbound shared link — changes the URL sort: restore
   // it into state. Guarded to fire only on a genuine difference, which also
-  // stops a loop with setSort's own write.
+  // stops a loop with setSort's own write. onSortChange fires here too so a
+  // serverSort page that relies on the callback re-fetches on back/forward.
   useEffect(() => {
     const fromUrl = parseSortParam(urlSort);
     if (fromUrl && (fromUrl.id !== sort.id || fromUrl.dir !== sort.dir)) {
       setSortState(fromUrl);
+      onSortChange?.(fromUrl);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSort]);
 
   const toggleSort = useCallback((id: string) => {
-    const col = columns.find(c => c.id === id);
-    if (!col || !col.sortValue) return;
-    setSort(nextSort(sort, col));
+    // resolveToggle is the pure half (lib/dataTable.ts): null = column
+    // unknown / not sortable → no-op, no state write, no callback.
+    const next = resolveToggle(columns, sort, id);
+    if (next) setSort(next);
   }, [columns, sort, setSort]);
 
   const startResize = useCallback((id: string, e: ReactMouseEvent) => {
@@ -143,10 +162,12 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, onOpen
 
   const resetLayout = useCallback(() => setColWidths({}), []);
 
-  const sortedRows = useMemo(() => {
-    const col = sort.id ? columns.find(c => c.id === sort.id) : undefined;
-    return sortRows(rows, col, sort.dir);
-  }, [rows, sort, columns]);
+  // serverSort mode returns `rows` verbatim (reference-equal) — the
+  // backend's ORDER BY already shaped the page; see computeSortedRows.
+  const sortedRows = useMemo(
+    () => computeSortedRows(rows, columns, sort, !!serverSort),
+    [rows, sort, columns, serverSort],
+  );
 
   // App-wide keyboard nav (UX#4). useTableNav owns the selected index + j/k/
   // gg/G/Enter/o/Esc bindings + auto-scroll; inert when onOpen is absent (no

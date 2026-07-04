@@ -8,8 +8,11 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
-import { useDataTable, DataTableColgroup, ColResizeHandle } from '@/components/DataTable';
-import type { DataTableColumn } from '@/lib/dataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import {
+  SERVICE_COLS, DEFAULT_SERVICES_SORT,
+  sanitizeServicesSort, decodeLegacyServicesSort,
+} from '@/lib/servicesTable';
 import { useAllServiceRuntimes, useServicesMetadata } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
@@ -19,36 +22,11 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { getItem, setItem } from '@/lib/storage';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 
-type SortKey = 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99' | 'apdex';
-type SortDir = 'asc' | 'desc';
-
-// Each column's natural starting direction when first selected.
-// Apdex is a satisfaction score so 'asc' surfaces the WORST services first.
-const NATURAL_DIR: Record<SortKey, SortDir> = {
-  name: 'asc',
-  spanCount: 'desc',
-  errorRate: 'desc',
-  avg: 'desc',
-  p99: 'desc',
-  apdex: 'asc',
-};
-
-// SERVICE_COLS — column defs for the shared DataTable primitive, used
-// here for RESIZE ONLY (v0.7.54). Sort stays SERVER-side via <SortTh>
-// (clicking re-fetches a sorted page off service_summary_5m), so these
-// intentionally omit `sortValue` — we read dt.colWidths + dt.startResize
-// and render the existing server-sorted rows, never dt.sortedRows. The
-// `id`s mirror the SortTh `col` values so the resize grip on each header
-// targets the right <col>. Persisted widths live under the 'services'
-// storageKey.
-const SERVICE_COLS: DataTableColumn<Service>[] = [
-  { id: 'name',      label: 'Service',    width: 280 },
-  { id: 'spanCount', label: 'Spans',      width: 130, align: 'right' },
-  { id: 'errorRate', label: 'Error rate', width: 130, align: 'right' },
-  { id: 'avg',       label: 'Avg',        width: 120, align: 'right' },
-  { id: 'p99',       label: 'P99',        width: 120, align: 'right' },
-  { id: 'apdex',     label: 'Apdex',      width: 100, align: 'right' },
-];
+// v0.8.251 — the page's hand-rolled SortKey/NATURAL_DIR/SortTh server-sort
+// system moved into the shared DataTable primitive's serverSort mode. The
+// column defs (ids double as the backend's ?sort= keys), the default sort,
+// the stale-id sanitizer and the legacy ?sort=&dir= link bridge live in
+// lib/servicesTable.ts so the node vitest harness pins them.
 
 export default function ServicesPage() {
   const navigate = useNavigate();
@@ -68,8 +46,6 @@ export default function ServicesPage() {
   const catalogQ = useServicesMetadata();
   const catalog = useMemo<Record<string, import('@/lib/types').ServiceMetadata>>(
     () => catalogQ.data ?? {}, [catalogQ.data]);
-  const [sortBy, setSortBy] = useState<SortKey>('errorRate');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
   // v0.5.276 — pinned services. localStorage Set; pinned rows
   // float to the top of the list regardless of sort, then sort
   // applies within both groups. Persists per-browser (per-
@@ -130,6 +106,58 @@ export default function ServicesPage() {
   // the Search button — so clicking the dropdown doesn't fan a
   // ClickHouse query out per keystroke.
   const [committedFilter, setCommittedFilter] = useState('');
+
+  // Sort runs server-side via ?sort/&dir; this only applies
+  // local display filters (errors-only / min-spans / min-p99
+  // / typed substring / team match). Server returns rows
+  // already ordered by the chosen column. The substring
+  // filter also matches against catalog `ownerTeam` /
+  // `sreTeam` so an SRE can type "platform" in the picker
+  // and see every service their team owns regardless of
+  // service-name spelling.
+  const sorted = useMemo(() => {
+    if (!data) return data;
+    // Client-side REFINEMENTS only (errors-only / min-spans / min-p99). Name +
+    // team filtering is server-side — the typed draft auto-commits (debounced)
+    // to committedFilter → ?name across ALL services, and team dropdowns
+    // resolve server-side. v0.7.29: the old local name-substring filter is gone
+    // (it emptied the loaded page to "no services" until Search committed).
+    const f = { errorsOnly, minSpans: parseFloat(minSpans), minP99: parseFloat(minP99) };
+    const filtered = data.filter(s => passesLocalDisplayFilters(s, f));
+    // v0.5.276 — pinned float to top. Server already sorted the
+    // page by the chosen column; partition into [pinned, rest]
+    // while preserving the server-side order within each group.
+    if (pinned.size === 0) return filtered;
+    const pinnedRows: typeof filtered = [];
+    const restRows: typeof filtered = [];
+    for (const row of filtered) {
+      if (pinned.has(row.name)) pinnedRows.push(row);
+      else restRows.push(row);
+    }
+    return [...pinnedRows, ...restRows];
+  }, [data, errorsOnly, minSpans, minP99, pinned]);
+
+  // v0.8.251 — sort state moved into the shared DataTable primitive,
+  // serverSort mode: the hook owns the URL (`s_services`) + localStorage
+  // persistence and the header click/arrow UX; the page owns the actual
+  // ordering by forwarding dt.sort to /api/services (CH does the ORDER BY
+  // before LIMIT/OFFSET, exactly as before — same column ids, same natural
+  // directions). sortedRows stays the server's order verbatim, so the
+  // pinned-partitioned `sorted` above renders unchanged. Legacy
+  // `?sort=&dir=` links pre-date `s_services`; decodeLegacyServicesSort
+  // bridges them in (above localStorage, below s_services) so old shared
+  // links still land on the sender's sort. Read once at mount — the page
+  // never writes the old params anymore.
+  const legacySort = useMemo(() => decodeLegacyServicesSort(window.location.search), []);
+  const dt = useDataTable<Service>({
+    storageKey: 'services', columns: SERVICE_COLS, rows: sorted ?? [],
+    serverSort: true,
+    initialSort: DEFAULT_SERVICES_SORT,
+    urlSortFallback: legacySort,
+  });
+  // Sanitized ?sort/&dir pair for the fetch below — a stale persisted id
+  // (old column schema, hand-edited URL) never reaches the backend ORDER BY.
+  const { sort: sortBy, dir: sortDir } = sanitizeServicesSort(dt.sort);
 
   // First-page fetch fires on mount. The v0.5.64 lazy-load gate
   // was removed in v0.5.72 because operators wanted the same
@@ -204,36 +232,6 @@ export default function ServicesPage() {
     () => (data ?? []).map(s => s.name).sort(),
     [data]
   );
-
-  // Sort runs server-side via ?sort/&dir; this only applies
-  // local display filters (errors-only / min-spans / min-p99
-  // / typed substring / team match). Server returns rows
-  // already ordered by the chosen column. The substring
-  // filter also matches against catalog `ownerTeam` /
-  // `sreTeam` so an SRE can type "platform" in the picker
-  // and see every service their team owns regardless of
-  // service-name spelling.
-  const sorted = useMemo(() => {
-    if (!data) return data;
-    // Client-side REFINEMENTS only (errors-only / min-spans / min-p99). Name +
-    // team filtering is server-side — the typed draft auto-commits (debounced)
-    // to committedFilter → ?name across ALL services, and team dropdowns
-    // resolve server-side. v0.7.29: the old local name-substring filter is gone
-    // (it emptied the loaded page to "no services" until Search committed).
-    const f = { errorsOnly, minSpans: parseFloat(minSpans), minP99: parseFloat(minP99) };
-    const filtered = data.filter(s => passesLocalDisplayFilters(s, f));
-    // v0.5.276 — pinned float to top. Server already sorted the
-    // page by the chosen column; partition into [pinned, rest]
-    // while preserving the server-side order within each group.
-    if (pinned.size === 0) return filtered;
-    const pinnedRows: typeof filtered = [];
-    const restRows: typeof filtered = [];
-    for (const row of filtered) {
-      if (pinned.has(row.name)) pinnedRows.push(row);
-      else restRows.push(row);
-    }
-    return [...pinnedRows, ...restRows];
-  }, [data, errorsOnly, minSpans, minP99, pinned]);
 
   const apply = () => setCommittedFilter(serviceFilter.trim());
   // v0.7.29 — auto-commit the typed filter after a short idle so the list
@@ -320,15 +318,6 @@ export default function ServicesPage() {
       }));
   }, [sorted, sparklines]);
 
-  const toggleSort = (col: SortKey) => {
-    if (sortBy === col) {
-      setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
-    } else {
-      setSortBy(col);
-      setSortDir(NATURAL_DIR[col]);
-    }
-  };
-
   const goToService = (svc: string) =>
     navigate(`/service?name=${encodeURIComponent(svc)}`);
 
@@ -355,12 +344,6 @@ export default function ServicesPage() {
     pageId: 'services',
     onOpen: (svc) => goToService(svc.name),
   });
-
-  // Column RESIZE only (v0.7.54). The page is already server-sorted, so we
-  // render the existing `sorted` rows below and consume just dt.colWidths
-  // (via <DataTableColgroup>) + dt.startResize (via <ColResizeHandle>).
-  // dt.sortedRows is deliberately unused — no column has a sortValue.
-  const dt = useDataTable<Service>({ storageKey: 'services', columns: SERVICE_COLS, rows: sorted ?? [] });
 
   // v0.6.55 — sparkline click drills to /explore carrying the
   // CLICKED metric's agg (throughput→rate, error→error_rate,
@@ -502,16 +485,10 @@ export default function ServicesPage() {
             <div className="table-wrap">
               <table style={{ tableLayout: 'fixed', width: '100%' }}>
                 <DataTableColgroup dt={dt} />
-                <thead>
-                  <tr>
-                    <SortTh col="name"      label="Service"    sort={sortBy} dir={sortDir} onSort={toggleSort} resize={<ColResizeHandle dt={dt} colId="name" />} />
-                    <SortTh col="spanCount" label="Spans"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="spanCount" />} />
-                    <SortTh col="errorRate" label="Error rate" sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="errorRate" />} />
-                    <SortTh col="avg"       label="Avg"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="avg" />} />
-                    <SortTh col="p99"       label="P99"        sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="p99" />} />
-                    <SortTh col="apdex"     label="Apdex"      sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" resize={<ColResizeHandle dt={dt} colId="apdex" />} />
-                  </tr>
-                </thead>
+                {/* v0.8.251 — shared primitive header (serverSort mode): same
+                    click-to-re-fetch semantics as the old SortTh row, plus the
+                    URL/localStorage-persisted sort state and resize grips. */}
+                <DataTableHead dt={dt} />
                 <tbody>
                   {agg && (
                     <tr className="agg-row">
@@ -724,30 +701,6 @@ function ApdexBadge({ value }: { value: number }) {
             : value >= 0.70 ? 'b-warn'
             : 'b-err';
   return <span className={`badge ${cls}`}>{value.toFixed(2)}</span>;
-}
-
-// SortTh keeps SERVER-side sort (onClick re-fetches a sorted page); the
-// optional `resize` slot carries the shared <ColResizeHandle> (v0.7.54).
-// position:relative anchors that handle's absolute right-edge grip, and
-// the handle stops its own click/mousedown so dragging the edge never
-// fires the header's sort.
-function SortTh({ col, label, sort, dir, onSort, align, resize }: {
-  col: SortKey; label: string;
-  sort: SortKey; dir: SortDir;
-  onSort: (c: SortKey) => void;
-  align?: 'left' | 'right';
-  resize?: React.ReactNode;
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        onClick={() => onSort(col)}
-        style={{ textAlign: align ?? 'left', position: 'relative' }}>
-      {label}
-      <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-      {resize}
-    </th>
-  );
 }
 
 // HealthDot — v0.5.274 Datadog-Watchdog-style service health

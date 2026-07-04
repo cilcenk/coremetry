@@ -1,26 +1,35 @@
 import { useEffect, useState } from 'react';
 import { setRaw } from '@/lib/storage';
 
-type Theme = 'dark' | 'light';
+// v0.8.268 — third palette: 'redhat' (PatternFly-flavoured light +
+// OpenShift-style dark nav; operator: "tasarım Red Hat ürünlerine
+// benzeyebilir"). The toggle cycles dark → light → redhat.
+type Theme = 'dark' | 'light' | 'redhat';
 
 const STORAGE_KEY = 'coremetry-theme';
 
+const NEXT: Record<Theme, Theme> = { dark: 'light', light: 'redhat', redhat: 'dark' };
+const GLYPH: Record<Theme, string> = { dark: '☾', light: '☀', redhat: '⬢' };
+const LABEL: Record<Theme, string> = {
+  dark: 'Dark', light: 'Light', redhat: 'Red Hat',
+};
+
 /**
- * Switches between dark and light palettes by toggling the
- * `data-theme` attribute on <html>. Persisted in localStorage; the
- * inline boot script in layout.tsx applies it pre-paint to avoid FOUC.
+ * Cycles the palette by setting the `data-theme` attribute on
+ * <html>. Persisted in localStorage; the inline boot script in
+ * index.html applies it pre-paint to avoid FOUC.
  */
 export function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>('light');
 
   // Read the theme that the boot script already applied to <html>
   useEffect(() => {
-    const t = (document.documentElement.getAttribute('data-theme') as Theme | null) ?? 'light';
-    setTheme(t);
+    const t = document.documentElement.getAttribute('data-theme');
+    setTheme(t === 'dark' || t === 'redhat' ? t : 'light');
   }, []);
 
   const toggle = () => {
-    const next: Theme = theme === 'dark' ? 'light' : 'dark';
+    const next = NEXT[theme];
     setTheme(next);
     document.documentElement.setAttribute('data-theme', next);
     setRaw(STORAGE_KEY, next);
@@ -28,9 +37,9 @@ export function ThemeToggle() {
 
   return (
     <button className="theme-toggle" onClick={toggle}
-      aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-      {theme === 'dark' ? '☀' : '☾'}
+      aria-label={`Theme: ${LABEL[theme]} — switch to ${LABEL[NEXT[theme]]}`}
+      title={`Theme: ${LABEL[theme]} — click for ${LABEL[NEXT[theme]]}`}>
+      {GLYPH[theme]}
     </button>
   );
 }

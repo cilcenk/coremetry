@@ -102,6 +102,81 @@
 
   color-scheme: light;
 }
+/* ── Red Hat theme (v0.8.268, operator: "tasarım olarak Red Hat /
+   OpenShift ürünlerine benzeyebilir") ────────────────────────────
+   PatternFly-flavoured light palette: #f0f0f0 page + white cards,
+   PF primary blue (#0066cc), PF status colours, squarer corners,
+   and an OpenShift-console-style DARK left nav (scoped token
+   remap on #sidebar below — components untouched). Selectable
+   from the theme toggle (dark → light → redhat cycle); purely
+   additive, zero new dependencies, the Red Hat Text font is a
+   local-only font-family preference with clean fallbacks (no
+   external font fetch). */
+[data-theme="redhat"] {
+  --bg0: #f0f0f0;
+  --bg1: #ffffff;
+  --bg2: #f5f5f5;
+  --bg3: #ebebeb;
+  --bg:  #ffffff;
+  --border: #d2d2d2;
+  --text:  #151515;
+  --text2: #4f5255;
+  --text3: #6a6e73;
+
+  --brand:  #ee0000;  /* Red Hat red */
+  --brand2: #e30613;
+
+  --accent:  #0066cc; /* PF primary blue */
+  --accent2: #0066cc;
+
+  --ok:   #3e8635;    /* PF success green */
+  --err:  #c9190b;    /* PF danger red */
+  --warn: #f0ab00;    /* PF gold */
+  --info: #2b9af3;
+
+  --purple: #8476d1;
+  --indigo: #8476d1;
+  --orange: #ec7a08;
+  --teal:   #009596;
+  --accent-soft:   rgba(0, 102, 204, .08);
+  --border-strong: #b8bbbe;
+  --shadow-pop:    0 8px 24px rgba(21, 21, 21, .16);
+  --shadow-sm:     0 1px 2px rgba(21, 21, 21, .08);
+
+  --accent-bg:     #e7f1fa;  /* PF blue-50 */
+  --accent-border: #bee1f4;
+  --text-faint:    #8a8d90;
+  --shadow-md:     0 4px 16px rgba(21, 21, 21, .10);
+  /* PatternFly runs squarer than Primer. */
+  --radius-sm: 3px;
+  --radius:    4px;
+  --radius-lg: 8px;
+
+  color-scheme: light;
+}
+[data-theme="redhat"] body {
+  font-family: 'Red Hat Text', 'RedHatText', -apple-system, 'Segoe UI', sans-serif;
+}
+/* OpenShift-console-style dark masthead nav: remap the surface
+   tokens INSIDE the sidebar only — every child (nav items, badges,
+   the user menu) restyles itself off the scoped variables without
+   any component change. Active items keep the blue accent, which
+   reads exactly like the console's selected-nav treatment. */
+[data-theme="redhat"] #sidebar {
+  --bg1: #151515;
+  --bg2: #26292d;
+  --bg3: #333333;
+  --bg:  #151515;
+  --border: #3c3f42;
+  --text:  #ffffff;
+  --text2: #d2d2d2;
+  --text3: #8a8d90;
+  --text-faint: #6a6e73;
+  --accent-soft: rgba(115, 188, 247, .14);
+  background: var(--bg1);
+  color-scheme: dark;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {

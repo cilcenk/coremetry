@@ -16,7 +16,7 @@
       (function() {
         try {
           var t = localStorage.getItem('coremetry-theme');
-          if (t !== 'light' && t !== 'dark') t = 'light';
+          if (t !== 'light' && t !== 'dark' && t !== 'redhat') t = 'light';
           document.documentElement.setAttribute('data-theme', t);
         } catch (e) {
           document.documentElement.setAttribute('data-theme', 'light');

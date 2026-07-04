@@ -318,6 +318,10 @@ function LogRow({
 }) {
   const attrs = Object.entries(l.attributes ?? {});
   const res = Object.entries(l.resourceAttributes ?? {});
+  // Doc viewer tab (Discover revamp 7/7). Per-row state — sticky
+  // across collapse/re-expand of the same row, which matches how
+  // Kibana keeps the doc viewer's last tab.
+  const [docTab, setDocTab] = useState<'table' | 'json'>('table');
   // k8s pod + cluster columns. v0.5.224 promoted the operator's
   // actual fields to the front of each chain (kubernetes.pod_name,
   // openshift.labels.cluster) — earlier order had k8s.pod.name
@@ -431,22 +435,21 @@ function LogRow({
       {expanded && (
         <tr>
           <td colSpan={cols} style={{ background: 'var(--bg0)', padding: '10px 20px' }}>
-            {/* v0.5.323 — if the body looks like JSON (starts
-                with `{` or `[`), pretty-print with 2-space
-                indent. ES-backed installs often emit the whole
-                event as compact JSON on one line; the expanded
-                view becomes unreadable. Falls back to raw body
-                on parse error so stack traces / free-form
-                messages keep their original formatting. */}
-            <pre style={{
-              fontSize: 12, whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere', color: 'var(--text)',
-              marginBottom: attrs.length ? 8 : 0,
-            }}>
-              {prettyMaybe(l.body)}
-            </pre>
-            {onContextOpen && (
-              <div style={{ marginBottom: 8 }}>
+            {/* Doc viewer tabs (Discover revamp 7/7): Table keeps
+                the classic anatomy (pretty body + kv-tables with
+                ⊕/⊖); JSON is the whole record pretty-printed with
+                a copy button. The trace deep-link (extraExpanded)
+                and ±50-context actions sit right of the tab strip
+                so they're reachable from either tab. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <div className="tab-strip">
+                <button className={docTab === 'table' ? 'active' : ''}
+                  onClick={e => { e.stopPropagation(); setDocTab('table'); }}>Table</button>
+                <button className={docTab === 'json' ? 'active' : ''}
+                  onClick={e => { e.stopPropagation(); setDocTab('json'); }}>JSON</button>
+              </div>
+              <div style={{ flex: 1 }} />
+              {onContextOpen && (
                 <button type="button"
                   onClick={e => { e.stopPropagation(); onContextOpen(l); }}
                   title="Show 50 logs before and after this one (same service)"
@@ -457,30 +460,65 @@ function LogRow({
                   }}>
                   ≡ View ±50 surrounding context
                 </button>
-              </div>
-            )}
-            {attrs.length > 0 && (
-              <table className="kv-table"><tbody>
-                {attrs.map(([k, v]) => (
-                  <KvRow key={k} k={k} v={String(v)}
-                    onAdd={onFilterAdd} onExclude={onFilterExclude} />
-                ))}
-              </tbody></table>
-            )}
-            {res.length > 0 && (
-              <details style={{ marginTop: 6 }}>
-                <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--text2)' }}>
-                  Resource ({res.length})
-                </summary>
-                <table className="kv-table"><tbody>
-                  {res.map(([k, v]) => (
-                    <KvRow key={k} k={k} v={String(v)}
-                      onAdd={onFilterAdd} onExclude={onFilterExclude} />
-                  ))}
-                </tbody></table>
-              </details>
-            )}
-            {extraExpanded && extraExpanded(l)}
+              )}
+              {extraExpanded && extraExpanded(l)}
+            </div>
+            {docTab === 'table' ? (
+              <>
+                {/* v0.5.323 — if the body looks like JSON (starts
+                    with `{` or `[`), pretty-print with 2-space
+                    indent. Falls back to raw body on parse error so
+                    stack traces / free-form messages keep their
+                    original formatting. */}
+                <pre style={{
+                  fontSize: 12, whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere', color: 'var(--text)',
+                  marginBottom: attrs.length ? 8 : 0,
+                }}>
+                  {prettyMaybe(l.body)}
+                </pre>
+                {attrs.length > 0 && (
+                  <table className="kv-table"><tbody>
+                    {attrs.map(([k, v]) => (
+                      <KvRow key={k} k={k} v={String(v)}
+                        onAdd={onFilterAdd} onExclude={onFilterExclude} />
+                    ))}
+                  </tbody></table>
+                )}
+                {res.length > 0 && (
+                  <details style={{ marginTop: 6 }}>
+                    <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--text2)' }}>
+                      Resource ({res.length})
+                    </summary>
+                    <table className="kv-table"><tbody>
+                      {res.map(([k, v]) => (
+                        <KvRow key={k} k={k} v={String(v)}
+                          onAdd={onFilterAdd} onExclude={onFilterExclude} />
+                      ))}
+                    </tbody></table>
+                  </details>
+                )}
+              </>
+            ) : (() => {
+              // Whole record as JSON — the wire shape, so what the
+              // operator copies is exactly what the API returned.
+              const json = JSON.stringify(l, null, 2);
+              return (
+                <div style={{ position: 'relative' }}>
+                  <div style={{ position: 'absolute', top: 2, right: 2 }}>
+                    <CopyButton value={json} title="Copy JSON document" />
+                  </div>
+                  <pre style={{
+                    fontSize: 12, whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere', color: 'var(--text)',
+                    background: 'var(--bg1)', border: '1px solid var(--border)',
+                    borderRadius: 6, padding: '8px 10px',
+                  }}>
+                    {json}
+                  </pre>
+                </div>
+              );
+            })()}
           </td>
         </tr>
       )}

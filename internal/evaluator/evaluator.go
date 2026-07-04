@@ -120,59 +120,95 @@ func (e *Evaluator) runIfLeader(ctx context.Context) {
 // routinely run 800ms-2s in steady state. That alarm fatigue erodes
 // trust in every other alert.
 //
-// New shape (7 rules, all critical-only):
-//   1. Error rate sustained >15% / 5 min          — service-wide breakdown
-//   2. HTTP 5xx rate >5% / 5 min                  — user-visible failures
-//   3. HTTP P99 >5s / 5 min                       — SLO-violating slow
-//   4. DB error rate >5% / 5 min                  — datastore actually down
-//   5. DB P99 >5s / 5 min                         — datastore actually slow
-//   6. RPC error rate >10% / 5 min                — inter-service breakdown
-//   7. MQ consume processing P99 >2 min / 5 min   — actual consumer lag
+// Two-tier default set (v0.8.262 — operator request: "built-in alert
+// rule'larında hardening yap, gerçek alertler oluşsun, default
+// gelsin"):
 //
-// Warning-tier rules are intentionally removed — operators define their
-// own service-specific warnings (lower thresholds, per-route gates) via
-// the UI when they have the SLO context to set them correctly. The
-// built-ins now act as a "really wrong" floor instead of a default
-// noise generator.
-// Slimmed to four floor alerts after v0.5.67 — operators kept
-// asking why three near-duplicate "X error rate >Y%" rules
-// were firing at once on the same incident. The kept four
-// each cover a distinct failure surface; the dropped three
-// are overlaps (HTTP-5xx / DB-error / RPC-error all roll up
-// into the service-wide error_rate rule).
+//   CRITICAL floor (5-min windows) — "really wrong", pages someone:
+//     error rate >15% · HTTP P99 >5s · DB P99 >5s · MQ consume P99 >2m
+//   WARNING tier (10-min sustained) — real degradation forming, catch
+//     it before the floor trips:
+//     error rate >5% · HTTP P99 >3s · DB P99 >2.5s · MQ consume P99 >30s
+//
+// Every rule now carries the full anti-noise kit the engine already
+// had but the defaults never used: MinSamples (v0.5.128 — no verdicts
+// from a 3-span window), ForSec (v0.5.126 — breach must SUSTAIN, one
+// spiky bucket doesn't open a problem), CooldownSec (v0.5.129 — no
+// flap-reopen at the threshold boundary).
+//
+// Threshold history: pre-v0.4.87 shipped 15 sub-second rules that
+// fired constantly on banking steady state (Oracle + multi-hop chains
+// run 800ms–2s P99 normally) — alarm fatigue erased trust. v0.5.67
+// slimmed near-duplicate transport error-rate rules into the service-
+// wide error_rate. The warning tier deliberately sits ABOVE those
+// documented steady-state ceilings (3s HTTP / 2.5s DB) with longer
+// windows + sustain gates, so it flags true degradation, not morning
+// warm-up.
 var builtins = []chstore.AlertRule{
+	// ── Critical floor ──────────────────────────────────────────
 	// Service-wide error rate. 15% is the "something is clearly
 	// failing" floor — normal failed-card-transactions noise
-	// stays well below. Below 15% is service-specific tuning
-	// territory; we don't guess. Subsumes HTTP-5xx, DB-error,
-	// and RPC-error sub-rates (all flow into this metric).
+	// stays well below. Subsumes HTTP-5xx, DB-error, and
+	// RPC-error sub-rates (all flow into this metric).
 	{ID: "builtin-error-rate-15pct", Name: "Critical error rate (>15% over 5 min)",
 		Metric: "error_rate", Comparator: ">", Threshold: 15, WindowSec: 5 * 60,
-		Severity: "critical", Enabled: true, BuiltIn: true},
+		Severity: "critical", Enabled: true, BuiltIn: true,
+		MinSamples: 50, ForSec: 120, CooldownSec: 300},
 
 	// HTTP latency. P99 >5s in a banking call chain is SLO-
-	// violating territory regardless of which service. Below
-	// that is service-specific.
+	// violating territory regardless of which service.
 	{ID: "builtin-http-p99-5s", Name: "HTTP P99 latency >5s (5 min)",
 		Metric: "http_p99_ms", Comparator: ">", Threshold: 5000, WindowSec: 5 * 60,
-		Severity: "critical", Enabled: true, BuiltIn: true},
+		Severity: "critical", Enabled: true, BuiltIn: true,
+		MinSamples: 50, ForSec: 120, CooldownSec: 300},
 
-	// Database latency. Banking DBs (Oracle, Mongo, MS SQL)
-	// routinely run 500ms-1s P99 with locks + indexes warming
-	// up — a 500ms threshold fired every morning. 5s is when
-	// the DB is actually broken (lock storm, undersized,
-	// network blip).
+	// Database latency. 5s is when the DB is actually broken
+	// (lock storm, undersized, network blip) — not warm-up.
 	{ID: "builtin-db-p99-5s", Name: "DB P99 latency >5s (5 min)",
 		Metric: "db_p99_ms", Comparator: ">", Threshold: 5000, WindowSec: 5 * 60,
-		Severity: "critical", Enabled: true, BuiltIn: true},
+		Severity: "critical", Enabled: true, BuiltIn: true,
+		MinSamples: 30, ForSec: 120, CooldownSec: 300},
 
 	// Message-queue consumer lag. 2 minutes processing P99 on a
-	// Kafka / IBM MQ consumer is real back-pressure — events are
-	// piling up. Producer errors fold into the error_rate rule
-	// at the top so we don't double-page.
+	// Kafka / IBM MQ consumer is real back-pressure. Producer
+	// errors fold into error_rate so we don't double-page.
 	{ID: "builtin-mq-consume-p99-2m", Name: "MQ consume P99 >2 min — consumer lag (5 min)",
 		Metric: "mq_consume_p99_ms", Comparator: ">", Threshold: 120000, WindowSec: 5 * 60,
-		Severity: "critical", Enabled: true, BuiltIn: true},
+		Severity: "critical", Enabled: true, BuiltIn: true,
+		MinSamples: 20, ForSec: 120, CooldownSec: 300},
+
+	// ── Warning tier (sustained degradation) ────────────────────
+	// 5% sustained error rate for 10+ minutes is genuinely
+	// abnormal against a 1-2% banking steady state; 3-min
+	// sustain + 100-sample floor keep single bad buckets and
+	// low-traffic services quiet.
+	{ID: "builtin-warn-error-rate-5pct", Name: "Elevated error rate (>5% sustained 10 min)",
+		Metric: "error_rate", Comparator: ">", Threshold: 5, WindowSec: 10 * 60,
+		Severity: "warning", Enabled: true, BuiltIn: true,
+		MinSamples: 100, ForSec: 180, CooldownSec: 600},
+
+	// 3s HTTP P99 sits above the documented 800ms–2s multi-hop
+	// steady-state ceiling — sustained 10 min means real
+	// degradation, with headroom before the 5s critical floor.
+	{ID: "builtin-warn-http-p99-3s", Name: "HTTP P99 latency >3s (sustained 10 min)",
+		Metric: "http_p99_ms", Comparator: ">", Threshold: 3000, WindowSec: 10 * 60,
+		Severity: "warning", Enabled: true, BuiltIn: true,
+		MinSamples: 100, ForSec: 180, CooldownSec: 600},
+
+	// 2.5s DB P99 sustained — above the 500ms–1s warm steady
+	// state banking datastores run, below the 5s "actually
+	// broken" floor. Catches lock contention building up.
+	{ID: "builtin-warn-db-p99-2500ms", Name: "DB P99 latency >2.5s (sustained 10 min)",
+		Metric: "db_p99_ms", Comparator: ">", Threshold: 2500, WindowSec: 10 * 60,
+		Severity: "warning", Enabled: true, BuiltIn: true,
+		MinSamples: 60, ForSec: 180, CooldownSec: 600},
+
+	// 30s consume P99 sustained = back-pressure forming well
+	// before the 2-minute critical lag floor.
+	{ID: "builtin-warn-mq-consume-p99-30s", Name: "MQ consume P99 >30s — back-pressure (sustained 10 min)",
+		Metric: "mq_consume_p99_ms", Comparator: ">", Threshold: 30000, WindowSec: 10 * 60,
+		Severity: "warning", Enabled: true, BuiltIn: true,
+		MinSamples: 20, ForSec: 180, CooldownSec: 600},
 }
 
 // deprecatedBuiltinIDs lists IDs that USED TO be in the
@@ -208,6 +244,37 @@ func (e *Evaluator) seedBuiltinRules(ctx context.Context) error {
 		if err := e.store.UpsertAlertRule(ctx, r); err != nil {
 			log.Printf("[evaluator] seed %s: %v", r.ID, err)
 		}
+	}
+	// Backfill the anti-noise kit onto builtin rows seeded by older
+	// releases (v0.8.262): pre-hardening builtins carried
+	// MinSamples/ForSec/CooldownSec = 0. Only zero fields are
+	// filled — an operator's explicit non-zero setting is never
+	// touched, and thresholds/windows/names are left alone entirely
+	// (they may be customised).
+	for _, def := range builtins {
+		cur, ok := byID[def.ID]
+		if !ok || !cur.BuiltIn {
+			continue
+		}
+		next := cur
+		if next.MinSamples == 0 {
+			next.MinSamples = def.MinSamples
+		}
+		if next.ForSec == 0 {
+			next.ForSec = def.ForSec
+		}
+		if next.CooldownSec == 0 {
+			next.CooldownSec = def.CooldownSec
+		}
+		if next == cur {
+			continue
+		}
+		if err := e.store.UpsertAlertRule(ctx, next); err != nil {
+			log.Printf("[evaluator] harden builtin %s: %v", def.ID, err)
+			continue
+		}
+		log.Printf("[evaluator] hardened builtin %s (minSamples=%d forSec=%d cooldownSec=%d)",
+			def.ID, next.MinSamples, next.ForSec, next.CooldownSec)
 	}
 	// Auto-disable rules that USED TO be builtins but were
 	// removed in a later release. Skips rules the operator

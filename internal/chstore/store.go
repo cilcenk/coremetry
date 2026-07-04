@@ -1503,6 +1503,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		// the table before v0.5.91. MODIFY TTL is metadata-only;
 		// repeated applies are idempotent.
 		`ALTER TABLE trace_snapshots MODIFY TTL toDateTime(expires_at) + INTERVAL 7 DAY`,
+		// v0.8.252 — public trace shares carry a LOG SNAPSHOT taken at
+		// share time ("o andaki" loglar): the public viewer renders
+		// exactly what the sharer saw, without the anonymous route ever
+		// querying the live logstore (no ES load, no drift after log
+		// TTL). JSON array of log records, ≤500 lines, ZSTD'd.
+		`ALTER TABLE trace_snapshots ADD COLUMN IF NOT EXISTS logs String DEFAULT '' CODEC(ZSTD(3))`,
 		// Status page double opt-in (v0.5.158). Rows from the
 		// public subscribe endpoint land with verified=0 and a
 		// confirm_token; clicking the emailed link clears the

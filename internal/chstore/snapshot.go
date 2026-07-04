@@ -17,6 +17,12 @@ type TraceSnapshot struct {
 	CreatedBy string `json:"createdBy,omitempty"`
 	CreatedAt int64  `json:"createdAt"`           // unix ns
 	ExpiresAt int64  `json:"expiresAt"`           // unix ns
+	// LogsJSON — the trace's log lines captured AT SHARE TIME
+	// (v0.8.252), pre-marshalled JSON array. The public viewer serves
+	// this frozen copy: no live logstore query on the anonymous route,
+	// and the share keeps its logs even after log-retention TTLs eat
+	// the originals. Empty = shared before v0.8.252 or capture failed.
+	LogsJSON string `json:"-"`
 }
 
 // NewSnapshotToken generates a 16-byte URL-safe hex token. Long
@@ -41,7 +47,7 @@ func (s *Store) CreateTraceSnapshot(ctx context.Context, snap TraceSnapshot) err
 		snap.CreatedAt = now
 	}
 	batch, err := s.conn.PrepareBatch(ctx,
-		"INSERT INTO trace_snapshots (token, trace_id, created_by, created_at, expires_at)")
+		"INSERT INTO trace_snapshots (token, trace_id, created_by, created_at, expires_at, logs)")
 	if err != nil {
 		return fmt.Errorf("prepare snapshot: %w", err)
 	}
@@ -51,6 +57,7 @@ func (s *Store) CreateTraceSnapshot(ctx context.Context, snap TraceSnapshot) err
 		snap.CreatedBy,
 		time.Unix(0, snap.CreatedAt).UTC(),
 		time.Unix(0, snap.ExpiresAt).UTC(),
+		snap.LogsJSON,
 	); err != nil {
 		return fmt.Errorf("append snapshot: %w", err)
 	}
@@ -95,7 +102,7 @@ func (s *Store) ListTraceSnapshots(ctx context.Context, traceID string) ([]Trace
 // Idempotent — revoking an already-expired token is a no-op.
 func (s *Store) RevokeTraceSnapshot(ctx context.Context, token string) error {
 	batch, err := s.conn.PrepareBatch(ctx,
-		"INSERT INTO trace_snapshots (token, trace_id, created_by, created_at, expires_at)")
+		"INSERT INTO trace_snapshots (token, trace_id, created_by, created_at, expires_at, logs)")
 	if err != nil {
 		return fmt.Errorf("prepare revoke: %w", err)
 	}
@@ -113,6 +120,7 @@ func (s *Store) RevokeTraceSnapshot(ctx context.Context, token string) error {
 		prev.Token, prev.TraceID, prev.CreatedBy,
 		time.Unix(0, prev.CreatedAt).UTC(),
 		now, // expires_at = now → instant expiry
+		prev.LogsJSON,
 	); err != nil {
 		return fmt.Errorf("append revoke: %w", err)
 	}
@@ -126,12 +134,13 @@ func (s *Store) GetTraceSnapshot(ctx context.Context, token string) (*TraceSnaps
 	row := s.conn.QueryRow(ctx, `
 		SELECT token, trace_id, created_by,
 		       toUnixTimestamp64Nano(created_at),
-		       toUnixTimestamp64Nano(expires_at)
+		       toUnixTimestamp64Nano(expires_at),
+		       logs
 		FROM trace_snapshots FINAL
 		WHERE token = ?
 		LIMIT 1`, token)
 	var snap TraceSnapshot
-	if err := row.Scan(&snap.Token, &snap.TraceID, &snap.CreatedBy, &snap.CreatedAt, &snap.ExpiresAt); err != nil {
+	if err := row.Scan(&snap.Token, &snap.TraceID, &snap.CreatedBy, &snap.CreatedAt, &snap.ExpiresAt, &snap.LogsJSON); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}

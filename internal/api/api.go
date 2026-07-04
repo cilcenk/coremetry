@@ -3184,6 +3184,18 @@ func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: time.Now().Add(time.Duration(ttlHours) * time.Hour).UnixNano(),
 	}
 	snap.Token = chstore.NewSnapshotToken()
+	// v0.8.252 — freeze the trace's logs INTO the share at mint time
+	// ("o andaki" loglar). The public route then serves this copy: the
+	// anonymous viewer never queries the live logstore, and the share
+	// outlives log retention. Best-effort — a logstore hiccup mints a
+	// share without logs rather than failing the share.
+	if logsPage, lerr := s.logs.Search(r.Context(), logstore.Filter{
+		TraceID: id, Limit: snapshotLogsMax,
+	}); lerr != nil {
+		log.Printf("[share] log snapshot capture failed for trace %s: %v", id, lerr)
+	} else {
+		snap.LogsJSON = snapshotLogsJSON(logsPage.Logs, snapshotLogsMax)
+	}
 	if err := s.store.CreateTraceSnapshot(r.Context(), snap); err != nil {
 		writeErr(w, err); return
 	}
@@ -3265,12 +3277,42 @@ func (s *Server) getPublicTrace(w http.ResponseWriter, r *http.Request) {
 	}
 	spans, err := s.store.GetTrace(r.Context(), snap.TraceID)
 	if err != nil { writeErr(w, err); return }
+	// v0.8.252 — logs come from the frozen share-time snapshot, never a
+	// live logstore query (anonymous route). Empty column (pre-v0.8.252
+	// share / capture failure) serves an empty array.
+	logsRaw := json.RawMessage(snap.LogsJSON)
+	if snap.LogsJSON == "" {
+		logsRaw = json.RawMessage("[]")
+	}
 	writeJSON(w, map[string]any{
 		"traceId":   snap.TraceID,
 		"spans":     spans,
+		"logs":      logsRaw,
 		"expiresAt": snap.ExpiresAt,
 		"createdBy": snap.CreatedBy,
 	})
+}
+
+// snapshotLogsMax bounds the share-time log capture. 500 lines covers
+// any realistic trace (typical: 1-100) while keeping the snapshot row
+// small; beyond it the tail is cut, newest-first order preserved.
+const snapshotLogsMax = 500
+
+// snapshotLogsJSON marshals up to max log records into the frozen
+// share payload. Pure (v0.8.252) — tested in snapshot_logs_test.go.
+// nil/empty → "" so the column stays empty (the reader serves []).
+func snapshotLogsJSON(logs []*logstore.LogRecord, max int) string {
+	if len(logs) == 0 {
+		return ""
+	}
+	if max > 0 && len(logs) > max {
+		logs = logs[:max]
+	}
+	b, err := json.Marshal(logs)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // getMetricNames now accepts q + limit + offset (v0.5.181) for

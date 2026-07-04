@@ -5,8 +5,9 @@ import { Wordmark } from '@/components/Wordmark';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { SpanDetail } from '@/components/SpanDetail';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
+import { LogTable } from '@/components/LogTable';
 import { fmtNs, tsLong } from '@/lib/utils';
-import type { SpanRow } from '@/lib/types';
+import type { SpanRow, LogRow } from '@/lib/types';
 
 // Public read-only trace viewer. Hit by /public/trace?token=xxx;
 // the URL encoding lets the snapshot link be plain HTTP-shareable
@@ -17,9 +18,16 @@ import type { SpanRow } from '@/lib/types';
 // time range picker. The waterfall + SpanDetail components are
 // reused as-is — they were already presentation-only.
 
+// v0.8.252 — snapshot logs: frozen at share time by the backend, so
+// the public viewer shows exactly what the sharer saw ("o andaki"
+// loglar) without ever querying the live logstore. The backend
+// serializes full logstore.LogRecord rows, which is exactly the
+// LogRow wire shape — so the shared <LogTable> renders them
+// unchanged and the public Logs tab matches the logged-in one.
 interface PublicTraceResponse {
   traceId: string;
   spans: SpanRow[];
+  logs?: LogRow[];
   expiresAt: number;
   createdBy?: string;
 }
@@ -29,6 +37,7 @@ function PublicTraceInner() {
   const token = sp.get('token') ?? '';
   const [data, setData] = useState<PublicTraceResponse | null | undefined>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(sp.get('span'));
+  const [tab, setTab] = useState<'waterfall' | 'logs'>('waterfall');
 
   useEffect(() => {
     if (!token) return;
@@ -68,6 +77,7 @@ function PublicTraceInner() {
   const maxT = Math.max(...data.spans.map(s => s.endTime));
   const totalNs = maxT - minT;
   const hasErr = data.spans.some(s => s.statusCode === 'error');
+  const logs = data.logs ?? [];
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '20px 24px' }}>
@@ -105,15 +115,46 @@ function PublicTraceInner() {
         )}
       </div>
 
-      {data.spans.length === 0 ? (
-        <Empty icon="⋮" title="Trace has no spans" />
-      ) : (
+      {/* Waterfall | Logs — same .tab-strip pattern as the logged-in
+          trace page so the recipient sees the exact same anatomy.
+          The Logs tab renders the SNAPSHOT frozen at share time; it
+          never queries the live logstore from this anonymous route. */}
+      <div className="tab-strip" style={{ marginBottom: 10 }}>
+        <button className={tab === 'waterfall' ? 'active' : ''} onClick={() => setTab('waterfall')}>
+          Waterfall <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{data.spans.length}</span>
+        </button>
+        <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>
+          Logs <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length}</span>
+        </button>
+      </div>
+
+      {tab === 'waterfall' && (
         <div id="td-outer">
           <div id="td-wf">
             <TraceWaterfall spans={data.spans} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
           {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
         </div>
+      )}
+
+      {tab === 'logs' && (
+        logs.length === 0 ? (
+          <Empty icon="≡" title="No logs in this snapshot">
+            Logs are frozen into the share when the link is minted. This share
+            was created before log capture existed, or the trace had no
+            correlated log lines at share time.
+          </Empty>
+        ) : (
+          <>
+            <div style={{
+              display: 'flex', gap: 10, padding: '6px 10px',
+              fontSize: 11, color: 'var(--text3)',
+            }}>
+              <span>{logs.length} log line{logs.length === 1 ? '' : 's'} · captured at share time</span>
+            </div>
+            <LogTable logs={[...logs].sort((a, b) => a.timestamp - b.timestamp)} hideTraceColumn />
+          </>
+        )
       )}
     </div>
   );

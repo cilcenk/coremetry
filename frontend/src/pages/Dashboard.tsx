@@ -10,6 +10,9 @@ import { VariablesBar } from '@/components/dashboard/VariablesBar';
 import type { DashboardVariable } from '@/lib/types';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useContentWidth } from '@/lib/useContentWidth';
+import { quantizeWidth } from '@/lib/chartStep';
+import { effectivePanelStep, estimatePanelPx } from '@/components/dashboard/panelStep';
 import type {
   Dashboard, Panel, PanelType, TimeRange,
   MetricPanelConfig, SpanMetricPanelConfig,
@@ -121,6 +124,15 @@ function Inner() {
     const panels = normalizePanels(list);
     return panels.filter(p => p.type === 'metric' || p.type === 'spanmetric');
   }, [doc?.panels]);
+  // GRAN-C (v0.8.248) — quantized #content width for the bundle's
+  // width-aware auto step. The bundle builds every panel's query before the
+  // panel divs are measurable, so auto-step panels estimate their pixels as
+  // content-width × grid-span/4 (estimatePanelPx); the per-panel fallback
+  // fetch (PanelRenderer) measures the real div instead. Already bucketed,
+  // so it only re-fires the bundle on a 200px bucket crossing. The watch key
+  // matters: #content doesn't exist during the early-return spinner, so the
+  // hook re-measures once the doc lands and the real layout renders.
+  const contentW = useContentWidth(doc != null);
   // Re-fire the bundle whenever the panel set, the time range,
   // or any variable value changes. Each of those re-keys the
   // server-side cache anyway, so we want the bundle aligned.
@@ -129,8 +141,23 @@ function Inner() {
       setBundlePanelData({});
       return;
     }
+    // Skip when contentW is provably stale: useContentWidth's effect runs
+    // just above this one in the same flush (hook declaration order), so a
+    // live-DOM mismatch means the corrected bucket is already scheduled and
+    // this effect re-fires immediately — skipping avoids a throwaway POST
+    // with wrong-width steps on the doc-load commit (where the bundle would
+    // otherwise fire against the pre-#content fallback width).
+    const live = document.getElementById('content');
+    if (live && quantizeWidth(live.clientWidth || 1200) !== contentW) return;
     let cancelled = false;
     const { from, to } = timeRangeToNs(range);
+    // Per-panel effective step: operator-pinned cfg.step passes through;
+    // auto (step absent — every pre-GRAN-C dashboard) resolves against the
+    // panel's estimated width. The backend min-step clamp (v0.8.243) floors
+    // fine requests at the metric's export interval.
+    const rangeSec = (to - from) / 1e9;
+    const stepFor = (cfgStep: number | undefined, p: Panel) =>
+      effectivePanelStep(cfgStep, rangeSec, estimatePanelPx(contentW, p.width)) ?? undefined;
     const requests = bundleablePanels.map(p => {
       if (p.type === 'metric') {
         const cfg = applyVarsToMetric(p.config as MetricPanelConfig, varValues);
@@ -139,7 +166,7 @@ function Inner() {
           name: cfg.metricName, service: cfg.service,
           agg: cfg.agg,
           groupBy: cfg.groupBy ? cfg.groupBy.split(',').map(s => s.trim()).filter(Boolean) : undefined,
-          step: cfg.step,
+          step: stepFor(cfg.step, p),
           filters: cfg.filters,
         };
       }
@@ -149,14 +176,14 @@ function Inner() {
         agg: cfg.agg, field: cfg.field,
         groupBy: cfg.groupBy ? cfg.groupBy.split(',').map(s => s.trim()).filter(Boolean) : undefined,
         filters: cfg.filters, dsl: cfg.dsl,
-        step: cfg.step,
+        step: stepFor(cfg.step, p),
       };
     });
     api.dashboardData({ from, to, requests })
       .then(out => { if (!cancelled) setBundlePanelData(out as Record<string, PanelDataOverride>); })
       .catch(() => { if (!cancelled) setBundlePanelData({}); });
     return () => { cancelled = true; };
-  }, [bundleablePanels, range, varValues]);
+  }, [bundleablePanels, range, varValues, contentW]);
 
   if (!id) return <Empty icon="◫" title="No dashboard selected" />;
   if (doc === undefined) return <Spinner />;

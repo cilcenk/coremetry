@@ -1755,7 +1755,11 @@ export interface MetricPanelConfig {
   service?: string;
   agg?: string;            // avg | sum | p95 | p99 | …
   groupBy?: string;        // comma-sep keys
-  step?: number;           // bucket seconds (auto if 0)
+  // Bucket seconds. Absent/0 = auto — width-aware since GRAN-C (v0.8.248):
+  // resolved from the panel's pixel budget (panelStep.ts), floored by the
+  // backend's min-step clamp (v0.8.243). Optional on purpose: dashboards
+  // saved before v0.8.248 have no step field and decode straight to auto.
+  step?: number;
   filters?: string;        // JSON FilterExpr[]
 }
 export interface SpanMetricPanelConfig {
@@ -1764,7 +1768,7 @@ export interface SpanMetricPanelConfig {
   groupBy?: string;
   dsl?: string;            // multi-line DSL (AND-joined)
   filters?: string;        // JSON FilterExpr[]
-  step?: number;
+  step?: number;           // bucket seconds; absent/0 = width-aware auto (see MetricPanelConfig.step)
   // Visualization shape. Grafana-style: 'line' is the default,
   // 'bar' / 'stacked-bar' for discrete buckets (good for counts
   // per period), 'area' / 'stacked-area' for cumulative-style

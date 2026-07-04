@@ -1,4 +1,5 @@
 import { MetricNamePicker } from '../MetricNamePicker';
+import { STEP_OPTIONS } from '@/pages/explore/presets';
 import type {
   Panel, PanelType, PanelWidth,
   MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
@@ -27,6 +28,29 @@ const WIDTH_LABELS: Record<PanelWidth, string> = {
 const SPAN_AGGS = ['count', 'rate', 'errors', 'error_rate', 'avg', 'sum', 'min', 'max',
                    'p50', 'p90', 'p95', 'p99', 'p999'];
 const METRIC_AGGS = ['avg', 'sum', 'min', 'max', 'last', 'p50', 'p95', 'p99'];
+
+// GRAN-C (v0.8.248) — shared step <select> for the metric / spanmetric forms.
+// Same option list as Explore's Step picker (STEP_OPTIONS); the 0 entry is
+// relabelled because dashboard "auto" now means width-aware (panel-pixel
+// budget, PanelRenderer), not the backend's ~120-point ladder. Auto stores
+// `undefined` (never 0) so a saved auto panel's JSON stays byte-identical to
+// a pre-GRAN-C document — the backward-compat contract for old dashboards.
+function StepSelect({ value, onChange }: {
+  value: number | undefined;
+  onChange: (v: number | undefined) => void;
+}) {
+  return (
+    <select value={value ?? 0}
+      onChange={e => {
+        const v = Number(e.target.value);
+        onChange(v > 0 ? v : undefined);
+      }}>
+      {STEP_OPTIONS.map(o => (
+        <option key={o.v} value={o.v}>{o.v === 0 ? 'Auto (fit width)' : o.label}</option>
+      ))}
+    </select>
+  );
+}
 
 // PanelEditor renders a form whose fields depend on panel.type. Pure
 // controlled component — the parent owns the panel state and the save
@@ -155,7 +179,7 @@ function MetricFields({ cfg, onChange }: {
           onChange={v => update('metricName', v)}
           placeholder="search metrics…" width="100%" />
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
         <Field label="Aggregation">
           <select value={cfg.agg ?? 'avg'} onChange={e => update('agg', e.target.value)}>
             {METRIC_AGGS.map(a => <option key={a} value={a}>{a}</option>)}
@@ -164,6 +188,9 @@ function MetricFields({ cfg, onChange }: {
         <Field label="Service (optional)">
           <input value={cfg.service ?? ''}
             onChange={e => update('service', e.target.value)} />
+        </Field>
+        <Field label="Step">
+          <StepSelect value={cfg.step} onChange={v => update('step', v)} />
         </Field>
       </div>
       <Field label="Group by (comma-sep keys, optional)">
@@ -202,10 +229,15 @@ function SpanMetricFields({ cfg, onChange }: {
           </select>
         </Field>
       </div>
-      <Field label="Group by (comma-sep keys)">
-        <input value={cfg.groupBy ?? ''} placeholder="service_name, http_route"
-          onChange={e => update('groupBy', e.target.value)} style={{ width: '100%' }} />
-      </Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+        <Field label="Group by (comma-sep keys)">
+          <input value={cfg.groupBy ?? ''} placeholder="service_name, http_route"
+            onChange={e => update('groupBy', e.target.value)} style={{ width: '100%' }} />
+        </Field>
+        <Field label="Step">
+          <StepSelect value={cfg.step} onChange={v => update('step', v)} />
+        </Field>
+      </div>
       <Field label="DSL filter (optional)">
         <textarea value={cfg.dsl ?? ''}
           placeholder='service_name = "checkout"\nduration > 100ms'

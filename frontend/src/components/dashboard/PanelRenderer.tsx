@@ -9,6 +9,8 @@ import { fmtSmart } from '@/lib/chartFmt';
 import { MultiLineChart } from '../MultiLineChart';
 import { DashboardViz } from '../DashboardViz';
 import { Spinner } from '../Spinner';
+import { effectivePanelStep } from './panelStep';
+import { usePanelWidth } from './usePanelWidth';
 
 // PanelRenderer dispatches on panel.type. Self-contained — fetches its
 // own data, re-fetches when `range` changes. Errors are surfaced inline
@@ -140,6 +142,10 @@ function MetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
 }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  // GRAN-C (v0.8.248) — width-aware auto step. widthPx is the panel's OWN
+  // container bucket (panels share a 4-col grid, so #content is the wrong
+  // yardstick); null until the layout pass measures it.
+  const { ref, widthPx } = usePanelWidth();
 
   // If the parent has supplied bundled data, route it through
   // local state shape and skip the per-panel fetch entirely.
@@ -160,18 +166,29 @@ function MetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
       return;
     }
     if (!cfg.metricName) { setError('Configure a metric name'); return; }
-    setSeries(undefined); setError(null);
+    // GRAN-C — cfg.step > 0 (operator-pinned) passes through; auto resolves
+    // against the measured panel width. null = not measured yet → defer this
+    // fetch one beat rather than firing at a guessed width. widthPx sits in
+    // the deps so the request (and its server-side cache key, which hashes
+    // the step param) tracks bucket crossings — no stale-step reuse.
     const { from, to } = timeRangeToNs(range);
+    const step = effectivePanelStep(cfg.step, (to - from) / 1e9, widthPx);
+    if (step === null) return;
+    setSeries(undefined); setError(null);
     api.metricQuery({
       name: cfg.metricName, service: cfg.service, agg: cfg.agg,
-      groupBy: cfg.groupBy, from, to, step: cfg.step,
+      groupBy: cfg.groupBy, from, to, step,
     }).then(s => setSeries(s ?? [])).catch(e => setError(e.message));
-  }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride)]);
+  }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx]);
 
   if (error) return <PanelError msg={error} />;
-  if (series === undefined) return <PanelLoading />;
-  if (!series || series.length === 0) return <PanelEmpty />;
-  return <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} />;
+  return (
+    <div ref={ref}>
+      {series === undefined ? <PanelLoading />
+        : !series || series.length === 0 ? <PanelEmpty />
+        : <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} />}
+    </div>
+  );
 }
 
 // ── Span metric line chart ──────────────────────────────────────────────────
@@ -183,6 +200,8 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
 }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  // GRAN-C (v0.8.248) — same width-aware auto step as MetricPanel above.
+  const { ref, widthPx } = usePanelWidth();
 
   const hasOverride = dataOverride && (dataOverride.series !== undefined || dataOverride.error);
   useEffect(() => {
@@ -197,26 +216,31 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
       return;
     }
     if (!cfg.agg) { setError('Configure an aggregation'); return; }
-    setSeries(undefined); setError(null);
     const { from, to } = timeRangeToNs(range);
+    const step = effectivePanelStep(cfg.step, (to - from) / 1e9, widthPx);
+    if (step === null) return; // panel width not measured yet — defer
+    setSeries(undefined); setError(null);
     api.spanMetric({
       agg: cfg.agg, field: cfg.field, groupBy: cfg.groupBy,
       filters: cfg.filters, dsl: cfg.dsl,
-      from, to, step: cfg.step,
+      from, to, step,
     }).then(s => setSeries(s ?? [])).catch(e => setError(e.message));
-  }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride)]);
+  }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx]);
 
   if (error) return <PanelError msg={error} />;
-  if (series === undefined) return <PanelLoading />;
-  if (!series || series.length === 0) return <PanelEmpty />;
   // Dispatch on the configured viz. 'line' (default) keeps the
   // existing uPlot multi-line path; everything else routes
   // through the small SVG-based DashboardViz component.
   const viz = cfg.viz ?? 'line';
-  if (viz === 'line') {
-    return <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} />;
-  }
-  return <DashboardViz series={series} viz={viz} height={280} />;
+  return (
+    <div ref={ref}>
+      {series === undefined ? <PanelLoading />
+        : !series || series.length === 0 ? <PanelEmpty />
+        : viz === 'line'
+          ? <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} />
+          : <DashboardViz series={series} viz={viz} height={280} />}
+    </div>
+  );
 }
 
 // ── Single value with prior-period delta + sparkline ──────────────────────

@@ -21,6 +21,8 @@ import { useMemo } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from '@/lib/queries/keys';
+import { stepForWidth } from '@/lib/chartStep';
+import { useContentWidth } from '@/lib/useContentWidth';
 import { encodeFilters, encodeFilterGroup } from '@/lib/urlState';
 import type { SpanMetricSeries, MetricExemplar } from '@/lib/types';
 import {
@@ -63,6 +65,19 @@ export function useExploreQueries(
   from: number,
   to: number,
 ): ExploreQueriesResult {
+  // GRAN-A (v0.8.245) — Grafana-style width-aware auto step. step=0 (auto) no
+  // longer defers to the backend's ~120-point ladder: we compute an explicit
+  // step from the window and the #content width (~2px/point, snapped up to a
+  // rung) and send it on all three fetch paths. The backend's min-step clamp
+  // (v0.8.243) floors it at the metric's export interval, so asking fine is
+  // safe. An operator-picked step (state.step > 0) passes through untouched.
+  // The width is quantized into 200px buckets (useContentWidth), and the
+  // effective step enters querySignature — so a drag-resize refetches at most
+  // once per bucket crossing, exactly the pre-GRAN-A cache-key contract.
+  const contentWidth = useContentWidth();
+  const rangeSec = Math.max(1, Math.round((to - from) / 1e9)); // from/to are unix ns
+  const effStep = state.step > 0 ? state.step : stepForWidth(rangeSec, contentWidth);
+
   const results = useQueries({
     queries: state.queries.map(q => {
       const filters = effectiveFilters(q);
@@ -76,10 +91,10 @@ export function useExploreQueries(
       // the querySignature cache key stays consistent.
       const desc = q.source === 'span' ? exemplarDescriptor(q) : null;
       return {
-        queryKey: keys.explore.query(querySignature(q, state.step), from, to),
+        queryKey: keys.explore.query(querySignature(q, effStep), from, to),
         queryFn: (): Promise<QueryData> =>
           desc
-            ? api.resolveMetric(desc, { from, to }, { step: state.step || undefined, exemplars: true })
+            ? api.resolveMetric(desc, { from, to }, { step: effStep, exemplars: true })
                 .then(r => ({ series: r?.series ?? [], exemplars: r?.exemplars ?? [] }))
             : q.source === 'span'
               ? api.spanMetricTopN({
@@ -101,7 +116,7 @@ export function useExploreQueries(
                     : undefined,
                   dsl: q.dsl.trim() || undefined,
                   from, to,
-                  step: state.step || undefined,
+                  step: effStep,
                 }).then(r => ({ series: r?.series ?? [], exemplars: [], totalSeries: r?.totalSeries }))
               : api.metricQuery({
                   name: q.metric,
@@ -109,7 +124,7 @@ export function useExploreQueries(
                   groupBy: q.splitBy.length ? q.splitBy.join(',') : undefined,
                   filters: filters.length ? encodeFilters(filters) : undefined,
                   from, to,
-                  step: state.step || undefined,
+                  step: effStep,
                 }).then(r => ({ series: r ?? [], exemplars: [] })),
         enabled: produces(q) && from > 0,
         staleTime: 30_000,

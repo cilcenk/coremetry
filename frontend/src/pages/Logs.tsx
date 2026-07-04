@@ -23,6 +23,10 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass } from '@/lib/utils';
+import {
+  compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
+} from '@/lib/logFilters';
+import type { LogFilter } from '@/lib/logFilters';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
 
 // Share affordance — copies a link to the CURRENT filtered logs
@@ -128,7 +132,7 @@ function buildKQLFromFilter(f: {
 }
 
 function LogsInner() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [range, setRange] = useUrlRange('30m');
   // Cursor paging (v0.7.22 — replaced the offset pager). `cursor`
@@ -147,6 +151,12 @@ function LogsInner() {
     service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '',
   });
   const [draft, setDraft] = useState(filter);
+  // Structured field filters (Kibana Discover pill model) — separate
+  // from the free-text `search`. Compiled together right before any
+  // query goes out (compiledSearch below), so the backend contract
+  // is unchanged. Pills live in the ?filters= URL param so Copy link
+  // and SavedViewsBar reproduce them.
+  const [filters, setFilters] = useState<LogFilter[]>([]);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   // v0.5.471 — cluster list for the inline selector. /api/clusters
   // returns the distinct k8s/openshift cluster names seen in the
@@ -178,16 +188,27 @@ function LogsInner() {
   // fetch dropped logs on a busy service at 10B logs/day.)
   const [live, setLive] = useState(false);
 
-  // Sync filter state from URL params on every URL change. This
-  // covers two cases that useState's lazy init does not handle
-  // reliably: (a) static-prerender → CSR hydration, where useState
-  // initializes against empty searchParams during SSG and never
-  // re-runs even though the client sees real params; (b) in-app
-  // navigations that update the URL without remounting the page.
-  // Anomaly + service drill-down links rely on this — they pass
-  // ?service=<svc>&q=<token> and expect the page to land already
-  // scoped instead of showing the global all-logs view.
+  // Sync filter state from URL params. Covers (a) static-prerender →
+  // CSR hydration, where useState initializes against empty
+  // searchParams; (b) in-app navigations that update the URL without
+  // remounting the page. Anomaly + service drill-down links rely on
+  // this — they pass ?service=<svc>&q=<token> and expect the page to
+  // land already scoped.
+  //
+  // Sig-guarded (Discover revamp step 1): the page now WRITES filter
+  // params back to the URL (apply / pill actions / clearTraceLock),
+  // and useUrlRange writes ?range=. Without the guard, every URL
+  // write re-ran this import and wiped locally-applied state (a
+  // range change used to clear an applied-but-not-in-URL filter).
+  // The sig hashes only the filter-bearing params, so range-only
+  // changes no-op and self-writes (which pre-store their own sig)
+  // don't double-apply.
+  const urlSig = (f: { service: string; cluster: string; search: string; traceId: string; spanId: string },
+    filtersRaw: string) =>
+    JSON.stringify([f.service, f.cluster, f.search, f.traceId, f.spanId, filtersRaw]);
+  const lastUrlSigRef = useRef<string | null>(null);
   useEffect(() => {
+    const filtersRaw = searchParams.get('filters') ?? '';
     const next = {
       service:  searchParams.get('service') ?? '',
       cluster:  searchParams.get('cluster') ?? '',
@@ -196,10 +217,36 @@ function LogsInner() {
       traceId:  searchParams.get('traceId') ?? '',
       spanId:   searchParams.get('spanId')  ?? '',
     };
+    const sig = urlSig(next, filtersRaw);
+    if (sig === lastUrlSigRef.current) return;
+    lastUrlSigRef.current = sig;
     setFilter(next);
     setDraft(next);
+    setFilters(parseFiltersParam(filtersRaw));
     resetPaging();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  // State → URL. Writes every filter-bearing param (replace:true — a
+  // filter tweak refines the view, no history entry per click) and
+  // pre-stores the sig so the import effect above treats the
+  // resulting searchParams change as a no-op.
+  const writeUrl = (f: typeof filter, pills: LogFilter[]) => {
+    const filtersRaw = encodeFiltersParam(pills);
+    lastUrlSigRef.current = urlSig(f, filtersRaw);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      const setOrDel = (k: string, v: string) => { if (v) p.set(k, v); else p.delete(k); };
+      setOrDel('service', f.service);
+      setOrDel('cluster', f.cluster);
+      setOrDel('q', f.search);
+      p.delete('search'); // legacy alias of q — never write both
+      setOrDel('traceId', f.traceId);
+      setOrDel('spanId', f.spanId);
+      setOrDel('filters', filtersRaw);
+      return p;
+    }, { replace: true });
+  };
 
   // Build the params for the static-window query. When live
   // tail is on, we don't run this query (the live useQuery
@@ -218,11 +265,19 @@ function LogsInner() {
     () => useTimeRange ? timeRangeToNs(range) : { from: undefined, to: undefined },
     [useTimeRange, range],
   );
+  // Pills + free text → the single query string every consumer
+  // (table, facets, histogram, live tail, Kibana link) sends to the
+  // backend. Disabled pills drop out here — no backend round-trip
+  // knows pills exist.
+  const compiledSearch = useMemo(
+    () => compileSearch(filters, filter.search),
+    [filters, filter.search],
+  );
   const staticQ = useLogs({
     limit: 100, after: cursor || undefined, from, to,
     service: filter.service || undefined,
     cluster: filter.cluster || undefined,
-    search: filter.search || undefined,
+    search: compiledSearch || undefined,
     severity: filter.severity > 0 ? filter.severity : undefined,
     traceId: filter.traceId || undefined,
     spanId:  filter.spanId  || undefined,
@@ -243,11 +298,11 @@ function LogsInner() {
   const volumeEnabled = (from !== undefined && to !== undefined) || !!filter.traceId;
   const volumeBucket = useMemo(() => pickVolumeBucket(from, to), [from, to]);
   const volumeQ = useQuery({
-    queryKey: ['logs', 'sev-volume', from, to, filter.service, filter.search, filter.traceId, volumeBucket],
+    queryKey: ['logs', 'sev-volume', from, to, filter.service, compiledSearch, filter.traceId, volumeBucket],
     queryFn: () => api.logsTimeseries({
       from, to,
       service: filter.service || undefined,
-      search:  filter.search  || undefined,
+      search:  compiledSearch || undefined,
       traceId: filter.traceId || undefined,
       groupBy: 'severity',
       bucketSec: volumeBucket,
@@ -289,7 +344,7 @@ function LogsInner() {
       const p = new URLSearchParams();
       if (filter.service) p.set('service', filter.service);
       if (filter.cluster) p.set('cluster', filter.cluster);
-      if (filter.search) p.set('search', filter.search);
+      if (compiledSearch) p.set('search', compiledSearch);
       if (filter.severity > 0) p.set('severity', String(filter.severity));
       if (newestNsRef.current) p.set('since', String(newestNsRef.current)); // reconnect catch-up
       es = new EventSource('/api/logs/stream?' + p.toString(), { withCredentials: true });
@@ -319,7 +374,7 @@ function LogsInner() {
       es?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, filter.service, filter.cluster, filter.search, filter.severity]);
+  }, [live, filter.service, filter.cluster, compiledSearch, filter.severity]);
 
   // When live, the table renders the SSE buffer; otherwise the static
   // windowed query. Live has no loading/error gate — rows fill in as they
@@ -333,7 +388,7 @@ function LogsInner() {
   // Reset expansion state when the filter / range / page
   // changes — opening row #5 in one window doesn't translate
   // to the next. `cursor` stands in for the page identity now.
-  useEffect(() => { setExpanded(new Set()); }, [range, filter, cursor]);
+  useEffect(() => { setExpanded(new Set()); }, [range, filter, filters, cursor]);
 
   // Field-mapping hint (v0.5.136 / v0.5.137). On the Elastic
   // backend, surface what fields are queryable so the operator
@@ -372,61 +427,35 @@ function LogsInner() {
     });
   };
 
-  const apply = () => { resetPaging(); setFilter(draft); };
+  const apply = () => { resetPaging(); setFilter(draft); writeUrl(draft, filters); };
   const reset = () => {
     const empty = { service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '' };
-    setDraft(empty); setFilter(empty); resetPaging();
+    setDraft(empty); setFilter(empty); setFilters([]); resetPaging();
+    writeUrl(empty, []);
   };
 
-  // Append/remove a `key:value` clause from the search box.
-  // `negate=true` produces a `NOT key:value` clause. Used by both
-  // the facet sidebar and the expanded-row KvRow click-to-filter
-  // buttons. Auto-applies (commits filter + resets page).
-  const toggleSearchClause = (key: string, value: string, negate = false) => {
-    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Always wrap values in double quotes — Lucene treats many
-    // characters as operators (`-`, `/`, `:`, `*`, etc.) and a
-    // bare hostname like "my-host-7f-abc" is parsed as a boolean
-    // expression rather than a literal. Inside quotes only `\`
-    // and `"` are special, which we escape. v0.5.230 caught a
-    // `host.hostname:my-host-abc` filter never matching.
-    const phraseQuote = (s: string) =>
-      `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-    const k = escapeRe(key);
-    const v = escapeRe(value);
-    // Match the existing clause (with or without NOT, with or
-    // without surrounding quotes). One regex finds both
-    // positive + negative forms so an exact ⊕ → ⊖ toggle works
-    // without duplicate clauses piling up.
-    const re = new RegExp(`(?:^|\\s+AND\\s+|\\s+)(?:NOT\\s+)?${k}:"?${v}"?`);
-    let nextSearch: string;
-    if (re.test(filter.search)) {
-      const alreadyNegated = new RegExp(`(?:^|\\s+AND\\s+|\\s+)NOT\\s+${k}:"?${v}"?`).test(filter.search);
-      nextSearch = filter.search.replace(re, ' ')
-        .replace(/\s+AND\s+AND\s+/g, ' AND ').trim()
-        .replace(/^AND\s+/, '').replace(/\s+AND$/, '');
-      if (alreadyNegated !== negate) {
-        const sep = nextSearch ? ' AND ' : '';
-        nextSearch = `${nextSearch}${sep}${negate ? 'NOT ' : ''}${key}:${phraseQuote(value)}`;
-      }
-    } else {
-      const sep = filter.search ? ' AND ' : '';
-      nextSearch = `${filter.search}${sep}${negate ? 'NOT ' : ''}${key}:${phraseQuote(value)}`;
-    }
-    const next = { ...filter, search: nextSearch };
-    setDraft(d => ({ ...d, search: nextSearch }));
-    setFilter(next);
+  // Commit a new pill set: state + paging + URL in one step. Every
+  // pill mutation (add/negate/disable/remove) is an auto-apply —
+  // same as the old toggleSearchClause behaviour.
+  const applyPills = (next: LogFilter[]) => {
+    setFilters(next);
     resetPaging();
+    writeUrl(filter, next);
   };
+  const negatePill  = (i: number) => applyPills(filters.map((f, j) => (j === i ? { ...f, negated: !f.negated } : f)));
+  const disablePill = (i: number) => applyPills(filters.map((f, j) => (j === i ? { ...f, disabled: !f.disabled } : f)));
+  const removePill  = (i: number) => applyPills(filters.filter((_, j) => j !== i));
 
-  // Expanded-row KvRow click-to-filter handlers (v0.5.229).
-  // Operator clicks ⊕ on any attribute / resource attribute →
-  // adds key:value to search. ⊖ → adds NOT key:value.
-  const addFromRow      = (key: string, value: string) => toggleSearchClause(key, value, false);
-  const excludeFromRow  = (key: string, value: string) => toggleSearchClause(key, value, true);
+  // Expanded-row KvRow click-to-filter handlers (v0.5.229 →
+  // Discover pills). Operator clicks ⊕ on any attribute → adds a
+  // pill; ⊖ → adds a negated pill. Toggle semantics (same polarity
+  // removes, opposite flips) live in lib/logFilters.ts.
+  const addFromRow      = (key: string, value: string) => applyPills(toggleFilter(filters, key, value, false));
+  const excludeFromRow  = (key: string, value: string) => applyPills(toggleFilter(filters, key, value, true));
   const clearTraceLock = () => {
     const next = { ...filter, traceId: '', spanId: '' };
     setFilter(next); setDraft(d => ({ ...d, traceId: '', spanId: '' }));
+    writeUrl(next, filters);
   };
   const toggle = (id: number) => {
     const next = new Set(expanded);
@@ -544,7 +573,7 @@ function LogsInner() {
               becomes the time range — so the operator lands on
               the same slice they're looking at here. */}
           {(() => {
-            const kql = buildKQLFromFilter(filter);
+            const kql = buildKQLFromFilter({ ...filter, search: compiledSearch });
             const href = buildKibanaURL(kibana, {
               fromNs: from ?? undefined,
               toNs: to ?? undefined,
@@ -564,6 +593,57 @@ function LogsInner() {
             );
           })()}
         </div>
+
+        {/* Filter pill bar (Discover revamp step 1). One pill per
+            structured field filter; free text stays in the search
+            box. ≠ toggles NOT (red tone), ◐ disables without
+            removing (opacity + line-through, drops out of the
+            compiled query), × removes. All actions auto-apply. */}
+        {filters.length > 0 && (
+          <div role="group" aria-label="Active field filters"
+            style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            {filters.map((f, i) => {
+              const tone = f.negated ? 'var(--err)' : 'var(--accent2)';
+              const pillBtn: CSSProperties = {
+                background: 'none', border: 'none', cursor: 'pointer',
+                padding: '0 2px', fontSize: 11, lineHeight: 1,
+                color: 'var(--text3)',
+              };
+              return (
+                <span key={`${f.key} ${f.value}`} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '3px 6px 3px 9px', borderRadius: 4, fontSize: 11.5,
+                  border: `1px solid ${f.negated ? 'var(--err)' : 'var(--border)'}`,
+                  background: f.negated ? 'transparent' : 'var(--accent-soft)',
+                  opacity: f.disabled ? 0.5 : 1,
+                }}>
+                  <span style={{
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    color: tone,
+                    textDecoration: f.disabled ? 'line-through' : 'none',
+                  }}>
+                    {f.negated && <b>NOT </b>}{f.key}: {f.value}
+                  </span>
+                  <button type="button" style={{ ...pillBtn, color: f.negated ? 'var(--err)' : 'var(--text3)' }}
+                    onClick={() => negatePill(i)}
+                    title={f.negated ? 'Include (drop the NOT)' : 'Negate — exclude matching logs'}>≠</button>
+                  <button type="button" style={pillBtn}
+                    onClick={() => disablePill(i)}
+                    title={f.disabled ? 'Re-enable this filter' : 'Temporarily disable (keeps the pill)'}>◐</button>
+                  <button type="button" style={pillBtn}
+                    onClick={() => removePill(i)}
+                    title="Remove this filter">×</button>
+                </span>
+              );
+            })}
+            <button type="button" className="sec"
+              style={{ fontSize: 11, padding: '2px 7px' }}
+              onClick={() => applyPills([])}
+              title="Remove all field filters (free-text search stays)">
+              Clear all
+            </button>
+          </div>
+        )}
 
         {/* Level facet chips (prototype LogsView .logbar/.facet/.lvl).
             Each chip drives the EXISTING min-severity filter
@@ -695,7 +775,7 @@ function LogsInner() {
             reading the count column. Hidden when neither a time
             range nor a trace pin is set; renders nothing on
             empty data. */}
-        <LogsHistogram range={{ from, to }} filter={filter} />
+        <LogsHistogram range={{ from, to }} filter={{ ...filter, search: compiledSearch }} />
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
         {data && logs.length === 0 && (

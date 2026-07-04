@@ -1,108 +1,217 @@
-import { useMemo } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
-import { ServiceGraph } from '@/components/ServiceGraph';
+import { Spinner, Empty } from '@/components/Spinner';
+import { useQuery } from '@tanstack/react-query';
+import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import { ServicePicker } from '@/components/ServicePicker';
-import { Button } from '@/components/ui/Button';
-import { useServiceGraph } from '@/lib/queries';
-import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { useServiceMap } from '@/lib/queries';
+import { api } from '@/lib/api';
+import { serviceGraphToMap } from '@/lib/serviceGraphAdapter';
+import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
-import type { NodeSizeMode, NodeSizeMetric } from '@/lib/topologyNodes';
-import type { GraphNodeKind } from '@/lib/types';
+import type { TimeRange, ServiceMap, ServiceMapNode } from '@/lib/types';
 
-// Service map (v0.8.277 — the topology promotion, T1 of the Datadog-bar plan).
-// The page now renders the canonical dagre+canvas ServiceGraph — zoom/pan/Fit,
-// node-size encoding, per-edge RED labels, click→inspector — fed ENTIRELY by
-// the MV-backed /api/servicegraph (topology_edges_5m: full coverage, per-edge
-// rate/error-rate/avg/p99). This finishes the stranded Stage-3 swap: the old
-// SVG TopologyFlowGraph + the trace-SAMPLED /api/service-map (no latency, no
-// edge error rate, rare edges missed) are retired from this surface, and the
-// lossy serviceGraphToMap adapter is deleted outright.
-//
-// URL is the source of truth for every control (house rule): ?focus= (the
-// neighborhood scope), ?top= (overview cap, default 100), ?brokers=hide,
-// ?size=/&metric= (node-size encoding, lifted from the old preview route).
-// All writes replace:true and copy prev so foreign params survive.
-//
-// Landing = the GLOBAL top-100 map (Datadog-style). The pre-v0.8.277
-// auto-focus-busiest-service landing existed because the old global view was
-// an unreadable hairball; the server topN prune + canvas culling remove the
-// premise. ?focus= deep links (Endpoints, service tabs, /topology redirect)
-// keep working unchanged.
-//
-// Compare/delta + the cluster ring/filter are OFF this release — they lived on
-// the sampled endpoint; T2 ports them to the MV path (diff= param + cluster
-// enrichment) and they return.
+const PRESETS: { key: TimeRange['preset']; secs: number; label: string }[] = [
+  { key: '5m',  secs: 300,    label: '5m'  },
+  { key: '15m', secs: 900,    label: '15m' },
+  { key: '1h',  secs: 3600,   label: '1h'  },
+  { key: '6h',  secs: 21600,  label: '6h'  },
+  { key: '24h', secs: 86400,  label: '24h' },
+];
 
-const TOP_DEFAULT = 100;
-const HIDE_BROKERS: GraphNodeKind[] = ['queue'];
+// Service map: global topology view + a focus mode that
+// narrows to a single service's 1-hop neighbourhood. The
+// picker is the primary interaction — pick a service →
+// the graph re-lays out radially around it (caller on the
+// left, callee on the right) so the operator can read
+// who depends on this service and who it depends on at
+// a glance, like Datadog / Honeycomb service maps.
+//
+// Performance posture: the underlying CH query already caps
+// work to a fixed sample of recent traces, so the network
+// payload stays tiny regardless of cluster size. The focus
+// filter happens client-side over that small payload — no
+// extra round trip — and the radial layout is closed-form
+// (no physics), so swap-in is instant.
+// Baseline comparison choices. "off" = no diff (default). The other
+// values mirror the rolling windows operators care about most: vs
+// last hour (catches deploy-time topology drift), vs yesterday
+// (canonical "is anything new today?"), vs last week (longer-term
+// dependency drift).
+const DIFF_PRESETS: { key: string; label: string }[] = [
+  { key: '',    label: 'off' },
+  { key: '1h',  label: 'vs 1h ago' },
+  { key: '24h', label: 'vs yesterday' },
+  { key: '168h', label: 'vs last week' },
+];
 
 export default function ServiceMapPage() {
   const [range, setRange] = useUrlRange('30m');
-  const nav = useNavigate();
+  const [samples, setSamples] = useState(200);
+  // v0.8.219 — /topology was folded into /service-map; honour its ?focus=<svc>
+  // deep-link (from Endpoints / service tabs / the redirect) by seeding focus
+  // from the URL. The auto-pick effect below skips when focus is already set.
   const [searchParams, setSearchParams] = useSearchParams();
+  const [focus, setFocus] = useState<string>(() => searchParams.get('focus') ?? '');
+  const [hoverNode, setHoverNode] = useState<string | null>(null);
+  const [diff, setDiff] = useState<string>('');
+  // Overview cap (v0.8.215): bound the rendered graph to the heaviest N services
+  // so the whole-production map isn't an unreadable hairball. 0 = no cap (full
+  // sampled graph). Server-side prune — the browser never receives the long tail.
+  const [topN, setTopN] = useState(0);
+  const since = (PRESETS.find(p => p.key === range.preset)?.secs ?? 900) + 's';
 
-  // Every control derives straight from the URL — no state double-source, so
-  // the v0.8.253 sig-guard class of bug can't exist here.
-  const focus = searchParams.get('focus') ?? '';
-  // v0.8.278 — the global map is NEVER uncapped (server clamps too): 0 / old
-  // "All services" links / garbage all mean the 500-node render budget. At a
-  // 1000+-service install an unbounded graph stalls dagre and reads as a
-  // hairball; the full estate is browsed via grouping (T3), not one big draw.
-  const topParam = searchParams.get('top');
-  const parsedTop = Number(topParam);
-  const topN = topParam === null
-    ? TOP_DEFAULT
-    : (Number.isFinite(parsedTop) && parsedTop > 0 ? Math.min(parsedTop, 500) : 500);
-  const hideBrokers = searchParams.get('brokers') === 'hide';
-  const nodeSizeMode: NodeSizeMode = searchParams.get('size') === 'incoming' ? 'incoming' : 'outgoing';
-  const nodeSizeMetric: NodeSizeMetric = searchParams.get('metric') === 'duration' ? 'duration' : 'rate';
-
-  const setParam = (k: string, v: string | null) => {
+  const mapQ = useServiceMap(since, samples, diff || undefined, topN);
+  // Single focus-commit path (v0.8.265, operator-reported "Focus
+  // seçemiyorum"): state + ?focus= URL move together (replace:true)
+  // so refresh / Copy link keep the selection — the v0.8.256
+  // drawer-param class of fix. Every caller (picker, node click,
+  // auto-pick) routes through here.
+  const commitFocus = (v: string) => {
+    setFocus(v);
+    setAutoFocused(true);
     setSearchParams(prev => {
       const p = new URLSearchParams(prev);
-      if (v === null || v === '') p.delete(k); else p.set(k, v);
+      if (v) p.set('focus', v); else p.delete('focus');
       return p;
     }, { replace: true });
   };
-  // Single focus-commit path (v0.8.265 discipline): picker, the inspector's
-  // "Focus →" button and the global-map escape all route through here.
-  const commitFocus = (v: string) => setParam('focus', v || null);
-  const onNodeSizeChange = (mode: NodeSizeMode, metric: NodeSizeMetric) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev);
-      // Defaults stay out of the URL so a shared link is clean.
-      if (mode === 'outgoing') p.delete('size'); else p.set('size', mode);
-      if (metric === 'rate') p.delete('metric'); else p.set('metric', metric);
-      return p;
-    }, { replace: true });
-  };
+  // Auto-pick a focused service on first load so the operator
+  // lands on a useful 1-hop view instead of the full graph (which
+  // can look like a hairball on large clusters). Deterministic:
+  // THE busiest real service (v0.8.265 — was random top-3; the
+  // operator asked for a stable pre-selected landing). Fires once;
+  // any manual pick disables it.
+  const [autoFocused, setAutoFocused] = useState(false);
+  useEffect(() => {
+    const nodes = mapQ.data?.nodes ?? [];
+    if (autoFocused || focus || !mapQ.data || nodes.length === 0) return;
+    const real = nodes
+      .filter(n => !n.kind)
+      .sort((a, b) => b.spanCount - a.spanCount);
+    if (real.length > 0) {
+      commitFocus(real[0].service);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapQ.data, autoFocused, focus]);
+  // Normalise nodes/edges to arrays even when the API returns
+  // them as null (older backend, empty windows). Downstream
+  // iterations assume arrays — without this, the page crashed
+  // with "i.nodes is not iterable" on first load against a
+  // pre-v0.5.105 server that hadn't returned empty slices yet.
+  const data = mapQ.isLoading
+    ? undefined
+    : mapQ.isError
+      ? null
+      : mapQ.data
+        ? { ...mapQ.data, nodes: mapQ.data.nodes ?? [], edges: mapQ.data.edges ?? [] }
+        : { nodes: [], edges: [], sampledFrom: 0, totalSpans: 0 };
 
-  const scope = focus ? 'neighborhood' as const : 'global' as const;
-  const effTopN = focus ? 0 : topN; // a neighborhood is already scoped — never prune it
+  // Cluster filter — when non-empty, narrows the graph to
+  // nodes whose enriched cluster matches. "multi" services
+  // count as a match for ANY cluster pick so a frontend
+  // running in eu-west AND eu-central isn't hidden from
+  // both views. Empty = show everything (default).
+  const [clusterPick, setClusterPick] = useState<string>('');
+  const clusterOptions = useMemo(() => {
+    if (!data) return [] as string[];
+    const set = new Set<string>();
+    for (const n of data.nodes) {
+      if (n.cluster && n.cluster !== 'multi') set.add(n.cluster);
+    }
+    return [...set].sort();
+  }, [data]);
 
-  // Same hook + args as the ServiceGraph canvas below → React Query dedupes
-  // into ONE fetch; the page reads the payload for the header/strip only.
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
-  const graphQ = useServiceGraph(scope, focus || undefined, from, to, effTopN);
-  const g = graphQ.data;
+  // Focus view data source (v0.8.273, operator-reported: "focus
+  // seçtiğimde göstermiyor — test ortamında bug"). The old path
+  // filtered the SAMPLED global map (200 heaviest traces) down to
+  // the focus neighborhood — any service outside the sample kept
+  // zero nodes, so on a 1200-service install almost every pick
+  // rendered an empty graph. Focus now fetches its neighborhood
+  // from the MV-backed /api/servicegraph (full coverage,
+  // sample-independent, hidden patterns applied) and renders that;
+  // the trace-sampled map stays the source for the global view.
+  const { from: winFrom, to: winTo } = useMemo(() => timeRangeToNs(range), [range]);
+  const focusQ = useQuery({
+    queryKey: ['servicegraph', 'map-focus', focus, winFrom, winTo],
+    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', from: winFrom, to: winTo }),
+    enabled: !!focus,
+    staleTime: 15_000,
+  });
+  const focusMap = useMemo(
+    () => (focusQ.data ? serviceGraphToMap(focusQ.data) : undefined),
+    [focusQ.data],
+  );
 
-  const focusNode = focus && g ? g.nodes.find(n => n.id === focus) : undefined;
-  const callers = focus && g ? g.edges.filter(e => e.target === focus).length : 0;
-  // Callee buckets — "calls 3 svc, 2 db, 1 queue" at a glance in the header.
+  // Filter to the 1-hop neighbourhood of the focused service
+  // (focused + every direct caller + every direct callee).
+  // Then apply the cluster filter on top (global view only — the
+  // MV path carries no cluster enrichment).
+  // Edges are kept iff both endpoints survived. Memoised so
+  // hover-induced re-renders don't recompute.
+  const filtered = useMemo<ServiceMap | undefined>(() => {
+    if (focus && focusMap) return focusMap; // MV-backed, already scoped server-side
+    if (!data) return undefined;
+    let nodes = data.nodes;
+    let edges = data.edges;
+    if (focus) {
+      // MV fetch still in flight — show the sample-derived slice
+      // as a preview (small installs render instantly; large ones
+      // upgrade when the MV response lands).
+      const keep = new Set<string>([focus]);
+      for (const e of data.edges) {
+        if (e.caller === focus) keep.add(e.callee);
+        if (e.callee === focus) keep.add(e.caller);
+      }
+      nodes = nodes.filter(n => keep.has(n.service));
+      edges = edges.filter(e => keep.has(e.caller) && keep.has(e.callee));
+    }
+    if (clusterPick) {
+      const inCluster = (svc: string) => {
+        const n = nodes.find(x => x.service === svc);
+        if (!n) return false;
+        return n.cluster === clusterPick || n.cluster === 'multi' || !n.cluster;
+      };
+      nodes = nodes.filter(n =>
+        n.cluster === clusterPick || n.cluster === 'multi' || !n.cluster);
+      edges = edges.filter(e => inCluster(e.caller) && inCluster(e.callee));
+    }
+    return {
+      nodes,
+      edges,
+      sampledFrom: data.sampledFrom,
+      totalSpans:  data.totalSpans,
+    };
+  }, [data, focus, focusMap, clusterPick]);
+
+  // Focus header facts read from the ACTIVE source — the MV map
+  // when it's loaded, the sampled map otherwise.
+  const activeMap: ServiceMap | undefined = focus && focusMap ? focusMap : data ?? undefined;
+  const focusNode: ServiceMapNode | undefined = focus && activeMap
+    ? activeMap.nodes.find(n => n.service === focus)
+    : undefined;
+  const callers = activeMap && focus
+    ? activeMap.edges.filter(e => e.callee === focus).length
+    : 0;
+  // Callee buckets — tell the operator at a glance how many of
+  // the focused service's downstreams are services vs DBs vs
+  // external deps. Reads as "calls 3 services, 2 dbs, 1 ext"
+  // in the focus header.
   const calleeBuckets = useMemo(() => {
-    const out = { service: 0, database: 0, queue: 0, external: 0, internal: 0 };
-    if (!g || !focus) return out;
-    const byId = new Map(g.nodes.map(n => [n.id, n] as const));
-    for (const e of g.edges) {
-      if (e.source !== focus) continue;
-      const kind = byId.get(e.target)?.kind ?? 'service';
-      out[kind] += 1;
+    const out = { service: 0, db: 0, queue: 0, external: 0 };
+    if (!activeMap || !focus) return out;
+    const byName = new Map<string, ServiceMapNode>(
+      activeMap.nodes.map(n => [n.service, n] as const));
+    for (const e of activeMap.edges) {
+      if (e.caller !== focus) continue;
+      const callee = byName.get(e.callee);
+      const kind = (callee?.kind || 'service') as keyof typeof out;
+      if (kind in out) out[kind] += 1;
     }
     return out;
-  }, [g, focus]);
-  const calleesTotal = calleeBuckets.service + calleeBuckets.database
-    + calleeBuckets.queue + calleeBuckets.external + calleeBuckets.internal;
+  }, [activeMap, focus]);
+  const calleesTotal = calleeBuckets.service + calleeBuckets.db + calleeBuckets.queue + calleeBuckets.external;
 
   return (
     <>
@@ -112,15 +221,25 @@ export default function ServiceMapPage() {
           display: 'flex', gap: 10, alignItems: 'center',
           marginBottom: 14, flexWrap: 'wrap',
         }}>
-          {focus && (
-            <Button variant="ghost" size="sm" onClick={() => commitFocus('')}
-              title="Back to the global map">
-              ← Global map
-            </Button>
-          )}
+          {/* Focus picker (v0.8.265, operator-reported "Focus
+              seçemiyorum"). Was a datalist <input> whose commit
+              path required the typed value to exist in the SAMPLED
+              map nodes — on a 1400-service install most picks
+              matched nothing and silently didn't commit, and the
+              eager full-catalogue datalist is the exact picker
+              anti-pattern the hard constraints ban. The shared
+              server-debounced ServicePicker commits every
+              selection unconditionally; a focus outside the
+              current sample simply renders its empty-state note. */}
           <label style={{ fontSize: 12, color: 'var(--text2)' }}>Focus</label>
           <ServicePicker value={focus} onChange={commitFocus}
             placeholder="Focus a service…" width={240} />
+          {/* Clear-focus button removed in v0.4.86 — picking a
+              different service from the dropdown OR clicking a
+              node in the graph already replaces the focus, so
+              the separate Clear button was redundant. Operators
+              who want the full hairball back can clear the
+              input manually. */}
           {focus && focusNode && (
             <Link to={`/service?name=${encodeURIComponent(focus)}`}
                   className="sec"
@@ -137,46 +256,123 @@ export default function ServiceMapPage() {
 
           <span style={{ flex: 1 }} />
 
-          {/* Overview cap (v0.8.215 contract on the MV path) — global only;
-              a focused neighborhood is already scoped. */}
-          {!focus && (
+          {/* Topology delta toggle — surfaces "what changed?".
+              When set, the backend marks new nodes / edges (in
+              the current window but not the baseline) and lists
+              ones that went missing. The summary strip below the
+              picker row renders the delta count. */}
+          <span style={{ fontSize: 12, color: 'var(--text2)' }}>Compare</span>
+          <select value={diff} onChange={e => setDiff(e.target.value)}
+                  style={{ fontSize: 12 }}>
+            {DIFF_PRESETS.map(p => (
+              <option key={p.key} value={p.key}>{p.label}</option>
+            ))}
+          </select>
+
+          <span style={{ fontSize: 12, color: 'var(--text2)' }}>Samples</span>
+          <select value={samples}
+                  onChange={e => setSamples(Number(e.target.value))}
+                  style={{ fontSize: 12 }}>
+            <option value={50}>50 traces</option>
+            <option value={100}>100 traces</option>
+            <option value={200}>200 traces</option>
+            <option value={500}>500 traces</option>
+          </select>
+
+          {/* Overview cap (v0.8.215) — bound the graph to the heaviest N
+              services so a 1000s-service prod map renders readably instead of
+              a hairball. Server-side prune; "Top" = no cap (full sampled graph). */}
+          <span style={{ fontSize: 12, color: 'var(--text2)' }}>Show</span>
+          <select value={topN}
+                  onChange={e => setTopN(Number(e.target.value))}
+                  style={{ fontSize: 12 }}
+                  title="Cap the map to the heaviest N services (overview); fewer nodes = readable graph">
+            <option value={0}>All services</option>
+            <option value={50}>Top 50</option>
+            <option value={100}>Top 100</option>
+            <option value={250}>Top 250</option>
+            <option value={500}>Top 500</option>
+          </select>
+
+          {/* Cluster filter — narrows the rendered graph to a
+              single k8s/openshift cluster's nodes (multi-cluster
+              services are kept on every view since their slice
+              of traffic spans the filter target too). Hidden
+              when zero clusters were enriched — single-cluster
+              installs don't need the chrome. */}
+          {clusterOptions.length > 0 && (
             <>
-              <span style={{ fontSize: 12, color: 'var(--text2)' }}>Show</span>
-              <select value={String(topN)}
-                      onChange={e => setParam('top', e.target.value === String(TOP_DEFAULT) ? null : e.target.value)}
-                      style={{ fontSize: 12 }}
-                      title="Cap the map to the heaviest N services; fewer nodes = readable graph">
-                <option value="50">Top 50</option>
-                <option value="100">Top 100</option>
-                <option value="250">Top 250</option>
-                <option value="500">Top 500 (max)</option>
+              <span style={{ fontSize: 12, color: 'var(--text2)' }}>Cluster</span>
+              <select value={clusterPick}
+                      onChange={e => setClusterPick(e.target.value)}
+                      style={{ fontSize: 12, maxWidth: 220 }}>
+                <option value="">All clusters</option>
+                {clusterOptions.map(c => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
               </select>
-              {/* Brokers are first-class nodes on the MV path (the old sampled
-                  view dropped them); the toggle hides the kafka/rabbit chrome
-                  when the operator only cares about service→service flow. */}
-              <label style={{ fontSize: 12, color: 'var(--text2)', display: 'inline-flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
-                <input type="checkbox" checked={hideBrokers}
-                  onChange={e => setParam('brokers', e.target.checked ? 'hide' : null)} />
-                Hide brokers
-              </label>
             </>
           )}
         </div>
 
-        {/* Overview cap indicator — the map is pruned to the heaviest N
-            services; tell the operator it's not the whole truth. */}
-        {!focus && g && g.shownNodes < g.totalNodes && (
-          <div style={{ fontSize: 12, color: 'var(--text2)', margin: '4px 0 8px' }}>
-            Showing the <strong>{g.shownNodes}</strong> heaviest of{' '}
-            <strong>{g.totalNodes}</strong> services.{' '}
-            {topN >= 500
-              ? 'That’s the render budget — focus a service to explore the rest.'
-              : 'Raise “Show” or focus a service to see a specific area.'}
+        {/* Cluster colour legend — decodes the node rings the
+            graph draws (one stable hue per cluster name via
+            hashColor + a dashed grey for multi-cluster
+            services). Single-cluster installs and the focus
+            view skip the legend since the chrome adds no
+            information there. */}
+        {clusterOptions.length > 1 && !focus && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 10,
+            marginTop: 6, marginBottom: 8,
+            fontSize: 11, color: 'var(--text2)',
+          }}>
+            <span style={{ color: 'var(--text3)' }}>Cluster ring:</span>
+            {clusterOptions.map(c => (
+              <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span style={{
+                  display: 'inline-block', width: 12, height: 12,
+                  borderRadius: '50%', border: `1.5px solid ${hashColor(c)}`,
+                  background: 'transparent',
+                }} />
+                {c}
+              </span>
+            ))}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{
+                display: 'inline-block', width: 12, height: 12,
+                borderRadius: '50%', border: '1.5px dashed var(--text3)',
+                background: 'transparent',
+              }} />
+              multi-cluster
+            </span>
           </div>
         )}
 
-        {/* Focus header — the focused service's KPIs above the graph, read
-            from the SAME MV payload the canvas renders. */}
+        {/* Overview cap indicator (v0.8.215) — the map is pruned to the
+            heaviest N services; tell the operator it's not the whole truth. */}
+        {data && (data.shownNodes ?? 0) < (data.totalNodes ?? 0) && (
+          <div style={{ fontSize: 12, color: 'var(--text2)', margin: '4px 0 8px' }}>
+            Showing the <strong>{data.shownNodes}</strong> heaviest of{' '}
+            <strong>{data.totalNodes}</strong> services. Raise “Show” or use the
+            service picker to focus a specific area.
+          </div>
+        )}
+
+        {/* Topology change summary — visible only when comparison
+            mode is on. Lists net delta + a small inline list of
+            the new / removed services so an operator scanning
+            the map sees "what's different" before reading the
+            graph itself. */}
+        {data && diff && (
+          <TopologyDeltaStrip data={data} baselineLabel={
+            DIFF_PRESETS.find(p => p.key === diff)?.label ?? diff
+          } />
+        )}
+
+        {/* Focus header — when a service is selected, surface
+            its KPIs above the graph so the operator doesn't
+            have to navigate away to read them. */}
         {focus && focusNode && (
           <div style={{
             display: 'flex', gap: 14, alignItems: 'center',
@@ -187,47 +383,54 @@ export default function ServiceMapPage() {
             flexWrap: 'wrap',
           }}>
             <span style={{ fontSize: 14, fontWeight: 600 }}>{focus}</span>
-            <span className={`badge b-${focusNode.errorRate >= 5 ? 'err' : focusNode.errorRate >= 1 ? 'warn' : 'ok'}`}>
-              {focusNode.errorRate.toFixed(2)}% error
+            <span className={`badge b-${focusNode.errorRate > 0.05 ? 'err' : focusNode.errorRate > 0.01 ? 'warn' : 'ok'}`}>
+              {(focusNode.errorRate * 100).toFixed(2)}% error
             </span>
-            <Chip label="Calls" value={fmtNum(focusNode.calls)} />
-            <Chip label="Rate" value={`${fmtNum(Math.round(focusNode.rate))}/min`} />
+            <Chip label="Spans"   value={fmtNum(focusNode.spanCount)} />
             <Chip label="Callers" value={`${callers}`} />
             <Chip label="Callees" value={
               calleesTotal === 0
                 ? '0'
                 : [
                     calleeBuckets.service  > 0 && `${calleeBuckets.service} svc`,
-                    calleeBuckets.database > 0 && `${calleeBuckets.database} db`,
+                    calleeBuckets.db       > 0 && `${calleeBuckets.db} db`,
                     calleeBuckets.queue    > 0 && `${calleeBuckets.queue} queue`,
                     calleeBuckets.external > 0 && `${calleeBuckets.external} ext`,
-                    calleeBuckets.internal > 0 && `${calleeBuckets.internal} int`,
                   ].filter(Boolean).join(' · ')
             } />
             <span style={{ flex: 1 }} />
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-              showing {focus}'s neighborhood — {g?.nodes.length ?? 0} nodes
+              showing {focus}'s 1-hop neighbourhood — {filtered?.nodes.length ?? 0} services
             </span>
           </div>
         )}
 
-        <ServiceGraph
-          scope={scope}
-          focus={focus || undefined}
-          range={range}
-          height={640}
-          topN={effTopN}
-          hideKinds={!focus && hideBrokers ? HIDE_BROKERS : undefined}
-          onSelectService={svc => nav(`/service?name=${encodeURIComponent(svc)}`)}
-          onFocusService={commitFocus}
-          nodeSizeMode={nodeSizeMode}
-          nodeSizeMetric={nodeSizeMetric}
-          onNodeSizeChange={onNodeSizeChange}
-        />
+        {data === undefined && <Spinner />}
+        {data === null && (
+          <Empty icon="!" title="Failed to load service map">
+            Check that ClickHouse is reachable and the spans table has recent data.
+          </Empty>
+        )}
+        {data && data.nodes.length === 0 && (
+          <Empty icon="◯" title="No services in this window">
+            Try widening the time range or check whether OTLP ingest is flowing
+            (System → ClickHouse stats).
+          </Empty>
+        )}
+        {filtered && filtered.nodes.length > 0 && (
+          <TopologyFlowGraph
+            data={filtered}
+            focus={focus || null}
+            hoverNode={hoverNode}
+            onHoverNode={setHoverNode}
+            onSelectNode={commitFocus}
+          />
+        )}
 
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
-          Click a node or edge to inspect · double-click a service to open it ·
-          scroll to zoom, drag to pan
+          {focus
+            ? 'Click any node to switch focus · auto-refresh 30 s'
+            : 'Click a node to focus on its 1-hop neighbourhood · auto-refresh 30 s'}
         </div>
       </div>
     </>
@@ -243,5 +446,74 @@ function Chip({ label, value }: { label: string; value: string }) {
       <span style={{ color: 'var(--text3)' }}>{label}</span>
       <span style={{ fontFamily: 'monospace', color: 'var(--text)' }}>{value}</span>
     </span>
+  );
+}
+
+// TopologyDeltaStrip surfaces topology changes between the current
+// window and the chosen baseline. Renders one chip per category
+// (new services, new dependencies, removed services, removed
+// dependencies) plus an inline preview of the names so the operator
+// gets the "what" without expanding anything. Filters out synthetic
+// dep nodes (kind="db"/"queue"/"external") — those churn naturally
+// as request paths shift, and surfacing every "we hit a new redis"
+// row drowns the real topology changes.
+function TopologyDeltaStrip({ data, baselineLabel }: { data: ServiceMap; baselineLabel: string }) {
+  const newSvcs = (data.nodes ?? []).filter(n => n.isNew && !n.kind);
+  const newDeps = (data.edges ?? []).filter(e => e.isNew);
+  const gone = (data.removedNodes ?? []).filter(n => !n.kind);
+  const goneEdges = data.removedEdges ?? [];
+  const total = newSvcs.length + newDeps.length + gone.length + goneEdges.length;
+  if (total === 0) {
+    return (
+      <div style={{
+        marginBottom: 12, padding: '8px 12px', borderRadius: 6,
+        background: 'var(--bg1)', border: '1px solid var(--border)',
+        fontSize: 12, color: 'var(--text2)',
+      }}>
+        ✓ No topology changes {baselineLabel}.
+      </div>
+    );
+  }
+  const sample = (xs: string[], n = 4) => xs.slice(0, n).join(', ') + (xs.length > n ? `, +${xs.length - n}` : '');
+  return (
+    <div style={{
+      marginBottom: 12, padding: '8px 12px', borderRadius: 6,
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'center', fontSize: 12,
+    }}>
+      <span style={{ fontWeight: 600 }}>Δ topology {baselineLabel}:</span>
+      {newSvcs.length > 0 && (
+        <span title={newSvcs.map(s => s.service).join('\n')}>
+          <span className="badge b-ok" style={{ marginRight: 6 }}>+{newSvcs.length} svc</span>
+          <span style={{ color: 'var(--text3)', fontFamily: 'monospace', fontSize: 11 }}>
+            {sample(newSvcs.map(s => s.service))}
+          </span>
+        </span>
+      )}
+      {newDeps.length > 0 && (
+        <span title={newDeps.map(e => `${e.caller} → ${e.callee}`).join('\n')}>
+          <span className="badge b-info" style={{ marginRight: 6 }}>+{newDeps.length} edge</span>
+          <span style={{ color: 'var(--text3)', fontFamily: 'monospace', fontSize: 11 }}>
+            {sample(newDeps.map(e => `${e.caller}→${e.callee}`))}
+          </span>
+        </span>
+      )}
+      {gone.length > 0 && (
+        <span title={gone.map(s => s.service).join('\n')}>
+          <span className="badge b-warn" style={{ marginRight: 6 }}>−{gone.length} svc</span>
+          <span style={{ color: 'var(--text3)', fontFamily: 'monospace', fontSize: 11 }}>
+            {sample(gone.map(s => s.service))}
+          </span>
+        </span>
+      )}
+      {goneEdges.length > 0 && (
+        <span title={goneEdges.map(e => `${e.caller} → ${e.callee}`).join('\n')}>
+          <span className="badge b-err" style={{ marginRight: 6 }}>−{goneEdges.length} edge</span>
+          <span style={{ color: 'var(--text3)', fontFamily: 'monospace', fontSize: 11 }}>
+            {sample(goneEdges.map(e => `${e.caller}→${e.callee}`))}
+          </span>
+        </span>
+      )}
+    </div>
   );
 }

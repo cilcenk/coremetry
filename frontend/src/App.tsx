@@ -20,6 +20,8 @@ const ServiceBacktrace  = lazy(() => import('./pages/ServiceBacktrace'));
 // v0.8.219 — /topology retired; /service-map is the single topology surface
 // (it carries the focus deep-link via ?focus=). /topology redirects to it.
 const ServiceMap        = lazy(() => import('./pages/ServiceMap'));
+// v0.8.12 — topology rebuild Stage 2 scratch route (removed in Stage 4).
+const ServiceGraphPreview = lazy(() => import('./pages/ServiceGraphPreview'));
 const Traces            = lazy(() => import('./pages/Traces'));
 const Trace             = lazy(() => import('./pages/Trace'));
 const TraceCompare      = lazy(() => import('./pages/TraceCompare'));
@@ -101,6 +103,7 @@ export default function App() {
             {/* v0.8.219 — /topology retired; redirect to the single /service-map
                 surface, preserving ?focus= so deep-links land focused. */}
             <Route path="/topology"       element={<TopologyRedirect />} />
+            <Route path="/servicegraph-preview" element={<ServiceGraphPreview />} />
             <Route path="/traces"         element={<Traces />} />
             <Route path="/trace"          element={<Trace />} />
             <Route path="/trace/compare"  element={<TraceCompare />} />

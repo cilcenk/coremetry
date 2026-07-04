@@ -105,18 +105,47 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 			scope = "global"
 		}
 	}
-	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d",
-		focus, scope, from.Unix()/60, to.Unix()/60)
+	// v0.8.264 (operator-reported): the hidden-pattern policy
+	// (v0.8.241, defaults kafka:log*/kafka:bsa*) was applied to
+	// /api/topology and /api/service-map but NOT here — and THIS
+	// endpoint feeds FocusedNeighborhood, i.e. both /topology's
+	// focused view AND the service-detail Topology tab. The
+	// config-server drops a kafka client into every project, so
+	// unfiltered kafka:log*/kafka:bsa* queue nodes drowned those
+	// graphs. Same matcher as the other two endpoints; digest in
+	// the cache key per the v0.5.187 rule.
+	hidPats := s.topologyHiddenPatterns(r.Context())
+	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:hid=%s",
+		focus, scope, from.Unix()/60, to.Unix()/60, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, 20000)
 		if err != nil {
 			return nil, err
 		}
+		edges = filterHiddenTopologyEdges(edges, hidPats)
 		// Best-effort db.name enrichment for database nodes; a lookup failure
 		// leaves nodes unannotated rather than failing the whole graph.
 		dbNames, _ := s.store.DbNamesBySystem(r.Context(), from, to)
 		return buildServiceGraph(edges, focus, scope, dbNames, serviceGraphWindowMinutes(from, to)), nil
 	})
+}
+
+// filterHiddenTopologyEdges drops every edge that touches a hidden
+// node (either endpoint). Pure so the kafka:log*/kafka:bsa* class of
+// operator-hidden noise is unit-testable without ClickHouse.
+func filterHiddenTopologyEdges(edges []chstore.ServiceTopologyEdge, patterns []string) []chstore.ServiceTopologyEdge {
+	if len(patterns) == 0 {
+		return edges
+	}
+	hidden := hiddenNodeMatcher(patterns)
+	kept := edges[:0]
+	for _, e := range edges {
+		if hidden(e.ParentService) || hidden(e.ChildNode) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
 }
 
 // serviceGraphWindowMinutes returns the window length in minutes used to derive

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
-import type { Service, ServiceMap, InfraMetricSeries, NeighborStat, ServiceRuntime, Deploy, ServiceMetadata } from '@/lib/types';
+import type { Service, ServiceMap, ServiceGraphResponse, InfraMetricSeries, NeighborStat, ServiceRuntime, Deploy, ServiceMetadata } from '@/lib/types';
 
 // /api/services + related — the topology side of the app.
 // `range` carries the time window so two pages with different
@@ -42,6 +42,28 @@ export function useServiceMap(since: string, samples: number, diff?: string, top
     queryFn: () => api.serviceMap(since, samples, diff, topN),
     refetchInterval: 30_000,
     staleTime: 25_000,
+  });
+}
+
+// v0.8.277 — shared hook for the MV-backed /api/servicegraph (the promoted
+// /service-map data source). The ServiceGraph canvas AND the page-level
+// header/"showing X of Y" strip call this with IDENTICAL args, so React Query
+// dedupes them into one network fetch — keep every input in the key.
+// topN only rides the request when > 0 (0 = uncapped, the server default).
+export function useServiceGraph(
+  scope: 'global' | 'neighborhood',
+  focus: string | undefined,
+  from: number,
+  to: number,
+  topN = 0,
+) {
+  return useQuery<ServiceGraphResponse>({
+    queryKey: ['servicegraph', scope, focus ?? '', from, to, topN],
+    queryFn: () => api.serviceGraph({
+      scope, focus: focus || undefined, from, to,
+      ...(topN > 0 ? { topN } : {}),
+    }),
+    staleTime: 30_000,
   });
 }
 

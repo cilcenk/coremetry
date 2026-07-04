@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,55 @@ type ServiceGraphResponse struct {
 	Edges []GraphEdge `json:"edges"`
 	Scope string      `json:"scope"`
 	Focus string      `json:"focus,omitempty"`
+	// TotalNodes / ShownNodes (v0.8.277) — set by pruneServiceGraphTopN. When
+	// the overview top-N cap trims a large graph, ShownNodes < TotalNodes and
+	// the UI shows "showing X of Y services" (same contract as the v0.8.215
+	// cap on the retired sampled /api/service-map).
+	TotalNodes int `json:"totalNodes"`
+	ShownNodes int `json:"shownNodes"`
+}
+
+// pruneServiceGraphTopN bounds the overview graph to the topN heaviest nodes so
+// a 1000s-service production map renders readably instead of a hairball (the
+// v0.8.215 rule, ported to the MV-backed path for the v0.8.277 /service-map
+// promotion). Nodes rank by Calls desc with ErrorRate desc as the tiebreak (a
+// high-error node survives a throughput tie) and ID asc as the stable final
+// tiebreak; edges are kept only when BOTH endpoints survive. TotalNodes/
+// ShownNodes are always set. topN<=0 or a within-budget graph = no prune.
+// Pure + order-stable so it's unit-tested without ClickHouse.
+func pruneServiceGraphTopN(g *ServiceGraphResponse, topN int) {
+	if g == nil {
+		return
+	}
+	g.TotalNodes = len(g.Nodes)
+	if topN <= 0 || len(g.Nodes) <= topN {
+		g.ShownNodes = len(g.Nodes)
+		return
+	}
+	ranked := append([]GraphNode(nil), g.Nodes...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].Calls != ranked[j].Calls {
+			return ranked[i].Calls > ranked[j].Calls
+		}
+		if ranked[i].ErrorRate != ranked[j].ErrorRate {
+			return ranked[i].ErrorRate > ranked[j].ErrorRate
+		}
+		return ranked[i].ID < ranked[j].ID
+	})
+	kept := ranked[:topN]
+	keepSet := make(map[string]bool, topN)
+	for _, n := range kept {
+		keepSet[n.ID] = true
+	}
+	edges := make([]GraphEdge, 0, len(g.Edges))
+	for _, e := range g.Edges {
+		if keepSet[e.Source] && keepSet[e.Target] {
+			edges = append(edges, e)
+		}
+	}
+	g.Nodes = kept
+	g.Edges = edges
+	g.ShownNodes = topN
 }
 
 // nodeKindToOTel maps the MV's node_kind to the clean OTel-native kind label.
@@ -114,9 +164,23 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 	// unfiltered kafka:log*/kafka:bsa* queue nodes drowned those
 	// graphs. Same matcher as the other two endpoints; digest in
 	// the cache key per the v0.5.187 rule.
+	// Overview cap (v0.8.277 — the v0.8.215 rule on the MV path). Clamped to
+	// [0,500]: 500 is the render budget the canvas/dagre layout is sized for;
+	// 0 = uncapped. Global scope only — a neighborhood is already focus-scoped
+	// and pruning it would silently hide direct dependencies.
+	topN, _ := strconv.Atoi(q.Get("topN"))
+	if topN < 0 {
+		topN = 0
+	}
+	if topN > 500 {
+		topN = 500
+	}
+	if scope != "global" {
+		topN = 0
+	}
 	hidPats := s.topologyHiddenPatterns(r.Context())
-	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:hid=%s",
-		focus, scope, from.Unix()/60, to.Unix()/60, hiddenDigest(hidPats))
+	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:top=%d:hid=%s",
+		focus, scope, from.Unix()/60, to.Unix()/60, topN, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, 20000)
 		if err != nil {
@@ -126,7 +190,9 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 		// Best-effort db.name enrichment for database nodes; a lookup failure
 		// leaves nodes unannotated rather than failing the whole graph.
 		dbNames, _ := s.store.DbNamesBySystem(r.Context(), from, to)
-		return buildServiceGraph(edges, focus, scope, dbNames, serviceGraphWindowMinutes(from, to)), nil
+		g := buildServiceGraph(edges, focus, scope, dbNames, serviceGraphWindowMinutes(from, to))
+		pruneServiceGraphTopN(&g, topN)
+		return g, nil
 	})
 }
 

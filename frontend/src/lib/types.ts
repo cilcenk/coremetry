@@ -153,6 +153,11 @@ export interface ServiceGraphResponse {
   edges: GraphEdge[];
   scope: string;       // 'global' | 'neighborhood'
   focus?: string;
+  // v0.8.277 — overview top-N cap counters (the v0.8.215 contract, ported to
+  // the MV path). shownNodes < totalNodes ⇒ the graph is pruned to the
+  // heaviest N and the UI renders "showing X of Y services".
+  totalNodes: number;
+  shownNodes: number;
 }
 
 // Root-anchored business flows (v0.5.103) — top entry points by

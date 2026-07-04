@@ -232,7 +232,7 @@ export const api = {
   // v0.8.10 — OTel-native service graph (topology rebuild). Compact
   // {nodes,edges} from the topology_edges_5m MV; one endpoint serves both the
   // global map (scope=global) and a service neighborhood (focus + scope).
-  serviceGraph: (params: { focus?: string; scope?: 'neighborhood' | 'global'; from?: number; to?: number }) =>
+  serviceGraph: (params: { focus?: string; scope?: 'neighborhood' | 'global'; from?: number; to?: number; topN?: number }) =>
     get<import('./types').ServiceGraphResponse>(`/api/servicegraph?${qs(params)}`),
   // Ops list for a given root service (powers the op picker on
   // the operation deep-dive view).

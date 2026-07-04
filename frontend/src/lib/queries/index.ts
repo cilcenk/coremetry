@@ -13,7 +13,7 @@ export {
   useBulkDeleteAnomalySilences,
 } from './anomalies';
 export {
-  useServices, useServiceNames, useServiceMap,
+  useServices, useServiceNames, useServiceMap, useServiceGraph,
   useServiceInfra, useServiceNeighbors, useServiceRuntime,
   useAllServiceRuntimes, useServiceDeploys, useServiceRollouts,
   useServicesMetadata, useServiceBacktrace, useClusters,

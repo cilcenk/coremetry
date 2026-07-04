@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import dagre from 'dagre';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useServiceGraph } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
@@ -141,7 +142,8 @@ function layoutGraph(data: ServiceGraphResponse, widthOf: (id: string) => number
 }
 
 export function ServiceGraph({
-  scope, focus, range, height = 560, onSelectService,
+  scope, focus, range, height = 560, onSelectService, onFocusService,
+  topN, hideKinds,
   nodeSizeMode: nodeSizeModeProp, nodeSizeMetric: nodeSizeMetricProp, onNodeSizeChange,
 }: {
   scope: 'global' | 'neighborhood';
@@ -149,6 +151,16 @@ export function ServiceGraph({
   range: TimeRange;
   height?: number;
   onSelectService?: (service: string) => void;
+  // v0.8.277 (/service-map promotion) — re-scope the page to a service's
+  // neighborhood from the node inspector's "Focus →" button. Optional: the
+  // service-detail Topology tab has no focus concept and skips the wiring.
+  onFocusService?: (service: string) => void;
+  // Overview cap forwarded to /api/servicegraph (global scope; rides the query
+  // key). 0/undefined = uncapped.
+  topN?: number;
+  // Client-side kind mask (the "Hide brokers" toggle) — filters the fetched
+  // payload, never the request, so flipping it is instant.
+  hideKinds?: GraphNodeKind[];
   // Node-size encoding axes (v0.8.x — Uptrace adapt, slice 3). Optional so the
   // standalone service-detail Topology tab works with no wiring (defaults
   // outgoing/rate). When a controlled value + onNodeSizeChange callback are
@@ -175,14 +187,26 @@ export function ServiceGraph({
   }, [onNodeSizeChange]);
 
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
-  const q = useQuery<ServiceGraphResponse>({
-    // NOTE: the query key deliberately does NOT include sizeMode/sizeMetric —
-    // toggling them re-rolls the SAME fetched payload client-side (the whole
-    // point of slice 3, like Uptrace). A key change here would refetch.
-    queryKey: ['servicegraph', scope, focus ?? '', from, to],
-    queryFn: () => api.serviceGraph({ scope, focus: focus || undefined, from, to }),
-    staleTime: 30_000,
-  });
+  // Shared hook (v0.8.277) so the /service-map page header reads the SAME
+  // React-Query entry — one network fetch for page + canvas. sizeMode/
+  // sizeMetric stay OUT of the key: toggling them re-rolls the same payload
+  // client-side (slice 3); a key change would refetch.
+  const q = useServiceGraph(scope, focus, from, to, topN ?? 0);
+
+  // hideKinds mask (v0.8.277 — "Hide brokers"): pure client-side filter over
+  // the fetched payload; nodes of a hidden kind drop and edges touching them
+  // go with them. Keyed by the joined string so a fresh array literal from the
+  // parent doesn't re-filter every render.
+  const hideKey = (hideKinds ?? []).join(',');
+  const data = useMemo(() => {
+    if (!q.data) return undefined;
+    if (!hideKey) return q.data;
+    const hidden = new Set(hideKey.split(','));
+    const nodes = q.data.nodes.filter(n => !hidden.has(n.kind));
+    const ids = new Set(nodes.map(n => n.id));
+    const edges = q.data.edges.filter(e => ids.has(e.source) && ids.has(e.target));
+    return { ...q.data, nodes, edges };
+  }, [q.data, hideKey]);
 
   // Node-size encoding (v0.8.x — Uptrace adapt, slice 3): width encodes the
   // selected mode (incoming|outgoing) × metric (rate|duration). Pure
@@ -193,34 +217,34 @@ export function ServiceGraph({
   // whatever metric is selected, so toggling just re-scales the widths.
   const nodeWidths = useMemo(() => {
     const m = new Map<string, number>();
-    if (!q.data) return m;
-    const { metric, max } = nodeSizeMetric(q.data.nodes, q.data.edges, sizeMode, sizeMetric);
-    for (const n of q.data.nodes) {
+    if (!data) return m;
+    const { metric, max } = nodeSizeMetric(data.nodes, data.edges, sizeMode, sizeMetric);
+    for (const n of data.nodes) {
       m.set(n.id, mapNumber(metric.get(n.id) ?? 0, 0, max, MIN_W, MAX_W));
     }
     return m;
-  }, [q.data, sizeMode, sizeMetric]);
+  }, [data, sizeMode, sizeMetric]);
 
   const layout = useMemo(
-    () => (q.data && q.data.nodes.length
-      ? layoutGraph(q.data, (id) => nodeWidths.get(id) ?? MIN_W)
+    () => (data && data.nodes.length
+      ? layoutGraph(data, (id) => nodeWidths.get(id) ?? MIN_W)
       : null),
-    [q.data, nodeWidths],
+    [data, nodeWidths],
   );
   const nodeById = useMemo(() => {
     const m = new Map<string, GraphNode>();
-    for (const n of q.data?.nodes ?? []) m.set(n.id, n);
+    for (const n of data?.nodes ?? []) m.set(n.id, n);
     return m;
-  }, [q.data]);
+  }, [data]);
   // adjacency for hover highlight (undirected neighbor set per node).
   const neighbors = useMemo(() => {
     const m = new Map<string, Set<string>>();
-    for (const e of q.data?.edges ?? []) {
+    for (const e of data?.edges ?? []) {
       (m.get(e.source) ?? m.set(e.source, new Set()).get(e.source)!).add(e.target);
       (m.get(e.target) ?? m.set(e.target, new Set()).get(e.target)!).add(e.source);
     }
     return m;
-  }, [q.data]);
+  }, [data]);
 
   // view transform: scale + translate (world → screen).
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
@@ -233,7 +257,7 @@ export function ServiceGraph({
 
   // Clear a stale selection if the payload changes underneath it (range/scope
   // flip). Guards against a panel pointing at a node/edge no longer in the graph.
-  useEffect(() => { setSelected(null); }, [q.data]);
+  useEffect(() => { setSelected(null); }, [data]);
 
   // ego set: the selected node + its direct neighbors. Non-ego nodes/edges dim.
   const egoSet = useMemo(() => {
@@ -248,8 +272,8 @@ export function ServiceGraph({
   // come from the SAME data the canvas drew — no second fetch).
   const selectedEdge = useMemo(() => {
     if (selected?.type !== 'edge') return null;
-    return q.data?.edges.find(e => e.source === selected.source && e.target === selected.target) ?? null;
-  }, [selected, q.data]);
+    return data?.edges.find(e => e.source === selected.source && e.target === selected.target) ?? null;
+  }, [selected, data]);
 
   const fit = useCallback(() => {
     const el = wrapRef.current;
@@ -261,17 +285,34 @@ export function ServiceGraph({
     setView({ scale, tx, ty });
   }, [layout, height]);
 
-  // Fit when a new layout lands. rAF so the canvas/container has settled its
-  // width first (fixing the first-paint off-center), + a ResizeObserver so the
-  // graph re-frames when the panel resizes (v0.8.14).
+  // Fit policy (v0.8.277 fit-guard): auto-Fit ONLY when the topology signature
+  // (the node-id set) actually changes — a refetch of the same graph must NOT
+  // yank a zoomed/panned operator back to frame zero. rAF so the container has
+  // settled its width first (the v0.8.14 first-paint fix).
+  const fitRef = useRef(fit);
+  useEffect(() => { fitRef.current = fit; });
+  const fitSigRef = useRef('');
+  useEffect(() => {
+    if (!layout) return;
+    const sig = [...layout.pos.keys()].sort().join('|');
+    if (sig === fitSigRef.current) return;
+    fitSigRef.current = sig;
+    const raf = requestAnimationFrame(() => fitRef.current());
+    return () => cancelAnimationFrame(raf);
+  }, [layout]);
+  // Panel resizes still re-frame, via ONE long-lived ResizeObserver. Its
+  // mount-time initial fire is skipped — the signature effect owns first fit.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const raf = requestAnimationFrame(fit);
-    const ro = new ResizeObserver(() => fit());
+    let first = true;
+    const ro = new ResizeObserver(() => {
+      if (first) { first = false; return; }
+      fitRef.current();
+    });
     ro.observe(el);
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
-  }, [fit]);
+    return () => ro.disconnect();
+  }, []);
 
   // ── draw ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -503,7 +544,7 @@ export function ServiceGraph({
 
   if (q.isLoading) return <div style={{ height, display: 'grid', placeItems: 'center' }}><Spinner /></div>;
   if (q.isError) return <Empty icon="⋔" title="Service graph unavailable">Couldn't load the topology edges.</Empty>;
-  if (!q.data || q.data.nodes.length === 0) return <Empty icon="⋔" title="No service interactions in this window" />;
+  if (!data || data.nodes.length === 0) return <Empty icon="⋔" title="No service interactions in this window" />;
 
   return (
     <div ref={wrapRef} style={{ position: 'relative', height, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg0)' }}>
@@ -522,7 +563,10 @@ export function ServiceGraph({
         <LegendDot color="var(--ok)" label="healthy" />
         <LegendDot color="var(--warn)" label="1–5% err" />
         <LegendDot color="var(--err)" label="≥5% err" />
-        <span style={{ color: 'var(--text3)' }}>{q.data.nodes.length} nodes · {q.data.edges.length} edges</span>
+        <span style={{ color: 'var(--text3)' }}>
+          {data.nodes.length} nodes · {data.edges.length} edges
+          {data.shownNodes < data.totalNodes ? ` · top ${data.shownNodes}/${data.totalNodes}` : ''}
+        </span>
       </div>
       {/* Node-size encoding toggles (v0.8.x — Uptrace adapt, slice 3). Two
           compact segmented controls re-roll the SAME payload client-side: no
@@ -575,6 +619,9 @@ export function ServiceGraph({
           onClose={() => setSelected(null)}
           onRecenter={() => { fit(); }}
           onOpen={() => { if (selectedNode.kind === 'service' && onSelectService) onSelectService(selectedNode.name); }}
+          onFocus={onFocusService && selectedNode.kind === 'service' && selectedNode.name !== focus
+            ? () => onFocusService(selectedNode.name)
+            : undefined}
         />
       )}
       {selected?.type === 'edge' && (
@@ -643,9 +690,12 @@ function PanelShell({ title, dot, sub, onClose, children }: {
 // monitors link: /alerts has no service-scoped filter today, so shipping
 // /alerts?service= would be a dead no-op query. Stats read from the live
 // payload — no refetch.
-function NodeDetail({ node, onClose, onRecenter, onOpen }: {
+function NodeDetail({ node, onClose, onRecenter, onOpen, onFocus }: {
   node: GraphNode;
   onClose: () => void; onRecenter: () => void; onOpen: () => void;
+  // v0.8.277 — present only on /service-map: re-scope the page to this
+  // service's neighborhood (the promoted map's focus affordance).
+  onFocus?: () => void;
 }) {
   const isService = node.kind === 'service';
   return (
@@ -662,6 +712,12 @@ function NodeDetail({ node, onClose, onRecenter, onOpen }: {
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         <Button variant="secondary" size="sm" onClick={onRecenter} title="Re-frame the graph (Fit)">Recenter</Button>
+        {onFocus && (
+          <Button variant="secondary" size="sm" onClick={onFocus}
+            title="Re-scope the map to this service's neighborhood">
+            Focus →
+          </Button>
+        )}
         {isService && <Button variant="primary" size="sm" onClick={onOpen}>Open service →</Button>}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

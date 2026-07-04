@@ -30,9 +30,10 @@ export const SERVICE_COLS: DataTableColumn<Service>[] = [
   { id: 'apdex',     label: 'Apdex',      width: 100, align: 'right', sortValue: s => s.apdex, naturalDir: 'asc' },
 ];
 
-// The landing sort — error-rate first, because the operator's eye goes to
-// what's failing. Same default the page has shipped since v0.3.0.
-export const DEFAULT_SERVICES_SORT: SortState = { id: 'errorRate', dir: 'desc' };
+// The landing sort — span volume first (operator request, v0.8.259;
+// error-rate-first had been the default since v0.3.0). Busiest
+// services top the list; the error-rate column stays one click away.
+export const DEFAULT_SERVICES_SORT: SortState = { id: 'spanCount', dir: 'desc' };
 
 // sanitizeServicesSort — dt.sort → the ?sort=/&dir= pair /api/services
 // accepts. The hook's state survives in localStorage + the URL, so a stale

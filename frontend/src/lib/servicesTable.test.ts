@@ -62,8 +62,10 @@ describe('sanitizeServicesSort — dt.sort → backend ORDER BY pair', () => {
     expect(sanitizeServicesSort({ id: 'p99', dir: 'asc' })).toEqual({ sort: 'p99', dir: 'asc' });
   });
   it('falls back to the default PAIR for a stale/unknown id (dir is just as untrusted)', () => {
+    // v0.8.259 — operator request: landing sort is span volume, not
+    // error rate. The fallback pair follows the default.
     expect(sanitizeServicesSort({ id: 'oldSchemaCol', dir: 'asc' }))
-      .toEqual({ sort: 'errorRate', dir: 'desc' });
+      .toEqual({ sort: 'spanCount', dir: 'desc' });
   });
   it('falls back for a null id (no active sort persisted)', () => {
     expect(sanitizeServicesSort({ id: null, dir: 'asc' }))

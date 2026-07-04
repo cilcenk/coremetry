@@ -229,7 +229,7 @@ func servicesSortExpr(sort, dir string) string {
 	switch sort {
 	case "name":
 		col = "service_name"
-	case "spans", "span_count":
+	case "spans", "span_count", "spanCount":
 		col = "span_count"
 	case "errorCount", "errors", "error_count":
 		col = "error_count"

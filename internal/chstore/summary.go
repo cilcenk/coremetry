@@ -294,7 +294,7 @@ func servicesAggSortExpr(sort, dir string) string {
 	switch sort {
 	case "name":
 		col = "service_name"
-	case "spans", "span_count":
+	case "spans", "span_count", "spanCount":
 		col = "spans"
 	case "errorCount", "errors", "error_count":
 		col = "errs"

@@ -1209,6 +1209,25 @@ export interface LogsResponse {
   nextCursor?: string;
 }
 
+// /api/notifications/log (v0.8.247 backend, v0.8.263 UI) — one sent
+// notification (email / Slack / Teams / Zoom / webhook / …) as the
+// worker's notify funnel recorded it. Target carries the real
+// recipient (full fidelity per operator policy); webhook URLs are
+// stored host-only because the full URL embeds a live credential.
+export interface NotificationLogEntry {
+  id: string;
+  sentAt: number;       // unix ns
+  channelKind: string;  // email|slack|mattermost|teams|zoomchat|webhook|whatsapp
+  channelName: string;
+  target: string;
+  subject: string;
+  bodyPreview: string;
+  relatedKind: string;  // problem|test|runbook|incident|alert|monitor|…
+  relatedId: string;
+  ok: boolean;
+  error: string;
+}
+
 // /api/logs/fieldstats (v0.8.255) — top values of one field in the
 // current slice, for the fields-panel accordion. total = docs the
 // top values were drawn from (buckets + remainder) → % denominators.

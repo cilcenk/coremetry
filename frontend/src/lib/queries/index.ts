@@ -55,7 +55,7 @@ export {
 export { useEventStream } from './eventStream';
 export { useExemplar, useExemplarFetcher } from './spans';
 export { useUsers, useCustomRoles } from './users';
-export { useOperatorEvents, useDeleteOperatorEvent } from './events';
+export { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from './events';
 export { useInbox } from './inbox';
 export { useProfiles, useProfileHotspots } from './profiles';
 export { useSlowQueries } from './databases';

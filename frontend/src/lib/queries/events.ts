@@ -18,6 +18,22 @@ export function useOperatorEvents(filter: {
   });
 }
 
+// Sent-notification log (v0.8.263) — the /events Notifications tab.
+// 30s poll keeps the tab near-live without breaching the ≥10s
+// polling budget; RQ pauses interval refetches while the tab is
+// hidden (refetchIntervalInBackground defaults false), which
+// satisfies the document.hidden rule.
+export function useNotificationLog(filter: {
+  from?: number; to?: number; kind?: string; limit?: number;
+}) {
+  return useQuery({
+    queryKey: [...EVENTS_KEY, 'notifications', filter],
+    queryFn: async () => (await api.notificationLog(filter)) ?? [],
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+}
+
 // Delete drops the row from every cached list in place — the page
 // previously did setData(filter) rather than refetching, so we keep
 // that no-refetch behaviour with a cache write instead.

@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
-import { useOperatorEvents, useDeleteOperatorEvent } from '@/lib/queries';
+import { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { TimeRange } from '@/lib/types';
+import type { NotificationLogEntry, TimeRange } from '@/lib/types';
 
 // v0.6.15 — Operator events list/delete UI.
 //
@@ -60,19 +61,147 @@ const KIND_COLOURS: Record<string, string> = {
   custom:      'var(--text2)',
 };
 
+// v0.8.263 — the page splits into two tabs. Operator: "coremetry'nin
+// gönderdiği mail zoom notification vs'leri events altında görebilmek
+// isterim, şu anda events işlevsiz gözüküyor."
+//   • Notifications (default) — every notification the notify funnel
+//     sent (email / Slack / Teams / Zoom / webhook …) from the
+//     notification_log table (v0.8.247), with delivery status and a
+//     deep link to the related problem.
+//   • Annotations — the original operator-marked event markers.
+// Tab rides ?tab= so links land on the right list.
 export default function EventsPage() {
-  const { user } = useAuth();
-  const canDelete = user?.role === 'admin' || user?.role === 'editor';
-
   const [range, setRange] = useUrlRange('24h');
-  const [serviceFilter, setServiceFilter] = useState('');
-  const [kindFilter, setKindFilter] = useState('');
-  const [busyDelete, setBusyDelete] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get('tab') === 'annotations' ? 'annotations' : 'notifications';
+  const setTab = (t: 'notifications' | 'annotations') =>
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.set('tab', t);
+      return p;
+    }, { replace: true });
 
-  // Eagerly compute the bounds so the query key gets a stable pair
+  // Eagerly compute the bounds so query keys get a stable pair
   // instead of re-evaluating timeRangeToNs(range) every render (the
   // v0.5.184 incident shape).
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+
+  return (
+    <>
+      <Topbar title="Events" range={range} onRangeChange={setRange} />
+      <div id="content">
+        <div className="tab-strip" style={{ marginBottom: 12 }}>
+          <button className={tab === 'notifications' ? 'active' : ''}
+            onClick={() => setTab('notifications')}>Notifications</button>
+          <button className={tab === 'annotations' ? 'active' : ''}
+            onClick={() => setTab('annotations')}>Annotations</button>
+        </div>
+        {tab === 'notifications'
+          ? <NotificationsTab from={from} to={to} />
+          : <AnnotationsTab from={from} to={to} />}
+      </div>
+    </>
+  );
+}
+
+// ── Notifications tab ────────────────────────────────────────────────
+function NotificationsTab({ from, to }: { from: number; to: number }) {
+  const [kind, setKind] = useState('');
+  const q = useNotificationLog({ from, to, kind: kind || undefined, limit: 500 });
+  const data: NotificationLogEntry[] | null | undefined =
+    q.isPending ? undefined : q.isError ? null : (q.data ?? []);
+
+  const cols = useMemo<DataTableColumn<NotificationLogEntry>[]>(() => [
+    { id: 'time',    label: 'Sent',    sortValue: n => n.sentAt,      naturalDir: 'desc', width: 130 },
+    { id: 'channel', label: 'Channel', sortValue: n => n.channelKind, naturalDir: 'asc',  width: 160 },
+    { id: 'target',  label: 'To',      sortValue: n => n.target,      naturalDir: 'asc',  width: 200 },
+    { id: 'subject', label: 'Subject', sortValue: n => n.subject,     naturalDir: 'asc',  width: 340 },
+    { id: 'related', label: 'Related', sortValue: n => n.relatedKind, naturalDir: 'asc',  width: 150 },
+    { id: 'status',  label: 'Status',  sortValue: n => (n.ok ? 1 : 0), naturalDir: 'asc', width: 90 },
+  ], []);
+  const dt = useDataTable<NotificationLogEntry>({
+    storageKey: 'notiflog', columns: cols,
+    rows: data ?? [], initialSort: { id: 'time', dir: 'desc' },
+  });
+
+  return (
+    <>
+      <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--text2)' }}>Channel:</span>
+        <select value={kind} onChange={e => setKind(e.target.value)}>
+          <option value="">(all)</option>
+          {['email', 'slack', 'mattermost', 'teams', 'zoomchat', 'webhook', 'whatsapp'].map(k =>
+            <option key={k} value={k}>{k}</option>)}
+        </select>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          {data?.length ?? 0} notifications · everything the alert pipeline sent
+        </span>
+      </div>
+
+      {data === undefined && <Spinner />}
+      {data === null && <Empty icon="⚠" title="Failed to load the notification log" />}
+      {data && data.length === 0 && (
+        <Empty icon="✉" title="No notifications in this window">
+          When an alert rule fires (or an operator sends a channel test),
+          every email / Slack / Teams / Zoom / webhook delivery lands here
+          with its outcome. Configure channels under Settings → Notifications.
+        </Empty>
+      )}
+      {data && data.length > 0 && (
+        <div className="table-wrap">
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} />
+            <DataTableHead dt={dt} />
+            <tbody>
+              {dt.sortedRows.map(n => (
+                <tr key={n.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
+                  <td className="mono" style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}
+                      title={new Date(n.sentAt / 1_000_000).toISOString()}>
+                    {fmtRel(n.sentAt)}
+                  </td>
+                  <td>
+                    <span className="badge b-info" style={{ marginRight: 6 }}>{n.channelKind}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text2)' }}>{n.channelName}</span>
+                  </td>
+                  <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }} title={n.target}>
+                    {n.target || '—'}
+                  </td>
+                  <td title={n.bodyPreview || n.subject}>{n.subject || '—'}</td>
+                  <td>
+                    {n.relatedKind === 'problem' && n.relatedId ? (
+                      <Link to={`/problems?problem=${encodeURIComponent(n.relatedId)}`}
+                        style={{ color: 'var(--accent2)', fontSize: 11 }}
+                        title="Open the problem this notification was sent for">
+                        problem ↗
+                      </Link>
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>{n.relatedKind || '—'}</span>
+                    )}
+                  </td>
+                  <td>
+                    {n.ok
+                      ? <span className="badge b-ok">sent</span>
+                      : <span className="badge b-err" title={n.error}>failed</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Annotations tab (the original operator-marked events) ───────────
+function AnnotationsTab({ from, to }: { from: number; to: number }) {
+  const { user } = useAuth();
+  const canDelete = user?.role === 'admin' || user?.role === 'editor';
+
+  const [serviceFilter, setServiceFilter] = useState('');
+  const [kindFilter, setKindFilter] = useState('');
+  const [busyDelete, setBusyDelete] = useState<string | null>(null);
 
   const eventsQ = useOperatorEvents({
     from: Math.floor(from / 1_000_000_000),
@@ -117,8 +246,6 @@ export default function EventsPage() {
 
   return (
     <>
-      <Topbar title="Events" range={range} onRangeChange={setRange} />
-      <div id="content">
         <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: 'var(--text2)' }}>Service:</span>
           <ServicePicker value={serviceFilter} onChange={setServiceFilter}
@@ -206,7 +333,6 @@ export default function EventsPage() {
             </table>
           </div>
         )}
-      </div>
     </>
   );
 }

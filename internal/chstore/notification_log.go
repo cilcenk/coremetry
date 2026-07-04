@@ -20,7 +20,7 @@ type NotificationLog struct {
 	SentAt      int64  `json:"sentAt"`      // unix ns
 	ChannelKind string `json:"channelKind"` // email|slack|mattermost|teams|zoomchat|webhook|whatsapp
 	ChannelName string `json:"channelName"`
-	Target      string `json:"target"` // MASKED recipient / webhook host — never the full address
+	Target      string `json:"target"` // full-fidelity recipient (operator policy); webhook URLs host-only (URL embeds a live credential)
 	Subject     string `json:"subject"`
 	BodyPreview string `json:"bodyPreview"` // first ~200 chars of the notification body
 	RelatedKind string `json:"relatedKind"` // problem|test|runbook|incident|alert|monitor|…

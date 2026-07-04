@@ -1,7 +1,7 @@
 import type {
   PurgeResult,
   Service, ServiceEdge, TracesResponse, TraceDetailResponse,
-  LogsResponse, LogFieldStats, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
+  LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, ServiceAttrsResponse,
@@ -395,6 +395,14 @@ export const api = {
   }) =>
     get<{ name: string; points: { t: number; v: number }[] }[]>(
       `/api/logs/timeseries?${qs(params)}`),
+
+  // Sent-notification log (v0.8.247 backend / v0.8.263 UI) — the
+  // /events Notifications tab. from/to are unix-ns strings like the
+  // logs endpoints; kind filters one channel type.
+  notificationLog: (params: {
+    from?: number; to?: number; kind?: string; limit?: number; offset?: number;
+  }) =>
+    get<NotificationLogEntry[]>(`/api/notifications/log?${qs(params)}`),
 
   // Fields-panel accordion (v0.8.255): top-5 values of one field
   // in the current slice, with counts for the % bars. Expand-

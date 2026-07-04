@@ -1,3 +1,5 @@
+export { fmtBytes } from '@/lib/utils';
+
 // Shared atoms for the /admin/stats surface (split out of the
 // 867-line AdminStats.tsx — frontend refactor batch item 2,
 // v0.8.269). Pure presentation + formatters; no data fetching.
@@ -39,17 +41,6 @@ export function fmtUptime(sec: number): string {
   return `${Math.floor(sec / 86400)}d`;
 }
 
-export function fmtBytes(n: number): string {
-  if (!n || n < 0) return '0 B';
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
-  let i = 0;
-  let v = n;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)} ${units[i]}`;
-}
 
 export function fmtRate(perSec: number): string {
   if (!perSec || perSec < 0) return '0 /s';

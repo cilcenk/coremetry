@@ -22,6 +22,7 @@ import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
 } from '@/lib/types';
 import { ProblemDetail } from './ProblemDetail';
+import { withProblemParam } from './problemLink';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -432,7 +433,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const currentUserEmail = user?.email ?? '';
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // When arriving via ?problem=<id> deep link, broaden the
   // status pivot so the drawer can resolve the row even when
   // it's acknowledged / resolved. Default 'open' otherwise.
@@ -449,6 +450,15 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // lands with the right drawer open.
   const [drawerProblemId, setDrawerProblemId] = useState<string | null>(
     () => searchParams.get('problem'));
+  // v0.8.256 (operator-reported): the drawer only READ ?problem= —
+  // opening a problem never wrote it back, so the address bar
+  // stayed /problems and a copied link lost the selection. Every
+  // open/close now routes through here: state + URL move together
+  // (replace:true — triage clicks shouldn't pile history entries).
+  const openDrawer = (id: string | null) => {
+    setDrawerProblemId(id);
+    setSearchParams(prev => withProblemParam(prev, id), { replace: true });
+  };
   // Bulk-select state (v0.5.83). Operators can multi-select
   // problems and acknowledge them in one POST — typical
   // workflow during a fan-out incident where 20 alerts fire
@@ -461,7 +471,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && drawerProblemId) {
-        setDrawerProblemId(null);
+        openDrawer(null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -876,7 +886,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             inline "Why?" expansion and the
                             scattered per-cell AI buttons. */}
                         <Button variant="secondary" size="sm"
-                          onClick={() => setDrawerProblemId(p.id)}>
+                          onClick={() => openDrawer(p.id)}>
                           Triage ▶
                         </Button>
                       </td>
@@ -890,7 +900,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
       {drawerProblemId && data && (() => {
         const p = data.find(x => x.id === drawerProblemId);
         if (!p) return null;
-        return <TriageDrawer problem={p} onClose={() => setDrawerProblemId(null)} />;
+        return <TriageDrawer problem={p} onClose={() => openDrawer(null)} />;
       })()}
     </div>
   );

@@ -61,6 +61,24 @@ type ServiceGraphResponse struct {
 	ShownNodes int `json:"shownNodes"`
 }
 
+// serviceGraphTopNClamp resolves the ?topN= overview cap. v0.8.278
+// (operator-reported: the full topology is unreadable on the 1000+-service
+// install): GLOBAL scope is NEVER uncapped — absent/zero/negative/garbage all
+// mean the 500-node render budget (dagre layout time + readability collapse
+// past it), and requests above the budget clamp down to it. Neighborhood scope
+// returns 0 (never pruned — it's already focus-scoped, and pruning would
+// silently hide direct dependencies). Pure + table-tested.
+func serviceGraphTopNClamp(raw, scope string) int {
+	if scope != "global" {
+		return 0
+	}
+	n, _ := strconv.Atoi(raw)
+	if n <= 0 || n > 500 {
+		return 500
+	}
+	return n
+}
+
 // pruneServiceGraphTopN bounds the overview graph to the topN heaviest nodes so
 // a 1000s-service production map renders readably instead of a hairball (the
 // v0.8.215 rule, ported to the MV-backed path for the v0.8.277 /service-map
@@ -164,20 +182,9 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 	// unfiltered kafka:log*/kafka:bsa* queue nodes drowned those
 	// graphs. Same matcher as the other two endpoints; digest in
 	// the cache key per the v0.5.187 rule.
-	// Overview cap (v0.8.277 — the v0.8.215 rule on the MV path). Clamped to
-	// [0,500]: 500 is the render budget the canvas/dagre layout is sized for;
-	// 0 = uncapped. Global scope only — a neighborhood is already focus-scoped
-	// and pruning it would silently hide direct dependencies.
-	topN, _ := strconv.Atoi(q.Get("topN"))
-	if topN < 0 {
-		topN = 0
-	}
-	if topN > 500 {
-		topN = 500
-	}
-	if scope != "global" {
-		topN = 0
-	}
+	// Overview cap (v0.8.277, hardened v0.8.278): the global map is NEVER
+	// uncapped — see serviceGraphTopNClamp.
+	topN := serviceGraphTopNClamp(q.Get("topN"), scope)
 	hidPats := s.topologyHiddenPatterns(r.Context())
 	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:top=%d:hid=%s",
 		focus, scope, from.Unix()/60, to.Unix()/60, topN, hiddenDigest(hidPats))

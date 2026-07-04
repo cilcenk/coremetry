@@ -45,8 +45,15 @@ export default function ServiceMapPage() {
   // Every control derives straight from the URL — no state double-source, so
   // the v0.8.253 sig-guard class of bug can't exist here.
   const focus = searchParams.get('focus') ?? '';
+  // v0.8.278 — the global map is NEVER uncapped (server clamps too): 0 / old
+  // "All services" links / garbage all mean the 500-node render budget. At a
+  // 1000+-service install an unbounded graph stalls dagre and reads as a
+  // hairball; the full estate is browsed via grouping (T3), not one big draw.
   const topParam = searchParams.get('top');
-  const topN = topParam === null ? TOP_DEFAULT : Math.max(0, Number(topParam) || 0);
+  const parsedTop = Number(topParam);
+  const topN = topParam === null
+    ? TOP_DEFAULT
+    : (Number.isFinite(parsedTop) && parsedTop > 0 ? Math.min(parsedTop, 500) : 500);
   const hideBrokers = searchParams.get('brokers') === 'hide';
   const nodeSizeMode: NodeSizeMode = searchParams.get('size') === 'incoming' ? 'incoming' : 'outgoing';
   const nodeSizeMetric: NodeSizeMetric = searchParams.get('metric') === 'duration' ? 'duration' : 'rate';
@@ -142,8 +149,7 @@ export default function ServiceMapPage() {
                 <option value="50">Top 50</option>
                 <option value="100">Top 100</option>
                 <option value="250">Top 250</option>
-                <option value="500">Top 500</option>
-                <option value="0">All services</option>
+                <option value="500">Top 500 (max)</option>
               </select>
               {/* Brokers are first-class nodes on the MV path (the old sampled
                   view dropped them); the toggle hides the kafka/rabbit chrome
@@ -162,8 +168,10 @@ export default function ServiceMapPage() {
         {!focus && g && g.shownNodes < g.totalNodes && (
           <div style={{ fontSize: 12, color: 'var(--text2)', margin: '4px 0 8px' }}>
             Showing the <strong>{g.shownNodes}</strong> heaviest of{' '}
-            <strong>{g.totalNodes}</strong> services. Raise “Show” or focus a
-            service to see a specific area.
+            <strong>{g.totalNodes}</strong> services.{' '}
+            {topN >= 500
+              ? 'That’s the render budget — focus a service to explore the rest.'
+              : 'Raise “Show” or focus a service to see a specific area.'}
           </div>
         )}
 

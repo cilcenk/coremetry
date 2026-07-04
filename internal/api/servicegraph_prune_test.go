@@ -85,3 +85,34 @@ func TestPruneServiceGraphTopN(t *testing.T) {
 		pruneServiceGraphTopN(nil, 10) // must not panic
 	})
 }
+
+// v0.8.278 (operator-reported: "full topology bankada çok zor gözükmez") — the
+// GLOBAL map is NEVER uncapped. topN<=0 / absent / garbage now clamps to the
+// 500-node render budget: at the 1000+-service bank install an uncapped
+// "All services" request stalls the dagre layout and draws an unreadable
+// hairball. Neighborhood scope stays 0 (already focus-scoped, never pruned).
+func TestServiceGraphTopNClamp(t *testing.T) {
+	cases := []struct {
+		name  string
+		raw   string
+		scope string
+		want  int
+	}{
+		{"absent param on global = render budget", "", "global", 500},
+		{"explicit 0 (old All-services links) = render budget", "0", "global", 500},
+		{"negative = render budget", "-5", "global", 500},
+		{"garbage = render budget", "abc", "global", 500},
+		{"in-range passes through", "100", "global", 100},
+		{"above budget clamps down", "9999", "global", 500},
+		{"exactly the budget", "500", "global", 500},
+		{"neighborhood is never pruned", "50", "neighborhood", 0},
+		{"neighborhood absent", "", "neighborhood", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := serviceGraphTopNClamp(c.raw, c.scope); got != c.want {
+				t.Fatalf("serviceGraphTopNClamp(%q, %q) = %d, want %d", c.raw, c.scope, got, c.want)
+			}
+		})
+	}
+}

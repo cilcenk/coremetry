@@ -138,18 +138,15 @@ function LogsInner() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [range, setRange] = useUrlRange('30m');
-  // Cursor paging (v0.7.22 — replaced the offset pager). `cursor`
-  // is the opaque `after` token for the page currently displayed
-  // ('' = first page). `cursorStack` holds the cursors of the
-  // pages we've walked past, so Back can pop one and refetch.
-  // Reset both whenever the filter / range / query changes (see
-  // resetPaging below + the apply/reset/URL-sync handlers).
+  // Cursor accumulation (v0.8.260 — "Load more" replaced the
+  // Back/Next pager; v0.7.22 keyset cursor mechanics unchanged).
+  // `cursor` is the opaque `after` token of the page most recently
+  // FETCHED ('' = first). Fetched pages append into `accRows`; a
+  // filter / range / query change resets both (a cursor from the
+  // old result set is meaningless against a new one — v0.7.81).
   const [cursor, setCursor] = useState('');
-  const [cursorStack, setCursorStack] = useState<string[]>([]);
-  // Reset to the first page. Called whenever the query inputs
-  // change (filter / range / search) — a cursor from the old
-  // result set is meaningless against a new one.
-  const resetPaging = () => { setCursor(''); setCursorStack([]); };
+  const [accRows, setAccRows] = useState<LogRow[]>([]);
+  const resetPaging = () => { setCursor(''); setAccRows([]); };
   const [filter, setFilter] = useState({
     service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '',
   });
@@ -443,10 +440,27 @@ function LogsInner() {
     : staticQ.isError ? null
     : staticQ.data;
 
-  // Reset expansion state when the filter / range / page
-  // changes — opening row #5 in one window doesn't translate
-  // to the next. `cursor` stands in for the page identity now.
-  useEffect(() => { setExpanded(new Set()); }, [range, filter, filters, cursor]);
+  // Accumulate fetched pages into accRows (v0.8.260 Load more).
+  // First page replaces (covers fresh views AND a staleTime
+  // refetch of page 1); later cursors append with id-dedup so the
+  // keyset boundary can't duplicate a row. isPlaceholderData
+  // guards against ingesting the keep-previous stand-in while the
+  // next page is still in flight.
+  useEffect(() => {
+    if (live || !staticQ.data || staticQ.isPlaceholderData) return;
+    const page = staticQ.data.logs ?? [];
+    setAccRows(prev => {
+      if (!cursor) return page;
+      const seen = new Set(prev.map(r => r.id));
+      return [...prev, ...page.filter(r => !seen.has(r.id))];
+    });
+  }, [staticQ.data, staticQ.isPlaceholderData, cursor, live]);
+
+  // Reset expansion state when the filter / range changes —
+  // opening row #5 in one window doesn't translate to the next.
+  // NOT on cursor: Load more appends below, existing expansions
+  // must survive the append.
+  useEffect(() => { setExpanded(new Set()); }, [range, filter, filters]);
 
   // Backend mapping fields (v0.5.136 → fields panel v0.8.255).
   // Feeds the left LogFieldsPanel's "Available fields" group. CH
@@ -503,7 +517,12 @@ function LogsInner() {
     setExpanded(next);
   };
 
-  const logs = data?.logs ?? [];
+  // Static view renders the ACCUMULATED rows; the raw page in
+  // `data` only feeds total/nextCursor/empty-state checks. Falls
+  // back to the page rows in the one render before the
+  // accumulator effect fills (or while a placeholder shows the
+  // previous slice during a filter change).
+  const logs = live ? (data?.logs ?? []) : (accRows.length > 0 ? accRows : (data?.logs ?? []));
   const total = data?.total ?? 0;
 
   // j/k row navigation — same pattern as /services and /traces.
@@ -825,40 +844,31 @@ function LogsInner() {
               onFilterExclude={excludeFromRow}
               onTracePeek={tid => setPeekTraceId(tid)}
               onContextOpen={l => setContextPivot(l)} />
-            {/* Cursor pager (v0.7.22 — replaced the offset Pager).
-                Back pops the cursor stack; Next pushes the current
-                cursor and advances to the response's nextCursor.
-                Next is hidden during live tail (the live query owns
-                its own moving window — no cursor). Total still comes
-                from the backend so the "N total" label is unchanged. */}
+            {/* Load more (v0.8.260 — replaced the Back/Next pager;
+                keyset cursor mechanics unchanged underneath). Rows
+                accumulate in accRows; the button advances the cursor
+                to the response's nextCursor and the new page appends.
+                Hidden during live tail (the live buffer owns its own
+                moving window). Button-first per spec — an
+                IntersectionObserver auto-load can layer on once the
+                behaviour settles (and it would multiply backend
+                queries, which the ES-usage constraint caps). */}
             {!live && (
               <div className="row" style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 marginTop: 10, fontSize: 12, color: 'var(--text3)',
               }}>
-                <Button variant="secondary" size="sm"
-                  disabled={cursorStack.length === 0}
-                  onClick={() => {
-                    setCursorStack(stack => {
-                      const next = stack.slice(0, -1);
-                      setCursor(stack[stack.length - 1] ?? '');
-                      return next;
-                    });
-                  }}
-                  title="Previous page">
-                  ← Back
-                </Button>
-                <Button variant="secondary" size="sm"
-                  disabled={!data.nextCursor}
-                  onClick={() => {
-                    if (!data.nextCursor) return;
-                    setCursorStack(stack => [...stack, cursor]);
-                    setCursor(data.nextCursor);
-                  }}
-                  title={data.nextCursor ? 'Next page' : 'No more pages'}>
-                  Next →
-                </Button>
-                <span>{total.toLocaleString()} total</span>
+                {data.nextCursor && (
+                  <Button variant="secondary" size="sm"
+                    disabled={staticQ.isFetching}
+                    onClick={() => { if (data.nextCursor) setCursor(data.nextCursor); }}
+                    title="Fetch the next page and append it below">
+                    {staticQ.isFetching ? 'Loading…' : '↓ Load more'}
+                  </Button>
+                )}
+                <span>
+                  showing {logs.length.toLocaleString()} of {total.toLocaleString()}
+                </span>
               </div>
             )}
           </>

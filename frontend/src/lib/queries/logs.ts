@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { LogsParams } from '@/lib/api';
 import type { LogsResponse } from '@/lib/types';
@@ -23,5 +23,11 @@ export function useLogs(params: LogsParams) {
     queryFn: () => api.logs(params),
     staleTime: 15_000,
     refetchOnWindowFocus: false,
+    // v0.8.260 — "Load more" accumulation on /logs: a cursor change
+    // is a NEW query key; without a placeholder the page flashed the
+    // skeleton on every append. Previous data holds the table stable
+    // while the next page loads (isPlaceholderData guards the
+    // accumulator from ingesting the stand-in).
+    placeholderData: keepPreviousData,
   });
 }

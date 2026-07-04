@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { ServiceGraph } from '@/components/ServiceGraph';
 import type { NodeSizeMode, NodeSizeMetric } from '@/lib/topologyNodes';
+import { Button } from '@/components/ui/Button';
 
 // ServiceGraphPreview — the v0.8.12 Stage-2 scratch route (/servicegraph-preview)
 // for comparing the new canonical OTel-native ServiceGraph against the old
@@ -51,7 +52,7 @@ export default function ServiceGraphPreview() {
           <form onSubmit={e => { e.preventDefault(); setFocus(focusInput.trim()); }} style={{ display: 'flex', gap: 6 }}>
             <input className="field" placeholder="Focus service…" value={focusInput}
               onChange={e => setFocusInput(e.target.value)} style={{ width: 200 }} />
-            <button type="submit" className="sec" style={{ fontSize: 12, padding: '4px 10px' }}>Focus</button>
+            <Button type="submit" variant="secondary" size="sm">Focus</Button>
           </form>
         )}
         <div className="segmented" style={{ marginLeft: 'auto' }}>

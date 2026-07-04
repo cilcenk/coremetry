@@ -7,6 +7,7 @@ import { healthToken } from '@/lib/health';
 import { Spinner } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
+import { Button } from '@/components/ui/Button';
 
 // FocusedNeighborhood — the focused-graph half of /topology (v0.8.x). Given a
 // chosen service, BFS out from it in BOTH directions (callers ← focus →
@@ -208,7 +209,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: healthToken(hoverNode.errorRate) }} />
             <span style={{ fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hoverNode.name}</span>
-            <button onClick={() => onRecenter(hoverNode.name)} className="sec" style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px' }}>Recenter</button>
+            <Button variant="secondary" size="sm" onClick={() => onRecenter(hoverNode.name)} style={{ marginLeft: 'auto' }}>Recenter</Button>
           </div>
           <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', marginBottom: 6 }}>
             {kindLabel(hoverNode)} · {hoverNode.kind === 'service' ? 'service.name' : hoverNode.system ? (hoverNode.kind === 'database' ? 'db.system' : 'messaging.system') : hoverNode.kind}

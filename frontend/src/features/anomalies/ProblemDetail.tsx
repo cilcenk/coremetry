@@ -9,6 +9,7 @@ import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import { TimeChart } from '@/components/charts/TimeChart';
 import { statusColor } from '@/lib/statusColor';
 import type { ExceptionGroup, ExceptionGroupState } from '@/lib/types';
+import { Button } from '@/components/ui/Button';
 
 // ProblemDetail — full in-page exception-group detail (prototype design-parity,
 // page 5). Opened from a Problems row; back returns to the list. Layout matches
@@ -86,9 +87,9 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     <div id="content">
       {/* Detail bar */}
       <div className="rb-bar">
-        <button className="sec" onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <ArrowLeft size={14} strokeWidth={1.75} /> Problems
-        </button>
+        <Button variant="secondary" onClick={onBack} leftIcon={<ArrowLeft size={14} strokeWidth={1.75} />}>
+          Problems
+        </Button>
         <span className={`badge ${STATE_BADGE[state]}`}>{STATE_LABEL[state]}</span>
         <span className="badge b-gray">{group.occurrences.toLocaleString()} occurrences</span>
         <span className="spacer" />
@@ -164,9 +165,9 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
             <h3>Stack trace</h3>
             <span className="ov-sub">representative sample</span>
             <span className="ov-right">
-              <button className="sec" onClick={copyStack} disabled={!stack} style={{ padding: '3px 9px', fontSize: 11 }}>
+              <Button variant="secondary" size="sm" onClick={copyStack} disabled={!stack}>
                 {copied ? 'Copied' : 'Copy'}
-              </button>
+              </Button>
             </span>
           </div>
           <div className="ov-card-b" style={{ background: 'var(--bg2)', borderRadius: '0 0 8px 8px' }}>

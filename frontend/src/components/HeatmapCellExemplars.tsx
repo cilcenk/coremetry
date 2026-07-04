@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { fmtSmart } from '@/lib/chartFmt';
 import { tsLong } from '@/lib/utils';
 import type { TraceRow, FilterExpr } from '@/lib/types';
+import { Button } from '@/components/ui/Button';
 
 // HeatmapCellExemplars — v0.5.260. Honeycomb-classic "click the
 // slow band → see what traces ran there" workflow. Modal opens
@@ -95,7 +96,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, onClos
             {new Date(cell.timeNs / 1e6).toLocaleTimeString()} ·{' '}
             {cell.count.toLocaleString()} spans in cell
           </span>
-          <button className="sec" onClick={onClose} style={{ fontSize: 12 }}>✕</button>
+          <Button variant="secondary" size="sm" onClick={onClose} title="Close">✕</Button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
           Top 20 traces ordered by duration desc, applying the heatmap's

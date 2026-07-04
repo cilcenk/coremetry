@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { tsShort } from '@/lib/utils';
 import { IconSparkles } from './icons';
 import type { ServiceAnalysisResponse } from '@/lib/types';
+import { Button } from '@/components/ui/Button';
 
 // AIAnalysisPanel — embedded "AI ile analiz et" affordance for a service /
 // incident / error-group (NOT logs). The operator clicks; the screen context
@@ -42,7 +43,7 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
         {state === 'done' && (
           <span className="ov-right" style={{ display: 'inline-flex', gap: 10, alignItems: 'center' }}>
             {res?.cached && <span className="ov-sub" style={{ fontSize: 10 }}>önbellekten</span>}
-            <button className="sec" style={{ padding: '3px 9px', fontSize: 11 }} onClick={() => run(true)}>Yeniden analiz et</button>
+            <Button variant="secondary" size="sm" onClick={() => run(true)}>Yeniden analiz et</Button>
           </span>
         )}
       </div>
@@ -50,9 +51,9 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
       <div className="ov-card-b">
         {state === 'idle' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            <button onClick={() => run(false)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-              <IconSparkles size={13} /> AI ile analiz et
-            </button>
+            <Button variant="primary" onClick={() => run(false)} leftIcon={<IconSparkles size={13} />}>
+              AI ile analiz et
+            </Button>
             <span style={{ fontSize: 12, color: 'var(--text3)' }}>
               Bu servisin RED metriklerini, baseline'ını, en sık hatalarını ve bağımlılıklarını yapay zekâ ile yorumlar.
             </span>
@@ -158,9 +159,9 @@ function Result({ res, fb, setFb, showCtx, setShowCtx }: {
         <button className="sec" style={fbBtn(fb === 'down')} onClick={() => setFb('down')} aria-label="faydasız">👎</button>
         {fb && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Teşekkürler.</span>}
         <span style={{ flex: 1 }} />
-        <button className="sec" style={{ padding: '3px 9px', fontSize: 11 }} onClick={() => setShowCtx(!showCtx)}>
+        <Button variant="secondary" size="sm" onClick={() => setShowCtx(!showCtx)}>
           {showCtx ? 'Bağlamı gizle' : 'Bağlamı gör'}
-        </button>
+        </Button>
       </div>
 
       {showCtx && ctx && <ContextView ctx={ctx} />}

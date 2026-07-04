@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { metricQuery } from '@/lib/metricQuery';
 import { tsLong } from '@/lib/utils';
 import type { Incident } from '@/lib/types';
+import { Button } from '@/components/ui/Button';
 
 export default function IncidentPage() {
   return <Suspense fallback={<Spinner />}><Inner /></Suspense>;
@@ -229,9 +230,9 @@ function Inner() {
               <div className="ov-card-h">
                 <h3><PenLine size={14} strokeWidth={1.75} style={{ verticalAlign: '-2px', marginRight: 4 }} />Postmortem</h3>
                 {isAdmin && !editingPM && (
-                  <button className="sec" onClick={() => setEditingPM(true)} style={{ marginLeft: 'auto', padding: '2px 8px', fontSize: 11 }}>
+                  <Button variant="secondary" size="sm" onClick={() => setEditingPM(true)} style={{ marginLeft: 'auto' }}>
                     {inc.postmortem ? 'Edit' : 'Write'}
-                  </button>
+                  </Button>
                 )}
               </div>
               <div className="ov-card-b">

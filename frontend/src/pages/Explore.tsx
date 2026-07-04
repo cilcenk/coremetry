@@ -44,6 +44,7 @@ import { QueryRow } from './explore/QueryRow';
 import { FormulaRow } from './explore/FormulaRow';
 import { VizRail } from './explore/VizRail';
 import { SplitByPicker } from './explore/SplitByPicker';
+import { Button } from '@/components/ui/Button';
 
 // Explore (explore-v2 Phase 2) — the metric result mode is now the
 // multi-query builder: up to four queries A–D (span signals or catalogue
@@ -662,13 +663,13 @@ name ~ checkout`}
                     fontSize: 12, color: 'var(--text2)',
                   }}>
                     <span>🔍 Zoom aktif — tüm paneller senkron</span>
-                    <button className="sec" type="button" style={{ fontSize: 11, padding: '2px 8px' }}
-                      onClick={() => setZoomWindow(null)}>Sıfırla</button>
-                    <button className="sec" type="button" style={{ fontSize: 11, padding: '2px 8px' }}
+                    <Button variant="secondary" size="sm"
+                      onClick={() => setZoomWindow(null)}>Sıfırla</Button>
+                    <Button variant="secondary" size="sm"
                       onClick={fetchZoomWindow}
                       title="Zoom penceresini sayfa aralığı yap — backend daha ince bucket'larla yeniden sorgular">
                       Bu pencereyi getir →
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {panels.length === 0 && anyLoading && <Spinner />}

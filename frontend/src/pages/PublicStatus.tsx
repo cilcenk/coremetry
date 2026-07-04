@@ -1,4 +1,5 @@
-import { useEffect, useState, FormEvent } from 'react';
+import { useState, FormEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -44,29 +45,25 @@ interface StatusResp {
 }
 
 export default function PublicStatusPage() {
-  const [data, setData] = useState<StatusResp | null | undefined>(undefined);
-
-  useEffect(() => {
-    const load = () => fetch('/api/public-status', { credentials: 'omit' })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(setData)
-      .catch(() => setData(null));
-    load();
-    // Skip the poll when the tab is hidden — public status is a
-    // background-pinned page for many viewers; without this guard
-    // a dozen idle tabs each fire one round-trip every 30s,
-    // multiplied by every operator who pinned it.
-    const tick = () => { if (!document.hidden) load(); };
-    const t = setInterval(tick, 30_000);
-    // Refresh immediately on tab focus so a returning operator
-    // sees current state, not whatever staleness was paused on.
-    const onVis = () => { if (!document.hidden) load(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener('visibilitychange', onVis);
-    };
-  }, []);
+  // v0.8.275 — React Query replaces the hand-rolled poll. The old
+  // 20-line lifecycle (setInterval + document.hidden guard + on-vis
+  // refresh) is exactly what RQ gives for free: interval refetches
+  // pause on hidden tabs by default, and the app-level
+  // refetchOnWindowFocus brings a returning operator current.
+  // credentials:'omit' — the page is public by contract; never send
+  // a session cookie from a status embed.
+  const q = useQuery<StatusResp>({
+    queryKey: ['public-status'],
+    queryFn: async () => {
+      const r = await fetch('/api/public-status', { credentials: 'omit' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<StatusResp>;
+    },
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  const data: StatusResp | null | undefined =
+    q.isPending ? undefined : q.isError ? null : q.data;
 
   if (data === undefined) {
     return (

@@ -1,4 +1,5 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Wordmark } from '@/components/Wordmark';
@@ -35,20 +36,25 @@ interface PublicTraceResponse {
 function PublicTraceInner() {
   const [sp] = useSearchParams();
   const token = sp.get('token') ?? '';
-  const [data, setData] = useState<PublicTraceResponse | null | undefined>(undefined);
   const [selectedId, setSelectedId] = useState<string | null>(sp.get('span'));
   const [tab, setTab] = useState<'waterfall' | 'logs'>('waterfall');
 
-  useEffect(() => {
-    if (!token) return;
-    fetch(`/api/public/trace/${token}`)
-      .then(async r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<PublicTraceResponse>;
-      })
-      .then(setData)
-      .catch(() => setData(null));
-  }, [token]);
+  // v0.8.275 — React Query replaces the mount-effect fetch. The
+  // snapshot is FROZEN server-side (spans + logs captured at mint),
+  // so staleTime Infinity: one fetch per token, no focus refetch,
+  // free retry on a flaky first load.
+  const q = useQuery<PublicTraceResponse>({
+    queryKey: ['public-trace', token],
+    enabled: !!token,
+    queryFn: async () => {
+      const r = await fetch(`/api/public/trace/${token}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<PublicTraceResponse>;
+    },
+    staleTime: Infinity,
+  });
+  const data: PublicTraceResponse | null | undefined =
+    q.isPending ? undefined : q.isError ? null : q.data;
 
   if (!token) {
     return <Empty icon="⚠" title="Missing share token" />;

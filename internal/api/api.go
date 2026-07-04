@@ -8813,7 +8813,14 @@ func (s *Server) getMetricAnomalies(w http.ResponseWriter, r *http.Request) {
 // both signals tell a coherent "what changed in the last 5 min"
 // story.
 func (s *Server) getLogPatternAnomalies(w http.ResponseWriter, r *http.Request) {
-	window := parseDuration(r.URL.Query().Get("window"), 5*time.Minute)
+	// v0.8.270 (operator: "log anomalies elastic backend'de çok fazla
+	// sorgu yapmasın") — snap the window to a fixed rung set. The
+	// window is part of the cache key, so an unbounded param let every
+	// distinct ?window= value mint its own key and pay its own
+	// _msearch against ES; snapping caps the key cardinality at 4,
+	// which caps the endpoint's worst-case ES rate at 4 batched
+	// round-trips per TTL regardless of callers.
+	window := snapAnomalyWindow(parseDuration(r.URL.Query().Get("window"), 5*time.Minute))
 	key := fmt.Sprintf("anomaly:log-patterns:window=%s", window)
 	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
 		// v0.5.241 — pass the logstore (not chstore) so the

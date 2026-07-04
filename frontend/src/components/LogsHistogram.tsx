@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
 
@@ -52,11 +52,20 @@ function colorFor(name: string): string {
   return SEV_COLORS[name.toUpperCase()] ?? '#6366f1';
 }
 
-export function LogsHistogram({ range, filter }: {
+export function LogsHistogram({ range, filter, onRangeSelect }: {
   range: { from?: number; to?: number };
   filter: Filter;
+  // Brush (Discover revamp 4/7): drag-select a horizontal span →
+  // called with the selected window as unix-ns bounds; the parent
+  // narrows its time range (setRange custom + resetPaging). Omitted
+  // → the chart is hover-only, exactly as before.
+  onRangeSelect?: (fromNs: number, toNs: number) => void;
 }) {
   const [data, setData] = useState<Series[] | null | undefined>(undefined);
+  // Brush drag state — chart-width fractions [0..1]. Window-level
+  // move/up listeners let the drag continue outside the chart box.
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const [drag, setDrag] = useState<{ start: number; cur: number } | null>(null);
 
   useEffect(() => {
     setData(undefined);
@@ -84,6 +93,51 @@ export function LogsHistogram({ range, filter }: {
   // x-axis time ticks (unix ns → clock). Hooks must precede the early
   // returns below, so compute alongside the stack.
   const ticks = useMemo(() => axisTicks(stack.times), [stack.times]);
+
+  // Fraction → unix ns over the chart's time domain (bucket starts
+  // plus one trailing bucket so the right edge of the last bar is
+  // selectable). padL/padR are 0.4% of the viewBox — ignorable for
+  // a brush.
+  const fracToNs = (frac: number): number => {
+    const times = stack.times;
+    if (times.length === 0) return 0;
+    const step = times.length > 1 ? times[1] - times[0] : 30 * 1e9;
+    const t0 = times[0];
+    const t1 = times[times.length - 1] + step;
+    return Math.round(t0 + Math.min(1, Math.max(0, frac)) * (t1 - t0));
+  };
+
+  // Window-level listeners while a drag is live; mouseup commits
+  // the selection when it spans at least ~1% of the chart (a plain
+  // click keeps behaving like a click, not a zero-width zoom).
+  useEffect(() => {
+    if (!drag) return;
+    const fracOf = (clientX: number) => {
+      const el = chartRef.current;
+      if (!el) return 0;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 ? (clientX - r.left) / r.width : 0;
+    };
+    const onMove = (e: MouseEvent) => setDrag(d => (d ? { ...d, cur: fracOf(e.clientX) } : d));
+    const onUp = (e: MouseEvent) => {
+      const end = fracOf(e.clientX);
+      setDrag(d => {
+        if (d && onRangeSelect && Math.abs(end - d.start) >= 0.01) {
+          const a = fracToNs(Math.min(d.start, end));
+          const b = fracToNs(Math.max(d.start, end));
+          if (b > a) onRangeSelect(a, b);
+        }
+        return null;
+      });
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag !== null, stack.times]);
 
   if (data === undefined) {
     return <div style={{ height: 80, marginBottom: 10 }} />;
@@ -118,7 +172,47 @@ export function LogsHistogram({ range, filter }: {
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* Kibana-Discover-style STACKED BARS — one column per time bucket,
             segmented by severity. (Was a stacked-area chart, which read as a
-            line graph rather than a histogram.) */}
+            line graph rather than a histogram.) The wrapper hosts the brush:
+            drag horizontally → accent overlay + range label → mouseup narrows
+            the page's time range to the selection. */}
+        <div ref={chartRef}
+          onMouseDown={onRangeSelect ? (e => {
+            if (e.button !== 0) return;
+            e.preventDefault(); // no text selection while brushing
+            const r = e.currentTarget.getBoundingClientRect();
+            const frac = r.width > 0 ? (e.clientX - r.left) / r.width : 0;
+            setDrag({ start: frac, cur: frac });
+          }) : undefined}
+          style={{
+            position: 'relative',
+            cursor: onRangeSelect ? 'crosshair' : undefined,
+            userSelect: drag ? 'none' : undefined,
+          }}>
+        {drag && (() => {
+          const lo = Math.min(drag.start, drag.cur);
+          const hi = Math.max(drag.start, drag.cur);
+          const withSecSel = true;
+          return (
+            <div style={{
+              position: 'absolute', top: 0, bottom: 0,
+              left: `${lo * 100}%`, width: `${Math.max(0.3, (hi - lo) * 100)}%`,
+              background: 'color-mix(in srgb, var(--accent) 22%, transparent)',
+              borderLeft: '1px solid var(--accent)',
+              borderRight: '1px solid var(--accent)',
+              pointerEvents: 'none', zIndex: 2,
+            }}>
+              <span style={{
+                position: 'absolute', top: -2, left: '50%', transform: 'translateX(-50%)',
+                fontSize: 10, whiteSpace: 'nowrap', padding: '0 4px',
+                background: 'var(--bg1)', border: '1px solid var(--accent)',
+                borderRadius: 3, color: 'var(--accent2)',
+                fontFamily: 'ui-monospace, monospace',
+              }}>
+                {fmtClock(fracToNs(lo), withSecSel)} – {fmtClock(fracToNs(hi), withSecSel)}
+              </span>
+            </div>
+          );
+        })()}
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
           preserveAspectRatio="none"
           style={{ display: 'block', width: '100%' }}>
@@ -146,6 +240,7 @@ export function LogsHistogram({ range, filter }: {
             );
           })}
         </svg>
+        </div>
         {ticks.length > 0 && (
           <div style={{
             display: 'flex', justifyContent: 'space-between',

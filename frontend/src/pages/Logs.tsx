@@ -807,7 +807,14 @@ function LogsInner() {
             reading the count column. Hidden when neither a time
             range nor a trace pin is set; renders nothing on
             empty data. */}
-        <LogsHistogram range={{ from, to }} filter={{ ...filter, search: compiledSearch }} />
+        <LogsHistogram range={{ from, to }} filter={{ ...filter, search: compiledSearch }}
+          onRangeSelect={(fromNs, toNs) => {
+            // Brush → narrow the window to the selection. Custom
+            // ranges ride ?range= (useUrlRange) so the zoom is
+            // shareable; paging resets per the v0.7.81 cursor rule.
+            setRange({ preset: 'custom', fromMs: Math.round(fromNs / 1e6), toMs: Math.round(toNs / 1e6) });
+            resetPaging();
+          }} />
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
         {data && logs.length === 0 && (

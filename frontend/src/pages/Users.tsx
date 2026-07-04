@@ -201,11 +201,7 @@ export default function UsersPage() {
                         <TeamEditor user={u} suggestions={teamOptions} onChanged={refresh} />
                       </td>
                       <td>
-                        <span style={{
-                          fontSize: 10, color: 'var(--text3)',
-                          border: '1px solid var(--border)', borderRadius: 3,
-                          padding: '1px 6px', textTransform: 'uppercase',
-                        }}>{u.authProvider || 'local'}</span>
+                        <span className="badge b-gray" style={{ textTransform: 'uppercase' }}>{u.authProvider || 'local'}</span>
                       </td>
                       <td className="mono" style={{ color: 'var(--text3)' }}>
                         {tsLong(u.createdAt)}

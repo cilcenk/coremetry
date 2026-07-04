@@ -166,11 +166,7 @@ export default function SlowQueriesPage() {
                           </Link>
                         </td>
                         <td>
-                          <span style={{
-                            fontSize: 10, padding: '2px 6px', borderRadius: 3,
-                            background: 'var(--bg3)', color: 'var(--text2)',
-                            fontFamily: 'ui-monospace, monospace',
-                          }}>{r.dbSystem || '?'}</span>
+                          <span className="badge b-gray mono">{r.dbSystem || '?'}</span>
                         </td>
                         <td style={{
                           fontFamily: 'ui-monospace, SFMono-Regular, monospace',

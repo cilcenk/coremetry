@@ -95,10 +95,7 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
         <span className={`status-dot status-dot-${cls}`} />
         <span style={{ fontWeight: 600 }}>{m.name}</span>
-        <span style={{
-          fontSize: 10, padding: '1px 6px', borderRadius: 3, background: 'var(--bg3)',
-          color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '.4px',
-        }}>{m.type}</span>
+        <span className="badge b-gray" style={{ textTransform: 'uppercase', letterSpacing: '.4px' }}>{m.type}</span>
         {!m.enabled && <span style={{ fontSize: 11, color: 'var(--text3)' }}>(disabled)</span>}
         {m.type === 'http' && (
           <span style={{

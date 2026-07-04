@@ -179,6 +179,17 @@ export default function UsersPage() {
                             padding: '1px 5px', textTransform: 'uppercase',
                           }}>you</span>
                         )}
+                        {/* v0.8.266 — directory identity line: full
+                            name + organization from LDAP, refreshed
+                            on each directory login. */}
+                        {(u.fullName || u.org) && (
+                          <div style={{
+                            fontSize: 11, color: 'var(--text3)', marginLeft: 28,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }} title={[u.fullName, u.org].filter(Boolean).join(' · ')}>
+                            {[u.fullName, u.org].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <RoleEditor user={u} isMe={isMe} onChanged={refresh} />

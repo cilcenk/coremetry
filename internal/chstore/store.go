@@ -1248,6 +1248,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		// because JPEG headers still squeeze a little and the column is
 		// cold (read only by the photo endpoints).
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS photo String DEFAULT '' CODEC(ZSTD(3))`,
+		// v0.8.266 — LDAP directory identity: full name (displayName)
+		// + organization (company/o). department/ou lands in the
+		// existing team column. Refreshed on each directory login.
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name String DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS org LowCardinality(String) DEFAULT ''`,
 		// v0.5.254 — Problem AI auto-explain. The background
 		// problemExplainer goroutine fills these for open critical
 		// problems within ~30s of opening; the UI surfaces the

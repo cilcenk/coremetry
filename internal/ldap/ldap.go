@@ -174,6 +174,13 @@ type LDAPUser struct {
 	Username    string   `json:"username"`
 	Email       string   `json:"email"`
 	DisplayName string   `json:"displayName"`
+	// Department / Company — directory org info (v0.8.266, operator:
+	// "organizasyon, ad soyad, ekip bilgisi de gelsin"). AD names them
+	// department/company; inetOrgPerson uses ou/o — dirText resolves
+	// the fallback. Department feeds the users.team column on login,
+	// Company the org column.
+	Department string   `json:"department,omitempty"`
+	Company    string   `json:"company,omitempty"`
 	Groups      []string `json:"groups,omitempty"`
 	// Photo — raw thumbnailPhoto (AD) / jpegPhoto (inetOrgPerson) bytes
 	// (v0.8.238). Never serialized: the directory-search UI JSON must
@@ -204,6 +211,19 @@ func photoFromEntry(e *goldap.Entry) []byte {
 		}
 	}
 	return nil
+}
+
+// dirText returns the first non-empty value among the given
+// directory attributes — AD and inetOrgPerson name the same concept
+// differently (department vs ou, company vs o), and some directories
+// pad values with whitespace.
+func dirText(e *goldap.Entry, attrs ...string) string {
+	for _, a := range attrs {
+		if v := strings.TrimSpace(e.GetAttributeValue(a)); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // AuthResult bundles the authenticated user + the role we resolved
@@ -458,6 +478,9 @@ func findUser(conn *goldap.Conn, c Config, username string) (*LDAPUser, error) {
 	// an absent attribute costs nothing on the wire, and photoFromEntry
 	// caps what we keep (maxPhotoBytes).
 	attrs = append(attrs, "thumbnailPhoto", "jpegPhoto")
+	// v0.8.266 — directory org info (department/company + the
+	// inetOrgPerson ou/o equivalents). Absent attrs are free.
+	attrs = append(attrs, "department", "ou", "company", "o")
 	log.Printf("[ldap] user search baseDN=%q filter=%s attrs=%v", c.BaseDN, filter, attrs)
 	req := goldap.NewSearchRequest(
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
@@ -501,6 +524,8 @@ func findUser(conn *goldap.Conn, c Config, username string) (*LDAPUser, error) {
 		Username:    firstNonEmpty(e.GetAttributeValue(c.UserAttribute), username),
 		Email:       e.GetAttributeValue(c.EmailAttribute),
 		DisplayName: e.GetAttributeValue(c.DisplayAttribute),
+		Department:  dirText(e, "department", "ou"),
+		Company:     dirText(e, "company", "o"),
 		Photo:       photoFromEntry(e),
 		Groups:      groups,
 	}, nil
@@ -530,7 +555,8 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]LDAPUs
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
 		limit, 30, false,
 		filter,
-		[]string{"dn", c.UserAttribute, c.EmailAttribute, c.DisplayAttribute},
+		[]string{"dn", c.UserAttribute, c.EmailAttribute, c.DisplayAttribute,
+			"department", "ou", "company", "o"},
 		nil,
 	)
 	res, err := conn.Search(req)
@@ -547,6 +573,8 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]LDAPUs
 			Username:    e.GetAttributeValue(c.UserAttribute),
 			Email:       e.GetAttributeValue(c.EmailAttribute),
 			DisplayName: e.GetAttributeValue(c.DisplayAttribute),
+			Department:  dirText(e, "department", "ou"),
+			Company:     dirText(e, "company", "o"),
 		})
 	}
 	return out, nil

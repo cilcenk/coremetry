@@ -4857,6 +4857,15 @@ func (s *Server) userPayload(u *chstore.User) map[string]any {
 		// for local/OIDC accounts and render the initials fallback.
 		"hasPhoto": u.HasPhoto,
 	}
+	// v0.8.266 — directory identity for the sidebar/profile chrome.
+	// Omitted (not empty-stringed) when unset so the SPA's ?? chains
+	// fall through cleanly.
+	if u.FullName != "" {
+		out["fullName"] = u.FullName
+	}
+	if u.Org != "" {
+		out["org"] = u.Org
+	}
 	// Only viewers get a custom-role restriction. Defensive guard
 	// mirrors UpsertUser — a stale pointer on an admin/editor row
 	// should be ignored, never enforced.
@@ -5014,6 +5023,10 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 		// v0.8.238 — persist the directory photo on every login so the
 		// avatar tracks the directory (removed there = cleared here).
 		Photo: res.User.Photo,
+		// v0.8.266 — directory identity: displayName → full name,
+		// company/o → organization, department/ou → team (below).
+		FullName: strings.TrimSpace(res.User.DisplayName),
+		Org:      strings.TrimSpace(res.User.Company),
 	}
 	firstLogin := existing == nil
 	if existing != nil {
@@ -5026,10 +5039,26 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 		u.Team = existing.Team
 		u.CustomRole = existing.CustomRole
 		u.PasswordHash = existing.PasswordHash
+		// Directory values refresh on every login but never WIPE a
+		// stored value when the attribute is absent — an admin's
+		// manual fill survives a sparse directory entry.
+		if u.FullName == "" {
+			u.FullName = existing.FullName
+		}
+		if u.Org == "" {
+			u.Org = existing.Org
+		}
 	} else {
 		idBytes := make([]byte, 8)
 		_, _ = rand.Read(idBytes)
 		u.ID = hex.EncodeToString(idBytes)
+	}
+	// v0.8.266 — the directory's department/ou IS the team when
+	// present (operator: "ekip bilgisi de gelsin" — the directory is
+	// the source of truth). An absent attribute keeps the admin's
+	// manual assignment (carried forward above).
+	if dep := strings.TrimSpace(res.User.Department); dep != "" {
+		u.Team = dep
 	}
 	if err := s.store.UpsertUser(ctx, u); err != nil {
 		return nil, fmt.Errorf("provision ldap user: %w", err)
@@ -5885,6 +5914,11 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 			"authProvider": provider,
 			"team":         u.Team,
 			"createdAt":    u.CreatedAt,
+			// v0.8.238/266 — avatar + directory identity for the
+			// admin Users table.
+			"hasPhoto": u.HasPhoto,
+			"fullName": u.FullName,
+			"org":      u.Org,
 		}
 		// Surface customRole + resolved pages for the admin Users
 		// page. Same defensive guard as userPayload: only viewers

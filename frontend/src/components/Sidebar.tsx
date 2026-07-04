@@ -366,12 +366,21 @@ export function Sidebar() {
             {showLabels && (
               <>
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* v0.8.266 — directory identity: full name leads
+                      when the directory provided one (email moves to
+                      the tooltip); role line carries the org. Local
+                      accounts render exactly as before. */}
                   <div style={{
                     fontSize: 12, color: 'var(--text2)',
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }} title={user.email}>{user.email}</div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase' }}>
-                    {user.role}
+                  }} title={user.fullName ? `${user.fullName} · ${user.email}` : user.email}>
+                    {user.fullName || user.email}
+                  </div>
+                  <div style={{
+                    fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }} title={user.org || undefined}>
+                    {user.role}{user.org ? ` · ${user.org}` : ''}
                   </div>
                 </div>
                 <span style={{ color: 'var(--text3)', fontSize: 10 }}>{menuOpen ? '▾' : '▸'}</span>

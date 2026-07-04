@@ -1831,6 +1831,11 @@ export interface AuthUser {
   // user; gates the <img src=".../photo"> so local/OIDC accounts
   // render the initials fallback without a guaranteed-404 request.
   hasPhoto?: boolean;
+  // v0.8.266 — directory identity, refreshed on each LDAP login:
+  // displayName → fullName, company/o → org (department/ou lands in
+  // the team field on UserRow). Empty for local/OIDC accounts.
+  fullName?: string;
+  org?: string;
 }
 export interface UserRow extends AuthUser {
   disabled: boolean;

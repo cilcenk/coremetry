@@ -9,7 +9,9 @@ import { IconSparkles } from './icons';
 import { api } from '@/lib/api';
 import { useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
-import { metricQuery } from '@/lib/metricQuery';
+import { stepForWidth } from '@/lib/chartStep';
+import { useContentWidth } from '@/lib/useContentWidth';
+import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibility';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 
@@ -46,12 +48,14 @@ export function ServiceCharts({ service, range, onZoom }: {
   // the hover ⋮ menu opens the Explorer on that exact series. The wrap uses
   // menuOnly: these charts own drag-zoom + bucket-click, so a body-click →
   // Explore would collide. filters pin the focused service; the panels split by
-  // operation, so groupBy ['name']. The bespoke spanMetricBatch fetch (one CH
-  // pass for all three aggs) is untouched — the doorway is additive.
-  const svcFilter = useMemo(() => ({ 'service.name': service }), [service]);
-  const rpsMq = useMemo(() => metricQuery({ metric: 'calls_total', agg: 'rate', unit: 'rps', filters: svcFilter, groupBy: ['name'] }), [svcFilter]);
-  const errMq = useMemo(() => metricQuery({ metric: 'calls_total', agg: 'error_rate', unit: '%', filters: svcFilter, groupBy: ['name'] }), [svcFilter]);
-  const p99Mq = useMemo(() => metricQuery({ metric: 'duration_milliseconds_bucket', agg: 'p99', unit: 'ms', filters: svcFilter, groupBy: ['name'] }), [svcFilter]);
+  // operation, so groupBy ['name'].
+  //
+  // GRAN-D (v0.8.249) — these descriptors are no longer menu-only: the fetch
+  // below rides the SAME objects through /api/metrics/resolve, so each panel
+  // draws exactly what its doorway opens (built + eligibility-pinned in
+  // lib/resolverEligibility.ts).
+  const red = useMemo(() => serviceRedDescriptors(service), [service]);
+  const { rps: rpsMq, err: errMq, p99: p99Mq } = red;
 
   const [rpsSeries, setRpsSeries] = useState<SpanMetricSeries[] | null>(null);
   const [errSeries, setErrSeries] = useState<SpanMetricSeries[] | null>(null);
@@ -87,25 +91,77 @@ export function ServiceCharts({ service, range, onZoom }: {
     : compare === '7d' ? '7d ago'
     : compare === 'prev' ? 'prev window' : '';
 
+  // GRAN-D (v0.8.249) — width-aware step for the resolver path. Full-row
+  // charts inside #content, so the page-level bucket (GRAN-A hook) is the
+  // right yardstick; entering the fetch deps below it doubles as the cache
+  // key's step component (v0.5.187 — refetch on bucket crossing, never a
+  // stale-step reuse). The backend min-step clamp (v0.8.243) floors it at
+  // the spanmetrics tier resolution.
+  const contentW = useContentWidth();
+  const effStep = useMemo(
+    () => stepForWidth((to - from) / 1e9, contentW),
+    [from, to, contentW],
+  );
+
+  // fetchRed — one RED-triple fetch for an arbitrary window (current period
+  // or the shifted compare window; both share it so main + ghost series ride
+  // the same path at the same step and their buckets align).
+  //
+  // GRAN-D (v0.8.249) — primary path is now /api/metrics/resolve per agg:
+  // the descriptors are tier-eligible by construction (service.name filter,
+  // 'name' split, rate/error_rate/p99), so a 1h window draws off the
+  // spanmetrics 10s/1m rollup tiers with the width-aware step instead of the
+  // 12-point 5m summary read. (History note: this migration was measured and
+  // parked 2026-06-15 on LATENCY grounds; it ships now for GRANULARITY, with
+  // operator approval.) Dual-path: ineligible descriptors or a resolver
+  // failure fall back to the pre-GRAN-D spanMetricBatch (one CH pass for all
+  // three aggs over the 5m MV) — never a blank panel. Exemplars aren't
+  // requested; bucket-click → api.spanExemplar covers that flow already.
+  const fetchRed = useCallback(
+    (fromNs: number, toNs: number): Promise<{
+      rate: SpanMetricSeries[]; error_rate: SpanMetricSeries[]; p99: SpanMetricSeries[];
+    }> => {
+      const viaLegacy = () => {
+        const dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
+        // Batch — one CH pass for rate + error_rate + p99 over the same
+        // WHERE. Cold-cache time drops to ~1/3 of a three-call fan-out
+        // because the spans scan happens once.
+        return api.spanMetricBatch({
+          from: fromNs, to: toNs, groupBy: ['name'], dsl,
+          aggs: [
+            { name: 'rate',       agg: 'rate' },
+            { name: 'error_rate', agg: 'error_rate' },
+            { name: 'p99',        agg: 'p99', field: 'duration_ms' },
+          ],
+        }).then(res => ({
+          rate: res.rate ?? [], error_rate: res.error_rate ?? [], p99: res.p99 ?? [],
+        }));
+      };
+      const eligible = isResolverEligible(rpsMq) && isResolverEligible(errMq) && isResolverEligible(p99Mq);
+      if (!eligible) return viaLegacy();
+      const r = { from: fromNs, to: toNs };
+      return Promise.all([
+        api.resolveMetric(rpsMq, r, { step: effStep }),
+        api.resolveMetric(errMq, r, { step: effStep }),
+        api.resolveMetric(p99Mq, r, { step: effStep }),
+      ]).then(([rps, err, p99]) => ({
+        // .series is byte-identical to the spanMetric shape (D5 contract) —
+        // MultiLineChart consumes it unchanged. null result = genuinely no
+        // data (not an error) → empty, matching the legacy path.
+        rate: rps?.series ?? [], error_rate: err?.series ?? [], p99: p99?.series ?? [],
+      })).catch(() => viaLegacy());
+    },
+    [service, rpsMq, errMq, p99Mq, effStep],
+  );
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
-    // Batch — one CH pass for rate + error_rate + p99 over the
-    // same WHERE. Cold-cache time drops to ~1/3 of the legacy
-    // three-call fan-out because the spans scan happens once.
-    api.spanMetricBatch({
-      from, to, groupBy: ['name'], dsl,
-      aggs: [
-        { name: 'rate',       agg: 'rate' },
-        { name: 'error_rate', agg: 'error_rate' },
-        { name: 'p99',        agg: 'p99', field: 'duration_ms' },
-      ],
-    }).then(res => {
+    fetchRed(from, to).then(res => {
       if (cancelled) return;
-      setRpsSeries(res.rate       ?? []);
-      setErrSeries(res.error_rate ?? []);
-      setP99Series(res.p99        ?? []);
+      setRpsSeries(res.rate);
+      setErrSeries(res.error_rate);
+      setP99Series(res.p99);
     }).catch(() => {
       if (cancelled) return;
       setRpsSeries([]); setErrSeries([]); setP99Series([]);
@@ -113,7 +169,7 @@ export function ServiceCharts({ service, range, onZoom }: {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [service, from, to]);
+  }, [from, to, fetchRed]);
 
   // Compare fetch — only fires when toggle is on. Same batch
   // trick: one CH pass for the previous window's three
@@ -126,27 +182,20 @@ export function ServiceCharts({ service, range, onZoom }: {
       return;
     }
     let cancelled = false;
-    const dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
-    const prevFrom = from - compareOffsetNs;
-    const prevTo = to - compareOffsetNs;
-    api.spanMetricBatch({
-      from: prevFrom, to: prevTo, groupBy: ['name'], dsl,
-      aggs: [
-        { name: 'rate',       agg: 'rate' },
-        { name: 'error_rate', agg: 'error_rate' },
-        { name: 'p99',        agg: 'p99', field: 'duration_ms' },
-      ],
-    }).then(res => {
+    // GRAN-D — same fetchRed dual-path as the current period, shifted by the
+    // compare offset. Same step, so the ghost overlay's buckets align 1:1
+    // with the main series after MultiLineChart re-bases them.
+    fetchRed(from - compareOffsetNs, to - compareOffsetNs).then(res => {
       if (cancelled) return;
-      setRpsPrev(res.rate       ?? []);
-      setErrPrev(res.error_rate ?? []);
-      setP99Prev(res.p99        ?? []);
+      setRpsPrev(res.rate);
+      setErrPrev(res.error_rate);
+      setP99Prev(res.p99);
     }).catch(() => {
       if (cancelled) return;
       setRpsPrev([]); setErrPrev([]); setP99Prev([]);
     });
     return () => { cancelled = true; };
-  }, [service, from, to, compare, compareOffsetNs]);
+  }, [from, to, compare, compareOffsetNs, fetchRed]);
 
   // Deploy markers for this service in the visible window.
   // deploysQ stays for DeployImpactButton (version-based AI explain;

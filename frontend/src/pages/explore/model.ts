@@ -11,6 +11,7 @@
 import type { FilterExpr, FilterGroup, SpanAgg } from '@/lib/types';
 import { isFlatAndGroup } from '@/lib/urlState';
 import { metricQuery, type MetricQuery, type MetricAgg } from '@/lib/metricQuery';
+import { TIER_DIM_KEYS, EXEMPLAR_AGGS } from '@/lib/resolverEligibility';
 
 // Per-query source: 'span' aggregates the spans table via api.spanMetric
 // (rate / error_rate / percentiles over duration_ms or any numeric attr);
@@ -237,19 +238,12 @@ export function pinnedOperation(q: BuilderQuery): string {
 // measured field being duration (the rollups carry no other numeric attr).
 // Anything else returns null — the panel simply renders without ◆ glyphs.
 
-// Mirror of chstore tierDimColumn's accepted keys.
-const TIER_DIM_KEYS = new Set([
-  'service.name', 'service_name',
-  'name', 'operation',
-  'kind', 'span.kind',
-  'status', 'status_code',
-  'http.route', 'http_route',
-]);
-
-// Aggs spanmetricStateAgg can serve (no p999/min/max/last on the rollups).
-const EXEMPLAR_AGGS = new Set([
-  'count', 'rate', 'per_min', 'errors', 'error_rate', 'apdex', 'avg', 'sum', 'p50', 'p90', 'p95', 'p99',
-]);
+// GRAN-D (v0.8.249) — TIER_DIM_KEYS + EXEMPLAR_AGGS moved to
+// lib/resolverEligibility.ts (imported above) so non-Explore surfaces
+// (ServiceCharts' RED family) share the eligibility contract without
+// importing this page's builder model. Re-exported verbatim for existing
+// consumers; exemplarDescriptor below is behaviour-identical.
+export { TIER_DIM_KEYS, EXEMPLAR_AGGS };
 
 export function exemplarDescriptor(q: BuilderQuery): MetricQuery | null {
   if (q.source !== 'span') return null;

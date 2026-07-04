@@ -10,7 +10,7 @@ import { Sparkline } from '@/components/Sparkline';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { useDataTable, DataTableColgroup, ColResizeHandle } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import { useAllServiceRuntimes } from '@/lib/queries';
+import { useAllServiceRuntimes, useServicesMetadata } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
@@ -62,11 +62,12 @@ export default function ServicesPage() {
   // Service-catalog metadata — pulled once, joined locally so
   // operators can filter the list by SRE team / owner team
   // and see "their" services. The endpoint is server-cached
-  // for 60s so the per-page-load cost is bounded.
-  const [catalog, setCatalog] = useState<Record<string, import('@/lib/types').ServiceMetadata>>({});
-  useEffect(() => {
-    api.servicesMetadata().then(c => setCatalog(c ?? {})).catch(() => {});
-  }, []);
+  // for 60s so the per-page-load cost is bounded. Memoized on
+  // the query data so the {} fallback keeps a stable identity
+  // for the team-option useMemos below.
+  const catalogQ = useServicesMetadata();
+  const catalog = useMemo<Record<string, import('@/lib/types').ServiceMetadata>>(
+    () => catalogQ.data ?? {}, [catalogQ.data]);
   const [sortBy, setSortBy] = useState<SortKey>('errorRate');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // v0.5.276 — pinned services. localStorage Set; pinned rows

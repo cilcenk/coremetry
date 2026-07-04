@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
-import { api } from '@/lib/api';
+import { useOperatorEvents, useDeleteOperatorEvent } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -65,38 +65,34 @@ export default function EventsPage() {
   const canDelete = user?.role === 'admin' || user?.role === 'editor';
 
   const [range, setRange] = useUrlRange('24h');
-  const [data, setData] = useState<Event[] | null | undefined>(undefined);
   const [serviceFilter, setServiceFilter] = useState('');
   const [kindFilter, setKindFilter] = useState('');
   const [busyDelete, setBusyDelete] = useState<string | null>(null);
 
-  // Eagerly compute the bounds so the effect dep array gets a
-  // stable pair instead of re-evaluating timeRangeToNs(range)
-  // every render (the v0.5.184 incident shape).
+  // Eagerly compute the bounds so the query key gets a stable pair
+  // instead of re-evaluating timeRangeToNs(range) every render (the
+  // v0.5.184 incident shape).
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
-  const load = () => {
-    setData(undefined);
-    api.listEvents({
-      from: Math.floor(from / 1_000_000_000),
-      to:   Math.floor(to / 1_000_000_000),
-      service: serviceFilter || undefined,
-      kind: kindFilter || undefined,
-      limit: 500,
-    })
-      .then(d => setData((d ?? []) as Event[]))
-      .catch(() => setData(null));
-  };
-
-  useEffect(load, [from, to, serviceFilter, kindFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  const eventsQ = useOperatorEvents({
+    from: Math.floor(from / 1_000_000_000),
+    to:   Math.floor(to / 1_000_000_000),
+    service: serviceFilter || undefined,
+    kind: kindFilter || undefined,
+    limit: 500,
+  });
+  const data: Event[] | null | undefined =
+    eventsQ.isPending ? undefined : eventsQ.isError ? null : (eventsQ.data ?? []) as Event[];
+  // Deletion drops the row from the cached list in place (no
+  // refetch) — same optimistic removal the manual setData did.
+  const deleteEvent = useDeleteOperatorEvent();
 
   const onDelete = async (id: string) => {
     if (!canDelete) return;
     if (!confirm('Delete this event marker?')) return;
     setBusyDelete(id);
     try {
-      await api.deleteEvent(id);
-      setData(prev => prev?.filter(e => e.id !== id) ?? prev);
+      await deleteEvent.mutateAsync(id);
     } catch (e) {
       alert('Delete failed: ' + (e as Error).message);
     } finally {

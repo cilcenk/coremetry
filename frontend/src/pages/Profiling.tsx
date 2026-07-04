@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { IconFlame } from '@/components/icons';
 import { ServicePicker } from '@/components/ServicePicker';
 import { BreakdownBar, KindBadge } from '@/components/KindBadge';
-import { api } from '@/lib/api';
+import { useProfiles, useProfileHotspots } from '@/lib/queries';
 import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -68,8 +68,33 @@ export default function ProfilingPage() {
     if (v === 'hotspots') p.set('view', 'hotspots'); else p.delete('view');
     return p;
   }, { replace: true });
-  const [data, setData] = useState<ProfileRow[] | null | undefined>(undefined);
-  const [hotspots, setHotspots] = useState<ProfileHotspotsResponse | null | undefined>(undefined);
+  // Bounds memoized on [range] so the query keys stay stable across
+  // renders (the v0.5.184 incident shape).
+  const rangeNs = useMemo(() => timeRangeToNs(range), [range]);
+
+  // Per-profile list — only fetched on the list view.
+  const listQ = useProfiles(
+    { service, type: ptype, from: rangeNs.from, to: rangeNs.to, limit: 200 },
+    view === 'list',
+  );
+  const data: ProfileRow[] | null | undefined =
+    view !== 'list' || listQ.isPending ? undefined
+      : listQ.isError ? null : listQ.data ?? [];
+
+  // Hotspots fetch — service is a hard requirement; skip entirely
+  // without one and let the empty-state nudge the operator to pick.
+  const hsEnabled = view === 'hotspots' && !!service;
+  const hsQ = useProfileHotspots({
+    service,
+    type: ptype || 'cpu',
+    from: rangeNs.from,
+    to: rangeNs.to,
+    limit: 200,
+    top: 100,
+  }, hsEnabled);
+  const hotspots: ProfileHotspotsResponse | null | undefined =
+    !hsEnabled || hsQ.isPending ? undefined
+      : hsQ.isError ? null : hsQ.data ?? null;
   // Shared sortable + resizable profiles list (unconditional hook).
   const profileDt = useDataTable<ProfileRow>({
     storageKey: 'profiles', columns: PROFILE_COLS,
@@ -80,37 +105,6 @@ export default function ProfilingPage() {
   // to figure out the wire format. Surfacing copy-paste snippets
   // here turns "is profiling working?" into a 90-second exercise.
   const [setupOpen, setSetupOpen] = useState(false);
-
-  useEffect(() => {
-    if (view !== 'list') return;
-    setData(undefined);
-    const { from, to } = timeRangeToNs(range);
-    api.profiles({ service, type: ptype, from, to, limit: 200 })
-      .then(p => setData(p ?? []))
-      .catch(() => setData(null));
-  }, [view, range, service, ptype]);
-
-  // Hotspots fetch — service is a hard requirement; skip
-  // entirely without one and let the empty-state nudge the
-  // operator to pick.
-  const hsRange = useMemo(() => timeRangeToNs(range), [range]);
-  useEffect(() => {
-    if (view !== 'hotspots' || !service) {
-      setHotspots(undefined);
-      return;
-    }
-    setHotspots(undefined);
-    api.profileHotspots({
-      service,
-      type: ptype || 'cpu',
-      from: hsRange.from,
-      to: hsRange.to,
-      limit: 200,
-      top: 100,
-    })
-      .then(r => setHotspots(r ?? null))
-      .catch(() => setHotspots(null));
-  }, [view, service, ptype, hsRange]);
 
   return (
     <>

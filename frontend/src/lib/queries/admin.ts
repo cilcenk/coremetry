@@ -29,6 +29,66 @@ export function useCardinality() {
   });
 }
 
+// ── Admin infrastructure reads ────────────────────────────
+
+// ClickHouse self-stats for /admin/clickhouse. 10s poll matches the
+// prior page-level setInterval; React Query pauses the interval
+// while the tab is hidden (refetchIntervalInBackground defaults to
+// false), preserving the document.hidden gate.
+export function useClickhouseHealth() {
+  return useQuery({
+    queryKey: ['admin', 'clickhouse-health'],
+    queryFn: api.clickhouseHealth,
+    refetchInterval: 10_000,
+    staleTime: 10_000,
+  });
+}
+
+// Multi-pod HA roster for /admin/cluster. 10s poll matches the
+// heartbeat interval so a freshly-rolled pod appears within one
+// tick; hidden tabs pause automatically.
+export function useClusterMembers() {
+  return useQuery({
+    queryKey: ['admin', 'cluster-members'],
+    queryFn: api.listClusterMembers,
+    refetchInterval: 10_000,
+    staleTime: 10_000,
+  });
+}
+
+// ES index inventory + ILM lifecycle for /admin/elastic. One shot
+// per mount (no poll) — _cat/indices + _ilm/explain cost ~1-3s on
+// big clusters.
+export function useElasticIndices() {
+  return useQuery({
+    queryKey: ['admin', 'elastic', 'indices'],
+    queryFn: api.adminElasticIndices,
+  });
+}
+
+// Recent failed ES queries (v0.8.230). Polls every 30s so an error
+// the operator just triggered on /logs shows up without a manual
+// refresh; pauses on document.hidden via the interval default.
+export function useElasticErrors() {
+  return useQuery({
+    queryKey: ['admin', 'elastic', 'errors'],
+    queryFn: api.adminElasticErrors,
+    refetchInterval: 30_000,
+    staleTime: 30_000,
+  });
+}
+
+// SQL playground schema browser. Schema shifts on migrations, not
+// minute-to-minute — cache it for the session's practical length.
+export function useSqlSchema(enabled = true) {
+  return useQuery({
+    queryKey: ['admin', 'sql-schema'],
+    queryFn: api.sqlSchema,
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 // ── Audit log ─────────────────────────────────────────────
 
 export function useAuditLog(

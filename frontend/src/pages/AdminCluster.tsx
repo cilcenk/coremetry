@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
-import { api, type ClusterMember } from '@/lib/api';
+import { useClusterMembers } from '@/lib/queries';
+import { type ClusterMember } from '@/lib/api';
 import { tsLong, tsRel } from '@/lib/utils';
 import { IconLock } from '@/components/icons';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -40,22 +40,16 @@ const CLUSTER_COLS: DataTableColumn<ClusterMember>[] = [
 
 export default function AdminClusterPage() {
   const { user } = useAuth();
-  const [data, setData] = useState<{ members: ClusterMember[]; selfId: string } | null | undefined>(undefined);
-  const [now, setNow] = useState(Date.now());
-
-  const load = () => {
-    api.listClusterMembers().then(setData).catch(() => setData(null));
-  };
-  useEffect(() => {
-    load();
-    const id = setInterval(() => {
-      if (!document.hidden) {
-        load();
-        setNow(Date.now());
-      }
-    }, 10_000);
-    return () => clearInterval(id);
-  }, []);
+  // 10s poll matches the heartbeat interval (via the hook's
+  // refetchInterval); hidden tabs pause automatically. `now` anchors
+  // the stale-badge math to the roster's fetch time — dataUpdatedAt
+  // moves with every successful poll, mirroring the prior interval
+  // that bumped Date.now() alongside each load.
+  const clusterQ = useClusterMembers();
+  const data: { members: ClusterMember[]; selfId: string } | null | undefined =
+    clusterQ.isPending ? undefined : clusterQ.isError ? null : clusterQ.data;
+  const now = clusterQ.dataUpdatedAt || Date.now();
+  const load = () => { clusterQ.refetch(); };
 
   // Shared sortable + resizable table. Hook is UNCONDITIONAL and ABOVE
   // the admin gate below (rules-of-hooks — on a render where `user`

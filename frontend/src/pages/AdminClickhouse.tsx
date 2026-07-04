@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
+import { useClickhouseHealth } from '@/lib/queries';
 import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange } from '@/lib/types';
 
@@ -163,19 +164,11 @@ const SHARD_POLICY_COLS: DataTableColumn<ShardPolicyRow>[] = [
 
 export default function AdminClickhousePage() {
   const [range, setRange] = useUrlRange('30m');
-  const [data, setData] = useState<CHHealth | null | undefined>(undefined);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchOnce = () => {
-      api.clickhouseHealth()
-        .then(d => { if (!cancelled) setData(d as CHHealth ?? null); })
-        .catch(() => { if (!cancelled) setData(null); });
-    };
-    fetchOnce();
-    const id = setInterval(() => { if (!document.hidden) fetchOnce(); }, 10_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  // 10s poll via the hook's refetchInterval; hidden tabs pause
+  // automatically (refetchIntervalInBackground defaults false).
+  const healthQ = useClickhouseHealth();
+  const data: CHHealth | null | undefined =
+    healthQ.isPending ? undefined : healthQ.isError ? null : healthQ.data as CHHealth ?? null;
 
   // Highest-volume merge — surfaced in the page header so the
   // operator sees pressure without reading the table.

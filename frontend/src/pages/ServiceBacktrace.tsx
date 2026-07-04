@@ -1,9 +1,9 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { api } from '@/lib/api';
+import { useServiceBacktrace } from '@/lib/queries';
 import { fmtNum, hashColor, tsLong } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -41,18 +41,19 @@ function BacktraceInner() {
   const svc = searchParams.get('name') ?? '';
 
   const [range, setRange] = useUrlRange('30m');
-  const [data, setData] = useState<CallerRow[] | null | undefined>(undefined);
   const [filter, setFilter] = useState('');
 
-  useEffect(() => {
-    if (!svc) return;
-    setData(undefined);
-    api.serviceBacktrace(svc, {
-      since: SINCE_MAP[range.preset] ?? '1h',
-      limit: 200,
-    }).then(r => setData(r?.callers ?? []))
-      .catch(() => setData(null));
-  }, [svc, range]);
+  // Keyed on (service, since) — the hook skips the fetch entirely
+  // when svc is empty (the "Missing service name" branch below).
+  const btQ = useServiceBacktrace(svc, {
+    since: SINCE_MAP[range.preset] ?? '1h',
+    limit: 200,
+  });
+  // Memoized so the tri-state mapping keeps a stable identity for
+  // the filtered/totals memos below.
+  const data = useMemo<CallerRow[] | null | undefined>(
+    () => btQ.isPending ? undefined : btQ.isError ? null : btQ.data?.callers ?? [],
+    [btQ.isPending, btQ.isError, btQ.data]);
 
   const filtered = useMemo(() => {
     if (!data) return [];

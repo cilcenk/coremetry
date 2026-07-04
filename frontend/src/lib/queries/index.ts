@@ -16,10 +16,13 @@ export {
   useServices, useServiceNames, useServiceMap,
   useServiceInfra, useServiceNeighbors, useServiceRuntime,
   useAllServiceRuntimes, useServiceDeploys, useServiceRollouts,
+  useServicesMetadata, useServiceBacktrace, useClusters,
 } from './services';
 export {
   useSystemStats, useCardinality,
   useAuditLog,
+  useClickhouseHealth, useClusterMembers,
+  useElasticIndices, useElasticErrors, useSqlSchema,
   useStatusPageConfig, useUpdateStatusPageConfig,
   useStatusPageComponents, useCreateStatusComponent,
   useUpdateStatusComponent, useDeleteStatusComponent,
@@ -51,3 +54,9 @@ export {
 } from './slos';
 export { useEventStream } from './eventStream';
 export { useExemplar, useExemplarFetcher } from './spans';
+export { useUsers, useCustomRoles } from './users';
+export { useOperatorEvents, useDeleteOperatorEvent } from './events';
+export { useInbox } from './inbox';
+export { useProfiles, useProfileHotspots } from './profiles';
+export { useSlowQueries } from './databases';
+export { useEndpoints } from './endpoints';

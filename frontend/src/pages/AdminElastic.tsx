@@ -1,12 +1,12 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { fmtNum, fmtBytes } from '@/lib/utils';
+import { useElasticIndices, useElasticErrors } from '@/lib/queries';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { ESQueryError } from '@/lib/types';
 
 // AdminElastic (v0.5.466) — operator-facing inventory of the
 // logs backend's indices: name, doc count, size, health, ILM
@@ -59,23 +59,15 @@ const ELASTIC_COLS: DataTableColumn<Row>[] = [
 ];
 
 // Recent failed ES queries (v0.8.230, operator-requested). Polls every
-// 30s (pauses on document.hidden per the polling rule) so an error the
-// operator just triggered on /logs shows up here without a manual
-// refresh. Expandable rows reveal the exact query body for curl replay.
+// 30s (pauses on document.hidden — React Query's default of not
+// refetching in background tabs) so an error the operator just
+// triggered on /logs shows up here without a manual refresh.
+// Expandable rows reveal the exact query body for curl replay.
+// Fetch errors are swallowed: the panel is best-effort; the indices
+// error banner covers hard failures.
 function QueryErrorsPanel() {
-  const [diag, setDiag] = useState<{ queryErrors: number; recentErrors: ESQueryError[] } | undefined>(undefined);
+  const diag = useElasticErrors().data;
   const [open, setOpen] = useState<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchOnce = () =>
-      api.adminElasticErrors()
-        .then(d => { if (!cancelled) setDiag(d); })
-        .catch(() => { /* panel is best-effort; the indices error banner covers hard failures */ });
-    fetchOnce();
-    const t = setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, []);
 
   if (!diag) return null;
   const errs = diag.recentErrors ?? [];
@@ -136,17 +128,12 @@ function QueryErrorsPanel() {
 }
 
 export default function AdminElasticPage() {
-  const [data, setData] = useState<Payload | undefined>(undefined);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setErr(null);
-    api.adminElasticIndices()
-      .then(d => { if (!cancelled) setData(d ?? { backend: '', indices: [] }); })
-      .catch(e => { if (!cancelled) setErr(e instanceof Error ? e.message : String(e)); });
-    return () => { cancelled = true; };
-  }, []);
+  const indicesQ = useElasticIndices();
+  const err = indicesQ.error
+    ? (indicesQ.error instanceof Error ? indicesQ.error.message : String(indicesQ.error))
+    : null;
+  const data: Payload | undefined =
+    indicesQ.data === undefined ? undefined : indicesQ.data ?? { backend: '', indices: [] };
 
   const rows = data?.indices ?? [];
   const dt = useDataTable<Row>({

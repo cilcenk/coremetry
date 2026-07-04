@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, FormEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
+import { keys, useUsers, useCustomRoles } from '@/lib/queries';
 import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
 import { tsLong } from '@/lib/utils';
@@ -22,21 +24,28 @@ const USER_COLS: DataTableColumn<UserRow>[] = [
 
 export default function UsersPage() {
   const { user: me } = useAuth();
-  const [users, setUsers] = useState<UserRow[] | null | undefined>(undefined);
-  const [customRoles, setCustomRoles] = useState<CustomRole[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [resetFor, setResetFor] = useState<UserRow | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // undefined = loading, null = fetch failed — the tri-state the
+  // render branches below key on. Custom-role catalog drives the
+  // per-row picker — fetched alongside the user list, refreshed on
+  // every change so a role added in Settings → Roles appears here
+  // without a hard reload.
+  const usersQ = useUsers();
+  const rolesQ = useCustomRoles();
+  // Memoized so the tri-state mapping keeps a stable identity for
+  // the teamOptions / filteredUsers memos below.
+  const users = useMemo<UserRow[] | null | undefined>(
+    () => usersQ.isPending ? undefined : usersQ.isError ? null : usersQ.data ?? [],
+    [usersQ.isPending, usersQ.isError, usersQ.data]);
+  const customRoles: CustomRole[] = rolesQ.data ?? [];
+  const qc = useQueryClient();
   const refresh = () => {
-    setUsers(undefined);
-    api.listUsers().then(u => setUsers(u ?? [])).catch(() => setUsers(null));
-    // Custom-role catalog drives the per-row picker — fetched once
-    // alongside the user list, refreshed on every change so a role
-    // added in Settings → Roles appears here without a hard reload.
-    api.listCustomRoles().then(r => setCustomRoles(r.roles ?? [])).catch(() => setCustomRoles([]));
+    // keys.users.all covers both the list and the role catalog.
+    qc.invalidateQueries({ queryKey: keys.users.all });
   };
-  useEffect(refresh, []);
 
   // Team filter — distinct non-empty teams from the loaded user list plus a
   // synthetic "Unassigned" bucket; free-text so admins narrow as they type.

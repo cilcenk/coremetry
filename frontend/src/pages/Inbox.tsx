@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Users, Shield } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
-import { api } from '@/lib/api';
+import { useInbox } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -37,7 +37,6 @@ const INBOX_COLS: DataTableColumn<InboxItem>[] = [
 
 export default function InboxPage() {
   const navigate = useNavigate();
-  const [data, setData] = useState<InboxItem[] | null | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<'open' | 'all'>('open');
   // Multi-select chips for priority + kind. Persisted so the
   // operator's view sticks across page reloads. Default: P1+P2
@@ -85,18 +84,15 @@ export default function InboxPage() {
     });
   };
 
-  useEffect(() => {
-    setData(undefined);
-    api.inbox({
-      status: statusFilter,
-      service: serviceFilter || undefined,
-      ownerTeam: ownerFilter || undefined,
-      sreTeam: sreFilter || undefined,
-      limit: 300,
-    })
-      .then(r => setData(r ?? []))
-      .catch(() => setData(null));
-  }, [statusFilter, serviceFilter, ownerFilter, sreFilter]);
+  const inboxQ = useInbox({
+    status: statusFilter,
+    service: serviceFilter || undefined,
+    ownerTeam: ownerFilter || undefined,
+    sreTeam: sreFilter || undefined,
+    limit: 300,
+  });
+  const data: InboxItem[] | null | undefined =
+    inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data ?? [];
 
   const filtered = useMemo(() => {
     if (!data) return data;

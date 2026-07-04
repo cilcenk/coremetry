@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Zap, ChevronRight, ChevronDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -10,6 +10,7 @@ import { MultiLineChart } from '@/components/MultiLineChart';
 import { EventMarkers } from '@/components/EventMarkers';
 import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useEndpoints, useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -66,11 +67,9 @@ export default function EndpointsPage() {
   const [params, setParams] = useSearchParams();
   // Global time window (UX#2) — URL-persisted + carried across pages.
   const [range, setRange] = useUrlRange('30m');
-  const [rows, setRows] = useState<EndpointRow[] | null | undefined>(undefined);
   const [search, setSearch] = useState(() => params.get('search') ?? '');
   // "/" focuses this filter via the shared table keyboard-nav.
   const searchRef = useRef<HTMLInputElement>(null);
-  const [clusterOptions, setClusterOptions] = useState<string[]>([]);
   const cluster = params.get('cluster') ?? '';
   const setCluster = (v: string) => setParams(prev => {
     const next = new URLSearchParams(prev);
@@ -89,16 +88,6 @@ export default function EndpointsPage() {
     return next;
   }, { replace: true });
 
-  // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
-  // row, Enter/o open its service detail, "/" focuses the path filter.
-  const dt = useDataTable<EndpointRow>({
-    storageKey: 'endpoints',
-    columns: ENDPOINT_COLS,
-    rows: rows ?? [],
-    initialSort: { id: 'calls', dir: 'desc' },
-    onOpen: r => navigate(`/service?name=${encodeURIComponent(r.service)}`),
-    searchRef,
-  });
   // v0.5.389 — limit lifted to 2000 default, with an explicit
   // "load top 5000" toggle so the operator can pull the long
   // tail when they need it. Backend caps at 5000; values above
@@ -150,28 +139,33 @@ export default function EndpointsPage() {
 
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
-  useEffect(() => {
-    setRows(undefined);
-    api.endpoints({
-      from, to,
-      service: service || undefined,
-      search: search.trim() || undefined,
-      cluster: cluster || undefined,
-      limit,
-      compare: compare ? 'prior' : undefined,
-      groupBy: bySignature ? 'signature' : undefined,
-    })
-      .then(r => setRows(r ?? []))
-      .catch(() => setRows(null));
-  }, [from, to, service, search, cluster, limit, compare, bySignature]);
+  const rowsQ = useEndpoints({
+    from, to,
+    service: service || undefined,
+    search: search.trim() || undefined,
+    cluster: cluster || undefined,
+    limit,
+    compare: compare ? 'prior' : undefined,
+    groupBy: bySignature ? 'signature' : undefined,
+  });
+  const rows: EndpointRow[] | null | undefined =
+    rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data ?? [];
 
   // Cluster picker options — mirror Services page so symmetry is
   // intuitive for operators landing here after filtering there.
-  useEffect(() => {
-    api.clusters(from, to)
-      .then(r => setClusterOptions(r?.clusters ?? []))
-      .catch(() => setClusterOptions([]));
-  }, [from, to]);
+  const clustersQ = useClusters(from, to);
+  const clusterOptions = clustersQ.data ?? [];
+
+  // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
+  // row, Enter/o open its service detail, "/" focuses the path filter.
+  const dt = useDataTable<EndpointRow>({
+    storageKey: 'endpoints',
+    columns: ENDPOINT_COLS,
+    rows: rows ?? [],
+    initialSort: { id: 'calls', dir: 'desc' },
+    onOpen: r => navigate(`/service?name=${encodeURIComponent(r.service)}`),
+    searchRef,
+  });
 
   const totalCalls = (rows ?? []).reduce((s, r) => s + r.calls, 0);
   const totalErrors = (rows ?? []).reduce((s, r) => s + r.errors, 0);

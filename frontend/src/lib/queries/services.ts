@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
-import type { Service, ServiceMap, InfraMetricSeries, NeighborStat, ServiceRuntime, Deploy } from '@/lib/types';
+import type { Service, ServiceMap, InfraMetricSeries, NeighborStat, ServiceRuntime, Deploy, ServiceMetadata } from '@/lib/types';
 
 // /api/services + related — the topology side of the app.
 // `range` carries the time window so two pages with different
@@ -99,6 +99,44 @@ export function useServiceRollouts(svc: string, from: number, to: number) {
     queryFn: () => api.serviceRollouts(svc, { from, to }),
     enabled: !!svc && !!from && !!to,
     staleTime: 30_000,
+  });
+}
+
+// Service-catalog metadata — operator-curated owner / SRE team /
+// runbook links, joined locally by the consumers. The endpoint is
+// server-cached 60s; the matching client stale-time keeps repeat
+// mounts within that window free.
+export function useServicesMetadata() {
+  return useQuery<Record<string, ServiceMetadata>>({
+    queryKey: keys.services.metadata,
+    queryFn: async () => (await api.servicesMetadata()) ?? {},
+    staleTime: 60_000,
+  });
+}
+
+// Inbound-callers backtrace — the Dynatrace-style consumer view on
+// /service-backtrace. Keyed on (service, since/limit) so flipping
+// the range preset caches per window.
+export function useServiceBacktrace(
+  svc: string,
+  opts: { since?: string; from?: number; to?: number; limit?: number } = {},
+) {
+  return useQuery({
+    queryKey: keys.services.backtrace(svc, opts),
+    queryFn: () => api.serviceBacktrace(svc, opts),
+    enabled: !!svc,
+  });
+}
+
+// Cluster facet options (k8s / openshift cluster resource attr) —
+// shared by the /services and /endpoints filter dropdowns. The
+// response is cached server-side (60s) so flipping ranges quickly
+// is free after the first hit.
+export function useClusters(from: number, to: number) {
+  return useQuery<string[]>({
+    queryKey: ['clusters', from, to],
+    queryFn: async () => (await api.clusters(from, to))?.clusters ?? [],
+    staleTime: 60_000,
   });
 }
 

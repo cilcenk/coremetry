@@ -6,7 +6,13 @@ import { IconShield } from '@/components/icons';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { Button } from '@/components/ui/Button';
-import { api } from '@/lib/api';
+import {
+  useMonitors,
+  useStatusPageConfig, useUpdateStatusPageConfig,
+  useStatusPageComponents, useCreateStatusComponent,
+  useUpdateStatusComponent, useDeleteStatusComponent,
+  useStatusPageSubscribers, useDeleteStatusSubscriber,
+} from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
 import type { StatusPageConfig, StatusComponent, StatusSubscriber, MonitorRow } from '@/lib/types';
 
@@ -57,12 +63,21 @@ export default function StatusPageAdmin() {
 }
 
 function ConfigTab() {
-  const [c, setC] = useState<StatusPageConfig | null | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const cfgQ = useStatusPageConfig();
+  const putConfig = useUpdateStatusPageConfig();
+  // Local editable draft, hydrated from the loaded config. While dirty
+  // we don't re-hydrate so a background refetch can't clobber edits
+  // (same pattern as the Runbook editor).
   // null = fetch failed (don't mask a load error with a default object —
   // saving over the top would clobber the real persisted config).
-  useEffect(() => { api.statusPageGetConfig().then(d => setC(d ?? { title: 'Service Status' })).catch(() => setC(null)); }, []);
+  const [c, setC] = useState<StatusPageConfig | null | undefined>(undefined);
+  const [dirty, setDirty] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const busy = putConfig.isPending;
+  useEffect(() => {
+    if (cfgQ.isError) { setC(null); return; }
+    if (cfgQ.data !== undefined && !dirty) setC(cfgQ.data ?? { title: 'Service Status' });
+  }, [cfgQ.data, cfgQ.isError, dirty]);
   if (c === undefined) return <Spinner />;
   if (c === null) return (
     <Empty icon="⚠" title="Couldn't load page header">
@@ -70,24 +85,24 @@ function ConfigTab() {
       risk overwriting the stored header.
     </Empty>
   );
+  const edit = (patch: Partial<StatusPageConfig>) => { setC({ ...c, ...patch }); setDirty(true); };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true); setMsg(null);
-    try { await api.statusPagePutConfig(c); setMsg('Saved'); }
+    setMsg(null);
+    try { await putConfig.mutateAsync(c); setDirty(false); setMsg('Saved'); }
     catch (err) { setMsg(err instanceof Error ? err.message : 'Save failed'); }
-    finally { setBusy(false); }
   };
   return (
     <form onSubmit={submit} style={{ maxWidth: 480 }}>
       <Field label="Page title">
-        <input required value={c.title} onChange={e => setC({ ...c, title: e.target.value })} style={{ width: '100%' }} />
+        <input required value={c.title} onChange={e => edit({ title: e.target.value })} style={{ width: '100%' }} />
       </Field>
       <Field label="Description (shown under banner)">
-        <textarea value={c.description ?? ''} onChange={e => setC({ ...c, description: e.target.value })}
+        <textarea value={c.description ?? ''} onChange={e => edit({ description: e.target.value })}
           rows={3} style={{ width: '100%', resize: 'vertical' }} />
       </Field>
       <Field label="Support URL (optional)">
-        <input type="url" value={c.supportUrl ?? ''} onChange={e => setC({ ...c, supportUrl: e.target.value })}
+        <input type="url" value={c.supportUrl ?? ''} onChange={e => edit({ supportUrl: e.target.value })}
           placeholder="https://support.example.com" style={{ width: '100%' }} />
       </Field>
       <Button type="submit" variant="primary" disabled={busy} style={{ marginTop: 12 }}>{busy ? 'Saving…' : 'Save'}</Button>
@@ -98,15 +113,14 @@ function ConfigTab() {
 
 function ComponentsTab() {
   // undefined = loading, null = fetch failed, [] = loaded-but-empty.
-  const [items, setItems] = useState<StatusComponent[] | null | undefined>(undefined);
-  const [monitors, setMonitors] = useState<MonitorRow[]>([]);
+  const itemsQ = useStatusPageComponents();
+  const items: StatusComponent[] | null | undefined =
+    itemsQ.isPending ? undefined : itemsQ.isError ? null : itemsQ.data ?? [];
+  // Monitor names label the component rows + fill the modal dropdown.
+  const monitors: MonitorRow[] = useMonitors().data ?? [];
+  const deleteComponent = useDeleteStatusComponent();
   const [editing, setEditing] = useState<StatusComponent | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const refresh = () => api.statusPageListComponents().then(d => setItems(d ?? [])).catch(() => setItems(null));
-  useEffect(() => {
-    refresh();
-    api.listMonitors().then(m => setMonitors(m ?? [])).catch(() => setMonitors([]));
-  }, []);
   if (items === undefined) return <Spinner />;
   if (items === null) return (
     <Empty icon="⚠" title="Couldn't load components">
@@ -150,7 +164,8 @@ function ComponentsTab() {
                 <Button variant="secondary" size="sm" onClick={() => setEditing(c)}>Edit</Button>
                 <Button variant="danger" size="sm" onClick={async () => {
                   if (!confirm(`Remove "${c.name}"?`)) return;
-                  await api.statusPageDeleteComponent(c.id); refresh();
+                  // Mutation auto-invalidates the components list.
+                  await deleteComponent.mutateAsync(c.id);
                 }}>Remove</Button>
               </div>
             </div>
@@ -160,7 +175,7 @@ function ComponentsTab() {
       {(showNew || editing) && (
         <ComponentModal initial={editing} monitors={monitors}
           onClose={() => { setShowNew(false); setEditing(null); }}
-          onSaved={() => { setShowNew(false); setEditing(null); refresh(); }} />
+          onSaved={() => { setShowNew(false); setEditing(null); }} />
       )}
     </>
   );
@@ -174,23 +189,24 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
 }) {
   const [c, setC] = useState<Partial<StatusComponent>>(initial ?? { displayOrder: 0 });
   const [source, setSource] = useState<'monitor' | 'service'>(initial?.serviceName ? 'service' : 'monitor');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Both mutations auto-invalidate the components list on success.
+  const createComponent = useCreateStatusComponent();
+  const updateComponent = useUpdateStatusComponent();
+  const busy = createComponent.isPending || updateComponent.isPending;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true); setError(null);
+    setError(null);
     try {
       // Clear the unused field so we don't double-source the status.
       const payload: Partial<StatusComponent> = { ...c };
       if (source === 'monitor') payload.serviceName = '';
       else                       payload.monitorId = '';
-      if (initial) await api.statusPageUpdateComponent(initial.id, payload);
-      else         await api.statusPageCreateComponent(payload);
+      if (initial) await updateComponent.mutateAsync({ id: initial.id, patch: payload });
+      else         await createComponent.mutateAsync(payload);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
-    } finally {
-      setBusy(false);
     }
   };
   return (
@@ -243,9 +259,10 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
 
 function SubsTab() {
   // undefined = loading, null = fetch failed, [] = loaded-but-empty.
-  const [subs, setSubs] = useState<StatusSubscriber[] | null | undefined>(undefined);
-  const refresh = () => { api.statusPageListSubscribers().then(d => setSubs(d ?? [])).catch(() => setSubs(null)); };
-  useEffect(() => { refresh(); }, []);
+  const subsQ = useStatusPageSubscribers();
+  const subs: StatusSubscriber[] | null | undefined =
+    subsQ.isPending ? undefined : subsQ.isError ? null : subsQ.data ?? [];
+  const deleteSubscriber = useDeleteStatusSubscriber();
   if (subs === undefined) return <Spinner />;
   if (subs === null) return (
     <Empty icon="⚠" title="Couldn't load subscribers">
@@ -271,7 +288,8 @@ function SubsTab() {
           </div>
           <Button variant="danger" size="sm" onClick={async () => {
             if (!confirm(`Remove subscriber ${s.email}?`)) return;
-            await api.statusPageDeleteSubscriber(s.email); refresh();
+            // Mutation auto-invalidates the subscriber list.
+            await deleteSubscriber.mutateAsync(s.email);
           }}>Remove</Button>
         </div>
       ))}

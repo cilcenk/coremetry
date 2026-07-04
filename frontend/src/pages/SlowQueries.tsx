@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { api } from '@/lib/api';
+import { useSlowQueries } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -44,7 +45,16 @@ type ExplainState = 'idle' | 'busy' | { text: string } | { error: string };
 export default function SlowQueriesPage() {
   const [range, setRange] = useUrlRange('1h');
   const [dbSystem, setDbSystem] = useState('');
-  const [rows, setRows] = useState<SlowQueryRow[] | null | undefined>(undefined);
+  // Bounds memoized on [range] so the query key stays stable across
+  // renders (the v0.5.184 incident shape).
+  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+  const rowsQ = useSlowQueries({
+    from, to,
+    db_system: dbSystem || undefined,
+    limit: 200,
+  });
+  const rows: SlowQueryRow[] | null | undefined =
+    rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data ?? [];
   const [expanded, setExpanded] = useState<string | null>(null);
   // Per-row explain state — keyed on the same "service::stmt"
   // composite the expand toggle uses. Resets implicitly when
@@ -72,18 +82,6 @@ export default function SlowQueriesPage() {
       setExplains(s => ({ ...s, [key]: { error: msg } }));
     }
   };
-
-  useEffect(() => {
-    const { from, to } = timeRangeToNs(range);
-    setRows(undefined);
-    api.slowQueries({
-      from, to,
-      db_system: dbSystem || undefined,
-      limit: 200,
-    })
-      .then(r => setRows(r ?? []))
-      .catch(() => setRows(null));
-  }, [range, dbSystem]);
 
   const systems = rows
     ? Array.from(new Set(rows.map(r => r.dbSystem).filter(Boolean))).sort()

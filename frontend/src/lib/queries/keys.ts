@@ -45,6 +45,10 @@ export const keys = {
     // entries (they return different row sets for the same window).
     operations:  (svc: string, range: { from: number; to: number }, normalized: boolean) =>
                    ['services', 'operations', svc, range, normalized] as const,
+    // Operator-curated catalog metadata (owner / SRE team / runbook
+    // links) — one map for the whole install, joined locally by the
+    // consumers (/services team filters, /admin/catalog editor).
+    metadata:    ['services', 'metadata'] as const,
   },
 
   problems: {
@@ -106,6 +110,10 @@ export const keys = {
   users: {
     all:         ['users'] as const,
     list:        ['users', 'list'] as const,
+    // Custom-role catalog rides under the users namespace so the
+    // Users page's single `invalidateQueries(keys.users.all)` after
+    // a mutation refreshes both the list and the role picker.
+    customRoles: ['users', 'custom-roles'] as const,
   },
 
   // Explore v2 multi-query builder (Phase 2). `sig` is the stable

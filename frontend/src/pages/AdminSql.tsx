@@ -6,6 +6,7 @@ import { VirtualList } from '@/components/ui';
 import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
+import { useSqlSchema } from '@/lib/queries';
 import type { SQLResult, SchemaTable } from '@/lib/types';
 import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 
@@ -86,7 +87,12 @@ export default function SQLPlaygroundPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
-  const [schema, setSchema] = useState<SchemaTable[] | undefined>(undefined);
+  // Schema browser — undefined while loading (Spinner), [] on fetch
+  // failure (renders the "no schema" hint), gated on isAdmin like
+  // the old manual fetch.
+  const schemaQ = useSqlSchema(isAdmin);
+  const schema: SchemaTable[] | undefined =
+    !isAdmin || schemaQ.isPending ? undefined : schemaQ.isError ? [] : schemaQ.data;
   const [openTables, setOpenTables] = useState<Set<string>>(new Set());
 
   const [backend, setBackend] = useState<Backend>(() => {
@@ -116,7 +122,6 @@ export default function SQLPlaygroundPage() {
 
   useEffect(() => {
     if (!isAdmin) return;
-    api.sqlSchema().then(setSchema).catch(() => setSchema([]));
     const h = getItem<string[] | null>(HISTORY_KEY, null);
     if (h) setHistory(h);
   }, [isAdmin]);

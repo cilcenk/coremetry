@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
-import { useServiceMap, useServiceNames } from '@/lib/queries';
+import { ServicePicker } from '@/components/ServicePicker';
+import { useServiceMap } from '@/lib/queries';
 import { fmtNum, hashColor } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange, ServiceMap, ServiceMapNode } from '@/lib/types';
@@ -48,18 +49,8 @@ export default function ServiceMapPage() {
   // v0.8.219 — /topology was folded into /service-map; honour its ?focus=<svc>
   // deep-link (from Endpoints / service tabs / the redirect) by seeding focus
   // from the URL. The auto-pick effect below skips when focus is already set.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [focus, setFocus] = useState<string>(() => searchParams.get('focus') ?? '');
-  // Picker input has its own state separate from focus so the
-  // user can type to filter the datalist without immediately
-  // re-focusing the graph on a partial match. Commit to focus
-  // happens on selection / blur — pre-v0.4.93 the input was
-  // bound directly to focus, which made every keystroke
-  // re-trigger the graph layout AND the datalist filtered to
-  // an exact match (browser dropdown then only showed that
-  // one option, blocking further selection).
-  const [pickerText, setPickerText] = useState<string>('');
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [diff, setDiff] = useState<string>('');
   // Overview cap (v0.8.215): bound the rendered graph to the heaviest N services
@@ -69,43 +60,37 @@ export default function ServiceMapPage() {
   const since = (PRESETS.find(p => p.key === range.preset)?.secs ?? 900) + 's';
 
   const mapQ = useServiceMap(since, samples, diff || undefined, topN);
-  // Picker datalist source — pre-v0.5.0 the dropdown listed
-  // only services that appeared in the sampled traces. With
-  // sampleCount=200 this often dropped low-volume but
-  // important services (cron jobs, batch workers) from the
-  // selector. Pulling the canonical /api/services list means
-  // every emitting service shows in the picker, even when its
-  // map node is absent from the current sample. Falls back to
-  // map nodes if the API hiccups.
-  const namesQ = useServiceNames();
-  const allServiceNames = useMemo(() => {
-    const set = new Set<string>();
-    if (namesQ.data?.names) {
-      for (const n of namesQ.data.names) set.add(n);
-    }
-    for (const n of (mapQ.data?.nodes ?? [])) if (!n.kind) set.add(n.service);
-    return Array.from(set).sort();
-  }, [namesQ.data, mapQ.data]);
+  // Single focus-commit path (v0.8.265, operator-reported "Focus
+  // seçemiyorum"): state + ?focus= URL move together (replace:true)
+  // so refresh / Copy link keep the selection — the v0.8.256
+  // drawer-param class of fix. Every caller (picker, node click,
+  // auto-pick) routes through here.
+  const commitFocus = (v: string) => {
+    setFocus(v);
+    setAutoFocused(true);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (v) p.set('focus', v); else p.delete('focus');
+      return p;
+    }, { replace: true });
+  };
   // Auto-pick a focused service on first load so the operator
   // lands on a useful 1-hop view instead of the full graph (which
-  // can look like a hairball on large clusters). Picks one of the
-  // top-3 busiest real services (by spanCount) at random — that
-  // way refreshes don't pin the same demo service, but the picks
-  // stay relevant. Only fires once per session per visit; manual
-  // selection / Clear focus disables further auto-picks.
+  // can look like a hairball on large clusters). Deterministic:
+  // THE busiest real service (v0.8.265 — was random top-3; the
+  // operator asked for a stable pre-selected landing). Fires once;
+  // any manual pick disables it.
   const [autoFocused, setAutoFocused] = useState(false);
   useEffect(() => {
     const nodes = mapQ.data?.nodes ?? [];
     if (autoFocused || focus || !mapQ.data || nodes.length === 0) return;
     const real = nodes
       .filter(n => !n.kind)
-      .sort((a, b) => b.spanCount - a.spanCount)
-      .slice(0, 3);
+      .sort((a, b) => b.spanCount - a.spanCount);
     if (real.length > 0) {
-      const pick = real[Math.floor(Math.random() * real.length)];
-      setFocus(pick.service);
-      setAutoFocused(true);
+      commitFocus(real[0].service);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapQ.data, autoFocused, focus]);
   // Normalise nodes/edges to arrays even when the API returns
   // them as null (older backend, empty windows). Downstream
@@ -204,61 +189,19 @@ export default function ServiceMapPage() {
           display: 'flex', gap: 10, alignItems: 'center',
           marginBottom: 14, flexWrap: 'wrap',
         }}>
-          {/* Picker — datalist autocomplete fed by the current
-              map's services. Plain <input> over a custom
-              dropdown so keyboard nav / clear / autocomplete
-              all just work. */}
+          {/* Focus picker (v0.8.265, operator-reported "Focus
+              seçemiyorum"). Was a datalist <input> whose commit
+              path required the typed value to exist in the SAMPLED
+              map nodes — on a 1400-service install most picks
+              matched nothing and silently didn't commit, and the
+              eager full-catalogue datalist is the exact picker
+              anti-pattern the hard constraints ban. The shared
+              server-debounced ServicePicker commits every
+              selection unconditionally; a focus outside the
+              current sample simply renders its empty-state note. */}
           <label style={{ fontSize: 12, color: 'var(--text2)' }}>Focus</label>
-          <input list="svc-map-services"
-                 aria-label="Focus map on a service"
-                 placeholder={focus || 'select a service…'}
-                 value={pickerOpen ? pickerText : focus}
-                 onChange={e => {
-                   setPickerText(e.target.value);
-                   // Commit immediately when the typed value
-                   // matches a service exactly — picking from
-                   // the datalist drops the typed string in
-                   // verbatim and the operator expects the
-                   // graph to re-focus right away.
-                   const match = data?.nodes.find(n => !n.kind && n.service === e.target.value);
-                   if (match) setFocus(match.service);
-                 }}
-                 onFocus={() => { setPickerText(''); setPickerOpen(true); }}
-                 // Click re-opens the picker even if the input
-                 // was already focused — browsers don't fire a
-                 // fresh focus event in that case, so without
-                 // this an operator who navigates away with the
-                 // keyboard and comes back can't see the full
-                 // datalist again.
-                 onMouseDown={() => { setPickerText(''); setPickerOpen(true); }}
-                 onBlur={() => {
-                   setPickerOpen(false);
-                   // Empty value on blur = "no commit yet" — keep
-                   // the existing focus. Typed value that doesn't
-                   // match a service = also keep existing focus so
-                   // a partial entry doesn't wipe the view.
-                   const match = data?.nodes.find(n => !n.kind && n.service === pickerText);
-                   if (match) setFocus(match.service);
-                 }}
-                 style={{
-                   minWidth: 240, fontSize: 13,
-                   padding: '4px 8px',
-                   border: '1px solid var(--border)',
-                   borderRadius: 6,
-                   background: 'var(--bg1)',
-                   color: 'var(--text)',
-                 }} />
-          <datalist id="svc-map-services">
-            {/* Picker only offers REAL services — synthesised
-                dep nodes (db:redis, ext:stripe, …) aren't
-                first-class focus targets. They show up in
-                the graph as neighbours of the services that
-                call them. Pulls from /api/services so every
-                emitting service shows even when the map's
-                trace sample didn't include it. */}
-            {allServiceNames.map(n =>
-              <option key={n} value={n} />)}
-          </datalist>
+          <ServicePicker value={focus} onChange={commitFocus}
+            placeholder="Focus a service…" width={240} />
           {/* Clear-focus button removed in v0.4.86 — picking a
               different service from the dropdown OR clicking a
               node in the graph already replaces the focus, so
@@ -448,7 +391,7 @@ export default function ServiceMapPage() {
             focus={focus || null}
             hoverNode={hoverNode}
             onHoverNode={setHoverNode}
-            onSelectNode={setFocus}
+            onSelectNode={commitFocus}
           />
         )}
 

@@ -1,627 +1,168 @@
 # Coremetry
 
 OpenTelemetry-native APM. Single Go binary + ClickHouse + Redis +
-optional external Elasticsearch/Tempo. Runs at 1000s of services,
-10000s of operations, 1B+ spans/day. Designed to land in an
-operator's stack as one container, not a kubernetes opera.
-
-When in doubt, the rubric is **"how would Datadog / Dynatrace /
-Honeycomb engineer this?"** — that's the bar. Operator-facing UX
-should feel familiar to an engineer who's used one of those for
-five years.
-
----
+optional external Elasticsearch/Tempo. 1000s of services, 1B+
+spans/day, one container. Rubric when in doubt: **"how would
+Datadog / Dynatrace / Honeycomb engineer this?"**
 
 ## Hard constraints — non-negotiable
 
-| Constraint | Why | Enforced where |
-|---|---|---|
-| **Single-binary release** | One image, one tag, one release pipeline. `COREMETRY_MODE=all\|ingest\|api\|worker` (v0.6.0) lets that single binary act in different roles for scale-out, but it's still one binary. | `main.go`, `Dockerfile` |
-| **Picker = server-side search** | 10k+ ops can't ride a `<Combobox options={…}>`. | `ServicePicker` / `OperationPicker` / `MetricNamePicker` |
-| **Table > 100 rows** | Virtualize, paginate server-side, OR `content-visibility:auto`. | `globals.css`, every list page |
-| **Every data table sortable + column-resizable** | Operator can't scan 1000s of rows without re-sorting / widening a column. One shared primitive — never hand-roll sort/resize per page. | `useDataTable` + `<DataTableHead>`/`<DataTableColgroup>` (`components/DataTable.tsx`), pure core in `lib/dataTable.ts`. Template: `SlowQueries.tsx` (v0.7.53) |
-| **Cache key hashes ALL inputs** | Length-only digests cross-poison (v0.5.187 incident). Use sorted + FNV. | `internal/api/cache.go` |
-| **`timeRangeToNs(range)` inside `useEffect`/`useMemo`** | Bare call in JSX = `now()` ticks every render = infinite refetch (v0.5.184). | every page using `range` |
-| **ClickHouse query on `spans` / `metric_points`** | Must have `LIMIT`, `SETTINGS max_execution_time`, time-bounded WHERE on indexed column. | `internal/chstore/*.go` |
-| **Admin write = audit entry** | `s.audit(r, "kind.action", "resource", id, details)` per state mutation. | `internal/api/*.go` |
-| **No PII redaction features** | Operator preference — full fidelity > theoretical safety. | Memory `feedback-no-redaction.md` |
-
----
+| Constraint | Enforced where |
+|---|---|
+| **Single-binary release** — one image/tag; `COREMETRY_MODE=all\|ingest\|api\|worker` for roles | `main.go`, `Dockerfile` |
+| **Picker = server-side search** — never eager `<Combobox options={…}>` | `ServicePicker` / `OperationPicker` / `MetricNamePicker` |
+| **Table > 100 rows** — virtualize, server-paginate, or `content-visibility:auto` | every list page |
+| **Every data table sortable + resizable** — shared primitive, never hand-rolled | `useDataTable` + `DataTable.tsx`; template `SlowQueries.tsx` |
+| **Cache key hashes ALL inputs** — sorted + FNV; length-only digests cross-poison (v0.5.187) | `internal/api/cache.go` |
+| **`timeRangeToNs(range)` only inside `useEffect`/`useMemo`** — bare in JSX = infinite refetch (v0.5.184) | every page using `range` |
+| **CH query on `spans`/`metric_points`** — `LIMIT` + `SETTINGS max_execution_time` + time-bounded WHERE | `internal/chstore/*.go` |
+| **Admin write = audit entry** — `s.audit(r, "kind.action", "resource", id, details)` | `internal/api/*.go` |
+| **No PII redaction features** — operator preference: full fidelity | memory `feedback-no-redaction.md` |
 
 ## Performance budgets
 
-- `/api/*` p99 < 200ms warm, < 1s cold
-- Hot endpoints (`/api/services`, `/api/problems`, `/api/health`) p99 < 50ms warm
-- `/api/spans/heatmap` < 3s for ≤6h window; auto-sample beyond
-- `/api/logs/patterns` (ES significant_text) < 2s at billion-doc index
-- TTFI on first paint < 1.5s on a fresh tab
-- Polling cadence ≥ 10s for everything except `/api/health` (5s)
-- Every polling component pauses on `document.hidden`
-
----
+- `/api/*` p99 < 200ms warm, < 1s cold; hot endpoints (`/api/services`, `/api/problems`, `/api/health`) < 50ms warm
+- `/api/spans/heatmap` < 3s ≤6h window (auto-sample beyond); `/api/logs/patterns` < 2s at billion docs
+- TTFI < 1.5s fresh tab; polling ≥ 10s (except `/api/health` 5s); every poller pauses on `document.hidden`
 
 ## Tech stack
 
-**Backend:** Go 1.22+, ClickHouse 24+, Redis 7+ (cache/lock).
-Single binary `main.go` wires `chstore.Store` (CH), `logstore.Store`
-(CH or ES — selected via `COREMETRY_LOGS_BACKEND`), `tempo.Service`
-(optional trace fallback), `cache.Cache` (Noop or Redis),
+**Backend:** Go 1.22+, ClickHouse 24+, Redis 7+. `main.go` wires
+`chstore.Store`, `logstore.Store` (CH or ES via
+`COREMETRY_LOGS_BACKEND`), `tempo.Service`, `cache.Cache`,
 `auth.Service`, `notify.Notifier`, `copilot.Service`.
-
-**Frontend:** React + Vite, no Tailwind (CSS variables in
-`globals.css`). React Query for fetch+cache, react-router-dom v6
-for routes. No state management library — components own state +
-URL is source of truth for shareable views.
-
-**Versioning:** git tags `v0.8.X` (current series; see `VERSION.txt`).
-Resolution order for runtime:
-`COREMETRY_VERSION` env > `-X main.Version=` ldflag > `/app/VERSION`
-file > `"dev"`.
-
----
+**Frontend:** React + Vite, no Tailwind (CSS vars in `globals.css`),
+React Query, react-router v6. No state library — URL is source of
+truth for shareable views.
+**Versioning:** git tags `v0.8.X`. Runtime resolution:
+`COREMETRY_VERSION` env > ldflag > `/app/VERSION` > `"dev"`.
 
 ## Architectural invariants
 
-1. **OTel is the source of truth.** Spans, logs, metrics enter via
-   OTLP/gRPC + OTLP/HTTP. No proprietary ingest path. Resource +
-   span attributes are kept verbatim — operator queries them later.
+1. **OTel is the source of truth** — OTLP/gRPC + HTTP only; attributes kept verbatim.
+2. **ClickHouse is the warm store** — ES is optional *read* backend for logs only.
+3. **MV-first reads** — `service_summary_5m`, `operation_summary_5m`, `topology_edges_5m`, `db_summary_5m`, `db_caller_summary_5m`, `topology_root_flows_5m`. Raw `spans` for an aggregate = bug.
+4. **`ReplacingMergeTree(version)` for state**, reads use `FINAL`. Whole-row replace: carry ALL fields forward.
+5. **One CH table for saved state** — `saved_views(page='<kind>', …)`; no new schema per surface.
+6. **Settings live in `system_settings`** — JSON blob per key; `LoadPersisted` at boot + `SavePersisted` on admin PUT (template: `internal/tempo/client.go`).
+7. **Roles admin / editor / viewer** — `auth.RequireRole` / `RequireAnyRole`; viewer SEES state read-only, never blank.
 
-2. **ClickHouse is the warm store.** Spans / metric_points / logs
-   land here always; ES is an optional *read* backend for logs only
-   (write side is CH). Aggregation tables (`*_summary_5m`,
-   `topology_*_5m`, `db_*_5m`) pre-compute the dashboards' hot path.
+## Ship checklist — every new operator-facing surface
 
-3. **Every read endpoint that touches CH must use the MV when one
-   exists.** `service_summary_5m`, `operation_summary_5m`,
-   `topology_edges_5m`, `db_summary_5m`, `db_caller_summary_5m`,
-   `topology_root_flows_5m`. Reading raw `spans` for an aggregate
-   query at billion-row scale is a bug.
+1. Handler hits the right MV; 2. `s.serveCached` with hash-all-inputs
+key; 3. auth gate + 4. audit entry if it writes; 5. settings via
+`system_settings` if configurable; 6. type in `lib/types.ts`;
+7. client method in `lib/api.ts`; 8. loading/error/empty states
+(`<Spinner/>`, `<Empty/>`); 9. `npx tsc --noEmit` gate;
+10. `go build ./...` gate; 11. bug-fix release = regression test
+(pure-function, table-driven, header cites the vX.Y.Z; canonical:
+`internal/api/cache_key_test.go`) + `go test ./...`.
 
-4. **`ReplacingMergeTree(version)` for state.** alert_rules,
-   problems, system_settings, saved_views, anomaly_events,
-   log_templates. Reads always use `FINAL`. Version column ends
-   the dedup story without operator-visible delete propagation
-   delay.
-
-5. **One CH table for saved state.** `saved_views(page='<kind>',
-   id, owner_id, query_string, …)` is the catch-all for alert
-   presets, topology views, dashboards, etc. Don't add a new
-   schema per surface.
-
-6. **Settings live in `system_settings`.** AI Copilot creds, LDAP
-   config, branding, Tempo backend, Kibana URL, sampling — all
-   one key/value table, JSON blob per key. The service that owns
-   the config struct does `LoadPersisted(ctx, store)` at boot +
-   `SavePersisted(...)` on admin PUT.
-
-7. **Permission roles: admin / editor / viewer.**
-   - admin = Settings tab + destructive actions
-   - editor = rule/preset/sampling edits + per-row state changes
-   - viewer = read-only everywhere
-   `auth.RequireRole(auth.RoleAdmin, h)` or
-   `auth.RequireAnyRole(editorRoles, h)`. Frontend buttons
-   hide/disable based on `user.role`; viewer still SEES state
-   (read-only chip), not blank.
-
----
-
-## When you ship a new feature
-
-Every new operator-facing surface must include:
-
-1. **Backend handler** that hits the right MV (not raw spans)
-2. **Cache wrapper** via `s.serveCached(w, r, key, ttl, fn)` with
-   a key that hashes ALL inputs (sorted + FNV for sets)
-3. **Auth gate** on the route if it writes state
-4. **Audit entry** via `s.audit(r, ...)` if it writes state
-5. **Settings persistence** if the operator can configure it —
-   reuse `system_settings` + the `LoadPersisted`/`SavePersisted`
-   pattern from `tempo` or `copilot`
-6. **Frontend type** in `lib/types.ts`
-7. **Frontend client** method in `lib/api.ts`
-8. **Loading + error + empty states** — never render a blank
-   panel; use the shared `<Spinner/>` and `<Empty/>` components
-9. **TypeScript** is law — `cd frontend && npx tsc --noEmit` is
-   the gate
-10. **Backend** is law — `go build ./...` is the gate
-11. **Regression test for bug-fixes** (v0.5.447) — every
-    `v0.5.X — bug-fix` release ships with a Go test that would
-    catch the bug if it re-regresses. Pattern: extract the
-    minimal pure function the fix touches; table-driven test
-    in `<package>/<feature>_test.go`; comment header cites the
-    v0.5.X release and explains the original symptom. See
-    [internal/api/cache_key_test.go](internal/api/cache_key_test.go)
-    (v0.5.187 collision) for the canonical example. Pre-tag
-    gate: `go test ./...` must pass.
-
-If it has an AI explain affordance: route through
-`s.copilotExplain(r, ...)` wrapper, NOT `s.copilot.Explain` direct.
-The wrapper writes the ai_calls row for /ai page attribution.
-
----
+AI explain affordances route through `s.copilotExplain(r, ...)`,
+never `s.copilot.Explain` direct (/ai attribution).
 
 ## Code patterns
 
-### Pickers
-```tsx
-// YES — server-debounced
-<ServicePicker value={svc} onChange={setSvc} placeholder="…" />
-
-// NO — eager catalogue load
-<Combobox options={allServices} value={svc} onChange={setSvc} />
-```
-
-### Tables > 100 rows
-```tsx
-// YES — content-visibility lets the browser skip off-screen rows
-<tr style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
-```
-
-### Sortable + resizable table (the shared primitive — v0.7.53)
-Every data table is column-sortable AND column-resizable. Don't
-hand-roll it; adopt `useDataTable`. Sort state + widths persist to
-localStorage by `storageKey`. Client-side sort suits fetched arrays;
-server-paged tables (Services/Traces) keep their server sort and adopt
-only the resize half.
-```tsx
-const dt = useDataTable<Row>({
-  storageKey: 'slowqueries', columns: COLS, rows: rows ?? [],
-  initialSort: { id: 'totalMs', dir: 'desc' },
-});
-<table style={{ tableLayout: 'fixed', width: '100%' }}>
-  <DataTableColgroup dt={dt} leading={[36]} />     {/* leading = expand/checkbox col widths */}
-  <DataTableHead dt={dt} leading={<th style={{ width: 36 }} />} />
-  <tbody>{dt.sortedRows.map(renderRow)}</tbody>
-</table>
-// COLS: { id, label, sortValue?: r=>val, numeric?, naturalDir?, width? }[]
-// numeric → .num class; omit sortValue → column not sortable (still resizes).
-```
-
-### Buttons + fields — ONE design language (v0.7.54)
-Operator principle: no visual difference between sibling buttons /
-labels / elements. Use the shared `<Button>` atom — never hand-roll
-`<button style={{ fontSize, padding, border, borderRadius }}>`. The
-inline-style size/shape drift (2px6px vs 3px7px vs custom accent
-borders) is the exact anti-pattern that triggered this.
-```tsx
-import { Button } from '@/components/ui/Button';
-<Button variant="secondary" size="sm" onClick={…}>Triage ▶</Button>  // compact action
-<Button variant="primary" onClick={…}>Acknowledge</Button>           // primary CTA
-// variant: primary (accent) | secondary (.sec) | danger | ghost
-// size: sm (compact, the toolbar default) | md | lg
-// Fields: the global input/select style + .field/.field-label; for
-// labelled inputs use components/ui/Field.tsx. Badges: .badge + .b-ok/.b-err/…
-```
-Rollout is incremental (one surface per release, high-traffic first);
-new code uses `<Button>` from day one. See [[feedback-ui-consistency-principles]].
-
-### Cache key for a set
-```go
-// YES — stable digest
-key := fmt.Sprintf("topology-exclude:%x", fnvDigest(sortedSlice(set)))
-
-// NO — length-only collapse
-key := fmt.Sprintf("topology-exclude:n=%d", len(set))
-```
-
-### CH query bounds
-```sql
--- YES
-SELECT … FROM spans
-WHERE service_name = ? AND time >= ? AND time <= ?
-LIMIT 1000
-SETTINGS max_execution_time = 30
-
--- NO — unbounded scan
-SELECT count() FROM spans GROUP BY service_name
-```
-
-### Setting persistence
-```go
-// Service holds an http.Client + cfg behind a RWMutex.
-// LoadPersisted hydrates from chstore at boot, SavePersisted
-// writes on admin PUT and updates the live config atomically.
-// See internal/tempo/client.go for the template.
-```
-
-### Settings save modal (admin-only)
-```tsx
-// Pattern: Settings.tsx tab → form → api.putX() → show ok/err.
-// Token-style secrets: never echo back; "stored" indicator;
-// empty input preserves the previously stored value (rotate by
-// pasting a new one).
-```
-
-### Logstore plurality
-Detectors / pattern queries (curated regex, Drain, log alerts) go
-through `logstore.Store.CountPatterns(...)` batched form — ES
-backend uses `_msearch` for a single round-trip; CH iterates
-behind the tokenbf_v1 skip index. Never call ES directly from a
-detector — that ties the detector to one backend.
-
-### Topology / inbox triage hierarchy
-- **P1** = handle now (critical + 2x threshold OR critical +
-  fresh deploy OR critical open ≥ 4h)
-- **P2** = handle today (critical default OR warning + same
-  signal multipliers)
-- **P3** = handle when convenient (steady warnings, info)
-Reason string ships with every Problem so the operator sees the
-rule.
-
----
+- **Cache key for a set:** `fmt.Sprintf("…:%x", fnvDigest(sortedSlice(set)))` — never `n=%d len(set)`.
+- **CH bounds:** every spans/metric_points query has time-bounded WHERE + `LIMIT` + `SETTINGS max_execution_time`.
+- **Tables:** `useDataTable` (`storageKey`, COLS with `sortValue`/`numeric`) + `<DataTableColgroup/>` + `<DataTableHead/>`; server-paged tables adopt resize half only. Rows > 100: `contentVisibility: 'auto'`.
+- **Buttons/fields — one design language:** shared `<Button variant size>` atom (`components/ui/Button.tsx`), `Field.tsx` for labelled inputs, `.badge .b-ok/.b-err`. Never hand-roll `<button style={{…}}>`.
+- **Secrets in Settings:** never echo back; "stored" indicator; empty input preserves stored value.
+- **Logstore plurality:** detectors go through `logstore.Store.CountPatterns(...)` batched (ES `_msearch` / CH tokenbf) — never call ES directly from a detector.
+- **Triage:** P1 = now (critical + 2x threshold / fresh deploy / open ≥ 4h), P2 = today, P3 = convenient. Reason string ships with every Problem.
 
 ## Workflow
 
-### Daily
+- `kuyruk` = show prioritised queue, end with "Hangisi?". `devam` = continue current item.
+- Operator-reported bugs = NEW priority, ship as `v0.8.X+1` immediately, never batch.
 
-- `kuyruk` = "show the queue" — agent presents numbered prioritised
-  pending items, ends with "Hangisi?".
-- `devam` = continue current in-progress item.
-- Operator-reported bugs are NEW priority — fix as `v0.8.X+1`
-  immediately after the current release, don't batch.
-
-### Release pattern — every functional change
-
+**Release — every functional change:**
 ```
- 1. Edit code.
- 2. cd frontend && npx tsc --noEmit  (frontend changes only)
- 3. go build ./...                    (backend changes)
- 4. go test ./...                     (bug-fix releases especially)
- 5. make audit                        (hard-constraint lint; v0.5.446)
- 6. git add <touched files>
- 7. git commit -m "<heredoc — see format below>"
- 8. git tag v0.8.X
- 9. git push && git push --tags        ← triggers Release workflow
-10. make docker-up                     (background — one at a time)
+edit → npx tsc --noEmit (fe) → go build ./... → go test ./...
+→ make audit → git add <files> → commit (heredoc) → tag v0.8.X
+→ git push && git push --tags → deploy (background, ONE at a time)
 ```
+`make audit`: 🔴 critical blocks the tag; 🟡 warnings reviewed, ship
+if known false positive.
 
-`make audit` exits 1 on 🔴 critical findings (cache-key length
-anti-pattern, eager Combobox, direct copilot.Explain, non-GLOBAL
-IN over Distributed). Don't tag until critical is clean. 🟡
-warnings (setInterval without document.hidden, FROM spans
-without nearby LIMIT) print but don't block — review the list,
-ship if known false positive.
+**Commit format:** `v0.8.X — title (≤70)` + body (what/why/root
+cause, 72 cols, operator bugs start "Operator-reported: …") +
+`Co-Authored-By: Claude <noreply@anthropic.com>`.
 
-### Commit message — multi-line heredoc
+**Skills (`.claude/skills/`):** `/release`, `/bugfix`, `/spec` (3+
+file changes), `/kuyruk`, `/scale-audit` (quarterly),
+`/clickhouse-schema` (BEFORE any CH table/query/MV change),
+`/helm-chart-coremetry` (BEFORE `charts/coremetry/` changes),
+`/otel-conventions` (BEFORE OTel-shaped data changes), `/mcp-tools`
+(BEFORE MCP server changes), `/frontend-dashboard-panel` (BEFORE new
+dashboard panel types).
 
-```
-v0.8.X — short title (≤ 70 chars)
+## Pitfall rules — full incident stories in [docs/INCIDENTS.md](docs/INCIDENTS.md)
 
-Body: what changed, why, root cause if a bug fix. Wrap at 72 cols.
-Operator-reported bugs start with "Operator-reported: …".
-
-Co-Authored-By: Claude <noreply@anthropic.com>
-```
-
-### Background rebuilds
-`make docker-up` may run in the background. ONE at a time. Wait
-for the previous to finish before starting the next (concurrent
-builds steal docker layer cache + serialize via BuildKit anyway).
-
-### Quarterly
-- `/scale-audit` skill — production regression catcher across 7
-  axes (pickers, tables, polling, cache keys, CH bounds, render
-  traps, permission gating). Quarterly cadence OR after a
-  multi-week feature sprint.
-
-### Skills directory (`.claude/skills/`)
-
-Project-local Claude Code skills pinned in the repo. Each
-captures Coremetry-specific judgement that generic Claude
-guidance would miss.
-
-| Skill | Use when |
-|---|---|
-| `/release` | Cut a release — next v0.8.X tag, commit, push, rebuild |
-| `/bugfix` | Operator-reported bug — investigate, fix as v0.8.X+1, ship immediately |
-| `/spec` | Idea → implementation plan before edit phase. Use for any change spanning 3+ files |
-| `/kuyruk` | "What's next" — shows prioritised pending items, ends with "Hangisi?" |
-| `/scale-audit` | Quarterly perf regression sweep across 7 axes |
-| `/clickhouse-schema` | BEFORE any change to a CH table, query, or MV. Captures engine-choice, MV bypass invariant, ORDER BY rules, async_insert tuning, migration checklist, anti-patterns. (v0.6.23) |
-| `/helm-chart-coremetry` | BEFORE any change under `charts/coremetry/`. OpenShift restricted-v2 SCC, global.imageRegistry air-gap rewrite, deployment.mode monolithic/distributed (v0.6.2), MCP/SSE session affinity (v0.6.21), Route vs Ingress, version-bump rules. (v0.6.25) |
-| `/otel-conventions` | BEFORE any change that reads or writes OTel-shaped data. W3C tracecontext-only propagator policy, semconv → column mapping, critical-5 resource attrs, head + tail sampling decision points, EDOT vs raw SDK acceptance, gen_ai.* readiness, OTel-spec deviations documented. (v0.6.25) |
-| `/mcp-tools` | BEFORE adding a tool / resource / prompt to the MCP server in `internal/mcptools/`. range_s convention, clampLimit caps, description-as-contract style, args↔JSON-Schema mirror, auth + audit gating, tools-vs-resources-vs-prompts triage. (v0.6.40) |
-| `/frontend-dashboard-panel` | BEFORE adding a new panel type (heatmap/table/etc) to the dashboard system. 7-edit checklist across types.ts PanelType union, PanelEditor default/form, PanelRenderer dispatch, applyVarsTo<X>, bundle fetch, range override, persistence backward-compat. (v0.6.41) |
-
----
-
-## Performance pitfalls — historical incidents
-
-Each entry references the incident-shaped fix. Avoid re-living
-them.
-
-- **`timeRangeToNs(range)` in JSX / IIFE on every render** —
-  re-evaluates `now()`, breaks `useEffect` dep equality, infinite
-  refetch (v0.5.184). Always `useMemo([range])` or call inside
-  `useEffect` body where deps are explicit.
-- **Cache key = `len(set)`** — cross-set poisoning where two
-  different sets sharing the same cardinality return each
-  other's data (v0.5.187). Stable digest required.
-- **`table-layout: fixed` + `white-space: nowrap` + small fixed
-  width** — silently clips text. Use `min-width` + `max-width`
-  + `ellipsis` + `title` attribute for tooltip.
-- **ES `query_string` with `case_insensitive: true`** — rejected
-  by ES 8.x as an unknown field (v0.5.231). Don't add it back.
-  Standard analyzer already case-folds.
-- **Per-pattern `_search` over N curated patterns** — N
-  round-trips. Use `_msearch` for a single coordinator fan-out
-  (v0.5.241).
-- **`significant_text` without `background_filter`** — ES
-  defaults the background to the whole index = catastrophic on
-  billion-doc indices. Always cap baseline window AND wrap in
-  `sampler` to bound per-shard scoring (v0.5.243).
-- **Drain-style templating against raw logs at billion-row
-  scale** — sample-based puller (1000/5min) > full scan. Sample
-  bias on rare templates is fine because the curated detector
-  + significant_text panel pick those up (v0.5.244 architecture
-  note).
-- **Polling without `document.hidden`** — burns mobile/laptop
-  battery + idle API trafficky. See PublicStatus.tsx pattern.
-  Always:
-  ```js
-  setInterval(() => { if (!document.hidden) fetchOnce(); }, 30_000);
-  ```
-- **Unit-mixing in SQL/time templates (`toDate(time) + INTERVAL %s`
-  with `%s` ∈ {"30 DAY", "1 HOUR"})** — `toDate(time) + INTERVAL 1
-  HOUR` = midnight + 1h = 01:00 of the SAME day, not "1 hour from
-  the row's time". v0.6.36: retention.spans = "1h" via admin UI
-  silently TTL'd every span after 01:00 — operator saw inconsistent
-  /traces counts because merges ran intermittently. Rule: ANY
-  template that accepts a value+unit (Nh/Nd, ms/s, MB/GB) MUST
-  have a table-driven test exercising **every** unit at ship time.
-  For sub-day TTLs use `<col> + INTERVAL N HOUR` (row-level); for
-  day TTLs use `toDate(<col>) + INTERVAL N DAY` (partition-aligned).
-  Never let `toDate()` wrap a sub-day calculation. See
-  [internal/chstore/retention_test.go](internal/chstore/retention_test.go)
-  for the canonical example.
-- **Combined-MV DROP at billion-row scale** — `DROP TABLE <mv>`
-  trips CH's `max_table_size_to_drop` guard (default 50 GB) once
-  the hidden `.inner_id.<uuid>` storage is large, and a per-query
-  `SETTINGS max_table_size_to_drop=0` on the MV does NOT reach the
-  inner drop (verified on 24.8). Drop the inner DIRECTLY with the
-  override, then the empty MV (`dropCombinedMV`, v0.8.190). Every
-  boot migration that recreates an MV routes through it.
-- **Reservoir `quantilesState` for `duration_q_state` at scale** —
-  the 8192-sample reservoir is ~64 KiB/row; merging a wide window
-  blows the per-query memory limit (code 241) + the timeout (code
-  159). The summary MVs use `quantilesTDigestState` (~4.3 KiB/row,
-  parallel-safe, ≤2% error, v0.8.194) — the concrete form of the
-  "quantile() past ~1M rows → TDigest" rule. Never put reservoir
-  `quantiles` in an MV state column.
-- **MV aggregate-type change = rolling-deploy read-error window** —
-  an atomic MV state-type swap at boot means OLD pods read the NEW
-  MV with the old finalizer (`quantilesMerge` on a TDigest column →
-  code 43) until they roll. `maxUnavailable:0` keeps the rollout
-  graceful but lengthens the window; finish the rollout fast (no
-  `dev`-tagged stragglers), or use a dual-column transition to
-  avoid it (v0.8.194).
-- **Hardcoded database name in SQL** — `FROM coremetry.spans`
-  breaks on any install whose CH database isn't literally
-  `coremetry` (e.g. `coremetry_prod`) → "Database coremetry does
-  not exist" (code 6, v0.8.195). The chstore conn defaults to
-  `cfg.Database`, so reference telemetry tables UNQUALIFIED.
-- **`toDateTime64('<RFC3339>', 9, 'UTC')` rejects the trailing
-  `Z`** — `time.RFC3339Nano` emits `…Z`; CH's DateTime64 string
-  parser errors at the Z (code 6, "Cannot parse string … as
-  DateTime64", parsed-just-`…714`). Format UTC with a space and NO
-  tz designator (`chDateTime64Arg`, v0.8.197). Any `toDateTime64(?)`
-  bind arg MUST be tz-less.
-- **Collector wedge after a coremetry rollout** — the OTel
-  collector's gRPC exporter resolves to "zero addresses" when the
-  headless ingest Service's ready endpoints drain during a roll
-  (default `maxUnavailable: 25%` + slow boot) and stays wedged
-  (503s every app's telemetry — only coremetry's own self-obs keeps
-  landing) until the collector is restarted. Fix: explicit
-  `maxUnavailable: 0` on the Deployment so endpoints never hit zero
-  (v0.8.193). Pre-fix installs: restart the collector once.
-
----
-
-## Self-observability
-
-Coremetry observes itself. The `/admin/stats` page reads
-`GetSystemStats(ctx)` — meta-observability snapshot of every
-ingest queue's accepted counter, Redis hit rate, CH connection
-pool, and per-endpoint hit rate. AI usage is recorded in
-`ai_calls` and surfaces on `/ai` (admin only).
-
-When adding a new ingest path or expensive endpoint, register a
-counter so the operator can see whether it's healthy without
-SSH'ing into the container.
-
----
-
-## Demo traffic generators
-
-Coremetry ships three self-contained workloads that feed a fresh
-install believable telemetry. They are what an operator sees on first
-boot, so they must look like a real bank — not flat synthetic noise.
-
-| Workload | Path | What it is |
-|---|---|---|
-| **Go demo** | `cmd/demo/` | Pure synthetic OTLP generator. Hand-builds traces/logs/metrics for a ~45-service retail-banking mesh (Oracle core, Kafka, polyglot runtimes) and POSTs OTLP/protobuf straight to the collector. No real services run. |
-| **Java demo** | `java-demo/` | Real Spring Boot app instrumented zero-code by the OTel **javaagent**. A `LoadGenerator` drives its own HTTP endpoints; `CoreBankingGateway` emits manual Oracle CLIENT spans (JDBC auto-instr is OFF so synthetic Oracle spans don't get shadowed). |
-| **JBoss demo** | `jboss-demo/` | JAX-RS/JBoss app, same javaagent pattern, driven by `LoadDriver`. |
-
-### Shared realism model (v0.8.x) — keep all three honest
-
-Real production traffic is **not** a flat line with fixed error odds and
-uniform latency. Both the Go demo (`cmd/demo/realism.go`) and the Java
-demo (`com.coremetry.demo.service.DemoLoad`) carry the SAME load model so
-metrics, traces and logs tell one coherent story:
-
-1. **Diurnal curve + spikes.** A 0.28→1.0 business-day multiplier
-   (overnight trough, ~10:00 peak, ~19:00 bump) plus organic
-   micro-spikes scales the emission rate. The demo genuinely slows
-   overnight and surges at the morning peak. Go: drives the Poisson
-   inter-arrival gap in the driver loop. Java: `DemoLoad.burstCount()`
-   governs how many scenarios each `LoadGenerator` tick fires.
-2. **Incidents.** Every few minutes a 1–4 min degradation window starts
-   (`oracle-row-lock-contention`, `jvm-gc-pause-storm`,
-   `downstream-dependency-degraded`, `noisy-neighbor-cpu-steal`) that
-   raises latency AND error rate together, then recovers on its own.
-3. **Log-normal latency.** `dur()` (Go) / `DemoLoad.sampleMs()` (Java)
-   sample a right-skewed distribution — dense body near the floor, long
-   p99 tail — scaled by the live latency factor, so saturation shows up
-   as a coordinated latency rise across every hop.
-4. **Correlated errors.** `rollFail(pct)` (Go) / `DemoLoad.roll(pct)`
-   (Java) fold the incident error-bump into each per-hop failure roll,
-   so failures CLUSTER during an incident instead of being uniform.
-   Error logs also spike in density and carry an `incident` attribute.
-5. **Real histogram buckets.** Duration histograms emit explicit
-   `ExplicitBounds` + `BucketCounts` (`latencyBounds` in Go;
-   `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION=explicit_bucket_histogram`
-   for the Java agent) so the backend computes real p50/p90/p95/p99 —
-   not just min/max/avg.
-6. **Richer saturation metrics.** Per-service connection-pool
-   usage/max/utilization, cache hit-ratio, in-flight + queued requests,
-   GC pause, host CPU/mem, and Kafka consumer lag — all load-correlated
-   (Go: `flush()` gauge loop; Java: `DemoMetrics` observable gauges +
-   business counters via the agent's MeterProvider). Java custom gauges
-   are namespaced `demo.*` to avoid colliding with agent-emitted
-   semconv metric names (e.g. HikariCP `db.client.connections.usage`).
-
-**Rule:** any new demo scenario or metric must read from the load model
-(`L` / `DemoLoad`) rather than rolling its own fixed probability or
-uniform latency, or it will visibly desync from the rest of the data.
-
----
+- `timeRangeToNs` bare in JSX → infinite refetch; memo it.
+- Cache key from `len(set)` → cross-poisoning; stable digest.
+- `table-layout:fixed` + `nowrap` + small width silently clips; use min/max-width + ellipsis + title.
+- ES: no `case_insensitive` on `query_string` (8.x rejects); `_msearch` over per-pattern `_search`; `significant_text` needs `background_filter` + `sampler`.
+- Drain templating is sample-based (1000/5min), never full-scan.
+- Value+unit templates (Nh/Nd, ms/s): test EVERY unit; never `toDate()` around sub-day math (`retention_test.go`).
+- Combined-MV drop: inner table first with `max_table_size_to_drop=0` (`dropCombinedMV`).
+- MV state columns use `quantilesTDigestState`, never reservoir `quantilesState`; MV type changes cause a rolling-deploy read-error window — roll fast or dual-column.
+- SQL references telemetry tables UNQUALIFIED (no `coremetry.` prefix).
+- `toDateTime64(?)` bind args must be tz-less (no trailing `Z`) — `chDateTime64Arg`.
+- Coremetry Deployment keeps `maxUnavailable: 0` or the OTel collector wedges on rollout ("zero addresses"); pre-fix: restart collector.
 
 ## What goes WHERE
 
 | Domain | Path |
 |---|---|
-| Demo traffic generator (Go, synthetic OTLP) | `cmd/demo/` |
-| Demo apps (Java Spring Boot + JBoss, real javaagent) | `java-demo/`, `jboss-demo/` |
+| Demo generators (Go synthetic / Java / JBoss) | `cmd/demo/`, `java-demo/`, `jboss-demo/` |
 | OTLP ingest | `internal/otlp/` |
-| Span / metric / log CH writes | `internal/chstore/` |
-| External log backend (ES) read | `internal/logstore/` |
-| External trace backend (Tempo) | `internal/tempo/` |
-| HTTP API (handlers + cache wrapper) | `internal/api/` |
-| Alert evaluator | `internal/evaluator/` |
-| Anomaly detectors (curated + recorder) | `internal/anomaly/` |
-| Drain log templater | `internal/templater/` |
-| Notification fan-out (channels) | `internal/notify/` |
-| Auth (local + LDAP + OIDC) | `internal/auth/` + `internal/ldap/` |
-| AI Copilot wrapper + system prompts | `internal/copilot/` |
-| Topology batch correlator | `internal/topology/` |
-| ClickHouse migrations | `internal/chmigrate/` |
-| Frontend pages | `frontend/src/pages/` |
-| Frontend components | `frontend/src/components/` |
-| Frontend types + API client | `frontend/src/lib/{types,api}.ts` |
-| Frontend route registry | `frontend/src/App.tsx` |
-| Frontend sidebar registry | `frontend/src/components/Sidebar.tsx` |
+| CH writes (spans/metrics/logs) | `internal/chstore/` |
+| ES log read backend | `internal/logstore/` |
+| Tempo trace fallback | `internal/tempo/` |
+| HTTP API + cache wrapper | `internal/api/` |
+| Alert evaluator / anomaly / templater | `internal/evaluator/`, `internal/anomaly/`, `internal/templater/` |
+| Notifications | `internal/notify/` |
+| Auth (local + LDAP + OIDC) | `internal/auth/`, `internal/ldap/` |
+| Copilot (system prompts at BOTTOM of copilot.go) | `internal/copilot/` |
+| Topology correlator / CH migrations | `internal/topology/`, `internal/chmigrate/` |
+| Frontend pages / components / types+client / routes / sidebar | `frontend/src/pages/`, `components/`, `lib/{types,api}.ts`, `App.tsx`, `components/Sidebar.tsx` |
 
-AI Copilot system prompts: `internal/copilot/copilot.go` BOTTOM
-of file. Every Copilot endpoint routes through
-`s.copilotExplain(r, ...)` — never `s.copilot.Explain` direct
-(/ai attribution depends on the wrapper).
+`lib/types.ts` is the single source of truth for shared data shapes —
+never re-declare in components. PascalCase types, camelCase props,
+`?:` for `omitempty` fields.
 
----
+## Demo realism
 
-## Frontend type discipline
+The three demo workloads share one load model (diurnal curve,
+incidents, log-normal latency, correlated errors, real histogram
+buckets, saturation metrics) — details in
+[docs/DEMO-REALISM.md](docs/DEMO-REALISM.md). **Rule:** any new demo
+scenario/metric reads from the load model (`L` / `DemoLoad`), never
+its own fixed probability or uniform latency.
 
-`frontend/src/lib/types.ts` is the single source of truth for
-data shapes shared between API client and components. Don't
-re-declare types in components — import from `lib/types.ts`. If
-the backend adds a field, the type goes here first, then the
-consumer reads it.
+## Self-observability
 
-Naming: PascalCase for types, camelCase for properties (Go
-struct tags do the JSON conversion). Optional fields use `?:`
-when the backend can omit them (`omitempty` Go tag) and a
-`unknown`-typed field for genuinely unknown shapes that the
-component will narrow.
-
----
+`/admin/stats` reads `GetSystemStats(ctx)`; AI usage lands in
+`ai_calls` → `/ai`. New ingest path or expensive endpoint = register
+a counter.
 
 ## Anti-patterns (don't)
 
-- Don't bypass `s.serveCached` — every hot read goes through it.
+- Don't bypass `s.serveCached` on hot reads.
 - Don't create new schema for user-saved state (use `saved_views`).
 - Don't fetch full catalogues for pickers.
-- Don't add a polling interval shorter than 10s on anything except
-  `/api/health`.
-- Don't write code that ignores `document.hidden`.
+- Don't poll faster than 10s (except `/api/health`) or ignore `document.hidden`.
 - Don't add backwards-compat shims when removing a feature.
-- Don't propose data redaction features (operator preference).
-- Don't fix typing by `as any` — fix the root cause.
-- Don't write `// TODO` without a release tag context; either ship
-  the fix or queue it via `kuyruk`.
-- Don't add a metrics counter without thinking about its
-  cardinality — `LowCardinality(String)` for high-cardinality
-  dimensions, not `String`.
+- Don't propose data redaction features.
+- Don't fix typing with `as any`.
+- Don't write `// TODO` without a release-tag context — ship it or queue it via `kuyruk`.
+- Don't add high-cardinality `String` metric dimensions — `LowCardinality(String)`.
 
----
+Decision log (architectural calls, v0.5.208 → v0.6.8):
+[docs/DECISIONS.md](docs/DECISIONS.md).
 
-## Decision log — recent architectural calls
-
-- **v0.5.208** — Tempo external trace backend as a *fallback*,
-  not a replacement. Coremetry samples at low rate, Tempo holds
-  100%, fallback resolves the long-tail trace-by-id.
-- **v0.5.210** — P1/P2/P3 priority score blended at READ time
-  (no extra column). Persisted is wasteful; fresh recompute is
-  cheap and lets fresh deploys/threshold ratios re-rank
-  instantly.
-- **v0.5.220** — Local monolithic Tempo + 30/100 collector split
-  for POC. Operators replicate this layout in prod (sample to
-  Coremetry, 100% to Tempo).
-- **v0.5.226 / v0.5.235** — Faceted sidebar shipped THEN dropped
-  at billion-doc scale because top-10 terms aren't useful when
-  the operator's value is in the long tail. Replaced with
-  click-from-row filter (still in place) + significant_text +
-  Drain templates.
-- **v0.5.241** — Log-pattern detector consumes `logstore.Store`,
-  not raw `chstore`. Decoupled detector from CH-only path so
-  ES-backed installs get coverage too. ES backend batches via
-  `_msearch`.
-- **v0.5.244** — Drain templater is sample-based on purpose.
-  Three-layer log anomaly cover: curated regex (high-priority
-  known failures) + significant_text (rare tokens, unsupervised)
-  + Drain templates (full shape clustering, sample-based).
-- **v0.5.246-247** — Topology op view + service view share the
-  same NODE / COL / ROW constants + orphan handling so the
-  operator's eye doesn't recalibrate when switching tabs.
-- **v0.6.0** — `COREMETRY_MODE` env var lets the single
-  binary run in four roles: `all` (default, monolithic POC),
-  `ingest` (OTLP receivers + CH writers), `api` (HTTP API +
-  SSE + Copilot), `worker` (evaluator + anomaly + topology
-  agg + notifier; replicas=1 — leader-elected). Preserves the
-  single-binary pitch (one image, one tag) while letting
-  banks run 5×ingest + 2×api + 1×worker at billion-spans
-  scale.
-- **v0.6.2** — Helm chart `deployment.mode: monolithic |
-  distributed` toggle. Monolithic = unchanged behaviour from
-  v0.5.x (one Deployment, replicaCount applies). Distributed
-  = three Deployments + four Services (`<release>` alias →
-  api, plus `-ingest`/`-api`/`-worker`). HPA targets api in
-  distributed mode; worker locked at 1 replica.
-- **v0.6.3** — SSE Redis pub/sub bridge. Worker-pod-fired
-  events (problem.open, anomaly.fire) ride a `coremetry-
-  events` Redis channel so every api pod's local SSE
-  subscribers receive them. PodID-stamped envelopes prevent
-  loops; 200ms publish deadline so a wedged Redis doesn't
-  stall the evaluator. Single-pod / Noop-cache installs are
-  unchanged (no Redis activity).
-- **v0.6.4-v0.6.7** — Model Context Protocol server. JSON-RPC
-  2.0 over HTTP+SSE per spec 2024-11-05. Exposes tools (7
-  telemetry surfaces in `internal/mcptools/`), resources
-  (URI-addressed snapshots + templated per-id reads), and
-  prompts (curated system+user message pairs that surface the
-  in-app ✨ Explain workflows). Auth via existing JWT
-  middleware — viewer/editor/admin roles carry into MCP. Runs
-  on api+all modes only (worker/ingest pods don't take
-  operator traffic).
-- **v0.6.8** — AI-driven CH query optimizer on
-  `/admin/clickhouse`. Operator pastes SQL, Copilot rewrites
-  it against the MV catalogue + six-rule checklist (MV bypass
-  / LIMIT / max_execution_time / time-bounded WHERE / GLOBAL
-  IN / quantileTDigest defaults). Suggestion only — no auto-
-  run; operator copies the optimized SQL to their CH client.
-  Routes through `s.copilotExplain` so every call writes an
-  ai_calls row for /ai attribution.
-
-  # Coremetry Development Rules
+# Coremetry Development Rules
 
 ## Backend (Go)
 - Veri yazma işlemlerinde ClickHouse Async Insert (`async_insert=1`) mekanizmasını bozma.

@@ -326,7 +326,12 @@ var defaults = Config{
 		// hardcoded 10 starved 24+ flushers of connections).
 		Username: "default", MaxOpenConns: 0, DialTimeout: "5s",
 	},
-	Retention:  RetentionConfig{SpansDays: 30, LogsDays: 30, MetricsDays: 7},
+	// v0.8.246 — operator default: 7 days across all signals ("default
+	// data retention 7 gün olsun"). Fresh installs create table TTLs at
+	// 7d; the retention enforcer uses these when no operator override
+	// is persisted (system_settings retention.* always wins). Raise via
+	// config.yaml retention block or the admin Retention tab.
+	Retention:  RetentionConfig{SpansDays: 7, LogsDays: 7, MetricsDays: 7},
 	// Defaults tuned for production-grade ingest at ~1B spans/day
 	// (12k/sec average, 50k/sec burst). Workers parallelise the CH
 	// insert path so a 200ms stall on one flush doesn't queue up

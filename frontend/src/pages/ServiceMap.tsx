@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { useQuery } from '@tanstack/react-query';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useServiceMap } from '@/lib/queries';
-import { fmtNum, hashColor } from '@/lib/utils';
+import { api } from '@/lib/api';
+import { serviceGraphToMap } from '@/lib/serviceGraphAdapter';
+import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange, ServiceMap, ServiceMapNode } from '@/lib/types';
 
@@ -120,16 +123,42 @@ export default function ServiceMapPage() {
     return [...set].sort();
   }, [data]);
 
+  // Focus view data source (v0.8.273, operator-reported: "focus
+  // seçtiğimde göstermiyor — test ortamında bug"). The old path
+  // filtered the SAMPLED global map (200 heaviest traces) down to
+  // the focus neighborhood — any service outside the sample kept
+  // zero nodes, so on a 1200-service install almost every pick
+  // rendered an empty graph. Focus now fetches its neighborhood
+  // from the MV-backed /api/servicegraph (full coverage,
+  // sample-independent, hidden patterns applied) and renders that;
+  // the trace-sampled map stays the source for the global view.
+  const { from: winFrom, to: winTo } = useMemo(() => timeRangeToNs(range), [range]);
+  const focusQ = useQuery({
+    queryKey: ['servicegraph', 'map-focus', focus, winFrom, winTo],
+    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', from: winFrom, to: winTo }),
+    enabled: !!focus,
+    staleTime: 15_000,
+  });
+  const focusMap = useMemo(
+    () => (focusQ.data ? serviceGraphToMap(focusQ.data) : undefined),
+    [focusQ.data],
+  );
+
   // Filter to the 1-hop neighbourhood of the focused service
   // (focused + every direct caller + every direct callee).
-  // Then apply the cluster filter on top.
+  // Then apply the cluster filter on top (global view only — the
+  // MV path carries no cluster enrichment).
   // Edges are kept iff both endpoints survived. Memoised so
   // hover-induced re-renders don't recompute.
   const filtered = useMemo<ServiceMap | undefined>(() => {
+    if (focus && focusMap) return focusMap; // MV-backed, already scoped server-side
     if (!data) return undefined;
     let nodes = data.nodes;
     let edges = data.edges;
     if (focus) {
+      // MV fetch still in flight — show the sample-derived slice
+      // as a preview (small installs render instantly; large ones
+      // upgrade when the MV response lands).
       const keep = new Set<string>([focus]);
       for (const e of data.edges) {
         if (e.caller === focus) keep.add(e.callee);
@@ -154,13 +183,16 @@ export default function ServiceMapPage() {
       sampledFrom: data.sampledFrom,
       totalSpans:  data.totalSpans,
     };
-  }, [data, focus, clusterPick]);
+  }, [data, focus, focusMap, clusterPick]);
 
-  const focusNode: ServiceMapNode | undefined = focus && data
-    ? data.nodes.find(n => n.service === focus)
+  // Focus header facts read from the ACTIVE source — the MV map
+  // when it's loaded, the sampled map otherwise.
+  const activeMap: ServiceMap | undefined = focus && focusMap ? focusMap : data ?? undefined;
+  const focusNode: ServiceMapNode | undefined = focus && activeMap
+    ? activeMap.nodes.find(n => n.service === focus)
     : undefined;
-  const callers = data && focus
-    ? data.edges.filter(e => e.callee === focus).length
+  const callers = activeMap && focus
+    ? activeMap.edges.filter(e => e.callee === focus).length
     : 0;
   // Callee buckets — tell the operator at a glance how many of
   // the focused service's downstreams are services vs DBs vs
@@ -168,17 +200,17 @@ export default function ServiceMapPage() {
   // in the focus header.
   const calleeBuckets = useMemo(() => {
     const out = { service: 0, db: 0, queue: 0, external: 0 };
-    if (!data || !focus) return out;
+    if (!activeMap || !focus) return out;
     const byName = new Map<string, ServiceMapNode>(
-      data.nodes.map(n => [n.service, n] as const));
-    for (const e of data.edges) {
+      activeMap.nodes.map(n => [n.service, n] as const));
+    for (const e of activeMap.edges) {
       if (e.caller !== focus) continue;
       const callee = byName.get(e.callee);
       const kind = (callee?.kind || 'service') as keyof typeof out;
       if (kind in out) out[kind] += 1;
     }
     return out;
-  }, [data, focus]);
+  }, [activeMap, focus]);
   const calleesTotal = calleeBuckets.service + calleeBuckets.db + calleeBuckets.queue + calleeBuckets.external;
 
   return (

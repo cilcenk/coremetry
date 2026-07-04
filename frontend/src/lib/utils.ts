@@ -64,9 +64,12 @@ export function escapeHTML(s: string): string {
 // Binary unit formatter — KiB / MiB / GiB / TiB. Hoisted from
 // ServiceInfra.tsx where it was duplicated locally; the
 // cardinality page also needs it for column-bytes columns.
+// Canonical binary-unit byte formatter (v0.8.272 dedup — was
+// re-implemented in adminstats/shared and AdminClickhouse with
+// drifting precision/fallbacks).
 export function fmtBytes(n: number): string {
-  if (!n || n < 0) return '0';
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  if (!n || n < 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
   let i = 0;
   let v = n;
   while (v >= 1024 && i < units.length - 1) {

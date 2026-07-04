@@ -4,7 +4,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
-import { fmtNum } from '@/lib/utils';
+import { fmtNum, fmtBytes } from '@/lib/utils';
 import { useClickhouseHealth } from '@/lib/queries';
 import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange } from '@/lib/types';
@@ -764,13 +764,6 @@ function KPI({ label, value, sub, cls }: { label: string; value: string; sub?: s
   );
 }
 
-function fmtBytes(n: number): string {
-  if (!n) return '0';
-  const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-  let i = 0; let v = n;
-  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
-}
 
 // v0.5.439 — short age string for the stale-cache pill. Drops
 // sub-second precision; rounds to the unit that reads cleanest

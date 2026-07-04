@@ -86,8 +86,8 @@ describe('escapeHTML', () => {
 
 describe('fmtBytes (binary / 1024)', () => {
   const cases: Array<[number, string]> = [
-    [0, '0'],
-    [-5, '0'],
+    [0, '0 B'],   // v0.8.272 dedup — canonical fallback is '0 B'
+    [-5, '0 B'],
     [512, '512 B'],
     [1024, '1.00 KiB'],
     [1536, '1.50 KiB'],
@@ -95,7 +95,7 @@ describe('fmtBytes (binary / 1024)', () => {
     [100 * 1024, '100 KiB'], // ≥100 → 0 decimals
     [1024 * 1024, '1.00 MiB'],
     [1024 ** 4, '1.00 TiB'],
-    [1024 ** 5, '1024 TiB'], // unit caps at TiB, no overflow unit
+    [1024 ** 5, '1.00 PiB'], // v0.8.272 — PiB rung added in the dedup
   ];
   it.each(cases)('fmtBytes(%d) = %s', (n, want) => {
     expect(fmtBytes(n)).toBe(want);

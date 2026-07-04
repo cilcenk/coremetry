@@ -221,7 +221,14 @@ export function DataTableColgroup<T>({ dt, leading }: { dt: DataTable<T>; leadin
 // sortable column is clickable (▲▼↕ glyph + aria-sort, matching the
 // house .sortable/.sorted CSS) and every column gets a right-edge resize
 // handle. `leading` slots in any non-data header cells (e.g. expand col).
-export function DataTableHead<T>({ dt, leading }: { dt: DataTable<T>; leading?: ReactNode }) {
+// `renderLabel` lets a caller decorate a header label (e.g. LogTable's
+// hover-× remove-column affordance) without touching the pure core's
+// string label type.
+export function DataTableHead<T>({ dt, leading, renderLabel }: {
+  dt: DataTable<T>;
+  leading?: ReactNode;
+  renderLabel?: (c: DataTable<T>['columns'][number]) => ReactNode;
+}) {
   return (
     <thead>
       <tr>
@@ -242,7 +249,7 @@ export function DataTableHead<T>({ dt, leading }: { dt: DataTable<T>; leading?: 
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   userSelect: 'none',
                 }}>
-              {c.label}
+              {renderLabel ? renderLabel(c) : c.label}
               {sortable && (
                 <span className="sort-arrow">{active ? (dt.sort.dir === 'desc' ? '▼' : '▲') : '↕'}</span>
               )}

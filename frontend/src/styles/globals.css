@@ -1814,3 +1814,14 @@ canvas { max-width: 100%; }
 @keyframes tf-edge-flow { to { stroke-dashoffset: -26; } }
 .tf-edge-hl { stroke-dasharray: 7 6; animation: tf-edge-flow .9s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .tf-edge-hl { animation: none; stroke-dasharray: none; } }
+
+/* Dynamic log-table columns (Discover revamp step 3) — hover-× on a
+   removable column header. Mirrors the .kv-actions reveal pattern. */
+.th-remove {
+  opacity: 0; margin-left: 4px; padding: 0 2px;
+  border: none; background: none; cursor: pointer;
+  font-size: 12px; line-height: 1; color: var(--text3);
+  transition: opacity 80ms ease-out;
+}
+thead th:hover .th-remove { opacity: 1; }
+.th-remove:hover { color: var(--err); }

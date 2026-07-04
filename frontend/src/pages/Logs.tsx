@@ -11,7 +11,7 @@ import { TableSkeleton } from '@/components/Skeleton';
 import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
 import { CopyButton } from '@/components/CopyButton';
-import { LogTable } from '@/components/LogTable';
+import { LogTable, DEFAULT_LOG_COLUMNS } from '@/components/LogTable';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
@@ -20,6 +20,7 @@ import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass } from '@/lib/utils';
@@ -157,6 +158,25 @@ function LogsInner() {
   // is unchanged. Pills live in the ?filters= URL param so Copy link
   // and SavedViewsBar reproduce them.
   const [filters, setFilters] = useState<LogFilter[]>([]);
+  // Dynamic table columns (Discover revamp step 3). localStorage is
+  // the operator's standing preference; the ?cols= URL param (only
+  // written when non-default) wins on deep links so a shared view
+  // reproduces its columns WITHOUT clobbering the recipient's
+  // stored preference.
+  const COLS_STORE_KEY = 'dt.logs.columns';
+  const [logCols, setLogCols] = useState<string[]>(() => {
+    const raw = getRaw(COLS_STORE_KEY);
+    if (raw) {
+      try {
+        const a: unknown = JSON.parse(raw);
+        if (Array.isArray(a)) return a.filter((x): x is string => typeof x === 'string');
+      } catch { /* fall through to defaults */ }
+    }
+    return DEFAULT_LOG_COLUMNS;
+  });
+  // '' when the current set matches the defaults → param omitted.
+  const colsParam = (cols: string[]) =>
+    cols.join(',') === DEFAULT_LOG_COLUMNS.join(',') ? '' : cols.join(',');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   // v0.5.471 — cluster list for the inline selector. /api/clusters
   // returns the distinct k8s/openshift cluster names seen in the
@@ -204,11 +224,12 @@ function LogsInner() {
   // changes no-op and self-writes (which pre-store their own sig)
   // don't double-apply.
   const urlSig = (f: { service: string; cluster: string; search: string; traceId: string; spanId: string },
-    filtersRaw: string) =>
-    JSON.stringify([f.service, f.cluster, f.search, f.traceId, f.spanId, filtersRaw]);
+    filtersRaw: string, colsRaw: string) =>
+    JSON.stringify([f.service, f.cluster, f.search, f.traceId, f.spanId, filtersRaw, colsRaw]);
   const lastUrlSigRef = useRef<string | null>(null);
   useEffect(() => {
     const filtersRaw = searchParams.get('filters') ?? '';
+    const colsRaw = searchParams.get('cols') ?? '';
     const next = {
       service:  searchParams.get('service') ?? '',
       cluster:  searchParams.get('cluster') ?? '',
@@ -217,12 +238,16 @@ function LogsInner() {
       traceId:  searchParams.get('traceId') ?? '',
       spanId:   searchParams.get('spanId')  ?? '',
     };
-    const sig = urlSig(next, filtersRaw);
+    const sig = urlSig(next, filtersRaw, colsRaw);
     if (sig === lastUrlSigRef.current) return;
     lastUrlSigRef.current = sig;
     setFilter(next);
     setDraft(next);
     setFilters(parseFiltersParam(filtersRaw));
+    // Deep-linked columns override the view; absence means "keep
+    // whatever the operator prefers" (localStorage init), so a plain
+    // /logs link never resets their column setup.
+    if (colsRaw) setLogCols(colsRaw.split(',').filter(Boolean));
     resetPaging();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -231,9 +256,10 @@ function LogsInner() {
   // filter tweak refines the view, no history entry per click) and
   // pre-stores the sig so the import effect above treats the
   // resulting searchParams change as a no-op.
-  const writeUrl = (f: typeof filter, pills: LogFilter[]) => {
+  const writeUrl = (f: typeof filter, pills: LogFilter[], cols?: string[]) => {
     const filtersRaw = encodeFiltersParam(pills);
-    lastUrlSigRef.current = urlSig(f, filtersRaw);
+    const colsRaw = colsParam(cols ?? logCols);
+    lastUrlSigRef.current = urlSig(f, filtersRaw, colsRaw);
     setSearchParams(prev => {
       const p = new URLSearchParams(prev);
       const setOrDel = (k: string, v: string) => { if (v) p.set(k, v); else p.delete(k); };
@@ -244,9 +270,18 @@ function LogsInner() {
       setOrDel('traceId', f.traceId);
       setOrDel('spanId', f.spanId);
       setOrDel('filters', filtersRaw);
+      setOrDel('cols', colsRaw);
       return p;
     }, { replace: true });
   };
+
+  // Column mutations: state + standing preference + URL in one step.
+  const changeCols = (next: string[]) => {
+    setLogCols(next);
+    setRaw(COLS_STORE_KEY, JSON.stringify(next));
+    writeUrl(filter, filters, next);
+  };
+  const removeColumn = (id: string) => changeCols(logCols.filter(c => c !== id));
 
   // Build the params for the static-window query. When live
   // tail is on, we don't run this query (the live useQuery
@@ -803,6 +838,8 @@ function LogsInner() {
         {data && logs.length > 0 && (
           <>
             <LogTable logs={logs} nav={tableNav}
+              columns={logCols}
+              onRemoveColumn={removeColumn}
               expandedIds={expanded}
               onToggleExpand={toggle}
               onFilterAdd={addFromRow}

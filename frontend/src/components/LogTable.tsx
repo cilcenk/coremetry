@@ -6,24 +6,30 @@ import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
 
-// LOG_COLS — column definitions for the shared DataTable primitive.
+// Column model (Discover revamp step 3): Time is fixed left, Message
+// is fixed right (flexes), the Trace deep-link column trails when
+// visible — and everything in between is a DYNAMIC field column
+// driven by the `columns` prop. Well-known ids (level / service /
+// cluster / pod) get bespoke renderers; any other id resolves
+// through attributes → resourceAttributes, which is how the fields
+// panel (step 2) adds arbitrary mapping fields as columns.
+//
 // RESIZE-ONLY (v0.7.54): /logs and the trace Logs tab are SERVER-paged
 // (100/page, time-desc order off ClickHouse), so client-side sort would
 // only reorder the visible page — misleading. Every column intentionally
 // omits `sortValue`, which makes DataTableHead render a plain,
-// non-clickable label (no ▲▼↕ glyph, no aria-sort) that still carries the
-// right-edge resize grip, and makes dt.sortedRows === the input rows in
-// server order. The Trace column is appended by the caller only when the
-// trace deep-link column is visible (omitted in the trace detail Logs tab).
+// non-clickable label that still carries the resize grip, and makes
+// dt.sortedRows === the input rows in server order.
 const TRACE_COL: DataTableColumn<LogRow> = { id: 'trace', label: 'Trace', width: 120 };
-const LOG_COLS: DataTableColumn<LogRow>[] = [
-  { id: 'time',    label: 'Time',    width: 150 },
-  { id: 'sev',     label: 'Sev',     width: 80 },
-  { id: 'service', label: 'Service', width: 140 },
-  { id: 'message', label: 'Message', width: 480 },
-  { id: 'cluster', label: 'Cluster', width: 120 },
-  { id: 'pod',     label: 'Pod',     width: 140 },
-];
+export const DEFAULT_LOG_COLUMNS = ['level', 'service', 'cluster', 'pod'];
+// Ids reserved by the fixed frame — a dynamic column may not shadow them.
+const FRAME_COL_IDS = new Set(['time', 'message', 'trace']);
+const COL_LABELS: Record<string, string> = {
+  level: 'Level', service: 'Service', cluster: 'Cluster', pod: 'Pod',
+};
+const COL_WIDTHS: Record<string, number> = {
+  level: 80, service: 140, cluster: 120, pod: 140,
+};
 
 // Middle-truncate so long pod names like `payment-api-7d6f9b54c5-xkv2m`
 // stay scannable in a column (keeps the deployment prefix + the
@@ -154,6 +160,8 @@ function firstNonEmpty(...vals: Array<string | undefined | null>): string {
 export function LogTable({
   logs,
   hideTraceColumn = false,
+  columns,
+  onRemoveColumn,
   nav,
   expandedIds,
   onToggleExpand,
@@ -165,6 +173,15 @@ export function LogTable({
 }: {
   logs: LogRow[];
   hideTraceColumn?: boolean;
+  // Dynamic middle columns (Discover revamp step 3). Omitted →
+  // DEFAULT_LOG_COLUMNS, which preserves the classic anatomy. Ids
+  // are well-known (level/service/cluster/pod) or raw attribute /
+  // resource-attribute keys.
+  columns?: string[];
+  // When set, every dynamic column header gets a hover-× that
+  // calls back with the column id. Omitted on surfaces without
+  // column management (trace detail Logs tab).
+  onRemoveColumn?: (id: string) => void;
   nav?: {
     selected: number;
     setSelected: (n: number) => void;
@@ -210,27 +227,45 @@ export function LogTable({
       return next;
     });
   };
-  // Pod + Cluster columns show on both surfaces. v0.5.212 split
-  // them out from the hideTraceColumn flag (which still gates the
-  // Trace deep-link column) so the trace detail Logs tab also
-  // shows where each log came from — operators were expanding
-  // every row just to read the resource attrs.
-  const cols = hideTraceColumn ? 6 : 7;
+  // Dynamic middle columns: prop wins, defaults preserve the classic
+  // anatomy. Frame ids (time/message/trace) can't be shadowed.
+  const colIds = useMemo(
+    () => (columns ?? DEFAULT_LOG_COLUMNS).filter(id => !FRAME_COL_IDS.has(id)),
+    [columns],
+  );
+  // Stable string key so the memo below doesn't rebuild on every
+  // render from a fresh array identity.
+  const colKey = colIds.join('');
   // Resize-only DataTable wiring. No column defines `sortValue`, so
   // dt.sortedRows is `logs` unchanged (server time-desc order preserved)
   // and the headers render as plain resizable labels. Persisted widths
-  // live under the 'logs' storageKey. The Trace column joins the set only
-  // when its deep-link column is shown (matches the body's `!hideTraceColumn`).
-  const columns = useMemo(
-    () => (hideTraceColumn ? LOG_COLS : [...LOG_COLS, TRACE_COL]),
-    [hideTraceColumn],
-  );
-  const dt = useDataTable<LogRow>({ storageKey: 'logs', columns, rows: logs });
+  // live under the 'logs' storageKey, keyed by column id, so a column
+  // keeps its width across add/remove. The Trace column joins the set
+  // only when its deep-link column is shown.
+  const dtColumns = useMemo<DataTableColumn<LogRow>[]>(() => [
+    { id: 'time', label: 'Time', width: 150 },
+    ...colIds.map(id => ({ id, label: COL_LABELS[id] ?? id, width: COL_WIDTHS[id] ?? 140 })),
+    { id: 'message', label: 'Message', width: 480 },
+    ...(hideTraceColumn ? [] : [TRACE_COL]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [colKey, hideTraceColumn]);
+  const dt = useDataTable<LogRow>({ storageKey: 'logs', columns: dtColumns, rows: logs });
+  // colSpan for the expanded row: Time + dynamic + Message (+ Trace).
+  const cols = 2 + colIds.length + (hideTraceColumn ? 0 : 1);
   return (
     <div className="table-wrap">
       <table className="logtbl-dense" style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
-        <DataTableHead dt={dt} />
+        <DataTableHead dt={dt} renderLabel={onRemoveColumn ? (c) => (
+          FRAME_COL_IDS.has(c.id)
+            ? c.label
+            : <>
+                {c.label}
+                <button type="button" className="th-remove"
+                  onClick={e => { e.stopPropagation(); onRemoveColumn(c.id); }}
+                  title={`Remove the ${c.label} column`}>×</button>
+              </>
+        ) : undefined} />
         <tbody>
           {dt.sortedRows.map((l, idx) => {
             const isExpanded = expanded.has(l.id);
@@ -241,6 +276,7 @@ export function LogTable({
                 l={l}
                 idx={idx}
                 cols={cols}
+                colIds={colIds}
                 hideTraceColumn={hideTraceColumn}
                 selected={isSelected}
                 expanded={isExpanded}
@@ -263,12 +299,13 @@ export function LogTable({
 }
 
 function LogRow({
-  l, idx, cols, hideTraceColumn, selected, expanded, onClick, extraExpanded,
+  l, idx, cols, colIds, hideTraceColumn, selected, expanded, onClick, extraExpanded,
   onFilterAdd, onFilterExclude, onTracePeek, onContextOpen,
 }: {
   l: LogRow;
   idx: number;
   cols: number;
+  colIds: string[];
   hideTraceColumn: boolean;
   selected: boolean;
   expanded: boolean;
@@ -312,29 +349,57 @@ function LogRow({
              scrollbar doesn't jump (v0.7.79). */
           style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
         <td className="mono">{tsLong(l.timestamp)}</td>
-        <td>
-          <span className={sevClass(l.severity)}>
-            {l.severityText || sevName(l.severity)}
-          </span>
-        </td>
-        <td>
-          <span style={{
-            fontSize: 11, padding: '1px 6px',
-            background: 'var(--bg3)', borderRadius: 3,
-            fontFamily: 'monospace',
-          }}>
-            {l.serviceName || '—'}
-          </span>
-        </td>
+        {colIds.map(id => {
+          if (id === 'level') {
+            return (
+              <td key={id}>
+                <span className={sevClass(l.severity)}>
+                  {l.severityText || sevName(l.severity)}
+                </span>
+              </td>
+            );
+          }
+          if (id === 'service') {
+            return (
+              <td key={id}>
+                <span style={{
+                  fontSize: 11, padding: '1px 6px',
+                  background: 'var(--bg3)', borderRadius: 3,
+                  fontFamily: 'monospace',
+                }}>
+                  {l.serviceName || '—'}
+                </span>
+              </td>
+            );
+          }
+          if (id === 'cluster') {
+            return (
+              <td key={id} className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+                  title={cluster || 'no openshift.labels.cluster / openshift.cluster.name / k8s.cluster.name resource attr'}>
+                {cluster || '—'}
+              </td>
+            );
+          }
+          if (id === 'pod') {
+            return (
+              <td key={id} className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+                  title={pod || 'no k8s.pod.name / kubernetes.pod_name resource attr'}>
+                {pod ? truncMid(pod, 22) : '—'}
+              </td>
+            );
+          }
+          // Arbitrary mapping field (added from the fields panel):
+          // attributes win over resource attributes — same precedence
+          // the expanded row's kv-tables imply (attrs listed first).
+          const v = (l.attributes ?? {})[id] ?? (l.resourceAttributes ?? {})[id] ?? '';
+          return (
+            <td key={id} className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
+                title={v || `no ${id} attribute on this log`}>
+              {v || '—'}
+            </td>
+          );
+        })}
         <td style={{ maxWidth: 480 }} title={l.body}>{l.body}</td>
-        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
-            title={cluster || 'no openshift.labels.cluster / openshift.cluster.name / k8s.cluster.name resource attr'}>
-          {cluster || '—'}
-        </td>
-        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}
-            title={pod || 'no k8s.pod.name / kubernetes.pod_name resource attr'}>
-          {pod ? truncMid(pod, 22) : '—'}
-        </td>
         {!hideTraceColumn && (
           <td className="mono">
             {l.traceId ? (

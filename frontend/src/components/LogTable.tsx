@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CopyButton } from './CopyButton';
 import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
+import { highlightSegments } from '@/lib/logFilters';
 import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
@@ -162,6 +163,7 @@ export function LogTable({
   hideTraceColumn = false,
   columns,
   onRemoveColumn,
+  highlightTerms,
   nav,
   expandedIds,
   onToggleExpand,
@@ -182,6 +184,11 @@ export function LogTable({
   // calls back with the column id. Omitted on surfaces without
   // column management (trace detail Logs tab).
   onRemoveColumn?: (id: string) => void;
+  // Free-text search terms to <mark> in the message cell
+  // (Discover revamp 6/7). The parent extracts bare terms +
+  // quoted phrases from its query (field clauses excluded) via
+  // extractHighlightTerms. Empty/omitted → plain rendering.
+  highlightTerms?: string[];
   nav?: {
     selected: number;
     setSelected: (n: number) => void;
@@ -277,6 +284,7 @@ export function LogTable({
                 idx={idx}
                 cols={cols}
                 colIds={colIds}
+                highlightTerms={highlightTerms}
                 hideTraceColumn={hideTraceColumn}
                 selected={isSelected}
                 expanded={isExpanded}
@@ -299,13 +307,14 @@ export function LogTable({
 }
 
 function LogRow({
-  l, idx, cols, colIds, hideTraceColumn, selected, expanded, onClick, extraExpanded,
+  l, idx, cols, colIds, highlightTerms, hideTraceColumn, selected, expanded, onClick, extraExpanded,
   onFilterAdd, onFilterExclude, onTracePeek, onContextOpen,
 }: {
   l: LogRow;
   idx: number;
   cols: number;
   colIds: string[];
+  highlightTerms?: string[];
   hideTraceColumn: boolean;
   selected: boolean;
   expanded: boolean;
@@ -403,7 +412,12 @@ function LogRow({
             </td>
           );
         })}
-        <td style={{ maxWidth: 480 }} title={l.body}>{l.body}</td>
+        <td style={{ maxWidth: 480 }} title={l.body}>
+          {highlightTerms && highlightTerms.length > 0
+            ? highlightSegments(l.body, highlightTerms).map((s, i) =>
+                s.hl ? <mark key={i} className="log-mark">{s.text}</mark> : <span key={i}>{s.text}</span>)
+            : l.body}
+        </td>
         {!hideTraceColumn && (
           <td className="mono">
             {l.traceId ? (

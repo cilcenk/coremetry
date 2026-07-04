@@ -27,6 +27,7 @@ import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass } from '@/lib/utils';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
+  extractHighlightTerms,
 } from '@/lib/logFilters';
 import type { LogFilter } from '@/lib/logFilters';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
@@ -310,6 +311,14 @@ function LogsInner() {
   const compiledSearch = useMemo(
     () => compileSearch(filters, filter.search),
     [filters, filter.search],
+  );
+  // <mark> terms for the message cell — the APPLIED free-text
+  // query's bare terms + quoted phrases only (field clauses and
+  // pills excluded; a level:error clause must not light unrelated
+  // "error" text). Client-side matching only.
+  const highlightTerms = useMemo(
+    () => extractHighlightTerms(filter.search),
+    [filter.search],
   );
   // Slice for the fields-panel accordion fetches — stable identity
   // so the panel's useQuery keys only change when the slice does.
@@ -809,6 +818,7 @@ function LogsInner() {
             <LogTable logs={logs} nav={tableNav}
               columns={logCols}
               onRemoveColumn={removeColumn}
+              highlightTerms={highlightTerms}
               expandedIds={expanded}
               onToggleExpand={toggle}
               onFilterAdd={addFromRow}

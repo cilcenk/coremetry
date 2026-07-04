@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
+  extractHighlightTerms, highlightSegments,
   type LogFilter,
 } from './logFilters';
 
@@ -53,6 +54,62 @@ describe('toggleFilter', () => {
   it('does not touch unrelated pills', () => {
     const others = [f('b', '2'), f('c', '3', true)];
     expect(toggleFilter([...others, f('a', '1')], 'a', '1', false)).toEqual(others);
+  });
+});
+
+// Discover revamp 6/7 — client-side <mark> highlighting. Field
+// clauses must NOT leak into the highlight set (level:error would
+// light unrelated "error" text), and segmentation must be case-
+// insensitive + non-overlapping.
+describe('extractHighlightTerms', () => {
+  it('collects bare terms and quoted phrases, skips operators', () => {
+    expect(extractHighlightTerms('timeout AND "connection refused" OR retry'))
+      .toEqual(['timeout', 'connection refused', 'retry']);
+  });
+
+  it('excludes field clauses — bare and quoted values', () => {
+    expect(extractHighlightTerms('level:error AND service.name:"checkout" payment'))
+      .toEqual(['payment']);
+    expect(extractHighlightTerms('trace.id:c9ea* NOT k8s.namespace:prod'))
+      .toEqual([]);
+  });
+
+  it('strips parens/wildcards, dedups, drops single chars', () => {
+    expect(extractHighlightTerms('(oom OR oom) killed* x'))
+      .toEqual(['oom', 'killed']);
+  });
+
+  it('empty query → no terms', () => {
+    expect(extractHighlightTerms('')).toEqual([]);
+    expect(extractHighlightTerms('   ')).toEqual([]);
+  });
+});
+
+describe('highlightSegments', () => {
+  it('no terms → single unhighlighted run', () => {
+    expect(highlightSegments('hello', [])).toEqual([{ text: 'hello', hl: false }]);
+  });
+
+  it('case-insensitive, non-overlapping runs in order', () => {
+    expect(highlightSegments('Payment TIMEOUT during payment', ['payment', 'timeout']))
+      .toEqual([
+        { text: 'Payment', hl: true },
+        { text: ' ', hl: false },
+        { text: 'TIMEOUT', hl: true },
+        { text: ' during ', hl: false },
+        { text: 'payment', hl: true },
+      ]);
+  });
+
+  it('longest term wins at the same position', () => {
+    expect(highlightSegments('connection refused', ['connection refused', 'connection']))
+      .toEqual([{ text: 'connection refused', hl: true }]);
+  });
+
+  it('round-trips the input text exactly', () => {
+    const body = 'a payment failed: timeout x2';
+    const joined = highlightSegments(body, ['payment', 'timeout']).map(s => s.text).join('');
+    expect(joined).toBe(body);
   });
 });
 

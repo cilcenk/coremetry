@@ -61,6 +61,75 @@ export function encodeFiltersParam(filters: LogFilter[]): string {
   return JSON.stringify(filters.map(f => [f.key, f.value, f.negated ? 1 : 0, f.disabled ? 1 : 0]));
 }
 
+// extractHighlightTerms — the free-text query's bare terms and
+// quoted phrases, for client-side <mark> highlighting in the
+// message cell (Discover revamp 6/7). Field clauses (key:value,
+// quoted or bare) are excluded — highlighting "error" because the
+// operator typed level:error would light up unrelated text.
+// Operators AND/OR/NOT and parens/wildcard punctuation are
+// stripped. Purely client-side by design — never the ES highlight
+// API (spec: "ES highlight API'sine girme").
+export function extractHighlightTerms(query: string): string[] {
+  const out: string[] = [];
+  const re = /(-?[\w.@-]+)\s*:\s*("(?:[^"\\]|\\.)*"|\S+)|"((?:[^"\\]|\\.)*)"|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(query))) {
+    if (m[1] !== undefined) continue; // field clause — skip key AND value
+    if (m[3] !== undefined) {
+      const phrase = m[3].replace(/\\(.)/g, '$1').trim();
+      if (phrase.length >= 2) out.push(phrase);
+      continue;
+    }
+    const w = m[4] ?? '';
+    const up = w.toUpperCase();
+    if (up === 'AND' || up === 'OR' || up === 'NOT') continue;
+    const clean = w.replace(/^[(*]+/, '').replace(/[)*]+$/, '');
+    if (clean.length >= 2) out.push(clean);
+  }
+  return [...new Set(out)];
+}
+
+// highlightSegments — split text into {text, hl} runs by case-
+// insensitive term matches (earliest match wins; longest term wins
+// at the same position; non-overlapping). Pure so the tokenizer is
+// unit-testable; the component maps hl runs to <mark>. Scanning is
+// capped so a pathological 200 KB single-line body doesn't pin the
+// main thread — the tail past the cap renders unhighlighted.
+const HIGHLIGHT_SCAN_CAP = 4000;
+export function highlightSegments(
+  text: string, terms: string[],
+): { text: string; hl: boolean }[] {
+  if (!text || terms.length === 0) return [{ text, hl: false }];
+  const head = text.slice(0, HIGHLIGHT_SCAN_CAP);
+  const tail = text.slice(HIGHLIGHT_SCAN_CAP);
+  const lower = head.toLowerCase();
+  const lterms = terms.map(t => t.toLowerCase()).filter(t => t.length > 0);
+  const segs: { text: string; hl: boolean }[] = [];
+  let i = 0;
+  while (i < head.length) {
+    let mIdx = -1;
+    let mLen = 0;
+    for (const t of lterms) {
+      const idx = lower.indexOf(t, i);
+      if (idx === -1) continue;
+      if (mIdx === -1 || idx < mIdx || (idx === mIdx && t.length > mLen)) {
+        mIdx = idx;
+        mLen = t.length;
+      }
+    }
+    if (mIdx === -1) {
+      segs.push({ text: head.slice(i), hl: false });
+      break;
+    }
+    if (mIdx > i) segs.push({ text: head.slice(i, mIdx), hl: false });
+    segs.push({ text: head.slice(mIdx, mIdx + mLen), hl: true });
+    i = mIdx + mLen;
+  }
+  if (tail) segs.push({ text: tail, hl: false });
+  if (segs.length === 0) return [{ text, hl: false }];
+  return segs;
+}
+
 export function parseFiltersParam(raw: string | null | undefined): LogFilter[] {
   if (!raw) return [];
   try {

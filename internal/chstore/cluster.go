@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // Distributed-ClickHouse helpers. The application code reads and
@@ -22,6 +24,77 @@ import (
 
 // clusterMode reports whether Distributed-CH schema should be used.
 func (s *Store) clusterMode() bool { return strings.TrimSpace(s.cfg.ClusterName) != "" }
+
+// clusterNameError validates a CONFIGURED cluster_name against the server's
+// system.clusters definitions (v0.8.280 — the other half of the v0.8.213
+// fail-fast: 213 catches cluster_name UNSET against external-Distributed spans;
+// this catches cluster_name SET WRONG). Without it a typo'd name died later
+// inside `CREATE DATABASE ... ON CLUSTER` with a raw CH code-170 error and no
+// guidance. Pure — the boot probe feeds it the available list — so the
+// operator-facing message is unit-tested. Empty configured name = single-node,
+// never an error here.
+func clusterNameError(configured string, available []string) error {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		return nil
+	}
+	for _, c := range available {
+		if c == configured {
+			return nil
+		}
+	}
+	// Case-insensitive near-miss: CH cluster names are case-sensitive, and the
+	// most common typo is a cased paste from another env's config.
+	for _, c := range available {
+		if strings.EqualFold(c, configured) {
+			return fmt.Errorf("configured cluster_name %q not found in system.clusters, "+
+				"but %q exists — cluster names are case-sensitive; set COREMETRY_CH_CLUSTER_NAME=%s",
+				configured, c, c)
+		}
+	}
+	if len(available) == 0 {
+		return fmt.Errorf("configured cluster_name %q not found: this ClickHouse server defines "+
+			"no clusters (system.clusters is empty) — unset COREMETRY_CH_CLUSTER_NAME for "+
+			"single-node mode, or point Coremetry at the clustered CH", configured)
+	}
+	list := available
+	const cap = 8
+	suffix := ""
+	if len(list) > cap {
+		suffix = fmt.Sprintf(", … (%d total)", len(list))
+		list = list[:cap]
+	}
+	return fmt.Errorf("configured cluster_name %q not found in system.clusters — available: %s%s",
+		configured, strings.Join(list, ", "), suffix)
+}
+
+// validateClusterName probes system.clusters and applies clusterNameError.
+// A PROBE failure (transient system-table hiccup, exotic permissions) logs and
+// passes — it must never block a boot that would otherwise work; the later
+// ON CLUSTER DDL still fails hard if the name is genuinely wrong.
+func validateClusterName(ctx context.Context, conn driver.Conn, configured string) error {
+	rows, err := conn.Query(ctx,
+		`SELECT DISTINCT cluster FROM system.clusters ORDER BY cluster LIMIT 100`)
+	if err != nil {
+		log.Printf("[chstore] cluster_name validation skipped (system.clusters probe: %v)", err)
+		return nil
+	}
+	defer rows.Close()
+	var available []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			log.Printf("[chstore] cluster_name validation skipped (scan: %v)", err)
+			return nil
+		}
+		available = append(available, c)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[chstore] cluster_name validation skipped (rows: %v)", err)
+		return nil
+	}
+	return clusterNameError(configured, available)
+}
 
 // shardSkipSetting returns the optimize_skip_unused_shards SETTINGS value for a
 // service-scoped read. It is "= 1" (prune to the shard WHERE service_name=?

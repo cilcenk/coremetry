@@ -173,6 +173,17 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 			return nil, fmt.Errorf("setup connect after retries: %w", lastErr)
 		}
 	}
+	// v0.8.280 — validate a SET cluster_name against system.clusters BEFORE any
+	// ON CLUSTER DDL (the other half of the v0.8.213 fail-fast: 213 catches
+	// UNSET against external-Distributed spans; this catches SET WRONG). A typo
+	// otherwise dies inside CREATE DATABASE with a raw code-170 and no guidance.
+	// Probe failures never block boot — see validateClusterName.
+	if name := strings.TrimSpace(cfg.ClusterName); name != "" {
+		if err := validateClusterName(ctx, setup, name); err != nil {
+			setup.Close()
+			return nil, fmt.Errorf("cluster_name validation: %w", err)
+		}
+	}
 	// v0.5.420 — operator-reported: "Database coremetry does not
 	// exist" during cluster boot. Root cause: CREATE DATABASE was
 	// emitted without ON CLUSTER, so the database appeared only

@@ -29,25 +29,38 @@ const lockKey = "coremetry:lock:anomaly"
 
 // Tunables — exposed as constants so it's obvious what to fiddle with.
 const (
-	bucketSeconds = 300            // 5-minute buckets
-	historyHours  = 24             // window used to learn the baseline
+	bucketSeconds = 300 // 5-minute buckets
+	historyHours  = 24  // window used to learn the baseline
 	// v0.8.220 — operator-reported too many anomalies + transient spikes that
 	// don't clear. Davis-style asymmetry: HARD to open (3.5σ AND 3 sustained
 	// 5-min buckets = 15 min, so an instant blip never opens), FAST to resolve
 	// (the most-recent bucket back inside the band clears it — see the detector;
 	// a single-bucket dip can't re-open thanks to the 3-bucket dwell, so it
 	// doesn't flap).
-	openZ         = 3.5            // |z| above this opens an anomaly
-	resolveZ      = 1.5            // and below this clears it
-	criticalZ     = 5.0            // |z| above this escalates warning → critical
-	dwellBuckets  = 3              // consecutive buckets that must all fire to open (anti-flap)
-	minSamples    = 12             // need at least this many baseline buckets
-	madScale      = 0.6745         // scales MAD to a normal-dist stdev (modified z-score)
-	magnitudeEps  = 1e-9           // denominator guard for the relative-change floor
+	openZ        = 3.5    // |z| above this opens an anomaly
+	resolveZ     = 1.5    // and below this clears it
+	criticalZ    = 5.0    // |z| above this escalates warning → critical
+	dwellBuckets = 3      // consecutive buckets that must all fire to open (anti-flap)
+	minSamples   = 12     // need at least this many baseline buckets
+	madScale     = 0.6745 // scales MAD to a normal-dist stdev (modified z-score)
+	magnitudeEps = 1e-9   // denominator guard for the relative-change floor
 
-	seasonalBaseline   = true // baseline from same-time-of-day history, not a flat 24h window
-	seasonalDays       = 7    // days of same-slot history for the seasonal baseline
-	seasonalMinSamples = 4    // min same-slot samples before the seasonal baseline is trusted
+	seasonalBaseline = true // baseline from same-time-of-day history, not a flat 24h window
+	// v0.8.250 — operator-reported diurnal false positives on off-peak/night
+	// slots (a bank: some ops finish fast by day but slow + thin out at night).
+	// Root cause was SAMPLE SCARCITY: the old baseline matched the EXACT 5-min
+	// slot on the SAME weekday/weekend class over 7 days, so a Saturday night
+	// slot had only ~2 candidate samples — below seasonalMinSamples — and fell
+	// back to the flat 24h window, which conflates day peak with night trough
+	// and fires. Three widenings feed the SAME slot more samples:
+	//   • seasonalDays 7→14 (twice the history: 2 Saturdays instead of 1)
+	//   • ±seasonalNeighborBuckets same-class neighbour slots join the baseline
+	//     (a ±15-min window ⇒ 7 candidate buckets/day instead of 1)
+	//   • the weekend class splits into saturday / sunday (a bank runs a
+	//     different profile Sat vs Sun; cmt ≠ paz) — dayClass() below.
+	seasonalDays            = 14 // days of same-slot history for the seasonal baseline
+	seasonalMinSamples      = 4  // min same-slot samples before the seasonal baseline is trusted
+	seasonalNeighborBuckets = 3  // ± same-class neighbour buckets (±15 min) folded into the baseline
 )
 
 // trackedMetrics is intentionally small: cardinality stays bounded
@@ -231,14 +244,20 @@ func (d *Detector) scan(ctx context.Context) {
 		log.Printf("[anomaly] list services: %v", err)
 		return
 	}
+	// Read the seasonal-baseline knobs fresh each sweep (same
+	// LoadPersisted-per-tick pattern the evaluator uses for the
+	// promotion config) so an operator tune takes effect on the next
+	// scan without a redeploy. They ride the existing anomaly_promotion
+	// blob — one anomaly settings surface, not two. v0.8.250.
+	days, minSamples, neighbor := seasonalParams(d.store.GetAnomalyPromotion(ctx))
 	for _, svc := range services {
 		for _, m := range trackedMetrics {
-			d.checkOne(ctx, svc.Name, m)
+			d.checkOne(ctx, svc.Name, m, days, minSamples, neighbor)
 		}
 	}
 }
 
-func (d *Detector) checkOne(ctx context.Context, service, metric string) {
+func (d *Detector) checkOne(ctx context.Context, service, metric string, seasonalDays, seasonalMinSamples, neighborBuckets int) {
 	buckets, err := d.fetchBuckets(ctx, service, metric)
 	if err != nil {
 		log.Printf("[anomaly] %s/%s fetch: %v", service, metric, err)
@@ -263,11 +282,11 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string) {
 	consecutive := buckets[:split]
 	var seasonal []float64
 	if seasonalBaseline {
-		if s, err := d.fetchSeasonalBaseline(ctx, service, metric, time.Now()); err == nil {
+		if s, err := d.fetchSeasonalBaseline(ctx, service, metric, time.Now(), seasonalDays, neighborBuckets); err == nil {
 			seasonal = s
 		}
 	}
-	baseline := chooseBaseline(seasonal, consecutive)
+	baseline := chooseBaseline(seasonal, consecutive, seasonalMinSamples)
 
 	// Modified z-score (median + MAD) instead of mean + population stdev:
 	// both are dragged by their OWN outliers, so a single contaminated
@@ -408,41 +427,109 @@ func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]
 	return out, rows.Err()
 }
 
-// fetchSeasonalBaseline returns the metric's value at the SAME time-of-day
-// slot as `at` across the last seasonalDays days, weekday/weekend-matched —
-// so a diurnal/weekly traffic pattern is the baseline instead of a flat 24h
-// window (which makes every morning ramp a false positive and hides real
-// off-peak dips). The slot is the bucket's (hour, 5-min minute); weekend is
-// grouped separately because traffic profiles differ. Reads service_summary_5m
-// (MV) with time-bound WHERE + LIMIT + max_execution_time. Returns fewer than
-// seasonalDays samples for new/sparse services; the caller falls back.
-func (d *Detector) fetchSeasonalBaseline(ctx context.Context, service, metric string, at time.Time) ([]float64, error) {
+// dayClass buckets a timestamp into the day-of-week traffic profile the
+// seasonal baseline matches on: "saturday" / "sunday" / "weekday". Split into
+// THREE classes (was a weekday/weekend binary) because a bank runs a distinct
+// profile on Saturday vs Sunday — cmt ≠ paz — so blending them poisoned the
+// baseline with the wrong day's shape. Pure so it's table-testable across all
+// seven weekdays. Mirrored in SQL by the multiIf on toDayOfWeek below.
+func dayClass(t time.Time) string {
+	switch t.Weekday() {
+	case time.Saturday:
+		return "saturday"
+	case time.Sunday:
+		return "sunday"
+	default:
+		return "weekday"
+	}
+}
+
+// slotSecondsOfDay returns t's seconds-since-midnight aligned DOWN to the
+// 5-min bucket grid (0 … 86340). This is the CENTRE of the neighbour window
+// the seasonal query matches; the MV's toHour*3600+toMinute*60 is the same
+// grid, so the circular distance below is a whole number of buckets.
+func slotSecondsOfDay(t time.Time) int {
+	return t.Hour()*3600 + (t.Minute()/5)*5*60
+}
+
+// seasonalParams resolves the operator-tunable seasonal knobs off the shared
+// anomaly_promotion blob, clamping each to a sane range and falling back to
+// the compile-time default when a field is zero/absent or out of bounds. The
+// clamp keeps the CH read bounded regardless of a hand-crafted API PUT (days
+// caps the cutoff lookback; neighbourBuckets caps the ±window). Pure so the
+// default/clamp table is unit-tested. v0.8.250.
+func seasonalParams(cfg chstore.AnomalyPromotionConfig) (days, minSamples, neighborBuckets int) {
+	days = cfg.SeasonalDays
+	if days < 1 || days > 90 {
+		days = seasonalDays
+	}
+	minSamples = cfg.SeasonalMinSamples
+	if minSamples < 1 || minSamples > 500 {
+		minSamples = seasonalMinSamples
+	}
+	neighborBuckets = cfg.SeasonalNeighborBuckets
+	if neighborBuckets < 1 || neighborBuckets > 24 {
+		neighborBuckets = seasonalNeighborBuckets
+	}
+	return days, minSamples, neighborBuckets
+}
+
+// seasonalBaselineSQL builds the seasonal-baseline query for a metric's
+// pre-computed SELECT expression. Extracted pure (no store, no binds) so the
+// SQL SHAPE is unit-tested — the circular midnight-wrap distance, the LIMIT +
+// max_execution_time bounds, the time-bounded WHERE, the three-way day class,
+// and that it reads the MV (never raw spans). The six `?` placeholders bind,
+// in order: service, cutoff, dayClass, targetSecondsOfDay (twice), radius.
+func seasonalBaselineSQL(vexpr string) string {
+	// sodExpr — the bucket's seconds-of-day on the same 5-min grid as targetSod
+	// (buckets are 5-min aligned, so toSecond is 0; included for correctness).
+	const sodExpr = "(toHour(time_bucket) * 3600 + toMinute(time_bucket) * 60)"
+	// classExpr — three-way bank day class. toDayOfWeek: 1=Mon … 6=Sat, 7=Sun.
+	const classExpr = "multiIf(toDayOfWeek(time_bucket) = 6, 'saturday', toDayOfWeek(time_bucket) = 7, 'sunday', 'weekday')"
+
+	// least(|sod-target|, 86400-|sod-target|) is the circular (midnight-wrap)
+	// distance in seconds; <= radius keeps the ±neighborBuckets slots of the
+	// matching day class. time_bucket >= cutoff prunes daily partitions first.
+	return fmt.Sprintf(`
+		SELECT toUnixTimestamp(time_bucket) AS t, %[1]s AS v
+		FROM service_summary_5m
+		WHERE service_name = ?
+		  AND time_bucket >= ?
+		  AND %[3]s = ?
+		  AND least(abs(%[2]s - ?), 86400 - abs(%[2]s - ?)) <= ?
+		GROUP BY t
+		ORDER BY t
+		LIMIT 700
+		SETTINGS max_execution_time = 10`, vexpr, sodExpr, classExpr)
+}
+
+// fetchSeasonalBaseline returns the metric's values at the same time-of-day
+// slot as `at` — PLUS its ±neighborBuckets neighbours (a ±15-min window at the
+// default radius) — across the last `days` days, matched on `at`'s dayClass
+// (weekday / saturday / sunday). Widening the slot into a neighbour window +
+// splitting saturday/sunday + 14 days of history is what feeds the baseline
+// enough samples on thin off-peak/night slots so it clears seasonalMinSamples
+// instead of falling back to the flat 24h window (the diurnal-false-positive
+// root cause — v0.8.250).
+//
+// The neighbour match is a CIRCULAR seconds-of-day distance, least(d,86400-d),
+// so the window wraps correctly across midnight (23:50's neighbours include
+// 00:00) instead of clipping at the day boundary. Reads service_summary_5m
+// (MV, never raw spans) with a partition-pruning time-bound WHERE + LIMIT +
+// max_execution_time. Returns fewer samples for new/sparse services; the
+// caller (chooseBaseline) falls back to the consecutive window.
+func (d *Detector) fetchSeasonalBaseline(ctx context.Context, service, metric string, at time.Time, days, neighborBuckets int) ([]float64, error) {
 	vexpr, err := metricValueExpr(metric)
 	if err != nil {
 		return nil, err
 	}
-	cutoff := at.Add(-time.Duration(seasonalDays) * 24 * time.Hour)
-	hour := at.Hour()
-	minute := (at.Minute() / 5) * 5 // align to the 5-min bucket grid
-	weekend := 0
-	if wd := at.Weekday(); wd == time.Saturday || wd == time.Sunday {
-		weekend = 1
-	}
-	// toDayOfWeek: 1=Mon … 7=Sun in ClickHouse; weekend = (dow >= 6).
-	sql := fmt.Sprintf(`
-		SELECT toUnixTimestamp(time_bucket) AS t, %s AS v
-		FROM service_summary_5m
-		WHERE service_name = ?
-		  AND time_bucket >= ?
-		  AND toHour(time_bucket) = ?
-		  AND toMinute(time_bucket) = ?
-		  AND if(toDayOfWeek(time_bucket) >= 6, 1, 0) = ?
-		GROUP BY t
-		ORDER BY t
-		LIMIT 100
-		SETTINGS max_execution_time = 10`, vexpr)
+	cutoff := at.Add(-time.Duration(days) * 24 * time.Hour)
+	targetSod := slotSecondsOfDay(at)         // 5-min-aligned centre of the window
+	radius := neighborBuckets * bucketSeconds // ±window half-width in seconds
+	class := dayClass(at)
+	sql := seasonalBaselineSQL(vexpr)
 
-	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff, hour, minute, weekend)
+	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff, class, targetSod, targetSod, radius)
 	if err != nil {
 		return nil, err
 	}
@@ -460,10 +547,10 @@ func (d *Detector) fetchSeasonalBaseline(ctx context.Context, service, metric st
 }
 
 // chooseBaseline prefers the seasonal same-slot samples when seasonal mode is
-// on AND there are enough of them; otherwise it falls back to the 24h
-// consecutive baseline (new / sparse service, or seasonal disabled).
-func chooseBaseline(seasonal, consecutive []float64) []float64 {
-	if seasonalBaseline && len(seasonal) >= seasonalMinSamples {
+// on AND there are at least minSamples of them; otherwise it falls back to the
+// 24h consecutive baseline (new / sparse service, or seasonal disabled).
+func chooseBaseline(seasonal, consecutive []float64, minSamples int) []float64 {
+	if seasonalBaseline && len(seasonal) >= minSamples {
 		return seasonal
 	}
 	return consecutive
@@ -522,16 +609,25 @@ func meanStdev(xs []float64) (mean, stdev float64) {
 
 func displayMetric(m string) string {
 	switch m {
-	case "p99_ms":       return "P99 latency"
-	case "error_rate":   return "Error rate"
-	case "request_rate": return "Request rate"
+	case "p99_ms":
+		return "P99 latency"
+	case "error_rate":
+		return "Error rate"
+	case "request_rate":
+		return "Request rate"
 	}
 	return m
 }
 func unitOf(m string) string {
-	if strings.HasSuffix(m, "_ms") { return "ms" }
-	if m == "error_rate"           { return "%" }
-	if m == "request_rate"         { return "/s" }
+	if strings.HasSuffix(m, "_ms") {
+		return "ms"
+	}
+	if m == "error_rate" {
+		return "%"
+	}
+	if m == "request_rate" {
+		return "/s"
+	}
 	return ""
 }
 

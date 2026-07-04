@@ -35,6 +35,27 @@ type AnomalyPromotionConfig struct {
 	// MinCount — absolute volume floor. A 100× ratio on 2
 	// occurrences is meaningless.
 	MinCount uint64 `json:"minCount"`
+
+	// Seasonal* — consumed by the anomaly DETECTOR's seasonal
+	// baseline (internal/anomaly), NOT the promotion sweep. They
+	// ride this blob so the anomaly feature keeps ONE operator
+	// settings surface instead of a second key/route (v0.8.250).
+	// Zero/absent → the detector's compile-time defaults via
+	// GetAnomalyPromotion's patch below, so an unedited install
+	// keeps the shipped behaviour. Frontend binding is a separate
+	// follow-up; the backend persistence is wired now.
+	//
+	// SeasonalDays — days of same-slot history the baseline learns
+	// from (default 14).
+	SeasonalDays int `json:"seasonalDays"`
+	// SeasonalMinSamples — min same-slot samples before the
+	// seasonal baseline is trusted over the flat 24h window
+	// (default 4).
+	SeasonalMinSamples int `json:"seasonalMinSamples"`
+	// SeasonalNeighborBuckets — ± same-class 5-min neighbour
+	// buckets folded into the baseline to beat sample scarcity on
+	// thin off-peak slots (default 3 ⇒ ±15 min).
+	SeasonalNeighborBuckets int `json:"seasonalNeighborBuckets"`
 }
 
 // Defaults — match the hard-coded constants from v0.5.59 so
@@ -46,6 +67,15 @@ func DefaultAnomalyPromotion() AnomalyPromotionConfig {
 		MinPeakRatio:    5.0,
 		MinSustainedSec: 5 * 60,
 		MinCount:        10,
+		// Mirror the anomaly-detector compile-time defaults
+		// (internal/anomaly: seasonalDays / seasonalMinSamples /
+		// seasonalNeighborBuckets). chstore can't import anomaly
+		// (that package imports chstore), so the values are
+		// duplicated here; the detector re-clamps on read, so a
+		// drift can't push the CH query out of bounds.
+		SeasonalDays:            14,
+		SeasonalMinSamples:      4,
+		SeasonalNeighborBuckets: 3,
 	}
 }
 
@@ -76,6 +106,25 @@ func (s *Store) GetAnomalyPromotion(ctx context.Context) AnomalyPromotionConfig 
 	}
 	if c.MinCount == 0 {
 		c.MinCount = d.MinCount
+	}
+	// Seasonal knobs: zero/absent (older saved rows written before
+	// v0.8.250 don't carry these fields, or a partial PUT omits
+	// them) → detector defaults, so the GET always returns a usable
+	// value and the detector never sees a zero. An `int` can't tell
+	// "absent" from "explicit 0", so 0 is treated as default for ALL
+	// three — including SeasonalNeighborBuckets: the widening is the
+	// whole point of the fix, so an install that saved this blob
+	// pre-v0.8.250 must inherit the ±3 window, not silently disable
+	// it. (An operator who truly wants exact-slot-only reverts via
+	// the compile-time default, not a 0 here.)
+	if c.SeasonalDays <= 0 {
+		c.SeasonalDays = d.SeasonalDays
+	}
+	if c.SeasonalMinSamples <= 0 {
+		c.SeasonalMinSamples = d.SeasonalMinSamples
+	}
+	if c.SeasonalNeighborBuckets <= 0 {
+		c.SeasonalNeighborBuckets = d.SeasonalNeighborBuckets
 	}
 	return c
 }

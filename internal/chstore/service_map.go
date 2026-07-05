@@ -35,6 +35,12 @@ type ServiceMapNode struct {
 	// DBSystem / Subkind carries the underlying type so the UI
 	// can show "redis" or "postgresql" rather than just "db".
 	Subkind   string `json:"subkind,omitempty"`
+	// DbName (v0.8.297) — dominant db.name for this node's db.system
+	// (db_summary_5m via DbNamesBySystem), best-effort read-time
+	// enrichment: the pill shows WHICH database ("COREBANK"), not just
+	// the engine ("oracle"). db nodes only; empty when the system
+	// never reports db.name.
+	DbName    string `json:"dbName,omitempty"`
 	// IsNew is set by GetServiceMapWithDiff when this node didn't
 	// appear in the baseline window (e.g. yesterday's same slot).
 	// Frontend pulses these green so a freshly-deployed service or
@@ -142,6 +148,29 @@ func pruneServiceMapTopN(m *ServiceMap, topN int) {
 // PruneServiceMapTopN is the exported wrapper the api package calls; the logic
 // lives in the pure pruneServiceMapTopN so the cap is unit-tested without a Store.
 func (s *Store) PruneServiceMapTopN(m *ServiceMap, topN int) { pruneServiceMapTopN(m, topN) }
+
+// annotateDbNames stamps each db node with the dominant db.name for its
+// db.system (v0.8.297 — the same DbNamesBySystem enrichment the MV-backed
+// /api/servicegraph has had since v0.8.37, applied to the sampled map).
+// Pure: only Kind=="db" nodes, never overwrites, nil/unknown are no-ops.
+func annotateDbNames(nodes []ServiceMapNode, dbNames map[string]string) {
+	if len(dbNames) == 0 {
+		return
+	}
+	for i := range nodes {
+		if nodes[i].Kind != "db" || nodes[i].DbName != "" {
+			continue
+		}
+		if dn := dbNames[nodes[i].Subkind]; dn != "" {
+			nodes[i].DbName = dn
+		}
+	}
+}
+
+// AnnotateDbNames is the exported wrapper the api package calls.
+func (s *Store) AnnotateDbNames(nodes []ServiceMapNode, dbNames map[string]string) {
+	annotateDbNames(nodes, dbNames)
+}
 
 // spanStatusIsError reports whether a span's status_code column value
 // denotes an error. The ingest path (internal/otlp/convert.go) maps

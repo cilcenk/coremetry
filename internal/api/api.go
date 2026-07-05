@@ -2234,6 +2234,13 @@ func (s *Server) getServiceMap(w http.ResponseWriter, r *http.Request) {
 			m.Edges = edges
 		}
 		s.store.PruneServiceMapTopN(m, topN)
+		// v0.8.297 — db pill'i "oracle" değil "oracle · COREBANK" okusun:
+		// dominant db.name enrichment (best-effort, MV yolundaki v0.8.37
+		// davranışının aynısı). Prune SONRASI: yalnız görünen düğümler.
+		now := time.Now()
+		if dbNames, err := s.store.DbNamesBySystem(r.Context(), now.Add(-since), now); err == nil {
+			s.store.AnnotateDbNames(m.Nodes, dbNames)
+		}
 		return m, nil
 	})
 }

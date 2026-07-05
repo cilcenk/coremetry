@@ -152,7 +152,12 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
         : n.kind === 'queue' ? 'queue'
         : n.kind === 'external' || n.kind === 'internal' ? 'external'
         : undefined,
-      subkind: n.name !== n.id ? n.name : undefined,
+      // v0.8.297 — dep pill'in ana satırı motor adını okur ("oracle",
+      // "kafka"); instance/db.name alt satıra iner (depInstanceLabel).
+      subkind: (n.kind === 'database' || n.kind === 'queue')
+        ? (n.system || n.name)
+        : (n.name !== n.id ? n.name : undefined),
+      dbName: n.dbName || undefined,
     })),
     edges: nb.edges.map(e => ({
       caller: e.source,

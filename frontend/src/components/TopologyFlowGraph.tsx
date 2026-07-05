@@ -3,6 +3,7 @@ import type { ServiceMap, ServiceMapNode, ServiceMapEdge } from '@/lib/types';
 import { isMessagingDep, fmtNum } from '@/lib/utils';
 import { edgeWeights } from '@/lib/edgeWeight';
 import { fitViewport, zoomAt, zoomRange, type Viewport } from '@/lib/topoViewport';
+import { depInstanceLabel } from '@/lib/topoLabels';
 import { Button } from '@/components/ui/Button';
 
 // TopologyFlowGraph — prototipteki "pill düğüm + akış animasyonlu
@@ -337,13 +338,14 @@ export function TopologyFlowGraph({
             title={
               `${n.service}${n.kind ? ` · ${n.kind}` : ''}\n` +
               `${n.spanCount.toLocaleString()} spans · ${(n.errorRate * 100).toFixed(2)}% error` +
+              (n.dbName ? `\ndb.name: ${n.dbName}` : '') +
               (n.cluster ? `\ncluster: ${n.cluster}` : '')
             }>
             <span className={`topo-dot ${level}`} />
             <div style={{ minWidth: 0 }}>
               <div className="topo-name">{displayLabel(n)}</div>
               <div className="topo-sub">
-                {isDep ? depLabel(n.kind!) : `${n.spanCount.toLocaleString()} span`}
+                {isDep ? (depInstanceLabel(n) ?? depLabel(n.kind!)) : `${n.spanCount.toLocaleString()} span`}
               </div>
             </div>
           </div>

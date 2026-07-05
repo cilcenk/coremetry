@@ -23,6 +23,9 @@ export function serviceGraphToMap(g: ServiceGraphResponse): ServiceMap {
       errorRate: (n.errorRate ?? 0) / 100,
       kind: n.kind === 'service' ? '' : n.kind,
       subkind: n.system || undefined,
+      // v0.8.297 — carry the db.name enrichment so the pill can show
+      // WHICH database, not just the engine.
+      dbName: n.dbName || undefined,
     })),
     edges: (g.edges ?? []).map(e => ({
       caller: e.source,

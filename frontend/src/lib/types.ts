@@ -2351,6 +2351,10 @@ export interface ServiceMapNode {
   // whether a node is "your code" or "your dependency".
   kind?: string;
   subkind?: string;
+  // v0.8.297 — dominant db.name for a db node's system (best-effort
+  // enrichment on both the sampled and MV paths); the pill sub-line
+  // shows it so "oracle" reads "oracle · COREBANK".
+  dbName?: string;
   // True when the diff endpoint reports this node didn't exist
   // in the baseline window (e.g. yesterday's same slot). Pulses
   // green in the graph + flagged "NEW" in the changes panel.

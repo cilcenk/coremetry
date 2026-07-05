@@ -20,12 +20,14 @@ const LABEL: Record<Theme, string> = {
  * index.html applies it pre-paint to avoid FOUC.
  */
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>('light');
+  // v0.8.285 — default 'redhat' to match the index.html boot default; the
+  // useEffect below still reads the real applied attribute (a saved pref wins).
+  const [theme, setTheme] = useState<Theme>('redhat');
 
   // Read the theme that the boot script already applied to <html>
   useEffect(() => {
     const t = document.documentElement.getAttribute('data-theme');
-    setTheme(t === 'dark' || t === 'redhat' ? t : 'light');
+    setTheme(t === 'dark' || t === 'light' ? t : 'redhat');
   }, []);
 
   const toggle = () => {

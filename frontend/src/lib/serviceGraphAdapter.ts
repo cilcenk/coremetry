@@ -32,6 +32,13 @@ export function serviceGraphToMap(g: ServiceGraphResponse): ServiceMap {
       // The MV path has no per-trace attribution; 0 renders as "—"
       // wherever trace counts surface.
       traceCount: 0,
+      // v0.8.281 — carry the MV's per-edge RED instead of discarding it
+      // (the pre-281 adapter dropped these, so the map could never show
+      // latency). errorRate rescales to the ServiceMap 0..1 convention.
+      rate: e.rate,
+      errorRate: (e.errorRate ?? 0) / 100,
+      avgMs: e.avgMs,
+      p99Ms: e.p99Ms,
     })),
     sampledFrom: 0, // MV-backed — not a trace sample
     totalSpans: (g.nodes ?? []).reduce((a, n) => a + (n.calls || 0), 0),

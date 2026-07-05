@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ServiceMap, ServiceMapNode, ServiceMapEdge } from '@/lib/types';
-import { isMessagingDep } from '@/lib/utils';
+import { isMessagingDep, fmtNum } from '@/lib/utils';
+import { edgeWeights } from '@/lib/edgeWeight';
 
 // TopologyFlowGraph — prototipteki "pill düğüm + akış animasyonlu
 // bezier kenar" topoloji görünümü. ServiceMapGraph ile AYNI props
@@ -158,10 +159,14 @@ export function TopologyFlowGraph({
     return pos;
   }, [data, width, height]);
 
-  const edgeMaxTraces = useMemo(
-    () => data.edges.reduce((m, e) => Math.max(m, e.traceCount), 0),
-    [data.edges],
-  );
+  // v0.8.281 — trafik ağırlığı: örneklenmiş global görünümde traceCount
+  // (eski davranış birebir), MV-backed focus görünümünde spanCount (orada
+  // traceCount hep 0 → tüm kenarlar minimum kalınlıkta çiziliyordu).
+  const { weightOf, max: edgeMax } = useMemo(() => edgeWeights(data.edges), [data.edges]);
+
+  // Yoğunluk kapısı (ServiceGraph slice-4 kuralının aynısı): az kenarlı
+  // grafikte chip'ler hep açık, kalabalıkta yalnız hover'da.
+  const labelAlways = renderedEdges.length < 8;
 
   return (
     <div ref={wrapRef} className="topo" style={{ height }}>
@@ -170,8 +175,7 @@ export function TopologyFlowGraph({
           const e = re.forward;
           const a = positioned.get(e.caller), b = positioned.get(e.callee);
           if (!a || !b) return null;
-          const totalTraces = e.traceCount + (re.reverse?.traceCount ?? 0);
-          const t = totalTraces / Math.max(1, edgeMaxTraces);
+          const t = (weightOf(e) + weightOf(re.reverse)) / edgeMax;
           const w = 1 + 2.2 * t;
           const errorish = e.errorCount > 0 || (re.reverse?.errorCount ?? 0) > 0;
           // Hover vurgusu: hover edilen düğüme DOĞRUDAN bağlı kenarlar maviye
@@ -199,6 +203,28 @@ export function TopologyFlowGraph({
           );
         })}
       </svg>
+
+      {/* v0.8.281 — kenar RED chip'i: hacim/dk · p99 (· err%). Veri yalnız
+          MV yolunda var (adapter enrichment) — örneklenmiş global görünümde
+          p99Ms undefined kalır ve chip hiç çizilmez. Yoğunluk kapısı:
+          labelAlways (<8 kenar) veya hover. pointer-events yok — dekor. */}
+      {renderedEdges.map((re, i) => {
+        const e = re.forward;
+        if (e.p99Ms == null) return null;
+        const a = positioned.get(e.caller), b = positioned.get(e.callee);
+        if (!a || !b) return null;
+        const hot = hoverNode && (e.caller === hoverNode || e.callee === hoverNode);
+        const dimmed = active && (!active.has(e.caller) || !active.has(e.callee));
+        if (dimmed || (!labelAlways && !hot)) return null;
+        const errPct = (e.errorRate ?? 0) * 100;
+        return (
+          <div key={`chip-${i}`} className={'topo-chip' + (hot ? ' hot' : '')}
+            style={{ left: (a.x + b.x) / 2, top: (a.y + b.y) / 2 }}>
+            {fmtNum(Math.round(e.rate ?? 0))}/dk · p99 {fmtMs(e.p99Ms)}
+            {errPct >= 1 && <span className="chip-err"> · {errPct.toFixed(1)}% err</span>}
+          </div>
+        );
+      })}
 
       {data.nodes.map(n => {
         const p = positioned.get(n.service);
@@ -242,6 +268,13 @@ export function TopologyFlowGraph({
 
 function displayLabel(n: ServiceMapNode): string {
   return n.subkind || n.service.replace(/^(db|queue|ext):/, '');
+}
+// fmtMs — kompakt latency etiketi (ServiceGraph.fmtMs ile aynı biçim; chip
+// ile canvas inspector aynı okunur).
+function fmtMs(ms: number): string {
+  if (!ms) return '—';
+  if (ms >= 1000) return (ms / 1000).toFixed(ms >= 10_000 ? 0 : 1) + 's';
+  return Math.round(ms) + 'ms';
 }
 function depLabel(kind: string): string {
   switch (kind) {

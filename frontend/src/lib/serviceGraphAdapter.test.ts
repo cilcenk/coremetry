@@ -33,6 +33,16 @@ describe('serviceGraphToMap', () => {
     expect(m.edges[0]).toMatchObject({ caller: 'checkout', callee: 'db:oracle', spanCount: 400, errorCount: 4 });
   });
 
+  // v0.8.281 — the adapter used to DISCARD the MV's per-edge RED
+  // (rate/errorRate/avgMs/p99Ms), so the map could never label an
+  // edge with latency. Pin the enrichment: rate + ms fields pass
+  // through, errorRate rescales 0..100 → 0..1 (the ServiceMap shape
+  // convention, same as nodes).
+  it('carries the MV edge RED through (rate, errorRate fraction, avg/p99 ms)', () => {
+    const m = serviceGraphToMap(g);
+    expect(m.edges[0]).toMatchObject({ rate: 13, errorRate: 0.01, avgMs: 12, p99Ms: 90 });
+  });
+
   it('tolerates empty/missing arrays', () => {
     const m = serviceGraphToMap({ scope: 'global', nodes: [], edges: [] });
     expect(m.nodes).toEqual([]);

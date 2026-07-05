@@ -661,7 +661,7 @@ function LogsInner() {
                 color: 'var(--text3)',
               };
               return (
-                <span key={`${f.key} ${f.value}`} style={{
+                <span key={`${f.key}\u0000${f.value}`} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
                   padding: '3px 6px 3px 9px', borderRadius: 4, fontSize: 11.5,
                   border: `1px solid ${f.negated ? 'var(--err)' : 'var(--border)'}`,

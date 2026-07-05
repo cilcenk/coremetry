@@ -112,7 +112,10 @@ export function LogFieldsPanel({
   onPillAdd: (key: string, value: string) => void;
   onPillExclude: (key: string, value: string) => void;
 }) {
-  const [open, setOpen] = useState<boolean>(() => getRaw(OPEN_KEY) !== '0');
+  // v0.8.286 (operator-reported "sürekli durmasın") — the fields rail is now
+  // CLOSED by default so /logs opens with a full-width table; the thin "ƒ Fields"
+  // affordance summons it, and the choice persists ('1' = keep open).
+  const [open, setOpen] = useState<boolean>(() => getRaw(OPEN_KEY) === '1');
   const [needle, setNeedle] = useState('');
   const [expandedField, setExpandedField] = useState<string | null>(null);
   const toggleOpen = () => {

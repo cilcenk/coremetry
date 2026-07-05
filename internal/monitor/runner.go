@@ -7,9 +7,12 @@ package monitor
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -27,7 +30,28 @@ const (
 	// Distributed-lock key — single instance probes at a time across
 	// HA replicas; otherwise each replica double-probes.
 	lockKey = "coremetry:lock:monitor-runner"
+	// keywordBodyLimit caps how much of a keyword monitor's response body
+	// we read into memory before matching — a monitor pointed at a large
+	// download must never balloon the worker.
+	keywordBodyLimit = 512 * 1024 // 512 KB
+	// maxProbeTimeout hard-caps any single probe so one wedged target
+	// can't pin a worker goroutine indefinitely.
+	maxProbeTimeout = 30 * time.Second
 )
+
+// probeTimeout resolves a monitor's per-probe timeout: the monitor's own
+// TimeoutSec, defaulting to 5s when unset and clamped to maxProbeTimeout so
+// a mis-configured value can't stall the loop.
+func probeTimeout(sec uint16) time.Duration {
+	d := time.Duration(sec) * time.Second
+	if d <= 0 {
+		d = 5 * time.Second
+	}
+	if d > maxProbeTimeout {
+		d = maxProbeTimeout
+	}
+	return d
+}
 
 type Runner struct {
 	store    *chstore.Store
@@ -100,11 +124,11 @@ func (r *Runner) tick(ctx context.Context) {
 		if hasPrev {
 			elapsed := now.Sub(time.Unix(0, prev.Time))
 			if elapsed < time.Duration(m.IntervalSec)*time.Second {
-				// HTTP monitors: too early to probe again.
-				// Heartbeat monitors: we ALWAYS run the staleness
-				// check below, since the absence of a beat is what
-				// triggers the down state.
-				if m.Type == "http" {
+				// Active probes (http/tcp/ssl-cert/keyword): too early to
+				// probe again. Heartbeat monitors: we ALWAYS run the
+				// staleness check below, since the absence of a beat is
+				// what triggers the down state.
+				if m.Type != "heartbeat" {
 					continue
 				}
 			}
@@ -112,6 +136,12 @@ func (r *Runner) tick(ctx context.Context) {
 		switch m.Type {
 		case "http":
 			r.probeHTTP(ctx, m, prev.Status)
+		case "tcp":
+			r.probeTCP(ctx, m, prev.Status)
+		case "ssl-cert":
+			r.probeSSLCert(ctx, m, prev.Status)
+		case "keyword":
+			r.probeKeyword(ctx, m, prev.Status)
 		case "heartbeat":
 			r.checkHeartbeat(ctx, m, prev)
 		}
@@ -131,7 +161,7 @@ func (r *Runner) probeHTTP(ctx context.Context, m chstore.Monitor, prevStatus st
 	}
 	req, err := http.NewRequestWithContext(pctx, method, m.URL, nil)
 	if err != nil {
-		r.record(ctx, m, "down", 0, 0, "build request: "+err.Error(), prevStatus)
+		r.record(ctx, m, "down", 0, 0, "build request: "+err.Error(), 0, prevStatus)
 		return
 	}
 	req.Header.Set("User-Agent", "Coremetry-Monitor/1.0")
@@ -139,7 +169,7 @@ func (r *Runner) probeHTTP(ctx context.Context, m chstore.Monitor, prevStatus st
 	resp, err := r.cli.Do(req)
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
-		r.record(ctx, m, "down", latency, 0, err.Error(), prevStatus)
+		r.record(ctx, m, "down", latency, 0, err.Error(), 0, prevStatus)
 		return
 	}
 	defer resp.Body.Close()
@@ -153,7 +183,111 @@ func (r *Runner) probeHTTP(ctx context.Context, m chstore.Monitor, prevStatus st
 		status = "down"
 		msg = fmt.Sprintf("expected %d got %d", expected, resp.StatusCode)
 	}
-	r.record(ctx, m, status, latency, uint16(resp.StatusCode), msg, prevStatus)
+	r.record(ctx, m, status, latency, uint16(resp.StatusCode), msg, 0, prevStatus)
+}
+
+// probeTCP dials target (host:port) with the monitor's timeout. Up = the
+// TCP handshake completes; latency is the connect time. A refused / timed-out
+// dial is monitor-DOWN, never a worker error.
+func (r *Runner) probeTCP(ctx context.Context, m chstore.Monitor, prevStatus string) {
+	addr, err := NormalizeAddr(m.Target, "")
+	if err != nil {
+		r.record(ctx, m, "down", 0, 0, "bad target: "+err.Error(), 0, prevStatus)
+		return
+	}
+	timeout := probeTimeout(m.TimeoutSec)
+	pctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	d := net.Dialer{Timeout: timeout}
+	start := time.Now()
+	conn, err := d.DialContext(pctx, "tcp", addr)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		r.record(ctx, m, "down", latency, 0, err.Error(), 0, prevStatus)
+		return
+	}
+	_ = conn.Close()
+	r.record(ctx, m, "up", latency, 0, "connected to "+addr, 0, prevStatus)
+}
+
+// probeSSLCert TLS-handshakes target (host[:443]) and inspects the leaf
+// certificate's NotAfter. DOWN when expired OR days-remaining < cert_warn_days;
+// records days-remaining in `detail` so the UI can show "37d left". We set
+// InsecureSkipVerify: we're asserting expiry here, NOT trust-chain validity —
+// a self-signed or mis-chained cert should still surface its expiry, and the
+// handshake must not fail on trust grounds before we can read NotAfter.
+func (r *Runner) probeSSLCert(ctx context.Context, m chstore.Monitor, prevStatus string) {
+	addr, err := NormalizeAddr(m.Target, "443")
+	if err != nil {
+		r.record(ctx, m, "down", 0, 0, "bad target: "+err.Error(), 0, prevStatus)
+		return
+	}
+	host, _, _ := net.SplitHostPort(addr) // addr is canonical, so this always parses
+	warn := m.CertWarnDays
+	if warn == 0 {
+		warn = 14
+	}
+	timeout := probeTimeout(m.TimeoutSec)
+	pctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	td := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: timeout},
+		Config: &tls.Config{
+			InsecureSkipVerify: true, // expiry check, not trust-chain validation (intentional)
+			ServerName:         host, // SNI so multi-cert endpoints hand back the right leaf
+		},
+	}
+	start := time.Now()
+	conn, err := td.DialContext(pctx, "tcp", addr)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		r.record(ctx, m, "down", latency, 0, "tls handshake failed: "+err.Error(), 0, prevStatus)
+		return
+	}
+	defer conn.Close()
+	// tls.Dialer always returns a *tls.Conn on success.
+	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		r.record(ctx, m, "down", latency, 0, "no peer certificate presented", 0, prevStatus)
+		return
+	}
+	status, days, msg := evalCertExpiry(certs[0].NotAfter, time.Now(), warn)
+	r.record(ctx, m, status, latency, 0, msg, days, prevStatus)
+}
+
+// probeKeyword GETs url (reusing the http prober's client / TLS posture) and
+// asserts the response body contains keyword (or does NOT, when inverted).
+// The body read is capped at keywordBodyLimit so a monitor pointed at a large
+// download can never balloon the worker's memory.
+func (r *Runner) probeKeyword(ctx context.Context, m chstore.Monitor, prevStatus string) {
+	timeout := probeTimeout(m.TimeoutSec)
+	pctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(pctx, http.MethodGet, m.URL, nil)
+	if err != nil {
+		r.record(ctx, m, "down", 0, 0, "build request: "+err.Error(), 0, prevStatus)
+		return
+	}
+	req.Header.Set("User-Agent", "Coremetry-Monitor/1.0")
+	start := time.Now()
+	resp, err := r.cli.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		r.record(ctx, m, "down", latency, 0, err.Error(), 0, prevStatus)
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, keywordBodyLimit))
+	if err != nil {
+		r.record(ctx, m, "down", latency, uint16(resp.StatusCode), "read body: "+err.Error(), 0, prevStatus)
+		return
+	}
+	up, msg := evalKeyword(string(body), m.Keyword, m.KeywordInvert)
+	status := "down"
+	if up {
+		status = "up"
+	}
+	r.record(ctx, m, status, latency, uint16(resp.StatusCode), msg, 0, prevStatus)
 }
 
 func (r *Runner) checkHeartbeat(ctx context.Context, m chstore.Monitor, prev chstore.MonitorResult) {
@@ -165,7 +299,7 @@ func (r *Runner) checkHeartbeat(ctx context.Context, m chstore.Monitor, prev chs
 		// No beats ever received — keep status as "down" with a hint
 		// so the operator knows the monitor exists but hasn't seen
 		// its first beat yet.
-		r.record(ctx, m, "down", 0, 0, "no heartbeat received yet", "")
+		r.record(ctx, m, "down", 0, 0, "no heartbeat received yet", 0, "")
 		return
 	}
 	elapsed := time.Since(time.Unix(0, prev.Time))
@@ -176,19 +310,21 @@ func (r *Runner) checkHeartbeat(ctx context.Context, m chstore.Monitor, prev chs
 		if prev.Status != "down" {
 			r.record(ctx, m, "down", 0, 0,
 				fmt.Sprintf("no heartbeat for %s (grace %s)", elapsed.Round(time.Second), grace),
-				prev.Status)
+				0, prev.Status)
 		}
 	}
 }
 
 // record persists a probe result and, when the status flipped, opens
-// or resolves a Problem so the notification stack fires.
+// or resolves a Problem so the notification stack fires. `detail` is a
+// type-specific number (ssl-cert: days remaining) surfaced by the UI;
+// pass 0 for types that don't use it.
 func (r *Runner) record(ctx context.Context, m chstore.Monitor, status string,
-	latencyMs int64, code uint16, msg string, prevStatus string) {
+	latencyMs int64, code uint16, msg string, detail int64, prevStatus string) {
 
 	if err := r.store.InsertMonitorResult(ctx, chstore.MonitorResult{
 		MonitorID: m.ID, Status: status, LatencyMs: latencyMs,
-		HTTPCode: code, Message: msg,
+		HTTPCode: code, Message: msg, Detail: detail,
 	}); err != nil {
 		log.Printf("[monitor] record %s: %v", m.Name, err)
 	}
@@ -223,8 +359,11 @@ func (r *Runner) handleStateChange(ctx context.Context, m chstore.Monitor, statu
 		if msg != "" {
 			desc += " Reason: " + msg
 		}
-		if m.Type == "http" {
+		switch m.Type {
+		case "http", "keyword":
 			desc += "\nURL: " + m.URL
+		case "tcp", "ssl-cert":
+			desc += "\nTarget: " + m.Target
 		}
 		p := chstore.Problem{
 			ID:          newProblemID(),

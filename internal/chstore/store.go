@@ -778,17 +778,23 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS monitors (
 			id            String,
 			name          String,
-			type          LowCardinality(String),         -- http | heartbeat
-			-- HTTP-only fields (ignored for heartbeats):
+			type          LowCardinality(String),         -- http | tcp | ssl-cert | keyword | heartbeat
+			-- HTTP + keyword fields (ignored for other types):
 			url           String        DEFAULT '',
 			method        LowCardinality(String) DEFAULT 'GET',
 			expected_status UInt16      DEFAULT 200,
 			timeout_sec   UInt16        DEFAULT 5,
 			-- Common:
-			interval_sec  UInt32        DEFAULT 60,        -- probe interval (HTTP) or grace window (heartbeat)
+			interval_sec  UInt32        DEFAULT 60,        -- probe interval (active) or grace window (heartbeat)
 			enabled       UInt8         DEFAULT 1,
 			-- Heartbeat-only:
 			heartbeat_token String      DEFAULT '',        -- random; appears in /api/heartbeats/{token}
+			-- tcp + ssl-cert (v0.8.283):
+			target         String       DEFAULT '',        -- host:port to dial
+			cert_warn_days UInt16        DEFAULT 14,        -- ssl-cert: DOWN when days-remaining < this
+			-- keyword (v0.8.283):
+			keyword        String        DEFAULT '',        -- substring asserted in the response body
+			keyword_invert UInt8         DEFAULT 0,          -- 1 = must NOT contain
 			created_at    DateTime64(9) DEFAULT now64(9),
 			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -805,6 +811,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			latency_ms  Int64         CODEC(T64, ZSTD(3)),
 			http_code   UInt16        DEFAULT 0,
 			message     String        CODEC(ZSTD(3)),
+			detail      Int64         DEFAULT 0 CODEC(T64, ZSTD(3)),  -- ssl-cert: days remaining (v0.8.283)
 			INDEX idx_mid monitor_id TYPE bloom_filter(0.01) GRANULARITY 4
 		) ENGINE = MergeTree()
 		PARTITION BY toDate(time)
@@ -1271,6 +1278,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		// yet (or AI Copilot disabled).
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary String DEFAULT ''`,
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
+		// v0.8.283 — synthetic monitor types beyond http+heartbeat: tcp,
+		// ssl-cert, keyword. Additive columns on the existing monitors
+		// state table (no new schema). `monitors` isn't a high-volume
+		// table so adaptDDL only injects ON CLUSTER on a cluster deploy —
+		// no spans-style _local hazard (same shape as the users ALTERs).
+		`ALTER TABLE monitors ADD COLUMN IF NOT EXISTS target String DEFAULT ''`,
+		`ALTER TABLE monitors ADD COLUMN IF NOT EXISTS cert_warn_days UInt16 DEFAULT 14`,
+		`ALTER TABLE monitors ADD COLUMN IF NOT EXISTS keyword String DEFAULT ''`,
+		`ALTER TABLE monitors ADD COLUMN IF NOT EXISTS keyword_invert UInt8 DEFAULT 0`,
+		// ssl-cert records days-remaining here so the UI shows "37d left".
+		`ALTER TABLE monitor_results ADD COLUMN IF NOT EXISTS detail Int64 DEFAULT 0 CODEC(T64, ZSTD(3))`,
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS runbook_url String DEFAULT ''`,
 		// v0.5.126 sustained-breach gate. 0 = open immediately
 		// (legacy behaviour). When > 0 the evaluator only opens a

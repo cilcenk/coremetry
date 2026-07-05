@@ -11,7 +11,53 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/monitor"
 )
+
+// validateMonitor enforces the type whitelist and per-type required fields
+// on create AND update. Returns a user-facing message (→ HTTP 400) or "".
+// Kept in one place so the two handlers can't drift.
+func validateMonitor(m *chstore.Monitor) string {
+	if m.Name == "" {
+		return "name required"
+	}
+	switch m.Type {
+	case "http":
+		if m.URL == "" {
+			return "url required for http monitor"
+		}
+	case "heartbeat":
+		// passive — no probe config to validate.
+	case "tcp":
+		if m.Target == "" {
+			return "target (host:port) required for tcp monitor"
+		}
+		// No default port for tcp — the operator must name it. Also
+		// range-checks the port so a typo fails here, not every probe.
+		if _, err := monitor.NormalizeAddr(m.Target, ""); err != nil {
+			return err.Error()
+		}
+	case "ssl-cert":
+		if m.Target == "" {
+			return "target (host[:443]) required for ssl-cert monitor"
+		}
+		if _, err := monitor.NormalizeAddr(m.Target, "443"); err != nil {
+			return err.Error()
+		}
+		// CertWarnDays==0 is defaulted to 14 by UpsertMonitor; nothing to
+		// reject (uint16 can't go negative). Threshold is thus always >0.
+	case "keyword":
+		if m.URL == "" {
+			return "url required for keyword monitor"
+		}
+		if m.Keyword == "" {
+			return "keyword required for keyword monitor"
+		}
+	default:
+		return "type must be one of: http, tcp, ssl-cert, keyword, heartbeat"
+	}
+	return ""
+}
 
 func (s *Server) listMonitors(w http.ResponseWriter, r *http.Request) {
 	monitors, err := s.store.ListMonitors(r.Context())
@@ -73,16 +119,8 @@ func (s *Server) createMonitor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if m.Name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
-		return
-	}
-	if m.Type != "http" && m.Type != "heartbeat" {
-		http.Error(w, "type must be http or heartbeat", http.StatusBadRequest)
-		return
-	}
-	if m.Type == "http" && m.URL == "" {
-		http.Error(w, "url required for http monitor", http.StatusBadRequest)
+	if msg := validateMonitor(&m); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 	m.ID = "" // force new ID
@@ -102,6 +140,10 @@ func (s *Server) updateMonitor(w http.ResponseWriter, r *http.Request) {
 	var m chstore.Monitor
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if msg := validateMonitor(&m); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 	m.ID = id

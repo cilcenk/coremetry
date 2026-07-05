@@ -8,12 +8,22 @@ import (
 	"time"
 )
 
-// Synthetic monitoring — HTTP uptime probes + heartbeat checks.
+// Synthetic monitoring — active probes + passive heartbeat checks.
 //
-// Two monitor types share the schema:
+// Monitor types share the one schema (additive columns per v0.8.283):
 //   - http      — runner periodically GETs the URL, records latency +
 //                 status_code. Down when the response code doesn't
 //                 match `expected_status` or the request times out.
+//   - tcp       — runner dials `target` (host:port) with the monitor
+//                 timeout; up = connect succeeds, records dial latency.
+//   - ssl-cert  — runner TLS-handshakes `target` (host[:443]), reads the
+//                 leaf cert NotAfter. Down when expired OR days-remaining
+//                 < cert_warn_days. Records days-remaining in the result
+//                 `detail` column so the UI can show "37d left".
+//   - keyword   — runner GETs `url` (reusing the http prober's client /
+//                 TLS posture) and asserts the (size-capped) response body
+//                 contains `keyword`. `keyword_invert` flips it to a
+//                 must-NOT-contain assertion.
 //   - heartbeat — passive: external job posts to
 //                 /api/heartbeats/{token} on its own cadence. The
 //                 runner inspects the gap since the last beat and
@@ -29,14 +39,18 @@ import (
 type Monitor struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
-	Type           string `json:"type"`            // http | heartbeat
-	URL            string `json:"url,omitempty"`   // http only
+	Type           string `json:"type"`            // http | tcp | ssl-cert | keyword | heartbeat
+	URL            string `json:"url,omitempty"`   // http + keyword
 	Method         string `json:"method,omitempty"`
 	ExpectedStatus uint16 `json:"expectedStatus,omitempty"`
 	TimeoutSec     uint16 `json:"timeoutSec,omitempty"`
-	IntervalSec    uint32 `json:"intervalSec"`     // HTTP probe interval OR heartbeat grace window
+	IntervalSec    uint32 `json:"intervalSec"`     // active probe interval OR heartbeat grace window
 	Enabled        bool   `json:"enabled"`
 	HeartbeatToken string `json:"heartbeatToken,omitempty"`
+	Target         string `json:"target,omitempty"`        // tcp + ssl-cert (host:port)
+	CertWarnDays   uint16 `json:"certWarnDays,omitempty"`  // ssl-cert warn threshold (days)
+	Keyword        string `json:"keyword,omitempty"`       // keyword type
+	KeywordInvert  bool   `json:"keywordInvert,omitempty"` // keyword type: must-NOT-contain
 	CreatedAt      int64  `json:"createdAt"`
 }
 
@@ -47,12 +61,14 @@ type MonitorResult struct {
 	LatencyMs int64  `json:"latencyMs"`
 	HTTPCode  uint16 `json:"httpCode,omitempty"`
 	Message   string `json:"message,omitempty"`
+	Detail    int64  `json:"detail"` // type-specific number (ssl-cert: days remaining; 0/negative are meaningful)
 }
 
 func (s *Store) ListMonitors(ctx context.Context) ([]Monitor, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, name, type, url, method, expected_status, timeout_sec,
 		       interval_sec, enabled, heartbeat_token,
+		       target, cert_warn_days, keyword, keyword_invert,
 		       toUnixTimestamp64Nano(created_at)
 		FROM monitors FINAL
 		ORDER BY name`)
@@ -63,13 +79,15 @@ func (s *Store) ListMonitors(ctx context.Context) ([]Monitor, error) {
 	out := []Monitor{}
 	for rows.Next() {
 		var m Monitor
-		var enabled uint8
+		var enabled, kwInvert uint8
 		if err := rows.Scan(&m.ID, &m.Name, &m.Type, &m.URL, &m.Method,
 			&m.ExpectedStatus, &m.TimeoutSec, &m.IntervalSec, &enabled,
-			&m.HeartbeatToken, &m.CreatedAt); err != nil {
+			&m.HeartbeatToken, &m.Target, &m.CertWarnDays, &m.Keyword,
+			&kwInvert, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		m.Enabled = enabled == 1
+		m.KeywordInvert = kwInvert == 1
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -79,19 +97,22 @@ func (s *Store) GetMonitor(ctx context.Context, id string) (*Monitor, error) {
 	row := s.conn.QueryRow(ctx, `
 		SELECT id, name, type, url, method, expected_status, timeout_sec,
 		       interval_sec, enabled, heartbeat_token,
+		       target, cert_warn_days, keyword, keyword_invert,
 		       toUnixTimestamp64Nano(created_at)
 		FROM monitors FINAL WHERE id = ? LIMIT 1`, id)
 	var m Monitor
-	var enabled uint8
+	var enabled, kwInvert uint8
 	if err := row.Scan(&m.ID, &m.Name, &m.Type, &m.URL, &m.Method,
 		&m.ExpectedStatus, &m.TimeoutSec, &m.IntervalSec, &enabled,
-		&m.HeartbeatToken, &m.CreatedAt); err != nil {
+		&m.HeartbeatToken, &m.Target, &m.CertWarnDays, &m.Keyword,
+		&kwInvert, &m.CreatedAt); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
 		return nil, err
 	}
 	m.Enabled = enabled == 1
+	m.KeywordInvert = kwInvert == 1
 	return &m, nil
 }
 
@@ -132,23 +153,34 @@ func (s *Store) UpsertMonitor(ctx context.Context, m *Monitor) error {
 	if m.IntervalSec == 0 {
 		m.IntervalSec = 60
 	}
+	if m.CertWarnDays == 0 {
+		m.CertWarnDays = 14
+	}
 	enabled := uint8(0)
 	if m.Enabled {
 		enabled = 1
+	}
+	kwInvert := uint8(0)
+	if m.KeywordInvert {
+		kwInvert = 1
 	}
 	created := time.Now().UTC()
 	if m.CreatedAt > 0 {
 		created = time.Unix(0, m.CreatedAt).UTC()
 	}
+	// ReplacingMergeTree whole-row replace — every column is carried
+	// forward on every upsert; the API hands us the full edited monitor.
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO monitors
 		(id, name, type, url, method, expected_status, timeout_sec,
-		 interval_sec, enabled, heartbeat_token, created_at, version)`)
+		 interval_sec, enabled, heartbeat_token, target, cert_warn_days,
+		 keyword, keyword_invert, created_at, version)`)
 	if err != nil {
 		return err
 	}
 	if err := batch.Append(m.ID, m.Name, m.Type, m.URL, m.Method,
 		m.ExpectedStatus, m.TimeoutSec, m.IntervalSec, enabled,
-		m.HeartbeatToken, created, uint64(time.Now().UnixNano())); err != nil {
+		m.HeartbeatToken, m.Target, m.CertWarnDays, m.Keyword, kwInvert,
+		created, uint64(time.Now().UnixNano())); err != nil {
 		return err
 	}
 	return batch.Send()
@@ -160,7 +192,7 @@ func (s *Store) DeleteMonitor(ctx context.Context, id string) error {
 
 func (s *Store) InsertMonitorResult(ctx context.Context, r MonitorResult) error {
 	batch, err := s.conn.PrepareBatch(ctx,
-		`INSERT INTO monitor_results (monitor_id, time, status, latency_ms, http_code, message)`)
+		`INSERT INTO monitor_results (monitor_id, time, status, latency_ms, http_code, message, detail)`)
 	if err != nil {
 		return err
 	}
@@ -168,7 +200,7 @@ func (s *Store) InsertMonitorResult(ctx context.Context, r MonitorResult) error 
 	if r.Time == 0 {
 		t = time.Now().UTC()
 	}
-	if err := batch.Append(r.MonitorID, t, r.Status, r.LatencyMs, r.HTTPCode, r.Message); err != nil {
+	if err := batch.Append(r.MonitorID, t, r.Status, r.LatencyMs, r.HTTPCode, r.Message, r.Detail); err != nil {
 		return err
 	}
 	return batch.Send()
@@ -183,7 +215,8 @@ func (s *Store) LastMonitorStatus(ctx context.Context) (map[string]MonitorResult
 		       argMax(status, time)                          AS status,
 		       argMax(latency_ms, time)                      AS lat,
 		       argMax(http_code, time)                       AS code,
-		       argMax(message, time)                         AS msg
+		       argMax(message, time)                         AS msg,
+		       argMax(detail, time)                          AS detail
 		FROM monitor_results
 		WHERE time > now() - INTERVAL 7 DAY
 		GROUP BY monitor_id`)
@@ -194,7 +227,7 @@ func (s *Store) LastMonitorStatus(ctx context.Context) (map[string]MonitorResult
 	out := map[string]MonitorResult{}
 	for rows.Next() {
 		var r MonitorResult
-		if err := rows.Scan(&r.MonitorID, &r.Time, &r.Status, &r.LatencyMs, &r.HTTPCode, &r.Message); err != nil {
+		if err := rows.Scan(&r.MonitorID, &r.Time, &r.Status, &r.LatencyMs, &r.HTTPCode, &r.Message, &r.Detail); err != nil {
 			return nil, err
 		}
 		out[r.MonitorID] = r
@@ -271,7 +304,7 @@ func (s *Store) MonitorTimeline(ctx context.Context, monitorID string, limit int
 		limit = 500
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT monitor_id, toUnixTimestamp64Nano(time), status, latency_ms, http_code, message
+		SELECT monitor_id, toUnixTimestamp64Nano(time), status, latency_ms, http_code, message, detail
 		FROM monitor_results
 		WHERE monitor_id = ?
 		ORDER BY time DESC
@@ -283,7 +316,7 @@ func (s *Store) MonitorTimeline(ctx context.Context, monitorID string, limit int
 	out := []MonitorResult{}
 	for rows.Next() {
 		var r MonitorResult
-		if err := rows.Scan(&r.MonitorID, &r.Time, &r.Status, &r.LatencyMs, &r.HTTPCode, &r.Message); err != nil {
+		if err := rows.Scan(&r.MonitorID, &r.Time, &r.Status, &r.LatencyMs, &r.HTTPCode, &r.Message, &r.Detail); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

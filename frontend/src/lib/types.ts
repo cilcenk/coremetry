@@ -995,17 +995,23 @@ export interface StatusSubscriber {
 
 // ── Synthetic monitoring ─────────────────────────────────────────────────────
 
+export type MonitorType = 'http' | 'tcp' | 'ssl-cert' | 'keyword' | 'heartbeat';
+
 export interface Monitor {
   id: string;
   name: string;
-  type: 'http' | 'heartbeat';
-  url?: string;
+  type: MonitorType;
+  url?: string;               // http + keyword
   method?: string;
   expectedStatus?: number;
   timeoutSec?: number;
-  intervalSec: number;        // probe period (http) or grace window (heartbeat)
+  intervalSec: number;        // active probe period or heartbeat grace window
   enabled: boolean;
   heartbeatToken?: string;    // returned by the API on heartbeat-type monitors
+  target?: string;            // tcp + ssl-cert (host:port)
+  certWarnDays?: number;      // ssl-cert warn threshold (days), default 14
+  keyword?: string;           // keyword type: substring asserted in the body
+  keywordInvert?: boolean;    // keyword type: must NOT contain
   createdAt: number;
 }
 
@@ -1016,6 +1022,7 @@ export interface MonitorResult {
   latencyMs: number;
   httpCode?: number;
   message?: string;
+  detail?: number;            // type-specific number (ssl-cert: days remaining)
 }
 
 // Per-monitor rollup over the last 1h / 24h windows. Returned by

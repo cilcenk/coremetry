@@ -9,7 +9,7 @@ import {
   useCreateMonitor, useUpdateMonitor, useDeleteMonitor,
 } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
-import type { Monitor, MonitorRow, MonitorStats } from '@/lib/types';
+import type { Monitor, MonitorRow, MonitorStats, MonitorType } from '@/lib/types';
 
 // /monitors — synthetic uptime + heartbeat dashboard.
 //
@@ -49,8 +49,9 @@ export default function MonitorsPage() {
         {items !== undefined && (!items || items.length === 0) && (
           <Empty icon="◉" title="No monitors yet">
             {isAdmin ? (
-              <>Create an HTTP monitor (URL pinged on a schedule) or a Heartbeat monitor
-                (your cron job posts a beat to a token URL — Coremetry alerts when it stops).</>
+              <>Create an HTTP, TCP-port, SSL-certificate, or keyword monitor (actively probed on a
+                schedule), or a Heartbeat monitor (your cron job posts a beat to a token URL —
+                Coremetry alerts when it stops).</>
             ) : 'Ask an admin to create monitors.'}
           </Empty>
         )}
@@ -97,11 +98,23 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
         <span style={{ fontWeight: 600 }}>{m.name}</span>
         <span className="badge b-gray" style={{ textTransform: 'uppercase', letterSpacing: '.4px' }}>{m.type}</span>
         {!m.enabled && <span style={{ fontSize: 11, color: 'var(--text3)' }}>(disabled)</span>}
-        {m.type === 'http' && (
+        {(m.type === 'http' || m.type === 'keyword') && m.url && (
           <span style={{
             fontSize: 11, fontFamily: 'monospace', color: 'var(--text3)',
             maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }} title={m.url}>{m.url}</span>
+        )}
+        {(m.type === 'tcp' || m.type === 'ssl-cert') && m.target && (
+          <span style={{
+            fontSize: 11, fontFamily: 'monospace', color: 'var(--text3)',
+            maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }} title={m.target}>{m.target}</span>
+        )}
+        {m.type === 'keyword' && m.keyword && (
+          <span className="badge b-gray" style={{ fontSize: 10 }}
+            title={m.keywordInvert ? 'Down when this string IS present' : 'Down when this string is missing'}>
+            {m.keywordInvert ? '≠' : '∋'} "{m.keyword}"
+          </span>
         )}
         {m.type === 'heartbeat' && m.heartbeatToken && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -130,6 +143,9 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
             yet (fresh monitor). */}
         {m.stats && m.stats.probes24h > 0 && (
           <UptimeChip stats={m.stats} />
+        )}
+        {m.type === 'ssl-cert' && m.lastResult?.detail !== undefined && (
+          <CertDaysChip days={m.lastResult.detail} warnDays={m.certWarnDays ?? 14} />
         )}
         {m.lastResult?.latencyMs !== undefined && m.lastResult.latencyMs > 0 && (
           <span style={{ color: 'var(--text3)', fontSize: 11, fontFamily: 'monospace' }} title="Last probe latency">
@@ -185,6 +201,25 @@ function UptimeChip({ stats }: { stats: MonitorStats }) {
       <span style={{ color: 'var(--border)' }}>·</span>
       <span style={{ color: 'var(--text3)', fontSize: 9, fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase' }}>24h</span>
       <span style={{ color: tone(stats.uptime24h), fontWeight: 600 }}>{fmt(stats.uptime24h)}</span>
+    </span>
+  );
+}
+
+// CertDaysChip — days remaining until the leaf cert expires, colour-banded
+// against the monitor's warn threshold. Negative = already expired.
+function CertDaysChip({ days, warnDays }: { days: number; warnDays: number }) {
+  const tone = days < 0 ? 'var(--err)' : days < warnDays ? 'var(--warn)' : 'var(--ok)';
+  const label = days < 0 ? `expired ${-days}d ago` : `${days}d left`;
+  return (
+    <span title={`Certificate ${days < 0 ? 'expired' : 'expires in ' + days + ' day(s)'} · warn < ${warnDays}d`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        padding: '2px 8px', borderRadius: 4,
+        background: 'var(--bg3)', border: '1px solid var(--border)',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontVariantNumeric: 'tabular-nums', fontSize: 11, color: tone, fontWeight: 600,
+      }}>
+      🔒 {label}
     </span>
   );
 }
@@ -274,8 +309,19 @@ function MonitorModal({ initial, onClose, onSaved }: {
               <SelectField
                 label="Type"
                 value={m.type ?? 'http'}
-                onChange={e => setM({ ...m, type: e.target.value as 'http' | 'heartbeat' })}>
+                onChange={e => {
+                  const t = e.target.value as MonitorType;
+                  setM({
+                    ...m, type: t,
+                    // Seed the ssl-cert warn threshold so the field isn't
+                    // blank the moment the operator picks the type.
+                    ...(t === 'ssl-cert' && !m.certWarnDays ? { certWarnDays: 14 } : {}),
+                  });
+                }}>
                 <option value="http">HTTP probe</option>
+                <option value="tcp">TCP port</option>
+                <option value="ssl-cert">SSL certificate</option>
+                <option value="keyword">Keyword (HTTP body)</option>
                 <option value="heartbeat">Heartbeat (passive)</option>
               </SelectField>
             </div>
@@ -287,6 +333,90 @@ function MonitorModal({ initial, onClose, onSaved }: {
                 onChange={e => setM({ ...m, intervalSec: Number(e.target.value) })} />
             </div>
           </UiRow>
+          {m.type === 'tcp' && (
+            <UiRow gap={3}>
+              <div style={{ flex: 2 }}>
+                <Field
+                  label="Target (host:port)"
+                  required
+                  value={m.target ?? ''}
+                  onChange={e => setM({ ...m, target: e.target.value })}
+                  placeholder="db.internal:5432" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Field
+                  label="Timeout (sec)"
+                  type="number" min={1} max={30}
+                  value={m.timeoutSec ?? 5}
+                  onChange={e => setM({ ...m, timeoutSec: Number(e.target.value) })} />
+              </div>
+            </UiRow>
+          )}
+          {m.type === 'ssl-cert' && (
+            <>
+              <UiRow gap={3}>
+                <div style={{ flex: 2 }}>
+                  <Field
+                    label="Target (host[:443])"
+                    required
+                    value={m.target ?? ''}
+                    onChange={e => setM({ ...m, target: e.target.value })}
+                    placeholder="example.com" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field
+                    label="Warn days"
+                    type="number" min={1} max={3650}
+                    value={m.certWarnDays ?? 14}
+                    onChange={e => setM({ ...m, certWarnDays: Number(e.target.value) })} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field
+                    label="Timeout (sec)"
+                    type="number" min={1} max={30}
+                    value={m.timeoutSec ?? 5}
+                    onChange={e => setM({ ...m, timeoutSec: Number(e.target.value) })} />
+                </div>
+              </UiRow>
+              <p style={{ fontSize: 11, color: 'var(--text3)' }}>
+                Flips to <b style={{ color: 'var(--err)' }}>down</b> when the leaf certificate is expired
+                or has fewer than <b>{m.certWarnDays ?? 14}</b> days remaining. Trust chain is not
+                validated — this checks expiry only.
+              </p>
+            </>
+          )}
+          {m.type === 'keyword' && (
+            <>
+              <Field
+                label="URL"
+                required
+                value={m.url ?? ''}
+                onChange={e => setM({ ...m, url: e.target.value })}
+                placeholder="https://api.example.com/status" />
+              <UiRow gap={3}>
+                <div style={{ flex: 2 }}>
+                  <Field
+                    label="Keyword"
+                    required
+                    value={m.keyword ?? ''}
+                    onChange={e => setM({ ...m, keyword: e.target.value })}
+                    placeholder='e.g. "operational"' />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <Field
+                    label="Timeout (sec)"
+                    type="number" min={1} max={30}
+                    value={m.timeoutSec ?? 5}
+                    onChange={e => setM({ ...m, timeoutSec: Number(e.target.value) })} />
+                </div>
+              </UiRow>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--text2)', fontSize: 12 }}>
+                <input type="checkbox" checked={m.keywordInvert ?? false}
+                  onChange={e => setM({ ...m, keywordInvert: e.target.checked })} />
+                Invert — alert when the keyword IS present (must-not-contain)
+              </label>
+            </>
+          )}
           {m.type === 'http' && (
             <>
               <Field

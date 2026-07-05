@@ -17,6 +17,8 @@ export function useProblems(filter: {
   status?: 'open' | 'all' | 'resolved';
   service?: string;
   priority?: string[];
+  ownerTeam?: string;
+  sreTeam?: string;
   limit?: number;
 }) {
   return useQuery<Problem[]>({

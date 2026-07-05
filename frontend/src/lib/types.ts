@@ -1587,6 +1587,14 @@ export interface Problem {
   // k8s/openshift clusters the firing service was active in
   // around the problem time — read-time enriched.
   clusters?: string[];
+  // Owning team + SRE/reliability team for the firing service,
+  // read-time enriched from the service catalog (NOT stored on the
+  // problems row — a catalog edit reflects on the next refresh).
+  // Empty when the service has no catalog entry. Powers the
+  // owner/SRE team filters on /problems (v0.8.290), mirroring the
+  // inbox + Services pattern.
+  ownerTeam?: string;
+  sreTeam?: string;
   // Most recent service.version deploy observed in the 30 min
   // before this problem opened, or undefined. Surfaced as a
   // "deployed v1.2 · 6m before" tag so operators see the

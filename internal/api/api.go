@@ -8195,6 +8195,13 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Owner/SRE team filters (v0.8.290) — resolved server-side
+	// against the service catalog (read-time enriched onto each
+	// Problem) so the narrowing is correct across the whole result,
+	// not just the loaded rows. Empty value = "all". Same
+	// EqualFold/empty-means-all semantics as the inbox.
+	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
+	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
 	f := chstore.ProblemFilter{
 		Status: q.Get("status"), Service: q.Get("service"),
 		Severity: q.Get("severity"), Priority: prios,
@@ -8208,8 +8215,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	for _, p := range prios {
 		prioMap[p] = true
 	}
-	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:limit=%d",
-		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), f.Limit)
+	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:limit=%d",
+		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Limit)
 	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
 		probs, err := s.store.ListProblems(r.Context(), f)
 		if err != nil {
@@ -8223,6 +8230,12 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// open problems pick up the new link on the next
 		// refresh.
 		probs = s.store.EnrichProblemsWithRunbooks(r.Context(), probs)
+		// Owner/SRE team chips + the source of truth for the team
+		// filter below (v0.8.290) — pulled from the service catalog
+		// at read time, same batch-lookup shape as runbooks. Mirrors
+		// the inbox enrichment so /problems and /inbox agree on which
+		// team owns a firing service.
+		probs = s.store.EnrichProblemsWithTeams(r.Context(), probs)
 		// Cluster chips — same read-time pattern. One batch
 		// CH query for the service→clusters map, soft-fails
 		// silently on error so a transient blip doesn't
@@ -8259,6 +8272,21 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 					bucket = "P3"
 				}
 				if prioMap[bucket] {
+					keep = append(keep, p)
+				}
+			}
+			probs = keep
+		}
+		// Team filter (v0.8.290) — owner/SRE narrowing applied AFTER
+		// enrichment, same EqualFold / empty-means-all semantics the
+		// inbox uses (matchesTeamFilter, table-tested). AND'd across
+		// the two axes. Runs before the RootCause fan-out below so
+		// that batch join only covers the rows the operator will
+		// actually see.
+		if ownerTeam != "" || sreTeam != "" {
+			keep := probs[:0]
+			for _, p := range probs {
+				if matchesTeamFilter(p.OwnerTeam, p.SRETeam, ownerTeam, sreTeam) {
 					keep = append(keep, p)
 				}
 			}

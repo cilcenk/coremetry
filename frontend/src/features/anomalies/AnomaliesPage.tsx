@@ -13,7 +13,7 @@ import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { ArrowDownToLine, Users, ChevronRight, ChevronDown, CornerDownRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
-import { useProblems, keys } from '@/lib/queries';
+import { useProblems, useServicesMetadata, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
@@ -523,6 +523,34 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
       return next;
     });
   };
+  // Owner-team / SRE-team filters (v0.8.290) — mirror the Services
+  // page. Plain local state (NOT URL-backed): the page's other
+  // filter axes (status / severity / priority) are all local too, so
+  // URL-backing only these two would diverge; only the triage drawer
+  // (?problem=) is URL-backed here. Empty value = "all", passed to
+  // the server which filters with the same EqualFold / empty-means-
+  // all semantics as /inbox. Options come from the service catalog
+  // (like Services) so the dropdown stays stable when a selection
+  // narrows the server-filtered rows — deriving them from the
+  // already-filtered result would collapse the list to the pick.
+  const [ownerTeam, setOwnerTeam] = useState('');
+  const [sreTeam, setSreTeam] = useState('');
+  const catalogQ = useServicesMetadata();
+  const ownerTeamOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of Object.values(catalogQ.data ?? {})) {
+      if (m.ownerTeam) set.add(m.ownerTeam);
+    }
+    return [...set].sort();
+  }, [catalogQ.data]);
+  const sreTeamOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of Object.values(catalogQ.data ?? {})) {
+      if (m.sreTeam) set.add(m.sreTeam);
+    }
+    return [...set].sort();
+  }, [catalogQ.data]);
+
   // (Pre-v0.5.80 inline "Why?" expansion lived here; the
   // same correlation panel is now embedded inside the
   // triage drawer.)
@@ -535,6 +563,8 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     status: statusFilter === 'all' ? undefined : statusFilter,
     service: serviceFilter || undefined,
     priority: prioParam,
+    ownerTeam: ownerTeam || undefined,
+    sreTeam: sreTeam || undefined,
     limit: 200,
   });
   const data: Problem[] | null | undefined = problemsQ.isLoading
@@ -658,6 +688,32 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             </span>
           );
         })}
+        {/* Owner / SRE team filters (v0.8.290) — mirror the Services
+            page. Plain <select> for these small catalog-derived sets
+            (frontend-conventions §3 permits <select> for ≤~10 fixed
+            values). Server resolves the pick with the same EqualFold
+            / empty-means-all filter the inbox uses, so the narrowing
+            is correct across the whole result, not just the loaded
+            rows. Options come from the catalog so they stay stable
+            when a pick narrows the list. */}
+        <select value={ownerTeam}
+          onChange={e => setOwnerTeam(e.target.value)}
+          aria-label="Filter by owner team"
+          style={{ minWidth: 130 }}>
+          <option value="">All owner teams</option>
+          {ownerTeamOptions.map(t => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        <select value={sreTeam}
+          onChange={e => setSreTeam(e.target.value)}
+          aria-label="Filter by SRE team"
+          style={{ minWidth: 130 }}>
+          <option value="">All SRE teams</option>
+          {sreTeamOptions.map(t => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
         <span style={{ marginLeft: 'auto', color: 'var(--text3)', fontSize: 12 }}>
           {open} open · {resolved} resolved
         </span>

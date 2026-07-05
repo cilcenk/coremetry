@@ -1413,7 +1413,7 @@ export const api = {
       body: JSON.stringify({ assignee }),
     }),
 
-  problems: (params: { status?: string; service?: string; severity?: string; priority?: string[]; limit?: number }) =>
+  problems: (params: { status?: string; service?: string; severity?: string; priority?: string[]; ownerTeam?: string; sreTeam?: string; limit?: number }) =>
     get<Problem[] | null>(`/api/problems?${qs({ ...params, priority: params.priority?.join(',') })}`),
   // v0.5.398 — sidebar-badge count endpoint. Returns just the
   // matching row count, no rows. Replaces the prior approach

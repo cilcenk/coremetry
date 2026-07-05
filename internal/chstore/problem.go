@@ -95,6 +95,15 @@ type Problem struct {
 	// chips so the oncall sees "this fires on eu-west AND
 	// eu-central" at a glance.
 	Clusters []string `json:"clusters,omitempty"`
+	// OwnerTeam / SRETeam (v0.8.290) — the owning + reliability
+	// team for the firing service, pulled from the operator-
+	// curated service catalog at READ time (NOT stored on the
+	// problems row — a catalog edit reflects on the next refresh
+	// without rewriting history). Empty when the service has no
+	// catalog entry. Populated by EnrichProblemsWithTeams; powers
+	// the owner/SRE team filters on /problems, mirroring the inbox.
+	OwnerTeam string `json:"ownerTeam,omitempty"`
+	SRETeam   string `json:"sreTeam,omitempty"`
 	// RecentDeploy — most recent observed service.version
 	// transition for this service in the window leading up
 	// to the problem firing, or nil. The AI explain /
@@ -574,6 +583,35 @@ func (s *Store) EnrichProblemsWithRunbooks(ctx context.Context, problems []Probl
 		}
 		if u, ok := svcBooks[problems[i].Service]; ok {
 			problems[i].RunbookURL = u
+		}
+	}
+	return problems
+}
+
+// EnrichProblemsWithTeams attaches each problem's owning team
+// (OwnerTeam) + reliability team (SRETeam) from the service
+// catalog. One batch ListServiceMetadata lookup covers every
+// problem in the slice — N+1 free, the same shape as the Clusters
+// / Runbooks enrichers. Read-time only: team ownership lives on
+// the operator-curated catalog, NOT the problems row, so a catalog
+// edit reflects on the next refresh without rewriting history.
+// Soft-fails: a catalog read error (or empty catalog) returns the
+// slice unchanged rather than blanking the team chips on a
+// transient CH blip. (v0.8.290 — powers the owner/SRE team filters
+// on /problems, mirroring the inbox enrichment so the two pages
+// agree on which team owns a firing service.)
+func (s *Store) EnrichProblemsWithTeams(ctx context.Context, problems []Problem) []Problem {
+	if len(problems) == 0 {
+		return problems
+	}
+	mds, err := s.ListServiceMetadata(ctx)
+	if err != nil || len(mds) == 0 {
+		return problems
+	}
+	for i := range problems {
+		if md, ok := mds[problems[i].Service]; ok {
+			problems[i].OwnerTeam = md.OwnerTeam
+			problems[i].SRETeam = md.SRETeam
 		}
 	}
 	return problems

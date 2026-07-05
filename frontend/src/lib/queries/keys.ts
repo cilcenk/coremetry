@@ -53,7 +53,7 @@ export const keys = {
 
   problems: {
     all:         ['problems'] as const,
-    list:        (filter: { status?: string; service?: string; limit?: number }) =>
+    list:        (filter: { status?: string; service?: string; ownerTeam?: string; sreTeam?: string; limit?: number }) =>
                    ['problems', 'list', filter] as const,
   },
 

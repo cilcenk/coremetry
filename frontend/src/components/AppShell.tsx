@@ -13,6 +13,7 @@ import { isPublicPath } from '@/lib/auth-paths';
 import { useBranding } from '@/lib/branding';
 import { PageLoader } from './Spinner';
 import { WhatChangedBanner } from './WhatChangedBanner';
+import { ErrorBoundary } from './ErrorBoundary';
 
 // ALWAYS_ALLOWED — routes the custom-role guard NEVER blocks, even
 // when the user has a restrictive role. Profile/Login/PublicStatus
@@ -107,7 +108,9 @@ export function AppShell() {
   }, [user, pathname, isPublic, navigate]);
 
   if (isPublic) {
-    return <Outlet />;
+    // v0.8.298 — route-scoped boundary on public pages too; key on the
+    // path so navigating away from a crashed page auto-recovers.
+    return <ErrorBoundary key={pathname}><Outlet /></ErrorBoundary>;
   }
   if (loading) {
     // v0.5.262 — centered OTel-mark loader instead of the bare
@@ -130,7 +133,16 @@ export function AppShell() {
           transitions. Self-hides on a quiet install. */}
       <div id="main">
         <WhatChangedBanner />
-        <Outlet />
+        {/* v0.8.298 (quality bar S1) — route-scoped boundary INSIDE the
+            shell: a page-render crash no longer unmounts the sidebar/nav
+            (the App.tsx global boundary stays as last resort, but before
+            this the operator lost the whole console to one bad row and
+            could only Reload). key={pathname} remounts the boundary on
+            navigation, so picking another page in the surviving sidebar
+            auto-clears the fallback. */}
+        <ErrorBoundary key={pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </div>
       {/* ShortcutsHelp owns its own '?' binding + the modal
           render. Mount once at the shell so the help modal

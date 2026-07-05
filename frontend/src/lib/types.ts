@@ -153,6 +153,10 @@ export interface ServiceGraphResponse {
   edges: GraphEdge[];
   scope: string;       // 'global' | 'neighborhood'
   focus?: string;
+  // v0.8.295 (global render budget): shownNodes < totalNodes ⇒ the server
+  // trimmed the global graph to the topN heaviest — "showing X of Y".
+  totalNodes?: number;
+  shownNodes?: number;
 }
 
 // Root-anchored business flows (v0.5.103) — top entry points by

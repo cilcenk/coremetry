@@ -234,7 +234,9 @@ export const api = {
   // global map (scope=global) and a service neighborhood (focus + scope).
   // hops (v0.8.294, neighborhood only, server-clamped 1..3) walks callers/
   // dependencies server-side so clients stop downloading the global graph.
-  serviceGraph: (params: { focus?: string; scope?: 'neighborhood' | 'global'; hops?: number; from?: number; to?: number }) =>
+  // topN (v0.8.295, global only): render budget — the server clamps
+  // absent/0/>500 to 500 and reports totalNodes/shownNodes.
+  serviceGraph: (params: { focus?: string; scope?: 'neighborhood' | 'global'; hops?: number; topN?: number; from?: number; to?: number }) =>
     get<import('./types').ServiceGraphResponse>(`/api/servicegraph?${qs(params)}`),
   // Ops list for a given root service (powers the op picker on
   // the operation deep-dive view).

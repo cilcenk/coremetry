@@ -8304,13 +8304,46 @@ func (s *Server) setProblemAssignee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Assignee = strings.TrimSpace(body.Assignee)
+	// Fetch first so we can (a) email a rich notification and (b) know the OLD
+	// assignee to suppress a re-send on a no-op save (v0.8.289). A fetch miss is
+	// non-fatal — the assign still proceeds, just without the notification.
+	prev, _ := s.store.GetProblem(r.Context(), id)
 	if err := s.store.SetProblemAssignee(r.Context(), id, body.Assignee); err != nil {
 		writeErr(w, err)
 		return
 	}
 	details, _ := json.Marshal(map[string]any{"id": id, "assignee": body.Assignee})
 	s.audit(r, "problem.assign", "problem", id, string(details))
+	// v0.8.289 (operator request) — when a Problem is assigned to a PERSON
+	// (email assignee) and it actually changed, email them the assignment.
+	if prev != nil {
+		oldAssignee := prev.Assignee
+		if email, send := assigneeNotifyEmail(body.Assignee, oldAssignee); send {
+			p := *prev
+			p.Assignee = body.Assignee
+			s.notifyAssignee(email, p, s.problemLink(r, id))
+		}
+	}
 	writeJSON(w, map[string]any{"id": id, "assignee": body.Assignee})
+}
+
+// problemLink builds the deep link into the Problems drawer for a problem id,
+// from the request scheme+host (mirrors sendStatusConfirmation's URL logic).
+func (s *Server) problemLink(r *http.Request, id string) string {
+	scheme := "http"
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		scheme = v
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		host = v
+	}
+	if host == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s://%s/problems?problem=%s", scheme, host, url.QueryEscape(id))
 }
 
 func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {

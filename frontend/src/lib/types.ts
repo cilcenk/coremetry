@@ -2611,6 +2611,17 @@ export interface Deploy {
   spanCount: number;
 }
 
+// ChartAnnotation (v0.8.284, A7) — one operator-event marker rendered as a
+// vertical annotation line on a uPlot time-series chart. Produced by
+// annotationsInWindow (lib/chartAnnotations.ts) from /api/operator-events and
+// consumed by the TimeSeriesPanel draw hook. timeUnixNs is unix nanoseconds;
+// kind (deploy|config|incident|maintenance|custom) drives the marker colour.
+export interface ChartAnnotation {
+  timeUnixNs: number;
+  kind: string;
+  label: string;
+}
+
 // DBQueryStat — one row in the database query analyzer panel.
 // One per normalised DB statement seen on the service in the
 // time window (literals replaced with "?" so a hot query

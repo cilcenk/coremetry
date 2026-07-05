@@ -5,6 +5,7 @@ import { downsampleXY } from '@/lib/perf/lttb';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { escapeHTML } from '@/lib/utils';
 import { placeTooltip } from '@/components/MultiLineChart';
+import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
 // the redesigned Metrics surfaces draw on. Built directly on uPlot (the only
@@ -30,6 +31,17 @@ import { placeTooltip } from '@/components/MultiLineChart';
 
 const MAX_POINTS = 2000;
 
+// v0.8.284 (A7) — annotation-line colour per operator-event kind. Token names
+// so canvas strokes re-resolve on a theme flip (resolveColor reads the live
+// CSS var). Mirrors the semantics of the legacy EventMarkers DOM overlay.
+const ANNOTATION_KIND_TOKEN: Record<string, string> = {
+  deploy: 'var(--ok)',
+  config: 'var(--accent)',
+  incident: 'var(--err)',
+  maintenance: 'var(--warn)',
+};
+const ANNOTATION_DEFAULT_TOKEN = 'var(--text3)';
+
 export interface TSSeries {
   label: string;
   points: { time: number /* ns */; value: number | null }[];
@@ -54,6 +66,11 @@ export type TSMode = 'line' | 'area' | 'bars' | 'stacked';
 interface TimeSeriesPanelProps {
   series: TSSeries[];
   deploys?: number[];          // unix ns — dashed vline + ▼ flag per deploy
+  // v0.8.284 (A7) — operator-event annotation lines (deploy/config/incident/
+  // maintenance/custom). Solid kind-coloured vline + top diamond, distinct from
+  // the dashed auto-deploy ▼. Pre-windowed by annotationsInWindow; the draw hook
+  // re-clamps to the live x-scale.
+  events?: ChartAnnotation[];
   thresholds?: TSThreshold[];
   height: number;
   mode?: TSMode;               // default 'line'
@@ -117,7 +134,7 @@ interface LegendRow {
 }
 
 export function TimeSeriesPanel({
-  series, deploys, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend,
+  series, deploys, events, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend,
   zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -316,7 +333,7 @@ export function TimeSeriesPanel({
           },
         ] } : {}),
         // Overlay draw — thresholds (line + breach band) then deploy annotations.
-        ...(((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0) || series.some(s => s.exemplars && s.exemplars.length > 0)) ? { draw: [
+        ...(((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0) || (events && events.length > 0) || series.some(s => s.exemplars && s.exemplars.length > 0)) ? { draw: [
           (u) => {
             const ctx = u.ctx;
             ctx.save();
@@ -366,6 +383,38 @@ export function TimeSeriesPanel({
                 ctx.stroke();
                 ctx.setLineDash([]);
                 ctx.fillText('▼', x - 3, u.bbox.top + 9);
+              }
+            }
+
+            // v0.8.284 (A7) — operator-event annotation lines. Solid vline in the
+            // kind colour + a small top diamond, distinct from the dashed auto-
+            // deploy ▼. Re-clamped to the live x-scale so a drag-zoom hides
+            // out-of-window markers.
+            if (events && events.length > 0) {
+              const xMin = u.scales.x.min ?? 0;
+              const xMax = u.scales.x.max ?? 0;
+              for (const ann of events) {
+                const t = ann.timeUnixNs / 1e9;
+                if (t < xMin || t > xMax) continue;
+                const col = resolveColor(ANNOTATION_KIND_TOKEN[ann.kind] ?? ANNOTATION_DEFAULT_TOKEN)
+                  || '#8b949e';
+                const x = u.valToPos(t, 'x', true);
+                ctx.strokeStyle = col;
+                ctx.fillStyle = col;
+                ctx.lineWidth = 1.2;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(x, u.bbox.top);
+                ctx.lineTo(x, u.bbox.top + u.bbox.height);
+                ctx.stroke();
+                // top diamond
+                ctx.beginPath();
+                ctx.moveTo(x, u.bbox.top);
+                ctx.lineTo(x + 3, u.bbox.top + 3);
+                ctx.lineTo(x, u.bbox.top + 6);
+                ctx.lineTo(x - 3, u.bbox.top + 3);
+                ctx.closePath();
+                ctx.fill();
               }
             }
 
@@ -470,6 +519,28 @@ export function TimeSeriesPanel({
               }
             }
 
+            // v0.8.284 (A7) — nearest operator-event annotation within 12px.
+            let eventRow = '';
+            if (events && events.length > 0) {
+              const cursorX = u.cursor.left ?? -1;
+              let near: ChartAnnotation | null = null;
+              let bestDx = 12;
+              for (const ann of events) {
+                const px = u.valToPos(ann.timeUnixNs / 1e9, 'x', true);
+                const dx = Math.abs(px - cursorX);
+                if (dx < bestDx) { bestDx = dx; near = ann; }
+              }
+              if (near) {
+                const col = ANNOTATION_KIND_TOKEN[near.kind] ?? ANNOTATION_DEFAULT_TOKEN;
+                const txt = near.label ? `${near.kind} · ${near.label}` : near.kind;
+                eventRow =
+                  `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">` +
+                    `<span style="display:inline-block;width:8px;height:8px;background:${col};transform:rotate(45deg);flex-shrink:0"></span>` +
+                    `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="${escapeHTML(txt)}">${escapeHTML(txt)}</span>` +
+                  `</div>`;
+              }
+            }
+
             // explore-v2 Phase 3.2 — if the cursor is near an exemplar ◆ of a
             // visible series, surface it (kind + short trace id). Same over-
             // relative px basis as cursor.left/top (valToPos w/o canvasPixels).
@@ -503,6 +574,7 @@ export function TimeSeriesPanel({
               `<div style="font-weight:600;margin-bottom:4px">${hh}:${mm}:${ss}</div>` +
               exemplarRow +
               deployRow +
+              eventRow +
               rows.map(r => {
                 const lbl = escapeHTML(r.label);
                 return `<div style="display:flex;gap:8px;align-items:center;line-height:1.5">` +
@@ -581,7 +653,7 @@ export function TimeSeriesPanel({
       plotRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, prepared, height, mode, logScale, syncKey, !!onZoom, deploys, thresholds, hasRight, leftUnit, rightUnit, anyUnit]);
+  }, [series, prepared, height, mode, logScale, syncKey, !!onZoom, deploys, events, thresholds, hasRight, leftUnit, rightUnit, anyUnit]);
 
   // Double-click resets the zoom to the full data range (Grafana parity).
   useEffect(() => {

@@ -24,7 +24,8 @@ import { keys } from '@/lib/queries/keys';
 import { stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { encodeFilters, encodeFilterGroup } from '@/lib/urlState';
-import type { SpanMetricSeries, MetricExemplar } from '@/lib/types';
+import type { SpanMetricSeries, MetricExemplar, ChartAnnotation } from '@/lib/types';
+import { annotationsInWindow } from '@/lib/chartAnnotations';
 import {
   type BuilderState, produces, effectiveFilters, querySignature, exemplarDescriptor,
   pinnedService, pinnedOperation, queryUnit, hasGroupedFilter, effectiveFilterGroup,
@@ -166,6 +167,7 @@ export function useExploreQueries(
 // explore-v2 Phase 3.3 — per-query context overlays.
 export interface ExploreOverlay {
   deploys: number[];                                           // unix ns — ▼ markers
+  events: ChartAnnotation[];                                   // v0.8.284 — operator-event annotation lines
   thresholds: { value: number; label?: string; color?: string }[];
 }
 
@@ -205,7 +207,24 @@ export function useExploreOverlays(
     }),
   });
 
+  // Operator events per query — same pinned-service gate as deploys. A query
+  // with no unambiguous service gets none (a global/OR query has no single
+  // event stream to annotate against). Windowed + deduped + capped by
+  // annotationsInWindow before it reaches the draw hook (v0.8.284).
+  const eventResults = useQueries({
+    queries: state.queries.map(q => {
+      const svc = pinnedService(q);
+      return {
+        queryKey: ['explore-events', svc, from, to],
+        queryFn: () => api.listEvents({ from, to, service: svc || undefined, limit: 100 }),
+        enabled: !!svc && from > 0,
+        staleTime: 60_000,
+      };
+    }),
+  });
+
   const sig = deployResults.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|')
+    + '#' + eventResults.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|')
     + ':' + (slosQ.data ? slosQ.dataUpdatedAt : 0);
   return useMemo(() => {
     const out: Record<string, ExploreOverlay> = {};
@@ -213,6 +232,7 @@ export function useExploreOverlays(
       const svc = pinnedService(q);
       const op = pinnedOperation(q);
       const deploys = deployResults[i].data ?? [];
+      const events = annotationsInWindow(eventResults[i].data, from, to);
       const thresholds: ExploreOverlay['thresholds'] = [];
       if (svc && q.source === 'span' && queryUnit(q) === 'ms') {
         for (const s of slos) {
@@ -221,9 +241,9 @@ export function useExploreOverlays(
           thresholds.push({ value: s.thresholdMs, label: `SLO ${s.name}`, color: 'var(--warn)' });
         }
       }
-      out[q.letter] = { deploys, thresholds };
+      out[q.letter] = { deploys, events, thresholds };
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, state, slos]);
+  }, [sig, state, slos, from, to]);
 }

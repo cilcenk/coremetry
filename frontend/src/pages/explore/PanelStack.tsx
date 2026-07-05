@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { SpanMetricSeries, MetricExemplar } from '@/lib/types';
+import type { SpanMetricSeries, MetricExemplar, ChartAnnotation } from '@/lib/types';
 import type { TSSeries, TSThreshold } from '@/components/viz/TimeSeriesPanel';
 import { seriesColor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
@@ -9,6 +9,7 @@ import {
 } from './model';
 import { valueAtCursor } from './cursorBus';
 import { QueryPanel } from './QueryPanel';
+import type { ExploreOverlay } from './useExploreQueries';
 
 // PanelStack (explore-v2 Phase 2) — one stacked, cursor-synced QueryPanel per
 // producing query + a dashed formula panel (the RedPanel stacked-synced
@@ -25,6 +26,7 @@ export interface PanelData {
   series: TSSeries[];      // capped, labeled, coloured
   more: number;            // series dropped by the cap
   deploys?: number[];      // ▼ deploy markers (Phase 3.3 — pinned-service queries)
+  events?: ChartAnnotation[]; // operator-event annotation lines (A7 — v0.8.284)
   thresholds?: TSThreshold[]; // SLO latency threshold lines (Phase 3.3)
 }
 
@@ -58,7 +60,7 @@ export function buildPanels(
   state: BuilderState,
   byLetter: Record<string, SpanMetricSeries[] | undefined>,
   exemplarsByLetter: Record<string, MetricExemplar[]> = {},
-  overlaysByLetter: Record<string, { deploys: number[]; thresholds: TSThreshold[] }> = {},
+  overlaysByLetter: Record<string, ExploreOverlay> = {},
   // letter → pre-trim series count. The server caps a high-cardinality span
   // groupBy to TOP_N_MAX, so ranked.length here is already ≤50; the true
   // "+N more" must come from this total, not the capped slice. Falls back to
@@ -105,6 +107,7 @@ export function buildPanels(
       series: ranked.slice(0, cap).map(x => x.s),
       more: Math.max(0, total - shown),
       deploys: ov?.deploys?.length ? ov.deploys : undefined,
+      events: ov?.events?.length ? ov.events : undefined,
       thresholds: ov?.thresholds?.length ? ov.thresholds : undefined,
     });
   }

@@ -65,6 +65,7 @@ export const QueryPanel = memo(function QueryPanel({
         <TimeSeriesPanel
           series={panel.series}
           deploys={panel.deploys}
+          events={panel.events}
           thresholds={panel.thresholds}
           height={PANEL_HEIGHT}
           mode={mode}

@@ -1712,6 +1712,12 @@ canvas { max-width: 100%; }
 
 /* Aggregate topology — tiered pill-card node-link graph (prototype .topo-*) */
 .topo { position: relative; width: 100%; background: var(--bg2); border-radius: 8px; overflow: hidden; }
+/* v0.8.296 — zoom/pan: svg + chip + pill katmanlarını tek transform sarmalar */
+.topo-viewport { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.topo.pannable { cursor: grab; }
+.topo.panning { cursor: grabbing; user-select: none; }
+.topo-zoomctl { position: absolute; top: 10px; right: 10px; z-index: 4; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.topo-zoomctl .pct { font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text3); font-variant-numeric: tabular-nums; }
 .topo-edges { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
 .topo-node { position: absolute; transform: translate(-50%, -50%); z-index: 2; display: flex; align-items: center; gap: 8px; max-width: 170px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg1); box-shadow: var(--shadow-sm); cursor: default; transition: opacity .12s ease, border-color .12s ease; }
 .topo-node.focus { border: 2px solid var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--bg1)); padding: 9px 12px; }

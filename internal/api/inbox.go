@@ -123,6 +123,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
 		probs = chstore.EnrichProblemsWithPriority(probs)
 		for _, p := range probs {
+			// v0.8.287 — drop resolved Problems from the open inbox. pickStatus
+			// fetched every status (see its comment), so the narrow happens here.
+			if !inboxKeepsProblem(p.Status, statusFilter) {
+				continue
+			}
 			items = append(items, problemToInbox(p))
 		}
 
@@ -226,6 +231,19 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 // pickStatus translates the inbox filter into a Problem status.
 // "open" inbox shows open + acknowledged (still in-flight);
 // "all" passes through to the store's no-filter.
+// inboxKeepsProblem decides whether a Problem row belongs in the inbox at the
+// given inbox status pivot. Fixes the v0.8.287 leak: pickStatus fetches every
+// status (a single-value CH filter can't express open+acknowledged), so the
+// "open" pivot must drop resolved rows in Go. "all" keeps everything; an empty
+// problem status is treated as active (never silently hide a pre-status row);
+// an unknown inbox mode is treated as "open" (defensive). Pure + table-tested.
+func inboxKeepsProblem(problemStatus, inboxStatus string) bool {
+	if inboxStatus == "all" {
+		return true
+	}
+	return problemStatus != "resolved"
+}
+
 func pickStatus(inboxStatus string) string {
 	if inboxStatus == "all" {
 		return ""
@@ -261,7 +279,8 @@ func priorityRank(p string) int {
 // computed them so the inbox bucket matches the /problems
 // page bucket exactly.
 func problemToInbox(p chstore.Problem) InboxItem {
-	// Skip resolved rows in the open inbox.
+	// (Resolved-row filtering happens at the call site via inboxKeepsProblem —
+	// v0.8.287; this normaliser assumes the row already passed that gate.)
 	return InboxItem{
 		ID:             "problem:" + p.ID,
 		Kind:           "problem",

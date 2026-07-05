@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
+import { TriageCrumb } from '@/components/TriageCrumb';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
@@ -222,6 +223,7 @@ export default function ProblemsPage() {
     <>
       <Topbar title="Problems" />
       <div id="content">
+        <TriageCrumb label="Problems" />
         <SavedViewsBar page="problems" />
 
         {/* ── 1. Exception inbox (top of page) ─────────────────

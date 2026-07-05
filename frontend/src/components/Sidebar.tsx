@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
-import { useHealth, useOpenProblemCount } from '@/lib/queries';
+import { useHealth, useOpenProblemCount, useInboxCount } from '@/lib/queries';
 import { useT } from '@/lib/i18n';
 import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { TelescopeIcon } from './TelescopeIcon';
@@ -139,6 +139,9 @@ export function Sidebar() {
   // count never drift.
   const healthQ = useHealth();
   const openProblems = useOpenProblemCount().data ?? 0;
+  // v0.8.288 (Option B) — the /inbox triage badge sums all three sources
+  // (not-resolved problems + open exceptions + active anomalies).
+  const inboxCount = useInboxCount().data ?? 0;
   // Footer only shows when the backend is unreachable — pre-v0.5.0
   // it always rendered the queue depths, which on a quiet
   // deployment read as a permanent "spans: 0 · logs: 0" line
@@ -330,6 +333,7 @@ export function Sidebar() {
                 showLabels={showLabels}
                 pathname={pathname}
                 openProblems={openProblems}
+                inboxCount={inboxCount}
                 t={t} />
             );
           })}
@@ -438,7 +442,7 @@ export function Sidebar() {
 // children stacked since the chevron interaction makes no
 // sense at 56px wide.
 function NavGroupBlock({
-  titleKey, items, isOpen, onToggle, showLabels, pathname, openProblems, t,
+  titleKey, items, isOpen, onToggle, showLabels, pathname, openProblems, inboxCount, t,
 }: {
   titleKey: string;
   items: NavItem[];
@@ -447,8 +451,13 @@ function NavGroupBlock({
   showLabels: boolean;
   pathname: string;
   openProblems: number;
+  inboxCount: number;
   t: (key: string) => string;
 }) {
+  // navBadge — the count rendered on a nav entry: /inbox → the triage total,
+  // /problems → open problems. 0 renders nothing.
+  const navBadge = (href: string): number =>
+    href === '/inbox' ? inboxCount : href === '/problems' ? openProblems : 0;
   // Icon-only sidebar: skip the group header (no place for it),
   // render every link inline. Operator still navigates by icon
   // memory in this mode.
@@ -461,8 +470,12 @@ function NavGroupBlock({
             title={t(n.label)}
             style={{ justifyContent: 'center', padding: '10px 0' }}>
             <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
-            {n.href === '/problems' && openProblems > 0 && (
-              <span className="nav-dot" title={`${openProblems} open problems`} />
+            {navBadge(n.href) > 0 && (
+              <span className="nav-dot" title={
+                n.href === '/inbox'
+                  ? `${navBadge(n.href)} triage items`
+                  : `${navBadge(n.href)} open problems`
+              } />
             )}
           </Link>
         ))}
@@ -479,8 +492,8 @@ function NavGroupBlock({
             className={isActive(pathname, n.href) ? 'active' : ''}>
             <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
             <span className="nav-label">{t(n.label)}</span>
-            {n.href === '/problems' && openProblems > 0 && (
-              <span className="nav-badge">{openProblems}</span>
+            {navBadge(n.href) > 0 && (
+              <span className="nav-badge">{navBadge(n.href)}</span>
             )}
           </Link>
         ))}
@@ -522,8 +535,8 @@ function NavGroupBlock({
           className={isActive(pathname, n.href) ? 'active' : ''}>
           <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
           <span className="nav-label">{t(n.label)}</span>
-          {n.href === '/problems' && openProblems > 0 && (
-            <span className="nav-badge">{openProblems}</span>
+          {navBadge(n.href) > 0 && (
+            <span className="nav-badge">{navBadge(n.href)}</span>
           )}
         </Link>
       ))}

@@ -162,6 +162,23 @@ type ListAnomalyEventsFilter struct {
 	Limit     int
 }
 
+// CountActiveAnomalyEvents returns the number of anomaly events currently
+// "active" — i.e. last_seen fresher than activeAge (the same derivation the
+// list/detail reads use). For the /inbox badge (v0.8.288): a cheap COUNT(*)
+// FINAL on the small state table, no row scan. activeAge 0 → 10m default.
+func (s *Store) CountActiveAnomalyEvents(ctx context.Context, activeAge time.Duration) (uint64, error) {
+	if activeAge == 0 {
+		activeAge = 10 * time.Minute
+	}
+	var n uint64
+	err := s.conn.QueryRow(ctx, `
+		SELECT count() FROM anomaly_events FINAL
+		WHERE last_seen >= now64() - INTERVAL ? SECOND`,
+		int64(activeAge.Seconds()),
+	).Scan(&n)
+	return n, err
+}
+
 func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter) ([]AnomalyEvent, error) {
 	if f.Limit == 0 {
 		f.Limit = 200

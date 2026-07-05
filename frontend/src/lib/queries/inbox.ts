@@ -16,3 +16,17 @@ export function useInbox(filter: {
     queryFn: async () => (await api.inbox(filter)) ?? [],
   });
 }
+
+// v0.8.288 (Option B Slice 1b) — the sidebar triage badge total across all
+// three inbox sources. Cheap COUNT endpoint; 30s poll (React Query pauses it
+// on a hidden tab), 25s stale to match. `select` narrows to the number so the
+// badge consumer stays a plain count.
+export function useInboxCount() {
+  return useQuery<{ count: number; problems: number; exceptions: number; anomalies: number }, Error, number>({
+    queryKey: ['inbox', 'count'],
+    queryFn: async () => (await api.inboxCount()) ?? { count: 0, problems: 0, exceptions: 0, anomalies: 0 },
+    select: (r) => r.count,
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+}

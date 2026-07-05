@@ -567,6 +567,7 @@ func (s *Server) Start() error {
 	// Exception groups + Anomaly events with a normalised
 	// priority blend so operators stop tab-hopping.
 	mux.HandleFunc("GET    /api/inbox",                     s.inbox)
+	mux.HandleFunc("GET    /api/inbox/count",               s.inboxCount)
 	mux.HandleFunc("GET    /api/alert-rules",               s.listAlertRules)
 	mux.HandleFunc("POST   /api/alert-rules",               auth.RequireAnyRole(editorRoles, s.createAlertRule))
 	mux.HandleFunc("PUT    /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.updateAlertRule))

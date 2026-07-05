@@ -231,6 +231,42 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 // pickStatus translates the inbox filter into a Problem status.
 // "open" inbox shows open + acknowledged (still in-flight);
 // "all" passes through to the store's no-filter.
+// inboxCount serves GET /api/inbox/count — the single triage badge total
+// (v0.8.288, Option B Slice 1b). Sums the three inbox sources with the SAME
+// "open" semantics the inbox uses: not-resolved Problems (open+acknowledged,
+// consistent with inboxKeepsProblem), open Exception groups, and active
+// Anomaly events. COUNT-only on small state tables (no enrichment/sort), 10s
+// cache — cheap enough for the 30s sidebar poll at scale.
+func (s *Server) inboxCount(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "inbox:count", 10*time.Second, func() (any, error) {
+		ctx := r.Context()
+		openP, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "open"})
+		if err != nil {
+			return nil, err
+		}
+		ackP, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "acknowledged"})
+		if err != nil {
+			return nil, err
+		}
+		exN, err := s.store.CountExceptionGroups(ctx, chstore.ExceptionGroupFilter{State: pickExceptionState("open")})
+		if err != nil {
+			return nil, err
+		}
+		anN, err := s.store.CountActiveAnomalyEvents(ctx, 0)
+		if err != nil {
+			return nil, err
+		}
+		problems := openP + ackP
+		exceptions := uint64(exN)
+		return map[string]any{
+			"count":      problems + exceptions + anN,
+			"problems":   problems,
+			"exceptions": exceptions,
+			"anomalies":  anN,
+		}, nil
+	})
+}
+
 // inboxKeepsProblem decides whether a Problem row belongs in the inbox at the
 // given inbox status pivot. Fixes the v0.8.287 leak: pickStatus fetches every
 // status (a single-value CH filter can't express open+acknowledged), so the

@@ -204,7 +204,12 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 }
 #sidebar[data-collapsed="true"] #sidebar-header { padding: 14px 0; justify-content: center; }
 #sidebar-header .logo { color: var(--brand); font-size: 22px; }
-#sidebar-header .title { font-weight: 800; font-size: 15px; letter-spacing: .02em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v0.8.285 — explicit color: var(--text) so the wordmark RE-RESOLVES the
+   sidebar's token remap. Without it the "metry" segment (no own color) inherits
+   body's already-computed dark --text and goes invisible on the redhat theme's
+   dark OpenShift sidebar (operator-reported). Now: redhat → white, dark → light,
+   light → dark; the "Core" span keeps its explicit var(--brand) red. */
+#sidebar-header .title { font-weight: 800; font-size: 15px; letter-spacing: .02em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 #nav { flex: 1; padding: 6px 0; overflow-y: auto; overflow-x: hidden; }
 #nav a {
   display: flex; align-items: center; gap: 10px;

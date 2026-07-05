@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="redhat">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -16,10 +16,12 @@
       (function() {
         try {
           var t = localStorage.getItem('coremetry-theme');
-          if (t !== 'light' && t !== 'dark' && t !== 'redhat') t = 'light';
+          // v0.8.285 — default to 'redhat' (PatternFly/OpenShift) for new
+          // sessions; a saved pref still wins so existing users keep their pick.
+          if (t !== 'light' && t !== 'dark' && t !== 'redhat') t = 'redhat';
           document.documentElement.setAttribute('data-theme', t);
         } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'light');
+          document.documentElement.setAttribute('data-theme', 'redhat');
         }
       })();
     </script>

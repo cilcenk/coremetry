@@ -8,6 +8,8 @@ import { useInbox } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
+import { resolveSelectedItem } from '@/lib/inboxDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
 
@@ -22,9 +24,10 @@ const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly'];
 // P1/P2/P3 priority blend so operators get "everything needing a
 // human" in one place instead of tab-hopping between three pages.
 //
-// Each row drill-downs to the source page with the item focused.
-// The per-source pages still exist as deep-drill workspaces; this
-// page is the daily landing surface.
+// A row click opens an in-place triage drawer (v0.8.292, Option B
+// slice 3): root-cause ribbon + inline ack/assign/mute, without
+// leaving /inbox. The drawer keeps an "Open source →" deep-link
+// escape hatch to the per-source workspaces, which still exist.
 
 const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
 
@@ -62,6 +65,9 @@ export default function InboxPage() {
   const serviceFilter = searchParams.get('service') ?? '';
   const ownerFilter = searchParams.get('owner') ?? '';
   const sreFilter = searchParams.get('sre') ?? '';
+  // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.
+  // Deep-linking /inbox?item=<id> opens the drawer; closing deletes the key.
+  const selectedId = searchParams.get('item');
 
   // Single URL writer — replace:true + copy prev so foreign params (a future
   // ?problem= drawer, range, etc.) survive. Empty/null deletes the key.
@@ -88,6 +94,8 @@ export default function InboxPage() {
   const setServiceFilter = (v: string) => setParam('service', v || null);
   const setOwnerFilter = (v: string) => setParam('owner', v || null);
   const setSreFilter = (v: string) => setParam('sre', v || null);
+  const openDrawer = (it: InboxItem) => setParam('item', it.id);
+  const closeDrawer = () => setParam('item', null);
 
   const inboxQ = useInbox({
     status: statusFilter,
@@ -98,6 +106,12 @@ export default function InboxPage() {
   });
   const data: InboxItem[] | null | undefined =
     inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data ?? [];
+
+  // The drawer's selected row, resolved from ?item= against the loaded list.
+  // Uses the full (pre-facet) list so a deep-link to a row hidden by the
+  // priority/kind filter still opens; undefined when the id isn't present →
+  // the drawer shows a soft fallback, never a blank panel.
+  const selected = useMemo(() => resolveSelectedItem(data, selectedId), [data, selectedId]);
 
   const filtered = useMemo(() => {
     if (!data) return data;
@@ -133,7 +147,7 @@ export default function InboxPage() {
     columns: INBOX_COLS,
     rows: inboxRows,
     initialSort: { id: 'priority', dir: 'desc' },
-    onOpen: goToSource,
+    onOpen: openDrawer,
     searchRef,
   });
 
@@ -172,7 +186,7 @@ export default function InboxPage() {
         <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 14 }}>
           Everything needing a human — Problems (alert rules), open Exception
           groups, and active Anomaly detections. Default view: <b>P1 + P2</b>
-          across all kinds. Click any row to drill into the source surface.
+          across all kinds. Click any row to triage it in place.
         </p>
 
         {/* One grouped facet bar (v0.8.38) — status pivot + priority + kind
@@ -265,7 +279,7 @@ export default function InboxPage() {
                 {dt.sortedRows.map((it, i) => (
                   <tr key={it.id}
                     {...dt.rowProps(i)}
-                    onClick={() => goToSource(it)}
+                    onClick={() => openDrawer(it)}
                     onMouseEnter={() => dt.nav.setSelected(i)}
                     style={{
                       cursor: 'pointer',
@@ -334,6 +348,14 @@ export default function InboxPage() {
           </div>
         )}
       </div>
+
+      {/* In-place triage drawer (v0.8.292). Rendered only once the list has
+          settled (Array.isArray) so a deep-linked ?item= doesn't flash the
+          soft-fallback during the initial load. `selected` is undefined when
+          the id isn't in the current list → the drawer's own fallback shows. */}
+      {selectedId && Array.isArray(data) && (
+        <InboxTriageDrawer item={selected} onClose={closeDrawer} onOpenSource={goToSource} />
+      )}
     </>
   );
 }

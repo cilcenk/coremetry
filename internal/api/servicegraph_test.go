@@ -38,7 +38,7 @@ func sampleEdges() []chstore.ServiceTopologyEdge {
 }
 
 func TestBuildServiceGraph_GlobalDecodesOTelKinds(t *testing.T) {
-	g := buildServiceGraph(sampleEdges(), "", "global", nil, 60)
+	g := buildServiceGraph(sampleEdges(), "", "global", 0, nil, 60)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -90,7 +90,7 @@ func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
 		sgEdge("mobile", "ext:payments", "external", "http", 100, 5, 80), // same service, seen via peer.service
 		sgEdge("orders", "ext:stripe.com", "external", "http", 60, 6, 400), // true 3rd party
 	}
-	g := buildServiceGraph(edges, "", "global", nil, 60)
+	g := buildServiceGraph(edges, "", "global", 0, nil, 60)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -111,7 +111,7 @@ func TestBuildServiceGraph_MergeExtIntoService(t *testing.T) {
 }
 
 func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
-	g := buildServiceGraph(sampleEdges(), "payments", "neighborhood", nil, 60)
+	g := buildServiceGraph(sampleEdges(), "payments", "neighborhood", 1, nil, 60)
 	if g.Scope != "neighborhood" || g.Focus != "payments" {
 		t.Fatalf("scope/focus = %q/%q", g.Scope, g.Focus)
 	}
@@ -137,7 +137,7 @@ func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
 // only database nodes (which carry a System) pick one up.
 func TestBuildServiceGraph_DbNameEnrichment(t *testing.T) {
 	dbNames := map[string]string{"postgresql": "core_txn"}
-	g := buildServiceGraph(sampleEdges(), "", "global", dbNames, 60)
+	g := buildServiceGraph(sampleEdges(), "", "global", 0, dbNames, 60)
 	byID := map[string]GraphNode{}
 	for _, n := range g.Nodes {
 		byID[n.ID] = n
@@ -150,7 +150,7 @@ func TestBuildServiceGraph_DbNameEnrichment(t *testing.T) {
 		t.Errorf("service node payments must not carry db.name, got %q", p.DbName)
 	}
 	// nil map → no enrichment, no panic.
-	for _, n := range buildServiceGraph(sampleEdges(), "", "global", nil, 60).Nodes {
+	for _, n := range buildServiceGraph(sampleEdges(), "", "global", 0, nil, 60).Nodes {
 		if n.DbName != "" {
 			t.Errorf("nil dbNames must leave DbName empty, %s got %q", n.ID, n.DbName)
 		}
@@ -187,7 +187,7 @@ func TestServiceGraphWindowMinutes(t *testing.T) {
 func TestBuildServiceGraph_RatePerMinute(t *testing.T) {
 	g := buildServiceGraph([]chstore.ServiceTopologyEdge{
 		sgEdge("gateway", "payments", "service", "http", 1200, 0, 50),
-	}, "", "global", nil, 60) // 1h window → 1200/60 = 20 calls/min
+	}, "", "global", 0, nil, 60) // 1h window → 1200/60 = 20 calls/min
 	var edgeRate float64
 	for _, e := range g.Edges {
 		if e.Source == "gateway" && e.Target == "payments" {
@@ -205,7 +205,7 @@ func TestBuildServiceGraph_RatePerMinute(t *testing.T) {
 	// guard: windowMin<1 floored to 1 inside buildServiceGraph (rate = calls).
 	g0 := buildServiceGraph([]chstore.ServiceTopologyEdge{
 		sgEdge("a", "b", "service", "http", 5, 0, 1),
-	}, "", "global", nil, 0)
+	}, "", "global", 0, nil, 0)
 	if g0.Edges[0].Rate != 5 {
 		t.Errorf("windowMin=0 must floor to 1 → rate=calls=5, got %v", g0.Edges[0].Rate)
 	}

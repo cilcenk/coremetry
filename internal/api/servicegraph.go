@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,67 @@ type ServiceGraphResponse struct {
 	Edges []GraphEdge `json:"edges"`
 	Scope string      `json:"scope"`
 	Focus string      `json:"focus,omitempty"`
+}
+
+// serviceGraphHopsClamp resolves the ?hops= neighborhood radius (v0.8.294).
+// Neighborhood scope defaults to 1 and clamps to [1,3] — 3 hops on a dense
+// graph already approaches the whole estate, and the client caps the render
+// at ~40 nearest nodes anyway. Any other scope returns 0: hops is meaningless
+// on a global read and must not fragment the cache key. Pure + table-tested.
+func serviceGraphHopsClamp(raw, scope string) int {
+	if scope != "neighborhood" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 1
+	}
+	if n > 3 {
+		return 3
+	}
+	return n
+}
+
+// neighborhoodKeepSet returns the node ids within `hops` of the focus,
+// walking downstream via OUT edges only and upstream via IN edges only —
+// each direction with its own seen-set. This MIRRORS the client's
+// assignFocusColumns walk (the v0.8.39 "won't branch at 2 hops" fix): a
+// caller's OTHER dependency (a "sibling") mixes directions and is never
+// included. Extracted pure (v0.8.294) so the service-detail Topology tab can
+// stop downloading the entire global graph to BFS ≤40 nodes client-side.
+func neighborhoodKeepSet(edges []chstore.ServiceTopologyEdge, focus string, hops int) map[string]bool {
+	if hops < 1 {
+		hops = 1
+	}
+	out := map[string][]string{} // parent → children (downstream adjacency)
+	in := map[string][]string{}  // child → parents (upstream adjacency)
+	for _, e := range edges {
+		out[e.ParentService] = append(out[e.ParentService], e.ChildNode)
+		in[e.ChildNode] = append(in[e.ChildNode], e.ParentService)
+	}
+	keep := map[string]bool{focus: true}
+	for dir := 0; dir < 2; dir++ {
+		adj := out
+		if dir == 1 {
+			adj = in
+		}
+		frontier := []string{focus}
+		seen := map[string]bool{focus: true} // per-direction so a cycle can reach both sides
+		for h := 0; h < hops && len(frontier) > 0; h++ {
+			var next []string
+			for _, id := range frontier {
+				for _, nb := range adj[id] {
+					if !seen[nb] {
+						seen[nb] = true
+						keep[nb] = true
+						next = append(next, nb)
+					}
+				}
+			}
+			frontier = next
+		}
+	}
+	return keep
 }
 
 // nodeKindToOTel maps the MV's node_kind to the clean OTel-native kind label.
@@ -114,9 +176,13 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 	// unfiltered kafka:log*/kafka:bsa* queue nodes drowned those
 	// graphs. Same matcher as the other two endpoints; digest in
 	// the cache key per the v0.5.187 rule.
+	// Neighborhood radius (v0.8.294) — server-side hops so the service-detail
+	// Topology tab stops downloading the whole global graph for a ≤40-node
+	// view. 0 outside neighborhood scope; in the cache key.
+	hops := serviceGraphHopsClamp(q.Get("hops"), scope)
 	hidPats := s.topologyHiddenPatterns(r.Context())
-	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:hid=%s",
-		focus, scope, from.Unix()/60, to.Unix()/60, hiddenDigest(hidPats))
+	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:hops=%d:hid=%s",
+		focus, scope, from.Unix()/60, to.Unix()/60, hops, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
 		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, 20000)
 		if err != nil {
@@ -126,7 +192,7 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 		// Best-effort db.name enrichment for database nodes; a lookup failure
 		// leaves nodes unannotated rather than failing the whole graph.
 		dbNames, _ := s.store.DbNamesBySystem(r.Context(), from, to)
-		return buildServiceGraph(edges, focus, scope, dbNames, serviceGraphWindowMinutes(from, to)), nil
+		return buildServiceGraph(edges, focus, scope, hops, dbNames, serviceGraphWindowMinutes(from, to)), nil
 	})
 }
 
@@ -162,7 +228,8 @@ func serviceGraphWindowMinutes(from, to time.Time) float64 {
 
 // buildServiceGraph is the pure transform from MV edge rows to the OTel-native
 // {nodes, edges} model. Extracted so it's unit-testable without ClickHouse.
-func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string, dbNames map[string]string, windowMin float64) ServiceGraphResponse {
+// hops bounds the neighborhood walk (v0.8.294); ignored outside that scope.
+func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string, hops int, dbNames map[string]string, windowMin float64) ServiceGraphResponse {
 	if windowMin < 1 {
 		windowMin = 1
 	}
@@ -188,18 +255,13 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 	}
 	edges = merged
 
-	// Neighborhood scope: keep only edges whose BOTH endpoints are the focus or
-	// a direct neighbor of the focus (callers + callees + the links among them).
+	// Neighborhood scope: keep only edges whose BOTH endpoints sit within
+	// `hops` of the focus — direction-separated walk (neighborhoodKeepSet,
+	// v0.8.294) so callers stay upstream, dependencies downstream, and a
+	// caller's other dependency never leaks in. hops=1 is the pre-v0.8.294
+	// behavior (focus + direct callers/callees + links among them).
 	if scope == "neighborhood" && focus != "" {
-		neigh := map[string]bool{focus: true}
-		for _, e := range edges {
-			if e.ParentService == focus {
-				neigh[e.ChildNode] = true
-			}
-			if e.ChildNode == focus {
-				neigh[e.ParentService] = true
-			}
-		}
+		neigh := neighborhoodKeepSet(edges, focus, hops)
 		kept := make([]chstore.ServiceTopologyEdge, 0, len(edges))
 		for _, e := range edges {
 			if neigh[e.ParentService] && neigh[e.ChildNode] {

@@ -9,15 +9,16 @@ import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 
-// FocusedNeighborhood — the focused-graph half of /topology (v0.8.x). Given a
-// chosen service, BFS out from it in BOTH directions (callers ← focus →
-// dependencies) to `hops` levels over the GLOBAL service graph (fetched once,
-// shared cache with ServicePicker), cap the node count, and render via
-// TopologyFlowGraph (v0.8.108): pill nodes + flow-animated bezier edges +
-// hover-blue direct-edge emphasis. The flow graph's BFS-layered closed-form
-// layout replaces the previous hand-rolled card grid + pan/zoom — pan/zoom is
-// deliberately dropped (the layered layout on a capped 1-2 hop neighborhood
-// doesn't hairball). Toolbar (hops / errors-only) + hover inspector stay.
+// FocusedNeighborhood — the focused topology graph (service-detail Topology
+// tab). Since v0.8.294 the neighborhood is walked SERVER-side
+// (/api/servicegraph?scope=neighborhood&hops=N — same direction-separated
+// BFS contract, see neighborhoodKeepSet) so this component no longer
+// downloads the entire global graph (20k edges at 1000+ services) for a
+// ≤40-node view. The client keeps assignFocusColumns on the returned
+// subgraph for the signed caller/dependency columns that drive the
+// nearest-first CAP, and renders via TopologyFlowGraph (v0.8.108): pill
+// nodes + flow-animated bezier edges + hover-blue direct-edge emphasis.
+// Toolbar (hops / errors-only) + hover inspector stay.
 
 const CAP = 40;
 
@@ -93,13 +94,15 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
   onClear: () => void;
 }) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+  // hops rides the query key (bounded: server clamps to 1..3, UI offers 1|2)
+  // so widening the radius refetches the wider subgraph; 30s server cache.
   const graph = useQuery<ServiceGraphResponse>({
-    queryKey: ['servicegraph', 'global', '', from, to],
-    queryFn: () => api.serviceGraph({ scope: 'global', from, to }),
+    queryKey: ['servicegraph', 'neighborhood', focus, hops, from, to],
+    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', hops, from, to }),
     staleTime: 30_000,
   });
 
-  // ── BFS the focused neighborhood from the global graph ──────────────────
+  // ── signed columns + nearest-first cap over the server-walked subgraph ──
   const nb = useMemo(() => {
     const allNodes = new Map<string, GraphNode>();
     for (const n of graph.data?.nodes ?? []) allNodes.set(n.id, n);

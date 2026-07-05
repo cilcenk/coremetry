@@ -2350,6 +2350,15 @@ export interface ServiceMapEdge {
   spanCount: number;
   errorCount: number;
   isNew?: boolean;
+  // v0.8.281 — per-edge RED, present ONLY on the MV path (the focus view's
+  // serviceGraphAdapter enriches them from GraphEdge; the sampled global
+  // /api/service-map never computes latency, so they stay undefined there
+  // and the renderer draws no label). errorRate follows the ServiceMap shape
+  // convention: a 0..1 fraction, like ServiceMapNode.errorRate.
+  rate?: number;      // calls per minute over the window
+  errorRate?: number; // 0..1
+  avgMs?: number;
+  p99Ms?: number;
 }
 
 export interface ServiceMap {

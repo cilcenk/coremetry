@@ -1719,6 +1719,12 @@ canvas { max-width: 100%; }
 .topo-dot.green { background: var(--ok); }
 .topo-dot.amber { background: var(--warn); }
 .topo-dot.red { background: var(--err); }
+/* v0.8.281 — kenar RED chip'i (hacim/dk · p99 · err%). Pill'lerin altında
+   kalsın diye z-index aynı (DOM sırası: chip'ler node'lardan önce);
+   pointer-events yok — hover/hit-test kenarın kendisinde kalır. */
+.topo-chip { position: absolute; transform: translate(-50%, -50%); z-index: 2; pointer-events: none; font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 7px; border-radius: 6px; background: var(--bg1); border: 1px solid var(--border); color: var(--text2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.topo-chip.hot { border-color: var(--accent); color: var(--text); }
+.topo-chip .chip-err { color: var(--err); }
 
 /* Metric query editor (v0.7.126) — Grafana-style ad-hoc builder. Tokens only. */
 .mqe { display: flex; flex-direction: column; gap: 10px; }

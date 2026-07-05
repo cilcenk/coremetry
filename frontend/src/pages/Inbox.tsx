@@ -1,15 +1,21 @@
-import { useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useMemo, useRef } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Users, Shield } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { useInbox } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
-import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
+import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
+
+// Facet vocab + defaults (v0.8.291) — the inbox lands on P1+P2 across all
+// kinds; both are the "default" the URL codec omits so a fresh link stays clean.
+const PRIO_ALL = ['P1', 'P2', 'P3'] as const;
+const PRIO_DEFAULT = ['P1', 'P2'] as const;
+const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly'];
 
 // /inbox — unified triage view (v0.5.211). Merges Problems +
 // Exception groups + Anomaly events server-side with a normalised
@@ -37,52 +43,51 @@ const INBOX_COLS: DataTableColumn<InboxItem>[] = [
 
 export default function InboxPage() {
   const navigate = useNavigate();
-  const [statusFilter, setStatusFilter] = useState<'open' | 'all'>('open');
-  // Multi-select chips for priority + kind. Persisted so the
-  // operator's view sticks across page reloads. Default: P1+P2
-  // (signal-first) across all kinds.
-  const [prioSet, setPrioSet] = useState<Set<string>>(() => {
-    const arr = getItem<string[] | null>(STORAGE_KEYS.inboxPrio, null);
-    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-    return new Set(['P1', 'P2']);
-  });
-  const [kindSet, setKindSet] = useState<Set<InboxKind>>(() => {
-    const arr = getItem<InboxKind[] | null>(STORAGE_KEYS.inboxKind, null);
-    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-    return new Set<InboxKind>(['problem', 'exception', 'anomaly']);
-  });
-  const [serviceFilter, setServiceFilter] = useState('');
-  const [ownerFilter, setOwnerFilter] = useState('');
-  const [sreFilter, setSreFilter] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
   // "/" focuses this filter via the shared table keyboard-nav.
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // URL = source of truth (v0.8.291, Option B Slice 2). Every facet/filter is
+  // derived straight from the query string — no useState mirror, so the
+  // one-way-read bug class (v0.8.256/265/267) can't exist here, and Copy link
+  // reproduces the exact triage view. Defaults (P1+P2, all kinds) are the codec
+  // fallback for an absent param, so a bare /inbox lands on the intended view.
+  const statusFilter: 'open' | 'all' = searchParams.get('status') === 'all' ? 'all' : 'open';
+  const rawPrio = searchParams.get('prio');
+  const rawKind = searchParams.get('kind');
+  const prioSet = useMemo(() => new Set(decodeCsvSet(rawPrio, PRIO_ALL, PRIO_DEFAULT)), [rawPrio]);
+  const kindSet = useMemo(
+    () => new Set(decodeCsvSet(rawKind, KIND_ALL, KIND_ALL) as InboxKind[]),
+    [rawKind]);
+  const serviceFilter = searchParams.get('service') ?? '';
+  const ownerFilter = searchParams.get('owner') ?? '';
+  const sreFilter = searchParams.get('sre') ?? '';
+
+  // Single URL writer — replace:true + copy prev so foreign params (a future
+  // ?problem= drawer, range, etc.) survive. Empty/null deletes the key.
+  const setParam = (k: string, v: string | null) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (v === null || v === '') p.delete(k); else p.set(k, v);
+      return p;
+    }, { replace: true });
+  };
+  const setStatusFilter = (s: 'open' | 'all') => setParam('status', s === 'all' ? 'all' : null);
+  // Multi-select toggles keep the min-1 invariant (can't deselect everything),
+  // then serialise the set back to the URL (default selection → param removed).
   const togglePrio = (p: string) => {
-    setPrioSet(prev => {
-      const next = new Set(prev);
-      if (next.has(p)) {
-        if (next.size === 1) return prev;
-        next.delete(p);
-      } else {
-        next.add(p);
-      }
-      setItem(STORAGE_KEYS.inboxPrio, [...next]);
-      return next;
-    });
+    const next = new Set(prioSet);
+    if (next.has(p)) { if (next.size === 1) return; next.delete(p); } else next.add(p);
+    setParam('prio', encodeCsvSet(next, PRIO_ALL, PRIO_DEFAULT));
   };
   const toggleKind = (k: InboxKind) => {
-    setKindSet(prev => {
-      const next = new Set(prev);
-      if (next.has(k)) {
-        if (next.size === 1) return prev;
-        next.delete(k);
-      } else {
-        next.add(k);
-      }
-      setItem(STORAGE_KEYS.inboxKind, [...next]);
-      return next;
-    });
+    const next = new Set(kindSet);
+    if (next.has(k)) { if (next.size === 1) return; next.delete(k); } else next.add(k);
+    setParam('kind', encodeCsvSet(next, KIND_ALL, KIND_ALL));
   };
+  const setServiceFilter = (v: string) => setParam('service', v || null);
+  const setOwnerFilter = (v: string) => setParam('owner', v || null);
+  const setSreFilter = (v: string) => setParam('sre', v || null);
 
   const inboxQ = useInbox({
     status: statusFilter,

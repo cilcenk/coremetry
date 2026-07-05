@@ -29,10 +29,15 @@ export function DropsPanel({ drops }: { drops: SystemStats['drops'] }) {
   const d = drops ?? {
     spansQueueFull: 0, logsQueueFull: 0, metricsQueueFull: 0,
     spansWriteFailed: 0, logsWriteFailed: 0, metricsWriteFailed: 0,
+    spansPipeline: 0, logsPipeline: 0, metricsPipeline: 0,
   };
   const total =
     d.spansQueueFull + d.logsQueueFull + d.metricsQueueFull +
     d.spansWriteFailed + d.logsWriteFailed + d.metricsWriteFailed;
+  // Pipeline drops are INTENTIONAL (operator drop/sample rules) — kept out
+  // of the loss `total`/alarm and shown as a neutral informational line so
+  // an active drop rule never flips the "✓ no loss" indicator (v0.8.282).
+  const pipelineTotal = d.spansPipeline + d.logsPipeline + d.metricsPipeline;
   const signals = [
     { label: 'Spans',   queueFull: d.spansQueueFull,   writeFailed: d.spansWriteFailed },
     { label: 'Logs',    queueFull: d.logsQueueFull,    writeFailed: d.logsWriteFailed },
@@ -77,6 +82,16 @@ export function DropsPanel({ drops }: { drops: SystemStats['drops'] }) {
               </div>
             );
           })}
+        </div>
+      )}
+      {pipelineTotal > 0 && (
+        <div style={{
+          marginTop: total > 0 ? 12 : 8, paddingTop: 8,
+          borderTop: total > 0 ? '1px solid var(--border)' : 'none',
+          fontSize: 11, color: 'var(--text3)',
+        }}>
+          Dropped by pipeline rules (intentional): spans {fmtNum(d.spansPipeline)}
+          {' · '}logs {fmtNum(d.logsPipeline)} · metrics {fmtNum(d.metricsPipeline)}
         </div>
       )}
     </div>

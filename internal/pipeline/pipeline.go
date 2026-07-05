@@ -6,11 +6,14 @@
 // drop case — implemented narrowly here so we don't grow a
 // second-config-system surface inside Coremetry.
 //
-// MVP scope:
-//   - Signal: spans only. Logs + metrics drop coming in a
-//     follow-up; the structure threads through.
-//   - Rule kind: "drop". Enrich (set resource attribute) is
-//     stubbed in the type but not applied yet.
+// Scope:
+//   - Signal: spans, logs, and metrics (v0.8.282 completed the
+//     logs + metrics application; the span-only MVP was v0.5.263).
+//     AcceptSpan / AcceptLog / AcceptMetric each scope to their
+//     own Signal so one shared catalog cleanly partitions rules.
+//   - Rule kind: "drop", "enrich" (set resource attribute), and
+//     "sample" (probabilistic keep). Sample on metrics is a sharp
+//     tool — it estimates aggregates — but supported for symmetry.
 //   - One Condition per rule (key = op + value). Multi-condition
 //     AND is a follow-up; one predicate covers the dominant
 //     "drop spans from service X" + "drop kind=internal" use
@@ -28,6 +31,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -336,29 +340,125 @@ func (e *Engine) AcceptSpan(sp *chstore.Span) bool {
 	return true
 }
 
+// AcceptLog is the logs hot path — mirrors AcceptSpan exactly
+// (v0.8.282). Called once per incoming log record before the
+// consumer buffer. Returns false to drop; the caller bumps its
+// logs-dropped-by-pipeline counter. Only rules whose Signal is
+// SignalLogs are considered — spans/metrics rules are skipped so
+// one shared rule catalog cleanly scopes per signal.
+func (e *Engine) AcceptLog(l *chstore.Log) bool {
+	if l == nil {
+		return true
+	}
+	e.mu.RLock()
+	rules := e.rules
+	e.mu.RUnlock()
+	if len(rules) == 0 {
+		return true
+	}
+	for i := range rules {
+		r := &rules[i]
+		if !r.Enabled {
+			continue
+		}
+		if r.Signal != SignalLogs {
+			continue
+		}
+		if !matchLog(r.When, l) {
+			continue
+		}
+		switch r.Kind {
+		case KindDrop:
+			return false
+		case KindSample:
+			if r.Rate <= 0 || rand.Float64() >= r.Rate {
+				return false
+			}
+		case KindEnrich:
+			applyEnrichAttrs(&l.ResKeys, &l.ResValues, r.SetAttributes)
+		}
+	}
+	return true
+}
+
+// AcceptMetric is the metrics hot path — mirrors AcceptSpan
+// (v0.8.282). Returns false to drop the data point. Drop is the
+// dominant use case (silence a noisy debug gauge / drop a whole
+// instrument for cost); enrich adds resource context. Sample is
+// supported for symmetry but is a sharp tool on metrics —
+// probabilistically discarding points corrupts cumulative sums,
+// counts, and histogram buckets, so the operator opts in per rule
+// knowing the aggregate becomes an estimate. Only SignalMetrics
+// rules are considered.
+func (e *Engine) AcceptMetric(m *chstore.MetricPoint) bool {
+	if m == nil {
+		return true
+	}
+	e.mu.RLock()
+	rules := e.rules
+	e.mu.RUnlock()
+	if len(rules) == 0 {
+		return true
+	}
+	for i := range rules {
+		r := &rules[i]
+		if !r.Enabled {
+			continue
+		}
+		if r.Signal != SignalMetrics {
+			continue
+		}
+		if !matchMetric(r.When, m) {
+			continue
+		}
+		switch r.Kind {
+		case KindDrop:
+			return false
+		case KindSample:
+			if r.Rate <= 0 || rand.Float64() >= r.Rate {
+				return false
+			}
+		case KindEnrich:
+			applyEnrichAttrs(&m.ResKeys, &m.ResValues, r.SetAttributes)
+		}
+	}
+	return true
+}
+
 // applyEnrich writes the given key/value pairs into the span's
-// parallel-array resource attributes. Existing keys are
-// overridden in-place; new keys append. Mutates the slice
-// headers via the pointer so the caller doesn't need to
-// re-assign. Hot-path: no allocation when every key already
-// exists (the common case after a brief warm-up).
+// parallel-array resource attributes. Thin adapter over the
+// signal-agnostic applyEnrichAttrs — the span, log, and metric
+// records all carry the same ResKeys/ResValues layout so the
+// enrich mechanism is shared (v0.8.282).
 func applyEnrich(sp *chstore.Span, set map[string]string) {
+	applyEnrichAttrs(&sp.ResKeys, &sp.ResValues, set)
+}
+
+// applyEnrichAttrs writes key/value pairs into a parallel-array
+// attribute set (used for RESOURCE attributes on every signal).
+// Existing keys are overridden in-place; new keys append. Mutates
+// the slice headers via the pointers so the caller doesn't need
+// to re-assign. Hot-path: no allocation when every key already
+// exists (the common case after a brief warm-up) — the append
+// only fires on the first record that seeds a new key.
+func applyEnrichAttrs(keys, values *[]string, set map[string]string) {
 	for k, v := range set {
 		// Try in-place override first — the common case once
 		// the slices have been seeded once.
 		hit := false
-		for i := 0; i < len(sp.ResKeys); i++ {
-			if sp.ResKeys[i] == k {
-				if i < len(sp.ResValues) {
-					sp.ResValues[i] = v
+		ks := *keys
+		for i := 0; i < len(ks); i++ {
+			if ks[i] == k {
+				if i < len(*values) {
+					(*values)[i] = v
 				}
 				hit = true
 				break
 			}
 		}
 		if !hit {
-			sp.ResKeys = append(sp.ResKeys, k)
-			sp.ResValues = append(sp.ResValues, v)
+			*keys = append(*keys, k)
+			*values = append(*values, v)
 		}
 	}
 }
@@ -394,6 +494,71 @@ func matchSpan(c Condition, sp *chstore.Span) bool {
 			// for the common "operator just typed http.route"
 			// case without a prefix.
 			got = lookupAttr(sp.AttrKeys, sp.AttrValues, c.Key)
+		}
+	}
+	return matchOp(c.Op, got, c.Value)
+}
+
+// matchLog evaluates a Condition against a log record (v0.8.282).
+// Well-known log fields branch directly; everything else routes
+// through the attr. / resource. prefixes (unprefixed unknown falls
+// back to log attributes, matching the span path's ergonomics).
+func matchLog(c Condition, l *chstore.Log) bool {
+	var got string
+	switch c.Key {
+	case "service.name":
+		got = l.ServiceName
+	case "severity_text":
+		got = l.SeverityText
+	case "severity_number":
+		got = strconv.Itoa(int(l.SeverityNum))
+	case "body":
+		got = l.Body
+	case "host.name":
+		got = l.HostName
+	case "trace_id":
+		got = l.TraceID
+	case "span_id":
+		got = l.SpanID
+	case "scope.name":
+		got = l.ScopeName
+	default:
+		if strings.HasPrefix(c.Key, "attr.") {
+			got = lookupAttr(l.AttrKeys, l.AttrValues, strings.TrimPrefix(c.Key, "attr."))
+		} else if strings.HasPrefix(c.Key, "resource.") {
+			got = lookupAttr(l.ResKeys, l.ResValues, strings.TrimPrefix(c.Key, "resource."))
+		} else {
+			got = lookupAttr(l.AttrKeys, l.AttrValues, c.Key)
+		}
+	}
+	return matchOp(c.Op, got, c.Value)
+}
+
+// matchMetric evaluates a Condition against a metric data point
+// (v0.8.282). "metric" (aliases "name" / "metric.name") targets the
+// metric name; "instrument" (alias "type") the instrument kind;
+// "unit" the unit string. Attribute / resource keys use the same
+// prefixes as the span + log paths.
+func matchMetric(c Condition, m *chstore.MetricPoint) bool {
+	var got string
+	switch c.Key {
+	case "metric", "name", "metric.name":
+		got = m.Metric
+	case "instrument", "type":
+		got = m.Instrument
+	case "unit":
+		got = m.Unit
+	case "service.name":
+		got = m.ServiceName
+	case "host.name":
+		got = m.HostName
+	default:
+		if strings.HasPrefix(c.Key, "attr.") {
+			got = lookupAttr(m.AttrKeys, m.AttrValues, strings.TrimPrefix(c.Key, "attr."))
+		} else if strings.HasPrefix(c.Key, "resource.") {
+			got = lookupAttr(m.ResKeys, m.ResValues, strings.TrimPrefix(c.Key, "resource."))
+		} else {
+			got = lookupAttr(m.AttrKeys, m.AttrValues, c.Key)
 		}
 	}
 	return matchOp(c.Op, got, c.Value)

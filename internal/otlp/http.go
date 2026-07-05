@@ -32,8 +32,11 @@ type Ingester struct {
 
 	// pipeline (v0.5.263) — ingest-time drop / enrich rules. nil = no rules
 	// (the engine is a no-op-on-empty, so passing it through is fine too).
-	pipeline     *pipeline.Engine
-	spansDropped atomic.Uint64
+	// v0.8.282 — extended to logs + metrics; one counter per signal.
+	pipeline       *pipeline.Engine
+	spansDropped   atomic.Uint64
+	logsDropped    atomic.Uint64
+	metricsDropped atomic.Uint64
 
 	// autocomplete (v0.8.80) — Redis-backed picker-facet cache. nil-safe:
 	// ObserveSpan short-circuits on a nil/disabled store, so pods without
@@ -56,6 +59,14 @@ func (ing *Ingester) SetPipeline(p *pipeline.Engine) { ing.pipeline = p }
 // alongside sampler-dropped + buffer-dropped counters so the
 // operator can see the policy engine's effect at a glance.
 func (ing *Ingester) SpansDroppedByPipeline() uint64 { return ing.spansDropped.Load() }
+
+// LogsDroppedByPipeline / MetricsDroppedByPipeline mirror the span
+// accessor (v0.8.282). Surfaced on /admin/stats so the operator sees
+// how many logs / metric points a pipeline rule discarded before the
+// consumer buffer. Distinct from the queue-full / write-failed loss
+// counters — pipeline drops are INTENTIONAL, not data loss.
+func (ing *Ingester) LogsDroppedByPipeline() uint64    { return ing.logsDropped.Load() }
+func (ing *Ingester) MetricsDroppedByPipeline() uint64 { return ing.metricsDropped.Load() }
 
 func NewIngester(
 	spans *consumer.Consumer[*chstore.Span],
@@ -82,6 +93,29 @@ func (ing *Ingester) addSpan(sp *chstore.Span) bool {
 	// picker facets.
 	ing.autocomplete.ObserveSpan(sp)
 	return ing.Spans.Add(sp)
+}
+
+// addLog runs the optional ingest-time pipeline (drop/enrich/sample) then
+// forwards to the log consumer (v0.8.282). Mirrors addSpan: an accept-but-
+// discard on a pipeline drop keeps the caller's accept accounting unaffected.
+// Returns false only when the consumer buffer was full.
+func (ing *Ingester) addLog(l *chstore.Log) bool {
+	if ing.pipeline != nil && !ing.pipeline.AcceptLog(l) {
+		ing.logsDropped.Add(1)
+		return true
+	}
+	return ing.Logs.Add(l)
+}
+
+// addMetric runs the optional ingest-time pipeline (drop/enrich/sample) then
+// forwards to the metric consumer (v0.8.282). Same accept-but-discard
+// semantics as addSpan / addLog.
+func (ing *Ingester) addMetric(m *chstore.MetricPoint) bool {
+	if ing.pipeline != nil && !ing.pipeline.AcceptMetric(m) {
+		ing.metricsDropped.Add(1)
+		return true
+	}
+	return ing.Metrics.Add(m)
 }
 
 // HTTPHandler returns an http.Handler that accepts OTLP/HTTP (protobuf + JSON).
@@ -120,7 +154,7 @@ func (ing *Ingester) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	logs := ConvertLogs(&req)
 	for _, l := range logs {
-		ing.Logs.Add(l)
+		ing.addLog(l)
 	}
 	writeProtoResp(w, r, &logscollpb.ExportLogsServiceResponse{})
 }
@@ -133,7 +167,7 @@ func (ing *Ingester) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	pts := ConvertMetrics(&req)
 	for _, p := range pts {
-		ing.Metrics.Add(p)
+		ing.addMetric(p)
 	}
 	writeProtoResp(w, r, &metricscollpb.ExportMetricsServiceResponse{})
 }

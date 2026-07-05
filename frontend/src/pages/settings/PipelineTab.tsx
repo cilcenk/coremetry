@@ -3,12 +3,13 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Modal, Button, Stack } from '@/components/ui';
 import { api, type PipelineRule } from '@/lib/api';
 
-// ── Pipeline tab (v0.5.263) ─────────────────────────────────────────────────
+// ── Pipeline tab (v0.5.263; logs + metrics v0.8.282) ────────────────────────
 //
-// Ingest-time drop rules — span-only MVP. Operator picks "service.name =
-// frontend" and any span matching that predicate gets dropped before the
-// sampler / consumer sees it. Drop counter is exposed on /admin/stats so
-// the effect is observable without log-grepping.
+// Ingest-time drop / enrich / sample rules for spans, logs, AND metrics.
+// Operator picks e.g. "service.name = frontend" and any matching record of
+// the chosen signal gets dropped (or enriched / sampled) before the
+// consumer sees it — no CH write. Per-signal drop counts are exposed on
+// /admin/stats so the effect is observable without log-grepping.
 export function PipelineTab() {
   const [rules, setRules] = useState<PipelineRule[] | null | undefined>(undefined);
   const [editing, setEditing] = useState<PipelineRule | null>(null);
@@ -32,7 +33,7 @@ export function PipelineTab() {
   };
 
   const remove = async (r: PipelineRule) => {
-    if (!confirm(`Delete pipeline rule "${r.name}"? Spans matching this rule will no longer be dropped.`)) return;
+    if (!confirm(`Delete pipeline rule "${r.name}"? Records matching this rule will no longer be affected.`)) return;
     try {
       await api.deletePipelineRule(r.id);
       setMsg({ kind: 'ok', text: `Deleted "${r.name}"` });
@@ -49,11 +50,11 @@ export function PipelineTab() {
     <div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
         <span style={{ fontSize: 12, color: 'var(--text2)', flex: 1 }}>
-          Ingest-time rules evaluated <b>before</b> the sampler. A "drop"
-          rule that matches removes the span entirely — no CH write, no
-          tail-sampler bookkeeping. Use for noisy health-check spans,
-          internal-only kinds you never want to inspect, or services
-          you've decided to drop wholesale for cost.
+          Ingest-time rules evaluated <b>before</b> the store write. A "drop"
+          rule that matches removes the record entirely — no CH write. Use
+          for noisy health-check spans, DEBUG logs, high-cardinality debug
+          metrics, or whole services you've decided to drop for cost.
+          Choose the <b>signal</b> (spans / logs / metrics) each rule scopes to.
         </span>
         <Button onClick={() => setCreating(true)}>+ New rule</Button>
       </div>
@@ -229,8 +230,8 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
               <select value={signal} onChange={e => setSignal(e.target.value as PipelineRule['signal'])}
                 style={{ width: '100%' }}>
                 <option value="spans">spans</option>
-                <option value="logs" disabled>logs (coming soon)</option>
-                <option value="metrics" disabled>metrics (coming soon)</option>
+                <option value="logs">logs</option>
+                <option value="metrics">metrics</option>
               </select>
             </div>
           </div>
@@ -240,7 +241,10 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr', gap: 8 }}>
               <input value={whenKey} onChange={e => setWhenKey(e.target.value)} required
-                placeholder="service.name | name | kind | attr.X | resource.X"
+                placeholder={
+                  signal === 'logs' ? 'service.name | severity_text | body | attr.X'
+                  : signal === 'metrics' ? 'metric | unit | instrument | service.name'
+                  : 'service.name | name | kind | attr.X | resource.X'}
                 style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
               <select value={whenOp} onChange={e => setWhenOp(e.target.value as PipelineRule['when']['op'])}
                 style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>
@@ -255,9 +259,19 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
                 style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
             </div>
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-              Well-known span fields branch directly: <code>service.name</code>,
-              {' '}<code>name</code>, <code>kind</code>, <code>status_code</code>.
-              Custom attributes via <code>attr.foo</code> / <code>resource.foo</code> prefix.
+              {signal === 'logs' ? (
+                <>Well-known log fields branch directly: <code>service.name</code>,
+                {' '}<code>severity_text</code>, <code>severity_number</code>,
+                {' '}<code>body</code>, <code>host.name</code>, <code>trace_id</code>.</>
+              ) : signal === 'metrics' ? (
+                <>Well-known metric fields branch directly: <code>metric</code>,
+                {' '}<code>instrument</code>, <code>unit</code>, <code>service.name</code>,
+                {' '}<code>host.name</code>.</>
+              ) : (
+                <>Well-known span fields branch directly: <code>service.name</code>,
+                {' '}<code>name</code>, <code>kind</code>, <code>status_code</code>.</>
+              )}
+              {' '}Custom attributes via <code>attr.foo</code> / <code>resource.foo</code> prefix.
             </div>
           </div>
 
@@ -276,7 +290,7 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
                   style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
               </div>
               <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                Sets a resource attribute on every matching span. Existing keys are
+                Sets a resource attribute on every matching record. Existing keys are
                 overridden. Multi-attribute support coming later — start with one.
               </div>
             </div>
@@ -292,9 +306,14 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
                 value={rate} onChange={e => setRate(Number(e.target.value))}
                 style={{ width: '100%' }} />
               <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                Probability of keeping each matching span. 1.0 = no-op; 0.0 = use a
-                drop rule instead. Runs BEFORE the global head sampler — that may
-                still further sample the kept spans.
+                Probability of keeping each matching record. 1.0 = no-op; 0.0 = use a
+                drop rule instead.
+                {signal === 'metrics' && (
+                  <span style={{ color: 'var(--warn, var(--err))' }}>
+                    {' '}Note: sampling metrics makes sums / counts / histograms an
+                    estimate — prefer drop for whole noisy series.
+                  </span>
+                )}
               </div>
             </div>
           )}

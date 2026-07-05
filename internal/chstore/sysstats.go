@@ -70,6 +70,14 @@ type IngestDrops struct {
 	SpansWriteFailed   int64 `json:"spansWriteFailed"`
 	LogsWriteFailed    int64 `json:"logsWriteFailed"`
 	MetricsWriteFailed int64 `json:"metricsWriteFailed"`
+	// Pipeline — records discarded by an operator-defined ingest rule
+	// (drop / sample) before the consumer buffer (v0.8.282). These are
+	// INTENTIONAL, not data loss, so the UI renders them separately from
+	// the queue-full / write-failed counters and never in the loss alarm.
+	// Populated by the API getSystemStats handler from the live Ingester.
+	SpansPipeline   int64 `json:"spansPipeline"`
+	LogsPipeline    int64 `json:"logsPipeline"`
+	MetricsPipeline int64 `json:"metricsPipeline"`
 }
 
 type SystemSnapshot struct {

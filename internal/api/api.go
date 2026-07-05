@@ -1295,6 +1295,12 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 				st.Drops.MetricsQueueFull = s.ing.Metrics.Dropped()
 				st.Drops.MetricsWriteFailed = s.ing.Metrics.WriteFailed()
 			}
+			// v0.8.282 — intentional ingest-pipeline drops per signal
+			// (drop / sample rules). Read straight off the Ingester's
+			// atomic counters, not the consumers.
+			st.Drops.SpansPipeline = int64(s.ing.SpansDroppedByPipeline())
+			st.Drops.LogsPipeline = int64(s.ing.LogsDroppedByPipeline())
+			st.Drops.MetricsPipeline = int64(s.ing.MetricsDroppedByPipeline())
 		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state.

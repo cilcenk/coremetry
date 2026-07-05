@@ -84,7 +84,7 @@ type logsGRPC struct {
 func (s *logsGRPC) Export(_ context.Context, req *logscollpb.ExportLogsServiceRequest) (*logscollpb.ExportLogsServiceResponse, error) {
 	logs := ConvertLogs(req)
 	for _, l := range logs {
-		s.ing.Logs.Add(l)
+		s.ing.addLog(l)
 	}
 	return &logscollpb.ExportLogsServiceResponse{}, nil
 }
@@ -99,7 +99,7 @@ type metricsGRPC struct {
 func (s *metricsGRPC) Export(_ context.Context, req *metricscollpb.ExportMetricsServiceRequest) (*metricscollpb.ExportMetricsServiceResponse, error) {
 	pts := ConvertMetrics(req)
 	for _, p := range pts {
-		s.ing.Metrics.Add(p)
+		s.ing.addMetric(p)
 	}
 	return &metricscollpb.ExportMetricsServiceResponse{}, nil
 }

@@ -2474,7 +2474,9 @@ export interface SystemStats {
   };
   // Cumulative ingest data-loss counters since process start (v0.8.x).
   // queueFull = receiver buffer overflow; writeFailed = ClickHouse insert
-  // errored and the batch was dropped (not retried).
+  // errored and the batch was dropped (not retried). pipeline = records
+  // discarded by an operator drop/sample rule (INTENTIONAL, not loss;
+  // shown separately from the loss alarm) — v0.8.282.
   drops: {
     spansQueueFull: number;
     logsQueueFull: number;
@@ -2482,6 +2484,9 @@ export interface SystemStats {
     spansWriteFailed: number;
     logsWriteFailed: number;
     metricsWriteFailed: number;
+    spansPipeline: number;
+    logsPipeline: number;
+    metricsPipeline: number;
   };
   // Config/boot conditions that silently degrade reads (v0.8.211).
   health: {

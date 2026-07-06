@@ -1038,6 +1038,15 @@ func nextSeverity(cur string, openFor time.Duration) string {
 // directly. v0.5.128's MinSamples gate only applies to the
 // former.
 func metricNeedsSampleFloor(metric string) bool {
+	// v0.8.314 — request_rate is ABSOLUTE (spans/second), not a ratio: at
+	// low traffic it IS the signal, so gating it on MinSamples suppressed
+	// traffic-drop rules exactly during the outage they exist to catch.
+	// The generic "_rate" suffix below is for ratio-like custom metrics;
+	// the known absolutes are exempted explicitly.
+	switch metric {
+	case "request_rate", "error_count":
+		return false
+	}
 	if strings.HasSuffix(metric, "_rate") || strings.HasSuffix(metric, "_ms") {
 		return true
 	}

@@ -449,11 +449,10 @@ function ExploreInner() {
             )}
             <span style={{ flex: 1 }} />
             {resultMode === 'traces' && (
-              <button className="sec" type="button" onClick={() => setShowFacets(v => !v)}
-                style={{ fontSize: 11, padding: '3px 10px' }}
+              <Button variant="secondary" size="sm" onClick={() => setShowFacets(v => !v)}
                 title="Toggle the trace tag explorer (discover common values per facet)">
                 {showFacets ? '× Facets' : '◫ Facets'}
-              </button>
+              </Button>
             )}
           </div>
 

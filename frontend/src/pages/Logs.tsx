@@ -60,11 +60,11 @@ function LogShareButton() {
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <button type="button" className="sec" onClick={copy}
+    <Button variant="secondary" size="sm" onClick={copy}
       title="Copy a shareable link to this filtered logs view (filters are encoded in the URL; recipients sign in to Coremetry to open it)"
-      style={{ fontSize: 11, padding: '3px 8px', color: copied ? 'var(--ok)' : undefined }}>
+      style={{ color: copied ? 'var(--ok)' : undefined }}>
       {copied ? '✓ Copied' : '⧉ Copy link'}
-    </button>
+    </Button>
   );
 }
 
@@ -655,11 +655,6 @@ function LogsInner() {
             style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
             {filters.map((f, i) => {
               const tone = f.negated ? 'var(--err)' : 'var(--accent2)';
-              const pillBtn: CSSProperties = {
-                background: 'none', border: 'none', cursor: 'pointer',
-                padding: '0 2px', fontSize: 11, lineHeight: 1,
-                color: 'var(--text3)',
-              };
               return (
                 <span key={`${f.key}\u0000${f.value}`} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -675,24 +670,23 @@ function LogsInner() {
                   }}>
                     {f.negated && <b>NOT </b>}{f.key}: {f.value}
                   </span>
-                  <button type="button" style={{ ...pillBtn, color: f.negated ? 'var(--err)' : 'var(--text3)' }}
+                  <Button variant="ghost" size="sm" style={{ color: f.negated ? 'var(--err)' : undefined }}
                     onClick={() => negatePill(i)}
-                    title={f.negated ? 'Include (drop the NOT)' : 'Negate — exclude matching logs'}>≠</button>
-                  <button type="button" style={pillBtn}
+                    title={f.negated ? 'Include (drop the NOT)' : 'Negate — exclude matching logs'}>≠</Button>
+                  <Button variant="ghost" size="sm"
                     onClick={() => disablePill(i)}
-                    title={f.disabled ? 'Re-enable this filter' : 'Temporarily disable (keeps the pill)'}>◐</button>
-                  <button type="button" style={pillBtn}
+                    title={f.disabled ? 'Re-enable this filter' : 'Temporarily disable (keeps the pill)'}>◐</Button>
+                  <Button variant="ghost" size="sm"
                     onClick={() => removePill(i)}
-                    title="Remove this filter">×</button>
+                    title="Remove this filter">×</Button>
                 </span>
               );
             })}
-            <button type="button" className="sec"
-              style={{ fontSize: 11, padding: '2px 7px' }}
+            <Button variant="secondary" size="sm"
               onClick={() => applyPills([])}
               title="Remove all field filters (free-text search stays)">
               Clear all
-            </button>
+            </Button>
           </div>
         )}
 

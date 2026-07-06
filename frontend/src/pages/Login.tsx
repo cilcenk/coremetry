@@ -3,6 +3,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Wordmark } from '@/components/Wordmark';
+import { Button } from '@/components/ui/Button';
 import { api, type AuthConfigResponse } from '@/lib/api';
 import { useBranding } from '@/lib/branding';
 import { useT } from '@/lib/i18n';
@@ -235,12 +236,12 @@ export default function LoginPage() {
           </div>
         )}
 
-        <button type="submit" disabled={busy}
-          style={{ width: '100%', padding: '8px 12px' }}>
+        <Button type="submit" disabled={busy}
+          style={{ width: '100%' }}>
           {busy
             ? t('login.signingIn')
             : (brand.signInButtonLabel === 'Sign in' ? t('login.signIn') : brand.signInButtonLabel)}
-        </button>
+        </Button>
 
         {brand.footerText && (
           <div style={{

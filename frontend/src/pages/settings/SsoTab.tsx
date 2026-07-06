@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from '@/components/ui/Button';
 
 // SSOPresetsTab — provider-template reference for OIDC + the
 // trusted-header proxy mode. Today OIDC + trusted-header are
@@ -177,13 +178,10 @@ export function SSOPresetsTab() {
         {active.description}
       </div>
       <div style={{ position: 'relative' }}>
-        <button onClick={copy} className="sec"
-          style={{
-            position: 'absolute', top: 8, right: 8, fontSize: 10, padding: '2px 8px',
-            background: 'var(--bg3)',
-          }}>
+        <Button variant="secondary" size="sm" onClick={copy}
+          style={{ position: 'absolute', top: 8, right: 8 }}>
           {copied ? '✓ copied' : 'Copy'}
-        </button>
+        </Button>
         <pre style={{
           margin: 0, padding: 14, background: 'var(--bg)',
           border: '1px solid var(--border)', borderRadius: 6,

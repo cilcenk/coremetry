@@ -480,12 +480,12 @@ function BurnExplainButton({ sloId }: { sloId: string }) {
 
   return (
     <>
-      <button onClick={run} disabled={busy} className="sec"
+      <Button variant="secondary" size="sm" onClick={run} disabled={busy}
         title="Ask copilot whether this SLO's budget is on track or burning fast"
-        style={{ fontSize: 12, padding: '4px 10px', color: 'var(--accent2)',
-                 display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-        <IconSparkles size={12} /> Explain burn
-      </button>
+        leftIcon={<IconSparkles size={12} />}
+        style={{ color: 'var(--accent2)' }}>
+        Explain burn
+      </Button>
       {open && (
         <Modal open={open} onClose={() => setOpen(false)} title="SLO burn analysis">
           {busy && <Spinner />}

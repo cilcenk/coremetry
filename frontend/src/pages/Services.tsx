@@ -9,6 +9,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import { Button } from '@/components/ui/Button';
 import {
   SERVICE_COLS, DEFAULT_SERVICES_SORT,
   sanitizeServicesSort, decodeLegacyServicesSort,
@@ -389,9 +390,8 @@ export default function ServicesPage() {
             <ServicePicker value={serviceFilter} onChange={setServiceFilter}
               onEnter={apply}
               placeholder="Filter services…" width={220} />
-            <button onClick={apply}
-                    title="Search server-side for matching services"
-                    style={{ padding: '5px 12px', fontSize: 12 }}>Search</button>
+            <Button size="sm" onClick={apply}
+                    title="Search server-side for matching services">Search</Button>
             <input placeholder="Min spans" aria-label="Minimum spans" value={minSpans} type="number"
               onChange={e => setMinSpans(e.target.value)} style={{ width: 100 }} />
             <input placeholder="Min P99 (ms)" aria-label="Minimum P99 latency in milliseconds" value={minP99} type="number"

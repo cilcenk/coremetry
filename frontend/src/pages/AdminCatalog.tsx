@@ -6,6 +6,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { IconShield } from '@/components/icons';
 import { api } from '@/lib/api';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { Button } from '@/components/ui/Button';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ServiceMetadata } from '@/lib/types';
 
@@ -162,10 +163,9 @@ export default function AdminCatalogPage() {
             {' · '}
             {rows ? `${rows.filter(r => r.meta.ownerTeam || r.meta.sreTeam).length} curated` : ''}
           </span>
-          <button className="sec" onClick={reload}
-            style={{ fontSize: 12, padding: '4px 12px' }}>
+          <Button variant="secondary" size="sm" onClick={reload}>
             Refresh
-          </button>
+          </Button>
         </div>
 
         {rows === undefined && <TableSkeleton rows={12} cols={7} />}
@@ -237,10 +237,9 @@ function DisplayRow({ row, onEdit }: { row: Row; onEdit: () => void }) {
       <td><LinkCell url={m.oncallUrl} /></td>
       <td><LinkCell url={m.repository} /></td>
       <td>
-        <button className="sec" onClick={onEdit}
-          style={{ fontSize: 11, padding: '2px 8px' }}>
+        <Button variant="secondary" size="sm" onClick={onEdit}>
           {hasAny ? 'Edit' : 'Add'}
-        </button>
+        </Button>
       </td>
     </tr>
   );
@@ -303,19 +302,17 @@ function EditRow({ draft, busy, onChange, onSave, onCancel }: {
         <td><Inp v={draft.repository} on={v => u({ repository: v })} ph="https://github/..." /></td>
         <td>
           <span style={{ display: 'inline-flex', gap: 4 }}>
-            <button className="sec" onClick={aiSuggest} disabled={busy || aiBusy}
+            <Button variant="secondary" size="sm" onClick={aiSuggest} disabled={busy || aiBusy}
               title="Auto-fill owner / SRE team / description from this service's recent telemetry"
-              style={{ fontSize: 11, padding: '2px 8px', color: 'var(--accent2)' }}>
+              style={{ color: 'var(--accent2)' }}>
               {aiBusy ? '…' : '✨ AI'}
-            </button>
-            <button onClick={onSave} disabled={busy}
-              style={{ fontSize: 11, padding: '2px 8px' }}>
+            </Button>
+            <Button size="sm" onClick={onSave} disabled={busy}>
               {busy ? '…' : 'Save'}
-            </button>
-            <button className="sec" onClick={onCancel} disabled={busy}
-              style={{ fontSize: 11, padding: '2px 8px' }}>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
               Cancel
-            </button>
+            </Button>
           </span>
         </td>
       </tr>

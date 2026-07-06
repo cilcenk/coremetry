@@ -253,10 +253,9 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                 spans in a short window.
               </div>
               {onWiden && (
-                <button type="button" onClick={onWiden}
-                  style={{ fontSize: 12, padding: '6px 14px' }}>
+                <Button onClick={onWiden}>
                   Widen to last 1h
-                </button>
+                </Button>
               )}
             </>
           ) : (

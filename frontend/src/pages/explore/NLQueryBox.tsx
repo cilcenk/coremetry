@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 
 // NLQueryBox — v0.5.255 natural-language search input.
 // Operator types a plain-English description; the Copilot returns
@@ -81,10 +82,10 @@ export function NLQueryBox({
           placeholder={`Try: "yesterday's slow checkouts" · "5xx from auth-service last hour" · "kafka producer errors today"`}
           disabled={busy}
           style={{ flex: 1, fontSize: 13 }} />
-        <button onClick={run} disabled={busy || !prompt.trim()}
-          style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+        <Button size="sm" onClick={run} disabled={busy || !prompt.trim()}
+          style={{ whiteSpace: 'nowrap' }}>
           {busy ? 'Thinking…' : 'Apply'}
-        </button>
+        </Button>
       </div>
       {state.kind === 'ok' && (
         <div style={{

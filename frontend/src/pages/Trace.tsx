@@ -806,13 +806,12 @@ function SharePopover({ traceId }: { traceId: string }) {
           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.5 }}>
             For Coremetry users — preserves your selected span, tab, and time range.
           </div>
-          <button onClick={copyInternal} className="sec"
-            style={{ width: '100%', fontSize: 12, padding: '6px 10px',
-                     display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'center',
+          <Button variant="secondary" onClick={copyInternal}
+            leftIcon={internalCopied ? <IconCheck /> : <IconLink />}
+            style={{ width: '100%', display: 'inline-flex', justifyContent: 'center',
                      color: internalCopied ? 'var(--ok)' : undefined }}>
-            {internalCopied ? <IconCheck /> : <IconLink />}
-            <span>{internalCopied ? 'Copied' : 'Copy current URL'}</span>
-          </button>
+            {internalCopied ? 'Copied' : 'Copy current URL'}
+          </Button>
 
           {canShare && (
             <>
@@ -839,24 +838,22 @@ function SharePopover({ traceId }: { traceId: string }) {
             </select>
           </div>
           {!publicURL ? (
-            <button onClick={generatePublic} disabled={busy}
-              style={{ width: '100%', fontSize: 12, padding: '6px 10px',
-                       display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}>
-              <IconLink /> <span>{busy ? 'Generating…' : 'Generate public link'}</span>
-            </button>
+            <Button onClick={generatePublic} disabled={busy}
+              leftIcon={<IconLink />}
+              style={{ width: '100%', display: 'inline-flex', justifyContent: 'center' }}>
+              {busy ? 'Generating…' : 'Generate public link'}
+            </Button>
           ) : (
             <>
               <div style={{ display: 'flex', gap: 6 }}>
                 <input value={publicURL} readOnly
                   onClick={e => (e.target as HTMLInputElement).select()}
                   style={{ flex: 1, fontSize: 11, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }} />
-                <button onClick={copyPublic} className="sec"
-                  style={{ fontSize: 11, padding: '4px 10px',
-                           display: 'inline-flex', alignItems: 'center', gap: 4,
-                           color: publicCopied ? 'var(--ok)' : undefined }}>
-                  {publicCopied ? <IconCheck /> : <IconLink />}
-                  <span>{publicCopied ? 'Copied' : 'Copy'}</span>
-                </button>
+                <Button variant="secondary" size="sm" onClick={copyPublic}
+                  leftIcon={publicCopied ? <IconCheck /> : <IconLink />}
+                  style={{ color: publicCopied ? 'var(--ok)' : undefined }}>
+                  {publicCopied ? 'Copied' : 'Copy'}
+                </Button>
               </div>
               {publicExpiresAt && (
                 <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}

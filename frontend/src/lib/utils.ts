@@ -44,6 +44,15 @@ export function fmtNum(n: number): string {
   return String(n);
 }
 
+// fmtFixed — null-tolerant `.toFixed` for display sites (v0.8.305,
+// quality bar S4). The API types say `number`, but a zero-traffic
+// service can serialize a metric field as null; bare `.toFixed()`
+// then throws mid-render and (post v0.8.298) blanks the route.
+// Non-finite values render "—" — the app's established no-data glyph.
+export function fmtFixed(n: number | null | undefined, digits: number): string {
+  return typeof n === 'number' && Number.isFinite(n) ? n.toFixed(digits) : '—';
+}
+
 // escapeHTML — minimal HTML-entity escape for safely
 // interpolating untrusted strings into innerHTML template
 // literals (chart tooltips, etc.). Covers the five chars

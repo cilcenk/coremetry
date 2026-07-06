@@ -17,7 +17,7 @@ import {
 import { useAllServiceRuntimes, useServicesMetadata } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
-import { fmtNum, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
+import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { getItem, setItem } from '@/lib/storage';
@@ -510,7 +510,7 @@ export default function ServicesPage() {
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <SparkCell value={
                           <span className={`badge b-${agg.errorRate > 5 ? 'err' : agg.errorRate > 0 ? 'warn' : 'ok'}`}>
-                            {agg.errorRate.toFixed(2)}%
+                            {fmtFixed(agg.errorRate, 2)}%
                           </span>
                         }
                         spark={aggBuckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
@@ -519,14 +519,14 @@ export default function ServicesPage() {
                         onClick={() => goToExplore('', 'error_rate')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
-                        <SparkCell value={`${agg.avgMs.toFixed(1)}ms`}
+                        <SparkCell value={`${fmtFixed(agg.avgMs, 1)}ms`}
                                    spark={aggBuckets.map(b => b.avgMs)}
                                    color="var(--accent)"
                                    title="Aggregate avg latency (weighted by spans)"
                                    onClick={() => goToExplore('', 'avg')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
-                        <SparkCell value={`${agg.p99Ms.toFixed(1)}ms`}
+                        <SparkCell value={`${fmtFixed(agg.p99Ms, 1)}ms`}
                                    spark={aggBuckets.map(b => b.p99Ms)}
                                    color="var(--warn)"
                                    title="Worst-service P99 in each bucket"
@@ -611,7 +611,7 @@ export default function ServicesPage() {
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <SparkCell value={
                             <span className={`badge b-${errCls === 'err' ? 'err' : errCls === 'warn' ? 'warn' : 'ok'}`}>
-                              {s.errorRate.toFixed(2)}%
+                              {fmtFixed(s.errorRate, 2)}%
                             </span>
                           }
                           spark={buckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
@@ -620,14 +620,14 @@ export default function ServicesPage() {
                           onClick={() => goToExplore(s.name, 'error_rate')} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
-                          <SparkCell value={`${s.avgDurationMs.toFixed(1)}ms`}
+                          <SparkCell value={`${fmtFixed(s.avgDurationMs, 1)}ms`}
                                      spark={buckets.map(b => b.avgMs)}
                                      color="var(--accent)"
                                      title={`Avg latency (ms) for ${s.name}`}
                                      onClick={() => goToExplore(s.name, 'avg')} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
-                          <SparkCell value={`${s.p99DurationMs.toFixed(1)}ms`}
+                          <SparkCell value={`${fmtFixed(s.p99DurationMs, 1)}ms`}
                                      spark={buckets.map(b => b.p99Ms)}
                                      color="var(--warn)"
                                      title={`P99 latency (ms) for ${s.name}`}
@@ -707,7 +707,7 @@ function ApdexBadge({ value }: { value: number }) {
             : value >= 0.85 ? 'b-info'
             : value >= 0.70 ? 'b-warn'
             : 'b-err';
-  return <span className={`badge ${cls}`}>{value.toFixed(2)}</span>;
+  return <span className={`badge ${cls}`}>{fmtFixed(value, 2)}</span>;
 }
 
 // HealthDot — v0.5.274 Datadog-Watchdog-style service health

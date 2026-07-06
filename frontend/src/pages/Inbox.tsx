@@ -5,7 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { useInbox } from '@/lib/queries';
-import { tsLong } from '@/lib/utils';
+import { tsLong, fmtFixed } from '@/lib/utils';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
@@ -389,8 +389,8 @@ function DetailLine({ it }: { it: InboxItem }) {
       <div style={{ fontSize: 11, color: 'var(--text3)' }}>
         <span className="mono">{it.problem.metric}</span>
         {' = '}
-        <span className="mono"><b style={{ color: 'var(--err)' }}>{it.problem.value.toFixed(2)}</b></span>
-        <span className="mono" style={{ color: 'var(--text3)' }}> / {it.problem.threshold.toFixed(2)}</span>
+        <span className="mono"><b style={{ color: 'var(--err)' }}>{fmtFixed(it.problem.value, 2)}</b></span>
+        <span className="mono" style={{ color: 'var(--text3)' }}> / {fmtFixed(it.problem.threshold, 2)}</span>
         {it.priorityReason && <span> · {it.priorityReason}</span>}
       </div>
     );
@@ -414,8 +414,8 @@ function DetailLine({ it }: { it: InboxItem }) {
   if (it.kind === 'anomaly' && it.anomaly) {
     return (
       <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-        peak <span className="mono">{it.anomaly.peakRatio.toFixed(1)}x</span>
-        {' · '}now <span className="mono">{it.anomaly.currentRatio.toFixed(1)}x</span>
+        peak <span className="mono">{fmtFixed(it.anomaly.peakRatio, 1)}x</span>
+        {' · '}now <span className="mono">{fmtFixed(it.anomaly.currentRatio, 1)}x</span>
         {it.priorityReason && <span> · {it.priorityReason}</span>}
       </div>
     );

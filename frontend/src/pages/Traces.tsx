@@ -35,7 +35,7 @@ import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { tsDateTime, timeRangeToNs, fmtNum } from '@/lib/utils';
+import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries, RelationFilter, RelationKind } from '@/lib/types';
 
@@ -1035,12 +1035,12 @@ function AggregateTable({ agg, groupBy, groupAttr, aggSort, aggOrder, onSort, on
                     )}
                   </td>
                   <td className="mono" style={{ textAlign: 'right' }} title="Traces per minute">{fmtPerMin(a.perMin)}</td>
-                  <td className="mono" style={{ textAlign: 'right' }}><span className={`badge ${errCls}`}>{a.errorRate.toFixed(2)}%</span></td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{a.avgMs.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{a.p50Ms.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{a.p95Ms.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{a.p99Ms.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{a.maxMs.toFixed(1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}><span className={`badge ${errCls}`}>{fmtFixed(a.errorRate, 2)}%</span></td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{fmtFixed(a.avgMs, 1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{fmtFixed(a.p50Ms, 1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{fmtFixed(a.p95Ms, 1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{fmtFixed(a.p99Ms, 1)}ms</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{fmtFixed(a.maxMs, 1)}ms</td>
                 </tr>
               );
             })}

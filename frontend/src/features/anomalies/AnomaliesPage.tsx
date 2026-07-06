@@ -17,7 +17,7 @@ import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, useServicesMetadata, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
-import { fmtNum, tsLong } from '@/lib/utils';
+import { fmtNum, fmtFixed, tsLong } from '@/lib/utils';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
@@ -843,8 +843,8 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                       </td>
                       <td className="mono">{p.metric}</td>
                       <td className="mono" style={{ textAlign: 'right' }}>
-                        <b style={{ color: 'var(--err)' }}>{p.value.toFixed(2)}</b>
-                        <span style={{ color: 'var(--text3)' }}> / {p.threshold.toFixed(2)}</span>
+                        <b style={{ color: 'var(--err)' }}>{fmtFixed(p.value, 2)}</b>
+                        <span style={{ color: 'var(--text3)' }}> / {fmtFixed(p.threshold, 2)}</span>
                       </td>
                       <td style={{ fontSize: 12 }}>
                         {isAnomaly && (
@@ -1026,7 +1026,7 @@ function TriageDrawer({ problem, onClose }: {
               <div style={{ color: 'var(--text3)' }}>Value / Threshold</div>
               <div className="mono">
                 <b style={{ color: 'var(--err)' }}>{problem.value.toFixed(2)}</b>
-                <span style={{ color: 'var(--text3)' }}> / {problem.threshold.toFixed(2)}</span>
+                <span style={{ color: 'var(--text3)' }}> / {fmtFixed(problem.threshold, 2)}</span>
               </div>
             </div>
             <div>

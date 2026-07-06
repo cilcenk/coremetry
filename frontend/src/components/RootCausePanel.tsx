@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Spinner, Empty } from './Spinner';
 import { IconFlame } from './icons';
 import { api } from '@/lib/api';
+import { fmtFixed } from '@/lib/utils';
 import type { RootCause, BubbleUpValue } from '@/lib/types';
 
 // RootCausePanel — the single "what changed / likely cause" surface for a
@@ -122,7 +123,11 @@ export function RootCausePanel({ problemId, service }: { problemId: string; serv
                         </td>
                         <td className="num mono">{c.rps.toFixed(1)}</td>
                         <td className="num mono" style={{ color: c.errorRate > 0 ? 'var(--err)' : 'var(--text2)' }}>
-                          {pct(c.errorRate)}
+                          {/* v0.8.317 — BlastRadiusCaller.errorRate is a PERCENT
+                              (chstore/blast_radius.go: errors*100/calls); pct()
+                              multiplies a 0..1 fraction by 100, so a 3%-error
+                              caller read "300%" on the triage drawer. */}
+                          {fmtFixed(c.errorRate, 1)}%
                         </td>
                         <td>
                           {c.hasOpenProblem

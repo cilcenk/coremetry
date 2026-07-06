@@ -278,6 +278,9 @@ function TracesPageInner() {
     if (view !== 'list') return;
     setData(undefined);
     setListErr(null);
+    // v0.8.300 (quality bar S3) — stale-overwrite guard, same pattern as the
+    // volume-strip effect below.
+    let cancelled = false;
     const tid = filter.traceId.trim().toLowerCase();
     const useTimeRange = tid.length === 0;
     const { from, to } = useTimeRange ? listRangeNs : { from: undefined, to: undefined };
@@ -297,10 +300,12 @@ function TracesPageInner() {
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
       extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
       count: showTotal && !tid ? 'exact' : 'skip',
-    }).then(setData).catch((e: unknown) => {
+    }).then(d => { if (!cancelled) setData(d); }).catch((e: unknown) => {
+      if (cancelled) return;
       setListErr(e instanceof Error ? e.message : 'Request failed');
       setData(null);
     });
+    return () => { cancelled = true; };
   }, [view, listRangeNs, sort, order, page, filter, advFilters, advGroupParam, extraCols, showTotal, retryNonce]);
 
   // ── Relations fetch (Gap 3) ────────────────────────────────────────────────
@@ -389,6 +394,7 @@ function TracesPageInner() {
   useEffect(() => {
     if (view !== 'aggregate') return;
     setAgg(undefined);
+    let cancelled = false; // v0.8.300 — stale-overwrite guard
     const { from, to } = aggRangeNs;
     const safeGroup = groupBy === 'attr' ? 'operation' : groupBy;
     const safeAttr  = groupBy === 'attr' ? groupAttr.trim() : '';
@@ -402,7 +408,8 @@ function TracesPageInner() {
       maxMs: filter.maxMs || undefined,
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
-    }).then(setAgg).catch(() => setAgg(null));
+    }).then(a => { if (!cancelled) setAgg(a); }).catch(() => { if (!cancelled) setAgg(null); });
+    return () => { cancelled = true; };
   }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam]);
 
   // apply commits the draft as the live filter (overrideService sidesteps the

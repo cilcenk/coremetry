@@ -252,6 +252,9 @@ function ExploreInner() {
     const a = debounced.queries.find(produces);
     if (!a) { setHeatmap(null); return; }
     setHeatmap(undefined);
+    // v0.8.300 (quality bar S3) — the debounced builder still fires on every
+    // settled edit; without cancellation an older heatmap can land last.
+    let cancelled = false;
     const fs = effectiveFilters(a);
     const { from, to } = exploreRange;
     api.spanHeatmap({
@@ -259,14 +262,16 @@ function ExploreInner() {
       dsl: a.dsl.trim() || undefined,
       from, to, buckets: 80,
     })
-      .then(h => setHeatmap(h ?? null))
-      .catch(() => setHeatmap(null));
+      .then(h => { if (!cancelled) setHeatmap(h ?? null); })
+      .catch(() => { if (!cancelled) setHeatmap(null); });
+    return () => { cancelled = true; };
   }, [builderActive, debounced, exploreRange]);
 
   // ── Traces / repeats fetches (pre-v2 behaviour, scoped to their modes) ───
   useEffect(() => {
     if (!hasParams || source !== 'spans' || resultMode === 'metric') return;
     setQueryError(null);
+    let cancelled = false; // v0.8.300 — stale-overwrite guard
     const { from, to } = timeRangeToNs(range);
     const filterArg = mode === 'builder' && filters.length ? JSON.stringify(filters) : undefined;
     const dslArg    = mode === 'advanced' && dsl.trim() ? dsl : undefined;
@@ -281,8 +286,9 @@ function ExploreInner() {
         count: 'approx',
         extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
       })
-        .then(r => { setTraces(r.traces ?? []); setTraceTotal(r.total ?? 0); })
+        .then(r => { if (!cancelled) { setTraces(r.traces ?? []); setTraceTotal(r.total ?? 0); } })
         .catch(err => {
+          if (cancelled) return;
           setTraces(null);
           const msg = String(err?.message ?? err);
           setQueryError(msg.includes('DSL') ? msg : null);
@@ -295,13 +301,15 @@ function ExploreInner() {
         groupBy: repeatGroupBy.length ? repeatGroupBy : ['db.statement'],
         minRepeats: repeatMin,
       })
-        .then(r => setRepeats(r ?? []))
+        .then(r => { if (!cancelled) setRepeats(r ?? []); })
         .catch(err => {
+          if (cancelled) return;
           setRepeats(null);
           const msg = String(err?.message ?? err);
           setQueryError(msg.includes('DSL') ? msg : null);
         });
     }
+    return () => { cancelled = true; };
   }, [resultMode, range, filters, dsl, mode, traceLimit, extraCols, repeatMin, repeatGroupBy, hasParams, source]);
 
   // ── Builder mutators ──────────────────────────────────────────────────────

@@ -171,6 +171,11 @@ export default function ServicesPage() {
   useEffect(() => {
     setData(undefined);
     setSparklines({});
+    // v0.8.300 (quality bar S3) — cancelled flag: deps change on every
+    // sort/filter/page click, and without cancellation an OLDER in-flight
+    // response could resolve LAST and overwrite the fresh page
+    // (stale-overwrite race).
+    let cancelled = false;
     const r = timeRangeToNs(range);
     // Two-phase fetch: services list first, then sparklines scoped
     // to ONLY those names. Without the scope the sparklines payload
@@ -202,14 +207,16 @@ export default function ServicesPage() {
       cluster: cluster || undefined,
       withTotal: '1',
     }).then(resp => {
+      if (cancelled) return;
       setData(resp?.services ?? []);
       setHasMore(resp?.hasMore ?? false);
       setTotal(resp?.total ?? null);
       const names = (resp?.services ?? []).map(s => s.name);
       if (names.length > 0) {
-        api.serviceSparklines(r, names).then(d => setSparklines(d ?? {})).catch(() => {});
+        api.serviceSparklines(r, names).then(d => { if (!cancelled) setSparklines(d ?? {}); }).catch(() => {});
       }
-    }).catch(() => { setData(null); setHasMore(false); });
+    }).catch(() => { if (!cancelled) { setData(null); setHasMore(false); } });
+    return () => { cancelled = true; };
   }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster]);
 
   // Reset to page 0 whenever the search filter, time range,

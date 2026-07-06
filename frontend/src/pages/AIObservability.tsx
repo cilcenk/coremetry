@@ -46,10 +46,11 @@ export default function AIObservabilityPage() {
   // server-side cached 30s.
   useEffect(() => {
     let timer: number | undefined;
+    let cancelled = false; // v0.8.300 — range change mid-flight must not overwrite
     const tick = () => {
       const { from, to } = timeRangeToNs(range);
-      api.aiStats({ from, to }).then(setStats).catch(() => setStats(null));
-      api.aiSeries({ from, to }).then(s => setSeries(s ?? [])).catch(() => setSeries([]));
+      api.aiStats({ from, to }).then(s => { if (!cancelled) setStats(s); }).catch(() => { if (!cancelled) setStats(null); });
+      api.aiSeries({ from, to }).then(s => { if (!cancelled) setSeries(s ?? []); }).catch(() => { if (!cancelled) setSeries([]); });
     };
     tick();
     // v0.5.248 — skip the refresh when the tab is hidden so
@@ -57,20 +58,22 @@ export default function AIObservabilityPage() {
     // minute. Foreground operator sees fresh stats on focus
     // (the next tick fires within 60s).
     timer = window.setInterval(() => { if (!document.hidden) tick(); }, 60_000);
-    return () => { if (timer) clearInterval(timer); };
+    return () => { cancelled = true; if (timer) clearInterval(timer); };
   }, [range]);
 
   useEffect(() => {
     const { from, to } = timeRangeToNs(range);
     setCalls(undefined);
+    let cancelled = false; // v0.8.300 — stale-overwrite guard
     api.aiCalls({
       from, to, limit: 200,
       surface: surface || undefined,
       provider: provider || undefined,
       status: status || undefined,
     })
-      .then(c => setCalls(c ?? []))
-      .catch(() => setCalls(null));
+      .then(c => { if (!cancelled) setCalls(c ?? []); })
+      .catch(() => { if (!cancelled) setCalls(null); });
+    return () => { cancelled = true; };
   }, [range, surface, provider, status]);
 
   return (

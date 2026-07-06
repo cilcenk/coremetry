@@ -499,9 +499,15 @@ func seasonalParams(cfg chstore.AnomalyPromotionConfig) (days, minSamples, neigh
 func seasonalBaselineSQL(vexpr string) string {
 	// sodExpr — the bucket's seconds-of-day on the same 5-min grid as targetSod
 	// (buckets are 5-min aligned, so toSecond is 0; included for correctness).
-	const sodExpr = "(toHour(time_bucket) * 3600 + toMinute(time_bucket) * 60)"
-	// classExpr — three-way bank day class. toDayOfWeek: 1=Mon … 6=Sat, 7=Sun.
-	const classExpr = "multiIf(toDayOfWeek(time_bucket) = 6, 'saturday', toDayOfWeek(time_bucket) = 7, 'sunday', 'weekday')"
+	// v0.8.323 — pinned to UTC: the Go side derives slot/class from at.UTC(),
+	// so the SQL must resolve hour/weekday on the SAME clock no matter what
+	// the CH server's default timezone is. A TZ delta (app Europe/Istanbul,
+	// CH UTC) silently matched the wrong time-of-day slot — day-peak history
+	// against a night "now" — reintroducing the diurnal false positives this
+	// seasonal feature exists to kill.
+	const sodExpr = "(toHour(time_bucket, 'UTC') * 3600 + toMinute(time_bucket, 'UTC') * 60)"
+	// classExpr — three-way bank day class. toDayOfWeek mode 0: 1=Mon … 6=Sat, 7=Sun.
+	const classExpr = "multiIf(toDayOfWeek(time_bucket, 0, 'UTC') = 6, 'saturday', toDayOfWeek(time_bucket, 0, 'UTC') = 7, 'sunday', 'weekday')"
 
 	// least(|sod-target|, 86400-|sod-target|) is the circular (midnight-wrap)
 	// distance in seconds; <= radius keeps the ±neighborBuckets slots of the
@@ -539,6 +545,11 @@ func (d *Detector) fetchSeasonalBaseline(ctx context.Context, service, metric st
 	if err != nil {
 		return nil, err
 	}
+	// v0.8.323 — slot + day class derive from UTC so they match the SQL's
+	// UTC-pinned toHour/toDayOfWeek (see seasonalBaselineSQL). With no DST
+	// in TR, a constant offset keeps slot-matching consistent either way —
+	// but only when BOTH sides share one clock.
+	at = at.UTC()
 	cutoff := at.Add(-time.Duration(days) * 24 * time.Hour)
 	targetSod := slotSecondsOfDay(at)         // 5-min-aligned centre of the window
 	radius := neighborBuckets * bucketSeconds // ±window half-width in seconds

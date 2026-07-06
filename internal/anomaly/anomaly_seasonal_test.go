@@ -86,7 +86,13 @@ func TestSeasonalBaselineSQLShape(t *testing.T) {
 	mustContain := map[string]string{
 		"MV read (not raw spans)":  "service_summary_5m",
 		"time-bounded WHERE":       "time_bucket >= ?",
-		"three-way day class":      "multiIf(toDayOfWeek(time_bucket) = 6, 'saturday', toDayOfWeek(time_bucket) = 7, 'sunday', 'weekday')",
+		// v0.8.323 — hour/weekday pinned to UTC on BOTH sides: the Go
+		// slot/class comes from at.UTC(), so the SQL must resolve on the
+		// same clock regardless of the CH server's default timezone. A
+		// TZ delta (app Europe/Istanbul vs CH UTC) used to match the
+		// wrong time-of-day slot — day-peak history against night "now".
+		"three-way day class (UTC)": "multiIf(toDayOfWeek(time_bucket, 0, 'UTC') = 6, 'saturday', toDayOfWeek(time_bucket, 0, 'UTC') = 7, 'sunday', 'weekday')",
+		"UTC hour grid":             "toHour(time_bucket, 'UTC')",
 		"circular distance (near)": "least(abs(",
 		"circular wrap (far side)": "86400 - abs(",
 		"row limit":                "LIMIT 700",

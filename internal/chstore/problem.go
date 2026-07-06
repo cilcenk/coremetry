@@ -208,10 +208,15 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 	}
 
 	// Breach magnitude. If threshold is 0 we can't compute a
-	// ratio — fall back to severity alone.
+	// ratio — fall back to severity alone. v0.8.321 — the FLIPPED
+	// ratio also feeds the reason strings below: they used to
+	// re-derive the raw Value/Threshold, so a "<" rule (uptime 40
+	// vs threshold 99) correctly ranked P1 but told the operator
+	// "critical + 0.4x threshold" instead of ~2.5x.
 	bigBreach := false
+	ratio := 0.0
 	if p.Threshold != 0 {
-		ratio := p.Value / p.Threshold
+		ratio = p.Value / p.Threshold
 		// For "<" or "<=" rules (e.g. uptime fell below 99%),
 		// the value drops as things get worse — flip the
 		// ratio.
@@ -234,7 +239,7 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 		case postDeploy:
 			return "P1", fmt.Sprintf("critical + deploy %ds before", p.RecentDeploy.AgeSeconds)
 		case bigBreach:
-			return "P1", fmt.Sprintf("critical + %.1fx threshold", p.Value/p.Threshold)
+			return "P1", fmt.Sprintf("critical + %.1fx threshold", ratio)
 		case staleCritical:
 			return "P1", fmt.Sprintf("critical open %.1fh", openHours)
 		default:
@@ -247,7 +252,7 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 	case postDeploy:
 		return "P2", fmt.Sprintf("warning + deploy %ds before", p.RecentDeploy.AgeSeconds)
 	case bigBreach:
-		return "P2", fmt.Sprintf("warning + %.1fx threshold", p.Value/p.Threshold)
+		return "P2", fmt.Sprintf("warning + %.1fx threshold", ratio)
 	default:
 		return "P3", "warning steady"
 	}

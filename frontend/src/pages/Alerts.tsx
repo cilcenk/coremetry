@@ -521,11 +521,12 @@ export default function AlertsPage() {
           </div>
         )}
         {rules && rules.length === 0 && (
-          <Empty icon="🔔" title="No alert rules">
+          <Empty icon="🔔" title="No alert rules"
+            action={<Button variant="primary" onClick={() => setShowForm(true)}>+ New rule</Button>}>
             <div style={{ marginTop: 6, color: 'var(--text2)' }}>
               Alert rules turn anomaly detectors and threshold checks into
-              named, routable problems. Click <b>+ New rule</b> to build one,
-              or import from your existing config via the SQL playground.
+              named, routable problems — or import from your existing config
+              via the SQL playground.
             </div>
           </Empty>
         )}

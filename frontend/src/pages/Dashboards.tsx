@@ -147,7 +147,8 @@ export default function DashboardsPage() {
         {items === undefined && <Spinner />}
         {items === null && <Empty icon="⚠" title="Failed to load dashboards" />}
         {items && items.length === 0 && (
-          <Empty icon="◫" title="No dashboards yet">
+          <Empty icon="◫" title="No dashboards yet"
+            action={isAdmin ? <Button onClick={() => setShowNew(true)}>+ New dashboard</Button> : undefined}>
             {isAdmin ? 'Create one to combine metrics, traces and logs into a single view.'
                      : 'Ask an admin to create dashboards.'}
           </Empty>

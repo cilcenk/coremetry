@@ -1039,6 +1039,7 @@ canvas { max-width: 100%; }
 .empty h3 { font-size: 14px; margin-bottom: 6px; color: var(--text); }
 .empty p { font-size: 12px; }
 .empty code { background: var(--bg2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 3px; font-family: monospace; }
+.empty .empty-action { margin-top: 14px; display: flex; justify-content: center; gap: 8px; }
 
 /* Spinner */
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }

@@ -79,14 +79,20 @@ export function PageLoader({ label }: { label?: string }) {
 // SVG icon node from `components/icons`. Using ReactNode keeps the
 // callers backward-compatible without forcing a sweep of every
 // existing Empty.
-export function Empty({ icon, title, children }: {
+//
+// `action` (v0.8.301, quality bar U3) — optional primary action under
+// the body, completing the PF empty-state anatomy (icon / title /
+// body / action). Pass a <Button> or link; renders nothing when absent.
+export function Empty({ icon, title, children, action }: {
   icon: React.ReactNode; title: string; children?: React.ReactNode;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="empty">
       <div className="icon">{icon}</div>
       <h3>{title}</h3>
       {children && <p>{children}</p>}
+      {action && <div className="empty-action">{action}</div>}
     </div>
   );
 }

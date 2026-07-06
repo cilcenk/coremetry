@@ -3023,7 +3023,13 @@ func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, fro
 	for rows.Next() {
 		var p MetricPointRow
 		var t time.Time
-		rows.Scan(&t, &p.Value, &p.Count, &p.Sum, &p.Attrs)
+		// v0.8.325 — the ignored Scan error was the file's one outlier:
+		// a per-row decode failure appended a ZERO-VALUE point and the
+		// call still reported success (rows.Err() doesn't cover Scan),
+		// silently corrupting chart data instead of failing loudly.
+		if err := rows.Scan(&t, &p.Value, &p.Count, &p.Sum, &p.Attrs); err != nil {
+			return nil, err
+		}
 		p.Time = t.UnixNano()
 		out = append(out, p)
 	}

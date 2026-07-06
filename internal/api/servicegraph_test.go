@@ -210,3 +210,30 @@ func TestBuildServiceGraph_RatePerMinute(t *testing.T) {
 		t.Errorf("windowMin=0 must floor to 1 → rate=calls=5, got %v", g0.Edges[0].Rate)
 	}
 }
+
+// v0.8.324 — the final node ordering lands verbatim in the cached response;
+// a non-stable bare-Calls sort let equal-Calls nodes swap between cache
+// rebuilds / pods. Pin the full tiebreak (Calls desc → ErrorRate desc →
+// ID asc), mirroring pruneServiceGraphTopN's contract.
+func TestBuildServiceGraph_DeterministicNodeOrder(t *testing.T) {
+	edges := []chstore.ServiceTopologyEdge{
+		sgEdge("root", "beta", "service", "http", 100, 0, 10),
+		sgEdge("root", "alpha", "service", "http", 100, 0, 10),
+		sgEdge("root", "hot", "service", "http", 100, 50, 10),
+	}
+	g := buildServiceGraph(edges, "", "global", 0, nil, 60)
+	var order []string
+	for _, n := range g.Nodes {
+		if n.ID != "root" {
+			order = append(order, n.ID)
+		}
+	}
+	// all three targets have 100 inbound calls: hot wins on ErrorRate,
+	// then alpha < beta by ID.
+	want := []string{"hot", "alpha", "beta"}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("node order = %v, want %v", order, want)
+		}
+	}
+}

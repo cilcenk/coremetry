@@ -225,9 +225,9 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
               placeholder="One-line context for end users" style={{ width: '100%' }} />
           </Field>
           <Field label="Status source">
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" className={source === 'monitor' ? '' : 'sec'} onClick={() => setSource('monitor')}>Monitor probe</button>
-              <button type="button" className={source === 'service' ? '' : 'sec'} onClick={() => setSource('service')}>Open Problems on service</button>
+            <div className="segmented">
+              <button type="button" className={source === 'monitor' ? 'active' : ''} onClick={() => setSource('monitor')}>Monitor probe</button>
+              <button type="button" className={source === 'service' ? 'active' : ''} onClick={() => setSource('service')}>Open Problems on service</button>
             </div>
           </Field>
           {source === 'monitor' && (

@@ -270,20 +270,15 @@ export default function SQLPlaygroundPage() {
                 reload. Swaps sample queries + run path; the
                 starter query is replaced to avoid a parse error
                 on first run. */}
-            <div style={{
-              display: 'flex', border: '1px solid var(--border)',
-              borderRadius: 6, overflow: 'hidden',
-            }}>
+            <div className="segmented" style={{ fontSize: 11 }}>
               <button type="button"
                 onClick={() => switchBackend('clickhouse')}
-                className={backend === 'clickhouse' ? '' : 'sec'}
-                style={{ borderRadius: 0, padding: '5px 10px', fontSize: 11 }}>
+                className={backend === 'clickhouse' ? 'active' : ''}>
                 ClickHouse
               </button>
               <button type="button"
                 onClick={() => switchBackend('elasticsearch')}
-                className={backend === 'elasticsearch' ? '' : 'sec'}
-                style={{ borderRadius: 0, padding: '5px 10px', fontSize: 11, borderLeft: '1px solid var(--border)' }}
+                className={backend === 'elasticsearch' ? 'active' : ''}
                 title="Forwards the SQL to Elasticsearch's _sql endpoint. Requires the logs backend to be Elasticsearch.">
                 Elasticsearch
               </button>

@@ -116,8 +116,7 @@ export default function ProfilingPage() {
               window. Hotspot tab needs a service; the empty
               state nudges the operator if they switch without
               picking one. */}
-          <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden',
-                        border: '1px solid var(--border)' }}>
+          <div className="segmented">
             <ViewTab cur={view} v="list"     label="Profiles"  onClick={setView} />
             <ViewTab cur={view} v="hotspots" label="Hotspots"  onClick={setView} />
           </div>
@@ -197,18 +196,14 @@ export default function ProfilingPage() {
   );
 }
 
+// v0.8.307 (quality bar P5) — the shared .segmented anatomy instead of a
+// hand-rolled accent-filled toggle; the active marker now rides the theme
+// tokens like every other view toggle.
 function ViewTab({ cur, v, label, onClick }:
   { cur: 'list' | 'hotspots'; v: 'list' | 'hotspots'; label: string;
     onClick: (v: 'list' | 'hotspots') => void }) {
-  const active = cur === v;
   return (
-    <button onClick={() => onClick(v)} className={active ? '' : 'sec'}
-      style={{
-        padding: '5px 14px', fontSize: 12, fontWeight: 600,
-        background: active ? 'var(--accent2)' : 'transparent',
-        color: active ? 'white' : 'var(--text2)',
-        border: 0, cursor: 'pointer', borderRadius: 0,
-      }}>
+    <button onClick={() => onClick(v)} className={cur === v ? 'active' : ''}>
       {label}
     </button>
   );
@@ -547,6 +542,7 @@ const HOST     = os.hostname();
 const WINDOW_MS = 30_000;
 
 setInterval(async () => {
+  // Server-side agent loop — no document.hidden tab guard applies here.
   const startNs = process.hrtime.bigint();
   // CPU profile, 30s window
   const cpuBuf = await pprof.time.profile({ durationMillis: WINDOW_MS });

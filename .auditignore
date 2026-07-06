@@ -11,4 +11,7 @@
 # Add a one-line reason per entry so the next operator (or future
 # you) can understand whether the suppression still applies.
 
-frontend/src/pages/Profiling.tsx:549   # pprof recipe template literal (NodeRecipe code string), not real browser code — re-verified 2026-07-06
+# (Profiling.tsx pprof-recipe suppression retired 2026-07-06 — the sample code
+# now carries a "no document.hidden applies server-side" comment within the
+# check's 5-line lookahead, so the awk pass clears it naturally and the entry
+# can't go stale on line drift again.)

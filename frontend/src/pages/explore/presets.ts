@@ -25,16 +25,6 @@ export type Viz = 'line' | 'bar' | 'topN' | 'kpi' | 'heatmap' | 'red';
 //             "stage 2 chips" trick.
 export type BubbleUpMode = 'off' | 'errors' | 'slow1s' | 'slow5s' | 'custom';
 
-export type TraceSortKey = 'traceId' | 'rootName' | 'serviceName' | 'duration' | 'spans' | 'time' | 'status';
-
-// Each column's natural starting direction when first selected: time
-// and duration are most-recent / slowest-first (descending), others
-// alphabetical ascending. Matches the convention on /traces and /services.
-export const TRACE_SORT_NATURAL: Record<TraceSortKey, 'asc' | 'desc'> = {
-  traceId: 'asc', rootName: 'asc', serviceName: 'asc',
-  duration: 'desc', spans: 'desc', time: 'desc', status: 'desc',
-};
-
 export const AGG_OPTIONS: { v: SpanAgg; label: string; unit?: string }[] = [
   { v: 'count',      label: 'Count',           unit: '' },
   { v: 'rate',       label: 'Rate (per sec)',  unit: '/s' },

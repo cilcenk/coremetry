@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ColumnManager } from '@/components/ColumnManager';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
 import { fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { TraceRow } from '@/lib/types';
-import { TRACE_SORT_NATURAL, type TraceSortKey } from './presets';
 
 // TracesResult — the Explore "Traces" result-mode table (the block
 // that renders BELOW the query console, in the right column).
@@ -17,9 +18,32 @@ import { TRACE_SORT_NATURAL, type TraceSortKey } from './presets';
 //   • traces / traceTotal / traceLimit / extraCols stay in the parent
 //     (Explore.tsx) — they ride the URL-write + fetch effects, and the
 //     limit picker + "showing N of M" footer live in the console card.
-//   • The transient sort column/direction is table-local, so it lives
-//     here (it was never URL-persisted).
-// Zero behaviour diff vs the inline version.
+//   • Sort lives in the shared useDataTable primitive (v0.8.306 —
+//     replaces the hand-rolled TraceSortTh/toggleTraceSort pair).
+//     Still CLIENT sort: the header never drove a server re-fetch, so
+//     client mode preserves the old behaviour exactly; accessors
+//     mirror the old cmp() switch, natural directions the old
+//     TRACE_SORT_NATURAL map.
+
+// Fixed columns for the primitive. Attribute columns are appended
+// per-render (resize-only, no sortValue — the backend doesn't order
+// by a projected attribute; same rule as /traces), and the
+// "+ Add column" manager rides the trailing <th> slot so its
+// dropdown isn't clipped by the managed headers' overflow:hidden.
+const TRACE_BASE_COLS: DataTableColumn<TraceRow>[] = [
+  { id: 'traceId',     label: 'Trace ID', sortValue: t => t.traceId,          naturalDir: 'asc', width: 130 },
+  { id: 'rootName',    label: 'Root',     sortValue: t => t.rootName || '',   naturalDir: 'asc', width: 240 },
+  { id: 'serviceName', label: 'Service',  sortValue: t => t.serviceName,      naturalDir: 'asc', width: 170 },
+  { id: 'duration',    label: 'Duration', sortValue: t => t.durationMs,       numeric: true, width: 100 },
+  { id: 'spans',       label: 'Spans',    sortValue: t => t.spanCount,        numeric: true, width: 80 },
+  { id: 'time',        label: 'Started',  sortValue: t => t.startTime,        width: 170 },
+  { id: 'status',      label: 'Status',   sortValue: t => Number(t.hasError), width: 90 },
+];
+
+// Attribute-column ids are prefixed so a custom attribute named like a
+// fixed column (e.g. "status") can't collide with its id in the sort
+// param / persisted widths.
+const ATTR_PREFIX = 'attr:';
 export function TracesResult({
   traces,
   traceTotal,
@@ -33,35 +57,17 @@ export function TracesResult({
 }) {
   const navigate = useNavigate();
 
-  // Client-side sort for the traces result table — page-size is small
-  // (default 50, max 500) so we don't need a server roundtrip per click.
-  const [traceSort, setTraceSort] = useState<TraceSortKey>('time');
-  const [traceSortDir, setTraceSortDir] = useState<'asc' | 'desc'>('desc');
+  const columns = useMemo<DataTableColumn<TraceRow>[]>(() => [
+    ...TRACE_BASE_COLS,
+    ...extraCols.map(k => ({ id: ATTR_PREFIX + k, label: k, width: 180 })),
+  ], [extraCols]);
 
-  // Sorted view of the trace results — pure client-side because the
-  // page is bounded (default 50, hard max 500). Avoids a server
-  // round-trip per header click.
-  const sortedTraces = useMemo(() => {
-    if (!traces) return traces;
-    const cmp = (a: TraceRow, b: TraceRow): number => {
-      switch (traceSort) {
-        case 'traceId':     return a.traceId.localeCompare(b.traceId);
-        case 'rootName':    return (a.rootName || '').localeCompare(b.rootName || '');
-        case 'serviceName': return a.serviceName.localeCompare(b.serviceName);
-        case 'duration':    return a.durationMs - b.durationMs;
-        case 'spans':       return a.spanCount - b.spanCount;
-        case 'time':        return a.startTime - b.startTime;
-        case 'status':      return Number(a.hasError) - Number(b.hasError);
-      }
-    };
-    const arr = [...traces].sort(cmp);
-    return traceSortDir === 'desc' ? arr.reverse() : arr;
-  }, [traces, traceSort, traceSortDir]);
-
-  const toggleTraceSort = (col: TraceSortKey) => {
-    if (traceSort === col) setTraceSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setTraceSort(col); setTraceSortDir(TRACE_SORT_NATURAL[col]); }
-  };
+  const dt = useDataTable<TraceRow>({
+    storageKey: 'explore-traces-result',
+    columns,
+    rows: traces ?? [],
+    initialSort: { id: 'time', dir: 'desc' },
+  });
 
   return (
     <>
@@ -78,39 +84,33 @@ export function TracesResult({
             {traces.length < traceTotal && <> · raise the limit to see more</>}
           </div>
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <TraceSortTh col="traceId"     label="Trace ID"  sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                  <TraceSortTh col="rootName"    label="Root"      sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                  <TraceSortTh col="serviceName" label="Service"   sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                  <TraceSortTh col="duration"    label="Duration"  sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} align="right" />
-                  <TraceSortTh col="spans"       label="Spans"     sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} align="right" />
-                  <TraceSortTh col="time"        label="Started"   sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                  <TraceSortTh col="status"      label="Status"    sort={traceSort} dir={traceSortDir} onSort={toggleTraceSort} />
-                  {/* Same column-manager UX as /traces — adds
-                      attribute columns to the result table. */}
-                  {extraCols.map(k => (
-                    <th key={k} style={{ position: 'relative', whiteSpace: 'nowrap' }}>
-                      <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>{k}</span>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} trailing={[120]} />
+              {/* Same column-manager UX as /traces — attribute columns
+                  carry a hover-× remove affordance via renderLabel, and
+                  the "+ Add column" manager keeps its own trailing <th>. */}
+              <DataTableHead dt={dt}
+                renderLabel={c => c.id.startsWith(ATTR_PREFIX)
+                  ? <>
+                      <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>{c.label}</span>
                       <button type="button" title="Remove column"
-                        onClick={() => setExtraCols(extraCols.filter(c => c !== k))}
+                        onClick={e => { e.stopPropagation(); setExtraCols(extraCols.filter(x => x !== c.label)); }}
                         style={{
                           marginLeft: 6, padding: '0 4px', fontSize: 10, lineHeight: 1,
                           background: 'transparent', border: 'none', color: 'var(--text3)',
                           cursor: 'pointer',
                         }}>×</button>
-                    </th>
-                  ))}
-                  <th style={{ width: 1, whiteSpace: 'nowrap' }}>
+                    </>
+                  : c.label}
+                trailing={
+                  <th style={{ whiteSpace: 'nowrap' }}>
                     <ColumnManager
                       cols={extraCols}
                       onAdd={k => { if (!extraCols.includes(k) && extraCols.length < 8) setExtraCols([...extraCols, k]); }} />
                   </th>
-                </tr>
-              </thead>
+                } />
               <tbody>
-                {(sortedTraces ?? []).map(t => (
+                {dt.sortedRows.map(t => (
                   <tr key={t.traceId}
                       {...rowClickHandlers(`/trace?id=${t.traceId}`,
                                            () => navigate(`/trace?id=${t.traceId}`))}
@@ -151,24 +151,5 @@ export function TracesResult({
         </>
       )}
     </>
-  );
-}
-
-// Sortable header for the traces result table. Reuses the same .sortable
-// CSS class as the /traces and /services tables for visual consistency.
-function TraceSortTh({ col, label, sort, dir, onSort, align }: {
-  col: TraceSortKey; label: string;
-  sort: TraceSortKey; dir: 'asc' | 'desc';
-  onSort: (c: TraceSortKey) => void;
-  align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        onClick={() => onSort(col)}
-        style={{ textAlign: align ?? 'left' }}>
-      {label}
-      <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-    </th>
   );
 }

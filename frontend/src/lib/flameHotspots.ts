@@ -131,15 +131,3 @@ function walkHotspots(
   const next = seen ? ancestorsOnThisStack : new Set(ancestorsOnThisStack).add(n.name);
   for (const c of n.children) walkHotspots(c, next, acc);
 }
-
-export type HotspotSort = 'self' | 'total' | 'paths';
-
-export function sortHotspots(list: MethodHotspot[], by: HotspotSort): MethodHotspot[] {
-  const sorted = [...list];
-  sorted.sort((a, b) => {
-    if (by === 'self') return b.self - a.self;
-    if (by === 'total') return b.total - a.total;
-    return b.paths - a.paths;
-  });
-  return sorted;
-}

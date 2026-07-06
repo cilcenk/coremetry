@@ -2908,20 +2908,27 @@ func (s *Store) GetMetricNames(ctx context.Context, service string) ([]MetricInf
 	return out, err
 }
 
-// ListMetricNames — server-side searchable counterpart for
-// MetricNamePicker (v0.5.181). Same wildcard semantics as
-// ListServiceNames / ListOperationNames: bare query = substring,
-// `*` and `?` honoured. Reads from metric_points; at billion-row
-// scale the DISTINCT GROUP BY is bounded by limit + the
-// 30s execution-time guard. A dedicated metric-name catalog MV
-// is the proper next step if this surfaces as slow; for now
-// the 30s API cache amortises load across concurrent operators.
-func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, limit, offset int) ([]MetricInfo, int, error) {
-	defaultUnlimited := limit == 0 && offset == 0 && pattern == ""
-	if limit <= 0 {
-		limit = 200
-	}
+// metricNameLookback bounds the metric-name picker (and the /metrics
+// catalogue load) to metrics that have reported at least once in this
+// window. The old query read raw metric_points with an UNBOUNDED
+// GROUP BY metric — it scanned all retained history and blew the 30s
+// max_execution_time at prod scale (operator-reported v0.8.311:
+// /api/metrics/names took ~30s and the list never loaded). A bounded
+// lookback prunes to a handful of daily partitions (PARTITION BY
+// toDate(time)) and matches how Datadog/Honeycomb surface "recently
+// active" metrics — a metric silent for a week isn't chartable on the
+// live page anyway. The proper long-term fix is a metric-name catalog
+// MV (mirroring the summary MVs the service/operation pickers read);
+// this time bound is the immediate, distributed-safe remedy.
+const metricNameLookback = 7 * 24 * time.Hour
+
+// buildMetricNamesWhere assembles the WHERE shared by ListMetricNames'
+// count + select queries. The `time >= since` bound is ALWAYS present —
+// pinned by a test so a future edit can't silently regress to the
+// full-history scan that caused the timeout.
+func buildMetricNamesWhere(service, pattern string, since time.Time) whereClause {
 	var wc whereClause
+	wc.add("time >= ?", since)
 	if service != "" {
 		wc.add("service_name = ?", service)
 	}
@@ -2932,6 +2939,22 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 		}
 		wc.add("metric ILIKE ?", like)
 	}
+	return wc
+}
+
+// ListMetricNames — server-side searchable counterpart for
+// MetricNamePicker (v0.5.181). Same wildcard semantics as
+// ListServiceNames / ListOperationNames: bare query = substring,
+// `*` and `?` honoured. Reads from metric_points, bounded to the
+// last metricNameLookback so the GROUP BY prunes to a few daily
+// partitions instead of scanning all history (v0.8.311 timeout fix).
+// The 30s API cache further amortises load across concurrent operators.
+func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, limit, offset int) ([]MetricInfo, int, error) {
+	defaultUnlimited := limit == 0 && offset == 0 && pattern == ""
+	if limit <= 0 {
+		limit = 200
+	}
+	wc := buildMetricNamesWhere(service, pattern, time.Now().Add(-metricNameLookback))
 
 	var total uint64
 	if !defaultUnlimited {

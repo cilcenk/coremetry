@@ -403,7 +403,19 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 		}
 		out = append(out, *n)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Calls > out[j].Calls })
+	// v0.8.324 — stable + fully-tiebroken (same contract as
+	// pruneServiceGraphTopN): the order lands verbatim in the cached
+	// response, and a bare non-stable Calls sort made equal-Calls nodes
+	// swap between cache rebuilds/pods.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Calls != out[j].Calls {
+			return out[i].Calls > out[j].Calls
+		}
+		if out[i].ErrorRate != out[j].ErrorRate {
+			return out[i].ErrorRate > out[j].ErrorRate
+		}
+		return out[i].ID < out[j].ID
+	})
 
 	return ServiceGraphResponse{Nodes: out, Edges: graphEdges, Scope: scope, Focus: focus}
 }

@@ -205,6 +205,9 @@ func bucketIndex(v float64) int {
 var redisBackedServices = map[string]bool{
 	"fraud-service": true, "fraud-ml-service": true, "forex-service": true,
 	"underwriting-service": true, "limits-service": true, "pricing-service": true,
+	// Mesh services with a redis hop in their chains (mesh.go).
+	"session-gateway": true, "feature-store": true, "feature-flags": true,
+	"pricing-engine": true,
 }
 
 // kafkaConsumerServices consume from Kafka, so they get a consumer-lag
@@ -213,6 +216,10 @@ var kafkaConsumerServices = map[string]bool{
 	"notification-service": true, "aml-service": true, "audit-service": true,
 	"rewards-service": true, "chargeback-service": true, "datawarehouse-etl": true,
 	"settlement-service": true,
+	// Mesh services with a kafka-consume hop in their chains (mesh.go).
+	"push-notification": true, "fraud-scoring-v2": true, "case-manager": true,
+	"payment-status-tracker": true, "reconciliation-service": true,
+	"feature-flags": true, "search-indexer": true,
 }
 
 // gcManaged reports whether a runtime has a stop-the-world-ish collector

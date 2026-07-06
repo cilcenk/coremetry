@@ -148,9 +148,9 @@ func podIP(pod string) string {
 // demoClusters is the synthetic multi-cluster set we spread the
 // demo services across so the per-cluster breakdown panel on
 // /service?name= and the cluster filter on /services have
-// something to show. Three names cover the typical bank
-// deployment shape (eu-west / eu-central / us-east).
-var demoClusters = []string{"prod-eu-west", "prod-eu-central", "prod-us-east"}
+// something to show. Five names cover the typical bank deployment
+// shape: three active regions, an APAC expansion and a DR site.
+var demoClusters = []string{"prod-eu-west", "prod-eu-central", "prod-us-east", "prod-ap-south", "dr-eu-west"}
 
 // clusterFor deterministically maps a service name to one of the
 // demoClusters via FNV-1a hash modulo the cluster count. Same
@@ -176,6 +176,12 @@ func clusterFor(serviceName string) string {
 // (sy-team) by banking domain, so the catalog surfaces a realistic spread of
 // teams once Coremetry's team-derive job reads these resource attributes.
 func teamsFor(name string) (owner, sre string) {
+	// Mesh services carry an explicit assignment (meshTeams, mesh.go) and
+	// must win before the substring buckets — "fraud-scoring-v2" contains
+	// "fraud" and would otherwise misfile under risk-engineering.
+	if t, ok := meshTeams[name]; ok {
+		return t[0], t[1]
+	}
 	has := func(subs ...string) bool {
 		for _, s := range subs {
 			if strings.Contains(name, s) {
@@ -1430,6 +1436,19 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		"auth.logged_in":         "auth-service",
 		"auth.login_failed":      "auth-service",
 		"kafka.events_published": "transfer-service",
+		// Mesh domains (mesh.go chains record these): channel, fraud-ML,
+		// payment rails, internal platform.
+		"sessions.established": "session-gateway",
+		"push.sent":            "push-notification",
+		"flags.evaluated":      "feature-flags",
+		"customer360.lookups":  "customer-360",
+		"fraud.scored":         "fraud-scoring-v2",
+		"fraud.cases_opened":   "case-manager",
+		"fast.payments":        "fast-payment-gateway",
+		"swift.messages_sent":  "swift-connector",
+		"recon.runs":           "reconciliation-service",
+		"search.docs_indexed":  "search-indexer",
+		"pricing.quotes":       "pricing-engine",
 	}
 	for name, svc := range bizMap {
 		v, ok := m.cumBiz[name]
@@ -1914,6 +1933,18 @@ var anomalyLines = []string{
 	"transfer declined: daily transfer limit exceeded for ACCT-118273645",
 	"fraud decision DECLINE: rule HIGH_VELOCITY tripped, model score 0.93 over threshold 0.80",
 	"no space left on device: cannot write Oracle redo log to /u02/oradata — disk full",
+	// Mesh-domain faults (v0.8.326): Mongo/Postgres backends, gRPC model
+	// serving, payment-rail rejects, channel/platform token + flag decay.
+	"MongoTimeoutError: Server selection timed out after 30000 ms — no reachable node for customer_profiles read from mongodb:27017",
+	"gRPC UNAVAILABLE: connection to model-serving:8500 refused — all subchannels in TRANSIENT_FAILURE",
+	"circuit breaker OPEN for fast-payment-gateway → sanctions-screening-v2 after 5 consecutive failures, fast-failing for 30s",
+	"SWIFT MT103 rejected: NAK from correspondent — field 59 beneficiary IBAN failed validation",
+	"feature-flag store stale: last successful config sync 14m ago, serving cached rules — flag evaluations may be outdated",
+	"JWT signature expired: token for session sess-8a91f rejected at session-gateway — forcing re-authentication",
+	"push token invalid: APNs returned BadDeviceToken for device DEV-52117 — unregistering token",
+	"model-serving latency SLO breach: p99 812ms over 500ms budget for fraud-scoring-v2 predictions",
+	"pg: deadlock detected — process 4182 waits for ShareLock on transaction 88213; rolling back payment_status update",
+	"ISO20022 parse error: pacs.008 GrpHdr/CreDtTm contains invalid timestamp — message routed to DLQ",
 }
 
 func pickAnomalyLine(service string) string {

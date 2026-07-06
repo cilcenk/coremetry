@@ -1095,28 +1095,72 @@ func useSummaryMV(window time.Duration) bool {
 	return window >= 5*time.Minute
 }
 
+// mvBucket is service_summary_5m's bucket width.
+const mvBucket = 5 * time.Minute
+
+// mvWindowStart aligns the window cutoff DOWN to the MV's bucket grid
+// (v0.8.315). The MV filter runs on time_bucket — the bucket START — so an
+// unaligned `now-window` cutoff excluded the bucket containing it and a
+// "5-minute" rule read as little as ~1 minute of data (the still-filling
+// bucket only). Down-alignment over-covers by <1 bucket instead;
+// count/rate metrics normalize back via scaleToWindow/mvCoveredSeconds.
+// time.Truncate aligns on the UTC epoch — the same grid as ClickHouse's
+// toStartOfInterval on the UTC-typed column.
+func mvWindowStart(now time.Time, window time.Duration) time.Time {
+	return now.Add(-window).Truncate(mvBucket)
+}
+
+// mvCoveredSeconds is the real span the aligned MV read covers — always
+// ≥ the nominal window (window + up-to-299s drift).
+func mvCoveredSeconds(now time.Time, window time.Duration) float64 {
+	return now.Sub(mvWindowStart(now, window)).Seconds()
+}
+
+// scaleToWindow normalizes an absolute count observed over `covered`
+// seconds to the nominal window, so thresholds keep their configured
+// meaning ("50 errors in 5 min" stays a 5-minute quantity even though the
+// aligned read spans up to 5m+299s).
+func scaleToWindow(n, windowSec, coveredSec float64) float64 {
+	if coveredSec <= 0 {
+		return n
+	}
+	return n * windowSec / coveredSec
+}
+
 func (e *Evaluator) measureCount(ctx context.Context, service string, window time.Duration) (uint64, error) {
-	cutoff := time.Now().Add(-window)
+	now := time.Now()
 	var n uint64
 	if useSummaryMV(window) {
+		// v0.8.315 — bucket-aligned cutoff + normalize back to the
+		// nominal window (see mvWindowStart).
 		err := e.store.Conn().QueryRow(ctx, `
 			SELECT countMerge(span_count_state) FROM service_summary_5m
 			WHERE service_name = ? AND time_bucket >= ?
 			SETTINGS max_execution_time = 10`,
-			service, cutoff).Scan(&n)
-		return n, err
+			service, mvWindowStart(now, window)).Scan(&n)
+		if err != nil {
+			return 0, err
+		}
+		return uint64(scaleToWindow(float64(n), window.Seconds(), mvCoveredSeconds(now, window))), nil
 	}
 	err := e.store.Conn().QueryRow(ctx, `
 		SELECT count() FROM spans WHERE service_name = ? AND time >= ?
 		SETTINGS max_execution_time = 10`,
-		service, cutoff).Scan(&n)
+		service, now.Add(-window)).Scan(&n)
 	return n, err
 }
 
 func (e *Evaluator) measure(ctx context.Context, service, metric string, window time.Duration) (float64, error) {
-	cutoff := time.Now().Add(-window)
+	now := time.Now()
+	cutoff := now.Add(-window)
 	conn := e.store.Conn()
 	mv := useSummaryMV(window)
+	if mv {
+		// v0.8.315 — the MV filter is on the bucket START; align down so
+		// the cutoff's bucket is included (ratios/quantiles read a
+		// deterministic full window; counts/rates normalize below).
+		cutoff = mvWindowStart(now, window)
+	}
 
 	switch metric {
 	case "error_rate":
@@ -1154,6 +1198,11 @@ func (e *Evaluator) measure(ctx context.Context, service, metric string, window 
 		if err != nil {
 			return 0, err
 		}
+		if mv {
+			// Absolute count over the aligned (over-covering) read —
+			// normalize back to the nominal window (v0.8.315).
+			return scaleToWindow(float64(n), window.Seconds(), mvCoveredSeconds(now, window)), nil
+		}
 		return float64(n), nil
 	case "request_rate":
 		var n uint64
@@ -1169,6 +1218,12 @@ func (e *Evaluator) measure(ctx context.Context, service, metric string, window 
 		err := conn.QueryRow(ctx, sql, service, cutoff).Scan(&n)
 		if err != nil {
 			return 0, err
+		}
+		if mv {
+			// Rate over the REAL covered span, not the nominal window —
+			// the pre-v0.8.315 partial-bucket count ÷ full window read as
+			// low as ~20% of the true rate (false traffic-drop alerts).
+			return float64(n) / mvCoveredSeconds(now, window), nil
 		}
 		return float64(n) / window.Seconds(), nil
 	case "p50_ms", "p95_ms", "p99_ms", "avg_ms":

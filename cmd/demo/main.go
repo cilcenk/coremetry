@@ -1449,6 +1449,18 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 		"recon.runs":           "reconciliation-service",
 		"search.docs_indexed":  "search-indexer",
 		"pricing.quotes":       "pricing-engine",
+		// Slice-2 mesh domains: batch/ETL & data platform, open-banking
+		// ecosystem, platform ops. statements.batch_generated is distinct
+		// from statements.generated above — that one belongs to the
+		// on-demand statement-service; this is the EOD bulk run.
+		"batch.runs":                 "eod-batch-orchestrator",
+		"statements.batch_generated": "statement-generator",
+		"cdc.events":                 "cdc-streamer",
+		"consents.granted":           "consent-manager",
+		"tpp.requests":               "tpp-gateway",
+		"webhooks.delivered":         "webhook-dispatcher",
+		"erasures.completed":         "gdpr-eraser",
+		"reports.filed":              "regulatory-reporter",
 	}
 	for name, svc := range bizMap {
 		v, ok := m.cumBiz[name]
@@ -1896,14 +1908,40 @@ func sendScenarioLog(scenarioName string, t *Trace) {
 		sendLog(target.service, 17, "ERROR", body,
 			t.traceID, target.span.SpanId, extra)
 	case mrand.IntN(4) == 0:
-		sendLog(target.service, 13, "WARN",
-			fmt.Sprintf("Slow %s: took longer than threshold", scenarioName),
+		// Same curated-swap pattern as the ERROR branch: ~40% of WARN
+		// logs carry a domain-flavoured body instead of the generic
+		// slow-scenario template, so healthy-but-degraded traffic also
+		// reads like a real bank in the log explorer.
+		body := fmt.Sprintf("Slow %s: took longer than threshold", scenarioName)
+		if mrand.IntN(100) < 40 {
+			body = target.service + ": " + warnLines[mrand.IntN(len(warnLines))]
+		}
+		sendLog(target.service, 13, "WARN", body,
 			t.traceID, target.span.SpanId, kv("threshold.ms", 200))
 	default:
-		sendLog(target.service, 9, "INFO",
-			fmt.Sprintf("%s completed successfully", scenarioName),
+		body := fmt.Sprintf("%s completed successfully", scenarioName)
+		if mrand.IntN(100) < 40 {
+			body = target.service + ": " + infoLines[mrand.IntN(len(infoLines))]
+		}
+		sendLog(target.service, 9, "INFO", body,
 			t.traceID, target.span.SpanId, nil)
 	}
+}
+
+// warnLines / infoLines are the curated bodies swapped into the WARN /
+// INFO branches above — the healthy-path sibling of anomalyLines. Kept
+// short and domain-flavoured (batch, CDC, open-banking, ops) so the
+// non-error log stream isn't wall-to-wall generic filler.
+var warnLines = []string{
+	"kafka consumer lag on cdc.corebank.events at 12,400 messages — dwh-loader trailing head by 5m",
+	"webhook delivery attempt 3/5 to partner-two timed out after 10s — backing off 60s",
+	"connection pool utilization 91% (36/40) — approaching saturation, consider raising max_pool_size",
+}
+
+var infoLines = []string{
+	"EOD checkpoint: GL posting phase complete in 41m 12s, handing off to DWH load",
+	"consent granted: scope=accounts:read tpp=ACME-AISP-042 expiry=90d",
+	"statement batch complete: 18,240 PDFs rendered at 312/s, archived to document-store",
 }
 
 // anomalyLines are realistic-looking log bodies for each curated
@@ -1945,6 +1983,16 @@ var anomalyLines = []string{
 	"model-serving latency SLO breach: p99 812ms over 500ms budget for fraud-scoring-v2 predictions",
 	"pg: deadlock detected — process 4182 waits for ShareLock on transaction 88213; rolling back payment_status update",
 	"ISO20022 parse error: pacs.008 GrpHdr/CreDtTm contains invalid timestamp — message routed to DLQ",
+	// Slice-2 domain faults: batch/ETL window + CDC lag + DWH capacity,
+	// open-banking consent/quota/webhook, platform-ops GDPR + PKI.
+	"EOD batch window overrun: GL posting phase still running at 06:12, cutoff 06:00 — statement generation delayed",
+	"CDC replication lag 342s on COREBANK.TXN_JOURNAL — redo log mining falling behind, DWH freshness SLA at risk",
+	"ORA-01653: unable to extend table DWH.FACT_GL_POSTINGS by 8192 in tablespace DWH_DATA — partition full",
+	"consent expired: TPP ACME-AISP-042 presented consent CONS-88213 expired 2026-07-04T22:10:00Z — returning 403",
+	"TPP rate limit breach: ACME-PISP-042 exceeded 300 req/min quota — throttling with 429 for 60s",
+	"webhook delivery rejected: HMAC signature mismatch for partner-one endpoint — secret rotation out of sync, parked for retry",
+	"GDPR erasure conflict: subject SAR-2291 has active legal hold on TXN_JOURNAL rows — erasure deferred to compliance queue",
+	"certificate renewal failed: ACME http-01 challenge for api.openbanking.example returned 403 — cert expires in 72h",
 }
 
 func pickAnomalyLine(service string) string {
@@ -2044,7 +2092,12 @@ func sendOTLP(path string, msg proto.Message) error {
 	if err != nil {
 		return err
 	}
-	req, _ := http.NewRequest("POST", *endpoint+path, bytes.NewReader(body))
+	// v0.8.327 — surface the URL-parse error instead of nil-derefing on
+	// req below (a scheme-less -endpoint like "127.0.0.1:1" panicked here).
+	req, err := http.NewRequest("POST", *endpoint+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	resp, err := httpClient.Do(req)
 	if err != nil {

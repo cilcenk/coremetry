@@ -208,6 +208,8 @@ var redisBackedServices = map[string]bool{
 	// Mesh services with a redis hop in their chains (mesh.go).
 	"session-gateway": true, "feature-store": true, "feature-flags": true,
 	"pricing-engine": true,
+	// Slice-2 mesh: quota counters + webhook idempotency keys.
+	"quota-manager": true, "webhook-dispatcher": true,
 }
 
 // kafkaConsumerServices consume from Kafka, so they get a consumer-lag
@@ -220,6 +222,11 @@ var kafkaConsumerServices = map[string]bool{
 	"push-notification": true, "fraud-scoring-v2": true, "case-manager": true,
 	"payment-status-tracker": true, "reconciliation-service": true,
 	"feature-flags": true, "search-indexer": true,
+	// Slice-2 mesh: risk.eod, batch.eod.completed, cdc.corebank.events,
+	// api.usage, payment.settled, platform.key.rotated consumers.
+	"eod-batch-orchestrator": true, "statement-generator": true,
+	"dwh-loader": true, "api-analytics": true, "webhook-dispatcher": true,
+	"notification-orchestrator": true,
 }
 
 // gcManaged reports whether a runtime has a stop-the-world-ish collector

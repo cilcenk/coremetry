@@ -55,8 +55,10 @@ func chainByName(t *testing.T, name string) *chainSpec {
 }
 
 func TestMeshChainShapes(t *testing.T) {
-	if len(meshChains) < 6 {
-		t.Fatalf("meshChains has %d specs, want at least 6", len(meshChains))
+	// 8 slice-1 chains + 8 slice-2 chains (EOD batch, CDC, TPP AISP/PISP,
+	// webhook fan-out, nightly archive, partner portal, platform maintenance).
+	if len(meshChains) < 16 {
+		t.Fatalf("meshChains has %d specs, want at least 16", len(meshChains))
 	}
 	for i := range meshChains {
 		spec := &meshChains[i]
@@ -224,8 +226,9 @@ func TestMeshServiceCoverage(t *testing.T) {
 		walk(&meshChains[i].root)
 	}
 
-	if len(meshServices) != 30 {
-		t.Fatalf("meshServices has %d entries, want 30", len(meshServices))
+	// 30 slice-1 + 25 slice-2 (batch/ETL, open-banking, platform-ops).
+	if len(meshServices) != 55 {
+		t.Fatalf("meshServices has %d entries, want 55", len(meshServices))
 	}
 	for _, s := range meshServices {
 		if !inChain[s.Name] {
@@ -241,9 +244,43 @@ func TestMeshServiceCoverage(t *testing.T) {
 			t.Errorf("%s: %d pods, want 2-4", s.Name, len(s.Pods))
 		}
 	}
-	// 20 base + 25 bank_extra + 30 mesh: any name collision would merge two
-	// entries and drop the total below 75.
-	if len(services) < 75 {
-		t.Errorf("services map has %d entries, want >= 75 — a mesh name collided with an existing service", len(services))
+	// 20 base + 25 bank_extra + 55 mesh: any name collision would merge two
+	// entries and drop the total below 100.
+	if len(services) < 100 {
+		t.Errorf("services map has %d entries, want >= 100 — a mesh name collided with an existing service", len(services))
+	}
+}
+
+// TestMeshWebhookParallelFanout pins the slice-2 headline shape: the webhook
+// dispatcher delivers to THREE partner endpoints in parallel (plus a
+// concurrent idempotency check), so all four CLIENT spans share the consumer
+// span as parent and start at the same offset.
+func TestMeshWebhookParallelFanout(t *testing.T) {
+	spec := chainByName(t, "MeshWebhookFanout")
+	tr := buildMeshTraceRoll(spec, neverFail)
+
+	var root *tracepb.Span
+	var kids []*tracepb.Span
+	for _, si := range tr.spans {
+		if si.span.Kind == tracepb.Span_SPAN_KIND_CONSUMER {
+			root = si.span
+		} else {
+			kids = append(kids, si.span)
+		}
+	}
+	if root == nil {
+		t.Fatal("no CONSUMER root span in MeshWebhookFanout")
+	}
+	if len(kids) != 4 {
+		t.Fatalf("got %d fan-out spans, want 4 (3 partner deliveries + idempotency check)", len(kids))
+	}
+	for _, k := range kids {
+		if string(k.ParentSpanId) != string(root.SpanId) {
+			t.Errorf("fan-out span %q not parented under the consumer root", k.Name)
+		}
+		if k.StartTimeUnixNano != kids[0].StartTimeUnixNano {
+			t.Errorf("fan-out span %q starts at %d, want %d (parallel siblings share offsets)",
+				k.Name, k.StartTimeUnixNano, kids[0].StartTimeUnixNano)
+		}
 	}
 }

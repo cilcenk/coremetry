@@ -18,6 +18,17 @@
 // customer.onboarded), so the new graph CONNECTS to the old one
 // instead of floating beside it.
 //
+// Slice 2 grows the catalog to ~100 with three more domains — the
+// batch/ETL & data platform (EOD orchestration, CDC, DWH loads,
+// regulatory reporting), the open-banking/API ecosystem (TPP gateway,
+// consent, quotas, webhooks, partner portal) and ops/infra-adjacent
+// app services (GDPR erasure, PKI rotation, backups, chaos probes).
+// Same connect-don't-float rule: the EOD batch consumes risk.eod
+// (treasury-service), webhooks consume payment.settled
+// (payments-orchestrator), consent checks ride auth-service, account
+// reads land on the existing account-service + Oracle core, and the
+// audit trail forwards into the existing audit-service.
+//
 // Realism contract (docs/DEMO-REALISM.md): every hop's latency goes
 // through dur(minMs,maxMs) and every failure through rollFail(failPct)
 // — the shared load model — so the mesh saturates, spikes and fails in
@@ -32,7 +43,7 @@ import (
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
-// ─── New services (30) ──────────────────────────────────────────────────────────
+// ─── New services (slice 1: 30, slice 2: 25) ────────────────────────────────────
 
 // meshServices — pod fleets sized 2-4 by heat, runtimes mixed via the
 // bank_extra presets so the polyglot badge spread stays believable.
@@ -71,6 +82,34 @@ var meshServices = []Service{
 	svc("customer-360", rtJava21, "c360-prod-1", "c360-prod-2", "c360-prod-3"),
 	svc("secrets-broker", rtGo, "secbrk-prod-1", "secbrk-prod-2"),
 	svc("entitlements-service", rtDotnet, "entitl-prod-1", "entitl-prod-2"),
+	// Batch/ETL & data platform (slice 2)
+	svc("eod-batch-orchestrator", rtJava17, "eodb-prod-1", "eodb-prod-2"),
+	svc("statement-generator", rtJava21, "stmtgen-prod-1", "stmtgen-prod-2"),
+	svc("dwh-loader", rtPy, "dwhl-prod-1", "dwhl-prod-2"),
+	svc("cdc-streamer", rtGo, "cdc-prod-1", "cdc-prod-2", "cdc-prod-3"),
+	svc("report-engine", rtJava21, "rpteng-prod-1", "rpteng-prod-2"),
+	svc("data-quality-checker", rtPy, "dqc-prod-1", "dqc-prod-2"),
+	svc("archive-service", rtGo, "arch-prod-1", "arch-prod-2"),
+	svc("gl-posting-batch", rtJava17, "glpost-prod-1", "glpost-prod-2"),
+	svc("regulatory-reporter", rtJava21, "regrep-prod-1", "regrep-prod-2"),
+	// Open-banking / API ecosystem (slice 2)
+	svc("consent-manager", rtGo, "consmgr-prod-1", "consmgr-prod-2"),
+	svc("tpp-gateway", rtGo, "tppgw-prod-1", "tppgw-prod-2", "tppgw-prod-3"),
+	svc("account-info-api", rtJava21, "aisapi-prod-1", "aisapi-prod-2", "aisapi-prod-3"),
+	svc("payment-init-api", rtJava21, "pisapi-prod-1", "pisapi-prod-2"),
+	svc("api-analytics", rtPy, "apianl-prod-1", "apianl-prod-2"),
+	svc("quota-manager", rtGo, "quota-prod-1", "quota-prod-2"),
+	svc("webhook-dispatcher", rtNode, "whdisp-prod-1", "whdisp-prod-2", "whdisp-prod-3"),
+	svc("partner-portal-bff", rtNode, "pportal-prod-1", "pportal-prod-2"),
+	// Ops / infra-adjacent app services (slice 2)
+	svc("notification-orchestrator", rtNode, "notifo-prod-1", "notifo-prod-2"),
+	svc("audit-trail-service", rtJava17, "audtrl-prod-1", "audtrl-prod-2"),
+	svc("gdpr-eraser", rtGo, "gdpr-prod-1", "gdpr-prod-2"),
+	svc("backup-coordinator", rtGo, "bkup-prod-1", "bkup-prod-2"),
+	svc("key-rotation-service", rtGo, "keyrot-prod-1", "keyrot-prod-2"),
+	svc("cert-manager-app", rtGo, "certmgr-prod-1", "certmgr-prod-2"),
+	svc("chaos-probe", rtRust, "chaos-prod-1", "chaos-prod-2"),
+	svc("capacity-planner", rtPy, "capln-prod-1", "capln-prod-2"),
 }
 
 // meshTeams pins {owner, SRE} per mesh service by exact name. teamsFor
@@ -111,6 +150,34 @@ var meshTeams = map[string][2]string{
 	"customer-360":         {"core-platform", "core-platform-sre"},
 	"secrets-broker":       {"core-platform", "security-sre"},
 	"entitlements-service": {"core-platform", "security-sre"},
+
+	"eod-batch-orchestrator": {"data-platform", "data-platform-sre"},
+	"statement-generator":    {"data-platform", "data-platform-sre"},
+	"dwh-loader":             {"data-platform", "data-platform-sre"},
+	"cdc-streamer":           {"data-platform", "data-platform-sre"},
+	"report-engine":          {"data-platform", "data-platform-sre"},
+	"data-quality-checker":   {"data-platform", "data-platform-sre"},
+	"archive-service":        {"data-platform", "data-platform-sre"},
+	"gl-posting-batch":       {"data-platform", "data-platform-sre"},
+	"regulatory-reporter":    {"data-platform", "data-platform-sre"},
+
+	"consent-manager":    {"open-banking", "open-banking-sre"},
+	"tpp-gateway":        {"open-banking", "open-banking-sre"},
+	"account-info-api":   {"open-banking", "open-banking-sre"},
+	"payment-init-api":   {"open-banking", "open-banking-sre"},
+	"api-analytics":      {"open-banking", "open-banking-sre"},
+	"quota-manager":      {"open-banking", "open-banking-sre"},
+	"webhook-dispatcher": {"open-banking", "open-banking-sre"},
+	"partner-portal-bff": {"open-banking", "open-banking-sre"},
+
+	"notification-orchestrator": {"platform-ops", "platform-ops-sre"},
+	"audit-trail-service":       {"platform-ops", "platform-ops-sre"},
+	"gdpr-eraser":               {"platform-ops", "platform-ops-sre"},
+	"backup-coordinator":        {"platform-ops", "platform-ops-sre"},
+	"key-rotation-service":      {"platform-ops", "platform-ops-sre"},
+	"cert-manager-app":          {"platform-ops", "platform-ops-sre"},
+	"chaos-probe":               {"platform-ops", "platform-ops-sre"},
+	"capacity-planner":          {"platform-ops", "platform-ops-sre"},
 }
 
 // ─── Attr helpers (mirror oraDB's shape) ────────────────────────────────────────
@@ -377,7 +444,7 @@ func buildMeshTraceRoll(spec *chainSpec, roll func(int) bool) *Trace {
 	return t
 }
 
-// ─── The chains (8) ─────────────────────────────────────────────────────────────
+// ─── The chains (slice 1: 8, slice 2: 8) ────────────────────────────────────────
 
 var meshChains = []chainSpec{
 	// Web-channel dashboard: web-bff establishes a session (Redis +
@@ -674,6 +741,309 @@ var meshChains = []chainSpec{
 				kids: []chainHop{
 					{svc: "pricing-engine", proto: "redis", op: "GET", table: "rates:{ccy}", minMs: 1, maxMs: 4},
 					{svc: "forex-service", proto: "grpc", op: "GetRates", minMs: 5, maxMs: 20},
+				}},
+		},
+	}},
+
+	// EOD batch (slice 2, LONG): consumes the risk.eod topic the OLD
+	// mesh publishes (treasury-service), seals the GL day with the
+	// EXISTING ledger-service, bulk-loads the Oracle DWH schema, gates
+	// the load on data quality, renders the EOD pack into the EXISTING
+	// document-store, files regulatory returns with the external
+	// regulator gateway, then hands off to statement generation over
+	// Kafka. The whole run sits in a slow, batch-shaped latency band.
+	{name: "MeshEodBatch", weight: 1, root: chainHop{
+		svc: "eod-batch-orchestrator", proto: "kafka-consume", topic: "risk.eod",
+		minMs: 900, maxMs: 2600, biz: "batch.runs",
+		failPct: 1, errMsg: "EOD batch window overrun: cutoff 06:00 exceeded — aborting run, resuming next window",
+		kids: []chainHop{
+			{svc: "gl-posting-batch", proto: "grpc", op: "RunPostings", minMs: 180, maxMs: 650,
+				kids: []chainHop{
+					{svc: "gl-posting-batch", proto: "db-oracle", op: "BEGIN", dbName: "COREBANK",
+						table: "GL_POSTINGS", stmt: "BEGIN PKG_GL.POST_EOD_BATCH(:1); END;",
+						minMs: 80, maxMs: 320},
+					{svc: "ledger-service", proto: "grpc", op: "SealDay", minMs: 25, maxMs: 90,
+						kids: []chainHop{
+							{svc: "ledger-service", proto: "db-oracle", op: "UPDATE", dbName: "COREBANK",
+								table: "GL_PERIODS", stmt: "UPDATE GL_PERIODS SET STATUS = 'CLOSED' WHERE PERIOD = :1",
+								minMs: 4, maxMs: 20},
+						}},
+				}},
+			{svc: "dwh-loader", proto: "grpc", op: "LoadFacts", minMs: 200, maxMs: 800,
+				failPct: 2, errMsg: "ORA-01653: unable to extend table DWH.FACT_GL_POSTINGS — partition full",
+				kids: []chainHop{
+					{svc: "dwh-loader", proto: "db-oracle", op: "INSERT", dbName: "DWH",
+						table: "FACT_GL_POSTINGS", stmt: "INSERT /*+ APPEND */ INTO FACT_GL_POSTINGS SELECT * FROM STG_GL_POSTINGS WHERE LOAD_ID = :1",
+						minMs: 120, maxMs: 520},
+				}},
+			{svc: "data-quality-checker", proto: "grpc", op: "ValidateLoad", minMs: 60, maxMs: 240,
+				failPct: 2, errMsg: "data-quality gate failed: null ratio 4.2% on FACT_GL_POSTINGS.ACCT_ID over 1% threshold",
+				kids: []chainHop{
+					{svc: "data-quality-checker", proto: "db-postgres", op: "SELECT", dbName: "dataplatform",
+						table: "dq_rules", stmt: "SELECT rule_id, expr, threshold FROM dq_rules WHERE dataset = $1 AND enabled",
+						minMs: 2, maxMs: 12},
+				}},
+			{svc: "report-engine", proto: "grpc", op: "RenderEodPack", minMs: 90, maxMs: 380,
+				kids: []chainHop{
+					{svc: "document-store", proto: "grpc", op: "StoreReport", minMs: 8, maxMs: 30,
+						kids: []chainHop{
+							{svc: "document-store", proto: "db-mongo", op: "insert", dbName: "docstore",
+								table: "reports", stmt: `{"insert":"reports","documents":[{"type":"eod-pack"}]}`,
+								minMs: 3, maxMs: 14},
+						}},
+				}},
+			{svc: "regulatory-reporter", proto: "grpc", op: "FileReturns", minMs: 100, maxMs: 420,
+				biz: "reports.filed", failPct: 2,
+				errMsg: "regulator gateway rejected COREP return: schema validation error in template C 66.01",
+				kids: []chainHop{
+					{svc: "regulatory-reporter", proto: "ext", op: "POST https://gateway.regulator.example/v2/returns",
+						target: "regulator-gateway", minMs: 60, maxMs: 300},
+				}},
+			{svc: "eod-batch-orchestrator", proto: "kafka-pub", topic: "batch.eod.completed", minMs: 8, maxMs: 25,
+				kids: []chainHop{
+					{svc: "statement-generator", proto: "kafka-consume", topic: "batch.eod.completed",
+						minMs: 150, maxMs: 600, biz: "statements.batch_generated",
+						kids: []chainHop{
+							{svc: "statement-generator", proto: "db-oracle", op: "SELECT", dbName: "COREBANK",
+								table: "STATEMENT_RUNS", stmt: "SELECT ACCT_ID, PERIOD FROM STATEMENT_RUNS WHERE STATUS = 'DUE'",
+								minMs: 20, maxMs: 90},
+							{svc: "document-store", proto: "grpc", op: "StoreStatement", minMs: 10, maxMs: 40,
+								kids: []chainHop{
+									{svc: "document-store", proto: "db-mongo", op: "insert", dbName: "docstore",
+										table: "statements", stmt: `{"insert":"statements","documents":[{"period":"?"}]}`,
+										minMs: 3, maxMs: 14},
+								}},
+						}},
+				}},
+		},
+	}},
+
+	// CDC pipeline (slice 2): cdc-streamer mines the Oracle redo log,
+	// publishes change events, dwh-loader consumes and MERGEs into the
+	// DWH dimension, then the delta is quality-checked — the continuous
+	// counterpart to the nightly EOD bulk load.
+	{name: "MeshCdcStream", weight: 2, root: chainHop{
+		svc: "cdc-streamer", proto: "grpc", op: "MineRedoBatch", minMs: 40, maxMs: 180, biz: "cdc.events",
+		kids: []chainHop{
+			{svc: "cdc-streamer", proto: "db-oracle", op: "SELECT", dbName: "COREBANK",
+				table: "LOGMNR_CONTENTS", stmt: "SELECT SCN, OPERATION, SQL_REDO FROM V$LOGMNR_CONTENTS WHERE SCN > :1",
+				minMs: 15, maxMs: 90, failPct: 1,
+				errMsg: "ORA-01291: missing logfile — redo already aged out, CDC falling back to snapshot"},
+			{svc: "cdc-streamer", proto: "kafka-pub", topic: "cdc.corebank.events", minMs: 6, maxMs: 20,
+				kids: []chainHop{
+					{svc: "dwh-loader", proto: "kafka-consume", topic: "cdc.corebank.events",
+						minMs: 30, maxMs: 140,
+						kids: []chainHop{
+							{svc: "dwh-loader", proto: "db-oracle", op: "MERGE", dbName: "DWH",
+								table: "DIM_CUSTOMER", stmt: "MERGE INTO DIM_CUSTOMER d USING STG_CDC s ON (d.CUST_ID = s.CUST_ID) WHEN MATCHED THEN UPDATE SET d.SEGMENT = s.SEGMENT",
+								minMs: 10, maxMs: 60},
+							{svc: "data-quality-checker", proto: "grpc", op: "ValidateDelta", minMs: 8, maxMs: 35,
+								kids: []chainHop{
+									{svc: "data-quality-checker", proto: "db-postgres", op: "SELECT", dbName: "dataplatform",
+										table: "dq_rules", stmt: "SELECT rule_id, expr, threshold FROM dq_rules WHERE dataset = $1 AND enabled",
+										minMs: 2, maxMs: 12},
+								}},
+						}},
+				}},
+		},
+	}},
+
+	// Open-banking AISP read (slice 2): inbound from an external TPP
+	// through the new tpp-gateway — quota gate (Redis), consent check
+	// (EXISTING auth-service + Postgres), account read through the
+	// EXISTING account-service/Oracle core, usage event to analytics.
+	{name: "MeshTppAccountInfo", weight: 2, root: chainHop{
+		svc: "tpp-gateway", proto: "http", op: "GET /open-banking/v4/aisp/accounts",
+		minMs: 90, maxMs: 320, biz: "tpp.requests",
+		kids: []chainHop{
+			{svc: "quota-manager", proto: "grpc", op: "Consume", minMs: 3, maxMs: 14,
+				failPct: 2, errMsg: "TPP rate limit breach: 300 req/min quota exceeded — throttling 429",
+				kids: []chainHop{
+					{svc: "quota-manager", proto: "redis", op: "INCR", table: "quota:{tpp}", minMs: 1, maxMs: 4},
+				}},
+			{svc: "consent-manager", proto: "grpc", op: "Verify", minMs: 8, maxMs: 35,
+				failPct: 2, errMsg: "consent expired for TPP — returning 403",
+				kids: []chainHop{
+					{svc: "auth-service", proto: "grpc", op: "ValidateToken", minMs: 5, maxMs: 18},
+					{svc: "consent-manager", proto: "db-postgres", op: "SELECT", dbName: "openbankingdb",
+						table: "consents", stmt: "SELECT scope, status, expires_at FROM consents WHERE consent_id = $1",
+						minMs: 2, maxMs: 10},
+				}},
+			{svc: "account-info-api", proto: "grpc", op: "ListAccounts", minMs: 25, maxMs: 110,
+				kids: []chainHop{
+					{svc: "account-service", proto: "grpc", op: "ListAccounts", minMs: 15, maxMs: 60,
+						kids: []chainHop{
+							{svc: "account-service", proto: "db-oracle", op: "SELECT", dbName: "COREBANK",
+								table: "ACCOUNTS", stmt: "SELECT ACCT_ID, IBAN, BALANCE, CCY FROM ACCOUNTS WHERE CUST_ID = :1",
+								minMs: 5, maxMs: 25},
+						}},
+				}},
+			{svc: "tpp-gateway", proto: "kafka-pub", topic: "api.usage", minMs: 4, maxMs: 12,
+				kids: []chainHop{
+					{svc: "api-analytics", proto: "kafka-consume", topic: "api.usage", minMs: 8, maxMs: 40,
+						kids: []chainHop{
+							{svc: "api-analytics", proto: "db-postgres", op: "INSERT", dbName: "openbankingdb",
+								table: "api_usage_events", stmt: "INSERT INTO api_usage_events(tpp_id, endpoint, status, latency_ms) VALUES($1,$2,$3,$4)",
+								minMs: 2, maxMs: 10},
+						}},
+				}},
+		},
+	}},
+
+	// Open-banking PISP init (slice 2): the write-side sibling — grants
+	// a payments consent, then initiates through payment-init-api into
+	// the EXISTING payments-orchestrator, which publishes the same
+	// payment.initiated topic fraud-scoring-v2 already consumes.
+	{name: "MeshTppPaymentInit", weight: 1, root: chainHop{
+		svc: "tpp-gateway", proto: "http", op: "POST /open-banking/v4/pisp/domestic-payments",
+		minMs: 140, maxMs: 480, biz: "tpp.requests",
+		kids: []chainHop{
+			{svc: "quota-manager", proto: "grpc", op: "Consume", minMs: 3, maxMs: 14,
+				failPct: 1, errMsg: "TPP rate limit breach: 300 req/min quota exceeded — throttling 429",
+				kids: []chainHop{
+					{svc: "quota-manager", proto: "redis", op: "INCR", table: "quota:{tpp}", minMs: 1, maxMs: 4},
+				}},
+			{svc: "consent-manager", proto: "grpc", op: "Grant", minMs: 12, maxMs: 50, biz: "consents.granted",
+				kids: []chainHop{
+					{svc: "auth-service", proto: "grpc", op: "ValidateToken", minMs: 5, maxMs: 18},
+					{svc: "consent-manager", proto: "db-postgres", op: "INSERT", dbName: "openbankingdb",
+						table: "consents", stmt: "INSERT INTO consents(consent_id, tpp_id, scope, expires_at) VALUES($1,$2,'payments:write',$3)",
+						minMs: 2, maxMs: 10},
+				}},
+			{svc: "payment-init-api", proto: "grpc", op: "Initiate", minMs: 40, maxMs: 160,
+				kids: []chainHop{
+					{svc: "payments-orchestrator", proto: "grpc", op: "Initiate", minMs: 30, maxMs: 120,
+						kids: []chainHop{
+							{svc: "payments-orchestrator", proto: "kafka-pub", topic: "payment.initiated", minMs: 8, maxMs: 25},
+						}},
+				}},
+		},
+	}},
+
+	// Webhook fan-out (slice 2): consumes the payment.settled topic the
+	// OLD mesh publishes and delivers to three partner endpoints in
+	// PARALLEL, with a concurrent Redis idempotency-key check per batch.
+	{name: "MeshWebhookFanout", weight: 2, root: chainHop{
+		svc: "webhook-dispatcher", proto: "kafka-consume", topic: "payment.settled",
+		minMs: 40, maxMs: 160, biz: "webhooks.delivered", par: true,
+		kids: []chainHop{
+			{svc: "webhook-dispatcher", proto: "redis", op: "GET", table: "wh:idemp:{event}", minMs: 1, maxMs: 4},
+			{svc: "webhook-dispatcher", proto: "ext", op: "POST https://webhooks.partner-one.example/v1/events",
+				target: "partner-one", minMs: 15, maxMs: 90, failPct: 3,
+				errMsg: "webhook rejected: HMAC signature mismatch (401) — endpoint secret out of sync"},
+			{svc: "webhook-dispatcher", proto: "ext", op: "POST https://events.partner-two.example/hooks/payments",
+				target: "partner-two", minMs: 15, maxMs: 90, failPct: 2,
+				errMsg: "webhook delivery timeout after 10s — attempt parked for retry"},
+			{svc: "webhook-dispatcher", proto: "ext", op: "POST https://api.partner-three.example/webhooks",
+				target: "partner-three", minMs: 15, maxMs: 90},
+		},
+	}},
+
+	// Nightly archive (slice 2): the slowest band in the demo — scans
+	// aged TXN_JOURNAL partitions, applies GDPR retention, ships to the
+	// same external s3 node document-service uses, prunes the journal,
+	// snapshots the run and appends to the audit trail, which forwards
+	// into the EXISTING audit-service.
+	{name: "MeshNightlyArchive", weight: 1, root: chainHop{
+		svc: "archive-service", proto: "grpc", op: "RunNightlyArchive", minMs: 2500, maxMs: 7000,
+		kids: []chainHop{
+			{svc: "archive-service", proto: "db-oracle", op: "SELECT", dbName: "COREBANK",
+				table: "TXN_JOURNAL", stmt: "SELECT TXN_ID FROM TXN_JOURNAL WHERE POSTED_TS < ADD_MONTHS(SYSDATE, -84)",
+				minMs: 400, maxMs: 1600},
+			{svc: "gdpr-eraser", proto: "grpc", op: "ApplyRetention", minMs: 120, maxMs: 480,
+				biz: "erasures.completed", failPct: 2,
+				errMsg: "GDPR erasure conflict: active legal hold on subject — erasure deferred to compliance queue",
+				kids: []chainHop{
+					{svc: "gdpr-eraser", proto: "db-oracle", op: "DELETE", dbName: "COREBANK",
+						table: "CUSTOMER_EVENTS", stmt: "DELETE FROM CUSTOMER_EVENTS WHERE CUST_ID = :1 AND EVENT_TS < :2",
+						minMs: 40, maxMs: 220},
+				}},
+			{svc: "archive-service", proto: "ext", op: "PUT https://s3.eu-west-1.amazonaws.com/bank-archive-cold",
+				target: "s3", minMs: 300, maxMs: 1400},
+			{svc: "archive-service", proto: "db-oracle", op: "DELETE", dbName: "COREBANK",
+				table: "TXN_JOURNAL", stmt: "DELETE FROM TXN_JOURNAL WHERE TXN_ID IN (SELECT TXN_ID FROM ARCHIVE_MANIFEST WHERE RUN_ID = :1)",
+				minMs: 200, maxMs: 900},
+			{svc: "backup-coordinator", proto: "grpc", op: "SnapshotArchive", minMs: 60, maxMs: 240,
+				kids: []chainHop{
+					{svc: "backup-coordinator", proto: "db-postgres", op: "INSERT", dbName: "opsdb",
+						table: "backup_catalog", stmt: "INSERT INTO backup_catalog(run_id, kind, bytes, status) VALUES($1,'archive',$2,'DONE')",
+						minMs: 2, maxMs: 10},
+				}},
+			{svc: "capacity-planner", proto: "grpc", op: "UpdateForecast", minMs: 30, maxMs: 120,
+				kids: []chainHop{
+					{svc: "capacity-planner", proto: "db-postgres", op: "SELECT", dbName: "opsdb",
+						table: "capacity_snapshots", stmt: "SELECT resource, used_bytes, capacity_bytes FROM capacity_snapshots WHERE taken_at > now() - interval '7 days'",
+						minMs: 2, maxMs: 12},
+				}},
+			{svc: "audit-trail-service", proto: "grpc", op: "Append", minMs: 8, maxMs: 30,
+				kids: []chainHop{
+					{svc: "audit-service", proto: "grpc", op: "Record", minMs: 5, maxMs: 20},
+				}},
+		},
+	}},
+
+	// Partner portal (slice 2): the bank-side TPP developer portal —
+	// auth through the EXISTING auth-service, then usage stats, quota
+	// status and recent webhook deliveries from the open-banking stores.
+	{name: "MeshPartnerPortal", weight: 1, root: chainHop{
+		svc: "partner-portal-bff", proto: "http", op: "GET /portal/dashboard", minMs: 80, maxMs: 300,
+		kids: []chainHop{
+			{svc: "auth-service", proto: "grpc", op: "ValidateToken", minMs: 5, maxMs: 18},
+			{svc: "api-analytics", proto: "grpc", op: "UsageSummary", minMs: 15, maxMs: 70,
+				kids: []chainHop{
+					{svc: "api-analytics", proto: "db-postgres", op: "SELECT", dbName: "openbankingdb",
+						table: "api_usage_events", stmt: "SELECT endpoint, count(*), avg(latency_ms) FROM api_usage_events WHERE tpp_id = $1 AND ts > now() - interval '24h' GROUP BY endpoint",
+						minMs: 5, maxMs: 30},
+				}},
+			{svc: "quota-manager", proto: "grpc", op: "Status", minMs: 3, maxMs: 12,
+				kids: []chainHop{
+					{svc: "quota-manager", proto: "redis", op: "GET", table: "quota:{tpp}", minMs: 1, maxMs: 4},
+				}},
+			{svc: "webhook-dispatcher", proto: "grpc", op: "RecentDeliveries", minMs: 8, maxMs: 35,
+				kids: []chainHop{
+					{svc: "webhook-dispatcher", proto: "db-postgres", op: "SELECT", dbName: "openbankingdb",
+						table: "webhook_deliveries", stmt: "SELECT event_id, endpoint, status, attempts FROM webhook_deliveries WHERE tpp_id = $1 ORDER BY ts DESC LIMIT 50",
+						minMs: 3, maxMs: 15},
+				}},
+		},
+	}},
+
+	// Platform maintenance (slice 2): scheduled key/cert rotation —
+	// new key material via the EXISTING secrets-broker/vault, ACME
+	// renewal, inventory update, a post-change chaos-probe verification
+	// against the EXISTING api-gateway, then a rotation notice fanned
+	// out through notification-orchestrator + email-renderer.
+	{name: "MeshPlatformMaintenance", weight: 1, root: chainHop{
+		svc: "key-rotation-service", proto: "grpc", op: "RotateExpiring", minMs: 250, maxMs: 900,
+		kids: []chainHop{
+			{svc: "secrets-broker", proto: "grpc", op: "PutSecret", minMs: 8, maxMs: 35,
+				kids: []chainHop{
+					{svc: "secrets-broker", proto: "ext", op: "POST https://vault.internal.example:8200/v1/transit/keys/payments/rotate",
+						target: "vault", minMs: 5, maxMs: 25},
+				}},
+			{svc: "cert-manager-app", proto: "grpc", op: "RenewExpiring", minMs: 60, maxMs: 260,
+				failPct: 2, errMsg: "ACME renewal failed: http-01 challenge returned 403 for api.openbanking.example",
+				kids: []chainHop{
+					{svc: "cert-manager-app", proto: "ext", op: "POST https://acme-v02.ca.example/acme/new-order",
+						target: "acme-ca", minMs: 40, maxMs: 200},
+					{svc: "cert-manager-app", proto: "db-postgres", op: "UPDATE", dbName: "opsdb",
+						table: "certificates", stmt: "UPDATE certificates SET not_after = $1, status = 'RENEWED' WHERE cn = $2",
+						minMs: 2, maxMs: 10},
+				}},
+			{svc: "key-rotation-service", proto: "db-postgres", op: "UPDATE", dbName: "opsdb",
+				table: "key_inventory", stmt: "UPDATE key_inventory SET rotated_at = now(), version = version + 1 WHERE key_id = $1",
+				minMs: 2, maxMs: 10},
+			{svc: "chaos-probe", proto: "grpc", op: "VerifyEndpoints", minMs: 30, maxMs: 130,
+				kids: []chainHop{
+					{svc: "api-gateway", proto: "http", op: "GET /api/v1/health", minMs: 3, maxMs: 15},
+				}},
+			{svc: "key-rotation-service", proto: "kafka-pub", topic: "platform.key.rotated", minMs: 6, maxMs: 20,
+				kids: []chainHop{
+					{svc: "notification-orchestrator", proto: "kafka-consume", topic: "platform.key.rotated",
+						minMs: 10, maxMs: 45,
+						kids: []chainHop{
+							{svc: "email-renderer", proto: "grpc", op: "Render", minMs: 10, maxMs: 45},
+						}},
 				}},
 		},
 	}},

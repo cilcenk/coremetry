@@ -17,7 +17,7 @@
 // lib doesn't own timers, so server-render / test setups can
 // snapshot listener calls deterministically.
 
-export type ToastKind = 'success' | 'error' | 'info';
+export type ToastKind = 'success' | 'error' | 'info' | 'warning';
 
 export interface ToastEntry {
   id: string;
@@ -64,6 +64,11 @@ export const toast = {
   // celebration or alarm ("Switched to dark mode").
   info: (message: string, durationMs = 3000) =>
     emit('info', message, durationMs),
+  // Warning — gold chip, 5s (v0.8.303, quality bar U4). For
+  // degraded-but-working outcomes ("saved, but the SMTP test
+  // failed") that aren't errors yet shouldn't read as success.
+  warning: (message: string, durationMs = 5000) =>
+    emit('warning', message, durationMs),
 };
 
 export function subscribeToasts(fn: Listener): () => void {

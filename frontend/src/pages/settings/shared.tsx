@@ -26,15 +26,19 @@ export function Row({ children }: { children: ReactNode }) {
   );
 }
 
+// v0.8.303 (quality bar U4) — same severity tokens as the toast system
+// (color-mix over --ok/--err) so inline settings alerts and toasts read
+// as one alert family; the old dark-palette rgba literals never
+// re-resolved under the light/redhat themes.
 export function FlashBox({ kind, children }: { kind: 'ok' | 'err'; children: ReactNode }) {
-  const colors = kind === 'ok'
-    ? { fg: 'var(--ok)',  bg: 'rgba(63,185,80,0.08)',  bd: 'rgba(63,185,80,0.3)' }
-    : { fg: 'var(--err)', bg: 'rgba(220,38,38,0.08)',  bd: 'rgba(220,38,38,0.3)' };
+  const tok = kind === 'ok' ? 'var(--ok)' : 'var(--err)';
   return (
     <div style={{
-      color: colors.fg, fontSize: 12, marginTop: 12,
-      padding: '6px 10px', background: colors.bg,
-      border: `1px solid ${colors.bd}`, borderRadius: 4,
+      color: tok, fontSize: 12, marginTop: 12,
+      padding: '6px 10px',
+      background: `color-mix(in srgb, ${tok} 8%, transparent)`,
+      border: `1px solid color-mix(in srgb, ${tok} 30%, transparent)`,
+      borderRadius: 4,
     }}>{children}</div>
   );
 }

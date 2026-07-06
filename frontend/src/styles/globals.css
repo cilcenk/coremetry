@@ -1576,6 +1576,12 @@ canvas { max-width: 100%; }
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .toast-info .toast-icon { color: var(--accent); font-weight: bold; }
+/* v0.8.303 (quality bar U4) — warning severity, PF AlertGroup parity */
+.toast-warning {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
+}
+.toast-warning .toast-icon { color: var(--warn); font-weight: bold; }
 .toast-msg { flex: 1; }
 @keyframes toastIn {
   from { opacity: 0; transform: translateX(20px); }

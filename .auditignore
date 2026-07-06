@@ -11,4 +11,4 @@
 # Add a one-line reason per entry so the next operator (or future
 # you) can understand whether the suppression still applies.
 
-frontend/src/pages/Profiling.tsx:539   # pprof recipe template literal, not real browser code
+frontend/src/pages/Profiling.tsx:549   # pprof recipe template literal (NodeRecipe code string), not real browser code — re-verified 2026-07-06

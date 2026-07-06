@@ -42,7 +42,7 @@ export function Toaster() {
           onClick={() => dismiss(e.id)}
           title="Click to dismiss">
           <span className="toast-icon" aria-hidden>
-            {e.kind === 'success' ? '✓' : e.kind === 'error' ? '✕' : 'ℹ'}
+            {e.kind === 'success' ? '✓' : e.kind === 'error' ? '✕' : e.kind === 'warning' ? '⚠' : 'ℹ'}
           </span>
           <span className="toast-msg">{e.message}</span>
         </div>

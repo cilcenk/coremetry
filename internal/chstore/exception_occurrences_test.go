@@ -1,9 +1,58 @@
 package chstore
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+// Regression guard for v0.8.312 (operator-reported): the occurrences query
+// crashed the external Distributed CH with `code 43 ... toUnixTimestamp64Nano:
+// Expected DateTime64, got DateTime`. toStartOfInterval on a second-grain
+// INTERVAL yields a DateTime (not DateTime64) on the prod spans schema, so
+// wrapping the bucket in toUnixTimestamp64Nano — which only accepts
+// DateTime64 — errored. Local monolithic CH yields DateTime64 from the same
+// expression, so it never reproduced there. The fix returns the bare
+// toStartOfInterval bucket and converts to unix-ns in Go via
+// time.Time.UnixNano() (mirroring GetSpanBreakdown), which is type-agnostic.
+//
+// This pins the SQL *shape* — the repro lived in prod-only schema we can't
+// exercise locally, so we assert the query never re-grows the type-fragile
+// wrapper and never loses its raw-spans bounds.
+func TestOccurrencesQuery_TypeSafeBucketAndBounds(t *testing.T) {
+	q := occurrencesQuery(occurrenceBucketCap, "max_threads = 4")
+
+	if strings.Contains(q, "toUnixTimestamp64Nano") {
+		t.Errorf("occurrences query wraps the bucket in toUnixTimestamp64Nano; "+
+			"that rejects the DateTime toStartOfInterval yields on the external "+
+			"Distributed schema (code 43). Scan toStartOfInterval as time.Time "+
+			"instead.\nquery:\n%s", q)
+	}
+	if !strings.Contains(q, "toStartOfInterval(time, INTERVAL ? SECOND) AS bucket") {
+		t.Errorf("occurrences query no longer selects the epoch-aligned "+
+			"toStartOfInterval bucket:\n%s", q)
+	}
+	// Raw-spans hard constraint: LIMIT + max_execution_time + indexed
+	// time-bounded WHERE must all be present.
+	for _, must := range []string{
+		"service_name = ?",
+		"time >= ?",
+		"time <= ?",
+		"LIMIT ",
+		"max_execution_time",
+	} {
+		if !strings.Contains(q, must) {
+			t.Errorf("occurrences query missing required clause %q:\n%s", must, q)
+		}
+	}
+	// The runtime-interpolated bits land where expected.
+	if !strings.Contains(q, "LIMIT 5000") {
+		t.Errorf("bucketCap not interpolated into LIMIT:\n%s", q)
+	}
+	if !strings.Contains(q, "max_threads = 4") {
+		t.Errorf("shardSkip setting not appended:\n%s", q)
+	}
+}
 
 // Regression coverage for the v0.8.309 occurrences-over-time fix. The old
 // panel bucketed the 100 newest samples client-side across the whole

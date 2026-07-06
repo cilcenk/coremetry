@@ -634,6 +634,30 @@ type OccurrencePoint struct {
 // 24h stale horizon that auto-resolves idle groups.
 const occurrenceBucketCap = 5000
 
+// occurrencesQuery builds the occurrences-over-time SQL. Extracted so a
+// unit test can pin the type-safe bucket shape (v0.8.312, operator-
+// reported): the bucket MUST stay a bare toStartOfInterval(...) scanned
+// as time.Time and converted with UnixNano() in Go — never wrapped in
+// toUnixTimestamp64Nano. toStartOfInterval on a second-grain INTERVAL
+// yields a DateTime (not DateTime64) on the external Distributed spans
+// schema, and toUnixTimestamp64Nano only accepts DateTime64 → code 43 on
+// prod. Bounds (service+time WHERE, LIMIT, max_execution_time) are the
+// raw-spans hard constraint and must survive any future edit.
+func occurrencesQuery(bucketCap int, shardSkip string) string {
+	return `
+		SELECT toStartOfInterval(time, INTERVAL ? SECOND) AS bucket,
+		       count() AS c
+		FROM spans
+		WHERE service_name = ? AND time >= ? AND time <= ?
+		  AND events LIKE '%"exception"%'
+		  AND coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>') = ?
+		GROUP BY bucket
+		ORDER BY bucket
+		LIMIT ` + fmt.Sprint(bucketCap) + `
+		SETTINGS max_execution_time = 10,
+		         ` + shardSkip
+}
+
 // GetExceptionOccurrences returns a real, gap-filled occurrences-over-
 // time series for the group (by fingerprint), spanning its whole
 // [first_seen, last_seen] window. It replaces the old client-side
@@ -670,30 +694,30 @@ func (s *Store) GetExceptionOccurrences(ctx context.Context, fingerprint string)
 	// time-bounded WHERE + LIMIT + max_execution_time). toStartOfInterval
 	// on a sub-day INTERVAL is epoch-aligned and tz-independent, so the
 	// Go-side fill below lands on the exact same bucket starts.
-	rows, err := s.conn.Query(ctx, `
-		SELECT toUnixTimestamp64Nano(toStartOfInterval(time, INTERVAL ? SECOND)) AS bucket,
-		       count() AS c
-		FROM spans
-		WHERE service_name = ? AND time >= ? AND time <= ?
-		  AND events LIKE '%"exception"%'
-		  AND coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>') = ?
-		GROUP BY bucket
-		ORDER BY bucket
-		LIMIT `+fmt.Sprint(occurrenceBucketCap)+`
-		SETTINGS max_execution_time = 10,
-		         `+s.shardSkipSetting(), step, g.Service, from, to, g.Type)
+	//
+	// Return the bucket as its native CH time type and convert to unix-ns
+	// in Go via bucket.UnixNano() — mirrors GetSpanBreakdown. Do NOT wrap
+	// it in toUnixTimestamp64Nano: toStartOfInterval on a second-grain
+	// INTERVAL yields a DateTime (not DateTime64) on the external
+	// Distributed schema, and toUnixTimestamp64Nano only accepts
+	// DateTime64 → code 43 on prod (v0.8.312, operator-reported; local
+	// monolithic CH yields DateTime64 so it never reproduced). Scanning
+	// as time.Time is type-agnostic and correct on both schemas.
+	rows, err := s.conn.Query(ctx,
+		occurrencesQuery(occurrenceBucketCap, s.shardSkipSetting()),
+		step, g.Service, from, to, g.Type)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	counts := make(map[int64]uint64)
 	for rows.Next() {
-		var bucket int64
+		var bucket time.Time
 		var c uint64
 		if err := rows.Scan(&bucket, &c); err != nil {
 			return nil, err
 		}
-		counts[bucket] = c
+		counts[bucket.UnixNano()] = c
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

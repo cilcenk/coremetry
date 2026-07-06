@@ -396,21 +396,28 @@ func metricValueExpr(metric string) (string, error) {
 // regardless of underlying span volume. LIMIT + SETTINGS still added as
 // belt-and-braces in case the MV grows past our expectations.
 func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]float64, error) {
-	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
+	now := time.Now()
+	cutoff := now.Add(-time.Duration(historyHours) * time.Hour)
 	vexpr, err := metricValueExpr(metric)
 	if err != nil {
 		return nil, err
 	}
+	// v0.8.316 — read COMPLETE buckets only. The still-filling bucket made
+	// request_rate (÷ fixed 300s) read ~elapsed/300 of the true rate, so a
+	// live spike looked baseline one minute into each bucket and the
+	// fast-resolve closed the open anomaly mid-incident (a flap per
+	// bucket). Complete-buckets-only costs ≤5 min detection lag; every
+	// sample now truly spans the 300s it's divided by.
 	sql := fmt.Sprintf(`
 		SELECT toUnixTimestamp(time_bucket) AS t, %s AS v
 		FROM service_summary_5m
-		WHERE service_name = ? AND time_bucket >= ?
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
 		GROUP BY t
 		ORDER BY t
 		LIMIT 1000
 		SETTINGS max_execution_time = 10`, vexpr)
 
-	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff)
+	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff, lastCompleteBucketStart(now))
 	if err != nil {
 		return nil, err
 	}
@@ -425,6 +432,15 @@ func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// lastCompleteBucketStart is the exclusive upper bound for MV series reads
+// (v0.8.316): the current bucket's START on the UTC 5-minute grid — the
+// same grid toStartOfInterval uses — so `time_bucket < bound` keeps only
+// buckets whose full 300s have elapsed. Pure + table-tested
+// (complete_bucket_test.go).
+func lastCompleteBucketStart(now time.Time) time.Time {
+	return now.Truncate(5 * time.Minute)
 }
 
 // dayClass buckets a timestamp into the day-of-week traffic profile the

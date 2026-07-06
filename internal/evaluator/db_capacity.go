@@ -40,6 +40,9 @@ import (
 const (
 	capacityCritPct = 90.0
 	capacityWarnPct = 85.0
+	// capacityHysteresisPct (v0.8.320) — an open problem only resolves
+	// below warn−this, so a boundary-parked gauge can't churn open/close.
+	capacityHysteresisPct = 2.0
 )
 
 // capacityCheck describes one saturation check: how to read it and how to
@@ -112,7 +115,12 @@ var capacityChecks = []capacityCheck{
 //     read layer already drops those, this is belt-and-suspenders.
 //   - rate check (limit == 0 via the rate flag): any rate > 0 is critical
 //     (active eviction); pct carries the rate itself for the reason.
-func capacityDecision(usage, limit float64, rate bool) (open bool, severity string, pct float64) {
+//   - wasOpen (v0.8.320) — hysteresis: an already-open problem stays open
+//     until pct drops below warn−2pp. Fire and clear at the same 85.0 had
+//     a boundary-parked gauge open→notify→resolve→re-open (re-notifying)
+//     every tick; this path has no ForSec/Cooldown kit, so the band IS the
+//     anti-noise mechanism.
+func capacityDecision(usage, limit float64, rate, wasOpen bool) (open bool, severity string, pct float64) {
 	if rate {
 		if usage > 0 {
 			return true, "critical", usage
@@ -127,6 +135,9 @@ func capacityDecision(usage, limit float64, rate bool) (open bool, severity stri
 	case pct >= capacityCritPct:
 		return true, "critical", pct
 	case pct >= capacityWarnPct:
+		return true, "warning", pct
+	case wasOpen && pct >= capacityWarnPct-capacityHysteresisPct:
+		// Inside the hysteresis band: don't resolve yet, don't fire fresh.
 		return true, "warning", pct
 	default:
 		return false, "", pct
@@ -210,12 +221,14 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 // sample, mirroring evaluateOne's open/refresh/resolve switch. Dedup is by
 // (rule_id, service) via FindOpenProblem + a stable Problem id.
 func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample) {
-	open, sev, pct := capacityDecision(s.Usage, s.Limit, c.rate)
 	ruleID := capacityRuleID(c.id)
 	service := capacityService(s.Instance, s.Subkey)
 
+	// Look up the open problem FIRST — the decision is hysteresis-aware
+	// (v0.8.320): an open problem holds until pct clears the band.
 	existing, err := e.store.FindOpenProblem(ctx, ruleID, service)
 	hasOpen := err == nil && existing != nil && existing.ID != ""
+	open, sev, pct := capacityDecision(s.Usage, s.Limit, c.rate, hasOpen)
 
 	switch {
 	case open && !hasOpen:

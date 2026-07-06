@@ -41,7 +41,7 @@ func TestCapacityDecision(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			open, sev, pct := capacityDecision(tt.usage, tt.limit, tt.rate)
+			open, sev, pct := capacityDecision(tt.usage, tt.limit, tt.rate, false)
 			if open != tt.wantOpen || sev != tt.wantSev {
 				t.Errorf("capacityDecision(%v,%v,rate=%v) = (open=%v sev=%q), want (open=%v sev=%q)",
 					tt.usage, tt.limit, tt.rate, open, sev, tt.wantOpen, tt.wantSev)
@@ -115,5 +115,38 @@ func TestCapacityDedupKeys(t *testing.T) {
 	}
 	if got := capacityService("corebank.prod", ""); got != "corebank.prod" {
 		t.Errorf("capacityService(undimensioned) = %q", got)
+	}
+}
+
+// v0.8.320 — regression: no hysteresis on the capacity thresholds. Fire and
+// clear both sat at exactly 85%, and reconcileCapacity has no ForSec/
+// Cooldown kit, so a pool oscillating 84.9→85.1→84.9 opened, notified,
+// resolved and RE-opened (re-notifying) every tick — continuous page spam
+// from a gauge parked on the boundary. An OPEN problem now stays open until
+// pct drops below warn−2pp (83%); fire thresholds are unchanged.
+func TestCapacityDecisionHysteresis(t *testing.T) {
+	cases := []struct {
+		name     string
+		usage    float64
+		wasOpen  bool
+		wantOpen bool
+		wantSev  string
+	}{
+		{"closed below warn stays closed", 84.9, false, false, ""},
+		{"closed fires at warn", 85.1, false, true, "warning"},
+		{"open survives a dip into the band", 84.0, true, true, "warning"},
+		{"open at exactly warn-2 stays open", 83.0, true, true, "warning"},
+		{"open resolves below warn-2", 82.9, true, false, ""},
+		{"open at crit is critical", 91.0, true, true, "critical"},
+		{"closed never fires inside the band", 84.0, false, false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			open, sev, _ := capacityDecision(c.usage, 100, false, c.wasOpen)
+			if open != c.wantOpen || sev != c.wantSev {
+				t.Fatalf("capacityDecision(%v, wasOpen=%v) = (open=%v sev=%q), want (open=%v sev=%q)",
+					c.usage, c.wasOpen, open, sev, c.wantOpen, c.wantSev)
+			}
+		})
 	}
 }

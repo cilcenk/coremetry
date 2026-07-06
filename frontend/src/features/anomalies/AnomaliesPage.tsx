@@ -77,6 +77,12 @@ export default function ProblemsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab     = searchParams.get('tab') || 'open';
   const service = searchParams.get('service') || '';
+  // Owner (ug-team) / SRE (sy-team) team filter — URL-backed so a
+  // triage link reproduces the exact team slice, mirroring /inbox's
+  // ?owner=/?sre= (v0.8.310). Resolved server-side to member services
+  // so the narrowing is correct across the whole paginated set.
+  const ownerTeam = searchParams.get('owner') || '';
+  const sreTeam   = searchParams.get('sre')   || '';
   const page    = Math.max(0, parseInt(searchParams.get('page') || '0', 10) || 0);
   const setTab = (v: string) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
@@ -87,6 +93,12 @@ export default function ProblemsPage() {
     const p = new URLSearchParams(prev);
     if (v) p.set('service', v); else p.delete('service');
     p.delete('page');
+    return p;
+  }, { replace: true });
+  const setTeam = (key: 'owner' | 'sre', v: string) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set(key, v); else p.delete(key);
+    p.delete('page'); // a filter change can't leave you on a now-missing page
     return p;
   }, { replace: true });
   const setPage = (next: number | ((p: number) => number)) =>
@@ -120,15 +132,16 @@ export default function ProblemsPage() {
     setData(undefined);
     api.exceptionGroups({
       state: tab, service: service || undefined,
+      ownerTeam: ownerTeam || undefined, sreTeam: sreTeam || undefined,
       limit: PAGE_SIZE, offset: page * PAGE_SIZE,
     })
       .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); })
       .catch(() => setData(null));
   };
-  // Page reset on filter change is owned by setTab/setService now
+  // Page reset on filter change is owned by setTab/setService/setTeam now
   // (they delete ?page=). Single effect drives the fetch.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(refreshExceptionGroups, [tab, service, page]);
+  useEffect(refreshExceptionGroups, [tab, service, ownerTeam, sreTeam, page]);
 
   useEffect(() => {
     api.services({ from: 0, to: 0 })
@@ -142,6 +155,21 @@ export default function ProblemsPage() {
 
   const [sortBy, setSortBy] = useState<SortKey>('lastSeen');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  // Team dropdown options come from the service catalog (not the loaded
+  // page), so a pick never collapses the list of teams to choose from —
+  // same source the alert-rules section + Services page use.
+  const catalogQ = useServicesMetadata();
+  const ownerTeamOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of Object.values(catalogQ.data ?? {})) if (m.ownerTeam) set.add(m.ownerTeam);
+    return [...set].sort();
+  }, [catalogQ.data]);
+  const sreTeamOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of Object.values(catalogQ.data ?? {})) if (m.sreTeam) set.add(m.sreTeam);
+    return [...set].sort();
+  }, [catalogQ.data]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -245,6 +273,20 @@ export default function ProblemsPage() {
             placeholder="Service…" width={170} />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search type/message…" style={{ width: 260 }} />
+          {/* Owner (ug-team) / SRE (sy-team) team filter — plain <select>
+              for these small catalog-derived sets (frontend-conventions
+              §3), resolved server-side so the narrowing is correct across
+              the whole paginated inbox, not just the loaded page. */}
+          <select value={ownerTeam} onChange={e => setTeam('owner', e.target.value)}
+            aria-label="Filter by owner team" style={{ minWidth: 130 }}>
+            <option value="">All owner teams</option>
+            {ownerTeamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <select value={sreTeam} onChange={e => setTeam('sre', e.target.value)}
+            aria-label="Filter by SRE team" style={{ minWidth: 130 }}>
+            <option value="">All SRE teams</option>
+            {sreTeamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {total > 0 && (
               <>

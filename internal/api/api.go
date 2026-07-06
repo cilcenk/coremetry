@@ -6167,6 +6167,25 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		Limit:    parseInt(q.Get("limit"), 50),
 		Offset:   parseInt(q.Get("offset"), 0),
 	}
+	// Owner/SRE team filter (v0.8.310) — resolve the pick to its member
+	// services from the catalog and constrain the query with service IN
+	// (…) so it bites BEFORE limit/offset. ANDs with an explicit
+	// ?service= when both are set (intersection). A team with no member
+	// services returns an empty page — never an unfiltered one, and
+	// never a malformed empty IN (…).
+	if ownerTeam, sreTeam := q.Get("ownerTeam"), q.Get("sreTeam"); ownerTeam != "" || sreTeam != "" {
+		mds, err := s.store.ListServiceMetadata(r.Context())
+		if err != nil { writeErr(w, err); return }
+		svcs := servicesForTeam(mds, ownerTeam, sreTeam)
+		if len(svcs) == 0 {
+			writeJSON(w, map[string]any{
+				"items": []chstore.ExceptionGroup{}, "total": 0,
+				"limit": f.Limit, "offset": f.Offset,
+			})
+			return
+		}
+		f.Services = svcs
+	}
 	items, err := s.store.ListExceptionGroups(r.Context(), f)
 	if err != nil { writeErr(w, err); return }
 	total, err := s.store.CountExceptionGroups(r.Context(), f)

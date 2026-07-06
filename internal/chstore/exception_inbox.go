@@ -297,6 +297,14 @@ type ExceptionGroupFilter struct {
 	State    string // empty = all (except ignored)
 	Service  string
 	Assignee string
+	// Services constrains the result to this set (service IN (…)). Used
+	// by the owner/SRE team filter on the Problems inbox (v0.8.310): the
+	// API resolves a team pick to its member services from the catalog
+	// and sets this, so the filter bites BEFORE the limit/offset — the
+	// only correct way to team-filter a server-paginated list (a Go-side
+	// post-filter would only trim the current page and break the count).
+	// Empty = no service-set constraint.
+	Services []string
 	Limit    int
 	Offset   int
 }
@@ -321,6 +329,11 @@ func buildExceptionGroupWhere(f ExceptionGroupFilter) whereClause {
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)
+	}
+	if len(f.Services) > 0 {
+		// Team filter → member-service set. Bound in list + count via the
+		// same helper so "Page X of Y" can't drift from the rows returned.
+		wc.add("service IN (?)", f.Services)
 	}
 	if f.Assignee != "" {
 		wc.add("assignee = ?", f.Assignee)

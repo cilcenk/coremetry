@@ -205,14 +205,16 @@ export function ColResizeHandle<T>({ dt, colId }: { dt: DataTable<T>; colId: str
 // DataTableColgroup — emits the <colgroup> that makes table-layout:fixed
 // respect (and resize) per-column widths. `leading` is the px width of any
 // leading non-data columns (expand chevron, checkbox) rendered before the
-// managed columns.
-export function DataTableColgroup<T>({ dt, leading }: { dt: DataTable<T>; leading?: number[] }) {
+// managed columns; `trailing` is the same for non-data columns rendered
+// after them (actions cell, "+ Add column" manager — v0.8.306).
+export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<T>; leading?: number[]; trailing?: number[] }) {
   return (
     <colgroup>
       {(leading ?? []).map((w, i) => <col key={`lead-${i}`} style={{ width: w }} />)}
       {dt.columns.filter(c => !c.headerHidden).map(c => (
         <col key={c.id} style={{ width: dt.colWidths[c.id] ?? c.width ?? DEFAULT_W }} />
       ))}
+      {(trailing ?? []).map((w, i) => <col key={`trail-${i}`} style={{ width: w }} />)}
     </colgroup>
   );
 }
@@ -220,13 +222,17 @@ export function DataTableColgroup<T>({ dt, leading }: { dt: DataTable<T>; leadin
 // DataTableHead — the full <thead><tr> built from the column defs: each
 // sortable column is clickable (▲▼↕ glyph + aria-sort, matching the
 // house .sortable/.sorted CSS) and every column gets a right-edge resize
-// handle. `leading` slots in any non-data header cells (e.g. expand col).
-// `renderLabel` lets a caller decorate a header label (e.g. LogTable's
-// hover-× remove-column affordance) without touching the pure core's
-// string label type.
-export function DataTableHead<T>({ dt, leading, renderLabel }: {
+// handle. `leading` slots in any non-data header cells (e.g. expand col);
+// `trailing` slots them AFTER the managed columns — the caller owns that
+// <th>, so a dropdown affordance (Explore's "+ Add column" manager) isn't
+// clipped by the managed cells' overflow:hidden (v0.8.306). `renderLabel`
+// lets a caller decorate a header label (e.g. LogTable's hover-×
+// remove-column affordance) without touching the pure core's string
+// label type.
+export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
   dt: DataTable<T>;
   leading?: ReactNode;
+  trailing?: ReactNode;
   renderLabel?: (c: DataTable<T>['columns'][number]) => ReactNode;
 }) {
   return (
@@ -260,6 +266,7 @@ export function DataTableHead<T>({ dt, leading, renderLabel }: {
             </th>
           );
         })}
+        {trailing}
       </tr>
     </thead>
   );

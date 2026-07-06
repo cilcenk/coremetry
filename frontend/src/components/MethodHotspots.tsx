@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { FlameNode, ProfileFrameKind } from '@/lib/types';
-import { flameToHotspots, sortHotspots, flameCategoryBreakdown, type HotspotSort, type MethodHotspot } from '@/lib/flameHotspots';
+import { flameToHotspots, flameCategoryBreakdown, type MethodHotspot } from '@/lib/flameHotspots';
 import { KindBadge, BreakdownBar, kindLabel } from './KindBadge';
+import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 
 // Method Hotspots — Dynatrace-style "which functions are
 // heaviest, ignoring call site" table. Sits below the flame
@@ -12,8 +14,20 @@ import { KindBadge, BreakdownBar, kindLabel } from './KindBadge';
 
 const ROW_CAP = 100;
 
+// Columns for the shared sortable + resizable DataTable primitive
+// (v0.8.306 — replaces the hand-rolled SortHeader + sortHotspots
+// pair). Self desc is the classic hotspot default; Method /
+// Location gain sorting for free (asc-natural, nulls-last on
+// missing locations).
+const HOTSPOT_COLS: DataTableColumn<MethodHotspot>[] = [
+  { id: 'method',   label: 'Method',   sortValue: h => h.name, naturalDir: 'asc', width: 380, minWidth: 160 },
+  { id: 'location', label: 'Location', sortValue: h => h.file ? `${h.file}:${h.line ?? 0}` : null, naturalDir: 'asc', width: 220 },
+  { id: 'self',     label: 'Self',     sortValue: h => h.self,  numeric: true, width: 130 },
+  { id: 'total',    label: 'Total',    sortValue: h => h.total, numeric: true, width: 130 },
+  { id: 'paths',    label: 'Paths',    sortValue: h => h.paths, numeric: true, width: 130 },
+];
+
 export function MethodHotspots({ root }: { root: FlameNode }) {
-  const [sortBy, setSortBy] = useState<HotspotSort>('self');
   const [filter, setFilter] = useState('');
   // Kind filter — operators chasing a lock-contention regression
   // want to see only Lock rows, not the CPU ones. 'all' is the
@@ -25,14 +39,24 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
   const breakdown = useMemo(() => flameCategoryBreakdown(root), [root]);
   const totalValue = root.value || 1;
 
-  const visible = useMemo(() => {
+  const filtered = useMemo(() => {
     const f = filter.trim().toLowerCase();
     let list = allHotspots;
     if (kindFilter !== 'all') list = list.filter(h => h.kind === kindFilter);
     if (f) list = list.filter(h => h.name.toLowerCase().includes(f));
-    list = sortHotspots(list, sortBy);
-    return list.slice(0, ROW_CAP);
-  }, [allHotspots, sortBy, filter, kindFilter]);
+    return list;
+  }, [allHotspots, filter, kindFilter]);
+
+  // Shared sortable + resizable table. Client sort — the whole
+  // profile is already in memory. ROW_CAP applies AFTER the sort so
+  // the table keeps showing the top 100 by the active column.
+  const dt = useDataTable<MethodHotspot>({
+    storageKey: 'method-hotspots',
+    columns: HOTSPOT_COLS,
+    rows: filtered,
+    initialSort: { id: 'self', dir: 'desc' },
+  });
+  const visible = useMemo(() => dt.sortedRows.slice(0, ROW_CAP), [dt.sortedRows]);
 
   if (allHotspots.length === 0) return null;
 
@@ -66,16 +90,9 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
         />
       </div>
       <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Method</th>
-              <th style={{ width: 220 }}>Location</th>
-              <SortHeader col="self" cur={sortBy} onChange={setSortBy} label="Self" />
-              <SortHeader col="total" cur={sortBy} onChange={setSortBy} label="Total" />
-              <SortHeader col="paths" cur={sortBy} onChange={setSortBy} label="Paths" />
-            </tr>
-          </thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} />
+          <DataTableHead dt={dt} />
           <tbody>
             {visible.map(h => (
               <HotspotRow key={h.name} h={h} totalValue={totalValue} />
@@ -118,19 +135,6 @@ function KindFilterChips({ cur, onChange }: {
         );
       })}
     </span>
-  );
-}
-
-function SortHeader({
-  col, cur, onChange, label,
-}: { col: HotspotSort; cur: HotspotSort; onChange: (c: HotspotSort) => void; label: string }) {
-  const active = col === cur;
-  return (
-    <th className="num" style={{ width: 130, cursor: 'pointer' }} onClick={() => onChange(col)}>
-      <span style={{ color: active ? 'var(--text)' : 'var(--text2)' }}>
-        {label}{active ? ' ▼' : ''}
-      </span>
-    </th>
   );
 }
 

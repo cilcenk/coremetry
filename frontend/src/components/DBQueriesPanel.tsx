@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Spinner } from './Spinner';
+import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { DBQueryStat, FilterExpr } from '@/lib/types';
 
 // Database query analyzer — Datadog DBM-style "where is my
@@ -19,12 +21,23 @@ import type { DBQueryStat, FilterExpr } from '@/lib/types';
 // panel starts collapsed so /service makes zero round-trips
 // until the operator opens it — same pattern as
 // ServiceStructure.
-type SortKey = 'totalMs' | 'count' | 'avgMs' | 'p95Ms' | 'p99Ms' | 'maxMs' | 'errorCount';
-const NATURAL_DIR: Record<SortKey, 'asc' | 'desc'> = {
-  totalMs: 'desc', count: 'desc', avgMs: 'desc',
-  p95Ms: 'desc', p99Ms: 'desc', maxMs: 'desc',
-  errorCount: 'desc',
-};
+// Columns for the shared sortable + resizable DataTable primitive
+// (v0.8.306 — replaces the hand-rolled SortTh/toggleSort pair).
+// Default sort stays total wall-clock desc; Statement + DB gain
+// sorting for free. The trailing Traces-drill column is layout-only
+// (no sortValue → not clickable, still resizable).
+const DBQ_COLS: DataTableColumn<DBQueryStat>[] = [
+  { id: 'statement',  label: 'Statement', sortValue: r => r.statement,      naturalDir: 'asc', width: 380, minWidth: 160 },
+  { id: 'dbSystem',   label: 'DB',        sortValue: r => r.dbSystem || '', naturalDir: 'asc', width: 90 },
+  { id: 'count',      label: '×N',     sortValue: r => r.count,      numeric: true, width: 80 },
+  { id: 'totalMs',    label: 'Total',  sortValue: r => r.totalMs,    numeric: true, width: 90 },
+  { id: 'avgMs',      label: 'Avg',    sortValue: r => r.avgMs,      numeric: true, width: 80 },
+  { id: 'p95Ms',      label: 'P95',    sortValue: r => r.p95Ms,      numeric: true, width: 80 },
+  { id: 'p99Ms',      label: 'P99',    sortValue: r => r.p99Ms,      numeric: true, width: 80 },
+  { id: 'maxMs',      label: 'Max',    sortValue: r => r.maxMs,      numeric: true, width: 80 },
+  { id: 'errorCount', label: 'Errors', sortValue: r => r.errorCount, numeric: true, width: 110 },
+  { id: 'traces',     label: '',       width: 90 },
+];
 
 export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
   service: string;
@@ -38,8 +51,6 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState<DBQueryStat[] | null | undefined>(undefined);
-  const [sortBy, setSortBy] = useState<SortKey>('totalMs');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   useEffect(() => {
@@ -50,21 +61,16 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
       .catch(() => setData(null));
   }, [open, service, from, to]);
 
-  const sorted = useMemo(() => {
-    if (!data) return data;
-    const out = [...data];
-    out.sort((a, b) => {
-      const av = a[sortBy] as number;
-      const bv = b[sortBy] as number;
-      return sortDir === 'desc' ? bv - av : av - bv;
-    });
-    return out;
-  }, [data, sortBy, sortDir]);
-
-  function toggleSort(k: SortKey) {
-    if (sortBy === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(k); setSortDir(NATURAL_DIR[k]); }
-  }
+  // Shared sortable + resizable table. Client sort — the panel holds
+  // its whole result set (one bounded fetch, limit 100), so there is
+  // no server ordering to preserve. Called unconditionally (hooks
+  // rule) with [] while collapsed/loading.
+  const dt = useDataTable<DBQueryStat>({
+    storageKey: 'db-queries-panel',
+    columns: DBQ_COLS,
+    rows: data ?? [],
+    initialSort: { id: 'totalMs', dir: 'desc' },
+  });
 
   return (
     <div style={{
@@ -86,9 +92,9 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
         <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
           DB queries by <span style={{ color: 'var(--text)' }}>{service}</span>
         </span>
-        {open && sorted && sorted.length > 0 && (
+        {open && data && data.length > 0 && (
           <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-            {sorted.length} normalised statement{sorted.length === 1 ? '' : 's'}
+            {data.length} normalised statement{data.length === 1 ? '' : 's'}
           </span>
         )}
         <span style={{ flex: 1 }} />
@@ -117,25 +123,13 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
               {' '}If your DB instrumentation strips statements for security, that's expected.
             </div>
           )}
-          {sorted && sorted.length > 0 && (
+          {data && data.length > 0 && (
             <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Statement</th>
-                    <th>DB</th>
-                    <SortTh col="count"      label="×N"     sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <SortTh col="totalMs"    label="Total"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <SortTh col="avgMs"      label="Avg"    sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <SortTh col="p95Ms"      label="P95"    sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <SortTh col="p99Ms"      label="P99"    sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <SortTh col="maxMs"      label="Max"    sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <SortTh col="errorCount" label="Errors" sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                    <th></th>
-                  </tr>
-                </thead>
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <DataTableColgroup dt={dt} />
+                <DataTableHead dt={dt} />
                 <tbody>
-                  {sorted.map((r, i) => {
+                  {dt.sortedRows.map((r, i) => {
                     const expanded = expandedIdx === i;
                     const errPct = r.count > 0 ? (r.errorCount / r.count) * 100 : 0;
                     const errCls = errPct > 5 ? 'b-err' : errPct > 0 ? 'b-warn' : 'b-ok';
@@ -245,20 +239,6 @@ function Row({ children }: { children: React.ReactNode }) {
   // expansion row from a single iteration without adding a
   // <Fragment> at every call site.
   return <>{children}</>;
-}
-
-function SortTh({ col, label, sort, dir, onSort }: {
-  col: SortKey; label: string;
-  sort: SortKey; dir: 'asc' | 'desc';
-  onSort: (k: SortKey) => void;
-}) {
-  const active = sort === col;
-  return (
-    <th className="num" onClick={() => onSort(col)}
-        style={{ cursor: 'pointer', userSelect: 'none' }}>
-      {label}{active ? (dir === 'desc' ? ' ↓' : ' ↑') : ''}
-    </th>
-  );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

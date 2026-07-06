@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 )
@@ -14,12 +15,12 @@ import (
 // poll from every operator's open tab collapses to one CH
 // query per replica per quarter-minute.
 func (s *Server) getRecentChanges(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "recent-changes", 15*time.Second, func() (any, error) {
+	s.serveCached(w, r, "recent-changes", 15*time.Second, func(ctx context.Context) (any, error) {
 		// Tally open problems globally — sum the per-service
 		// counts. Reuses the existing GetOpenProblemCountsByService
 		// scan so we don't fan a second FINAL over the problems
 		// table.
-		counts, err := s.store.GetOpenProblemCountsByService(r.Context())
+		counts, err := s.store.GetOpenProblemCountsByService(ctx)
 		var critical, warning, info int
 		if err == nil {
 			for _, c := range counts {
@@ -28,7 +29,7 @@ func (s *Server) getRecentChanges(w http.ResponseWriter, r *http.Request) {
 				info += c.Info
 			}
 		}
-		deploys, derr := s.store.GetRecentDeploys(r.Context(), 30*time.Minute, 20)
+		deploys, derr := s.store.GetRecentDeploys(ctx, 30*time.Minute, 20)
 		if derr != nil {
 			// Banner is best-effort — deploy lookup failure
 			// shouldn't blank the problem counts.

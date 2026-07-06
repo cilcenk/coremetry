@@ -6,6 +6,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -55,14 +56,14 @@ func (s *Server) alertTuningNoisyRules(w http.ResponseWriter, r *http.Request) {
 	// hammer CH with duplicate queries.
 	key := fmt.Sprintf("alert-tuning-noisy:since=%s:limit=%d",
 		since.String(), limit)
-	s.serveCached(w, r, key, 5*time.Minute, func() (any, error) {
-		rules, err := s.store.NoisyRules(r.Context(), from, to, limit)
+	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
+		rules, err := s.store.NoisyRules(ctx, from, to, limit)
 		if err != nil {
 			return nil, err
 		}
 		// Fetch the rule list once to surface current knob values
 		// + scope the suggestion to "this rule already has X set?"
-		allRules, err := s.store.ListAlertRules(r.Context())
+		allRules, err := s.store.ListAlertRules(ctx)
 		if err != nil {
 			return nil, err
 		}

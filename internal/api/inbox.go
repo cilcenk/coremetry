@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -98,8 +99,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 
 	cacheKey := fmt.Sprintf("inbox:status=%s:svc=%s:owner=%s:sre=%s:limit=%d",
 		statusFilter, service, ownerTeam, sreTeam, limit)
-	s.serveCached(w, r, cacheKey, 10*time.Second, func() (any, error) {
-		ctx := r.Context()
+	s.serveCached(w, r, cacheKey, 10*time.Second, func(ctx context.Context) (any, error) {
 		items := make([]InboxItem, 0, 256)
 
 		// v0.5.245 — service filter is now case-insensitive
@@ -238,8 +238,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 // Anomaly events. COUNT-only on small state tables (no enrichment/sort), 10s
 // cache — cheap enough for the 30s sidebar poll at scale.
 func (s *Server) inboxCount(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "inbox:count", 10*time.Second, func() (any, error) {
-		ctx := r.Context()
+	s.serveCached(w, r, "inbox:count", 10*time.Second, func(ctx context.Context) (any, error) {
 		openP, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "open"})
 		if err != nil {
 			return nil, err

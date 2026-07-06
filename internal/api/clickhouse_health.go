@@ -190,8 +190,8 @@ type CHMutation struct {
 // getClickHouseHealth — admin-only. Cached 5s (CH self-stats are
 // cheap; 5s amortises across a tab full of operators).
 func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "ch-health", 5*time.Second, func() (any, error) {
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	s.serveCached(w, r, "ch-health", 5*time.Second, func(ctx context.Context) (any, error) {
+		ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
 		out := CHHealth{Generated: time.Now().UnixNano()}
 

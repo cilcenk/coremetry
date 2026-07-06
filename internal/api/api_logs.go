@@ -212,8 +212,8 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("logs:svc=%s:clu=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:lim=%d:off=%d:cur=%s:q=%s",
 		f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
 		q.Get("from"), q.Get("to"), f.Limit, f.Offset, f.Cursor, f.Search)
-	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
-		page, err := s.logs.Search(r.Context(), f)
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
+		page, err := s.logs.Search(ctx, f)
 		if err != nil {
 			// Surface the full backend error (ES carries the authz/index reason
 			// in the response body via res.String()) in the pod log so the
@@ -244,14 +244,14 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 	type fielder interface {
 		ListFields(ctx context.Context) ([]string, error)
 	}
-	s.serveCached(w, r, "logs-fields", 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, "logs-fields", 60*time.Second, func(ctx context.Context) (any, error) {
 		// Unwrap (v0.8.232): the Switchable wrapper doesn't forward
 		// optional capabilities — assert on the live inner store.
 		f, ok := logstore.Unwrap(s.logs).(fielder)
 		if !ok {
 			return map[string]any{"fields": []string{}, "backend": s.logs.Backend()}, nil
 		}
-		fields, err := f.ListFields(r.Context())
+		fields, err := f.ListFields(ctx)
 		if err != nil {
 			log.Printf("[logs] field discovery failed (backend=%s): %v", s.logs.Backend(), err)
 			return nil, err
@@ -284,8 +284,8 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 // share but not interesting to a viewer. 30s cache: indices
 // don't churn often.
 func (s *Server) adminElasticIndices(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "admin-elastic-indices", 30*time.Second, func() (any, error) {
-		idx, err := s.logs.Indices(r.Context())
+	s.serveCached(w, r, "admin-elastic-indices", 30*time.Second, func(ctx context.Context) (any, error) {
+		idx, err := s.logs.Indices(ctx)
 		if err != nil {
 			log.Printf("[logs] indices failed (backend=%s): %v", s.logs.Backend(), err)
 			return nil, err
@@ -336,8 +336,8 @@ func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
 		limit = 20
 	}
 	key := fmt.Sprintf("logs-field-values:%s:%s:%d", field, prefix, limit)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		vals, err := s.logs.FieldValues(r.Context(), field, prefix, limit)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		vals, err := s.logs.FieldValues(ctx, field, prefix, limit)
 		if err != nil {
 			// Surfaced to the pod log (the UI swallows it below, so this is the
 			// only place an ES authz/_terms_enum error on field-values shows up).
@@ -375,8 +375,8 @@ func (s *Server) getLogsTemplates(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("logs-templates:sort=%s:since=%s:limit=%d",
 		sortBy, sinceDur, limit)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		rows, err := s.store.ListLogTemplates(r.Context(), chstore.ListLogTemplatesFilter{
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		rows, err := s.store.ListLogTemplates(ctx, chstore.ListLogTemplatesFilter{
 			SinceNs: since,
 			SortBy:  sortBy,
 			Limit:   limit,
@@ -443,12 +443,12 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 		Ascending: true,
 	}
 	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:n=%d", ts, service, n)
-	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
-		beforePage, err := s.logs.Search(r.Context(), beforeF)
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
+		beforePage, err := s.logs.Search(ctx, beforeF)
 		if err != nil {
 			return nil, err
 		}
-		afterPage, err := s.logs.Search(r.Context(), afterF)
+		afterPage, err := s.logs.Search(ctx, afterF)
 		if err != nil {
 			return nil, err
 		}
@@ -504,8 +504,8 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s",
 		field, f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
 		q.Get("from"), q.Get("to"), q.Get("search"))
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 		return s.logs.FieldStats(ctx, f, field, 5)
 	})
@@ -538,13 +538,13 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("logs-ts:svc=%s:sev=%d:trace=%s:from=%s:to=%s:b=%d:g=%s:q=%s",
 		f.Service, f.SeverityMin, f.TraceID, q.Get("from"), q.Get("to"),
 		bucketSec, groupBy, q.Get("search"))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.3 — bound the Go goroutine on BOTH backends. CH already
 		// self-caps at 30s (max_execution_time); this gives the ES path
 		// the same ceiling so the api pod releases the goroutine +
 		// response buffers even if the cluster keeps churning (the ES
 		// soft-timeout in the query body is the tighter inner bound).
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		return s.logs.Histogram(ctx, f, bucketSec, groupBy)
 	})

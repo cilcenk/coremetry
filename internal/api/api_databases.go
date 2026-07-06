@@ -7,6 +7,7 @@ package api
 // stay in api.go because many other clusters use them too.
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -15,8 +16,8 @@ import (
 func (s *Server) getDatabases(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
 	key := "databases:" + cacheBucket(from, to)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetDatabases(r.Context(), from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetDatabases(ctx, from, to)
 	})
 }
 
@@ -31,8 +32,8 @@ func (s *Server) getDatabases(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getDBTrends(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
 	key := "db-trends:" + cacheBucket(from, to)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetDBTrends(r.Context(), from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetDBTrends(ctx, from, to)
 	})
 }
 
@@ -51,8 +52,8 @@ func (s *Server) getDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, time.Hour)
 	key := fmt.Sprintf("db-detail:%s:%s:%s", system, instance, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetDatabaseDetail(r.Context(), system, instance, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetDatabaseDetail(ctx, system, instance, from, to)
 	})
 }
 
@@ -66,8 +67,8 @@ func (s *Server) getOracleMetrics(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	from, to := parseFromTo(r, time.Hour)
 	key := fmt.Sprintf("oracle:%s:%s", instance, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetOracleMetrics(r.Context(), instance, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetOracleMetrics(ctx, instance, from, to)
 	})
 }
 
@@ -79,8 +80,8 @@ func (s *Server) getPostgresMetrics(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	from, to := parseFromTo(r, time.Hour)
 	key := fmt.Sprintf("postgres:%s:%s", instance, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetPostgresMetrics(r.Context(), instance, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetPostgresMetrics(ctx, instance, from, to)
 	})
 }
 
@@ -90,8 +91,8 @@ func (s *Server) getMySQLMetrics(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	from, to := parseFromTo(r, time.Hour)
 	key := fmt.Sprintf("mysql:%s:%s", instance, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetMySQLMetrics(r.Context(), instance, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetMySQLMetrics(ctx, instance, from, to)
 	})
 }
 
@@ -101,8 +102,8 @@ func (s *Server) getRedisMetrics(w http.ResponseWriter, r *http.Request) {
 	instance := r.URL.Query().Get("instance")
 	from, to := parseFromTo(r, time.Hour)
 	key := fmt.Sprintf("redis:%s:%s", instance, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetRedisMetrics(r.Context(), instance, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetRedisMetrics(ctx, instance, from, to)
 	})
 }
 
@@ -111,8 +112,8 @@ func (s *Server) getRedisMetrics(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getMessaging(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
 	key := "messaging:" + cacheBucket(from, to)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetMessaging(r.Context(), from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetMessaging(ctx, from, to)
 	})
 }
 
@@ -135,7 +136,7 @@ func (s *Server) getMessagingDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, time.Hour)
 	key := fmt.Sprintf("msg-detail:%s:%s:%s:%s", system, cluster, dest, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetMessagingDetail(r.Context(), system, cluster, dest, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetMessagingDetail(ctx, system, cluster, dest, from, to)
 	})
 }

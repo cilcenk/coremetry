@@ -40,8 +40,8 @@ func (s *Server) listActiveAnomalies(w http.ResponseWriter, r *http.Request) {
 	// of keystrokes without serving stale "active" status to a
 	// long-running session.
 	key := fmt.Sprintf("anomalies-active:%s:%d", q, limit)
-	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
-		evts, err := s.store.ListAnomalyEvents(r.Context(),
+	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+		evts, err := s.store.ListAnomalyEvents(ctx,
 			chstore.ListAnomalyEventsFilter{Limit: 200})
 		if err != nil {
 			return nil, err

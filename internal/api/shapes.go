@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -33,8 +34,8 @@ func (s *Server) getTraceShapes(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("trace-shapes:from=%d:to=%d:svc=%s:lim=%d",
 		from.UnixNano(), to.UnixNano(), service, limit)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetTraceShapes(r.Context(), chstore.TraceShapesFilter{
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetTraceShapes(ctx, chstore.TraceShapesFilter{
 			From: from, To: to, Service: service, Limit: limit,
 		})
 	})

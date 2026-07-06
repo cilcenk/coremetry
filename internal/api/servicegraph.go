@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -254,15 +255,15 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 	hidPats := s.topologyHiddenPatterns(r.Context())
 	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:top=%d:hops=%d:hid=%s",
 		focus, scope, from.Unix()/60, to.Unix()/60, topN, hops, hiddenDigest(hidPats))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, 20000)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		edges, err := s.store.ReadServiceTopologyAgg(ctx, from, to, 20000)
 		if err != nil {
 			return nil, err
 		}
 		edges = filterHiddenTopologyEdges(edges, hidPats)
 		// Best-effort db.name enrichment for database nodes; a lookup failure
 		// leaves nodes unannotated rather than failing the whole graph.
-		dbNames, _ := s.store.DbNamesBySystem(r.Context(), from, to)
+		dbNames, _ := s.store.DbNamesBySystem(ctx, from, to)
 		g := buildServiceGraph(edges, focus, scope, hops, dbNames, serviceGraphWindowMinutes(from, to))
 		pruneServiceGraphTopN(&g, topN)
 		return g, nil

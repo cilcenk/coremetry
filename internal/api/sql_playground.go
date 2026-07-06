@@ -307,10 +307,10 @@ func (s *Server) sqlSchema(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "admin only", http.StatusForbidden)
 		return
 	}
-	s.serveCached(w, r, "sql:schema", 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, "sql:schema", 60*time.Second, func(ctx context.Context) (any, error) {
 		conn := s.store.Conn()
 		// Pull tables + their engines.
-		tableRows, err := conn.Query(r.Context(), `
+		tableRows, err := conn.Query(ctx, `
 			SELECT name, engine FROM system.tables
 			WHERE database = currentDatabase()
 			  AND name NOT LIKE '.inner%'
@@ -330,7 +330,7 @@ func (s *Server) sqlSchema(w http.ResponseWriter, r *http.Request) {
 			out = append(out, t)
 		}
 		// Pull every column in one shot, then bucket by table.
-		colRows, err := conn.Query(r.Context(), `
+		colRows, err := conn.Query(ctx, `
 			SELECT table, name, type
 			FROM system.columns
 			WHERE database = currentDatabase()

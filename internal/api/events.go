@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,8 +30,8 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	// burst without serving stale-to-the-second markers.
 	key := fmt.Sprintf("events:%d:%d:%s:%s:%d",
 		f.From.Unix()/60, f.To.Unix()/60, f.Service, f.Kind, f.Limit)
-	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
-		evs, err := s.store.ListEvents(r.Context(), f)
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
+		evs, err := s.store.ListEvents(ctx, f)
 		if err != nil {
 			return nil, err
 		}

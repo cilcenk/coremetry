@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -74,8 +75,8 @@ func (s *Server) resolveMetric(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("metric-resolve:m=%s:from=%d:to=%d:step=%d:ex=%t",
 		m, from.Unix()/60, to.Unix()/60, step, exemplars)
 
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.ResolveMetricQuery(r.Context(), chstore.MetricResolveQuery{
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.ResolveMetricQuery(ctx, chstore.MetricResolveQuery{
 			Source:           desc.Source,
 			Metric:           desc.Metric,
 			Agg:              desc.Agg,

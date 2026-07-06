@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -127,7 +128,7 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 	windowSec := int(end.Sub(started).Seconds())
 
 	key := fmt.Sprintf("rootcause:%s:%d", id, end.Truncate(time.Minute).Unix())
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		out := RootCause{
 			ProblemID: p.ID, Service: p.Service, Metric: p.Metric,
 			StartedAt:    p.StartedAt,
@@ -136,7 +137,7 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 			Correlations: []chstore.ChangedService{},
 		}
 		// Recent deploy — reuse the same enrichment the /problems list uses.
-		if enr := s.store.EnrichProblemsWithDeploys(r.Context(), []chstore.Problem{*p}, 30*time.Minute); len(enr) == 1 {
+		if enr := s.store.EnrichProblemsWithDeploys(ctx, []chstore.Problem{*p}, 30*time.Minute); len(enr) == 1 {
 			out.RecentDeploy = enr[0].RecentDeploy
 		}
 
@@ -145,7 +146,7 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if cs, e := s.store.GetCorrelatedChanges(r.Context(), started, windowSec, windowSec*4); e == nil {
+			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil {
 				out.Correlations = cs
 			}
 		}()
@@ -153,7 +154,7 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if br, e := s.store.GetServiceBlastRadius(r.Context(), p.Service, end.Sub(started)); e == nil {
+			if br, e := s.store.GetServiceBlastRadius(ctx, p.Service, end.Sub(started)); e == nil {
 				out.BlastRadius = &br
 			}
 		}()
@@ -161,7 +162,7 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if ex, e := s.store.FindExemplar(r.Context(), chstore.ExemplarReq{
+			if ex, e := s.store.FindExemplar(ctx, chstore.ExemplarReq{
 				Service: p.Service, From: started, To: end,
 				Kind: exemplarKindForMetric(p.Metric),
 			}); e == nil {
@@ -182,7 +183,7 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 					{Key: "service.name", Op: "=", Values: []string{p.Service}},
 					{Key: "status_code", Op: "=", Values: []string{"error"}},
 				}
-				if bu, e := s.store.BubbleUp(r.Context(), baseline, selection, started, end); e == nil {
+				if bu, e := s.store.BubbleUp(ctx, baseline, selection, started, end); e == nil {
 					out.BubbleUp = bu
 				}
 			}()
@@ -232,7 +233,7 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 	exKind := exemplarKindForAnomaly(ev.Kind)
 
 	key := fmt.Sprintf("anomaly-rootcause:%s:%d", id, end.Truncate(time.Minute).Unix())
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		out := AnomalyRootCause{
 			RootCause: RootCause{
 				ProblemID: "", // anomaly-anchored — no parent Problem
@@ -248,7 +249,7 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 			Pattern:     ev.Pattern,
 		}
 		// Recent deploy — reuse the SAME enrichment the /anomalies list uses.
-		if enr := s.store.EnrichAnomaliesWithDeploys(r.Context(), []chstore.AnomalyEvent{*ev}, 30*time.Minute); len(enr) == 1 {
+		if enr := s.store.EnrichAnomaliesWithDeploys(ctx, []chstore.AnomalyEvent{*ev}, 30*time.Minute); len(enr) == 1 {
 			out.RecentDeploy = enr[0].RecentDeploy
 		}
 
@@ -257,7 +258,7 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if cs, e := s.store.GetCorrelatedChanges(r.Context(), started, windowSec, windowSec*4); e == nil {
+			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil {
 				out.Correlations = cs
 			}
 		}()
@@ -265,7 +266,7 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if br, e := s.store.GetServiceBlastRadius(r.Context(), ev.Service, end.Sub(started)); e == nil {
+			if br, e := s.store.GetServiceBlastRadius(ctx, ev.Service, end.Sub(started)); e == nil {
 				out.BlastRadius = &br
 			}
 		}()
@@ -285,7 +286,7 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 			if ev.Kind == "trace_op" {
 				op = ev.Pattern // scope the exemplar to the anomalous operation
 			}
-			if ex, e := s.store.FindExemplar(r.Context(), chstore.ExemplarReq{
+			if ex, e := s.store.FindExemplar(ctx, chstore.ExemplarReq{
 				Service: ev.Service, Operation: op, From: started, To: end, Kind: exKind,
 			}); e == nil {
 				out.Exemplar = ex
@@ -305,7 +306,7 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 					{Key: "service.name", Op: "=", Values: []string{ev.Service}},
 					{Key: "status_code", Op: "=", Values: []string{"error"}},
 				}
-				if bu, e := s.store.BubbleUp(r.Context(), baseline, selection, started, end); e == nil {
+				if bu, e := s.store.BubbleUp(ctx, baseline, selection, started, end); e == nil {
 					out.BubbleUp = bu
 				}
 			}()
@@ -419,7 +420,7 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 	// expensive — a 10m TTL lets concurrent triage clicks share one trip while
 	// the version guarantees freshness on re-rank.
 	key := fmt.Sprintf("rootcause-explain:%s:%s:%d", anchorKind, id, h.Version)
-	s.serveCached(w, r, key, 10*time.Minute, func() (any, error) {
+	s.serveCached(w, r, key, 10*time.Minute, func(ctx context.Context) (any, error) {
 		prose, err := s.copilotExplain(r, copilot.SystemPromptRootCauseNarration(), buildRootCausePrompt(h))
 		if err != nil {
 			return nil, err

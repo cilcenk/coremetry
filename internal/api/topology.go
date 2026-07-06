@@ -70,10 +70,10 @@ func (s *Server) getTopology(w http.ResponseWriter, r *http.Request) {
 	// must not serve the pre-edit graph for the TTL).
 	hidPats := s.topologyHiddenPatterns(r.Context())
 	key := fmt.Sprintf("topology-op:root=%s:op=%s:depth=%d:from=%d:to=%d:hid=%s", root, rootOp, depth, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), hiddenDigest(hidPats))
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// Read from the pre-aggregated op-edges table instead of
 		// the live spans self-join. Same shape, 1000× cheaper.
-		allEdges, err := s.store.ReadTopologyOpEdgesAgg(r.Context(), from, to, edgeCap)
+		allEdges, err := s.store.ReadTopologyOpEdgesAgg(ctx, from, to, edgeCap)
 		if err != nil {
 			return nil, err
 		}
@@ -534,13 +534,13 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("topology-service:from=%d:to=%d:noise=%v:mp=%.2f:cmp=%v:top=%d:focus=%s:hops=%d:bc=%v:hid=%s",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
 		noiseShow, minCallPct, comparePrior, topN, focusSvc, focusHops, broadcastShow, hiddenDigest(hidPats))
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// Read from the topology_edges_5m pre-aggregated table
 		// (filled by the background aggregator goroutine every
 		// 5 min). The live self-join path used to run here is
 		// untenable at production scale — see WriteTopologyBucket
 		// for the actual aggregation query.
-		edges, err := s.store.ReadServiceTopologyAgg(r.Context(), from, to, edgeCap)
+		edges, err := s.store.ReadServiceTopologyAgg(ctx, from, to, edgeCap)
 		if err != nil {
 			return nil, err
 		}
@@ -564,7 +564,7 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		// edges without trend data rather than 500'ing.
 		if comparePrior && len(edges) > 0 {
 			dur := to.Sub(from)
-			priorEdges, perr := s.store.ReadServiceTopologyAgg(r.Context(), from.Add(-dur), from, edgeCap)
+			priorEdges, perr := s.store.ReadServiceTopologyAgg(ctx, from.Add(-dur), from, edgeCap)
 			if perr == nil {
 				type k struct{ p, c, pr string }
 				idx := make(map[k]*chstore.ServiceTopologyEdge, len(priorEdges))
@@ -722,8 +722,8 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		// rendered. Soft-fail: a CH error on either lookup
 		// leaves nodes un-enriched but doesn't blank the
 		// diagram.
-		nsMap, _ := s.store.GetServiceNamespaces(r.Context(), time.Hour)
-		probMap, _ := s.store.GetOpenProblemCountsByService(r.Context())
+		nsMap, _ := s.store.GetServiceNamespaces(ctx, time.Hour)
+		probMap, _ := s.store.GetOpenProblemCountsByService(ctx)
 		for i := range nodesOut {
 			if nodesOut[i].Kind != "service" {
 				continue
@@ -967,12 +967,12 @@ func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 1*time.Hour)
 	top := parseInt(r.URL.Query().Get("top"), 20)
 	key := fmt.Sprintf("topology-flows:from=%d:to=%d:top=%d", from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), top)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// Read from the pre-aggregated table (v0.5.112). The live
 		// self-join path used to run here would intermittently
 		// timeout on high-cardinality installs; the agg table is
 		// filled by the same 5-min topology-agg goroutine.
-		flows, err := s.store.ReadRootFlowsAgg(r.Context(), from, to, top)
+		flows, err := s.store.ReadRootFlowsAgg(ctx, from, to, top)
 		if err != nil {
 			return nil, err
 		}
@@ -992,7 +992,7 @@ func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 					RootOp:      f.RootOp,
 				})
 			}
-			if lat, err := s.store.ComputeFlowsLatencyP99(r.Context(), from, to, sigs); err == nil {
+			if lat, err := s.store.ComputeFlowsLatencyP99(ctx, from, to, sigs); err == nil {
 				for i := range flows {
 					flows[i].P99Ns = lat[flows[i].RootService+"\x00"+flows[i].RootOp]
 				}
@@ -1001,7 +1001,7 @@ func (s *Server) getRootFlows(w http.ResponseWriter, r *http.Request) {
 		// v0.7.39 — total distinct flows in the window so the UI can show
 		// "showing N of M flows" and offer to raise ?top. Soft-fail: a count
 		// error just leaves TotalFlows 0 (no banner) rather than 500'ing.
-		total, _ := s.store.CountRootFlows(r.Context(), from, to)
+		total, _ := s.store.CountRootFlows(ctx, from, to)
 		return FlowsResponse{Flows: flows, From: from.UnixNano(), To: to.UnixNano(), TotalFlows: total}, nil
 	})
 }
@@ -1024,8 +1024,8 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("topology-flow:rs=%s:ro=%s:from=%d:to=%d:hid=%s",
 		rootService, rootOp,
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), hiddenDigest(hidPats))
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		edges, err := s.store.GetFlowTopology(r.Context(), from, to, rootService, rootOp, 5000)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		edges, err := s.store.GetFlowTopology(ctx, from, to, rootService, rootOp, 5000)
 		if err != nil {
 			return nil, err
 		}
@@ -1132,8 +1132,8 @@ func (s *Server) getTopologyEdgeInstances(w http.ResponseWriter, r *http.Request
 	key := fmt.Sprintf("topology-edge-instances:p=%s:s=%s:k=%s:from=%d:to=%d",
 		parent, system, kind,
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		instances, err := s.store.GetEdgeInstances(r.Context(), parent, system, kind, from, to, 50)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		instances, err := s.store.GetEdgeInstances(ctx, parent, system, kind, from, to, 50)
 		if err != nil {
 			return nil, err
 		}
@@ -1156,8 +1156,8 @@ func (s *Server) getTopologyOps(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := parseFromTo(r, 1*time.Hour)
 	key := fmt.Sprintf("topology-ops:svc=%s:from=%d:to=%d", service, from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		ops, err := s.store.ListOpsForService(r.Context(), service, from, to)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		ops, err := s.store.ListOpsForService(ctx, service, from, to)
 		if err != nil {
 			return nil, err
 		}

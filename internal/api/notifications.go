@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -32,8 +33,8 @@ func (s *Server) listNotificationLog(w http.ResponseWriter, r *http.Request) {
 	// while the 15s TTL keeps it near-live.
 	key := fmt.Sprintf("notiflog:%d:%d:%s:%d:%d",
 		from.Unix()/60, to.Unix()/60, kind, limit, offset)
-	s.serveCached(w, r, key, 15*time.Second, func() (any, error) {
-		logs, err := s.store.ListNotificationLog(r.Context(), from, to, kind, limit, offset)
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
+		logs, err := s.store.ListNotificationLog(ctx, from, to, kind, limit, offset)
 		if err != nil {
 			return nil, err
 		}

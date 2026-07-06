@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -243,7 +244,7 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 		"mk="+metricKind,
 	)
 
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		out := CorrelationContext{
 			Anchor: CorrelationAnchor{
 				Kind:    kind,
@@ -273,7 +274,7 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				spans, err := s.store.GetTrace(r.Context(), traceID)
+				spans, err := s.store.GetTrace(ctx, traceID)
 				if err != nil || len(spans) == 0 {
 					return
 				}
@@ -312,7 +313,7 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 				lf.From = from
 				lf.To = to
 			}
-			page, err := s.logs.Search(r.Context(), lf)
+			page, err := s.logs.Search(ctx, lf)
 			if err != nil || page == nil {
 				return
 			}
@@ -345,11 +346,11 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 					Service: service, From: from, To: to,
 					Kind: correlateExemplarKind(metricKind),
 				}
-				ex, err := s.store.FindExemplarRollup(r.Context(), req)
+				ex, err := s.store.FindExemplarRollup(ctx, req)
 				if err != nil || ex == nil {
 					// Rollup miss (pre-cutover / TTL'd / no error in window) →
 					// raw-spans fallback. Still a real representative trace.
-					ex, err = s.store.FindExemplar(r.Context(), req)
+					ex, err = s.store.FindExemplar(ctx, req)
 				}
 				if err == nil && ex != nil {
 					mu.Lock()

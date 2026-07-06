@@ -205,7 +205,16 @@ const staleFactor = 3
 //   - L2 Redis down: Get/Set return errors, we log + fall
 //     through to the live path (same as pre-tiered behaviour)
 //   - fn() error: surface to caller, do not poison the cache
-func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string, ttl time.Duration, fn func() (any, error)) {
+//
+// fn receives the context to query under (v0.8.319): the foreground
+// miss path passes the request context; the SWR background refresh
+// passes its own detached 20s context. Closures must use that ctx —
+// closing over r.Context() was the bug: by the time the background
+// refresh ran, the request had returned and its context was
+// cancelled, so EVERY refresh died with context.Canceled and stale
+// entries only advanced on a full miss at ≥3×TTL (a "30s-fresh"
+// surface frozen for 90s).
+func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string, ttl time.Duration, fn func(ctx context.Context) (any, error)) {
 	skipRead := r.URL.Query().Get("refresh") == "1"
 
 	if !skipRead {
@@ -252,7 +261,7 @@ func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string,
 
 	// ── Miss path with singleflight dedupe ────────────────────
 	v, err, _ := s.sf.Do(key, func() (any, error) {
-		return fn()
+		return fn(r.Context())
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -307,7 +316,7 @@ func (s *Server) storeCached(ctx context.Context, key string, body []byte, ttl t
 // refresh has already returned), updates both cache tiers.
 // Deduped via singleflight under the cache key so concurrent
 // stale-hits don't fan out into N parallel CH queries.
-func (s *Server) refreshKey(key string, ttl time.Duration, fn func() (any, error)) {
+func (s *Server) refreshKey(key string, ttl time.Duration, fn func(ctx context.Context) (any, error)) {
 	s.sf.Do(key, func() (any, error) {
 		// Defensive timeout — same as the warmer's queryBudg.
 		// A refresh that hangs longer than this would block
@@ -315,7 +324,11 @@ func (s *Server) refreshKey(key string, ttl time.Duration, fn func() (any, error
 		// in the same window.
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		v, err := fn()
+		// v0.8.319 — the fresh context now actually reaches the
+		// upstream query. fn() used to close over the (already
+		// cancelled) request context, so every background refresh
+		// aborted with context.Canceled.
+		v, err := fn(ctx)
 		if err != nil {
 			log.Printf("[cache] refresh %s: %v", key, err)
 			return nil, err

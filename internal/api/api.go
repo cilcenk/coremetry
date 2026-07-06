@@ -1076,8 +1076,8 @@ func (s *Server) warmDependenciesCache() {
 func (s *Server) getClusters(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 24*time.Hour)
 	key := "clusters:" + cacheBucket(from, to)
-	s.serveCached(w, r, key, 5*time.Minute, func() (any, error) {
-		names, err := s.store.ListClusters(r.Context(), from, to)
+	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
+		names, err := s.store.ListClusters(ctx, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -1160,13 +1160,13 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
 	// filter, range). Refresh button on the page can ?refresh=1.
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// Resolve team filters → service-name allowlist via
 		// the catalog. Bounded by catalog size (~thousands),
 		// not span volume; effectively free.
 		var serviceIn []string
 		if ownerTeam != "" || sreTeam != "" {
-			catalog, cerr := s.store.ListServiceMetadata(r.Context())
+			catalog, cerr := s.store.ListServiceMetadata(ctx)
 			if cerr != nil {
 				return nil, fmt.Errorf("catalog: %w", cerr)
 			}
@@ -1198,9 +1198,9 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		var rows []chstore.ServiceSummary
 		var err error
 		if useMV {
-			rows, err = s.store.GetServicesAggFilteredIn(r.Context(), from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
+			rows, err = s.store.GetServicesAggFilteredIn(ctx, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
 		} else {
-			rows, err = s.store.GetServicesFilteredIn(r.Context(), since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster)
+			rows, err = s.store.GetServicesFilteredIn(ctx, since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster)
 		}
 		if err != nil {
 			return nil, err
@@ -1213,7 +1213,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		// errorRate + open-problem counts. Single FINAL scan
 		// over the problems table; bounded by status=open so
 		// the row count is tiny.
-		counts, perr := s.store.GetOpenProblemCountsByService(r.Context())
+		counts, perr := s.store.GetOpenProblemCountsByService(ctx)
 		if perr == nil {
 			for i := range rows {
 				c := counts[rows[i].Name]
@@ -1231,7 +1231,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		// path only (cheap uniqExact over service_summary_5m); on the raw/cluster
 		// path total stays absent and the UI degrades to First + Next/Prev.
 		if withTotal && useMV {
-			if total, terr := s.store.CountServicesAgg(r.Context(), from, to, nameMatch, serviceIn); terr == nil {
+			if total, terr := s.store.CountServicesAgg(ctx, from, to, nameMatch, serviceIn); terr == nil {
 				resp["total"] = total
 			}
 		}
@@ -1275,8 +1275,8 @@ func scoreHealth(svc *chstore.ServiceSummary, c chstore.OpenProblemCounts) (stri
 // Backed by ClickHouse system.parts metadata + the 5m span aggregate
 // MV so it stays sub-second even at 40M traces / day. Cached 60s.
 func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "system-stats", 60*time.Second, func() (any, error) {
-		st, err := s.store.GetSystemStats(r.Context())
+	s.serveCached(w, r, "system-stats", 60*time.Second, func(ctx context.Context) (any, error) {
+		st, err := s.store.GetSystemStats(ctx)
 		if err != nil || st == nil {
 			return st, err
 		}
@@ -1344,8 +1344,8 @@ func (s *Server) getCorrelations(w http.ResponseWriter, r *http.Request) {
 	// second click within the minute always hits Redis.
 	atBucketed := at.Truncate(time.Minute).Unix()
 	key := fmt.Sprintf("correlate:at=%d:w=%d:b=%d", atBucketed, windowSec, baselineSec)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetCorrelatedChanges(r.Context(), at, windowSec, baselineSec)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetCorrelatedChanges(ctx, at, windowSec, baselineSec)
 	})
 }
 
@@ -1358,11 +1358,11 @@ func (s *Server) getCorrelations(w http.ResponseWriter, r *http.Request) {
 // Cached 5s — the ops/sec gauge needs to feel live during incident
 // response. Cheap query (single INFO + DBSIZE round-trip).
 func (s *Server) getRedisStats(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "redis-stats", 5*time.Second, func() (any, error) {
+	s.serveCached(w, r, "redis-stats", 5*time.Second, func(ctx context.Context) (any, error) {
 		if s.cache == nil {
 			return cache.RedisStats{}, nil
 		}
-		return s.cache.Stats(r.Context())
+		return s.cache.Stats(ctx)
 	})
 }
 
@@ -1390,8 +1390,8 @@ func (s *Server) getCacheStats(w http.ResponseWriter, r *http.Request) {
 // result exposes which services / metric names exist (mild
 // information leak in multi-tenant deployments).
 func (s *Server) getCardinality(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "cardinality", 5*time.Minute, func() (any, error) {
-		return s.store.GetCardinality(r.Context())
+	s.serveCached(w, r, "cardinality", 5*time.Minute, func(ctx context.Context) (any, error) {
+		return s.store.GetCardinality(ctx)
 	})
 }
 
@@ -1408,8 +1408,8 @@ func (s *Server) getServiceClusterBreakdown(w http.ResponseWriter, r *http.Reque
 	name := r.PathValue("name")
 	from, to := parseFromTo(r, time.Hour)
 	key := fmt.Sprintf("service-clusters:%s:%s", name, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		rows, err := s.store.GetServiceClusterBreakdown(r.Context(), name, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		rows, err := s.store.GetServiceClusterBreakdown(ctx, name, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -1460,7 +1460,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 	// v0.5.36 extends stale-but-usable to 3 min. Combined
 	// with the v0.5.66 hover-prefetch this means most
 	// operator clicks within their session land on a HIT-L1.
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		type result struct {
 			Service    *chstore.ServiceSummary    `json:"service"`
 			Problems   []chstore.Problem          `json:"problems"`
@@ -1480,7 +1480,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			list, err := s.store.GetServicesAggFiltered(r.Context(), from, to,
+			list, err := s.store.GetServicesAggFiltered(ctx, from, to,
 				svc, "spanCount", "desc", 1, 0)
 			if err != nil {
 				log.Printf("[svc-bundle] services %s: %v", svc, err)
@@ -1496,7 +1496,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			probs, err := s.store.ListProblems(r.Context(), chstore.ProblemFilter{
+			probs, err := s.store.ListProblems(ctx, chstore.ProblemFilter{
 				Service: svc,
 				Limit:   50,
 			})
@@ -1509,7 +1509,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			ops, err := s.store.GetOperationSummary(r.Context(), svc, since, from, to, false)
+			ops, err := s.store.GetOperationSummary(ctx, svc, since, from, to, false)
 			if err != nil {
 				log.Printf("[svc-bundle] operations %s: %v", svc, err)
 				return
@@ -1519,7 +1519,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			deps, err := s.store.GetServiceDeploys(r.Context(), svc, from, to)
+			deps, err := s.store.GetServiceDeploys(ctx, svc, from, to)
 			if err != nil {
 				log.Printf("[svc-bundle] deploys %s: %v", svc, err)
 				return
@@ -1550,9 +1550,9 @@ func (s *Server) getServiceStructure(w http.ResponseWriter, r *http.Request) {
 	// CH round-trip. A range or sample-count change still misses.
 	key := fmt.Sprintf("service-structure:svc=%s:since=%s:samples=%d:int=%t",
 		name, since, samples, internalOnly)
-	s.serveCached(w, r, key, time.Hour, func() (any, error) {
+	s.serveCached(w, r, key, time.Hour, func(ctx context.Context) (any, error) {
 		roots, totalSpans, sampledFrom, err := s.store.AggregateServiceStructure(
-			r.Context(), name, since, samples, internalOnly)
+			ctx, name, since, samples, internalOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -1584,8 +1584,8 @@ func (s *Server) getServiceInfraMetrics(w http.ResponseWriter, r *http.Request) 
 	}
 	since := parseDuration(r.URL.Query().Get("since"), 15*time.Minute)
 	key := fmt.Sprintf("infra-metrics:svc=%s:since=%s", name, since)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetInfraMetrics(r.Context(), name, since, 0)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetInfraMetrics(ctx, name, since, 0)
 	})
 }
 
@@ -1603,8 +1603,8 @@ func (s *Server) getServiceInstances(w http.ResponseWriter, r *http.Request) {
 	to := time.Now()
 	from := to.Add(-since)
 	key := fmt.Sprintf("svc-instances:svc=%s:since=%s", name, since)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.ServiceInstances(r.Context(), name, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.ServiceInstances(ctx, name, from, to)
 	})
 }
 
@@ -1626,8 +1626,8 @@ func (s *Server) getServiceRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := fmt.Sprintf("service-runtime:svc=%s", name)
-	s.serveCached(w, r, key, 5*time.Minute, func() (any, error) {
-		return s.store.GetServiceRuntime(r.Context(), name)
+	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
+		return s.store.GetServiceRuntime(ctx, name)
 	})
 }
 
@@ -1639,8 +1639,8 @@ func (s *Server) getServiceRuntime(w http.ResponseWriter, r *http.Request) {
 //
 // Cached 5 min — runtime changes only on deploy.
 func (s *Server) getAllServiceRuntimes(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "all-service-runtimes", 5*time.Minute, func() (any, error) {
-		return s.store.GetAllServiceRuntimes(r.Context())
+	s.serveCached(w, r, "all-service-runtimes", 5*time.Minute, func(ctx context.Context) (any, error) {
+		return s.store.GetAllServiceRuntimes(ctx)
 	})
 }
 
@@ -1711,8 +1711,8 @@ func (s *Server) putServiceMetadata(w http.ResponseWriter, r *http.Request) {
 // drives the owner-team chip on the /services list without
 // fanning out N requests at billion-span scale.
 func (s *Server) listServiceMetadata(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "services-metadata", 60*time.Second, func() (any, error) {
-		return s.store.ListServiceMetadata(r.Context())
+	s.serveCached(w, r, "services-metadata", 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.ListServiceMetadata(ctx)
 	})
 }
 
@@ -1748,8 +1748,8 @@ func (s *Server) getServiceDeploys(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("service-deploys:svc=%s:from=%d:to=%d",
 		name, from.UnixNano(), to.UnixNano())
-	s.serveCached(w, r, key, time.Minute, func() (any, error) {
-		return s.store.GetServiceDeploys(r.Context(), name, from, to)
+	s.serveCached(w, r, key, time.Minute, func(ctx context.Context) (any, error) {
+		return s.store.GetServiceDeploys(ctx, name, from, to)
 	})
 }
 
@@ -1794,8 +1794,8 @@ func (s *Server) getDeployHistory(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("deploy-history:svc=%s:lim=%d:back=%d:win=%d",
 		name, limit, lookbackHours, windowSec)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		deploys, err := s.store.GetServiceDeploys(r.Context(), name, from, to)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		deploys, err := s.store.GetServiceDeploys(ctx, name, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -1815,7 +1815,7 @@ func (s *Server) getDeployHistory(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			imp, err := s.store.ComputeDeployImpact(
-				r.Context(), name, d.Version, d.TimeUnixNs, windowSec)
+				ctx, name, d.Version, d.TimeUnixNs, windowSec)
 			if err != nil {
 				// Best-effort — failed impact compute doesn't
 				// hide the deploy itself; UI shows "—" deltas.
@@ -1849,8 +1849,8 @@ func (s *Server) getServiceRollouts(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("service-rollouts:svc=%s:from=%d:to=%d",
 		name, from.UnixNano(), to.UnixNano())
-	s.serveCached(w, r, key, time.Minute, func() (any, error) {
-		res, err := s.store.GetServiceRollouts(r.Context(), name, from, to)
+	s.serveCached(w, r, key, time.Minute, func(ctx context.Context) (any, error) {
+		res, err := s.store.GetServiceRollouts(ctx, name, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -1863,7 +1863,7 @@ func (s *Server) getServiceRollouts(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			imp, err := s.store.ComputeDeployImpact(
-				r.Context(), name, res.Rollouts[i].VersionAfter,
+				ctx, name, res.Rollouts[i].VersionAfter,
 				res.Rollouts[i].TimeUnixNs, 600)
 			if err != nil {
 				log.Printf("[rollouts] impact %s @%d: %v", name, res.Rollouts[i].TimeUnixNs, err)
@@ -1895,8 +1895,8 @@ func (s *Server) getServiceDBQueries(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	key := fmt.Sprintf("service-db-queries:svc=%s:from=%d:to=%d:limit=%d",
 		name, from.UnixNano(), to.UnixNano(), limit)
-	s.serveCached(w, r, key, time.Minute, func() (any, error) {
-		return s.store.GetTopDBQueries(r.Context(), name, from, to, limit)
+	s.serveCached(w, r, key, time.Minute, func(ctx context.Context) (any, error) {
+		return s.store.GetTopDBQueries(ctx, name, from, to, limit)
 	})
 }
 
@@ -1914,8 +1914,8 @@ func (s *Server) getSlowQueriesGlobal(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("slow-queries-global:from=%d:to=%d:sys=%s:limit=%d",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
 		dbSystem, limit)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		return s.store.GetSlowQueriesGlobal(r.Context(), from, to, dbSystem, limit)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetSlowQueriesGlobal(ctx, from, to, dbSystem, limit)
 	})
 }
 
@@ -1947,13 +1947,13 @@ func (s *Server) getServiceBacktrace(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("service-backtrace:svc=%s:since=%s:from=%s:to=%s:limit=%d",
 		name, q.Get("since"), q.Get("from"), q.Get("to"), limit)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// v0.5.368 — read from service_callers_5m MV. The
 		// raw-spans ServiceCallers() runs a self-join that's
 		// unviable at billion-span scale; topology aggregator
 		// now pre-aggregates the rollup every 5 min so reads
 		// stay sub-second regardless of fleet size.
-		rows, err := s.store.ReadServiceCallersAgg(r.Context(), name, from, to, limit)
+		rows, err := s.store.ReadServiceCallersAgg(ctx, name, from, to, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -2001,8 +2001,8 @@ func (s *Server) getServiceBlastRadius(w http.ResponseWriter, r *http.Request) {
 		since = 24 * time.Hour
 	}
 	key := fmt.Sprintf("service-blast-radius:svc=%s:since=%s", name, since)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		return s.store.GetServiceBlastRadius(r.Context(), name, since)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetServiceBlastRadius(ctx, name, since)
 	})
 }
 
@@ -2016,9 +2016,9 @@ func (s *Server) getServiceNeighbors(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("service-neighbors:svc=%s:since=%s:samples=%d",
 		name, since, samples)
-	s.serveCached(w, r, key, time.Hour, func() (any, error) {
+	s.serveCached(w, r, key, time.Hour, func(ctx context.Context) (any, error) {
 		upstream, downstream, sampledFrom, totalSpans, err := s.store.ServiceNeighbors(
-			r.Context(), name, since, samples)
+			ctx, name, since, samples)
 		if err != nil {
 			return nil, err
 		}
@@ -2065,8 +2065,8 @@ func (s *Server) getServiceAttrs(w http.ResponseWriter, r *http.Request) {
 	samples := parseInt(q.Get("samples"), 5)
 	key := fmt.Sprintf("service-attrs:svc=%s:from=%s:to=%s:top=%d:s=%d",
 		name, cacheBucket(from, to), cacheBucket(from, to), top, samples)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		rows, err := s.store.GetServiceAttrs(r.Context(), name, from, to, top, samples)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		rows, err := s.store.GetServiceAttrs(ctx, name, from, to, top, samples)
 		if err != nil {
 			return nil, err
 		}
@@ -2115,8 +2115,8 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	// (/orders/8421) into a normalized signature (/orders/:id) at read time.
 	bySignature := q.Get("groupBy") == "signature"
 	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d:cmp=%v:sig=%v", cacheBucket(from, to), service, search, cluster, limit, compare, bySignature)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		rows, err := s.store.GetEndpoints(r.Context(), from, to, service, search, cluster, limit, bySignature)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		rows, err := s.store.GetEndpoints(ctx, from, to, service, search, cluster, limit, bySignature)
 		if err != nil {
 			return nil, err
 		}
@@ -2128,7 +2128,7 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		dur := to.Sub(from)
 		priorFrom := from.Add(-dur)
 		priorTo := from
-		priorRows, err := s.store.GetEndpoints(r.Context(), priorFrom, priorTo, service, search, cluster, limit, bySignature)
+		priorRows, err := s.store.GetEndpoints(ctx, priorFrom, priorTo, service, search, cluster, limit, bySignature)
 		if err != nil {
 			// Prior failure is non-fatal — return current rows
 			// without trends rather than 500'ing the page.
@@ -2204,13 +2204,13 @@ func (s *Server) getServiceMap(w http.ResponseWriter, r *http.Request) {
 
 	hidPats := s.topologyHiddenPatterns(r.Context())
 	key := fmt.Sprintf("service-map:since=%s:samples=%d:diff=%s:topN=%d:hid=%s", since, samples, diffStr, topN, hiddenDigest(hidPats))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		var m *chstore.ServiceMap
 		var err error
 		if diff > 0 {
-			m, err = s.store.GetServiceMapWithDiff(r.Context(), since, samples, diff, diffStr)
+			m, err = s.store.GetServiceMapWithDiff(ctx, since, samples, diff, diffStr)
 		} else {
-			m, err = s.store.GetServiceMap(r.Context(), since, samples)
+			m, err = s.store.GetServiceMap(ctx, since, samples)
 		}
 		if err != nil {
 			return nil, err
@@ -2239,7 +2239,7 @@ func (s *Server) getServiceMap(w http.ResponseWriter, r *http.Request) {
 		// dominant db.name enrichment (best-effort, MV yolundaki v0.8.37
 		// davranışının aynısı). Prune SONRASI: yalnız görünen düğümler.
 		now := time.Now()
-		if dbNames, err := s.store.DbNamesBySystem(r.Context(), now.Add(-since), now); err == nil {
+		if dbNames, err := s.store.DbNamesBySystem(ctx, now.Add(-since), now); err == nil {
 			s.store.AnnotateDbNames(m.Nodes, dbNames)
 		}
 		return m, nil
@@ -2287,8 +2287,8 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(sortedSvcs)
 	key := fmt.Sprintf("services-spark:window=%s:svcs=%s",
 		cacheBucket(from, to), strings.Join(sortedSvcs, ","))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		rows, err := s.store.GetServiceSummary5mFor(r.Context(), wantSvcs, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		rows, err := s.store.GetServiceSummary5mFor(ctx, wantSvcs, from, to)
 		if err != nil {
 			return nil, err
 		}
@@ -2352,8 +2352,8 @@ func (s *Server) getOperationNames(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fmt.Sprintf("op-names:svc=%s:q=%s:limit=%d:offset=%d", service, pattern, limit, offset)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		names, total, err := s.store.ListOperationNames(r.Context(), service, pattern, limit, offset)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		names, total, err := s.store.ListOperationNames(ctx, service, pattern, limit, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -2386,8 +2386,8 @@ func (s *Server) getServiceNames(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fmt.Sprintf("svc-names:q=%s:limit=%d:offset=%d", pattern, limit, offset)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		names, total, err := s.store.ListServiceNames(r.Context(), pattern, limit, offset)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		names, total, err := s.store.ListServiceNames(ctx, pattern, limit, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -2433,7 +2433,7 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("attr-keys:since=%s:limit=%d:f=%s:fg=%s",
 		q.Get("since"), limit, rawFilters, rawFilterGroup)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// Filter-derived WHERE fragment via the public chstore helper so we
 		// don't reach into the package's internal whereClause type. AND-merged
 		// with the time floor inside attributeKeysSQL for each union branch.
@@ -2461,7 +2461,7 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 		args = append(args, filterArgs...)
 		args = append(args, limit)
 
-		rows, err := s.store.Conn().Query(r.Context(), sqlText, args...)
+		rows, err := s.store.Conn().Query(ctx, sqlText, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -2596,7 +2596,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheKey := fmt.Sprintf("attr-values:%s:since=%s:from=%s:to=%s:limit=%d:q=%s", rawKey, q.Get("since"), q.Get("from"), q.Get("to"), limit, pattern)
-	s.serveCached(w, r, cacheKey, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, cacheKey, 60*time.Second, func(ctx context.Context) (any, error) {
 		// Decide projection. The HTTP-layer attribute-key picker is
 		// allowed to send `resource.X` and `span.X` prefixes; strip
 		// them to map to the underlying column / array.
@@ -2690,7 +2690,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		rows, err := s.store.Conn().Query(r.Context(), sql, args...)
+		rows, err := s.store.Conn().Query(ctx, sql, args...)
 		if err != nil { return nil, err }
 		defer rows.Close()
 		type valRow struct {
@@ -2735,8 +2735,8 @@ func (s *Server) getServiceGraph(w http.ResponseWriter, r *http.Request) {
 	// re-render of the same selection into one CH round-trip.
 	key := fmt.Sprintf("service-graph:svc=%s:since=%s:from=%s:to=%s:topN=%d",
 		service, q.Get("since"), q.Get("from"), q.Get("to"), topN)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetServiceGraphTopN(r.Context(), service, since, from, to, topN)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetServiceGraphTopN(ctx, service, since, from, to, topN)
 	})
 }
 
@@ -2746,8 +2746,8 @@ func (s *Server) getOperations(w http.ResponseWriter, r *http.Request) {
 	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
 	key := fmt.Sprintf("operations:svc=%s:since=%s:from=%s:to=%s",
 		q.Get("service"), q.Get("since"), q.Get("from"), q.Get("to"))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetOperations(r.Context(), q.Get("service"), since, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetOperations(ctx, q.Get("service"), since, from, to)
 	})
 }
 
@@ -2839,8 +2839,8 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	// relative window stable within the TTL (do NOT key on parsed now()-
 	// ticking time, the v0.5.184 class).
 	key := "traces:" + r.URL.RawQuery
-	s.serveCached(w, r, key, 20*time.Second, func() (any, error) {
-		traces, total, hasMore, err := s.store.GetTraces(r.Context(), f)
+	s.serveCached(w, r, key, 20*time.Second, func(ctx context.Context) (any, error) {
+		traces, total, hasMore, err := s.store.GetTraces(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -3010,8 +3010,8 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 	// string; GET, no body/role variance). raw from/to keep a
 	// relative window stable within the TTL (v0.5.184 class).
 	key := "traces-agg:" + r.URL.RawQuery
-	s.serveCached(w, r, key, 20*time.Second, func() (any, error) {
-		return s.store.GetTraceAggregate(r.Context(), f)
+	s.serveCached(w, r, key, 20*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetTraceAggregate(ctx, f)
 	})
 }
 
@@ -3087,8 +3087,8 @@ func (s *Server) getTracesByRelation(w http.ResponseWriter, r *http.Request) {
 		kind, rf.Direct, limit, q.Get("from"), q.Get("to"),
 		jsonSetDigest(q.Get("parent")), jsonSetDigest(q.Get("child")))
 
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		ids, hasMore, err := s.store.GetTracesByRelation(r.Context(), rf)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		ids, hasMore, err := s.store.GetTracesByRelation(ctx, rf)
 		if err != nil {
 			return nil, err
 		}
@@ -3107,7 +3107,7 @@ func (s *Server) getTracesByRelation(w http.ResponseWriter, r *http.Request) {
 			Limit:     len(ids),
 			CountMode: "skip",
 		}
-		traces, _, _, terr := s.store.GetTraces(r.Context(), tf)
+		traces, _, _, terr := s.store.GetTraces(ctx, tf)
 		if terr != nil {
 			return nil, terr
 		}
@@ -3126,8 +3126,8 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 	// short TTL. `source` distinguishes CH-resident vs Tempo-
 	// fallback so the frontend can banner-tag the result.
 	key := "trace:" + id
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		spans, err := s.store.GetTrace(r.Context(), id)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		spans, err := s.store.GetTrace(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -3140,7 +3140,7 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 		// would have without the fallback, and a [tempo] log line
 		// fingers the misconfig.
 		if s.tempo != nil && s.tempo.Configured() {
-			tspans, terr := s.tempo.LookupTrace(r.Context(), id)
+			tspans, terr := s.tempo.LookupTrace(ctx, id)
 			if terr != nil {
 				log.Printf("[tempo] lookup %q: %v", id, terr)
 			} else if len(tspans) > 0 {
@@ -3156,7 +3156,7 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 		// trace and surface an honest "aged out of raw spans"
 		// hint with the aggregate stats so the operator gets
 		// SOMETHING useful instead of a blank pane.
-		if stub, ok := s.store.GetTraceAggregateStub(r.Context(), id); ok {
+		if stub, ok := s.store.GetTraceAggregateStub(ctx, id); ok {
 			return map[string]any{
 				"traceId":  id,
 				"spans":    []any{},
@@ -3351,8 +3351,8 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 	// Old shape — no pagination params → return MetricInfo[]
 	// like pre-v0.5.181 callers expect.
 	if pattern == "" && limit == 0 && offset == 0 {
-		s.serveCached(w, r, "metric-names:svc="+svc, 60*time.Second, func() (any, error) {
-			return s.store.GetMetricNames(r.Context(), svc)
+		s.serveCached(w, r, "metric-names:svc="+svc, 60*time.Second, func(ctx context.Context) (any, error) {
+			return s.store.GetMetricNames(ctx, svc)
 		})
 		return
 	}
@@ -3360,8 +3360,8 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 		limit = 1000
 	}
 	key := fmt.Sprintf("metric-names:svc=%s:q=%s:limit=%d:offset=%d", svc, pattern, limit, offset)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		names, total, err := s.store.ListMetricNames(r.Context(), svc, pattern, limit, offset)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		names, total, err := s.store.ListMetricNames(ctx, svc, pattern, limit, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -3409,8 +3409,8 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	to := parseTime(q.Get("to"))
 	key := fmt.Sprintf("metric-query:name=%s:svc=%s:agg=%s:step=%d:gb=%s:f=%s:from=%d:to=%d",
 		name, svc, agg, step, groupByRaw, filtersRaw, from.Unix()/60, to.Unix()/60)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.QueryMetric(r.Context(), chstore.MetricQueryFilter{
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.QueryMetric(ctx, chstore.MetricQueryFilter{
 			Name:        name,
 			Service:     svc,
 			Filters:     parseFilters(filtersRaw),
@@ -3438,8 +3438,8 @@ func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 	to := parseTime(q.Get("to"))
 	key := fmt.Sprintf("metric-hist:name=%s:svc=%s:step=%d:f=%s:from=%d:to=%d",
 		name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.QueryMetricHistogram(r.Context(), chstore.MetricQueryFilter{
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.QueryMetricHistogram(ctx, chstore.MetricQueryFilter{
 			Name:        name,
 			Service:     svc,
 			Filters:     parseFilters(filtersRaw),
@@ -3527,12 +3527,12 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 		from.Truncate(time.Minute).UnixNano(),
 		to.Truncate(time.Minute).UnixNano(),
 		top, wantSparkline)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// Probe the metric catalogue for the call/duration
 		// names actually flowing. One round-trip; tiny because
 		// metric column is LowCardinality.
 		var callsMetric, durationMetric string
-		probeRows, err := s.store.Conn().Query(r.Context(), `
+		probeRows, err := s.store.Conn().Query(ctx, `
 			SELECT DISTINCT metric
 			FROM metric_points
 			WHERE time >= ? AND time <= ?
@@ -3573,7 +3573,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 		// `from` to include the bucket overlapping the window
 		// (same alignment as service_summary_5m reads).
 		bucketStart := from.Truncate(5 * time.Minute)
-		topRows, err := s.store.Conn().Query(r.Context(), `
+		topRows, err := s.store.Conn().Query(ctx, `
 			SELECT service_name,
 			       sumMerge(calls_state)  AS calls,
 			       sumMerge(errors_state) AS errors
@@ -3637,7 +3637,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 			sparkArgs := []any{from.UnixNano(), bucketNs, bucketStart, to}
 			sparkArgs = append(sparkArgs, svcArgs...)
 			sparkArgs = append(sparkArgs, sparkBuckets)
-			sparkRows, serr := s.store.Conn().Query(r.Context(), `
+			sparkRows, serr := s.store.Conn().Query(ctx, `
 				WITH per_bin AS (
 				  SELECT service_name,
 				         intDiv(toUnixTimestamp(time_bucket) * 1000000000 - ?, ?) AS b,
@@ -3685,7 +3685,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 		if durationMetric != "" {
 			durArgs := []any{bucketStart, to}
 			durArgs = append(durArgs, svcArgs...)
-			durRows, derr := s.store.Conn().Query(r.Context(), `
+			durRows, derr := s.store.Conn().Query(ctx, `
 				SELECT service_name,
 				       sumMerge(sum_state) / nullIf(sumMerge(count_state), 0) AS avg_s,
 				       maxMerge(max_state)                                    AS max_s
@@ -3732,7 +3732,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 		if durationMetric != "" {
 			qArgs := []any{bucketStart, to}
 			qArgs = append(qArgs, svcArgs...)
-			qRows, qerr := s.store.Conn().Query(r.Context(), `
+			qRows, qerr := s.store.Conn().Query(ctx, `
 				SELECT service_name,
 				       anyMerge(bounds_state)    AS bounds,
 				       sumMapMerge(counts_state) AS counts_map
@@ -3959,8 +3959,8 @@ func (s *Server) spanFacets(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("facets:%s:%s:%d",
 		q.Get("dsl")+"|"+q.Get("filters")+"|"+q.Get("filterGroup"),
 		cacheBucket(from, to), topValues)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetSpanFacets(r.Context(), filters, root, from, to, topValues)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetSpanFacets(ctx, filters, root, from, to, topValues)
 	})
 }
 
@@ -3987,8 +3987,8 @@ func (s *Server) spanRepeats(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("repeats:%s:%s:%s:%d:%d:%s",
 		q.Get("dsl"), q.Get("filters"), strings.Join(groupBy, ","),
 		minRepeats, limit, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.QueryRepeatedSpans(r.Context(), chstore.RepeatedSpanFilter{
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.QueryRepeatedSpans(ctx, chstore.RepeatedSpanFilter{
 			Filters: filters, GroupBy: groupBy, MinRepeats: minRepeats,
 			From: from, To: to, Limit: limit,
 		})
@@ -4030,14 +4030,14 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 	// the traces-agg cache key); from/to are frontend-memoised so they don't
 	// tick now() and poison the key (v0.5.184 class).
 	key := "span-metric:" + r.URL.RawQuery
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.x — trim the wire payload on a high-cardinality groupBy. The
 		// frontend (PanelStack) only ever renders the top ≤TOP_N_MAX series by
 		// area, so returning thousands wastes wire + parse. QuerySpanMetricTopN
 		// keeps the top-50 by the SAME area metric and reports the pre-trim
 		// total so the "+N more" stays accurate. totalSeries omitted (== len)
 		// when no trim happened, keeping the response compact.
-		series, total, err := s.store.QuerySpanMetricTopN(r.Context(), f)
+		series, total, err := s.store.QuerySpanMetricTopN(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -4301,8 +4301,8 @@ func (s *Server) spanHeatmap(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("span-heatmap:window=%s:buckets=%d:filters=%s:dsl=%s",
 		cacheBucket(from, to), timeBuckets,
 		q.Get("filters"), q.Get("dsl"))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetLatencyHeatmap(r.Context(), filters, from, to, timeBuckets)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetLatencyHeatmap(ctx, filters, from, to, timeBuckets)
 	})
 }
 
@@ -4339,8 +4339,8 @@ func (s *Server) spanBubbleUp(w http.ResponseWriter, r *http.Request) {
 		cacheBucket(from, to),
 		q.Get("filters"), q.Get("dsl"),
 		q.Get("selFilters"), q.Get("selDsl"))
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		return s.store.BubbleUp(r.Context(), baseline, selection, from, to)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.BubbleUp(ctx, baseline, selection, from, to)
 	})
 }
 
@@ -4603,7 +4603,7 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 	fromKey, toKey := from.Truncate(time.Minute), to.Truncate(time.Minute)
 	key := fmt.Sprintf("profile-hotspots:%s:%s:%d:%d:%d:%d",
 		service, ptype, fromKey.UnixNano(), toKey.UnixNano(), limit, top)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		merged := &chstore.FlameNode{Name: "root"}
 		parsed, failed := 0, 0
 		var earliest, latest time.Time
@@ -4612,7 +4612,7 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 		// one payload instead of N × payload size. At 200 × 1MB
 		// the old slice approach burned ~200MB per request;
 		// streaming holds it to ~1MB peak.
-		err := s.store.IterateProfilePayloads(r.Context(), chstore.ProfileFilter{
+		err := s.store.IterateProfilePayloads(ctx, chstore.ProfileFilter{
 			Service:     service,
 			ProfileType: ptype,
 			From:        from,
@@ -4677,14 +4677,14 @@ func (s *Server) profileHotspotsForSpan(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	key := fmt.Sprintf("profile-hotspots-byspan:%s:%d:%d:%d", service, startNs, endNs, top)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		merged := &chstore.FlameNode{Name: "root"}
 		parsed, failed := 0, 0
 		// v0.5.340 — single CH round-trip + streaming parse.
 		// Replaces the prior N+1 pattern (FindProfilesForSpan +
 		// GetProfileBytes per row) and the per-request RAM
 		// double-buffer.
-		err := s.store.IterateProfilesForSpan(r.Context(), service,
+		err := s.store.IterateProfilesForSpan(ctx, service,
 			time.Unix(0, startNs), time.Unix(0, endNs),
 			func(p chstore.ProfilePayload) error {
 				flame, perr := profileconv.BuildFlameAuto(p.Bytes)
@@ -6226,8 +6226,8 @@ func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request
 // short TTL bounds staleness without thrashing on every poll.
 func (s *Server) getExceptionGroupOccurrences(w http.ResponseWriter, r *http.Request) {
 	fp := r.PathValue("fp")
-	s.serveCached(w, r, "exc-occ:"+fp, 30*time.Second, func() (any, error) {
-		return s.store.GetExceptionOccurrences(r.Context(), fp)
+	s.serveCached(w, r, "exc-occ:"+fp, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetExceptionOccurrences(ctx, fp)
 	})
 }
 
@@ -6296,8 +6296,8 @@ func (s *Server) svcSpanBreakdown(w http.ResponseWriter, r *http.Request) {
 		from = to.Add(-1 * time.Hour)
 	}
 	key := fmt.Sprintf("svc-breakdown:svc=%s:window=%s", svc, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetSpanBreakdown(r.Context(), svc, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetSpanBreakdown(ctx, svc, from, to)
 	})
 }
 
@@ -6335,8 +6335,8 @@ func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	// during normal traffic. Pre-v0.5.58 this was 15s which
 	// half-the-time forced an upstream re-fetch the operator
 	// would never notice if it was stale.
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.GetOperationSummary(r.Context(), svc, since, from, to, normalized)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetOperationSummary(ctx, svc, since, from, to, normalized)
 	})
 }
 
@@ -6392,8 +6392,8 @@ type publicStatusResp struct {
 }
 
 func (s *Server) publicStatus(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "public-status", 30*time.Second, func() (any, error) {
-		return s.collectPublicStatus(r.Context())
+	s.serveCached(w, r, "public-status", 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.collectPublicStatus(ctx)
 	})
 }
 
@@ -8176,8 +8176,8 @@ func (s *Server) countProblems(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("problems-count:status=%s:svc=%s:sev=%s",
 		f.Status, f.Service, f.Severity)
-	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
-		n, err := s.store.CountProblems(r.Context(), f)
+	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+		n, err := s.store.CountProblems(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -8201,8 +8201,8 @@ func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
 		Limit: 2000,
 	}
 	key := fmt.Sprintf("problems-buckets:status=%s:svc=%s", f.Status, f.Service)
-	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
-		probs, err := s.store.ListProblems(r.Context(), f)
+	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+		probs, err := s.store.ListProblems(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -8210,7 +8210,7 @@ func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
 		// the deploys enrich must run before the priority enrich.
 		// Runbooks/clusters enrichment skipped — buckets don't need
 		// either, and skipping the CH round-trips keeps this cheap.
-		probs = s.store.EnrichProblemsWithDeploys(r.Context(), probs, 30*time.Minute)
+		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
 		probs = chstore.EnrichProblemsWithPriority(probs)
 		sev := map[string]int{"critical": 0, "warning": 0, "info": 0}
 		prio := map[string]int{"P1": 0, "P2": 0, "P3": 0}
@@ -8265,8 +8265,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:limit=%d",
 		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Limit)
-	s.serveCached(w, r, key, 5*time.Second, func() (any, error) {
-		probs, err := s.store.ListProblems(r.Context(), f)
+	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+		probs, err := s.store.ListProblems(ctx, f)
 		if err != nil {
 			return nil, err
 		}
@@ -8277,18 +8277,18 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// operator who edits a runbook URL sees existing
 		// open problems pick up the new link on the next
 		// refresh.
-		probs = s.store.EnrichProblemsWithRunbooks(r.Context(), probs)
+		probs = s.store.EnrichProblemsWithRunbooks(ctx, probs)
 		// Owner/SRE team chips + the source of truth for the team
 		// filter below (v0.8.290) — pulled from the service catalog
 		// at read time, same batch-lookup shape as runbooks. Mirrors
 		// the inbox enrichment so /problems and /inbox agree on which
 		// team owns a firing service.
-		probs = s.store.EnrichProblemsWithTeams(r.Context(), probs)
+		probs = s.store.EnrichProblemsWithTeams(ctx, probs)
 		// Cluster chips — same read-time pattern. One batch
 		// CH query for the service→clusters map, soft-fails
 		// silently on error so a transient blip doesn't
 		// blank the page.
-		probs = s.store.EnrichProblemsWithClusters(r.Context(), probs, time.Hour)
+		probs = s.store.EnrichProblemsWithClusters(ctx, probs, time.Hour)
 		// Deploy correlation — attach the most recent
 		// service.version deploy within 30 min before each
 		// problem fired. UI renders a "deployed vX.Y · 6m
@@ -8299,7 +8299,7 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// receiving traffic, broke things" windows; longer
 		// causal chains stay invisible to keep the signal
 		// strong.
-		probs = s.store.EnrichProblemsWithDeploys(r.Context(), probs, 30*time.Minute)
+		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
 		// Priority bucket (v0.5.210) — pure function over the
 		// already-enriched values, no CH round-trip. Runs last
 		// so it can read RecentDeploy + value/threshold +
@@ -8346,7 +8346,7 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// priority filter so the IN-list only covers the visible rows. Soft-
 		// fails to the unenriched slice; rows with no hypothesis keep
 		// RootCause=nil (honest "no clear cause yet"). Read-only — no audit.
-		probs = s.store.EnrichProblemsWithRootCause(r.Context(), probs)
+		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		return probs, nil
 	})
 }
@@ -8567,8 +8567,8 @@ func (s *Server) getAlertBaseline(w http.ResponseWriter, r *http.Request) {
 		comparator = ">"
 	}
 	cacheKey := fmt.Sprintf("alert-baseline:%s:%s:%s", service, metric, comparator)
-	s.serveCached(w, r, cacheKey, 5*time.Minute, func() (any, error) {
-		b, err := s.store.GetMetricBaseline(r.Context(), service, metric, 7*24*time.Hour)
+	s.serveCached(w, r, cacheKey, 5*time.Minute, func(ctx context.Context) (any, error) {
+		b, err := s.store.GetMetricBaseline(ctx, service, metric, 7*24*time.Hour)
 		if err != nil {
 			return nil, err
 		}
@@ -8841,12 +8841,12 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getTraceOpAnomalies(w http.ResponseWriter, r *http.Request) {
 	window := parseDuration(r.URL.Query().Get("window"), 5*time.Minute)
 	key := fmt.Sprintf("anomaly:trace-ops:window=%s", window)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		hits, err := anomaly.DetectTraceOpAnomalies(r.Context(), s.store, window)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		hits, err := anomaly.DetectTraceOpAnomalies(ctx, s.store, window)
 		if err != nil {
 			return nil, err
 		}
-		muted, _ := s.store.ActiveSilencedFingerprints(r.Context())
+		muted, _ := s.store.ActiveSilencedFingerprints(ctx)
 		out := hits[:0]
 		for _, a := range hits {
 			fp := chstore.FingerprintAnomaly("trace_op", a.Operation, a.Service)
@@ -8870,22 +8870,22 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 	since := parseDuration(q.Get("since"), 24*time.Hour)
 	limit := parseInt(q.Get("limit"), 200)
 	key := fmt.Sprintf("anomaly:events:since=%s:limit=%d", since, limit)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		rows, err := s.store.ListAnomalyEvents(r.Context(), chstore.ListAnomalyEventsFilter{
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		rows, err := s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
 			SinceNs: time.Now().Add(-since).UnixNano(),
 			Limit:   limit,
 		})
 		if err != nil {
 			return nil, err
 		}
-		rows = s.store.EnrichAnomaliesWithClusters(r.Context(), rows, time.Hour)
+		rows = s.store.EnrichAnomaliesWithClusters(ctx, rows, time.Hour)
 		// v0.5.286 — attach the most recent deploy per service
 		// in the 30 min preceding each event's startedAt so the
 		// /anomalies page can answer "did this break because of a
 		// deploy?" without a context switch. Uses the v0.5.283
 		// effective-version chain (Helm labels, image tags) so
 		// installs with no service.version still correlate.
-		rows = s.store.EnrichAnomaliesWithDeploys(r.Context(), rows, 30*time.Minute)
+		rows = s.store.EnrichAnomaliesWithDeploys(ctx, rows, 30*time.Minute)
 		// rc #3 — attach the persisted root-cause top-suspect summary in
 		// ONE batch read (GetHypotheses) so each anomaly row renders the
 		// in-page ribbon without a per-row /rootcause fetch. Soft-fails to
@@ -8893,7 +8893,7 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 		// (honest "no clear cause yet" state). Stays inside serveCached —
 		// the existing key already hashes since+limit; this join is
 		// read-only, no new audit.
-		rows = s.store.EnrichAnomaliesWithRootCause(r.Context(), rows)
+		rows = s.store.EnrichAnomaliesWithRootCause(ctx, rows)
 		return rows, nil
 	})
 }
@@ -8938,19 +8938,19 @@ func (s *Server) getLogPatternAnomalies(w http.ResponseWriter, r *http.Request) 
 	// round-trips per TTL regardless of callers.
 	window := snapAnomalyWindow(parseDuration(r.URL.Query().Get("window"), 5*time.Minute))
 	key := fmt.Sprintf("anomaly:log-patterns:window=%s", window)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// v0.5.241 — pass the logstore (not chstore) so the
 		// detector runs against whichever backend is wired:
 		// CH path = match() + tokenbf prefilter; ES path =
 		// query_string token-OR.
-		hits, err := anomaly.DetectLogPatterns(r.Context(), s.logs, window)
+		hits, err := anomaly.DetectLogPatterns(ctx, s.logs, window)
 		if err != nil {
 			return nil, err
 		}
 		// Drop silenced fingerprints — operator has muted them
 		// explicitly. They still get persisted into anomaly_events
 		// by the recorder so history shows them with status.
-		muted, _ := s.store.ActiveSilencedFingerprints(r.Context())
+		muted, _ := s.store.ActiveSilencedFingerprints(ctx)
 		out := hits[:0]
 		for _, a := range hits {
 			fp := chstore.FingerprintAnomaly("log_pattern", a.Pattern, a.Service)
@@ -8971,8 +8971,8 @@ func (s *Server) getLogPatternAnomalies(w http.ResponseWriter, r *http.Request) 
 // Cached for 5s — the /status page polls every 30s but a refresh-spammy
 // user shouldn't be able to hammer the underlying systems with probes.
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "system-status", 5*time.Second, func() (any, error) {
-		return s.collectStatus(r.Context()), nil
+	s.serveCached(w, r, "system-status", 5*time.Second, func(ctx context.Context) (any, error) {
+		return s.collectStatus(ctx), nil
 	})
 }
 

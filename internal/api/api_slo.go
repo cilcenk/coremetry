@@ -7,6 +7,7 @@ package api
 // api.go.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -21,8 +22,8 @@ func (s *Server) listSLOs(w http.ResponseWriter, r *http.Request) {
 	// query (now MV-backed for availability) and this fans out over ALL of them.
 	// Uncached, every /api/slos load (and every operator viewing it) re-ran N
 	// status queries. A 30s TTL collapses that to one fan-out per window.
-	s.serveCached(w, r, "slos:status", 30*time.Second, func() (any, error) {
-		out, err := s.store.ListSLOs(r.Context())
+	s.serveCached(w, r, "slos:status", 30*time.Second, func(ctx context.Context) (any, error) {
+		out, err := s.store.ListSLOs(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -34,7 +35,7 @@ func (s *Server) listSLOs(w http.ResponseWriter, r *http.Request) {
 		}
 		rows := make([]row, 0, len(out))
 		for _, o := range out {
-			st, err := s.store.ComputeSLOStatus(r.Context(), o)
+			st, err := s.store.ComputeSLOStatus(ctx, o)
 			if err != nil {
 				log.Printf("[slo] status %s: %v", o.ID, err)
 			}
@@ -90,15 +91,15 @@ func (s *Server) sloForecast(w http.ResponseWriter, r *http.Request) {
 		burnWindow = 24 * time.Hour
 	}
 	key := fmt.Sprintf("slo-forecast:%s:%s", id, burnWindow)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		o, err := s.store.GetSLO(r.Context(), id)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		o, err := s.store.GetSLO(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		if o == nil {
 			return nil, fmt.Errorf("slo not found")
 		}
-		return s.store.ComputeSLOForecast(r.Context(), *o, burnWindow)
+		return s.store.ComputeSLOForecast(ctx, *o, burnWindow)
 	})
 }
 
@@ -110,15 +111,15 @@ func (s *Server) sloBurnSeries(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	days := parseInt(r.URL.Query().Get("days"), 7)
 	key := fmt.Sprintf("slo-burn-series:%s:%d", id, days)
-	s.serveCached(w, r, key, 60*time.Second, func() (any, error) {
-		o, err := s.store.GetSLO(r.Context(), id)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		o, err := s.store.GetSLO(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		if o == nil {
 			return nil, fmt.Errorf("slo not found")
 		}
-		series, err := s.store.ComputeSLOBurnSeries(r.Context(), *o, days)
+		series, err := s.store.ComputeSLOBurnSeries(ctx, *o, days)
 		if err != nil {
 			return nil, err
 		}

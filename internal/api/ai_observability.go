@@ -7,6 +7,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -178,8 +179,8 @@ func (s *Server) aiStats(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 24*time.Hour)
 	key := fmt.Sprintf("ai-stats:from=%d:to=%d",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.ComputeAIStats(r.Context(), from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.ComputeAIStats(ctx, from, to)
 	})
 }
 
@@ -197,7 +198,7 @@ func (s *Server) aiSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("ai-series:from=%d:to=%d:b=%d",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute), bucketSec)
-	s.serveCached(w, r, key, 30*time.Second, func() (any, error) {
-		return s.store.AICallsTimeseries(r.Context(), from, to, bucketSec)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.AICallsTimeseries(ctx, from, to, bucketSec)
 	})
 }

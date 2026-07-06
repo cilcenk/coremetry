@@ -6164,8 +6164,16 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		State:    q.Get("state"),
 		Service:  q.Get("service"),
 		Assignee: q.Get("assignee"),
-		Limit:    parseInt(q.Get("limit"), 50),
-		Offset:   parseInt(q.Get("offset"), 0),
+		// v0.8.318 — sort + search run server-side: the inbox is
+		// LIMIT/OFFSET paginated, so the old client-side sort/search of
+		// one 50-row page mis-prioritized ("top by occurrences" was
+		// really "most-recent 50, reordered") and search missed matches
+		// on other pages. Sort ids are whitelisted in chstore.
+		Search: strings.TrimSpace(q.Get("q")),
+		Sort:   q.Get("sort"),
+		Dir:    q.Get("dir"),
+		Limit:  parseInt(q.Get("limit"), 50),
+		Offset: parseInt(q.Get("offset"), 0),
 	}
 	// Owner/SRE team filter (v0.8.310) — resolve the pick to its member
 	// services from the catalog and constrain the query with service IN

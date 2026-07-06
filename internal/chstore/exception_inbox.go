@@ -305,8 +305,19 @@ type ExceptionGroupFilter struct {
 	// post-filter would only trim the current page and break the count).
 	// Empty = no service-set constraint.
 	Services []string
-	Limit    int
-	Offset   int
+	// Search (v0.8.318) — case-insensitive substring over ex_type /
+	// ex_message / service, applied server-side so it covers EVERY page
+	// of the paginated inbox (the old client-side filter only searched
+	// the loaded 50 rows).
+	Search string
+	// Sort / Dir (v0.8.318) — server-side ordering (whitelisted via
+	// exceptionGroupsOrderBy). The inbox is LIMIT/OFFSET paginated, so a
+	// client-side sort of one page silently lied ("top by occurrences"
+	// was really "most-recent 50, reordered").
+	Sort string
+	Dir  string
+	Limit  int
+	Offset int
 }
 
 // buildExceptionGroupWhere builds the WHERE clause shared by the
@@ -338,7 +349,37 @@ func buildExceptionGroupWhere(f ExceptionGroupFilter) whereClause {
 	if f.Assignee != "" {
 		wc.add("assignee = ?", f.Assignee)
 	}
+	if f.Search != "" {
+		p := "%" + f.Search + "%"
+		wc.add("(ex_type ILIKE ? OR ex_message ILIKE ? OR service ILIKE ?)", p, p, p)
+	}
 	return wc
+}
+
+// exceptionGroupsOrderBy maps the UI sort ids onto whitelisted ORDER BY
+// clauses (v0.8.318) — caller input never reaches the SQL string — with a
+// fingerprint tiebreak so equal-key rows stay stable across OFFSET pages.
+// Unknown ids/dirs fall back to the historical last_seen DESC.
+func exceptionGroupsOrderBy(sort, dir string) string {
+	col, ok := map[string]string{
+		// state sorts by severity rank (worst first when DESC), matching
+		// the ordering the client used to compute — not lexically.
+		"state":       "multiIf(state='new',5, state='regressed',4, state='acknowledged',3, state='resolved',2, 1)",
+		"type":        "ex_type",
+		"service":     "service",
+		"occurrences": "occurrences",
+		"firstSeen":   "first_seen",
+		"lastSeen":    "last_seen",
+		"assignee":    "assignee",
+	}[sort]
+	if !ok {
+		return "ORDER BY last_seen DESC, fingerprint ASC"
+	}
+	d := "DESC"
+	if dir == "asc" {
+		d = "ASC"
+	}
+	return "ORDER BY " + col + " " + d + ", fingerprint ASC"
 }
 
 func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter) ([]ExceptionGroup, error) {
@@ -359,7 +400,7 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 		       toUnixTimestamp64Nano(last_seen),
 		       resolved_at, occurrences, notes
 		FROM exception_groups FINAL `+wc.sql()+`
-		ORDER BY last_seen DESC
+		`+exceptionGroupsOrderBy(f.Sort, f.Dir)+`
 		LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err

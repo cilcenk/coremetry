@@ -38,11 +38,8 @@ const TABS: { key: string; label: string; hint: string }[] = [
 type SortKey = 'state' | 'type' | 'service' | 'occurrences' | 'firstSeen' | 'lastSeen' | 'assignee';
 type SortDir = 'asc' | 'desc';
 
-// Severity-style ordering for state column (worst at top desc-sorted)
-const STATE_RANK: Record<string, number> = {
-  new: 5, regressed: 4, acknowledged: 3, resolved: 2, ignored: 1,
-};
-
+// State's severity-style ordering (worst at top) moved server-side with
+// the v0.8.318 sort migration — see exceptionGroupsOrderBy's multiIf.
 const NATURAL_DIR: Record<SortKey, SortDir> = {
   state: 'desc', type: 'asc', service: 'asc',
   occurrences: 'desc', firstSeen: 'desc', lastSeen: 'desc', assignee: 'asc',
@@ -109,6 +106,21 @@ export default function ProblemsPage() {
       return p;
     }, { replace: true });
   const [search, setSearch] = useState('');
+  // v0.8.318 — search commits debounced and runs SERVER-side (q=): the old
+  // client filter only searched the loaded 50-row page, so matches on
+  // other pages read as "no results".
+  const [committedSearch, setCommittedSearch] = useState('');
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setCommittedSearch(prev => {
+        const next = search.trim();
+        if (next !== prev) setPage(0);
+        return next;
+      });
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
   const [, setServices] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [data, setData] = useState<ExceptionGroup[] | null | undefined>(undefined);
@@ -124,6 +136,10 @@ export default function ProblemsPage() {
   // Selected group for the full in-page detail view (null = list).
   const [detail, setDetail] = useState<ExceptionGroup | null>(null);
 
+  // Sort state must precede the fetch effect that consumes it (v0.8.318).
+  const [sortBy, setSortBy] = useState<SortKey>('lastSeen');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
   // Exception groups inbox — separate query because it depends
   // on tab + service filter; couldn't be folded into the shared
   // anomaly hooks above.
@@ -133,15 +149,21 @@ export default function ProblemsPage() {
     api.exceptionGroups({
       state: tab, service: service || undefined,
       ownerTeam: ownerTeam || undefined, sreTeam: sreTeam || undefined,
+      // v0.8.318 — sort + search are server-side across the whole set;
+      // the client-side sort of one server page mis-prioritized ("top by
+      // occurrences" was really "most-recent 50, reordered").
+      sort: sortBy, dir: sortDir,
+      q: committedSearch || undefined,
       limit: PAGE_SIZE, offset: page * PAGE_SIZE,
     })
       .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); })
       .catch(() => setData(null));
   };
   // Page reset on filter change is owned by setTab/setService/setTeam now
-  // (they delete ?page=). Single effect drives the fetch.
+  // (they delete ?page=); sort/search reset it themselves. Single effect
+  // drives the fetch.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(refreshExceptionGroups, [tab, service, ownerTeam, sreTeam, page]);
+  useEffect(refreshExceptionGroups, [tab, service, ownerTeam, sreTeam, page, sortBy, sortDir, committedSearch]);
 
   useEffect(() => {
     api.services({ from: 0, to: 0 })
@@ -152,9 +174,6 @@ export default function ProblemsPage() {
     if (!isAdmin) return;
     api.listUsers().then(u => setUsers(u ?? [])).catch(() => {});
   }, [isAdmin]);
-
-  const [sortBy, setSortBy] = useState<SortKey>('lastSeen');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   // Team dropdown options come from the service catalog (not the loaded
   // page), so a pick never collapses the list of teams to choose from —
@@ -171,30 +190,14 @@ export default function ProblemsPage() {
     return [...set].sort();
   }, [catalogQ.data]);
 
-  const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    const list = (data ?? []).filter(g => {
-      if (!term) return true;
-      return g.type.toLowerCase().includes(term)
-          || g.message.toLowerCase().includes(term)
-          || g.service.toLowerCase().includes(term);
-    });
-    const cmp = (a: ExceptionGroup, b: ExceptionGroup): number => {
-      switch (sortBy) {
-        case 'state':       return (STATE_RANK[a.state] ?? 0) - (STATE_RANK[b.state] ?? 0);
-        case 'type':        return a.type.localeCompare(b.type);
-        case 'service':     return a.service.localeCompare(b.service);
-        case 'occurrences': return Number(a.occurrences) - Number(b.occurrences);
-        case 'firstSeen':   return a.firstSeen - b.firstSeen;
-        case 'lastSeen':    return a.lastSeen  - b.lastSeen;
-        case 'assignee':    return (a.assignee || '').localeCompare(b.assignee || '');
-      }
-    };
-    const arr = [...list].sort(cmp);
-    return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [data, search, sortBy, sortDir]);
+  // v0.8.318 — the server owns filtering AND ordering now (q=/sort=/dir=
+  // across the whole paginated set); the page renders rows verbatim. The
+  // old client-side sort of one 50-row server page mis-prioritized, and
+  // the client search read as "no results" for matches on other pages.
+  const filtered = data ?? [];
 
   const toggleSort = (col: SortKey) => {
+    setPage(0); // a new ordering invalidates the current page offset
     if (sortBy === col) setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
     else { setSortBy(col); setSortDir(NATURAL_DIR[col]); }
   };

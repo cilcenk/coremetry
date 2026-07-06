@@ -165,6 +165,15 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
       traceCount: e.calls,
       spanCount: e.calls,
       errorCount: e.errors,
+      // v0.8.322 — carry the MV's per-edge RED (the v0.8.281 chip
+      // contract). This inline adapter dropped them, so the service
+      // Topology tab never showed the "N/dk · p99 · err%" chips its
+      // /service-map twin renders (TopologyFlowGraph gates the chip on
+      // p99Ms != null). errorRate rescales to ServiceMap's 0..1.
+      rate: e.rate,
+      errorRate: (e.errorRate ?? 0) / 100,
+      avgMs: e.avgMs,
+      p99Ms: e.p99Ms,
     })),
   }), [nb]);
 

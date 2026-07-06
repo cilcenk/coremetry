@@ -248,8 +248,13 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 	case open && hasOpen:
 		// Refresh live value + severity (a warning can worsen into a
 		// critical without re-opening). Keep the original StartedAt.
+		// v0.8.309 — clamp to the age-based escalation floor: this line
+		// used to rewrite escalateStaleProblems' critical back to the
+		// gauge-derived warning every tick, and the sweep re-escalated +
+		// re-paged 60s later — the storm (87% tablespace = a critical
+		// page per minute, for hours).
 		existing.Value = pct
-		existing.Severity = sev
+		existing.Severity = effectiveSeverity(sev, time.Since(time.Unix(0, existing.StartedAt)))
 		existing.Threshold = capacityThreshold(c, sev)
 		existing.Description = capacityReason(c, s.Instance, s.Subkey, pct)
 		if err := e.store.UpsertProblem(ctx, *existing); err != nil {

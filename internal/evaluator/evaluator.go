@@ -941,6 +941,12 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 			id = ruleID + ":" + ev.Service
 			startedAt = ev.StartedAt
 		}
+		// v0.8.309 — clamp to the age-based escalation floor. The refresh
+		// branch used to rewrite the sweep's critical back to the
+		// ratio-derived severity every tick (page storm); the backdated
+		// StartedAt on promotion also made a fresh problem double-page
+		// (promote at warning + escalate to critical in one pass).
+		sev = effectiveSeverity(sev, time.Since(time.Unix(0, startedAt)))
 		p := chstore.Problem{
 			ID:          id,
 			RuleID:      ruleID,
@@ -986,6 +992,20 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// effectiveSeverity clamps a freshly-RECOMPUTED severity to the age-based
+// escalation floor (v0.8.309). Refresh paths that derive severity from the
+// live gauge every tick (db-capacity, anomaly promotion) were silently
+// undoing escalateStaleProblems' bump, and the sweep then re-escalated AND
+// re-paged every tick — the critical-notification storm. Routing the
+// recompute through this clamp means an escalated problem can never dip
+// back below its floor, so the sweep finds nothing to re-fire on.
+func effectiveSeverity(computed string, openFor time.Duration) string {
+	if next := nextSeverity(computed, openFor); next != "" {
+		return next
+	}
+	return computed
 }
 
 // nextSeverity returns the new severity for a problem that's

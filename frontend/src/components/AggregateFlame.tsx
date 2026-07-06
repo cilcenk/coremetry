@@ -129,7 +129,9 @@ export function AggregateFlame({ roots, totalWidth = 1100 }: {
         <svg width={totalWidth} height={height} style={{ display: 'block', fontFamily: 'monospace' }}>
           {boxes.map((b, i) => {
             const isErr = b.node.errorCount > 0;
-            const baseColor = isErr ? '#ff5252' : hashColor(b.node.service || b.node.operation);
+            // v0.8.302 — error bars use the theme token (SVG resolves var()),
+            // so they match the app-wide error red on every palette.
+            const baseColor = isErr ? 'var(--err)' : hashColor(b.node.service || b.node.operation);
             const w = Math.max(0.5, b.width);
             const x = b.x;
             const y = PAD_TOP + b.depth * ROW_H;

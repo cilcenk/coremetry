@@ -85,7 +85,8 @@ function AggRow({ node, depth, ancestorContinues, isLastSibling, refMs, colWidth
   const [open, setOpen] = useState(true);
   const hasChildren = !!node.children && node.children.length > 0;
   const isErr = node.errorCount > 0;
-  const color = isErr ? '#ff5252' : hashColor(node.service);
+  // v0.8.302 — theme token instead of dark-palette literal.
+  const color = isErr ? 'var(--err)' : hashColor(node.service);
 
   const startPct = Math.max(0, Math.min(100, (node.avgStartMs / refMs) * 100));
   const widthPct = Math.max(0.5, Math.min(100 - startPct, (node.avgMs / refMs) * 100));

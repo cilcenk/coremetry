@@ -237,6 +237,12 @@ export function MultiLineChart({
     const text3 = css.getPropertyValue('--text3').trim() || '#484f58';
     const grid  = css.getPropertyValue('--bg2').trim()   || '#21262d';
     const mutedGray = css.getPropertyValue('--text3').trim() || '#8b9299';
+    // v0.8.302 (quality bar U2) — threshold/deploy overlay colors come from
+    // theme tokens (canvas needs resolved values, so read them like text3/
+    // grid above instead of baking dark-palette hex).
+    const errCol    = css.getPropertyValue('--err').trim()    || '#e84e4e';
+    const warnCol   = css.getPropertyValue('--warn').trim()   || '#f0b352';
+    const deployCol = css.getPropertyValue('--purple').trim() || '#a371f7';
     // Stable colour per series name; the folded "others" tail is always muted grey.
     const colorFor = (label: string) =>
       label === OTHERS_KEY ? mutedGray : (colorOf?.(label) ?? seriesColor(label));
@@ -496,13 +502,14 @@ export function MultiLineChart({
               ctx.font = '10px ui-monospace, monospace';
               for (const th of thresholds) {
                 if (th.value < yMin || th.value > yMax) continue;
-                const colour = th.severity === 'err' ? '#e84e4e' : '#f0b352';
+                const colour = th.severity === 'err' ? errCol : warnCol;
                 const y = u.valToPos(th.value, 'y', true);
-                // Tinted breach band above the line.
-                ctx.fillStyle = th.severity === 'err'
-                  ? 'rgba(232,78,78,0.07)'
-                  : 'rgba(240,179,82,0.07)';
+                // Tinted breach band above the line — token color at 7% via
+                // globalAlpha (canvas fillStyle can't color-mix reliably).
+                ctx.globalAlpha = 0.07;
+                ctx.fillStyle = colour;
                 ctx.fillRect(u.bbox.left, u.bbox.top, u.bbox.width, y - u.bbox.top);
+                ctx.globalAlpha = 1;
                 // The line itself.
                 ctx.strokeStyle = colour;
                 ctx.fillStyle = colour;
@@ -529,8 +536,8 @@ export function MultiLineChart({
             if (deploys && deploys.length > 0) {
               const xMin = u.scales.x.min ?? 0;
               const xMax = u.scales.x.max ?? 0;
-              ctx.strokeStyle = '#a371f7';
-              ctx.fillStyle = '#a371f7';
+              ctx.strokeStyle = deployCol;
+              ctx.fillStyle = deployCol;
               ctx.lineWidth = 1.2;
               ctx.setLineDash([5, 4]);
               ctx.font = '10px ui-monospace, monospace';
@@ -649,7 +656,7 @@ export function MultiLineChart({
                 const desc = nearest.description ? ' — ' + escapeHTML(nearest.description) : '';
                 deployRow =
                   `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">` +
-                    `<span style="display:inline-block;width:8px;height:8px;background:#a371f7;border-radius:2px;flex-shrink:0"></span>` +
+                    `<span style="display:inline-block;width:8px;height:8px;background:var(--purple, #a371f7);border-radius:2px;flex-shrink:0"></span>` +
                     `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${lbl}${desc}">deploy ${lbl}</span>` +
                   `</div>`;
               }

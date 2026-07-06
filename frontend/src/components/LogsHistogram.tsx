@@ -26,17 +26,21 @@ type Series = { name: string; points: { t: number; v: number }[] };
 const SEV_COLORS: Record<string, string> = {
   // OTel ECS canonical levels — both UPPER and lower because
   // shippers vary on casing.
-  FATAL:  '#dc2626',
-  ERROR:  '#ef4444',
-  WARN:   '#f59e0b',
-  WARNING: '#f59e0b',
-  INFO:   '#3b82f6',
-  DEBUG:  '#a3a3a3',
-  TRACE:  '#a3a3a3',
+  // v0.8.302 (quality bar U2) — theme tokens instead of fixed hex so the
+  // histogram bands agree with the severity chips/badges on every palette
+  // (SVG fill + legend inline-style both resolve var()). FATAL darkens the
+  // error token so the fatal/error distinction survives.
+  FATAL:  'color-mix(in srgb, var(--err) 75%, black)',
+  ERROR:  'var(--err)',
+  WARN:   'var(--warn)',
+  WARNING: 'var(--warn)',
+  INFO:   'var(--accent)',
+  DEBUG:  'var(--text3)',
+  TRACE:  'var(--text3)',
   // v0.5.396 — synthetic band for severities that didn't fit
   // the top-50 terms agg (custom levels, mixed casing). Subtle
   // grey so the operator's eye still lands on errors first.
-  OTHER: '#94a3b8',
+  OTHER: 'color-mix(in srgb, var(--text3) 60%, transparent)',
 };
 // Sort priority — bottom-most band in the stack is the most
 // important (errors anchor the chart so they're always at the
@@ -49,7 +53,7 @@ const SEV_RANK: Record<string, number> = {
 };
 
 function colorFor(name: string): string {
-  return SEV_COLORS[name.toUpperCase()] ?? '#6366f1';
+  return SEV_COLORS[name.toUpperCase()] ?? 'var(--purple)';
 }
 
 export function LogsHistogram({ range, filter, onRangeSelect }: {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
@@ -27,20 +27,6 @@ const STATE_BADGE: Record<ExceptionGroupState, string> = {
   new: 'b-err', regressed: 'b-err', acknowledged: 'b-warn', resolved: 'b-ok', ignored: 'b-gray',
 };
 
-// bucketTimes — counts of sample timestamps (unix ns) across `n` equal buckets
-// spanning [from, to]. Returns [] when the window is degenerate or empty.
-function bucketTimes(timesNs: number[], fromNs: number, toNs: number, n: number): number[] {
-  if (!timesNs.length || !(toNs > fromNs)) return [];
-  const span = toNs - fromNs;
-  const out = new Array(n).fill(0);
-  for (const t of timesNs) {
-    let b = Math.floor(((t - fromNs) / span) * n);
-    if (b < 0) b = 0; if (b >= n) b = n - 1;
-    out[b]++;
-  }
-  return out;
-}
-
 export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   group: ExceptionGroup;
   isAdmin: boolean;
@@ -58,11 +44,16 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   });
   const samples = samplesQ.data ?? [];
 
-  const buckets = useMemo(
-    () => bucketTimes(samples.map(s => s.time), group.firstSeen, group.lastSeen, 24),
-    [samples, group.firstSeen, group.lastSeen],
-  );
-  const maxB = Math.max(1, ...buckets);
+  // Occurrences-over-time is a real server-side, gap-filled COUNT over the
+  // group's whole window (v0.8.309) — NOT bucketed from the sampled
+  // timestamps, which clustered near last_seen and mis-rendered any busy
+  // group as a single right-edge spike.
+  const occQ = useQuery({
+    queryKey: ['exc-occ-detail', group.fingerprint],
+    queryFn: () => api.exceptionGroupOccurrences(group.fingerprint),
+    staleTime: 30_000,
+  });
+  const occ = occQ.data ?? [];
 
   // Representative stack = the first sample that carries one.
   const stack = samples.find(s => s.stacktrace)?.stacktrace ?? '';
@@ -124,35 +115,28 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
       <AIAnalysisPanel service={group.service} />
 
 
-      {/* Occurrences over time */}
+      {/* Occurrences over time — real server-side, gap-filled COUNT over the
+          group's whole window (v0.8.309). Replaced the old client-side
+          bucketing of the 100 newest samples, which clustered near last_seen
+          and rendered any busy group as a single right-edge spike, plus a
+          fabricated deploy marker that fired on every chart. */}
       <div className="card ov-mb">
         <div className="ov-card-h">
           <h3>Occurrences over time</h3>
-          <span className="ov-sub">from {samples.length} recent sample{samples.length === 1 ? '' : 's'}</span>
+          <span className="ov-sub">{group.occurrences.toLocaleString()} total</span>
         </div>
         <div className="ov-card-b">
-          {buckets.length === 0 ? (
+          {occ.length === 0 ? (
             <div style={{ color: 'var(--text3)', fontSize: 12 }}>
-              {samplesQ.isLoading ? 'Loading…' : 'Not enough sampled occurrences to chart.'}
+              {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
             </div>
-          ) : (() => {
-            // Migrated to the shared <TimeChart> primitive (v0.8.94): occurrence
-            // bars over the real firstSeen→lastSeen window + a deploy marker at
-            // the spike onset. Bar height already shows the pre/post jump; the
-            // red marker conveys where it started.
-            const N = buckets.length;
-            const span = group.lastSeen - group.firstSeen;
-            const times = buckets.map((_, i) => (group.firstSeen + ((i + 0.5) / N) * span) / 1e9);
-            const deployIdx = buckets.findIndex(v => v >= maxB * 0.66);
-            return (
-              <TimeChart
-                times={times}
-                series={[{ key: 'occ', label: 'occurrences', data: buckets, color: statusColor('warn'), type: 'bar' }]}
-                height={110}
-                deployMarkers={deployIdx >= 0 ? [times[deployIdx]] : undefined}
-              />
-            );
-          })()}
+          ) : (
+            <TimeChart
+              times={occ.map(p => p.time / 1e9)}
+              series={[{ key: 'occ', label: 'occurrences', data: occ.map(p => p.count), color: statusColor('warn'), type: 'bar' }]}
+              height={110}
+            />
+          )}
         </div>
       </div>
 

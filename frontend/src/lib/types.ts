@@ -1664,6 +1664,14 @@ export interface ExceptionSample {
   statusMsg: string;
 }
 
+// One time-bucket of the "occurrences over time" histogram on the
+// problem detail page — a real server-side, gap-filled COUNT (v0.8.309),
+// not derived from sampled timestamps.
+export interface OccurrencePoint {
+  time: number;          // unix ns, bucket start
+  count: number;
+}
+
 // ── Settings + notifications ─────────────────────────────────────────────────
 
 export interface SMTPSettings {

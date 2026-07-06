@@ -606,6 +606,111 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 	return out, rows.Err()
 }
 
+// OccurrencePoint is one time-bucket of the "occurrences over time"
+// histogram on the problem detail page — a real server-side COUNT, not
+// a sample. Time is the bucket START in unix ns; Count is how many
+// occurrences of the group landed in [Time, Time+step).
+type OccurrencePoint struct {
+	Time  int64  `json:"time"`  // unix ns, bucket start
+	Count uint64 `json:"count"`
+}
+
+// occurrenceBucketCap bounds the gap-filled series so a pathological
+// window can't balloon the response or the fill loop. bucketForWindow
+// caps the step at 1h, so 5000 buckets covers ~208 days — far past the
+// 24h stale horizon that auto-resolves idle groups.
+const occurrenceBucketCap = 5000
+
+// GetExceptionOccurrences returns a real, gap-filled occurrences-over-
+// time series for the group (by fingerprint), spanning its whole
+// [first_seen, last_seen] window. It replaces the old client-side
+// bucketing of the 100 most-recent samples, which mis-rendered any busy
+// group: the newest 100 samples cluster near last_seen, so all-but-one
+// bucket read zero even for a steadily-firing problem (v0.8.309).
+//
+// The count is coarse-scoped to (service, exception.type) — the same
+// candidate population GetExceptionGroupSamples draws from — so a group
+// whose (service, type) hosts a single fingerprint (the common case)
+// reads exactly; a rare (service, type) shared by sibling fingerprints
+// reads slightly high. That's the honest, bounded trade for a temporal
+// distribution SQL can compute without recomputing the Go-side
+// fingerprint per row.
+func (s *Store) GetExceptionOccurrences(ctx context.Context, fingerprint string) ([]OccurrencePoint, error) {
+	g, err := s.GetExceptionGroup(ctx, fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if g == nil {
+		return nil, nil
+	}
+	fromNs, toNs := g.FirstSeen, g.LastSeen
+	if toNs <= fromNs {
+		// Degenerate window (single occurrence / clock skew): widen by
+		// one second so we still emit exactly one bucket instead of [].
+		toNs = fromNs + int64(time.Second)
+	}
+	from := time.Unix(0, fromNs).UTC()
+	to := time.Unix(0, toNs).UTC()
+	step := bucketForWindow(int64(to.Sub(from).Seconds()))
+
+	// Bounded raw-spans drill-down (single service + exception type +
+	// time-bounded WHERE + LIMIT + max_execution_time). toStartOfInterval
+	// on a sub-day INTERVAL is epoch-aligned and tz-independent, so the
+	// Go-side fill below lands on the exact same bucket starts.
+	rows, err := s.conn.Query(ctx, `
+		SELECT toUnixTimestamp64Nano(toStartOfInterval(time, INTERVAL ? SECOND)) AS bucket,
+		       count() AS c
+		FROM spans
+		WHERE service_name = ? AND time >= ? AND time <= ?
+		  AND events LIKE '%"exception"%'
+		  AND coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>') = ?
+		GROUP BY bucket
+		ORDER BY bucket
+		LIMIT `+fmt.Sprint(occurrenceBucketCap)+`
+		SETTINGS max_execution_time = 10,
+		         `+s.shardSkipSetting(), step, g.Service, from, to, g.Type)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := make(map[int64]uint64)
+	for rows.Next() {
+		var bucket int64
+		var c uint64
+		if err := rows.Scan(&bucket, &c); err != nil {
+			return nil, err
+		}
+		counts[bucket] = c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return fillOccurrenceBuckets(fromNs, toNs, step, counts), nil
+}
+
+// fillOccurrenceBuckets builds a dense, epoch-aligned series of
+// `stepSec`-wide buckets spanning [fromNs, toNs]. `counts` maps a bucket
+// start (unix ns, already epoch-aligned) to its observed count; buckets
+// with no observations read 0 — so the chart shows real gaps instead of
+// silently dropping empty intervals. Pure + table-tested (v0.8.309).
+func fillOccurrenceBuckets(fromNs, toNs, stepSec int64, counts map[int64]uint64) []OccurrencePoint {
+	if stepSec <= 0 || toNs < fromNs {
+		return nil
+	}
+	stepNs := stepSec * int64(time.Second)
+	// Floor-align the first bucket to the epoch, matching CH's
+	// toStartOfInterval(time, INTERVAL stepSec SECOND).
+	start := (fromNs / stepNs) * stepNs
+	out := make([]OccurrencePoint, 0, (toNs-start)/stepNs+1)
+	for t := start; t <= toNs; t += stepNs {
+		out = append(out, OccurrencePoint{Time: t, Count: counts[t]})
+		if len(out) >= occurrenceBucketCap {
+			break
+		}
+	}
+	return out
+}
+
 // RefreshExceptionGroups scans exception events newer than `since`, then
 // applies the v2 fingerprint (stacktrace top-frames or normalized message)
 // to merge what would otherwise show as several rows for the same logical

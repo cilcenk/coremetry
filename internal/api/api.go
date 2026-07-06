@@ -546,6 +546,7 @@ func (s *Server) Start() error {
 	// Errors Inbox — stateful exception groups (read = any, write = admin)
 	mux.HandleFunc("GET    /api/exception-groups",                s.listExceptionGroups)
 	mux.HandleFunc("GET    /api/exception-groups/{fp}/samples",   s.getExceptionGroupSamples)
+	mux.HandleFunc("GET    /api/exception-groups/{fp}/occurrences", s.getExceptionGroupOccurrences)
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/state",     auth.RequireAnyRole(editorRoles, s.setExceptionGroupState))
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign",    auth.RequireAnyRole(editorRoles, s.assignExceptionGroup))
 	mux.HandleFunc("GET    /api/services/{name}/operations", s.svcOperationSummary)
@@ -6188,6 +6189,19 @@ func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request
 	out, err := s.store.GetExceptionGroupSamples(r.Context(), r.PathValue("fp"), limit)
 	if err != nil { writeErr(w, err); return }
 	writeJSON(w, out)
+}
+
+// getExceptionGroupOccurrences serves the "occurrences over time"
+// histogram on the problem detail page — a real server-side, gap-filled
+// COUNT over the group's whole window (v0.8.309), replacing the old
+// client-side bucketing of 100 recent samples. Cached briefly: the only
+// input is the fingerprint; last_seen creeps for an active group, so a
+// short TTL bounds staleness without thrashing on every poll.
+func (s *Server) getExceptionGroupOccurrences(w http.ResponseWriter, r *http.Request) {
+	fp := r.PathValue("fp")
+	s.serveCached(w, r, "exc-occ:"+fp, 30*time.Second, func() (any, error) {
+		return s.store.GetExceptionOccurrences(r.Context(), fp)
+	})
 }
 
 func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) {

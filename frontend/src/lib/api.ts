@@ -9,7 +9,7 @@ import type {
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
-  ExceptionGroup, ExceptionGroupState, ExceptionSample,
+  ExceptionGroup, ExceptionGroupState, ExceptionSample, OccurrencePoint,
   SparklineBucket, OperationSummary,
   SystemStatus,
   Monitor, MonitorResult, MonitorRow,
@@ -1404,6 +1404,8 @@ export const api = {
     get<{ items: ExceptionGroup[]; total: number; limit: number; offset: number }>(`/api/exception-groups?${qs(params)}`),
   exceptionGroupSamples: (fingerprint: string, limit = 10) =>
     get<ExceptionSample[] | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
+  exceptionGroupOccurrences: (fingerprint: string) =>
+    get<OccurrencePoint[] | null>(`/api/exception-groups/${fingerprint}/occurrences`),
   setExceptionGroupState: (fingerprint: string, state: ExceptionGroupState) =>
     request<void>(`/api/exception-groups/${fingerprint}/state`, {
       method: 'POST',

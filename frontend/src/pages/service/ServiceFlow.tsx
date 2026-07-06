@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
 import type { TimeRange } from '@/lib/types';
@@ -150,7 +151,19 @@ export function ServiceFlow({ service, range, from, to }: {
   const isHot = (side: 'in' | 'out', i: number) => !!hot && hot.side === side && hot.i === i;
   const anyHot = hot != null;
 
-  if (topoQ.data && callers.length === 0 && deps.length === 0) {
+  // v0.8.308 (quality bar P6) — the load state used to render the card frame
+  // with zero nodes (a blank panel) and an error left it that way forever.
+  // Loading gets a Spinner in the same card so the layout doesn't jump;
+  // an error hides the panel like the no-flow case (overview stays tight).
+  if (topoQ.isLoading) {
+    return (
+      <div className="card ov-mb">
+        <div className="ov-card-h"><h3>Service flow</h3><span className="ov-sub">1-hop request path</span></div>
+        <div className="ov-card-b" style={{ display: 'grid', placeItems: 'center', minHeight: 120 }}><Spinner /></div>
+      </div>
+    );
+  }
+  if (topoQ.isError || (topoQ.data && callers.length === 0 && deps.length === 0)) {
     return null; // no flow to show — keep the overview tight
   }
 

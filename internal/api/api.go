@@ -71,8 +71,10 @@ type Server struct {
 	// lockDegraded — Redis was configured but the leader lock fell back to the
 	// always-leader Noop (Redis down at boot). Surfaced on /admin/stats so a
 	// multi-pod operator sees that background jobs are duplicated. Set by
-	// SetLockDegraded from main.go. v0.8.212.
-	lockDegraded bool
+	// SetLockDegraded from main.go. v0.8.212. Atomic since v0.8.341: the Redis
+	// re-probe goroutine CLEARS it at runtime (after swapping the real lock in)
+	// while /admin/stats handlers read it concurrently.
+	lockDegraded atomic.Bool
 	webFS       embed.FS
 	auth        *auth.Service
 	oidc        *auth.OIDCService // nil when SSO disabled
@@ -326,7 +328,9 @@ func (s *Server) EnableDemoMode(email, password string) {
 // SetLockDegraded records that the distributed leader lock fell back to the
 // always-leader Noop despite Redis being configured (Redis down at boot) — so
 // /admin/stats can warn that multi-pod background jobs are duplicated. v0.8.212.
-func (s *Server) SetLockDegraded(b bool) { s.lockDegraded = b }
+// Called with false by the Redis re-probe (v0.8.341) once the real lock is
+// swapped back in — the /admin/stats warning clears without a pod restart.
+func (s *Server) SetLockDegraded(b bool) { s.lockDegraded.Store(b) }
 
 // SetLogstoreESManager wires the UI-managed logstore config owner
 // (v0.8.232). main() constructs the manager alongside the Switchable
@@ -1344,8 +1348,9 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 			st.SpanLinks.DroppedInvalid = int64(s.ing.SpanLinksDroppedInvalid())
 		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
-		// the lock fell back to always-leader Noop). main.go owns the lock state.
-		st.Health.LockDegraded = s.lockDegraded
+		// the lock fell back to always-leader Noop). main.go owns the lock state;
+		// since v0.8.341 the re-probe clears it live, hence the atomic load.
+		st.Health.LockDegraded = s.lockDegraded.Load()
 		// v0.8.230 — ES query-failure visibility. The ES logstore counts its
 		// failed queries; non-zero here points the operator at
 		// /admin/elastic → Recent query errors for the exact requests.

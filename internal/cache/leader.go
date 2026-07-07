@@ -29,10 +29,14 @@ import (
 //         if !leader.IsLeader() { return }
 //         // ... do work ...
 //
-//  4. The held state flips back to false if Refresh fails
-//     (lease expired due to network blip, or another pod
-//     somehow acquired) — the workers stop running, then on
-//     the next acquire attempt the leadership picks back up.
+//  4. The held state flips back to false when Refresh reports
+//     the lease is definitively lost (ok=false) OR — v0.8.341 —
+//     when Refresh ERRORS have gone on longer than the lease
+//     TTL (Redis partition / AUTH flap: we can no longer prove
+//     we hold it, and the lease HAS expired server-side, so a
+//     peer may legitimately be leader). The workers stop
+//     running; the holder falls back into the acquire loop and
+//     leadership picks back up when Redis returns.
 //
 // Bounded behaviour at N pods: exactly one pod is leader at any
 // moment (subject to lease TTL crossover during failover — same
@@ -109,6 +113,17 @@ func (h *LeaderHolder) IsLeader() bool {
 	return h.held.Load()
 }
 
+// refreshOutlivedLease is the pure demote decision — v0.8.341 (H4). True
+// once the time since the last SUCCESSFUL refresh reaches the lease TTL:
+// the PEXPIRE from that refresh has elapsed server-side, the key is gone,
+// and a peer may have legitimately acquired it. `>=` not `>` — at exactly
+// ttl the lease is already expired. Below the TTL we tolerate errors (the
+// lock might still be ours; demoting early would thrash leadership on
+// every Redis blip, the exact failure the 30s TTL floor exists to absorb).
+func refreshOutlivedLease(sinceLastOK, ttl time.Duration) bool {
+	return sinceLastOK >= ttl
+}
+
 func (h *LeaderHolder) run(ctx context.Context) {
 	// On exit, release the lock so the next pod can become
 	// leader without waiting for TTL expiry.
@@ -123,59 +138,75 @@ func (h *LeaderHolder) run(ctx context.Context) {
 		}
 	}()
 
-	// Initial acquire attempt + retry until success or ctx done.
-	// Other pods sit in this loop until the current leader dies.
+	// Outer loop: acquire → hold → (demoted | lost) → acquire again.
+	// v0.8.341 restructure: pre-fix, the refresh loop `continue`d on EVERY
+	// Refresh error, so a leader that lost Redis (partition / AUTH flap)
+	// while ClickHouse stayed up kept held=true FOREVER — its lease expired,
+	// a peer acquired it, and two evaluators ran concurrently (duplicate
+	// Problem rows + duplicate pages). Now error streaks are bounded by the
+	// lease TTL, after which we demote and drop back here.
 	for {
-		ok, err := h.lock.TryAcquire(ctx, h.key, h.ttl)
-		if err == nil && ok {
-			h.held.Store(true)
-			log.Printf("[leader] became leader for %s (ttl=%s)", h.key, h.ttl)
-			break
+		// Acquire loop — retry until success or ctx done. Non-leader
+		// pods sit here until the current leader dies or demotes.
+		for {
+			ok, err := h.lock.TryAcquire(ctx, h.key, h.ttl)
+			if err == nil && ok {
+				h.held.Store(true)
+				log.Printf("[leader] became leader for %s (ttl=%s)", h.key, h.ttl)
+				break
+			}
+			// Either another pod holds it (ok=false) OR network
+			// blip (err != nil). Wait + retry.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(h.refresh):
+			}
 		}
-		// Either another pod holds it (ok=false) OR network
-		// blip (err != nil). Wait + retry.
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(h.refresh):
-		}
-	}
 
-	// Refresh loop — extend the TTL every `refresh`. If refresh
-	// fails (we lost the lease somehow), drop back to acquire
-	// loop to try to regain leadership.
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(h.refresh):
-		}
-		ok, err := h.lock.Refresh(ctx, h.key, h.ttl)
-		if err != nil {
-			// Network blip — keep `held=true` for one more
-			// cycle (the lock might still be ours; lease will
-			// expire naturally if not). Retry on next tick.
-			log.Printf("[leader] refresh %s failed (network blip): %v", h.key, err)
-			continue
-		}
-		if !ok {
-			// Lost leadership — lease expired before our
-			// refresh landed, or someone else acquired. Drop
-			// IsLeader and re-enter acquire loop.
-			h.held.Store(false)
-			log.Printf("[leader] lost leadership for %s, re-entering acquire loop", h.key)
-			for {
-				ok2, err2 := h.lock.TryAcquire(ctx, h.key, h.ttl)
-				if err2 == nil && ok2 {
-					h.held.Store(true)
-					log.Printf("[leader] re-acquired leadership for %s", h.key)
-					break
+		// Refresh loop — extend the TTL every `refresh`. lastOK is the
+		// last instant we KNOW the lease was extended (acquire counts:
+		// SetNX set the TTL). A successful refresh resets the clock.
+		lastOK := time.Now()
+	hold:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(h.refresh):
+			}
+			ok, err := h.lock.Refresh(ctx, h.key, h.ttl)
+			switch {
+			case err == nil && ok:
+				lastOK = time.Now()
+			case err != nil:
+				// Refresh at ttl/3 → up to ~3 consecutive failures
+				// before the streak reaches the TTL and we demote —
+				// short blips never drop leadership.
+				since := time.Since(lastOK)
+				if refreshOutlivedLease(since, h.ttl) {
+					// v0.8.341 (H4) — DEMOTE. Our lease is expired in
+					// Redis; a peer may already be leader. Keeping
+					// held=true here is the split-brain: two pods
+					// running the same worker.
+					h.held.Store(false)
+					log.Printf("[leader] DEMOTED %s — refresh failures outlived the lease "+
+						"(ttl=%s, last successful refresh %s ago; last error: %v). "+
+						"A peer may hold leadership now; falling back to acquire loop.",
+						h.key, h.ttl, since.Round(time.Second), err)
+					break hold
 				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(h.refresh):
-				}
+				log.Printf("[leader] refresh %s failed (%v) — still within lease, "+
+					"demoting in ≤%s unless a refresh lands",
+					h.key, err, (h.ttl - since).Round(time.Second))
+			default:
+				// ok=false, err=nil: definitive answer from Redis — our
+				// token no longer owns the key (lease expired before the
+				// refresh landed, or someone else acquired). Drop
+				// IsLeader and re-enter the acquire loop.
+				h.held.Store(false)
+				log.Printf("[leader] lost leadership for %s, re-entering acquire loop", h.key)
+				break hold
 			}
 		}
 	}

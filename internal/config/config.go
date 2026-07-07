@@ -711,7 +711,16 @@ func Load(path string) (*Config, error) {
 // An explicit operator value (COREMETRY_CH_MAX_OPEN_CONNS / yaml
 // max_open_conns) is honored as-is — the operator may be capping against
 // their CH server's max_connections ceiling. When unset (0), derive
-// 3*workers plus 8 connections of read-path headroom.
+// ingestSignals*workers plus 8 connections of read-path headroom.
+//
+// v0.8.351 — the multiplier tracks the CONSUMER COUNT, which the "3×"
+// literal silently stopped doing when v0.8.328/329 added the exemplars
+// and span_links consumers: 5 signals × 8 workers = 40 flushers were
+// again fighting over 3×8+8=32 connections — the exact v0.8.205 starvation
+// shape, reintroduced by feature growth. The constant lives here (not a
+// magic number) so the next signal bumps it consciously.
+const ingestSignals = 5 // spans, logs, metrics, exemplars, span_links
+
 func resolveMaxOpenConns(configured, workers int) int {
 	if configured > 0 {
 		return configured
@@ -719,5 +728,5 @@ func resolveMaxOpenConns(configured, workers int) int {
 	if workers <= 0 {
 		workers = 8
 	}
-	return 3*workers + 8
+	return ingestSignals*workers + 8
 }

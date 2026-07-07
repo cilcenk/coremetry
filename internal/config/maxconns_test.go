@@ -14,9 +14,12 @@ import "testing"
 // path) → acquire-conn-timeout → dropped batches.
 //
 // resolveMaxOpenConns is the minimal pure function the fix touches: it sizes
-// the pool to 3*workers + read headroom when unset, and honors an explicit
-// operator override. This test pins that contract so the pool can never
-// silently fall below the flush fan-out again.
+// the pool to ingestSignals*workers + read headroom when unset, and honors an
+// explicit operator override. This test pins that contract so the pool can
+// never silently fall below the flush fan-out again — v0.8.351 re-pinned it
+// after the v0.8.328/329 consumers (exemplars, span_links) grew the fan-out
+// to 5 signals while the old 3× literal stayed put (40 flushers vs 32 conns,
+// the v0.8.205 starvation shape reintroduced).
 func TestResolveMaxOpenConns(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -24,19 +27,19 @@ func TestResolveMaxOpenConns(t *testing.T) {
 		workers    int
 		want       int
 	}{
-		// Unset (0) → derive 3*workers + 8 headroom.
-		{"default 8 workers", 0, 8, 32},
-		{"bumped 16 workers", 0, 16, 56},
-		{"low 4 workers", 0, 4, 20},
+		// Unset (0) → derive ingestSignals(5)*workers + 8 headroom.
+		{"default 8 workers", 0, 8, 48},
+		{"bumped 16 workers", 0, 16, 88},
+		{"low 4 workers", 0, 4, 28},
 		// Workers unset/garbage falls back to the 8-worker assumption so the
 		// pool is never derived to a starving size.
-		{"zero workers floors to 8", 0, 0, 32},
-		{"negative workers floors to 8", 0, -3, 32},
+		{"zero workers floors to 8", 0, 0, 48},
+		{"negative workers floors to 8", 0, -3, 48},
 		// Explicit operator override is honored verbatim (may be capping
 		// against CH server max_connections) — even when below the fan-out.
 		{"explicit override honored", 64, 16, 64},
 		{"explicit below fanout still honored", 10, 16, 10},
-		{"explicit equals derived", 32, 8, 32},
+		{"explicit equals derived", 48, 8, 48},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

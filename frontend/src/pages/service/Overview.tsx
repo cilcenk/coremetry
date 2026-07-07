@@ -1,32 +1,42 @@
 import { useId, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { Service, Problem, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
+import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useServiceDeploys } from '@/lib/queries';
 import { OverviewChart, type OvChartSeries } from './charts/OverviewChart';
-import { Neighbors } from './Neighbors';
 import { OpsCard, DbCard } from './OverviewTables';
-import { ServiceInstancesCard } from './ServiceInstancesCard';
 import { MetricPanel } from '@/components/MetricPanel';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
+import { ServiceNeighbors } from '@/components/ServiceNeighbors';
 import { Spinner } from '@/components/Spinner';
 import { metricQuery, type MetricQuery } from '@/lib/metricQuery';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
 // from the design handoff. The new tab on /service?name=<svc> (becomes the
 // default once complete). Reuses the service-bundle data Service.tsx already
-// fetched (info + problems); the RED series for the KPI sparklines + charts
+// fetched (info); the RED series for the KPI sparklines + charts
 // come from one batched span-metric call here.
 //
-// Done: KPI row (+ full-bleed sparklines), RED charts row, recent problems.
-// Next: service-flow map, compact ops + top-DB tables, instances, sub-tabs.
+// v0.8.366 — operator-requested trim: the bottom Instances +
+// "Recent problems & events" cards are gone (problems already
+// surface via the banner/chips, instances live on /hosts), and the
+// flat two-column Neighbors block is replaced by the richer
+// ServiceNeighbors panel that used to open the Details tab.
+
+// Maps TimeRange presets to the `since` window ServiceNeighbors
+// expects (same table Service.tsx / ServiceBacktrace.tsx keep —
+// local on purpose: importing from Service.tsx would cycle).
+const SINCE_MAP: Record<string, string> = {
+  '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h',
+  '3h': '3h', '6h': '6h', '12h': '12h', '24h': '24h',
+  '2d': '2d', '7d': '7d',
+};
 
 interface Props {
   service: string;
   range: TimeRange;
   info: Service | null;
-  problems: Problem[];
   operations: OperationSummary[];
 }
 
@@ -152,24 +162,8 @@ function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready'
   );
 }
 
-const PROB_ICON: Record<string, { ic: string; fg: string }> = {
-  critical: { ic: '▲', fg: 'var(--err)' },
-  warning:  { ic: '◆', fg: 'var(--warn)' },
-  info:     { ic: '•', fg: 'var(--accent)' },
-};
 
-function relTime(ns: number): string {
-  const ms = Date.now() - ns / 1e6;
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
-export function ServiceOverview({ service, range, info, problems, operations }: Props) {
+export function ServiceOverview({ service, range, info, operations }: Props) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const windowSec = Math.max(1, (to - from) / 1e9);
 
@@ -225,7 +219,6 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
 
   if (!info) return null;
   const rps = info.spanCount / windowSec;
-  const open = problems.filter(p => p.status !== 'resolved');
 
   // "Every metric is a doorway" (Phase C) — canonical descriptors for each KPI
   // + RED chart. The SAME object that the panel carries is what the Explorer
@@ -286,10 +279,11 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
         </MetricPanel>
       </div>
 
-      {/* Upstream / downstream neighbors (prototype design-parity) — flat
-          two-column list of inbound callers + outbound dependencies. Replaced
-          the old in-page service-flow map; the full graph lives on /topology. */}
-      <Neighbors service={service} range={range} from={from} to={to} />
+      {/* Upstream / downstream neighbours — the richer panel that used
+          to open the Details tab, moved here v0.8.366 (operator: the
+          Details version "daha güzel gösteriyor"); the flat two-column
+          Neighbors block it replaces is gone. Full graph on /topology. */}
+      <ServiceNeighbors service={service} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
 
       {/* AI Analizi — auto-sends this service + selected window (v0.8.89). */}
       <AIAnalysisPanel service={service} rangeS={Math.round((to - from) / 1e9)} />
@@ -300,37 +294,6 @@ export function ServiceOverview({ service, range, info, problems, operations }: 
         <DbCard service={service} from={from} to={to} />
       </div>
 
-      {/* Instances (infra health) + Recent problems & events */}
-      <div className="ov-grid ov-cols-2 ov-mb">
-        <ServiceInstancesCard service={service} since={range.preset} />
-        <div className="card">
-          <div className="ov-card-h">
-            <h3>Recent problems &amp; events</h3>
-            {open.length > 0 && <span className="ov-sub">{open.length} open</span>}
-          </div>
-          {open.length === 0 ? (
-            <div className="ov-card-b" style={{ color: 'var(--text2)', fontSize: 13 }}>
-              No open problems for {service} in this window.
-            </div>
-          ) : (
-            <div>
-              {open.slice(0, 8).map(p => {
-                const sk = PROB_ICON[p.severity] ?? PROB_ICON.info;
-                return (
-                  <div className="ov-prob" key={p.id}>
-                    <div className="ov-ic" style={{ background: 'var(--accent-soft)', color: sk.fg }}>{sk.ic}</div>
-                    <div>
-                      <div className="ov-ti">{p.ruleName}</div>
-                      <div className="ov-de">{p.description}</div>
-                    </div>
-                    <div className="ov-tm">{relTime(p.startedAt)}</div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

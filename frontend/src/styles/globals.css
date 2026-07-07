@@ -1644,13 +1644,7 @@ canvas { max-width: 100%; }
 .ov-gauge { height: 5px; border-radius: 3px; background: var(--bg2); margin-top: 4px; overflow: hidden; }
 .ov-gauge i { display: block; height: 100%; }
 
-/* Problems */
-.ov-prob { display: flex; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.ov-prob:last-child { border-bottom: none; }
-.ov-prob .ov-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; font-size: 14px; }
-.ov-prob .ov-ti { font-weight: 600; font-size: 13px; }
-.ov-prob .ov-de { color: var(--text2); font-size: 12px; margin-top: 2px; }
-.ov-prob .ov-tm { margin-left: auto; color: var(--text3); font-size: 11px; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
 
 /* Mini-bar (table cells), status dot, op-type tag — pills reuse .badge/.b-* */
 .ov-barcell { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; width: 100%; }

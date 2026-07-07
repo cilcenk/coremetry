@@ -17,8 +17,6 @@ import { LazyMount } from '@/components/LazyMount';
 import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
-import { ServiceNeighbors } from '@/components/ServiceNeighbors';
-import { ServiceInfra } from '@/components/ServiceInfra';
 import { ServiceProfilingPanel } from '@/components/ServiceProfilingPanel';
 import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
 import { api } from '@/lib/api';
@@ -400,7 +398,7 @@ function ServiceDetailInner() {
               opCount={operations.length} />
 
             {tab === 'overview' && (
-              <ServiceOverview service={svc} range={range} info={info} problems={problems} operations={operations} />
+              <ServiceOverview service={svc} range={range} info={info} operations={operations} />
             )}
             {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
@@ -424,12 +422,10 @@ function ServiceDetailInner() {
                     Now: 3 immediate queries, the rest queue
                     progressively. Mounted panels stay mounted
                     so scroll-back keeps the data. */}
-                {/* v0.8.83 — Operator-requested: upstream/downstream neighbours
-                    pulled to the very top of Details; Recent rollouts
-                    (DeployHistoryPanel) moved to the bottom of the tab. */}
-                <ServiceNeighbors service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
-                {/* Above-the-fold (eager): ServiceInfra + ServiceCharts. */}
-                <ServiceInfra     service={svc} since={SINCE_MAP[range.preset] ?? '15m'} />
+                {/* v0.8.366 — Operator-requested trim: ServiceNeighbors moved
+                    to the Overview tab (replacing its flat Neighbors block);
+                    ServiceInfra retired (instances/infra live on /hosts).
+                    Above-the-fold (eager): ServiceCharts. */}
                 <ServiceCharts service={svc} range={range}
                   onZoom={(fromUnixSec, toUnixSec) => {
                     setRange({

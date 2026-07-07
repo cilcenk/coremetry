@@ -43,6 +43,16 @@ spec:
   # Redis lock — running multiple workers wastes the lock arbitration
   # without parallelising the work. Ingest + api scale freely.
   replicas: {{ $role.replicas }}
+  # v0.8.349 (HA audit) — the v0.8.193 maxUnavailable:0 invariant was
+  # monolithic-only; the distributed roles fell back to the k8s default
+  # (25% unavailable), and the INGEST role is precisely the Deployment
+  # behind the headless Service whose empty endpoint set wedges the
+  # collector's dns:///round_robin exporter. Same knobs as monolithic.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ ($.Values.deployment.rollingUpdate | default dict).maxUnavailable | default 0 }}
+      maxSurge: {{ ($.Values.deployment.rollingUpdate | default dict).maxSurge | default 1 }}
   selector:
     matchLabels:
       {{- include "coremetry.selectorLabels" $ | nindent 6 }}

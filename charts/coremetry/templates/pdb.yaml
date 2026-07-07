@@ -1,0 +1,44 @@
+{{- /* PodDisruptionBudgets (v0.8.349, HA audit) — maxUnavailable:0 on the
+   Deployment only governs ROLLOUTS. Voluntary evictions (kubectl drain,
+   cluster upgrades, kured, autoscaler bin-packing) had no PDB, so a
+   multi-node drain could evict every coremetry/ingest pod at once →
+   the headless ingest Service went to zero endpoints → the collector's
+   dns:///round_robin exporter wedged (the known zero-addresses
+   incident). Rendered only when a role has >1 replica: a
+   maxUnavailable:1 PDB on a single-replica Deployment would BLOCK
+   drains outright, which is worse than the eviction. */}}
+{{- $fullname := include "coremetry.fullname" . }}
+{{- if eq .Values.deployment.mode "distributed" }}
+{{- range $role := list "ingest" "api" }}
+{{- $cfg := index $.Values.deployment.roles $role }}
+{{- if gt (int $cfg.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-{{ $role }}
+  labels: {{- include "coremetry.labels" $ | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "coremetry.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: coremetry-{{ $role }}
+{{- end }}
+{{- end }}
+{{- else }}
+{{- if gt (int .Values.replicaCount) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}
+  labels: {{- include "coremetry.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "coremetry.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: coremetry
+{{- end }}
+{{- end }}

@@ -51,6 +51,11 @@ func (s *Store) EnforceRetention(ctx context.Context) error {
 		// exemplar outliving its trace is a dead link. Mirrors the
 		// SetRetention plan entry.
 		{"exemplars",     "retention.spans",    s.ret.SpansDays},
+		// v0.8.329 — span links (both directions) ride the SPANS horizon
+		// too: a link outliving its spans is a dead edge either way it's
+		// traversed. Mirrors the SetRetention plan entries.
+		{"span_links",         "retention.spans", s.ret.SpansDays},
+		{"span_links_reverse", "retention.spans", s.ret.SpansDays},
 	}
 	overrides, _ := s.GetRetention(ctx)
 	overrideMap := map[string]string{

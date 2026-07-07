@@ -330,6 +330,14 @@ var defaultShardPolicy = map[string]string{
 	// cityHash64 wants a hashable arg shape consistent with the other
 	// policies.
 	"exemplars":            "cityHash64(toString(series_fingerprint))",
+	// v0.8.329 — span links: each pivot direction shards by ITS OWN lookup
+	// key so both reads are single-shard PK scans. The forward table takes
+	// ingest INSERTs through the wrapper (routes by owning trace_id); the
+	// reverse table's key is exercised by span_links_reverse_mv writing TO
+	// the bare Distributed name — that write IS the re-shard by
+	// linked_trace_id.
+	"span_links":         "cityHash64(trace_id)",
+	"span_links_reverse": "cityHash64(linked_trace_id)",
 	"trace_summary_5m":     "cityHash64(trace_id)",
 	// v0.5.422 — trace_summary_1d MV columns are only `day` +
 	// `trace_count_state` (HLL state); trace_id isn't projected.
@@ -758,6 +766,14 @@ var highVolumeTables = map[string]bool{
 	// metric_points, so it needs the same `_local` + Distributed-wrapper
 	// treatment (shard policy above keeps each series' rows co-located).
 	"exemplars": true,
+	// v0.8.329 — span links + the reverse-PK copy: ingest-path volume next
+	// to spans, so both need `_local` + Distributed wrappers. The TO-form
+	// span_links_reverse_mv is DELIBERATELY not listed: it has no storage of
+	// its own — adaptDDL only rewrites its FROM to span_links_local, and its
+	// TO target stays the bare span_links_reverse (the Distributed wrapper),
+	// which is exactly what re-shards reverse rows by linked_trace_id.
+	"span_links":         true,
+	"span_links_reverse": true,
 	// Materialized views feeding off the high-volume base tables —
 	// each shard aggregates its own slice, the Distributed wrapper
 	// fans queries out across shards and merges.

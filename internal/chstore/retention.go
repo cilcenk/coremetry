@@ -89,6 +89,12 @@ func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string
 		// retention.spans value so an operator TTL edit propagates here in
 		// the same apply.
 		{"retention.spans", sp.Spans, "exemplars", "timestamp", false},
+		// v0.8.329 — span links (both directions) ride the SPANS retention
+		// too: a link outliving its spans is a dead edge whichever way it's
+		// traversed. Same ride-along persist:false pattern — the shared
+		// retention.spans key is upserted once by the spans row above.
+		{"retention.spans", sp.Spans, "span_links", "time", false},
+		{"retention.spans", sp.Spans, "span_links_reverse", "time", false},
 		{"retention.logs", sp.Logs, "logs", "time", true},
 		{"retention.metrics", sp.Metrics, "metric_points", "time", true},
 		{"retention.profiles", sp.Profiles, "profiles", "start_time", true},

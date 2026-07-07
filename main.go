@@ -349,11 +349,16 @@ func main() {
 	// v0.8.328 — OTLP metric exemplars (cross-signal pivot). Same batching
 	// machinery + flush cadence as the metric rows they arrived with.
 	exemplarConsumer := consumer.New("exemplars", opts, store.InsertExemplars)
+	// v0.8.329 — OTel span links (cross-signal pivot Phase 1b). Same batching
+	// machinery + flush cadence as the spans they arrived with; rows land in
+	// span_links and fan into span_links_reverse via its MV.
+	spanLinkConsumer := consumer.New("span_links", opts, store.InsertSpanLinks)
 	if mode.ingest {
 		spanConsumer.Start(ctx)
 		logConsumer.Start(ctx)
 		metricConsumer.Start(ctx)
 		exemplarConsumer.Start(ctx)
+		spanLinkConsumer.Start(ctx)
 	}
 
 	// ── OTLP ingester ─────────────────────────────────────────────────────────
@@ -362,6 +367,9 @@ func main() {
 	// require_trace_context default true — a stored exemplar exists to be
 	// clicked through to its trace (v0.8.328).
 	ing.SetExemplarPolicy(cfg.Exemplars.RequireTraceContext)
+	// v0.8.329 — span links: no policy knob (an empty/all-zero linked trace
+	// id is malformed per OTel spec, always dropped + counted).
+	ing.SetSpanLinks(spanLinkConsumer)
 
 	// ── Autocomplete cache (acache, v0.8.80) ──────────────────────────────────
 	// Redis-backed picker facets (service / operation / attribute-value names)

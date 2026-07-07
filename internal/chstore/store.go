@@ -1120,6 +1120,68 @@ func (s *Store) migrate(ctx context.Context) error {
 		TTL toDate(timestamp) + INTERVAL %[1]d DAY
 		SETTINGS index_granularity = 8192`, sd),
 
+		// span_links — v0.8.329, cross-signal pivot Phase 1b. One row per
+		// OTel span link (previously dropped at ingest, pivot-audit §2).
+		// Both pivot directions are point-lookups by ONE trace id, so BOTH
+		// get their own primary key (the operator-approved storage call):
+		// this table serves "what does this trace link TO" as a pure PK
+		// scan on ORDER BY (trace_id, time); the reverse MV below copies
+		// every row into span_links_reverse whose ORDER BY (linked_trace_id,
+		// time) makes "what links TO this trace" a PK scan too — no full
+		// scan, no JOIN in either direction. A nested column on `spans` was
+		// rejected: the reverse direction would need a spans full-scan or a
+		// separate index table anyway, and link rows are ~1-5% of span
+		// volume — cheap to duplicate.
+		//   - trace/span ids: plain String DEFAULT '' (hex, same encoding as
+		//     spans.trace_id → same-type lookups). NOT LowCardinality:
+		//     high-cardinality IDs make the dict overhead exceed its value.
+		//   - idx_linked bloom filter: belt-and-braces for ad-hoc backlink
+		//     queries against THIS table (the reverse table is the real
+		//     answer; the bloom keeps a mis-routed query survivable).
+		//   - attr arrays: the spans layout (LC keys + ZSTD values) — link
+		//     attr sets are tiny ("follows_from", batch ids), read whole.
+		//   - TTL from retention.spans (%[1]d) — a span link outliving its
+		//     spans is a dead edge in both directions. SetRetention keeps
+		//     this in lockstep with operator edits to retention.spans.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS span_links (
+			trace_id        String DEFAULT '' CODEC(ZSTD(3)),
+			span_id         String DEFAULT '' CODEC(ZSTD(3)),
+			linked_trace_id String DEFAULT '' CODEC(ZSTD(3)),
+			linked_span_id  String DEFAULT '' CODEC(ZSTD(3)),
+			time            DateTime64(9) CODEC(Delta, ZSTD(3)),
+			service_name    LowCardinality(String),
+			attr_keys       Array(LowCardinality(String)),
+			attr_values     Array(String) CODEC(ZSTD(3)),
+			INDEX idx_linked linked_trace_id TYPE bloom_filter(0.01) GRANULARITY 4
+		) ENGINE = MergeTree()
+		PARTITION BY toDate(time)
+		ORDER BY (trace_id, time)
+		TTL toDate(time) + INTERVAL %[1]d DAY
+		SETTINGS index_granularity = 8192`, sd),
+
+		// span_links_reverse — the SAME rows as span_links with the reverse
+		// direction as the primary key (v0.8.329, rationale above). A real
+		// MergeTree table (not a combined MV) so the MV below can be a
+		// storage-less TO-form trigger: in cluster mode the TO target stays
+		// the bare Distributed name, which is exactly what re-shards reverse
+		// rows by linked_trace_id (cluster.go defaultShardPolicy). Never
+		// written directly — ingest only touches span_links. No skip index:
+		// its ORDER BY prefix IS the one query it exists to serve.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS span_links_reverse (
+			trace_id        String DEFAULT '' CODEC(ZSTD(3)),
+			span_id         String DEFAULT '' CODEC(ZSTD(3)),
+			linked_trace_id String DEFAULT '' CODEC(ZSTD(3)),
+			linked_span_id  String DEFAULT '' CODEC(ZSTD(3)),
+			time            DateTime64(9) CODEC(Delta, ZSTD(3)),
+			service_name    LowCardinality(String),
+			attr_keys       Array(LowCardinality(String)),
+			attr_values     Array(String) CODEC(ZSTD(3))
+		) ENGINE = MergeTree()
+		PARTITION BY toDate(time)
+		ORDER BY (linked_trace_id, time)
+		TTL toDate(time) + INTERVAL %[1]d DAY
+		SETTINGS index_granularity = 8192`, sd),
+
 		// Pre-aggregated topology edges (v0.5.108). The service-
 		// level topology view used to run a self-join on the spans
 		// table per request — at billions-of-spans-per-day scale
@@ -2346,6 +2408,26 @@ func (s *Store) migrate(ctx context.Context) error {
 		   maxState(time)                        AS last_seen_state
 		 FROM spans
 		 GROUP BY service_name, time_bucket, trace_id`,
+
+		// span_links_reverse_mv — v0.8.329, cross-signal pivot Phase 1b.
+		// Copies every span_links row into span_links_reverse verbatim so the
+		// backlink direction ("what links TO this trace") has its own primary
+		// key — see the span_links CREATE for the both-directions-as-PK-scan
+		// rationale. TO-form ON PURPOSE (the first in this codebase; every
+		// other MV is combined): the target is a real table we also TTL /
+		// purge / retain independently, and the MV itself keeps no storage.
+		// Cluster mode (adaptDDL): the FROM rewrites to span_links_local
+		// (each shard triggers on its own slice) while the TO target stays
+		// the bare span_links_reverse — the Distributed wrapper — so reverse
+		// rows RE-SHARD by cityHash64(linked_trace_id) and LinksToTrace stays
+		// a single-shard PK scan. No ENGINE clause, so the Replicated engine
+		// swap correctly never touches it.
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS span_links_reverse_mv
+		 TO span_links_reverse
+		 AS SELECT
+		   trace_id, span_id, linked_trace_id, linked_span_id,
+		   time, service_name, attr_keys, attr_values
+		 FROM span_links`,
 	}
 	// v0.5.361 — bug-fix: the spanmetrics_hist_5m MV (added in
 	// v0.5.359) references metric_points.bucket_counts. On an

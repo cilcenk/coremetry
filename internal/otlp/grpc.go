@@ -61,12 +61,18 @@ type traceGRPC struct {
 }
 
 func (s *traceGRPC) Export(_ context.Context, req *tracecollpb.ExportTraceServiceRequest) (*tracecollpb.ExportTraceServiceResponse, error) {
-	spans := ConvertTraces(req)
+	spans, links := ConvertTraces(req)
 	dropped := 0
 	for _, sp := range spans {
 		if !s.ing.addSpan(sp) {
 			dropped++
 		}
+	}
+	// v0.8.329 — span links; gate + counters shared with the HTTP path via
+	// addSpanLink. Enqueued BEFORE the span-drop error return so links from
+	// the accepted spans of a partially-dropped batch still land.
+	for _, l := range links {
+		s.ing.addSpanLink(l)
 	}
 	if dropped > 0 {
 		return nil, status.Errorf(codes.ResourceExhausted, "dropped %d spans: buffer full", dropped)

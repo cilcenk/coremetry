@@ -17,8 +17,10 @@ import (
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricscollpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	tracecollpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -287,5 +289,143 @@ func TestIngesterExemplarGateDisabledKeepsTraceless(t *testing.T) {
 	}
 	if got := ing.ExemplarsDroppedNoTrace(); got != 0 {
 		t.Fatalf("droppedNoTrace = %d, want 0", got)
+	}
+}
+
+// ── Span links (v0.8.329, cross-signal pivot Phase 1b) ───────────────────────
+//
+// Before v0.8.329 convertSpan silently DROPPED sp.Links (pivot-audit §2).
+// These fixtures pin:
+//   - link rows carry the OWNING span's identity (trace/span id, start time,
+//     service) — the forward pivot key of the span_links table,
+//   - an all-zero linked trace id collapses to "" in conversion (parentID,
+//     the same nil-vs-zero-bytes SDK disagreement spans handle) so the
+//     Ingester's invalid gate sees both encodings identically,
+//   - the Ingester gate: invalid rows are dropped+counted, valid rows count
+//     as ingested; a nil span-link consumer (api-only pods) never panics.
+
+var (
+	linkedTraceID = []byte{0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30}
+	linkedSpanID  = []byte{0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38}
+)
+
+const (
+	linkedTraceHex = "2122232425262728292a2b2c2d2e2f30"
+	linkedSpanHex  = "3132333435363738"
+	spanStartNs    = uint64(1_700_000_200_000_000_000)
+)
+
+// linkedSpanFixture is one span with 2 links: one valid (with attributes) and
+// one whose linked trace id is all-zero bytes (the OTel "no trace" encoding
+// some SDKs emit) — the invalid one the ingest gate must drop.
+func linkedSpanFixture() *tracepb.Span {
+	return &tracepb.Span{
+		TraceId:           testTraceID,
+		SpanId:            testSpanID,
+		Name:              "checkout.process",
+		StartTimeUnixNano: spanStartNs,
+		EndTimeUnixNano:   spanStartNs + 1_000_000,
+		Links: []*tracepb.Span_Link{
+			{
+				TraceId:    linkedTraceID,
+				SpanId:     linkedSpanID,
+				Attributes: []*commonpb.KeyValue{kvStr("link.kind", "follows_from")},
+			},
+			{
+				TraceId: make([]byte, 16), // all-zero = no trace context
+				SpanId:  make([]byte, 8),
+			},
+		},
+	}
+}
+
+func tracesRequest(spans ...*tracepb.Span) *tracecollpb.ExportTraceServiceRequest {
+	return &tracecollpb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			Resource: &resourcepb.Resource{
+				Attributes: []*commonpb.KeyValue{kvStr("service.name", "checkout")},
+			},
+			ScopeSpans: []*tracepb.ScopeSpans{{Spans: spans}},
+		}},
+	}
+}
+
+func TestConvertTracesSpanLinks(t *testing.T) {
+	spans, links := ConvertTraces(tracesRequest(linkedSpanFixture()))
+	if len(spans) != 1 {
+		t.Fatalf("want 1 span, got %d", len(spans))
+	}
+	// Conversion is pure: BOTH links come out (the all-zero one with its
+	// linked ids collapsed to "") — the drop happens at the Ingester gate
+	// where the counters live, so HTTP + gRPC share one policy.
+	if len(links) != 2 {
+		t.Fatalf("want 2 link rows, got %d", len(links))
+	}
+
+	// Owning-span identity — the forward pivot key. Every link row must carry
+	// the trace/span id of the span that DECLARED the link, its start time,
+	// and its resource's service.
+	for i, ln := range links {
+		if ln.TraceID != testTraceHex || ln.SpanID != testSpanHex {
+			t.Errorf("link %d: owning ids = %q/%q, want %q/%q", i, ln.TraceID, ln.SpanID, testTraceHex, testSpanHex)
+		}
+		if got := ln.Time.UnixNano(); got != int64(spanStartNs) {
+			t.Errorf("link %d: time = %d, want owning span start %d", i, got, spanStartNs)
+		}
+		if ln.ServiceName != "checkout" {
+			t.Errorf("link %d: service = %q, want checkout", i, ln.ServiceName)
+		}
+	}
+
+	// Link 1: valid linked ids + attributes preserved as arrays.
+	if links[0].LinkedTraceID != linkedTraceHex || links[0].LinkedSpanID != linkedSpanHex {
+		t.Errorf("linked ids = %q/%q, want %q/%q", links[0].LinkedTraceID, links[0].LinkedSpanID, linkedTraceHex, linkedSpanHex)
+	}
+	if len(links[0].AttrKeys) != 1 || links[0].AttrKeys[0] != "link.kind" ||
+		len(links[0].AttrVals) != 1 || links[0].AttrVals[0] != "follows_from" {
+		t.Errorf("link attrs = %v/%v, want [link.kind]/[follows_from]", links[0].AttrKeys, links[0].AttrVals)
+	}
+
+	// Link 2: all-zero linked ids collapse to "" (parentID semantics).
+	if links[1].LinkedTraceID != "" || links[1].LinkedSpanID != "" {
+		t.Errorf("all-zero linked ids must convert to empty strings, got %q/%q", links[1].LinkedTraceID, links[1].LinkedSpanID)
+	}
+}
+
+func TestConvertTracesNoLinks(t *testing.T) {
+	sp := linkedSpanFixture()
+	sp.Links = nil
+	spans, links := ConvertTraces(tracesRequest(sp))
+	if len(spans) != 1 {
+		t.Fatalf("want 1 span, got %d", len(spans))
+	}
+	if len(links) != 0 {
+		t.Fatalf("want 0 link rows for a link-less span, got %d", len(links))
+	}
+}
+
+// The Ingester's span-link gate: an empty linked trace id (was all-zero or
+// nil on the wire) is a link pointing NOWHERE — dropped + counted as invalid,
+// accept-but-discard like the exemplar/pipeline gates. Valid links count as
+// ingested; a nil consumer (api-only pods) must never panic.
+func TestIngesterSpanLinkGateDropsInvalid(t *testing.T) {
+	ing := &Ingester{}
+	if ok := ing.addSpanLink(&chstore.SpanLinkRow{TraceID: testTraceHex, SpanID: testSpanHex, LinkedTraceID: ""}); !ok {
+		t.Fatalf("invalid-link drop must be accept-but-discard (true), got false")
+	}
+	if got := ing.SpanLinksDroppedInvalid(); got != 1 {
+		t.Fatalf("droppedInvalid = %d, want 1", got)
+	}
+	if got := ing.SpanLinksIngested(); got != 0 {
+		t.Fatalf("ingested = %d, want 0", got)
+	}
+	if ok := ing.addSpanLink(&chstore.SpanLinkRow{TraceID: testTraceHex, SpanID: testSpanHex, LinkedTraceID: linkedTraceHex}); !ok {
+		t.Fatalf("valid link with nil consumer must be accepted (no-op), got false")
+	}
+	if got := ing.SpanLinksIngested(); got != 1 {
+		t.Fatalf("ingested = %d, want 1", got)
+	}
+	if got := ing.SpanLinksDroppedInvalid(); got != 1 {
+		t.Fatalf("droppedInvalid moved to %d, want 1", got)
 	}
 }

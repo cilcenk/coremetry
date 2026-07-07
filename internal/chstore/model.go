@@ -116,6 +116,35 @@ type ExemplarRow struct {
 	FilteredAttrs map[string]string
 }
 
+// SpanLinkRow is one OTel span link normalised for the `span_links` table
+// (v0.8.329, cross-signal pivot Phase 1b — previously convertSpan dropped
+// sp.Links entirely, pivot-audit §2). One row per link; the reverse-direction
+// copy in span_links_reverse is populated by span_links_reverse_mv, never
+// written directly.
+type SpanLinkRow struct {
+	// TraceID / SpanID identify the OWNING span — the span that DECLARED the
+	// link. Lowercase hex, same encoding as spans.trace_id so both pivot
+	// directions are same-type lookups against the trace view.
+	TraceID string
+	SpanID  string
+	// LinkedTraceID / LinkedSpanID are the link's TARGET. "" when the wire
+	// carried nil or all-zero bytes (the SDK "no context" disagreement
+	// parentID collapses) — the Ingester's invalid gate drops those rows: a
+	// link pointing nowhere can't be traversed in either direction.
+	LinkedTraceID string
+	LinkedSpanID  string
+	// Time is the OWNING span's start time — links have no timestamp of
+	// their own in OTLP, and anchoring to the owner keeps the row inside the
+	// same partition/TTL horizon as the span it belongs to.
+	Time        time.Time
+	ServiceName string
+	// Link attributes as parallel arrays (attrsToArrays), the same layout
+	// spans uses — tiny sets ("follows_from", messaging batch ids), read
+	// whole by the trace view.
+	AttrKeys []string
+	AttrVals []string
+}
+
 // ── API response types ────────────────────────────────────────────────────────
 
 // OperationSummary is one row of the per-operation aggregate shown on

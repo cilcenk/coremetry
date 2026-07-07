@@ -19,8 +19,17 @@ import (
 
 // ── Trace conversion ──────────────────────────────────────────────────────────
 
-func ConvertTraces(req *tracecollpb.ExportTraceServiceRequest) []*chstore.Span {
+// ConvertTraces returns the span rows plus the span-link rows extracted from
+// them (v0.8.329 — previously sp.Links was silently dropped, pivot-audit §2;
+// mirrors how ConvertMetrics returns exemplars since v0.8.328). Link rows
+// carry the OWNING span's identity (trace/span id, start time, service) — the
+// forward key of the span_links table. The invalid-link gate (empty linked
+// trace id) is NOT applied here: pure conversion, unit-testable; the
+// Ingester's addSpanLink applies it so HTTP + gRPC share one gate + one set
+// of counters (the v0.8.328 exemplar split, same reason).
+func ConvertTraces(req *tracecollpb.ExportTraceServiceRequest) ([]*chstore.Span, []*chstore.SpanLinkRow) {
 	var out []*chstore.Span
+	var links []*chstore.SpanLinkRow
 	for _, rs := range req.ResourceSpans {
 		svcName, hostName, deployEnv := "unknown", "", ""
 		resK, resV := attrsToArrays(nil)
@@ -36,11 +45,37 @@ func ConvertTraces(req *tracecollpb.ExportTraceServiceRequest) []*chstore.Span {
 				scopeName = ss.Scope.Name
 			}
 			for _, sp := range ss.Spans {
-				out = append(out, convertSpan(sp, svcName, hostName, deployEnv, scopeName, resK, resV))
+				row := convertSpan(sp, svcName, hostName, deployEnv, scopeName, resK, resV)
+				out = append(out, row)
+				links = appendSpanLinks(links, sp.Links, row)
 			}
 		}
 	}
-	return out
+	return out, links
+}
+
+// appendSpanLinks converts one span's OTLP links into SpanLinkRows carrying
+// the already-converted span row's identity (owning trace/span id, start
+// time, service) — identity by construction, no re-derivation to drift.
+func appendSpanLinks(dst []*chstore.SpanLinkRow, links []*tracepb.Span_Link, sp *chstore.Span) []*chstore.SpanLinkRow {
+	for _, ln := range links {
+		attrK, attrV := attrsToArrays(ln.Attributes)
+		dst = append(dst, &chstore.SpanLinkRow{
+			TraceID: sp.TraceID,
+			SpanID:  sp.SpanID,
+			// parentID (not hexID): a link target of nil bytes and one of
+			// all-zero bytes are the same "no context" on different SDKs —
+			// both must collapse to "" so the Ingester's invalid gate sees
+			// them identically (the exemplar/parent_id precedent).
+			LinkedTraceID: parentID(ln.TraceId),
+			LinkedSpanID:  parentID(ln.SpanId),
+			Time:          sp.Time,
+			ServiceName:   sp.ServiceName,
+			AttrKeys:      attrK,
+			AttrVals:      attrV,
+		})
+	}
+	return dst
 }
 
 func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName string, resK, resV []string) *chstore.Span {

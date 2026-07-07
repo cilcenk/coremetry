@@ -23,6 +23,7 @@ type SystemStats struct {
 	Drops     IngestDrops    `json:"drops"`
 	Health    SystemHealth   `json:"health"`
 	Exemplars ExemplarIngest `json:"exemplars"`
+	SpanLinks SpanLinkIngest `json:"spanLinks"`
 }
 
 // ExemplarIngest — the two OTLP metric-exemplar ingest totals (cumulative
@@ -35,6 +36,18 @@ type SystemStats struct {
 type ExemplarIngest struct {
 	Ingested       int64 `json:"ingested"`
 	DroppedNoTrace int64 `json:"droppedNoTrace"`
+}
+
+// SpanLinkIngest — the two OTel span-link ingest totals (cumulative since
+// process start, v0.8.329). DroppedInvalid counts links whose linked trace
+// id arrived empty/all-zero — MALFORMED per the OTel spec (link trace_id is
+// required), so like the exemplar policy gate it's an intentional drop,
+// never in the loss alarm. Populated by the API getSystemStats handler from
+// the live Ingester atomics; GetSystemStats (CH-only) leaves it zero so
+// chstore keeps no otlp dependency.
+type SpanLinkIngest struct {
+	Ingested       int64 `json:"ingested"`
+	DroppedInvalid int64 `json:"droppedInvalid"`
 }
 
 // SystemHealth surfaces config/boot conditions that silently degrade reads, so

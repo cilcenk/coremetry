@@ -1307,6 +1307,10 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 			// the require-trace-context gate), same Ingester-atomics pattern.
 			st.Exemplars.Ingested = int64(s.ing.ExemplarsIngested())
 			st.Exemplars.DroppedNoTrace = int64(s.ing.ExemplarsDroppedNoTrace())
+			// v0.8.329 — span-link ingest totals (accepted vs dropped for an
+			// empty/all-zero linked trace id), same pattern.
+			st.SpanLinks.Ingested = int64(s.ing.SpanLinksIngested())
+			st.SpanLinks.DroppedInvalid = int64(s.ing.SpanLinksDroppedInvalid())
 		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state.

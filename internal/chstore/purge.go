@@ -22,9 +22,13 @@ type PurgeResult struct {
 // CREATE statements in store.go / chmigrate; TestPurgeAllowlistExcludesConfig
 // pins that no config table leaks in.
 var telemetryPurgeTables = []string{
-	// raw signals (exemplars = OTLP metric exemplars, v0.8.328 — pure
-	// telemetry, regenerates from new ingest)
+	// raw signals (exemplars = OTLP metric exemplars, v0.8.328;
+	// span_links + span_links_reverse = OTel span links, v0.8.329 — pure
+	// telemetry, regenerates from new ingest. The reverse table is listed
+	// EXPLICITLY: it's a real MergeTree filled by a TO-form MV, so
+	// truncating span_links alone would leave stale backlinks behind.)
 	"spans", "logs", "metric_points", "profiles", "exemplars",
+	"span_links", "span_links_reverse",
 	// RED / aggregation MVs
 	"service_summary_5m", "operation_summary_5m", "operation_group_summary_5m",
 	"db_summary_5m", "db_caller_summary_5m",

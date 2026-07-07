@@ -87,6 +87,45 @@ func TestAdaptDDL_MV(t *testing.T) {
 	}
 }
 
+// TestAdaptDDL_TOFormMV — v0.8.329: span_links_reverse_mv is the codebase's
+// first TO-form MV (explicit target table, no ENGINE of its own). Pins the
+// cluster-mode contract its DDL comment promises:
+//   - the MV name is NOT in highVolumeTables → no _local rename, no
+//     Distributed wrapper for the trigger itself (1 statement out);
+//   - FROM span_links rewrites to span_links_local (each shard triggers on
+//     its own slice) WITHOUT bleeding into the TO clause or the _local name;
+//   - TO span_links_reverse stays the BARE name — that's the Distributed
+//     wrapper, whose cityHash64(linked_trace_id) policy re-shards reverse
+//     rows so LinksToTrace is a single-shard PK scan;
+//   - no ENGINE clause → the Replicated engine swap must not touch it.
+func TestAdaptDDL_TOFormMV(t *testing.T) {
+	s := &Store{cfg: config.CHConfig{ClusterName: "c", ReplicaPath: "/p"}}
+	src := `CREATE MATERIALIZED VIEW IF NOT EXISTS span_links_reverse_mv
+		TO span_links_reverse
+		AS SELECT trace_id, span_id, linked_trace_id, linked_span_id,
+		time, service_name, attr_keys, attr_values
+		FROM span_links`
+	got := s.adaptDDL(src)
+	if len(got) != 1 {
+		t.Fatalf("TO-form MV must be 1 stmt (no wrapper — it has no storage), got %d: %#v", len(got), got)
+	}
+	if !strings.Contains(got[0], "span_links_reverse_mv ON CLUSTER `c`") {
+		t.Errorf("ON CLUSTER missing / MV wrongly renamed: %s", got[0])
+	}
+	if !strings.Contains(got[0], "FROM span_links_local") {
+		t.Errorf("MV FROM not rewritten to the shard-local source: %s", got[0])
+	}
+	if !strings.Contains(got[0], "TO span_links_reverse\n") && !strings.Contains(got[0], "TO span_links_reverse ") {
+		t.Errorf("TO target must stay the bare Distributed name: %s", got[0])
+	}
+	if strings.Contains(got[0], "TO span_links_reverse_local") {
+		t.Errorf("TO target must NOT be rewritten to _local (re-sharding by linked_trace_id happens via the wrapper): %s", got[0])
+	}
+	if strings.Contains(got[0], "Replicated") {
+		t.Errorf("engine swap must not touch an ENGINE-less TO-form MV: %s", got[0])
+	}
+}
+
 // TestIsClusterUnsupportedAlter — locks the exact substring we
 // recognise so a future code-gen change to the CH client error
 // format can't silently make the migration fatal again.

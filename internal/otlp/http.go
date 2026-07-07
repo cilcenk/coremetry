@@ -35,6 +35,12 @@ type Ingester struct {
 	// cadence as Metrics. nil-safe: addExemplar no-ops the enqueue (counters
 	// still tick) on pods where main didn't wire it.
 	Exemplars *consumer.Consumer[*chstore.ExemplarRow]
+	// SpanLinks (v0.8.329) — OTel span links extracted alongside the span
+	// rows (cross-signal pivot Phase 1b). Its flusher batches into
+	// chstore.InsertSpanLinks with the same consumer machinery / flush
+	// cadence as Spans. nil-safe: addSpanLink no-ops the enqueue (counters
+	// still tick) on pods where main didn't wire it.
+	SpanLinks *consumer.Consumer[*chstore.SpanLinkRow]
 
 	// pipeline (v0.5.263) — ingest-time drop / enrich rules. nil = no rules
 	// (the engine is a no-op-on-empty, so passing it through is fine too).
@@ -53,6 +59,13 @@ type Ingester struct {
 	exemplarsNoTraceOK      bool
 	exemplarsIngested       atomic.Uint64
 	exemplarsDroppedNoTrace atomic.Uint64
+
+	// span-link counters (v0.8.329). No policy knob: a link whose linked
+	// trace id is empty/all-zero is MALFORMED per the OTel spec (trace_id is
+	// required on a link), not an operator choice — always dropped + counted
+	// as invalid. Same atomics + accessor shape as the exemplar counters.
+	spanLinksIngested       atomic.Uint64
+	spanLinksDroppedInvalid atomic.Uint64
 
 	// autocomplete (v0.8.80) — Redis-backed picker-facet cache. nil-safe:
 	// ObserveSpan short-circuits on a nil/disabled store, so pods without
@@ -100,6 +113,16 @@ func (ing *Ingester) SetExemplarPolicy(requireTraceContext bool) {
 // the pipeline-counter accessor pattern above.
 func (ing *Ingester) ExemplarsIngested() uint64       { return ing.exemplarsIngested.Load() }
 func (ing *Ingester) ExemplarsDroppedNoTrace() uint64 { return ing.exemplarsDroppedNoTrace.Load() }
+
+// SetSpanLinks wires the span-link consumer (v0.8.329). Called from main();
+// nil keeps addSpanLink counting but not enqueueing (api-only pods).
+func (ing *Ingester) SetSpanLinks(c *consumer.Consumer[*chstore.SpanLinkRow]) { ing.SpanLinks = c }
+
+// SpanLinksIngested / SpanLinksDroppedInvalid are the two v0.8.329 span-link
+// ingest totals surfaced on /admin/stats (SystemStats.SpanLinks), following
+// the exemplar-counter accessor pattern above.
+func (ing *Ingester) SpanLinksIngested() uint64       { return ing.spanLinksIngested.Load() }
+func (ing *Ingester) SpanLinksDroppedInvalid() uint64 { return ing.spanLinksDroppedInvalid.Load() }
 
 func NewIngester(
 	spans *consumer.Consumer[*chstore.Span],
@@ -167,6 +190,24 @@ func (ing *Ingester) addExemplar(ex *chstore.ExemplarRow) bool {
 	return ing.Exemplars.Add(ex)
 }
 
+// addSpanLink applies the invalid-link gate (v0.8.329) then forwards to the
+// span-link consumer. A link whose linked trace id collapsed to "" (nil or
+// all-zero on the wire) points NOWHERE — it can't be traversed in either
+// pivot direction, so storing it would only bloat the PK. Accept-but-discard
+// like the exemplar/pipeline gates; returns false only when the consumer
+// buffer was full.
+func (ing *Ingester) addSpanLink(l *chstore.SpanLinkRow) bool {
+	if l.LinkedTraceID == "" {
+		ing.spanLinksDroppedInvalid.Add(1)
+		return true
+	}
+	ing.spanLinksIngested.Add(1)
+	if ing.SpanLinks == nil {
+		return true // pod without the span-link consumer wired — count only
+	}
+	return ing.SpanLinks.Add(l)
+}
+
 // HTTPHandler returns an http.Handler that accepts OTLP/HTTP (protobuf + JSON).
 func HTTPHandler(ing *Ingester) http.Handler {
 	mux := http.NewServeMux()
@@ -182,7 +223,7 @@ func (ing *Ingester) handleTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	spans := ConvertTraces(&req)
+	spans, links := ConvertTraces(&req)
 	dropped := 0
 	for _, sp := range spans {
 		if !ing.addSpan(sp) {
@@ -191,6 +232,11 @@ func (ing *Ingester) handleTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	if dropped > 0 {
 		log.Printf("[otlp/http] traces: dropped %d spans (buffer full)", dropped)
+	}
+	// v0.8.329 — span links ride the same request; the invalid gate +
+	// counters live in addSpanLink so gRPC shares them.
+	for _, l := range links {
+		ing.addSpanLink(l)
 	}
 	writeProtoResp(w, r, &tracecollpb.ExportTraceServiceResponse{})
 }

@@ -123,11 +123,14 @@ func ext(peer, method, url string, status int) map[string]any {
 	)
 }
 
-// kafkaPub appends a Kafka producer span on `topic` under `parent`.
+// kafkaPub appends a Kafka producer span on `topic` under `parent` and
+// records it in the shared producer ring so later consumer traces can
+// link back to it (v0.8.335).
 func kafkaPub(t *Trace, service string, parent []byte, topic string, off time.Duration, ref string) {
-	t.Add(service, "kafka.publish "+topic, tracepb.Span_SPAN_KIND_PRODUCER, parent, off, dur(8, 25),
+	sid := t.Add(service, "kafka.publish "+topic, tracepb.Span_SPAN_KIND_PRODUCER, parent, off, dur(8, 25),
 		kv("messaging.system", "kafka", "messaging.destination", topic, "messaging.operation", "publish",
 			"peer.service", "kafka", "banking.txn_ref", ref), true, "")
+	kafkaLinks.record(topic, t.traceID, sid)
 	M.RecordBiz("kafka.events_published")
 }
 
@@ -530,6 +533,7 @@ func scenarioRewardsEvent() *Trace {
 	rw := t.Add("rewards-service", "kafka.consume card.approved", tracepb.Span_SPAN_KIND_CONSUMER, nil, 0, total,
 		kv("messaging.system", "kafka", "messaging.destination", "card.approved",
 			"messaging.operation", "receive", "peer.service", "kafka", "banking.txn_ref", ref), true, "")
+	t.Link(rw, kafkaLinks.maybe("card.approved", t.traceID))
 	t.Add("rewards-service", "UPDATE POINTS_LEDGER", tracepb.Span_SPAN_KIND_CLIENT, rw, 8*ms1, dur(6, 24),
 		oraDB("REWARDS", "UPDATE", "POINTS_LEDGER",
 			"UPDATE POINTS_LEDGER SET BALANCE = BALANCE + :1 WHERE CUST_ID = :2", oracleCore), true, "")
@@ -557,6 +561,7 @@ func scenarioChargebackEvent() *Trace {
 	cb := t.Add("chargeback-service", "kafka.consume dispute.opened", tracepb.Span_SPAN_KIND_CONSUMER, nil, 0, total,
 		kv("messaging.system", "kafka", "messaging.destination", "dispute.opened",
 			"messaging.operation", "receive", "peer.service", "kafka", "banking.txn_ref", ref), true, "")
+	t.Link(cb, kafkaLinks.maybe("dispute.opened", t.traceID))
 	// Raise the chargeback with the scheme via the adapter.
 	sav := t.Add("scheme-adapter", "SchemeAdapter.RaiseChargeback", tracepb.Span_SPAN_KIND_SERVER, cb, 12*ms1, dur(80, 260),
 		kv("rpc.system", "grpc", "rpc.method", "RaiseChargeback", "card.scheme", scheme, "banking.txn_ref", ref), true, "")

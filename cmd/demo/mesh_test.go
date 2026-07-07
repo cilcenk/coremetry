@@ -251,6 +251,140 @@ func TestMeshServiceCoverage(t *testing.T) {
 	}
 }
 
+// ─── Cross-trace Kafka span links (v0.8.335) ────────────────────────────────
+//
+// Every kafka-pub hop records its producer span into the process-global
+// kafkaLinks ring; kafka-consume spans attach 1-2 OTLP Span.Links pointing at
+// RECENT producer spans from OTHER traces on the same topic — the real data
+// behind the cross-signal "Linked traces" pivot (v0.8.329-333). The tests use
+// topic names no registered chain publishes, so the shared ring is empty for
+// them until each test seeds it.
+
+// linkPubSpec / linkSubSpec: minimal producer→topic / consumer←topic specs.
+func linkPubSpec(topic string) *chainSpec {
+	return &chainSpec{name: "linkpub", root: chainHop{
+		svc: "web-bff", proto: "http", op: "GET /t", minMs: 10, maxMs: 20,
+		kids: []chainHop{
+			{svc: "web-bff", proto: "kafka-pub", topic: topic, minMs: 5, maxMs: 10},
+		},
+	}}
+}
+
+func linkSubSpec(topic string) *chainSpec {
+	return &chainSpec{name: "linksub", root: chainHop{
+		svc: "webhook-dispatcher", proto: "kafka-consume", topic: topic, minMs: 10, maxMs: 20,
+	}}
+}
+
+func findKind(tr *Trace, kind tracepb.Span_SpanKind) *tracepb.Span {
+	for _, si := range tr.spans {
+		if si.span.Kind == kind {
+			return si.span
+		}
+	}
+	return nil
+}
+
+// TestMeshConsumerCrossTraceLinks drives the REAL production path: build a
+// producer trace (seeds the ring), then consumer traces until the plain-rand
+// ~70% link odds fire — P(none in 60 builds) = 0.3^60, effectively zero — and
+// pins that the link targets the producer's OTHER trace with the messaging
+// attrs the span_links pivot filters on.
+func TestMeshConsumerCrossTraceLinks(t *testing.T) {
+	const topic = "test.links.crosstrace"
+	prod := buildMeshTraceRoll(linkPubSpec(topic), neverFail)
+	prodSpan := findKind(prod, tracepb.Span_SPAN_KIND_PRODUCER)
+	if prodSpan == nil {
+		t.Fatal("producer spec emitted no PRODUCER span")
+	}
+
+	for i := 0; i < 60; i++ {
+		tr := buildMeshTraceRoll(linkSubSpec(topic), neverFail)
+		cons := findKind(tr, tracepb.Span_SPAN_KIND_CONSUMER)
+		if cons == nil {
+			t.Fatal("consumer spec emitted no CONSUMER span")
+		}
+		if len(cons.Links) == 0 {
+			continue // odds didn't fire this build — try again
+		}
+		ln := cons.Links[0]
+		if string(ln.TraceId) != string(prod.traceID) {
+			t.Errorf("link trace id = %x, want the producer trace %x", ln.TraceId, prod.traceID)
+		}
+		if string(ln.SpanId) != string(prodSpan.SpanId) {
+			t.Errorf("link span id = %x, want the producer span %x", ln.SpanId, prodSpan.SpanId)
+		}
+		if string(ln.TraceId) == string(tr.traceID) {
+			t.Error("link points at the consumer's OWN trace — self-links must be excluded")
+		}
+		attrs := map[string]string{}
+		for _, a := range ln.Attributes {
+			attrs[a.Key] = a.Value.GetStringValue()
+		}
+		if attrs["messaging.system"] != "kafka" {
+			t.Errorf("link attr messaging.system = %q, want kafka", attrs["messaging.system"])
+		}
+		if attrs["messaging.destination.name"] != topic {
+			t.Errorf("link attr messaging.destination.name = %q, want %q", attrs["messaging.destination.name"], topic)
+		}
+		return
+	}
+	t.Fatal("no consumer span carried a link after 60 builds (odds ~0.3^60) — links not wired")
+}
+
+// TestLinkRingSelfExclusion pins the deterministic core: a consumer never
+// links its own trace, so a ring holding only THIS trace's producer yields
+// zero links.
+func TestLinkRingSelfExclusion(t *testing.T) {
+	const topic = "test.links.self"
+	prod := buildMeshTraceRoll(linkPubSpec(topic), neverFail)
+	if got := kafkaLinks.pick(topic, prod.traceID, 2); len(got) != 0 {
+		t.Fatalf("pick returned %d links for the ring entry's own trace, want 0", len(got))
+	}
+}
+
+// TestLinkRingCap pins the memory bound: 65 pushes keep the 64 newest entries
+// (oldest evicted), and pick returns newest-first.
+func TestLinkRingCap(t *testing.T) {
+	r := &linkRing{byTopic: map[string][]spanRef{}}
+	first := randID(16)
+	r.record("t", first, randID(8))
+	var last []byte
+	for i := 0; i < 64; i++ {
+		last = randID(16)
+		r.record("t", last, randID(8))
+	}
+	if got := len(r.byTopic["t"]); got != linkRingCap {
+		t.Fatalf("ring holds %d entries after 65 pushes, want %d", got, linkRingCap)
+	}
+	for _, ref := range r.byTopic["t"] {
+		if string(ref.traceID) == string(first) {
+			t.Error("oldest entry survived eviction — ring is not FIFO-bounded")
+		}
+	}
+	got := r.pick("t", randID(16), 1)
+	if len(got) != 1 || string(got[0].TraceId) != string(last) {
+		t.Error("pick(1) did not return the newest ring entry")
+	}
+}
+
+// TestLinkRingEmpty pins the cold-start path: an unseeded topic yields zero
+// links — no panic — both through pick and through the full consumer build.
+func TestLinkRingEmpty(t *testing.T) {
+	const topic = "test.links.empty"
+	if got := kafkaLinks.pick(topic, randID(16), 2); len(got) != 0 {
+		t.Fatalf("pick on empty ring returned %d links, want 0", len(got))
+	}
+	tr := buildMeshTraceRoll(linkSubSpec(topic), neverFail)
+	cons := findKind(tr, tracepb.Span_SPAN_KIND_CONSUMER)
+	if cons == nil {
+		t.Fatal("consumer spec emitted no CONSUMER span")
+	}
+	if len(cons.Links) != 0 {
+		t.Fatalf("consumer on unseeded topic carries %d links, want 0", len(cons.Links))
+	}
+}
+
 // TestMeshWebhookParallelFanout pins the slice-2 headline shape: the webhook
 // dispatcher delivers to THREE partner endpoints in parallel (plus a
 // concurrent idempotency check), so all four CLIENT spans share the consumer

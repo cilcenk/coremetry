@@ -310,6 +310,23 @@ func (t *Trace) Add(service, name string, kind tracepb.Span_SpanKind,
 	return spanID
 }
 
+// Link attaches OTLP span links to a span previously returned by Add —
+// the smallest extension of the Add contract for the cross-trace Kafka
+// links (v0.8.335): Add keeps its signature, Link decorates by id.
+// Searches newest-first because Link is called right after the Add
+// that created the span.
+func (t *Trace) Link(spanID []byte, links []*tracepb.Span_Link) {
+	if len(links) == 0 {
+		return
+	}
+	for i := len(t.spans) - 1; i >= 0; i-- {
+		if string(t.spans[i].span.SpanId) == string(spanID) {
+			t.spans[i].span.Links = append(t.spans[i].span.Links, links...)
+			return
+		}
+	}
+}
+
 func (t *Trace) Send() error {
 	// ~15% of traces get their root span dropped before sending —
 	// simulates a real-world OTel sampler / collector dropping the
@@ -747,10 +764,11 @@ func scenarioTransfer() *Trace {
 		kv("rpc.system", "grpc", "rpc.method", "Send", "peer.service", "email-service"), true, "")
 
 	kafkaStart := postStart + dur(60, 110)
-	t.Add("transfer-service", "kafka.publish transfer.posted", tracepb.Span_SPAN_KIND_PRODUCER,
+	pubSpan := t.Add("transfer-service", "kafka.publish transfer.posted", tracepb.Span_SPAN_KIND_PRODUCER,
 		xferSpan, kafkaStart, dur(8, 25), kv("messaging.system", "kafka",
 			"messaging.destination", "transfer.posted", "peer.service", "kafka",
 			"banking.txn_ref", ref), true, "")
+	kafkaLinks.record("transfer.posted", t.traceID, pubSpan)
 	M.RecordBiz("kafka.events_published")
 	return t
 }
@@ -1107,6 +1125,7 @@ func scenarioTransferEvent() *Trace {
 			"messaging.destination", "transfer.posted",
 			"messaging.operation", "receive", "peer.service", "kafka",
 			"banking.txn_ref", ref), true, "")
+	t.Link(notifSpan, kafkaLinks.maybe("transfer.posted", t.traceID))
 
 	// Email branch
 	emailDur := dur(40, 120)
@@ -1153,6 +1172,7 @@ func scenarioTransferEvent() *Trace {
 		notifSpan, 4*time.Millisecond, amlDur,
 		kv("messaging.system", "kafka", "messaging.destination", "transfer.posted",
 			"messaging.operation", "receive", "banking.txn_ref", ref), true, "")
+	t.Link(amlSpan, kafkaLinks.maybe("transfer.posted", t.traceID))
 	t.Add("aml-service", "elasticsearch.index txn", tracepb.Span_SPAN_KIND_CLIENT,
 		amlSpan, 6*time.Millisecond, dur(15, 70),
 		kv("db.system", "elasticsearch", "db.operation", "index",
@@ -1163,6 +1183,7 @@ func scenarioTransferEvent() *Trace {
 		notifSpan, 4*time.Millisecond, dur(20, 70),
 		kv("messaging.system", "kafka", "messaging.destination", "transfer.posted",
 			"banking.txn_ref", ref), true, "")
+	t.Link(auditSpan, kafkaLinks.maybe("transfer.posted", t.traceID))
 	t.Add("audit-service", "INSERT AUDIT_LOG", tracepb.Span_SPAN_KIND_CLIENT,
 		auditSpan, 6*time.Millisecond, dur(8, 30),
 		oraDB("AUDIT", "INSERT", "AUDIT_LOG",

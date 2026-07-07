@@ -396,6 +396,7 @@ func emitHop(t *Trace, b *builtHop, parentSvc string, parent []byte, off time.Du
 		sid := t.Add(h.svc, "kafka.publish "+h.topic, tracepb.Span_SPAN_KIND_PRODUCER, parent, off, b.d,
 			kv("messaging.system", "kafka", "messaging.destination", h.topic,
 				"messaging.operation", "publish", "peer.service", "kafka"), ok, msg)
+		kafkaLinks.record(h.topic, t.traceID, sid)
 		// Async continuation: consumers are independent groups, so they
 		// all start together, AFTER the publish lands on the broker —
 		// same producer-parented shape as scenarioTransferEvent.
@@ -409,6 +410,9 @@ func emitHop(t *Trace, b *builtHop, parentSvc string, parent []byte, off time.Du
 		sid := t.Add(h.svc, "kafka.consume "+h.topic, tracepb.Span_SPAN_KIND_CONSUMER, parent, off, b.d,
 			kv("messaging.system", "kafka", "messaging.destination", h.topic,
 				"messaging.operation", "receive", "peer.service", "kafka"), ok, msg)
+		// Cross-trace link back to recent producers of this topic — the
+		// batch-consume shape the "Linked traces" pivot exists for.
+		t.Link(sid, kafkaLinks.maybe(h.topic, t.traceID))
 		emitKids(t, b, sid, off+hopGap)
 
 	case "ext":

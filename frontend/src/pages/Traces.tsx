@@ -933,6 +933,15 @@ function TracesPageInner() {
                     </>
                   )}
                   {' · '}sorted by <b>{sort}</b> {order}
+                  {/* v0.8.369 — Dynatrace-style honesty hint: non-time
+                      sorts rank within the newest-N slice, not the
+                      whole window. */}
+                  {data?.rankedWithinRecent ? (
+                    <span title={`For speed, ${sort} ranks the newest ${data.rankedWithinRecent.toLocaleString()} traces in the window — an older trace beyond that slice won't appear. Sort by time for the full window.`}
+                      style={{ marginLeft: 6, color: 'var(--text3)' }}>
+                      · ranked within newest {data.rankedWithinRecent.toLocaleString()}
+                    </span>
+                  ) : null}
                 </>
               } />
           </>

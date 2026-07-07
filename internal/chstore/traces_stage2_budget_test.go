@@ -69,3 +69,21 @@ func TestTracePostAggFiltered(t *testing.T) {
 		})
 	}
 }
+
+// v0.8.369 (operator decision — Dynatrace-style): non-time sorts rank
+// within the newest traceRecencySliceN traces; time keeps the exact
+// window path. The slice must fit Stage 2's IN-list byte budget.
+func TestTraceSortRecencySliced(t *testing.T) {
+	for sort, want := range map[string]bool{
+		"": false, "time": false,
+		"duration": true, "spans": true, "status": true,
+		"service": true, "operation": true,
+	} {
+		if got := traceSortRecencySliced(sort); got != want {
+			t.Errorf("traceSortRecencySliced(%q) = %v, want %v", sort, got, want)
+		}
+	}
+	if traceRecencySliceN > traceStage2MaxIDs {
+		t.Fatalf("recency slice %d exceeds the Stage-2 IN-list cap %d", traceRecencySliceN, traceStage2MaxIDs)
+	}
+}

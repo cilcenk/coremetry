@@ -1309,6 +1309,13 @@ type TraceFilter struct {
 	Order    string       // "asc" | "desc"
 	Limit    int
 	Offset   int
+	// RankedWithin, when non-nil, is an OUT param: the MV fast-path
+	// writes traceRecencySliceN into it when a non-time sort was
+	// ranked within the newest-N recency slice (v0.8.369,
+	// Dynatrace-style). The HTTP layer forwards it so the UI can
+	// show the "ranked within newest N" hint honestly — it stays 0
+	// when the raw path (or an unsliced sort) served the request.
+	RankedWithin *int
 	// CountMode controls the cost/accuracy of the total-rows badge:
 	//
 	//	"skip"    no DISTINCT count at all — the cheapest path. The caller
@@ -1944,6 +1951,23 @@ func traceStage1LightSQL(f TraceFilter, having []string) (string, bool) {
 		         optimize_aggregation_in_order = 1`, true
 }
 
+// traceRecencySliceN is the Dynatrace-style ranking slice (v0.8.369,
+// operator decision): on the no-service path, non-time sorts rank
+// within the NEWEST N traces instead of aggregating every trace in
+// the window. Cost becomes constant at any range (the global
+// duration sort was O(window) — at 1B spans/day a wide window
+// pushed the 15s cap); the trade-off, surfaced in the UI as a
+// "ranked within newest N" hint, is that a slower-but-older trace
+// outside the slice no longer tops the list. Must stay ≤
+// traceStage2MaxIDs (the ids ride Stage 2's IN list).
+const traceRecencySliceN = 5000
+
+// traceSortRecencySliced says whether a sort key ranks within the
+// recency slice (everything except time itself). Pure — table-tested.
+func traceSortRecencySliced(sort string) bool {
+	return sort != "" && sort != "time"
+}
+
 // traceStage2MaxIDs bounds how many trace ids Stage 1 may hand to
 // Stage 2's IN list. clickhouse-go interpolates bind args client-side,
 // so each id costs ~35 bytes ('<32 hex>' + comma) of query text and
@@ -2094,8 +2118,22 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// are correct; Stage 2 then merges the full states for ~stage1Limit
 	// ids instead of the whole window. Deep offsets grow the id budget.
 	if f.Service == "" && holders == "" {
+		s1f := f
+		ranked := traceSortRecencySliced(f.Sort)
 		budget, budgetOK := traceStage1Budget(f.Offset, pageLimit, stage1Limit)
-		if s1, ok := traceStage1LightSQL(f, having); ok && budgetOK {
+		if ranked {
+			// Dynatrace-style (v0.8.369): Stage 1 picks the NEWEST
+			// traceRecencySliceN ids (always time DESC — f.Order
+			// belongs to the requested key, applied by Stage 2 within
+			// the slice). This also gives service/operation sorts a
+			// two-stage path — they used to single-stage over the
+			// whole window. Pages past the slice come back empty by
+			// design; the response carries the slice size so the UI
+			// can say so.
+			s1f.Sort, s1f.Order = "time", "desc"
+			budget, budgetOK = traceRecencySliceN, true
+		}
+		if s1, ok := traceStage1LightSQL(s1f, having); ok && budgetOK {
 			rows1, err := s.conn.Query(ctx, s1, f.From, f.To, budget)
 			if err != nil {
 				return nil, 0, false, fmt.Errorf("stage1-light: %w", err)
@@ -2119,6 +2157,9 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			traceIDs = ids
 			holders = strings.Repeat("?,", len(ids))
 			holders = holders[:len(holders)-1]
+			if ranked && f.RankedWithin != nil {
+				*f.RankedWithin = traceRecencySliceN
+			}
 		}
 	}
 

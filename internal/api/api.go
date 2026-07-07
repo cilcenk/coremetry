@@ -2981,11 +2981,19 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	// ticking time, the v0.5.184 class).
 	key := "traces:" + r.URL.RawQuery
 	s.serveCached(w, r, key, 20*time.Second, func(ctx context.Context) (any, error) {
+		// OUT param (v0.8.369): set to the recency-slice size when a
+		// non-time sort was ranked within the newest-N slice, so the
+		// UI can hint honestly (0 = exact/global ordering served).
+		rankedWithin := 0
+		f.RankedWithin = &rankedWithin
 		traces, total, hasMore, err := s.store.GetTraces(ctx, f)
 		if err != nil {
 			return nil, err
 		}
 		resp := map[string]interface{}{"traces": traces, "hasMore": hasMore}
+		if rankedWithin > 0 {
+			resp["rankedWithinRecent"] = rankedWithin
+		}
 		// Only emit `total` when the caller actually computed one — clients
 		// distinguish "unknown total" from "zero total" by the field's
 		// presence, not its value.

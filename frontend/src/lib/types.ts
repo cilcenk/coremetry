@@ -1175,6 +1175,11 @@ export interface TracesResponse {
   // True when the backend pulled Limit+1 rows and the extra row was
   // dropped — i.e. "there's at least one more page after this one".
   hasMore?: boolean;
+  // v0.8.369 (Dynatrace-style sort): present when a non-time sort was
+  // ranked within the newest-N recency slice instead of the whole
+  // window — the UI shows a "ranked within newest N" hint. Absent =
+  // exact/global ordering.
+  rankedWithinRecent?: number;
 }
 
 export interface SpanEvent {

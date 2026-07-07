@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -154,5 +155,79 @@ func TestExplainOpenAITrulyEmptyStillErrors(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "empty content") {
 		t.Fatalf("error %q should mention empty content", err.Error())
+	}
+}
+
+// v0.8.373 — operator-reported: chat tool-calling against Gemini's
+// OpenAI-compat endpoint failed on the SECOND turn with 400
+// "Function call is missing a thought_signature in functionCall
+// parts". The parser kept only id/name/arguments, so provider extras
+// (extra_content → thought_signature) were dropped and the replayed
+// assistant tool_call no longer matched what the model emitted. The
+// fix captures each tool_call's raw JSON and replays it verbatim.
+func TestChatOpenAIToolCallRawPreserved(t *testing.T) {
+	const geminiStyle = `{"choices":[{"message":{"content":"",` +
+		`"tool_calls":[{"id":"call_1","type":"function",` +
+		`"function":{"name":"list_problems","arguments":"{\"status\":\"open\"}"},` +
+		`"extra_content":{"google":{"thought_signature":"SIG-XYZ"}}}]}}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":5}}`
+
+	// Turn 1: parse — the raw object must be captured alongside the
+	// trimmed executor view.
+	var sentBodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b := new(strings.Builder)
+		_, _ = io.Copy(b, r.Body)
+		sentBodies = append(sentBodies, b.String())
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(geminiStyle))
+	}))
+	defer srv.Close()
+	s := New("openai", "", "test-model")
+	s.Configure("openai", "", "test-model", srv.URL, false, true)
+
+	turn, err := s.chatOpenAIWithTools(context.Background(), "sys",
+		[]ChatMessage{{Role: "user", Text: "Show me errors in the last hour"}}, nil)
+	if err != nil {
+		t.Fatalf("turn 1: %v", err)
+	}
+	if len(turn.ToolCalls) != 1 || turn.ToolCalls[0].Name != "list_problems" ||
+		turn.ToolCalls[0].ID != "call_1" || string(turn.ToolCalls[0].Input) != `{"status":"open"}` {
+		t.Fatalf("executor view broken: %+v", turn.ToolCalls)
+	}
+	if !strings.Contains(string(turn.ToolCalls[0].Raw), "SIG-XYZ") {
+		t.Fatalf("raw tool_call lost the provider extras: %s", turn.ToolCalls[0].Raw)
+	}
+
+	// Turn 2: replay — the request body must carry the tool_call
+	// verbatim, thought_signature included.
+	msgs := []ChatMessage{
+		{Role: "user", Text: "Show me errors in the last hour"},
+		{Role: "assistant", ToolCalls: turn.ToolCalls},
+		{Role: "user", ToolResults: []ToolResult{{CallID: "call_1", Name: "list_problems", Content: `{"problems":[]}`}}},
+	}
+	if _, err := s.chatOpenAIWithTools(context.Background(), "sys", msgs, nil); err != nil {
+		t.Fatalf("turn 2: %v", err)
+	}
+	replay := sentBodies[len(sentBodies)-1]
+	if !strings.Contains(replay, "thought_signature") || !strings.Contains(replay, "SIG-XYZ") {
+		t.Fatalf("replayed body dropped thought_signature:\n%s", replay)
+	}
+	if !strings.Contains(replay, `"tool_call_id":"call_1"`) {
+		t.Fatalf("tool result lost its call id:\n%s", replay)
+	}
+
+	// Legacy fallback: a ToolCall without Raw still reconstructs the
+	// OpenAI shape instead of sending nothing.
+	legacy := []ChatMessage{
+		{Role: "user", Text: "q"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "c9", Name: "list_problems", Input: []byte(`{}`)}}},
+		{Role: "user", ToolResults: []ToolResult{{CallID: "c9", Name: "list_problems", Content: `{}`}}},
+	}
+	if _, err := s.chatOpenAIWithTools(context.Background(), "sys", legacy, nil); err != nil {
+		t.Fatalf("legacy turn: %v", err)
+	}
+	if last := sentBodies[len(sentBodies)-1]; !strings.Contains(last, `"name":"list_problems"`) || !strings.Contains(last, `"id":"c9"`) {
+		t.Fatalf("legacy reconstruction broken:\n%s", last)
 	}
 }

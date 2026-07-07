@@ -42,6 +42,16 @@ type ToolCall struct {
 	ID    string          // provider-issued id, echoed back in the result
 	Name  string          // tool name
 	Input json.RawMessage // arguments as JSON
+	// Raw is the COMPLETE tool_call object exactly as the openai-compat
+	// provider returned it (v0.8.373, operator-reported). Gemini's
+	// compat endpoint attaches extra fields (extra_content →
+	// thought_signature) and REJECTS the next turn with 400
+	// INVALID_ARGUMENT when the replayed functionCall lacks them —
+	// rebuilding the object from the trimmed fields above silently
+	// dropped everything unknown. When set, the replay encoder sends
+	// Raw verbatim; ID/Name/Input remain the parsed view for the
+	// executor. Nil for the Anthropic path and legacy messages.
+	Raw json.RawMessage `json:",omitempty"`
 }
 
 // ToolResult is the output of executing a ToolCall, fed back into
@@ -233,8 +243,17 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 	apiMsgs := []map[string]any{{"role": "system", "content": system}}
 	for _, m := range msgs {
 		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
-			tcs := make([]map[string]any, 0, len(m.ToolCalls))
+			// Replay each tool_call VERBATIM when we captured the
+			// provider's raw object — Gemini's compat endpoint 400s
+			// if its thought_signature (and any future extra field)
+			// is missing (v0.8.373). Reconstruction is only the
+			// fallback for legacy messages without Raw.
+			tcs := make([]any, 0, len(m.ToolCalls))
 			for _, tc := range m.ToolCalls {
+				if len(tc.Raw) > 0 {
+					tcs = append(tcs, json.RawMessage(tc.Raw))
+					continue
+				}
 				tcs = append(tcs, map[string]any{
 					"id": tc.ID, "type": "function",
 					"function": map[string]any{"name": tc.Name, "arguments": string(tc.Input)},
@@ -295,14 +314,12 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 	var parsed struct {
 		Choices []struct {
 			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
-					ID       string `json:"id"`
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
+				Content string `json:"content"`
+				// Raw objects on purpose (v0.8.373): Gemini's compat
+				// endpoint attaches provider extras (extra_content →
+				// thought_signature) that MUST survive the replay;
+				// each is re-parsed below for the executor's view.
+				ToolCalls []json.RawMessage `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
@@ -319,13 +336,23 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 	}
 	msg := parsed.Choices[0].Message
 	turn.Text = msg.Content
-	for _, tc := range msg.ToolCalls {
+	for _, raw := range msg.ToolCalls {
+		var tc struct {
+			ID       string `json:"id"`
+			Function struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"function"`
+		}
+		if err := json.Unmarshal(raw, &tc); err != nil {
+			return ChatTurn{}, fmt.Errorf("decode openai-compat tool_call: %w", err)
+		}
 		args := tc.Function.Arguments
 		if args == "" {
 			args = "{}"
 		}
 		turn.ToolCalls = append(turn.ToolCalls, ToolCall{
-			ID: tc.ID, Name: tc.Function.Name, Input: json.RawMessage(args),
+			ID: tc.ID, Name: tc.Function.Name, Input: json.RawMessage(args), Raw: raw,
 		})
 	}
 	return turn, nil

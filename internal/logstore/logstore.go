@@ -14,6 +14,9 @@ package logstore
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"time"
 )
 
@@ -315,4 +318,115 @@ type LogSeries struct {
 type LogPoint struct {
 	T int64 `json:"t"` // unix ns, bucket start
 	V int64 `json:"v"` // count
+}
+
+// ─── Cross-signal pivot reads (v0.8.330, pivot Phase 2) ─────────────────────
+//
+// LogsForTrace / LogsForSpan are the trace→log and span→log pivots. They are
+// PACKAGE-LEVEL functions over the Store interface, not interface methods, on
+// purpose: Go interfaces carry no default implementations, so interface
+// methods would force three delegating copies (CH + ES + Switchable) of the
+// same Filter construction — the exact duplication the audit ruled out.
+// Implemented once here, every backend (and any future one) gets them for
+// free through its Search.
+
+// ErrBackendSlow is the sentinel a pivot caller matches with errors.Is to
+// degrade gracefully: the log backend timed out or is unreachable — NOT a
+// query error. The trace view must never block on the log backend (audit §3);
+// callers return a partial result with a degraded flag instead of 5xx.
+var ErrBackendSlow = errors.New("log backend slow/unreachable")
+
+// PivotTimeout is the default per-request budget for pivot log reads. 3s —
+// tighter than the backends' own 10s query knobs on purpose: a pivot is one
+// tab of a trace view already on screen, so past ~3s an empty "backend slow"
+// tab beats a spinner holding the whole view hostage.
+const PivotTimeout = 3 * time.Second
+
+// SearchWithTimeout runs one Search under a per-request deadline (timeout
+// ≤ 0 → PivotTimeout) and maps "the backend is slow or unreachable" —
+// deadline exceeded, transport timeout, dial/connection failures — to
+// ErrBackendSlow (wrapped, so the original cause stays visible in logs).
+// Genuine query errors (bad field, ES 400, …) pass through unchanged: those
+// are bugs to surface, not conditions to degrade on.
+func SearchWithTimeout(ctx context.Context, st Store, f Filter, timeout time.Duration) (*Page, error) {
+	if timeout <= 0 {
+		timeout = PivotTimeout
+	}
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	page, err := st.Search(tctx, f)
+	if err == nil {
+		return page, nil
+	}
+	// Our own deadline firing can surface as a backend-specific error string
+	// (the CH driver wraps ctx errors); check tctx directly — but only when
+	// the PARENT is still live, so a client disconnect (context.Canceled all
+	// the way up) keeps its honest cancellation error.
+	if isBackendSlow(err) || (tctx.Err() == context.DeadlineExceeded && ctx.Err() == nil) {
+		return nil, fmt.Errorf("%w: %v", ErrBackendSlow, err)
+	}
+	return nil, err
+}
+
+// isBackendSlow classifies an error as "slow/unreachable" (→ ErrBackendSlow)
+// vs a genuine query failure. Deadline exceeded covers both backends' ctx
+// plumbing; net.Error timeouts and *net.OpError cover the ES/CH transports'
+// dial-refused / no-route / reset shapes (the go-elasticsearch client returns
+// them wrapped in *url.Error, which errors.As unwraps).
+func isBackendSlow(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return true
+	}
+	var operr *net.OpError
+	return errors.As(err, &operr)
+}
+
+// pivotLogLimit defaults/caps the pivot read size. 500 matches the
+// TracePeekDrawer / correlate-bundle log cap — a trace's Logs tab reads
+// density, not an export.
+func pivotLogLimit(limit int) int {
+	if limit <= 0 || limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+// LogsForTrace returns the logs carrying one trace id, under the pivot
+// timeout semantics (ErrBackendSlow on a slow/unreachable backend).
+//
+// Window semantics (the correlate.go finding, kept caller-visible): ES
+// ignores From/To when TraceID is set (a trace link can be older than any
+// default slice); CH AND-applies them. Pass ZERO from/to to make trace_id
+// the sole filter on both backends; pass a bounded window on CH installs to
+// help the partition scan (the logs table has no trace_id skip index yet —
+// audit §1).
+func LogsForTrace(ctx context.Context, st Store, traceID string, from, to time.Time, limit int) (*Page, error) {
+	if traceID == "" {
+		return nil, fmt.Errorf("traceID is required")
+	}
+	return SearchWithTimeout(ctx, st, Filter{
+		TraceID: traceID,
+		From:    from,
+		To:      to,
+		Limit:   pivotLogLimit(limit),
+	}, 0)
+}
+
+// LogsForSpan narrows LogsForTrace to one span (trace_id AND span_id — both
+// backends translate Filter.SpanID). Same timeout + window semantics.
+func LogsForSpan(ctx context.Context, st Store, traceID, spanID string, from, to time.Time, limit int) (*Page, error) {
+	if traceID == "" || spanID == "" {
+		return nil, fmt.Errorf("traceID and spanID are required")
+	}
+	return SearchWithTimeout(ctx, st, Filter{
+		TraceID: traceID,
+		SpanID:  spanID,
+		From:    from,
+		To:      to,
+		Limit:   pivotLogLimit(limit),
+	}, 0)
 }

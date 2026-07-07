@@ -10,6 +10,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -213,6 +214,42 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
 		q.Get("from"), q.Get("to"), f.Limit, f.Offset, f.Cursor, f.Search)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
+		// v0.8.330 (pivot Phase 2) — the TRACE-LOGS branch (?traceId=, the
+		// Trace Logs tab) must never block or 5xx the trace view on a slow/
+		// unreachable log backend: bound the round-trip at 3s
+		// (logstore.SearchWithTimeout) and degrade to an HTTP 200 empty
+		// payload with {degraded, reason} instead of an error. Caching the
+		// degraded result for the 15s TTL is deliberate back-pressure — a
+		// struggling backend isn't re-hammered by every tab refresh. Genuine
+		// query errors still fail loudly (only ErrBackendSlow degrades), and
+		// the non-trace search path below is byte-for-byte unchanged.
+		if f.TraceID != "" {
+			page, err := logstore.SearchWithTimeout(ctx, s.logs, f, 0)
+			if err != nil {
+				if errors.Is(err, logstore.ErrBackendSlow) {
+					log.Printf("[logs] trace-logs degraded (backend=%s, trace=%q): %v",
+						s.logs.Backend(), f.TraceID, err)
+					return map[string]interface{}{
+						// `items` is the Phase 2 degraded contract the Phase 3
+						// client reads; `total`/`logs` keep today's client
+						// rendering an honest empty list, not a crash.
+						"items":    []*logstore.LogRecord{},
+						"total":    0,
+						"logs":     []*logstore.LogRecord{},
+						"degraded": true,
+						"reason":   "log backend slow/unreachable",
+					}, nil
+				}
+				log.Printf("[logs] search failed (backend=%s, service=%q, trace=%q): %v",
+					s.logs.Backend(), f.Service, f.TraceID, err)
+				return nil, err
+			}
+			return map[string]interface{}{
+				"total":      page.Total,
+				"logs":       page.Logs,
+				"nextCursor": page.NextCursor,
+			}, nil
+		}
 		page, err := s.logs.Search(ctx, f)
 		if err != nil {
 			// Surface the full backend error (ES carries the authz/index reason

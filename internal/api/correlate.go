@@ -385,7 +385,7 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 				out.Anchor.FromNs = mFrom.UnixNano()
 				out.Anchor.ToNs = mTo.UnixNano()
 			}
-			if series := s.redSeries(r, svc, mFrom, mTo); len(series) > 0 {
+			if series := s.redSeries(ctx, svc, mFrom, mTo); len(series) > 0 {
 				out.Metrics = series
 			}
 		}
@@ -450,7 +450,13 @@ func metricHasExemplar(metricKind string) bool {
 // the result is one line per metric. Soft-fails per-query: a missing series
 // just drops out of the bundle. The GroupKey[0] is overwritten with the metric
 // label so the drawer's three lines are self-describing without a side channel.
-func (s *Server) redSeries(r *http.Request, service string, from, to time.Time) []chstore.SpanMetricSeries {
+//
+// v0.8.330 — takes ctx instead of *http.Request so it's shareable with the
+// /api/spans/window-metrics pivot (pivot.go) AND correct under the v0.8.319
+// serveCached ctx discipline: closures must query on the ctx serveCached hands
+// them (the SWR background refresh runs after the request returns, when
+// r.Context() is already cancelled).
+func (s *Server) redSeries(ctx context.Context, service string, from, to time.Time) []chstore.SpanMetricSeries {
 	svcFilter := []chstore.FilterExpr{{Key: "service.name", Op: "=", Values: []string{service}}}
 	out := make([]chstore.SpanMetricSeries, 0, 3)
 	add := func(label, agg, field string) {
@@ -458,7 +464,7 @@ func (s *Server) redSeries(r *http.Request, service string, from, to time.Time) 
 			Aggregation: agg, Field: field, Filters: svcFilter, From: from, To: to,
 			GroupBy: []string{"service.name"},
 		}
-		rows, err := s.store.QuerySpanMetric(r.Context(), f)
+		rows, err := s.store.QuerySpanMetric(ctx, f)
 		if err != nil || len(rows) == 0 {
 			return
 		}

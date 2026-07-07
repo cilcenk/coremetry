@@ -535,6 +535,7 @@ func (s *Server) Start() error {
 	// (writes no state; same posture as /api/correlations, /api/problems). Pure
 	// orchestration over existing reads — no new CH query.
 	mux.HandleFunc("GET /api/correlate/context", s.getCorrelationContext)
+	s.registerPivotRoutes(mux) // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
 	mux.HandleFunc("GET /api/spans/heatmap", s.spanHeatmap)
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)

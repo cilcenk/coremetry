@@ -6,6 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { useInbox } from '@/lib/queries';
 import { tsLong, fmtFixed } from '@/lib/utils';
+import { teamOptionsCI } from '@/lib/teamOptions';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
@@ -166,18 +167,12 @@ export default function InboxPage() {
   // selecting a team and then opening the dropdown again still
   // shows the remaining teams — the operator can stack
   // (owner=X then sre=Y) without losing visibility.
-  const { ownerOptions, sreOptions } = useMemo(() => {
-    const owners = new Set<string>();
-    const sres   = new Set<string>();
-    for (const it of data ?? []) {
-      if (it.ownerTeam) owners.add(it.ownerTeam);
-      if (it.sreTeam)   sres.add(it.sreTeam);
-    }
-    return {
-      ownerOptions: [...owners].sort(),
-      sreOptions:   [...sres].sort(),
-    };
-  }, [data]);
+  const { ownerOptions, sreOptions } = useMemo(() => ({
+    // v0.8.330 — case-insensitive dedup, same rule as the catalog-fed
+    // dropdowns (mixed-casing team attrs read as one team).
+    ownerOptions: teamOptionsCI((data ?? []).map(it => it.ownerTeam)),
+    sreOptions:   teamOptionsCI((data ?? []).map(it => it.sreTeam)),
+  }), [data]);
 
   return (
     <>

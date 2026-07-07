@@ -18,6 +18,7 @@ import { useAllServiceRuntimes, useServicesMetadata } from '@/lib/queries';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
+import { teamOptionsCI } from '@/lib/teamOptions';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { getItem, setItem } from '@/lib/storage';
@@ -262,20 +263,11 @@ export default function ServicesPage() {
 
   // Distinct team values from the catalog — feeds the two
   // dropdowns. Sorted for stable rendering.
-  const ownerTeamOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of Object.values(catalog)) {
-      if (m.ownerTeam) set.add(m.ownerTeam);
-    }
-    return [...set].sort();
-  }, [catalog]);
-  const sreTeamOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of Object.values(catalog)) {
-      if (m.sreTeam) set.add(m.sreTeam);
-    }
-    return [...set].sort();
-  }, [catalog]);
+  // v0.8.330 — case-insensitive dedup ("avengerSY"/"Avengersy" = one team).
+  const ownerTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalog).map(m => m.ownerTeam)), [catalog]);
+  const sreTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalog).map(m => m.sreTeam)), [catalog]);
 
   // Aggregate row across the currently-visible (filtered) services.
   // Span count → sum. Error rate / avg / apdex → weighted by span count

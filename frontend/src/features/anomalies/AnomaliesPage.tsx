@@ -18,6 +18,7 @@ import { useProblems, useServicesMetadata, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
 import { fmtNum, fmtFixed, tsLong } from '@/lib/utils';
+import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
@@ -179,16 +180,14 @@ export default function ProblemsPage() {
   // page), so a pick never collapses the list of teams to choose from —
   // same source the alert-rules section + Services page use.
   const catalogQ = useServicesMetadata();
-  const ownerTeamOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of Object.values(catalogQ.data ?? {})) if (m.ownerTeam) set.add(m.ownerTeam);
-    return [...set].sort();
-  }, [catalogQ.data]);
-  const sreTeamOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of Object.values(catalogQ.data ?? {})) if (m.sreTeam) set.add(m.sreTeam);
-    return [...set].sort();
-  }, [catalogQ.data]);
+  // v0.8.330 — case-insensitive dedup: mixed-casing team attrs
+  // ("avengerSY"/"Avengersy") listed the same team twice.
+  const ownerTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalogQ.data ?? {}).map(m => m.ownerTeam)),
+    [catalogQ.data]);
+  const sreTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalogQ.data ?? {}).map(m => m.sreTeam)),
+    [catalogQ.data]);
 
   // v0.8.318 — the server owns filtering AND ordering now (q=/sort=/dir=
   // across the whole paginated set); the page renders rows verbatim. The
@@ -583,20 +582,13 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const [ownerTeam, setOwnerTeam] = useState('');
   const [sreTeam, setSreTeam] = useState('');
   const catalogQ = useServicesMetadata();
-  const ownerTeamOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of Object.values(catalogQ.data ?? {})) {
-      if (m.ownerTeam) set.add(m.ownerTeam);
-    }
-    return [...set].sort();
-  }, [catalogQ.data]);
-  const sreTeamOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of Object.values(catalogQ.data ?? {})) {
-      if (m.sreTeam) set.add(m.sreTeam);
-    }
-    return [...set].sort();
-  }, [catalogQ.data]);
+  // v0.8.330 — case-insensitive team options (see teamOptionsCI).
+  const ownerTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalogQ.data ?? {}).map(m => m.ownerTeam)),
+    [catalogQ.data]);
+  const sreTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalogQ.data ?? {}).map(m => m.sreTeam)),
+    [catalogQ.data]);
 
   // (Pre-v0.5.80 inline "Why?" expansion lived here; the
   // same correlation panel is now embedded inside the

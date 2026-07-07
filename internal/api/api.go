@@ -49,6 +49,11 @@ import (
 
 type Server struct {
 	addr        string
+	// roleIngestOff / roleAPIOff — inverted so the zero value keeps every
+	// role ON (monolithic + direct-constructed test Servers unchanged);
+	// SetRoles flips them from main's parsed COREMETRY_MODE (v0.8.346).
+	roleIngestOff bool
+	roleAPIOff    bool
 	// chPing* back the 5s-cached CH reachability read on /api/health
 	// (v0.8.339) — see chReachable.
 	chPingMu sync.Mutex
@@ -338,6 +343,34 @@ func (s *Server) SetLockDegraded(b bool) { s.lockDegraded.Store(b) }
 // without it (partial init / tests).
 func (s *Server) SetLogstoreESManager(m *logstore.ESManager) { s.logsMgr = m }
 
+// SetRoles wires the pod's runtime role split into the HTTP surface
+// (v0.8.346, HA audit H6). main.go's old comment claimed "api.NewServer
+// handles the role guard internally" — no such code existed: every role
+// registered POST /v1/* while only ingest pods Start() the consumers, so
+// a collector pointed at an api-role pod had its Exports 200-OK'd into
+// channels NOBODY DRAINED (silent black hole; queue gauges even looked
+// healthy at a constant 100%). Defaults (unset) = all roles on, which
+// keeps monolithic mode and test-constructed Servers byte-identical.
+func (s *Server) SetRoles(ingest, apiRole bool) {
+	s.roleIngestOff = !ingest
+	s.roleAPIOff = !apiRole
+}
+
+// otlpRouteGuard 501s OTLP ingest routes on pods whose role never
+// starts the consumers — a spec-visible refusal the collector logs and
+// alerts on, instead of the silent ACK-into-void. Pure so the guard
+// decision is table-tested.
+func otlpRouteGuard(disabled bool, next http.Handler) http.Handler {
+	if !disabled {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w,
+			"this pod does not run the ingest role (COREMETRY_MODE) — point the collector at the ingest Service",
+			http.StatusNotImplemented)
+	})
+}
+
 // editorRoles is the role bundle used by RequireAnyRole on routes
 // that admin + editor may both use (dashboards, monitors, alerts,
 // incidents, exception triage). Admin-only routes (user mgmt, system
@@ -348,7 +381,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	// OTLP HTTP
-	otlpHandler := otlp.HTTPHandler(s.ing)
+	otlpHandler := otlpRouteGuard(s.roleIngestOff, otlp.HTTPHandler(s.ing))
 	mux.Handle("POST /v1/traces", otlpHandler)
 	mux.Handle("POST /v1/logs", otlpHandler)
 	mux.Handle("POST /v1/metrics", otlpHandler)
@@ -944,7 +977,12 @@ func (s *Server) Start() error {
 	// 30s) is always hot. Operators using a non-default range
 	// (15m, 24h, custom) still pay the cold-load cost — but the
 	// morning-triage default lands instantly.
-	go s.warmDependenciesCache()
+	// v0.8.346 (HA audit H6) — the warmer belongs to the api role: on a
+	// 6-ingest + 2-api distributed fleet every pod used to run the heavy
+	// /databases + /messaging GROUP-BY warm set every 25s.
+	if !s.roleAPIOff {
+		go s.warmDependenciesCache()
+	}
 
 	log.Printf("[api] HTTP listening on %s", s.addr)
 	// v0.6.42 — self-observability. otelhttp wraps the outer-most

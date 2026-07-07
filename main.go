@@ -807,6 +807,11 @@ func main() {
 	log.Printf("[cluster] pod id %s", clusterSvc.MyID())
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
+	// v0.8.346 (HA audit H6) — the role guard the old comment only claimed:
+	// OTLP HTTP routes 501 off the ingest role (a collector mis-pointed at
+	// an api pod used to get its Exports 200-OK'd into channels nobody
+	// drains), and the dependency-cache warmer runs on api pods only.
+	srv.SetRoles(mode.ingest, mode.api)
 	srv.SetLockDegraded(lockDegraded) // v0.8.212 — duplicate-worker HA warning on /admin/stats
 	// v0.8.341 (H4) — Redis configured but down at boot: background re-probe
 	// until it answers, then hot-swap the real cache+lock into the
@@ -881,10 +886,9 @@ func main() {
 	}
 	// v0.5.488 — every mode runs the HTTP server. api/all serves the
 	// full surface (API + UI + SSE). ingest/worker serve only
-	// /api/health + /api/version so Kubernetes readiness probes
-	// have something to hit; api.NewServer handles the role guard
-	// internally based on the mode label below (passed via env so
-	// the api package stays mode-unaware).
+	// /api/health + /api/version stay on every role so Kubernetes
+	// probes have something to hit (the OTLP-route role guard is
+	// wired via srv.SetRoles above, v0.8.346).
 	go func() {
 		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("[http] %v", err)

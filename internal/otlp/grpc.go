@@ -18,11 +18,45 @@ import (
 	tracecollpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 )
 
-// StartGRPC starts the OTLP/gRPC server and blocks until it fails.
-func StartGRPC(addr string, ing *Ingester) error {
+// GRPCHandle is the shutdown handle StartGRPC returns (v0.8.336, HA
+// audit H1). Opaque on purpose: main owns WHEN to stop accepting, the
+// otlp package owns HOW (graceful-with-bound), and main never imports
+// google.golang.org/grpc.
+type GRPCHandle struct {
+	srv *grpc.Server
+}
+
+// Shutdown drains gracefully — GOAWAY to collectors, in-flight Exports
+// finish — but never longer than `grace`: GracefulStop can hang on a
+// stuck stream, and a shutdown that outlives terminationGracePeriod
+// gets SIGKILLed mid-drain, losing more than the hard Stop would.
+func (h *GRPCHandle) Shutdown(grace time.Duration) {
+	if h == nil || h.srv == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		h.srv.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(grace):
+		log.Printf("[grpc] graceful stop exceeded %s — forcing", grace)
+		h.srv.Stop()
+	}
+}
+
+// StartGRPC listens, registers the OTLP services and serves in a
+// background goroutine, returning a handle main GracefulStops during
+// shutdown (v0.8.336, HA audit H1 — the server used to outlive the
+// consumers: post-SIGTERM Exports were ACKed into channels nobody
+// drained, and the abrupt connection cut on process exit is the
+// client-side trigger for the otelcol zero-addresses wedge).
+func StartGRPC(addr string, ing *Ingester) (*GRPCHandle, error) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", addr, err)
+		return nil, fmt.Errorf("listen %s: %w", addr, err)
 	}
 
 	srv := grpc.NewServer(
@@ -50,7 +84,14 @@ func StartGRPC(addr string, ing *Ingester) error {
 	metricscollpb.RegisterMetricsServiceServer(srv, &metricsGRPC{ing: ing})
 
 	log.Printf("[grpc] listening on %s", addr)
-	return srv.Serve(lis)
+	go func() {
+		if err := srv.Serve(lis); err != nil {
+			// GracefulStop/Stop return nil from Serve; anything else is a
+			// real serve failure worth logging.
+			log.Printf("[grpc] serve: %v", err)
+		}
+	}()
+	return &GRPCHandle{srv: srv}, nil
 }
 
 // ── Trace service ──────────────────────────────────────────────────────────────

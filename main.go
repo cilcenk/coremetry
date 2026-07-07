@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -15,21 +17,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/acache"
 	agentpkg "github.com/cilcenk/coremetry/internal/agent"
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/api"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chmigrate"
-	"github.com/cilcenk/coremetry/internal/cluster"
-	"github.com/cilcenk/coremetry/internal/pipeline"
-	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/cluster"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/consumer"
-	"github.com/cilcenk/coremetry/internal/correlator"
-	"github.com/cilcenk/coremetry/internal/evaluator"
 	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/correlator"
+	"github.com/cilcenk/coremetry/internal/elasticml"
+	"github.com/cilcenk/coremetry/internal/evaluator"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
@@ -37,11 +39,11 @@ import (
 	"github.com/cilcenk/coremetry/internal/monitor"
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
+	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/selfobs"
 	"github.com/cilcenk/coremetry/internal/sse"
-	"github.com/cilcenk/coremetry/internal/elasticml"
-	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/templater"
+	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/topology"
 )
 
@@ -202,18 +204,18 @@ func main() {
 	// one-shot day-partitioned bulk copy from a remote single-node
 	// CH into this Coremetry's own ClickHouse (typically the new
 	// cluster), then exit. The web server is NOT started.
-	migrateFrom     := flag.String("migrate-from", "", "Source ClickHouse addr for one-shot data migration (e.g. 'old-ch:9000'). When set, runs migration and exits.")
-	migrateDB       := flag.String("migrate-db", "coremetry", "Source CH database for migration")
-	migrateUser     := flag.String("migrate-user", "default", "Source CH user for migration")
-	migratePass     := flag.String("migrate-pass", "", "Source CH password for migration")
-	migrateTables   := flag.String("migrate-tables", "spans,logs,metric_points,profiles", "Comma-separated tables to migrate")
-	migrateDays     := flag.Int("migrate-days", 30, "Number of trailing days to migrate")
+	migrateFrom := flag.String("migrate-from", "", "Source ClickHouse addr for one-shot data migration (e.g. 'old-ch:9000'). When set, runs migration and exits.")
+	migrateDB := flag.String("migrate-db", "coremetry", "Source CH database for migration")
+	migrateUser := flag.String("migrate-user", "default", "Source CH user for migration")
+	migratePass := flag.String("migrate-pass", "", "Source CH password for migration")
+	migrateTables := flag.String("migrate-tables", "spans,logs,metric_points,profiles", "Comma-separated tables to migrate")
+	migrateDays := flag.Int("migrate-days", 30, "Number of trailing days to migrate")
 	// Init-container mode: run schema migration only and exit.
 	// Designed for multi-replica deployments where every web pod
 	// trying to migrate concurrently causes ZK / DDL races. Run
 	// this once as a Job or initContainer; web pods boot with
 	// COREMETRY_SKIP_MIGRATE=1 to avoid re-running.
-	migrateOnly     := flag.Bool("migrate-only", false, "Run ClickHouse schema migration only, then exit. Use as a Kubernetes initContainer / one-shot Job before web pods roll out.")
+	migrateOnly := flag.Bool("migrate-only", false, "Run ClickHouse schema migration only, then exit. Use as a Kubernetes initContainer / one-shot Job before web pods roll out.")
 	// DESTRUCTIVE: drops the configured CH database (every table:
 	// spans, logs, metrics, dashboards, audit log, anomaly history,
 	// users, …) and exits. Designed for the Helm pre-install /
@@ -221,7 +223,7 @@ func main() {
 	// external CH can re-deploy "as if from scratch". Honours
 	// COREMETRY_CH_RESET_SCHEMA=1 as an env-var alias for ergonomic
 	// container args. Idempotent — DROP DATABASE IF EXISTS.
-	resetSchema     := flag.Bool("reset-schema", false, "DROP the configured CH database and exit. Destroys ALL coremetry data — use only for fresh install hooks.")
+	resetSchema := flag.Bool("reset-schema", false, "DROP the configured CH database and exit. Destroys ALL coremetry data — use only for fresh install hooks.")
 	flag.Parse()
 	// The --reset-schema FLAG is a one-shot Job (drop + exit; the Helm
 	// pre-install hook). The COREMETRY_CH_RESET_SCHEMA ENV is set on the
@@ -343,8 +345,8 @@ func main() {
 		FlushInterval: cfg.Ingestion.FlushInterval,
 		Workers:       cfg.Ingestion.Workers,
 	}
-	spanConsumer   := consumer.New("spans",   opts, store.InsertSpans)
-	logConsumer    := consumer.New("logs",    opts, store.InsertLogs)
+	spanConsumer := consumer.New("spans", opts, store.InsertSpans)
+	logConsumer := consumer.New("logs", opts, store.InsertLogs)
 	metricConsumer := consumer.New("metrics", opts, store.InsertMetrics)
 	// v0.8.328 — OTLP metric exemplars (cross-signal pivot). Same batching
 	// machinery + flush cadence as the metric rows they arrived with.
@@ -353,15 +355,25 @@ func main() {
 	// machinery + flush cadence as the spans they arrived with; rows land in
 	// span_links and fan into span_links_reverse via its MV.
 	spanLinkConsumer := consumer.New("span_links", opts, store.InsertSpanLinks)
+	// v0.8.336 (HA audit H1) — consumers run on their OWN context, NOT the
+	// signal ctx: the drain must begin only AFTER the OTLP servers stop
+	// accepting. On the signal ctx the loops started draining at SIGTERM
+	// while gRPC/HTTP kept ACKing new Exports into channels nobody read —
+	// silent, uncounted loss on every deploy.
+	pipeCtx, pipeCancel := context.WithCancel(context.Background())
+	defer pipeCancel()
 	if mode.ingest {
-		spanConsumer.Start(ctx)
-		logConsumer.Start(ctx)
-		metricConsumer.Start(ctx)
-		exemplarConsumer.Start(ctx)
-		spanLinkConsumer.Start(ctx)
+		spanConsumer.Start(pipeCtx)
+		logConsumer.Start(pipeCtx)
+		metricConsumer.Start(pipeCtx)
+		exemplarConsumer.Start(pipeCtx)
+		spanLinkConsumer.Start(pipeCtx)
 	}
 
 	// ── OTLP ingester ─────────────────────────────────────────────────────────
+	// grpcHandle stays nil on non-ingest roles; GRPCHandle.Shutdown is
+	// nil-safe, so the ordered teardown below needs no role branching.
+	var grpcHandle *otlp.GRPCHandle
 	ing := otlp.NewIngester(spanConsumer, logConsumer, metricConsumer)
 	ing.SetExemplars(exemplarConsumer)
 	// require_trace_context default true — a stored exemplar exists to be
@@ -406,11 +418,13 @@ func main() {
 		ing.SetPipeline(pipelineEng)
 
 		// ── gRPC server ───────────────────────────────────────────────
-		go func() {
-			if err := otlp.StartGRPC(cfg.Listen.GRPC, ing); err != nil {
-				log.Printf("[grpc] %v", err)
-			}
-		}()
+		var gerr error
+		grpcHandle, gerr = otlp.StartGRPC(cfg.Listen.GRPC, ing)
+		if gerr != nil {
+			// A dead OTLP listener on an ingest pod is not a degraded
+			// mode — fail loud so the orchestrator restarts us.
+			log.Fatalf("[grpc] %v", gerr)
+		}
 	}
 
 	// ── Cache + distributed lock (optional) ───────────────────────────────────
@@ -838,13 +852,13 @@ func main() {
 	// internally based on the mode label below (passed via env so
 	// the api package stays mode-unaware).
 	go func() {
-		if err := srv.Start(); err != nil {
+		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("[http] %v", err)
 		}
 	}()
 
 	log.Println("┌──────────────────────────────────────────────┐")
-	log.Printf( "│         Coremetry APM    — ready (%s)        │", mode.name)
+	log.Printf("│         Coremetry APM    — ready (%s)        │", mode.name)
 	if mode.ingest {
 		log.Printf("│  OTLP/gRPC ingest:    localhost%s         │", cfg.Listen.GRPC)
 	}
@@ -857,10 +871,29 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("Shutting down gracefully...")
+	// v0.8.336 (HA audit H1) — ordered teardown. Sequence matters:
+	//   1. Stop ACCEPTING: gRPC GracefulStop (GOAWAY to collectors,
+	//      in-flight Exports finish, bounded 10s) + HTTP Shutdown. Before
+	//      this fix the servers ran until process exit, ACKing post-
+	//      SIGTERM Exports into channels nobody drained — and the abrupt
+	//      gRPC cut is the client-side trigger of the otelcol
+	//      zero-addresses wedge.
+	//   2. THEN cancel the pipeline ctx and Stop ALL FIVE consumers —
+	//      exemplars + span_links used to be skipped entirely, racing
+	//      their final flush against process exit.
+	grpcHandle.Shutdown(10 * time.Second)
+	sctx, scancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := srv.Shutdown(sctx); err != nil {
+		log.Printf("[http] shutdown: %v", err)
+	}
+	scancel()
+	pipeCancel()
 	if mode.ingest {
 		spanConsumer.Stop()
 		logConsumer.Stop()
 		metricConsumer.Stop()
+		exemplarConsumer.Stop()
+		spanLinkConsumer.Stop()
 	}
 	log.Println("Bye.")
 }
@@ -1281,7 +1314,7 @@ func runMigration(ctx context.Context, store *chstore.Store,
 		log.Fatalf("[migrate] --migrate-tables empty")
 	}
 
-	to := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, 1)
+	to := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
 	from := to.AddDate(0, 0, -days)
 	plans := make([]chmigrate.Plan, 0, len(tableList))
 	for _, t := range tableList {
@@ -1381,4 +1414,3 @@ func (r aiCallRecorder) RecordCall(ctx context.Context, c copilot.CallRecord) {
 		log.Printf("[ai-obs] insert call: %v", err)
 	}
 }
-

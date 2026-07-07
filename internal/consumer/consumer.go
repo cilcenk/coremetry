@@ -8,6 +8,12 @@ import (
 	"time"
 )
 
+// drainHandoffTimeout bounds the shutdown-drain hand-off to the flush
+// stage (v0.8.336): long enough for a slow-but-alive ClickHouse insert
+// to free a slot, short enough that a wedged flush stage can't hold the
+// pod past terminationGracePeriod.
+const drainHandoffTimeout = 5 * time.Second
+
 type Options struct {
 	BatchSize     int
 	BufferSize    int
@@ -17,6 +23,13 @@ type Options struct {
 	// a slow ClickHouse insert no longer back-pressures item
 	// accumulation. Defaults to 1 when unset for back-compat.
 	Workers int
+	// FlushTimeout bounds each flushFn call (v0.8.336). The old
+	// context.Background() assumed CH's server-side
+	// max_execution_time=60 bounds the insert — but a wedged server
+	// that ACCEPTS the connection and never answers is bounded only
+	// by the driver's 300s default ReadTimeout, and shutdown (Stop
+	// waits on flushers) inherited whichever was worse. Defaults 60s.
+	FlushTimeout time.Duration
 }
 
 // Consumer is a generic, channel-based batch consumer with
@@ -96,20 +109,36 @@ func (c *Consumer[T]) loop(ctx context.Context) {
 
 	batch := make([]T, 0, c.opts.BatchSize)
 
+	// send hands one batch to the flush stage. v0.8.336 (HA audit H1):
+	// the old single `select { flushQ | ctx.Done }` coin-flipped healthy
+	// final batches into the void during shutdown — with ctx ALREADY
+	// cancelled in the drain path, Go picks uniformly among ready cases,
+	// so ~50% of last batches were silently discarded on every deploy
+	// (uncounted). Two-stage shape instead: the first select is the
+	// normal backpressure point; once ctx is done we fall through to a
+	// BOUNDED blocking hand-off — healthy flushers always get the batch,
+	// and a fully wedged flush stage can't hang shutdown (loss COUNTED).
+	send := func(b []T) {
+		select {
+		case c.flushQ <- b:
+			return
+		case <-ctx.Done():
+		}
+		select {
+		case c.flushQ <- b:
+		case <-time.After(drainHandoffTimeout):
+			c.dropped.Add(int64(len(b)))
+			log.Printf("[consumer/%s] drain: flush stage wedged — abandoned %d items after %s",
+				c.name, len(b), drainHandoffTimeout)
+		}
+	}
 	dispatch := func() {
 		if len(batch) == 0 {
 			return
 		}
 		b := batch
 		batch = make([]T, 0, c.opts.BatchSize)
-		// Backpressure point: if every flusher is busy AND flushQ
-		// is full, this blocks until a worker frees a slot. That
-		// transitively blocks the reader on `ch`, then `Add`,
-		// which is the right surface for backpressure visibility.
-		select {
-		case c.flushQ <- b:
-		case <-ctx.Done():
-		}
+		send(b)
 	}
 
 	for {
@@ -142,15 +171,22 @@ func (c *Consumer[T]) loop(ctx context.Context) {
 	}
 }
 
-// flusher reads dispatched batches and runs flushFn. Uses
-// context.Background() rather than the consumer's context so a
-// shutdown-triggered drain still gets the final batches written.
-// The 60s ClickHouse max_execution_time on the Store side keeps
-// these calls bounded.
+// flusher reads dispatched batches and runs flushFn. Detached from
+// the consumer's context so a shutdown-triggered drain still gets the
+// final batches written — but BOUNDED per call (v0.8.336): a wedged
+// ClickHouse that accepts TCP and never answers used to hold flushers
+// (and therefore Stop()) for the driver's 300s default ReadTimeout.
 func (c *Consumer[T]) flusher() {
 	defer c.wg.Done()
+	timeout := c.opts.FlushTimeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
 	for batch := range c.flushQ {
-		if err := c.flushFn(context.Background(), batch); err != nil {
+		fctx, cancel := context.WithTimeout(context.Background(), timeout)
+		err := c.flushFn(fctx, batch)
+		cancel()
+		if err != nil {
 			c.writeFailed.Add(int64(len(batch)))
 			log.Printf("[consumer/%s] flush error (%d items lost): %v", c.name, len(batch), err)
 		}

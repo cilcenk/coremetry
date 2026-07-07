@@ -49,6 +49,11 @@ import (
 
 type Server struct {
 	addr        string
+	// httpSrv is the live http.Server once Start() runs — kept so main
+	// can Shutdown() it during the ordered v0.8.336 teardown (stop
+	// ACCEPTING before draining consumers; a bare ListenAndServe had no
+	// shutdown surface at all).
+	httpSrv     *http.Server
 	store       *chstore.Store
 	logs        logstore.Store    // read-side abstraction; CH or external ES
 	// logsMgr owns the UI-managed logstore config (Settings →
@@ -945,7 +950,18 @@ func (s *Server) Start() error {
 			return r.Method + " " + collapseRoute(r.URL.Path)
 		}),
 	)
-	return http.ListenAndServe(s.addr, handler)
+	s.httpSrv = &http.Server{Addr: s.addr, Handler: handler}
+	return s.httpSrv.ListenAndServe()
+}
+
+// Shutdown drains the HTTP server (v0.8.336, HA audit H1): stops
+// accepting new connections, lets in-flight requests finish within
+// ctx's deadline. Safe before Start() (nil server = no-op).
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpSrv == nil {
+		return nil
+	}
+	return s.httpSrv.Shutdown(ctx)
 }
 
 // warmDependenciesCache primes the hottest read endpoints on

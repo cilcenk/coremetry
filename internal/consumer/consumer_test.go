@@ -3,6 +3,7 @@ package consumer
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -82,4 +83,84 @@ func TestConsumer_WriteFailedZeroOnHealthyFlush(t *testing.T) {
 	}
 	cancel()
 	c.Stop()
+}
+
+// v0.8.336 (HA audit H1) — regression: shutdown-drain data loss. The drain
+// path's dispatch raced `flushQ <- b` against the ALREADY-CANCELLED
+// ctx.Done() — Go's select picks uniformly among ready cases, so every
+// final batch had ~50% odds of being discarded (uncounted!) on every
+// deploy, 100% when flushQ was momentarily full. Contract now:
+//   - every item accepted before cancellation reaches flushFn OR is
+//     counted in Dropped() — never silent;
+//   - a wedged flusher can't hang shutdown forever (bounded drain send).
+func TestDrainDeliversAllOnShutdown(t *testing.T) {
+	for round := 0; round < 30; round++ {
+		var got atomic.Int64
+		c := New[int]("drain-test", Options{
+			BatchSize: 10, BufferSize: 1000, FlushInterval: time.Hour, Workers: 2,
+		}, func(_ context.Context, b []int) error {
+			got.Add(int64(len(b)))
+			return nil
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		c.Start(ctx)
+		const n = 137 // deliberately not a batch multiple → forces a partial final batch
+		for i := 0; i < n; i++ {
+			if !c.Add(i) {
+				t.Fatalf("round %d: Add rejected with room to spare", round)
+			}
+		}
+		cancel()
+		c.Stop()
+		if got.Load()+c.Dropped() != int64(n) {
+			t.Fatalf("round %d: flushed %d + dropped %d != accepted %d (silent loss)",
+				round, got.Load(), c.Dropped(), n)
+		}
+		if got.Load() != int64(n) {
+			t.Fatalf("round %d: healthy flushers must receive ALL items, flushed only %d/%d",
+				round, got.Load(), n)
+		}
+	}
+}
+
+// A fully wedged flush stage (all workers blocked) must not hang Stop()
+// forever: the bounded drain send gives up, COUNTS the loss, and shutdown
+// completes.
+func TestDrainBoundedWhenFlushersWedged(t *testing.T) {
+	block := make(chan struct{})
+	// The fn honors ctx like the real CH driver does — the consumer's
+	// FlushTimeout (v0.8.336) is what bounds a server that accepts TCP
+	// and never answers.
+	c := New[int]("wedge-test", Options{
+		BatchSize: 5, BufferSize: 100, FlushInterval: time.Hour, Workers: 1,
+		FlushTimeout: time.Second,
+	}, func(ctx context.Context, b []int) error {
+		select {
+		case <-block:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	for i := 0; i < 40; i++ { // enough to fill flushQ (2×workers) + wedge the worker
+		c.Add(i)
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() { c.Stop(); close(done) }()
+	select {
+	case <-done:
+		// bounded — good. EVERY item must be accounted for: either counted
+		// as a timed-out write (writeFailed) or abandoned at the drain
+		// hand-off (dropped) — never silent.
+		if c.Dropped()+c.WriteFailed() != 40 {
+			t.Fatalf("accounting hole: dropped %d + writeFailed %d != 40 accepted",
+				c.Dropped(), c.WriteFailed())
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("Stop() hung >15s with a wedged flusher — shutdown must be bounded")
+	}
+	close(block)
 }

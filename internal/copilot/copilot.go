@@ -802,6 +802,16 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provid
 
 // ── Prompt helpers (pre-baked so handlers don't have to compose) ────────────
 
+// AnswerInTurkish is appended to every PROSE copilot surface
+// (v0.8.374, operator decision: "hepsi Türkçe" — the AI-analysis
+// panel was already Turkish while Explain answered in English).
+// Strict-JSON surfaces (systemNLToQuery, systemCHQueryOptimize,
+// systemServiceTags) deliberately do NOT get it: a language
+// directive invites prose around machine-parsed output. Exported so
+// the api package's chat prompt shares the exact same line. Pinned
+// by TestProsePromptsAnswerInTurkish.
+const AnswerInTurkish = "\n\nHer zaman Türkçe yanıt ver."
+
 const systemTrace = `You are a senior SRE assistant inside an APM tool. Given a JSON
 representation of a single distributed trace (a list of spans with
 service, name, parent, duration, status), explain in 4-8 short bullet
@@ -811,7 +821,7 @@ errors are concentrated if any, (4) the most plausible root cause hint
 the operator should investigate next.
 
 Be terse and concrete — the operator is reading this on a pager call.
-No preamble, no headers — just the bullets.`
+No preamble, no headers — just the bullets.` + AnswerInTurkish
 
 // systemSpan — focused per-span explain (v0.5.144). Inputs are
 // the target span + parent + immediate children + any error
@@ -830,7 +840,7 @@ visible in the context, (4) one or two concrete next-step
 suggestions for an oncall.
 
 Be terse and direct — operator is reading this on a pager call.
-No preamble, no headers — just the bullets.`
+No preamble, no headers — just the bullets.` + AnswerInTurkish
 
 const systemProblem = `You are a senior SRE assistant inside an APM tool. The operator
 just opened a Problem (an alert that fired). You are given the rule +
@@ -850,7 +860,7 @@ Produce a RANKED root-cause hypothesis:
 
 Ground every claim in the provided signals — do not invent service
 names, versions, or numbers. Be terse — this lands on a pager call.
-No preamble.`
+No preamble.` + AnswerInTurkish
 
 const systemException = `You are a senior SRE assistant inside an APM tool. Given a code
 exception (type, message, stacktrace, service), explain in 3-5
@@ -858,7 +868,7 @@ bullets: (1) what the exception class typically means, (2) the most
 likely cause given the call site shown in the stacktrace, (3) the
 fix hint or first investigation step.
 
-Be terse and direct — the operator is debugging in real time.`
+Be terse and direct — the operator is debugging in real time.` + AnswerInTurkish
 
 // systemIncident — used when the operator hits "Explain" on an
 // incident detail or row. Incidents are higher-level than
@@ -875,7 +885,7 @@ customers likely affected), (3) the first three coordination /
 investigation actions for the oncall, (4) a one-line "should this
 escalate to SEV-1?" call when severity warrants.
 
-Be terse — this lands on a pager call. No preamble, no headers.`
+Be terse — this lands on a pager call. No preamble, no headers.` + AnswerInTurkish
 
 // systemAnomaly — used on log-pattern / trace-op anomaly
 // events. Different shape than Problem (no rule fired; pattern
@@ -890,7 +900,7 @@ benign or actionable, (3) the first thing to look at to confirm
 intent vs incident, (4) one related metric/log query to run
 next.
 
-Be terse — operator triage context. No preamble.`
+Be terse — operator triage context. No preamble.` + AnswerInTurkish
 
 // systemServiceHealth — used when the operator hits "Explain
 // service health" on a Service detail page. The model gets the
@@ -919,7 +929,7 @@ active problems), respond in 3-5 bullets:
 
 Be terse and grounded in the numbers — no preamble, no
 hedging like "without more context". If the data really does
-look healthy, say so plainly.`
+look healthy, say so plainly.` + AnswerInTurkish
 
 // systemRunbook — used when the operator hits "Suggest
 // runbook" on an open Problem. Distinct from explain-problem:
@@ -960,7 +970,7 @@ Rules:
   • Every step must be specific to THIS service / metric.
     Generic "check logs" is a fail.
   • No preamble. No "Here's a runbook:". Just the numbered
-    list, one short paragraph per step max.`
+    list, one short paragraph per step max.` + AnswerInTurkish
 
 func SystemPromptTrace() string         { return systemTrace }
 func SystemPromptSpan() string          { return systemSpan }
@@ -1003,7 +1013,7 @@ Respond in 3-5 short bullets:
 Be terse and concrete. Don't restate the raw diff — the
 operator already saw it. Don't hedge ("without more
 context"). If the two traces are essentially the same,
-say so plainly.`
+say so plainly.` + AnswerInTurkish
 
 func SystemPromptCompareTraces() string { return systemCompareTraces }
 
@@ -1035,7 +1045,7 @@ Respond in 3-5 short bullets:
 
 Be terse and grounded in the numbers. Don't speculate
 beyond the diff data. If everything looks healthy, say
-"clean deploy" plainly.`
+"clean deploy" plainly.` + AnswerInTurkish
 
 func SystemPromptDeployImpact() string { return systemDeployImpact }
 
@@ -1070,7 +1080,7 @@ Respond in 3-5 short bullets:
 
 Be terse and grounded in the numbers. Don't hedge ("without
 more context"). If the burn rate < 1 say "budget on track"
-plainly even when the operator clicked the button.`
+plainly even when the operator clicked the button.` + AnswerInTurkish
 
 func SystemPromptSLOBurn() string { return systemSLOBurn }
 
@@ -1166,7 +1176,7 @@ Respond in 3-5 short bullets:
 Anchor on the data you have. Don't speculate about schema
 columns you weren't shown. If the query already looks well-
 structured say "looks fine — investigate locking / autovacuum
-/ cache hit rate" plainly.`
+/ cache hit rate" plainly.` + AnswerInTurkish
 
 func SystemPromptSlowQuery() string { return systemSlowQuery }
 
@@ -1391,6 +1401,6 @@ Rules:
     confidence), say plainly that no single cause stands out and the
     signal looks localized to the anchor's own service.
   • No preamble, no markdown headers, no bullet points — just the
-    paragraph. Terse: this is triage context next to a chart.`
+    paragraph. Terse: this is triage context next to a chart.` + AnswerInTurkish
 
 func SystemPromptRootCauseNarration() string { return systemRootCauseNarration }

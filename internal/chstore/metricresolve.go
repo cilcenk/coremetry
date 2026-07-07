@@ -307,7 +307,7 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 		ORDER BY gk, bucket
 		LIMIT 50000
 		SETTINGS max_execution_time = 30`,
-		step, groupSelect, aggExpr, exemplarCols, tier.table, strings.Join(conds, " AND "))
+		step, groupSelect, aggExpr, exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "))
 
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
@@ -403,7 +403,7 @@ func (s *Store) spanmetricsCoverageStart(ctx context.Context) time.Time {
 
 	earliest := time.Now()
 	var probed time.Time
-	row := s.conn.QueryRow(ctx, "SELECT min(time_bucket) FROM spanmetrics_1m SETTINGS max_execution_time = 5")
+	row := s.conn.QueryRow(ctx, "SELECT min(time_bucket) FROM "+s.spanmetricsSourceFor("spanmetrics_1m")+" SETTINGS max_execution_time = 5")
 	if err := row.Scan(&probed); err == nil && probed.Year() >= 2000 {
 		earliest = probed
 	}

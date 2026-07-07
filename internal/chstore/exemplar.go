@@ -107,10 +107,10 @@ func (s *Store) FindExemplarRollup(ctx context.Context, req ExemplarReq) (*Exemp
 
 	sql := fmt.Sprintf(`
 		SELECT %s AS trace_id
-		FROM spanmetrics_1m
+		FROM %s
 		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
 		LIMIT 1
-		SETTINGS max_execution_time = 10`, traceExpr)
+		SETTINGS max_execution_time = 10`, traceExpr, s.spanmetricsSourceFor("spanmetrics_1m"))
 
 	row := s.conn.QueryRow(ctx, sql, req.Service, req.From, req.To)
 	var traceID string

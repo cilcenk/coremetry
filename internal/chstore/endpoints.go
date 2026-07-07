@@ -234,14 +234,19 @@ func endpointsWindowMinutes(from, to time.Time) float64 {
 // TODO(v0.8.356-follow-up): the real fix is promoting the
 // spanmetrics_* doorway MVs into highVolumeTables + a
 // dropCombinedMV migration so they get the _local + Distributed
-// wrapper shape like the *_5m summaries — that also heals the
-// /explore doorway + exemplar reads, which undercount today. When
-// that lands this helper collapses to the bare name.
-func (s *Store) spanmetricsSource() string {
+// wrapper shape like the *_5m summaries. When that lands this
+// helper collapses to the bare name — and MUST, or cluster() over
+// a Distributed wrapper would double-count.
+//
+// v0.8.358 generalizes it to every spanmetrics_* tier: the
+// /explore doorway (all three tiers), the coverage probe, the
+// exemplar rollup, and the evaluator's mq_* plans had the same
+// one-shard undercount.
+func (s *Store) spanmetricsSourceFor(table string) string {
 	if cn := strings.TrimSpace(s.cfg.ClusterName); cn != "" {
-		return "cluster('" + cn + "', currentDatabase(), 'spanmetrics_1m')"
+		return "cluster('" + cn + "', currentDatabase(), '" + table + "')"
 	}
-	return "spanmetrics_1m"
+	return table
 }
 
 // GetEndpointsMV is the spanmetrics_1m-backed /endpoints read
@@ -322,7 +327,7 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		         sumMerge(duration_sum_state)                     AS bv_sum_dur,
 		         arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 4) / 1e6 AS bv_p99,
 		         quantilesTDigestMergeState(0.5, 0.9, 0.95, 0.99)(duration_q_state) AS q_state
-		  FROM ` + s.spanmetricsSource() + `
+		  FROM ` + s.spanmetricsSourceFor("spanmetrics_1m") + `
 		  WHERE ` + where + `
 		  GROUP BY service_name, path, b
 		)

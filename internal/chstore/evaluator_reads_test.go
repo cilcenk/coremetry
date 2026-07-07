@@ -82,7 +82,7 @@ func TestMeasureAllServicesPlanRouting(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.metric, func(t *testing.T) {
-			plan, err := measureAllServicesPlan(c.metric)
+			plan, err := measureAllServicesPlan(c.metric, "spanmetrics_1m")
 			if err != nil {
 				t.Fatalf("plan(%q): %v", c.metric, err)
 			}
@@ -123,7 +123,7 @@ func TestMeasureAllServicesPlanRouting(t *testing.T) {
 
 func TestMeasureAllServicesPlanUnknownMetric(t *testing.T) {
 	for _, m := range []string{"bogus_metric", "anomaly_ratio", "log_query", ""} {
-		if _, err := measureAllServicesPlan(m); err == nil {
+		if _, err := measureAllServicesPlan(m, "spanmetrics_1m"); err == nil {
 			t.Errorf("plan(%q) must fail, got nil error", m)
 		}
 	}

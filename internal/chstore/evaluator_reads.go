@@ -207,7 +207,10 @@ const evalReadTail = `
 
 // measureAllServicesPlan routes an alert metric to its batched query.
 // Pure — the routing + SQL shape are table-tested without a CH connection.
-func measureAllServicesPlan(metric string) (measureAllPlan, error) {
+// smSource is the FROM source for spanmetrics_1m reads (Store passes
+// spanmetricsSourceFor: bare name single-node, cluster() on a
+// chstore-owned cluster — v0.8.358, the per-shard undercount class).
+func measureAllServicesPlan(metric, smSource string) (measureAllPlan, error) {
 	// Basic RED metrics — service_summary_5m merge states, the batched
 	// twins of the per-service v0.6.12 MV queries.
 	switch metric {
@@ -260,7 +263,7 @@ func measureAllServicesPlan(metric string) (measureAllPlan, error) {
 	if mvWhere, mvOK := spanmetricsTransportWhere(metric); mvOK &&
 		(op != "error_rate" || numerator == "status_code='error'") {
 		mvHead := `
-			FROM spanmetrics_1m
+			FROM ` + smSource + `
 			WHERE time_bucket >= ? AND ` + mvWhere
 		switch op {
 		case "error_rate":
@@ -332,7 +335,7 @@ func (s *Store) MeasureAllServices(ctx context.Context, metric string, window ti
 	if !UseSummaryMV(window) {
 		return nil, fmt.Errorf("MeasureAllServices: window %s below the %s MV grid — use the per-service raw path", window, summaryMVBucket)
 	}
-	plan, err := measureAllServicesPlan(metric)
+	plan, err := measureAllServicesPlan(metric, s.spanmetricsSourceFor("spanmetrics_1m"))
 	if err != nil {
 		return nil, err
 	}

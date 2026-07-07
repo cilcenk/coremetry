@@ -2096,6 +2096,75 @@ export interface EndpointRow {
   priorP99Ms?: number;
 }
 
+// EndpointDetail — v0.8.360 (Stage-2 slice E2). One payload for the
+// /endpoints detail drawer, mirroring internal/api/endpoints_detail.go's
+// endpointDetailPayload. Sections are NULL-TOLERANT by contract: a
+// failed backend section arrives as null and the drawer renders the
+// rest — never gate the whole drawer on one section.
+export interface EndpointDetail {
+  service: string;
+  path: string;
+  fromNs: number;
+  toNs: number;
+  // 1-D latency distribution over the heatmap's log-scale duration
+  // bins (bin = upper bound in ms). samplingRate < 1 ⇒ counts are
+  // extrapolated from a trace-ID sample (>1h windows).
+  histogram: {
+    bins: number[];
+    counts: number[];
+    samplingRate?: number;
+  } | null;
+  // Per-status-CODE counts + the class rollup the table pills use.
+  statusBreakdown: {
+    http2xx: number;
+    http3xx: number;
+    http4xx: number;
+    http5xx: number;
+    codes: Record<string, number>;
+  } | null;
+  topExceptions: EndpointExceptionRow[] | null;
+  failingTraces: EndpointFailingTrace[] | null;
+  exemplars: { slowTraceId?: string; errorTraceId?: string } | null;
+}
+
+// One exception type observed on the endpoint's spans; fingerprint is
+// the inbox group id for the /problems?exception= deep link.
+export interface EndpointExceptionRow {
+  type: string;
+  message: string;
+  fingerprint: string;
+  count: number;
+  lastSeenNs: number;
+}
+
+// One failing trace on the endpoint (direct /trace?id= pivot).
+// durationMs is the worst ENDPOINT-span duration inside the trace.
+export interface EndpointFailingTrace {
+  traceId: string;
+  durationMs: number;
+  spanName: string;
+  statusMsg?: string;
+  httpStatus?: number;
+  errorSpans: number;
+  timeNs: number;
+}
+
+// EndpointSplitResponse — v0.8.360. Top-10 values of one whitelisted
+// attribute with RED each (the drawer's split-by section).
+export interface EndpointSplitResponse {
+  by: string;
+  values: EndpointSplitValue[];
+}
+
+export interface EndpointSplitValue {
+  value: string;
+  calls: number;
+  errors: number;
+  errorRate: number;
+  avgMs: number;
+  p99Ms: number;
+}
+
 // Span-metrics-derived per-service RED rollup. Source: the
 // spanmetrics processor (or compatible Grafana Alloy /
 // otelcol pipeline) emits a calls counter + duration

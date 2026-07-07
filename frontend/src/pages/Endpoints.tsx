@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Zap, ChevronRight, ChevronDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Zap, ChevronRight, ChevronDown } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
-import { Spinner, Empty } from '@/components/Spinner';
+import { Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
@@ -15,6 +15,9 @@ import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { TrendDelta } from '@/pages/endpoints/TrendDelta';
+import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
+import { encodeEndpointParam, decodeEndpointParam } from '@/pages/endpoints/endpointParam';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 
@@ -158,6 +161,29 @@ export default function EndpointsPage() {
   // a glance, then drills further via the same "view traces"
   // link the table row already exposes.
   const [detail, setDetail] = useState<EndpointRow | null>(null);
+
+  // v0.8.360 — URL-first detail drawer (Stage-2 slice E2). Row click
+  // (not the sparkline — that keeps its RED modal above) writes
+  // ?endpoint=<svc>|<path>[|sig] with replace:true; Esc/✕/overlay
+  // clears it. Copy-link reproduces the exact drill-down: sig rides
+  // the param itself, so a link copied in "group by shape" mode keeps
+  // aggregating the collapsed route for the recipient.
+  const endpointRef = useMemo(
+    () => decodeEndpointParam(params.get('endpoint')),
+    [params],
+  );
+  const openEndpoint = (r: EndpointRow) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.set('endpoint', encodeEndpointParam({
+      service: r.service, path: r.path, sig: bySignature,
+    }));
+    return next;
+  }, { replace: true });
+  const closeEndpoint = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('endpoint');
+    return next;
+  }, { replace: true });
 
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
@@ -337,8 +363,18 @@ export default function EndpointsPage() {
                       <React.Fragment key={rowKey}>
                       <tr {...dt.rowProps(i)}
                         onMouseEnter={() => dt.nav.setSelected(i)}
+                        onClick={e => {
+                          // v0.8.360 — row click opens the detail
+                          // drawer. Links / buttons inside the row
+                          // (service link, expander, sparkline,
+                          // traces →) keep their own affordances.
+                          if ((e.target as HTMLElement).closest('a, button')) return;
+                          openEndpoint(r);
+                        }}
+                        title="Click for endpoint detail (latency distribution, errors, failing traces)"
                         style={{
                           contentVisibility: 'auto', containIntrinsicSize: 'auto 32px',
+                          cursor: 'pointer',
                           // Subtle err tint on broken endpoints (prototype cue).
                           background: r.errorRate >= 5
                             ? 'color-mix(in srgb, var(--err) 7%, transparent)'
@@ -462,6 +498,20 @@ export default function EndpointsPage() {
           </>
         )}
         <EndpointMetricModal row={detail} onClose={() => setDetail(null)} range={range} />
+        {/* v0.8.360 — route-scoped drill-down drawer. row may be
+            undefined on a stale deep-link (endpoint not in the loaded
+            page) — the drawer soft-falls back and still loads its
+            sections from /api/endpoints/detail. */}
+        {endpointRef && (
+          <EndpointDetailDrawer
+            refObj={endpointRef}
+            row={(rows ?? []).find(x =>
+              x.service === endpointRef.service && x.path === endpointRef.path)}
+            range={range}
+            compare={compare}
+            onClose={closeEndpoint}
+          />
+        )}
       </div>
     </>
   );
@@ -767,50 +817,8 @@ function DependencyStrip({ service, deps }: {
   );
 }
 
-// TrendDelta — small arrow + % change next to a metric value.
-// kind='lowerBetter' → red when current > prior (regression),
-//                       green when current < prior (improvement).
-// kind='neutral' → just direction tint, no value judgement
-//                  (used for calls — more traffic isn't inherently
-//                   bad, less isn't inherently good).
-// Threshold: |delta| < 5% renders as a neutral "·" so noise
-// doesn't paint every cell colorful. NEW = prior didn't exist.
-function TrendDelta({ cur, prior, kind }: {
-  cur: number; prior?: number; kind: 'lowerBetter' | 'neutral';
-}) {
-  if (prior === undefined || prior === null) return null;
-  if (prior === 0) {
-    if (cur === 0) return null;
-    return (
-      <span className="badge b-info" style={{ marginLeft: 4, fontSize: 9 }}>NEW</span>
-    );
-  }
-  const pct = ((cur - prior) / prior) * 100;
-  const abs = Math.abs(pct);
-  if (abs < 5) {
-    return (
-      <span style={{ marginLeft: 4, color: 'var(--text3)', fontSize: 9 }}>·</span>
-    );
-  }
-  const up = pct > 0;
-  let color = 'var(--text3)';
-  if (kind === 'lowerBetter') {
-    color = up ? 'var(--err)' : 'var(--ok)';
-  } else if (kind === 'neutral') {
-    color = up ? 'var(--accent2)' : 'var(--text3)';
-  }
-  return (
-    <span style={{
-      marginLeft: 4, fontSize: 9, color,
-      fontFamily: 'ui-monospace, monospace',
-      display: 'inline-flex', alignItems: 'center', gap: 1,
-    }}
-      title={`Prior window: ${prior.toLocaleString(undefined, { maximumFractionDigits: 1 })}`}>
-      {up ? <ArrowUp size={9} strokeWidth={2.5} /> : <ArrowDown size={9} strokeWidth={2.5} />}
-      {abs.toFixed(0)}%
-    </span>
-  );
-}
+// TrendDelta moved to pages/endpoints/TrendDelta.tsx (v0.8.360) so the
+// detail drawer's header RED strip shares the exact same delta chip.
 
 // fmtRate — Req/min cell (v0.8.356). Sub-10 rates keep one decimal
 // ("3.2") so low-traffic endpoints don't all read "0"; larger rates

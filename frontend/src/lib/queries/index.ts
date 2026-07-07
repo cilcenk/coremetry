@@ -59,4 +59,4 @@ export { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from '.
 export { useInbox, useInboxCount } from './inbox';
 export { useProfiles, useProfileHotspots } from './profiles';
 export { useSlowQueries } from './databases';
-export { useEndpoints } from './endpoints';
+export { useEndpoints, useEndpointDetail, useEndpointSplit } from './endpoints';

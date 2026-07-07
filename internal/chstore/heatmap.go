@@ -63,6 +63,63 @@ func (s *Store) GetLatencyHeatmap(
 	from, to time.Time,
 	timeBuckets int,
 ) (*LatencyHeatmap, error) {
+	// Scale guardrail (v0.5.238): on wide windows the per-row
+	// log10 + floor + GROUP BY hashing blew past the 30s
+	// max_execution_time on billion-span installs. Solution:
+	// hash-sample trace IDs deterministically and multiply the
+	// counts back up in Go. Shape is preserved (distribution
+	// over time × duration); absolute counts are extrapolated.
+	sampleN := heatmapSampleN(from, to)
+
+	wc := whereClause{}
+	wc.add("time >= ?", from)
+	wc.add("time <= ?", to)
+	if sampleN > 1 {
+		// cityHash64 is built-in to CH and lighter than sipHash64
+		// for non-cryptographic sampling.
+		wc.add(fmt.Sprintf("cityHash64(trace_id) %% %d = 0", sampleN))
+	}
+	ApplyFilters(&wc, filters)
+	return s.latencyHeatmapWhere(ctx, wc, from, to, timeBuckets, sampleN)
+}
+
+// heatmapSampleN picks the deterministic 1-in-N trace-ID sampling
+// fraction for a window (v0.5.238 guardrail, extracted v0.8.360 so
+// the endpoint-detail histogram shares it). Sampling kicks in only
+// when the window exceeds 1h — short windows are small enough to
+// scan fully, and operators staring at a 15-min window expect exact
+// counts. Hash on trace_id so all spans of a trace land in or out
+// together (preserves multi-modal signal — outlier traces aren't
+// half-counted).
+func heatmapSampleN(from, to time.Time) int {
+	windowHours := to.Sub(from).Hours()
+	switch {
+	case windowHours > 24:
+		return 100
+	case windowHours > 6:
+		return 25
+	case windowHours > 1:
+		return 10
+	}
+	return 1
+}
+
+// latencyHeatmapWhere is the heatmap core behind GetLatencyHeatmap,
+// split out in v0.8.360 (Stage-2 slice E2) so callers that need a
+// predicate FilterExpr cannot express — the endpoint-detail
+// drawer's signature-mode route match `opSigWrap(http_route) = ?`
+// — compose their own whereClause and still reuse the exact same
+// log-bin grid, sampling scale-back and wire format. The caller
+// owns the time bounds + sampling predicate inside wc; sampleN must
+// match what heatmapSampleN produced for the window (it drives the
+// Go-side count extrapolation).
+func (s *Store) latencyHeatmapWhere(
+	ctx context.Context,
+	wc whereClause,
+	from, to time.Time,
+	timeBuckets int,
+	sampleN int,
+) (*LatencyHeatmap, error) {
 	if timeBuckets <= 0 || timeBuckets > 240 {
 		timeBuckets = 60
 	}
@@ -85,41 +142,6 @@ func (s *Store) GetLatencyHeatmap(
 	if stepSec < 1 {
 		stepSec = 1
 	}
-
-	// Scale guardrail (v0.5.238): on wide windows the per-row
-	// log10 + floor + GROUP BY hashing blew past the 30s
-	// max_execution_time on billion-span installs. Solution:
-	// hash-sample trace IDs deterministically and multiply the
-	// counts back up in Go. Shape is preserved (distribution
-	// over time × duration); absolute counts are extrapolated.
-	//
-	// Sampling kicks in only when the window exceeds 1h — short
-	// windows are small enough to scan fully, and operators
-	// staring at a 15-min window expect exact counts. The
-	// fraction picks 1-in-N where N = 10 for ≤6h, N = 25 for
-	// ≤24h, N = 100 beyond. Hash on trace_id so all spans of a
-	// trace land in or out together (preserves multi-modal
-	// signal — outlier traces aren't half-counted).
-	sampleN := 1
-	windowHours := to.Sub(from).Hours()
-	switch {
-	case windowHours > 24:
-		sampleN = 100
-	case windowHours > 6:
-		sampleN = 25
-	case windowHours > 1:
-		sampleN = 10
-	}
-
-	wc := whereClause{}
-	wc.add("time >= ?", from)
-	wc.add("time <= ?", to)
-	if sampleN > 1 {
-		// cityHash64 is built-in to CH and lighter than sipHash64
-		// for non-cryptographic sampling.
-		wc.add(fmt.Sprintf("cityHash64(trace_id) %% %d = 0", sampleN))
-	}
-	ApplyFilters(&wc, filters)
 
 	sql := fmt.Sprintf(`
 		SELECT

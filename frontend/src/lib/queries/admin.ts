@@ -78,6 +78,18 @@ export function useElasticErrors() {
   });
 }
 
+// Trace-context self-discovery (v0.8.348, pivot Phase 1c). One shot per
+// mount + a staleTime matching the server's 5m cache so tab switches
+// don't re-trigger the ES field_caps + 24h coverage aggregation (the
+// ES-cost UI discipline — no polling, no list prefetch).
+export function useTraceContext() {
+  return useQuery({
+    queryKey: ['admin', 'logstore', 'trace-context'],
+    queryFn: api.adminLogstoreTraceContext,
+    staleTime: 5 * 60_000,
+  });
+}
+
 // SQL playground schema browser. Schema shifts on migrations, not
 // minute-to-minute — cache it for the session's practical length.
 export function useSqlSchema(enabled = true) {

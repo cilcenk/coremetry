@@ -492,7 +492,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			res_keys      Array(LowCardinality(String)),
 			res_values    Array(String),
 			scope_name    LowCardinality(String) DEFAULT '',
-			INDEX idx_body body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 4
+			INDEX idx_body body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 4,
+			INDEX idx_logs_trace trace_id TYPE bloom_filter(0.01) GRANULARITY 4
 		) ENGINE = MergeTree()
 		PARTITION BY toDate(time)
 		ORDER BY (service_name, severity_num, time)
@@ -1634,6 +1635,20 @@ func (s *Store) migrate(ctx context.Context) error {
 		// near-zero overhead and lets CH skip granules whose
 		// status set doesn't include 'error'.
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_status      status_code TYPE set(0)    GRANULARITY 4`,
+		// v0.8.348 — pivot Phase 1c: the trace→log pivot
+		// (/api/logs?traceId=, Trace Logs tab) filters `WHERE
+		// trace_id = ?`, but the logs ORDER BY is (service_name,
+		// severity_num, time) and the only skip index was idx_body —
+		// a bare trace-id lookup scanned every granule in the window.
+		// Same bloom_filter shape as spans.idx_trace. NEW PARTS ONLY:
+		// existing parts aren't rewritten (no MATERIALIZE INDEX — too
+		// heavy at billion-log scale); old data ages out via TTL. On
+		// an external Distributed `logs` with cluster_name unset this
+		// ALTER returns CH error 48 and the isClusterUnsupportedAlter
+		// branch below logs + skips it — a pure query-time
+		// optimisation, never a correctness dependency (same gating
+		// as the spans skip indexes above).
+		`ALTER TABLE logs ADD INDEX IF NOT EXISTS idx_logs_trace trace_id TYPE bloom_filter(0.01) GRANULARITY 4`,
 		// v0.8.214 — ZSTD(3) on the free-text columns that lacked an explicit
 		// codec. attr_values alone is ~25% of the spans table at only ~5.9x with
 		// the default LZ4; ZSTD(3) pushes free text to ~8-11x. db_statement (SQL)

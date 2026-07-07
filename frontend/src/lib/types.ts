@@ -2861,6 +2861,42 @@ export interface ESQueryError {
   error: string;
 }
 
+// v0.8.348 — pivot Phase 1c: logstore trace-context SELF-DISCOVERY
+// (GET /api/admin/logstore/trace-context). The system verifies its OWN
+// configured backend: trace-id field mapping verdict + 24h coverage.
+// One candidate trace-id field shape as the backend maps it.
+export interface TraceContextField {
+  name: string;
+  types: string[];      // mapping types found (sorted); empty = absent
+  searchable: boolean;
+  aggregatable: boolean;
+  configured: boolean;  // the operator-configured TraceID field
+}
+
+export interface TraceContextServiceCoverage {
+  service: string;
+  total: number;
+  withTrace: number;
+}
+
+export interface TraceContextReport {
+  available: boolean;
+  reason?: string;      // set on failure; may accompany available:true when only coverage failed
+  effectiveField: string;
+  effectiveType: string; // 'keyword' | 'text' | … | 'absent' (ES); 'String' (CH)
+  pivotReady: boolean;
+  fields: TraceContextField[];
+  windowHours: number;
+  total: number;
+  withTrace: number;
+  services: TraceContextServiceCoverage[];
+}
+
+export interface TraceContextPayload {
+  backend: string;
+  report: TraceContextReport;
+}
+
 // Result of the admin "purge telemetry data" factory-reset.
 export interface PurgeResult {
   tablesPurged: string[];

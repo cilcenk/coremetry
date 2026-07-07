@@ -218,6 +218,62 @@ type Diagnoser interface {
 	Diagnostics() ESDiagnostics
 }
 
+// ─── Trace-context self-discovery (v0.8.348, pivot Phase 1c) ────────────────
+//
+// The trace→log pivot silently dies when the backend's trace-id field is
+// mis-mapped (ES `text` → term clauses match nothing) or absent. Instead of
+// asking the operator to hand-query their cluster (audit §3 ⚠), the system
+// verifies its OWN configured backend: field mapping verdict + "% of logs
+// with trace context" coverage over the last 24h. Surfaced on
+// GET /api/admin/logstore/trace-context → /admin/elastic + /admin/stats.
+
+// TraceContextField is one candidate trace-id field shape as the backend
+// maps it. Types empty = the field is absent from the mapping.
+type TraceContextField struct {
+	Name         string   `json:"name"`
+	Types        []string `json:"types"` // mapping types found (sorted); empty = absent
+	Searchable   bool     `json:"searchable"`
+	Aggregatable bool     `json:"aggregatable"`
+	Configured   bool     `json:"configured"` // the operator-configured TraceID field
+}
+
+// TraceContextServiceCoverage is one service's share of logs carrying
+// trace context in the report window.
+type TraceContextServiceCoverage struct {
+	Service   string `json:"service"`
+	Total     int64  `json:"total"`
+	WithTrace int64  `json:"withTrace"`
+}
+
+// TraceContextReport is the cross-backend self-discovery result.
+// Available=false + Reason replaces raw errors — the admin surface renders
+// the reason instead of a 5xx. Reason may also be set with Available=true
+// when the field verdict succeeded but the coverage aggregation failed.
+type TraceContextReport struct {
+	Available      bool   `json:"available"`
+	Reason         string `json:"reason,omitempty"`
+	EffectiveField string `json:"effectiveField"`
+	// EffectiveType: "keyword" | "text" | … | "absent" on ES; "String" on CH.
+	EffectiveType string              `json:"effectiveType"`
+	PivotReady    bool                `json:"pivotReady"`
+	Fields        []TraceContextField `json:"fields"`
+
+	// Coverage over the last WindowHours.
+	WindowHours int                           `json:"windowHours"`
+	Total       int64                         `json:"total"`
+	WithTrace   int64                         `json:"withTrace"`
+	Services    []TraceContextServiceCoverage `json:"services"`
+}
+
+// TraceContextDiagnoser is the optional per-backend capability behind the
+// report. Both shipped backends implement it (ES via field_caps + one size:0
+// aggregation, CH via two bounded countIf queries); the API layer still
+// type-asserts through Unwrap — the Switchable deliberately does not forward
+// optional capabilities (see switchable.go).
+type TraceContextDiagnoser interface {
+	TraceContextDiagnostics(ctx context.Context) (*TraceContextReport, error)
+}
+
 // Store is the read interface every backend implements.
 type Store interface {
 	Search(ctx context.Context, f Filter) (*Page, error)

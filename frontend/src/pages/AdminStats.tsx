@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useSystemStats, keys } from '@/lib/queries';
+import { useSystemStats, useTraceContext, keys } from '@/lib/queries';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { api } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
@@ -98,6 +98,12 @@ export default function AdminStatsPage() {
   });
   const cacheStats = cacheStatsQ.isLoading ? undefined
     : cacheStatsQ.isError ? null : cacheStatsQ.data;
+
+  // Trace-context coverage snapshot (v0.8.348, pivot Phase 1c). One-shot,
+  // 5m-stale (matches the server cache); the KPI simply doesn't render
+  // until the report is available — best-effort, never blocks the page.
+  const traceCtxQ = useTraceContext();
+  const traceCtx = traceCtxQ.data?.report;
   const setRefreshTick = (_n: number | ((p: number) => number)) => {
     qc.invalidateQueries({ queryKey: keys.admin.systemStats });
   };
@@ -206,6 +212,12 @@ export default function AdminStatsPage() {
               <KPI label="Logs · 24h" value={fmtNum(data.snapshot.logs24h)}
                    sub={`${fmtRate(data.ingest.logsPerSec)} now`} />
               <KPI label="Logs total" value={fmtNum(data.snapshot.logsAllTime)} />
+              {traceCtx?.available && traceCtx.total > 0 && (
+                <KPI label="Logs w/ trace ctx · 24h"
+                     value={`${((traceCtx.withTrace / traceCtx.total) * 100).toFixed(1)}%`}
+                     cls={traceCtx.pivotReady ? undefined : 'warn'}
+                     sub={`${fmtNum(traceCtx.withTrace)} of ${fmtNum(traceCtx.total)} · ${traceCtxQ.data?.backend ?? ''}`} />
+              )}
               <KPI label="Metrics · 24h" value={fmtNum(data.snapshot.metrics24h)}
                    sub={`${fmtRate(data.ingest.metricsPerSec)} now`} />
               <KPI label="Metrics total" value={fmtNum(data.snapshot.metricsAllTime)} />

@@ -360,6 +360,48 @@ func (s *Server) adminElasticErrors(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// adminLogstoreTraceContext — GET /api/admin/logstore/trace-context
+// (v0.8.348, pivot Phase 1c SELF-DISCOVERY). The system verifies its OWN
+// configured logs backend instead of anyone hand-querying prod: trace-id
+// field mapping verdict (keyword ✓ / text ⚠ / absent — a text mapping
+// silently kills the trace→log pivot's term clauses) + "% of logs with
+// trace context" over the last 24h, overall and top-50 per service.
+// Powers the /admin/elastic "Trace context" card + the /admin/stats
+// snapshot line.
+//
+// Admin-only (cluster-mapping metadata, same posture as the elastic
+// diagnostics above). 5m cache — the ES side is one field_caps + one
+// size:0 aggregation over 24h of dailies; the CH side two bounded countIf
+// scans. The key carries the backend name so a Settings-driven backend
+// swap (Switchable) gets a fresh report instead of the other backend's
+// cached one; backend failures come back as a typed
+// {available:false, reason} report, never a raw 5xx (logstore contract).
+func (s *Server) adminLogstoreTraceContext(w http.ResponseWriter, r *http.Request) {
+	backend := s.logs.Backend()
+	key := "admin-logstore-trace-context:" + backend
+	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
+		rep := &logstore.TraceContextReport{
+			Available: false,
+			Reason:    "trace-context diagnostics not supported on this backend",
+		}
+		if d, ok := logstore.Unwrap(s.logs).(logstore.TraceContextDiagnoser); ok {
+			got, err := d.TraceContextDiagnostics(ctx)
+			if err != nil {
+				rep = &logstore.TraceContextReport{Available: false, Reason: err.Error()}
+			} else if got != nil {
+				rep = got
+			}
+		}
+		if rep.Fields == nil {
+			rep.Fields = []logstore.TraceContextField{}
+		}
+		if rep.Services == nil {
+			rep.Services = []logstore.TraceContextServiceCoverage{}
+		}
+		return map[string]any{"backend": backend, "report": rep}, nil
+	})
+}
+
 func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	field := strings.TrimSpace(q.Get("field"))

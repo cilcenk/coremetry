@@ -4,9 +4,10 @@ import { Empty, Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { fmtNum, fmtBytes } from '@/lib/utils';
-import { useElasticIndices, useElasticErrors } from '@/lib/queries';
+import { useElasticIndices, useElasticErrors, useTraceContext } from '@/lib/queries';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import type { TraceContextServiceCoverage } from '@/lib/types';
 
 // AdminElastic (v0.5.466) — operator-facing inventory of the
 // logs backend's indices: name, doc count, size, health, ILM
@@ -122,6 +123,144 @@ function QueryErrorsPanel() {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+// Trace-context self-discovery card (v0.8.348, pivot Phase 1c). The
+// backend inspects its OWN configured logstore — field_caps over the
+// trace-id candidate shapes + a 24h coverage aggregation — so the moment
+// prod ES credentials land in Settings → Elasticsearch, the "is the
+// trace→log pivot going to work?" answer appears here without anyone
+// hand-querying the cluster. Works on both backends (CH reports its fixed
+// trace_id column + the same coverage numbers).
+const COVERAGE_COLS: DataTableColumn<TraceContextServiceCoverage>[] = [
+  { id: 'service',   label: 'Service',    sortValue: r => r.service,   naturalDir: 'asc',  width: 280 },
+  { id: 'total',     label: 'Logs · 24h', sortValue: r => r.total,     naturalDir: 'desc', numeric: true, width: 130 },
+  { id: 'withTrace', label: 'With trace', sortValue: r => r.withTrace, naturalDir: 'desc', numeric: true, width: 130 },
+  { id: 'pct',       label: 'Coverage',   sortValue: r => (r.total > 0 ? r.withTrace / r.total : 0),
+                                                                       naturalDir: 'desc', numeric: true, width: 140 },
+];
+
+function covPct(withTrace: number, total: number): string {
+  return total > 0 ? `${((withTrace / total) * 100).toFixed(1)}%` : '—';
+}
+
+function TraceContextCard() {
+  const tcQ = useTraceContext();
+  const report = tcQ.data?.report;
+  const rows = report?.services ?? [];
+  // Hook above the conditional return (rules-of-hooks).
+  const dt = useDataTable<TraceContextServiceCoverage>({
+    storageKey: 'es-trace-coverage',
+    columns: COVERAGE_COLS,
+    rows,
+    initialSort: { id: 'total', dir: 'desc' },
+  });
+  if (!tcQ.data || !report) return null; // loading / fetch error — card is best-effort
+
+  const verdict = report.pivotReady
+    ? { cls: 'b-ok',   text: `${report.effectiveType} ✓` }
+    : report.effectiveType === 'absent'
+      ? { cls: 'b-warn', text: 'absent ⚠' }
+      : { cls: 'b-err',  text: `${report.effectiveType} ⚠` };
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 14 }}>Trace context</h3>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          self-discovered from the configured {tcQ.data.backend} backend · last {report.windowHours || 24}h · cached 5m
+        </span>
+      </div>
+
+      {!report.available ? (
+        <div className="empty" style={{ padding: 16, color: 'var(--err)', fontSize: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Trace-context discovery failed</div>
+          <div>{report.reason || 'unknown error'}</div>
+        </div>
+      ) : (
+        <div style={{
+          background: 'var(--bg1)', border: '1px solid var(--border)',
+          borderRadius: 8, padding: 14,
+        }}>
+          {/* Field verdict */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--text2)' }}>Trace-id field</span>
+            <code style={{ fontSize: 12 }}>{report.effectiveField || '(none)'}</code>
+            <span className={`badge ${verdict.cls}`}>{verdict.text}</span>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6 }}>
+            {report.pivotReady && (
+              <>Trace→log pivot operable — exact-match lookups on{' '}
+                <code>{report.effectiveField}</code> work.</>
+            )}
+            {!report.pivotReady && report.effectiveType === 'text' && (
+              <span style={{ color: 'var(--err)' }}>
+                Trace→log pivot inoperable: <code>{report.effectiveField}</code> is an analyzed{' '}
+                <code>text</code> field, so the pivot&apos;s exact term lookups match nothing.
+                Fix the ES index template to map it as <code>keyword</code>.
+              </span>
+            )}
+            {!report.pivotReady && report.effectiveType === 'absent' && (
+              <span style={{ color: 'var(--warn)' }}>
+                No trace-id field found in the last-24h mapping
+                (checked {report.fields.map(f => f.name).join(', ') || '—'}).
+                Point Settings → Elasticsearch → Trace ID field at the right field,
+                or fix the shipping pipeline to extract the id.
+              </span>
+            )}
+            {!report.pivotReady && report.effectiveType !== 'text' && report.effectiveType !== 'absent' && (
+              <span style={{ color: 'var(--err)' }}>
+                <code>{report.effectiveField}</code> is mapped <code>{report.effectiveType}</code>{' '}
+                — exact term lookups need a <code>keyword</code> mapping; fix the ES index template.
+              </span>
+            )}
+          </div>
+          {/* Candidate shapes the probe checked (the traceTermsAny fan-out) */}
+          {report.fields.length > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, fontFamily: 'ui-monospace, monospace' }}>
+              {report.fields.map(f =>
+                `${f.name}: ${f.types.length > 0 ? f.types.join('/') : 'absent'}${f.configured ? ' (configured)' : ''}`,
+              ).join(' · ')}
+            </div>
+          )}
+          {report.reason && (
+            <div style={{ fontSize: 12, color: 'var(--err)', marginTop: 8 }}>{report.reason}</div>
+          )}
+
+          {/* Coverage */}
+          {report.total > 0 && (
+            <div style={{ fontSize: 12, marginTop: 12 }}>
+              <strong>{covPct(report.withTrace, report.total)}</strong> of logs carry trace context ·{' '}
+              {fmtNum(report.withTrace)} of {fmtNum(report.total)} in the last {report.windowHours || 24}h
+            </div>
+          )}
+          {report.total === 0 && !report.reason && (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 12 }}>
+              No logs found in the last {report.windowHours || 24}h window.
+            </div>
+          )}
+          {rows.length > 0 && (
+            <div className="table-wrap" style={{ marginTop: 10, maxHeight: 320, overflowY: 'auto' }}>
+              <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                <DataTableColgroup dt={dt} />
+                <DataTableHead dt={dt} />
+                <tbody>
+                  {dt.sortedRows.map(r => (
+                    <tr key={r.service}>
+                      <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.service}>{r.service}</td>
+                      <td className="num">{fmtNum(r.total)}</td>
+                      <td className="num">{fmtNum(r.withTrace)}</td>
+                      <td className="num">{covPct(r.withTrace, r.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -266,6 +405,12 @@ export default function AdminElasticPage() {
             </table>
           </>
         )}
+
+        {/* v0.8.348 — trace-context self-discovery. Rendered for BOTH
+            backends (CH reports its fixed trace_id column) and even when
+            the index inventory errored — the field verdict is exactly
+            what you want while debugging a broken ES setup. */}
+        <TraceContextCard />
 
         {/* v0.8.230 — failed-query diagnostics. Rendered whenever the
             backend is ES OR the inventory itself errored (the exact

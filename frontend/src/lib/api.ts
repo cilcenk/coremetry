@@ -567,6 +567,14 @@ export const api = {
   adminElasticErrors: () =>
     get<{ backend: string; queryErrors: number; recentErrors: ESQueryError[] }>(
       `/api/admin/elastic/errors`),
+  // Trace-context self-discovery (v0.8.348, pivot Phase 1c) — the
+  // backend verifies its OWN configured logstore: trace-id field
+  // mapping verdict (keyword ✓ / text ⚠ / absent) + % of last-24h
+  // logs carrying trace context, overall and top-50 per service.
+  // Server-cached 5m per backend; failures come back as a typed
+  // {available:false, reason} report, never a 5xx.
+  adminLogstoreTraceContext: () =>
+    get<import('./types').TraceContextPayload>(`/api/admin/logstore/trace-context`),
   // Kibana saved-search interop URLs — used as download / upload
   // anchors in /admin/elastic. v0.5.467.
   kibanaExportURL: () => `/api/admin/elastic/saved-search-export`,

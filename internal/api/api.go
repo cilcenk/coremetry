@@ -731,6 +731,11 @@ func (s *Server) Start() error {
 	// ILM phase/policy. Admin-only (read of cluster metadata).
 	mux.HandleFunc("GET  /api/admin/elastic/indices", auth.RequireRole(auth.RoleAdmin, s.adminElasticIndices))
 	mux.HandleFunc("GET  /api/admin/elastic/errors", auth.RequireRole(auth.RoleAdmin, s.adminElasticErrors))
+	// v0.8.348 — pivot Phase 1c: trace-context SELF-DISCOVERY. The
+	// system verifies its own configured logs backend (trace-id
+	// field mapping verdict + 24h coverage) — /admin/elastic card
+	// + /admin/stats snapshot line. Admin-only, 5m cached.
+	mux.HandleFunc("GET  /api/admin/logstore/trace-context", auth.RequireRole(auth.RoleAdmin, s.adminLogstoreTraceContext))
 	// v0.5.467 — Kibana saved-search interop. Export streams an
 	// .ndjson the operator can import into Kibana Discover;
 	// import accepts the same format and turns each saved search

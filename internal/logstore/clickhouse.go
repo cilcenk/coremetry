@@ -427,3 +427,86 @@ func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 	return out, rows.Err()
 }
 
+// ─── Trace-context self-discovery (v0.8.348, pivot Phase 1c) ────────────────
+//
+// CH sibling of the ES field_caps + coverage probe so the /admin surface
+// works on BOTH backends. The mapping half is trivial here — `trace_id` is a
+// fixed String column on the Coremetry-created logs table, exact-match
+// lookups always work — so the report is really about coverage: what share
+// of the last-24h logs actually carry a trace id. Both queries are bounded
+// per the house rule (time-bounded WHERE + LIMIT + max_execution_time);
+// per-service grouping caps mirror FieldStats' overflow guards. Consts so
+// clickhouse_trace_context_test.go pins the bounded shape.
+
+const chTraceCoverageSQL = `
+	SELECT count() AS total, countIf(trace_id != '') AS with_trace
+	FROM logs
+	WHERE time >= ? AND time <= ?
+	LIMIT 1
+	SETTINGS max_execution_time = 10`
+
+const chTraceCoverageTopSQL = `
+	SELECT service_name, count() AS total, countIf(trace_id != '') AS with_trace
+	FROM logs
+	WHERE time >= ? AND time <= ?
+	GROUP BY service_name
+	ORDER BY total DESC
+	LIMIT 50
+	SETTINGS max_execution_time = 10,
+	         max_rows_to_group_by = 100000,
+	         group_by_overflow_mode = 'any'`
+
+// TraceContextDiagnostics implements TraceContextDiagnoser. Same error
+// posture as the ES side: backend failures come back as a typed report
+// (available:false + reason for the overall count; verdict kept + Reason
+// set when only the per-service breakdown failed) — never a raw 5xx.
+func (s *CHStore) TraceContextDiagnostics(ctx context.Context) (*TraceContextReport, error) {
+	to := time.Now()
+	from := to.Add(-24 * time.Hour)
+	rep := &TraceContextReport{
+		Available:      true,
+		EffectiveField: "trace_id",
+		EffectiveType:  "String", // fixed schema column — exact match always works
+		PivotReady:     true,
+		WindowHours:    24,
+		Fields: []TraceContextField{{
+			Name: "trace_id", Types: []string{"String"},
+			Searchable: true, Aggregatable: true, Configured: true,
+		}},
+		Services: []TraceContextServiceCoverage{},
+	}
+	var total, withTrace uint64
+	if err := s.store.Conn().QueryRow(ctx, chTraceCoverageSQL, from, to).Scan(&total, &withTrace); err != nil {
+		return &TraceContextReport{
+			Available: false, Reason: "coverage query failed: " + err.Error(),
+			EffectiveType: "absent",
+			Fields:        []TraceContextField{},
+			Services:      []TraceContextServiceCoverage{},
+			WindowHours:   24,
+		}, nil
+	}
+	rep.Total, rep.WithTrace = int64(total), int64(withTrace)
+
+	rows, err := s.store.Conn().Query(ctx, chTraceCoverageTopSQL, from, to)
+	if err != nil {
+		rep.Reason = "per-service coverage failed: " + err.Error()
+		return rep, nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var svc string
+		var t, w uint64
+		if err := rows.Scan(&svc, &t, &w); err != nil {
+			rep.Reason = "per-service coverage failed: " + err.Error()
+			return rep, nil
+		}
+		rep.Services = append(rep.Services, TraceContextServiceCoverage{
+			Service: svc, Total: int64(t), WithTrace: int64(w),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rep.Reason = "per-service coverage failed: " + err.Error()
+	}
+	return rep, nil
+}
+

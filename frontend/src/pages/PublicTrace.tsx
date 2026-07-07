@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react';
+import { Suspense, useCallback, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -8,6 +8,7 @@ import { SpanDetail } from '@/components/SpanDetail';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { LogTable } from '@/components/LogTable';
 import { fmtNs, tsLong } from '@/lib/utils';
+import { useOutsideClose } from '@/lib/useOutsideClose';
 import type { SpanRow, LogRow } from '@/lib/types';
 
 // Public read-only trace viewer. Hit by /public/trace?token=xxx;
@@ -38,6 +39,14 @@ function PublicTraceInner() {
   const token = sp.get('token') ?? '';
   const [selectedId, setSelectedId] = useState<string | null>(sp.get('span'));
   const [tab, setTab] = useState<'waterfall' | 'logs'>('waterfall');
+
+  // Operator-reported (v0.8.361, mirrors /trace): pressing the page
+  // background dismisses the span panel. Hoisted above the data
+  // early-returns (rules-of-hooks); the ref wraps waterfall + panel
+  // so a row press stays a re-select.
+  const spanAreaRef = useRef<HTMLDivElement>(null);
+  const closeSpanPanel = useCallback(() => setSelectedId(null), []);
+  useOutsideClose(spanAreaRef, !!selectedId && tab === 'waterfall', closeSpanPanel);
 
   // v0.8.275 — React Query replaces the mount-effect fetch. The
   // snapshot is FROZEN server-side (spans + logs captured at mint),
@@ -135,11 +144,11 @@ function PublicTraceInner() {
       </div>
 
       {tab === 'waterfall' && (
-        <div id="td-outer">
+        <div id="td-outer" ref={spanAreaRef}>
           <div id="td-wf">
             <TraceWaterfall spans={data.spans} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
-          {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)} />}
+          {sel && <SpanDetail span={sel} onClose={closeSpanPanel} />}
         </div>
       )}
 

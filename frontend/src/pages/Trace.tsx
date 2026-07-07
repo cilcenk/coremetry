@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
@@ -14,6 +14,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useOutsideClose } from '@/lib/useOutsideClose';
 import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
 import type { LogRow, SpanRow, TimeRange, PivotAnchor } from '@/lib/types';
@@ -252,6 +253,17 @@ function TraceDetailInner() {
     });
   }, [spans]);
 
+  // Operator-reported (v0.8.361): pressing the page background closes
+  // the span panel — before this, only ✕/Esc dismissed it. The ref
+  // wraps waterfall + panel together so a row press stays a re-select
+  // (no close→reopen remount losing panel scroll + refetching).
+  // Hooks, so hoisted above the `if (!id)` early return; active keys
+  // off selectedId (a dangling id without a matching span renders no
+  // panel, and nulling it is a no-op).
+  const spanAreaRef = useRef<HTMLDivElement>(null);
+  const closeSpanPanel = useCallback(() => setSelectedId(null), []);
+  useOutsideClose(spanAreaRef, !!selectedId, closeSpanPanel);
+
   // Early return AFTER every hook so the hook call order is
   // stable across renders (react-hooks/rules-of-hooks). When
   // there's no id we render the missing-id placeholder — same
@@ -444,7 +456,7 @@ function TraceDetailInner() {
                     dropped-span counts so the operator never mistakes a partial
                     trace for a complete one. */}
                 <TraceHonesty spans={spans} source={source} />
-                <div style={{ display: 'flex', alignItems: 'stretch', gap: 10, minHeight: 240 }}>
+                <div ref={spanAreaRef} style={{ display: 'flex', alignItems: 'stretch', gap: 10, minHeight: 240 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <TraceServiceBreakdown spans={spans} />
                     <SpanFilterBar spans={spans} value={spanFilter} onChange={setSpanFilter}
@@ -454,7 +466,7 @@ function TraceDetailInner() {
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined} />
                   </div>
-                  {sel && <SpanDetail span={sel} onClose={() => setSelectedId(null)}
+                  {sel && <SpanDetail span={sel} onClose={closeSpanPanel}
                     logsFrom={logWin?.from} logsTo={logWin?.to} />}
                 </div>
               </>

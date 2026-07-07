@@ -22,6 +22,7 @@ import type {
   Role, LDAPConfig, LDAPDirectoryUser,
   RelationResponse, RelationKind, FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
+  OtlpExemplar, TraceLinks,
 } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 
@@ -378,6 +379,20 @@ export const api = {
       order: params.order,
     })}`),
   trace:     (id: string)            => get<TraceDetailResponse>(`/api/traces/${id}`),
+
+  // v0.8.332 (pivot Phase 3) — real OTLP exemplars for a metric window
+  // (GET /api/exemplars, pivot Phase 2). Either a comma-separated
+  // `fingerprints` set (PK scan) or a `metric`(+`service`) fallback.
+  // 30s server-side cache — client staleTime must stay ≥ that.
+  exemplars: (params: {
+    fingerprints?: string; metric?: string; service?: string;
+    from: number; to: number; limit?: number;
+  }) =>
+    get<{ items: OtlpExemplar[] }>(`/api/exemplars?${qs(params)}`),
+  // v0.8.332 — OTel span links for one trace, BOTH directions in one payload
+  // (GET /api/traces/{id}/links, pivot Phase 2; 30s server-side cache).
+  traceLinks: (id: string) =>
+    get<TraceLinks>(`/api/traces/${encodeURIComponent(id)}/links`),
 
   logs:      (params: LogsParams)    => get<LogsResponse>(`/api/logs?${qs(params)}`),
 

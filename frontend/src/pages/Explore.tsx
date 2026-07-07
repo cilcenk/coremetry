@@ -228,8 +228,14 @@ function ExploreInner() {
   const builderActive = hasParams && source === 'spans' && resultMode === 'metric';
   const builderFrom = builderActive && debounced.viz !== 'heatmap' ? exploreRange.from : 0;
   // D5 — eligible span queries fetch series + exemplars in ONE resolver call;
-  // exemplarsByLetter (◆ glyphs) comes from the same hook now.
-  const { byLetter, totalByLetter, exemplarsByLetter, anyLoading, error: builderError } = useExploreQueries(
+  // exemplarsByLetter (◆ glyphs) comes from the same hook now. v0.8.332
+  // (pivot Phase 3): otlpExemplarsByLetter adds REAL OTLP exemplar ◆ for
+  // single-service catalogue-metric queries; clicks ride the same
+  // onExemplarClick → CorrelationContextDrawer path as the span-derived ones.
+  const {
+    byLetter, totalByLetter, exemplarsByLetter, otlpExemplarsByLetter,
+    anyLoading, error: builderError,
+  } = useExploreQueries(
     debounced,
     builderFrom,
     exploreRange.to,
@@ -237,8 +243,8 @@ function ExploreInner() {
   // Phase 3.3 — deploy markers + SLO thresholds for pinned-service queries.
   const overlaysByLetter = useExploreOverlays(debounced, builderFrom, exploreRange.to);
   const panels = useMemo(
-    () => buildPanels(debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter),
-    [debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter],
+    () => buildPanels(debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter),
+    [debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter],
   );
   const anyProduces = debounced.queries.some(produces);
 

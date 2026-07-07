@@ -24,7 +24,7 @@ import { keys } from '@/lib/queries/keys';
 import { stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { encodeFilters, encodeFilterGroup } from '@/lib/urlState';
-import type { SpanMetricSeries, MetricExemplar, ChartAnnotation } from '@/lib/types';
+import type { SpanMetricSeries, MetricExemplar, ChartAnnotation, OtlpExemplar } from '@/lib/types';
 import { annotationsInWindow } from '@/lib/chartAnnotations';
 import {
   type BuilderState, produces, effectiveFilters, querySignature, exemplarDescriptor,
@@ -44,6 +44,10 @@ export interface ExploreQueriesResult {
   // ONLY for resolver-eligible span queries — which now fetch series AND
   // exemplars in the SAME api.resolveMetric call (D5). [] for everything else.
   exemplarsByLetter: Record<string, MetricExemplar[]>;
+  // v0.8.332 (pivot Phase 3) — letter → REAL OTLP exemplars (◆, neutral
+  // 'otlp' kind) for CATALOGUE-metric queries scoped to a single service.
+  // [] for span queries, group-by charts, and unscoped metric queries.
+  otlpExemplarsByLetter: Record<string, OtlpExemplar[]>;
   anyLoading: boolean;
   // first error among producing queries, with the letter that raised it
   error: { letter: string; message: string } | null;
@@ -133,12 +137,43 @@ export function useExploreQueries(
     }),
   });
 
+  // v0.8.332 (pivot Phase 3) — REAL OTLP exemplar ◆ for catalogue-metric
+  // charts. The span-source paths above already carry span-DERIVED exemplars
+  // (resolver rollups); the metric-source path had none because metric_points
+  // stored no exemplars until pivot Phase 1. Fetch gate: a picked catalogue
+  // metric scoped to ONE service (pinnedService — scope slot or a single
+  // service.name= chip) and NO splitBy — a multi-series group-by chart has no
+  // per-series service scoping, so it is skipped silently. The window is
+  // minute-bucketed into BOTH the key and the request so the client-key
+  // cardinality stays bounded and lines up with the server's minute-bucketed
+  // 30s cache key (pivot.go pivotExemplarKey); staleTime ≥ that server TTL.
+  // Decoration only: errors/loading never gate the panel (data ?? []).
+  const otlpResults = useQueries({
+    queries: state.queries.map(q => {
+      const svc = q.source === 'metric' ? pinnedService(q) : '';
+      const eligible = q.source === 'metric' && produces(q)
+        && !!q.metric && !!svc && q.splitBy.length === 0;
+      const fromB = Math.floor(from / 60e9) * 60e9; // minute-bucketed unix ns
+      const toB = Math.floor(to / 60e9) * 60e9;
+      return {
+        queryKey: ['explore-otlp-exemplars', q.metric, svc, fromB, toB, 50],
+        queryFn: (): Promise<OtlpExemplar[]> =>
+          api.exemplars({ metric: q.metric, service: svc, from: fromB, to: toB, limit: 50 })
+            .then(r => r?.items ?? []),
+        enabled: eligible && from > 0,
+        staleTime: 30_000,
+      };
+    }),
+  });
+
   // Stabilise on data identity, not array identity (MQE perf pattern).
-  const dataSig = results.map(r => (r.data ? r.dataUpdatedAt : r.isError ? -1 : 0)).join('|');
+  const dataSig = results.map(r => (r.data ? r.dataUpdatedAt : r.isError ? -1 : 0)).join('|')
+    + '◆' + otlpResults.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|');
   return useMemo(() => {
     const byLetter: Record<string, SpanMetricSeries[] | undefined> = {};
     const totalByLetter: Record<string, number | undefined> = {};
     const exemplarsByLetter: Record<string, MetricExemplar[]> = {};
+    const otlpExemplarsByLetter: Record<string, OtlpExemplar[]> = {};
     let anyLoading = false;
     let error: { letter: string; message: string } | null = null;
     state.queries.forEach((q, i) => {
@@ -154,8 +189,9 @@ export function useExploreQueries(
       // doesn't report one — resolver / metric queries are never trimmed.
       totalByLetter[q.letter] = series === undefined ? undefined : (r.data?.totalSeries ?? series.length);
       exemplarsByLetter[q.letter] = r.data?.exemplars ?? [];
+      otlpExemplarsByLetter[q.letter] = otlpResults[i].data ?? [];
     });
-    return { byLetter, totalByLetter, exemplarsByLetter, anyLoading, error };
+    return { byLetter, totalByLetter, exemplarsByLetter, otlpExemplarsByLetter, anyLoading, error };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, state]);
 }

@@ -51,8 +51,10 @@ export interface TSSeries {
   dash?: number[];         // canvas dash pattern (explore-v2: the formula series)
   // explore-v2 Phase 3.2 — exemplar trace markers (◆) anchored on this series.
   // time is unix NANOS (bucket start); value is the series value to pin the
-  // glyph at; kind tints it (error = red, slow = accent). Click opens the trace.
-  exemplars?: { time: number; value: number; traceId: string; kind: 'slow' | 'error' }[];
+  // glyph at; kind tints it (error = red, slow = accent; 'otlp' — v0.8.332
+  // pivot Phase 3, a real OTLP exemplar, neutral --purple). Click opens the
+  // trace.
+  exemplars?: { time: number; value: number; traceId: string; kind: 'slow' | 'error' | 'otlp' }[];
 }
 
 export interface TSThreshold {
@@ -421,7 +423,7 @@ export function TimeSeriesPanel({
             // explore-v2 Phase 3.2 — exemplar ◆ markers, drawn last so they sit
             // on top of the lines. One per (visible series, bucket-with-a-trace);
             // a thin halo in the panel bg keeps them legible over same-coloured
-            // lines. error = --err, slow = --accent2.
+            // lines. error = --err, slow = --accent2, otlp = --purple (v0.8.332).
             const exMinX = u.scales.x.min ?? 0;
             const exMaxX = u.scales.x.max ?? 0;
             for (let si = 0; si < series.length; si++) {
@@ -433,8 +435,11 @@ export function TimeSeriesPanel({
                 if (t < exMinX || t > exMaxX) continue;
                 const x = u.valToPos(t, 'x', true);
                 const y = u.valToPos(ex.value, sk, true);
-                const col = resolveColor(ex.kind === 'error' ? 'var(--err)' : 'var(--accent2)')
-                  || (ex.kind === 'error' ? '#ef4444' : '#a371f7');
+                const col = resolveColor(
+                  ex.kind === 'error' ? 'var(--err)'
+                    : ex.kind === 'otlp' ? 'var(--purple)'
+                    : 'var(--accent2)',
+                ) || (ex.kind === 'error' ? '#ef4444' : '#a371f7');
                 ctx.beginPath();
                 ctx.moveTo(x, y - 4);
                 ctx.lineTo(x + 4, y);
@@ -561,7 +566,9 @@ export function TimeSeriesPanel({
                 }
               }
               if (near) {
-                const c = near.kind === 'error' ? 'var(--err)' : 'var(--accent2)';
+                const c = near.kind === 'error' ? 'var(--err)'
+                  : near.kind === 'otlp' ? 'var(--purple)'
+                  : 'var(--accent2)';
                 exemplarRow =
                   `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)">` +
                     `<span style="color:${c}">◆</span>` +

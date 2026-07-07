@@ -3,6 +3,8 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"sort"
 	"time"
 )
 
@@ -316,48 +318,57 @@ func (s *Store) EnrichAnomaliesWithClusters(ctx context.Context, events []Anomal
 	return events
 }
 
-// EnrichProblemsWithDeploys attaches the most recent
-// observed service.version deploy that happened up to
-// `lookback` before each problem's started_at. Single bulk
-// CH query covers every service across every problem in the
-// slice — N+1 free regardless of problem count. Soft-fails:
-// CH error returns the slice unchanged rather than blocking
-// the page render.
-//
-// Mechanism: one GROUP BY over spans for the union of
-// involved services in [min(started)-lookback, max(started)],
-// then per-problem in-memory match against the highest
-// first_seen time ≤ that problem's started_at.
-func (s *Store) EnrichProblemsWithDeploys(ctx context.Context, problems []Problem, lookback time.Duration) []Problem {
-	if len(problems) == 0 {
-		return problems
-	}
-	// Distinct services + global time window across the page.
-	services := map[string]struct{}{}
-	var minStarted, maxStarted int64
-	for i, p := range problems {
-		if p.Service == "" {
-			continue
-		}
-		services[p.Service] = struct{}{}
-		if i == 0 || p.StartedAt < minStarted {
-			minStarted = p.StartedAt
-		}
-		if p.StartedAt > maxStarted {
-			maxStarted = p.StartedAt
-		}
-	}
-	if len(services) == 0 {
-		return problems
-	}
-	svcList := make([]any, 0, len(services))
-	for s := range services {
-		svcList = append(svcList, s)
-	}
-	from := time.Unix(0, minStarted).Add(-lookback)
-	to := time.Unix(0, maxStarted)
+// deploysCacheEntry is one cached fetchDeploysByService result
+// (v0.8.359). The deploy list per service is READ-ONLY once cached —
+// the enrich matching loop only walks it.
+type deploysCacheEntry struct {
+	at        time.Time
+	byService map[string][]spanDeploy
+}
 
-	// Build positional placeholders for the IN clause.
+// spanDeploy is one observed (version, first_seen) pair for a service.
+type spanDeploy struct {
+	version string
+	ns      int64
+}
+
+// deploysCacheKey builds the cache key for one deploys fetch: the FNV
+// digest of the SORTED service set (cf. the v0.5.187 cache-key rule —
+// never length-only) plus the exact query window. Pure — table-tested.
+func deploysCacheKey(services map[string]struct{}, from, to time.Time) string {
+	names := make([]string, 0, len(services))
+	for svc := range services {
+		names = append(names, svc)
+	}
+	sort.Strings(names)
+	h := fnv.New64a()
+	for _, n := range names {
+		h.Write([]byte(n))
+		h.Write([]byte{0})
+	}
+	return fmt.Sprintf("%x:%d:%d", h.Sum64(), from.UnixNano(), to.UnixNano())
+}
+
+// fetchDeploysByService runs the bulk deploys GROUP BY for the given
+// service set + window, behind a 15s TTL cache (v0.8.359, perf P2-C:
+// the problems list / buckets / inbox / sidebar all re-run this every
+// 5s poll with an unchanged problem set — the ~80-130ms scan collapsed
+// to one query per window per TTL). Keys are exact (service set digest
+// + ns-precise window), so a changed problem set is always a miss.
+func (s *Store) fetchDeploysByService(ctx context.Context, services map[string]struct{}, from, to time.Time) (map[string][]spanDeploy, error) {
+	key := deploysCacheKey(services, from, to)
+	now := time.Now()
+	s.deploysMu.Lock()
+	if e, ok := s.deploysCache[key]; ok && now.Sub(e.at) < deploysCacheTTL {
+		s.deploysMu.Unlock()
+		return e.byService, nil
+	}
+	s.deploysMu.Unlock()
+
+	svcList := make([]any, 0, len(services))
+	for svc := range services {
+		svcList = append(svcList, svc)
+	}
 	holders := ""
 	for i := range svcList {
 		if i > 0 {
@@ -381,24 +392,94 @@ func (s *Store) EnrichProblemsWithDeploys(ctx context.Context, problems []Proble
 	args = append(args, from, to)
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
-		return problems
+		return nil, err
 	}
 	defer rows.Close()
-	// Map: service → []deploy{version, ns} ordered ascending.
-	type d struct {
-		version string
-		ns      int64
-	}
-	byService := map[string][]d{}
+	byService := map[string][]spanDeploy{}
 	for rows.Next() {
 		var svc, ver string
 		var ns int64
 		if err := rows.Scan(&svc, &ver, &ns); err != nil {
-			return problems
+			return nil, err
 		}
-		byService[svc] = append(byService[svc], d{ver, ns})
+		byService[svc] = append(byService[svc], spanDeploy{ver, ns})
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	s.storeDeploysCacheEntry(key, deploysCacheEntry{at: now, byService: byService}, now)
+	return byService, nil
+}
+
+// storeDeploysCacheEntry inserts one fetch result, keeping the cache
+// bounded: expired entries are swept on every store, and if a burst of
+// distinct problem sets still overflows the cap, the oldest entry is
+// dropped. Split out so the bound is table-testable without a CH conn.
+func (s *Store) storeDeploysCacheEntry(key string, e deploysCacheEntry, now time.Time) {
+	s.deploysMu.Lock()
+	defer s.deploysMu.Unlock()
+	if s.deploysCache == nil {
+		s.deploysCache = map[string]deploysCacheEntry{}
+	}
+	for k, old := range s.deploysCache {
+		if now.Sub(old.at) >= deploysCacheTTL {
+			delete(s.deploysCache, k)
+		}
+	}
+	if len(s.deploysCache) >= deploysCacheMax {
+		var oldestK string
+		var oldestAt time.Time
+		for k, old := range s.deploysCache {
+			if oldestK == "" || old.at.Before(oldestAt) {
+				oldestK, oldestAt = k, old.at
+			}
+		}
+		delete(s.deploysCache, oldestK)
+	}
+	s.deploysCache[key] = e
+}
+
+// EnrichProblemsWithDeploys attaches the most recent
+// observed service.version deploy that happened up to
+// `lookback` before each problem's started_at. Single bulk
+// CH query covers every service across every problem in the
+// slice — N+1 free regardless of problem count. Soft-fails:
+// CH error returns the slice unchanged rather than blocking
+// the page render.
+//
+// Mechanism: one GROUP BY over spans for the union of
+// involved services in [min(started)-lookback, max(started)]
+// (cached ~15s, v0.8.359), then per-problem in-memory match
+// against the highest first_seen time ≤ that problem's
+// started_at.
+func (s *Store) EnrichProblemsWithDeploys(ctx context.Context, problems []Problem, lookback time.Duration) []Problem {
+	if len(problems) == 0 {
+		return problems
+	}
+	// Distinct services + global time window across the page.
+	services := map[string]struct{}{}
+	var minStarted, maxStarted int64
+	for i, p := range problems {
+		if p.Service == "" {
+			continue
+		}
+		services[p.Service] = struct{}{}
+		if i == 0 || p.StartedAt < minStarted {
+			minStarted = p.StartedAt
+		}
+		if p.StartedAt > maxStarted {
+			maxStarted = p.StartedAt
+		}
+	}
+	if len(services) == 0 {
+		return problems
+	}
+	from := time.Unix(0, minStarted).Add(-lookback)
+	to := time.Unix(0, maxStarted)
+
+	byService, err := s.fetchDeploysByService(ctx, services, from, to)
+	if err != nil {
 		return problems
 	}
 	lookbackNs := int64(lookback)
@@ -410,7 +491,7 @@ func (s *Store) EnrichProblemsWithDeploys(ctx context.Context, problems []Proble
 		// Find latest deploy with ns ≤ problem.StartedAt and
 		// ns ≥ problem.StartedAt-lookback. List is asc, so
 		// walk from the end.
-		var pick *d
+		var pick *spanDeploy
 		for j := len(list) - 1; j >= 0; j-- {
 			if list[j].ns > problems[i].StartedAt {
 				continue

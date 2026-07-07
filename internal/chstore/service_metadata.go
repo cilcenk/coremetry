@@ -107,7 +107,27 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 // used by the /services list to render the owner-team chip on
 // every row without N round-trips. Cheap because the table is
 // at most a few thousand rows.
+//
+// Cached 30s with write-side invalidation (v0.8.359, perf P2-C):
+// the problems enrich chain reads it twice per recompute
+// (runbooks + teams), the inbox and /services once more — a
+// FINAL scan each time. A local Upsert invalidates immediately,
+// so "a catalog edit reflects on the next refresh" still holds;
+// a peer pod's edit lands within the TTL (same tolerance as the
+// alertRules cache). Each call returns a fresh top-level COPY so
+// a caller mutating its map cannot poison the shared snapshot.
 func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMetadata, error) {
+	s.svcMetaMu.RLock()
+	if s.svcMetaVal != nil && time.Since(s.svcMetaAt) < svcMetaCacheTTL {
+		snap := s.svcMetaVal
+		s.svcMetaMu.RUnlock()
+		out := make(map[string]ServiceMetadata, len(snap))
+		for k, v := range snap {
+			out[k] = v
+		}
+		return out, nil
+	}
+	s.svcMetaMu.RUnlock()
 	rows, err := s.conn.Query(ctx, `
 		SELECT service, owner_team, sre_team, description, repository,
 		       runbook_url, oncall_url, chat_channel, slack_channel,
@@ -135,7 +155,28 @@ func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMeta
 		}
 		out[m.Service] = m
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	s.svcMetaMu.Lock()
+	s.svcMetaAt = time.Now()
+	s.svcMetaVal = out
+	s.svcMetaMu.Unlock()
+	// Return a copy — `out` just became the shared snapshot.
+	cp := make(map[string]ServiceMetadata, len(out))
+	for k, v := range out {
+		cp[k] = v
+	}
+	return cp, nil
+}
+
+// invalidateServiceMetadata clears the catalog cache so the next
+// ListServiceMetadata re-reads (v0.8.359) — called from every
+// catalog write path.
+func (s *Store) invalidateServiceMetadata() {
+	s.svcMetaMu.Lock()
+	s.svcMetaVal = nil
+	s.svcMetaMu.Unlock()
 }
 
 // UpsertServiceMetadata writes a catalog row. Last-write-wins
@@ -189,7 +230,11 @@ func (s *Store) UpsertServiceMetadata(ctx context.Context, m ServiceMetadata) er
 		now.UTC(), uint64(now.UnixNano())); err != nil {
 		return err
 	}
-	return batch.Send()
+	if err := batch.Send(); err != nil {
+		return err
+	}
+	s.invalidateServiceMetadata()
+	return nil
 }
 
 // ── Auto-derive owner/sre team from span attributes (v0.8.95) ────────────────

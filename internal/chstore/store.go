@@ -106,11 +106,44 @@ type Store struct {
 	alertRulesMu  sync.RWMutex
 	alertRulesAt  time.Time // when alertRulesVal was last fetched
 	alertRulesVal []AlertRule
+
+	// v0.8.359 (perf P2-C): the /api/problems warm recompute measured
+	// 145-580ms — dominated by three read-time enrichment lookups that
+	// are near-static between 5s polls: the service→cluster map (raw
+	// spans GROUP BY, ~120-220ms), the service catalog FINAL scan
+	// (runbooks + teams read it back to back), and the deploys
+	// GROUP BY (~80-130ms). Same TTL treatment as alertRules above;
+	// svcMeta additionally invalidates on Upsert so a catalog edit
+	// still lands on the operator's next refresh.
+	svcMetaMu  sync.RWMutex
+	svcMetaAt  time.Time
+	svcMetaVal map[string]ServiceMetadata
+
+	clusterMapMu  sync.RWMutex
+	clusterMapAt  time.Time
+	clusterMapFor time.Duration // the `since` clusterMapVal was built with
+	clusterMapVal map[string][]string
+
+	deploysMu    sync.Mutex
+	deploysCache map[string]deploysCacheEntry
 }
 
 // alertRulesCacheTTL bounds how stale a cached rule list can be when no
 // write invalidates it first.
 const alertRulesCacheTTL = 30 * time.Second
+
+// v0.8.359 enrichment-lookup TTLs. Cluster membership is
+// infrastructure-stable (a service joining a new cluster shows up
+// within a minute — same tolerance the clusters warmer uses); the
+// catalog mutates only on operator edits (write path invalidates);
+// deploys are derived from span first_seen so they are already
+// minutes-lagged — 15s staleness is invisible.
+const (
+	svcMetaCacheTTL    = 30 * time.Second
+	clusterMapCacheTTL = 60 * time.Second
+	deploysCacheTTL    = 15 * time.Second
+	deploysCacheMax    = 64 // distinct (service-set, window) keys kept
+)
 
 func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	dialTimeout, _ := time.ParseDuration(cfg.DialTimeout)

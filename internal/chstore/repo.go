@@ -339,10 +339,28 @@ func (s *Store) clusterExpr() string {
 // Single batched query — N+1-free regardless of problem count.
 // Capped at 1000 services × 50 clusters as a defensive bound;
 // well above any realistic bank-scale deployment.
+//
+// Cached 60s per `since` (v0.8.359, perf P2-C): this raw-spans
+// GROUP BY measured 120-220ms and re-ran on every problems /
+// inbox / incidents / anomalies recompute. Cluster membership is
+// infrastructure-stable, so a minute of staleness is invisible.
+// Single-entry cache keyed by since — the enrichment callers all
+// pass time.Hour, so a variable-window caller (service map)
+// simply misses without thrashing them. The cached map is
+// returned SHARED: callers must treat it as read-only (all
+// current callers only index into it).
 func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (map[string][]string, error) {
 	if since == 0 {
 		since = 1 * time.Hour
 	}
+	s.clusterMapMu.RLock()
+	if s.clusterMapVal != nil && s.clusterMapFor == since &&
+		time.Since(s.clusterMapAt) < clusterMapCacheTTL {
+		v := s.clusterMapVal
+		s.clusterMapMu.RUnlock()
+		return v, nil
+	}
+	s.clusterMapMu.RUnlock()
 	from := time.Now().Add(-since)
 	rows, err := s.conn.Query(ctx, `
 		SELECT service_name, `+s.clusterExpr()+` AS cluster
@@ -365,7 +383,17 @@ func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (
 		}
 		out[svc] = append(out[svc], cl)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	// Replace, never mutate — a reader holding the old snapshot
+	// stays consistent (same discipline as the alertRules cache).
+	s.clusterMapMu.Lock()
+	s.clusterMapAt = time.Now()
+	s.clusterMapFor = since
+	s.clusterMapVal = out
+	s.clusterMapMu.Unlock()
+	return out, nil
 }
 
 // clusterScanWindow bounds how far back a cluster-enumeration scan

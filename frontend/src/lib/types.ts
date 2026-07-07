@@ -369,6 +369,13 @@ export interface MessagingDetail {
   // Optional so a stale pre-M1 cached payload can't crash the
   // drawer mid-rolling-deploy.
   series?: MsgKindPoint[];
+  // v0.8.372 (Stage-2 M2) — span_links-correlated end-to-end
+  // produce→consume latency. Absent when the backend read failed
+  // (or on a stale pre-M2 cached payload); present with
+  // linkless=true when no links correlated in the window, so the
+  // drawer can say "SDKs aren't emitting span links" instead of a
+  // misleading 0ms.
+  e2e?: MsgE2E;
 }
 
 // MsgKindPoint — one 5-minute bucket of the messaging drawer's
@@ -377,6 +384,34 @@ export interface MsgKindPoint {
   timeS: number;
   produceCount: number;
   consumeCount: number;
+}
+
+// MsgE2E — end-to-end produce→consume latency for one messaging
+// destination (v0.8.372, Stage-2 M2). Correlated via span_links:
+// consumer spans link back to the producer span of the message they
+// processed; lag = consumer start − producer end, clamped ≥ 0
+// server-side (clock skew). slowest* carry the drawer's one exemplar
+// pivot (→ /trace?id=<consumer trace>).
+export interface MsgE2E {
+  count: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  // True when zero pairs correlated in the window — the SDKs aren't
+  // emitting messaging span links (honest empty state, not "0ms").
+  linkless?: boolean;
+  series: MsgE2EPoint[];
+  slowestLagMs?: number;
+  slowestConsumerTraceId?: string;
+  slowestProducerTraceId?: string;
+}
+
+// MsgE2EPoint — one 5-minute bucket of the e2e series: correlated
+// pair count + the bucket's average lag in ms (v0.8.372).
+export interface MsgE2EPoint {
+  timeS: number;
+  count: number;
+  avgMs: number;
 }
 
 // OracleMetrics — payload of /api/databases/oracle. Mirrors the

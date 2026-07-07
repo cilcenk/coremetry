@@ -363,6 +363,11 @@ type MessagingDetail struct {
 	// state GROUP BY — no raw-spans read). Drives the drawer's
 	// produce/consume sparklines.
 	Series []MsgKindPoint `json:"series"`
+	// E2E — v0.8.372 (Stage-2 M2). span_links-correlated end-to-end
+	// produce→consume latency (messaging_e2e.go). Nil when the read
+	// fails (drawer omits the section); non-nil with Linkless=true
+	// when no links correlated in the window (honest empty state).
+	E2E *MsgE2E `json:"e2e,omitempty"`
 }
 
 // MsgKindPoint is one 5-minute bucket of the messaging detail's
@@ -512,6 +517,14 @@ func (s *Store) GetMessagingDetail(
 			}
 		}
 		sRows.Close()
+	}
+
+	// End-to-end produce→consume latency — v0.8.372 (Stage-2 M2).
+	// span_links-correlated, one bounded scan (messaging_e2e.go).
+	// Best-effort: an error leaves E2E nil and the drawer renders
+	// without the section — it never blocks the detail payload.
+	if e2e, err := s.getMessagingE2E(ctx, system, cluster, destination, from, to); err == nil {
+		out.E2E = e2e
 	}
 
 	// Top operations — for messaging the span name is the

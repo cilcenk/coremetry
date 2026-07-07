@@ -1873,6 +1873,49 @@ func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []st
 	return nil
 }
 
+// traceStage1LightSQL builds the no-service Stage-1 id-select
+// (v0.8.357): ONE aggregate for the sort key + only the states the
+// active HAVING filters need — instead of every merge state for every
+// trace in the window. ok=false for service/operation sorts, whose sort
+// key IS the heavy argMax state (nothing to lighten; caller falls back
+// to the single-stage scan). Pure so the shape is table-tested.
+func traceStage1LightSQL(f TraceFilter, having []string) (string, bool) {
+	var sortExpr string
+	switch f.Sort {
+	case "", "time":
+		// Plain column max — no merge state at all. 5-min granularity
+		// ties are fine: Stage 1 over-selects and Stage 2 re-sorts the
+		// kept ids on the exact trace_start state.
+		sortExpr = "max(time_bucket)"
+	case "duration":
+		sortExpr = "(maxMerge(trace_end_state) - toUnixTimestamp64Nano(minMerge(trace_start_state)))"
+	case "spans":
+		sortExpr = "countMerge(span_count_state)"
+	case "status":
+		sortExpr = "toUInt8(countMerge(error_count_state) > 0)"
+	default:
+		return "", false
+	}
+	order := "DESC"
+	if f.Order == "asc" {
+		order = "ASC"
+	}
+	havingSQL := ""
+	if len(having) > 0 {
+		havingSQL = " HAVING " + strings.Join(having, " AND ")
+	}
+	return `
+		SELECT trace_id
+		FROM trace_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		GROUP BY trace_id` + havingSQL + `
+		ORDER BY ` + sortExpr + ` ` + order + `
+		LIMIT ?
+		SETTINGS max_execution_time = 15,
+		         optimize_read_in_order = 1,
+		         optimize_aggregation_in_order = 1`, true
+}
+
 func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	if f.Limit == 0 {
 		f.Limit = 50
@@ -1886,11 +1929,16 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		stage1Limit = 200
 	}
 
-	// No-service path: skip Stage 1 entirely. trace_summary_5m's
-	// PK on (time_bucket, trace_id) handles the partition prune,
-	// so a direct scan over the window finds every trace without
-	// the service-index narrowing step. holders="" tells Stage 2
-	// to omit the `trace_id IN (...)` clause.
+	// v0.8.357 (operator-reported: /traces 30-60m çok yavaş) — the
+	// no-service path used to skip Stage 1 entirely and let Stage 2
+	// compute EVERY merge state (6× argMax/min/max/count) for EVERY
+	// trace in the window just to keep 50. At prod volume (millions of
+	// trace_summary rows per 30m) that is the whole page-load. The
+	// no-service path now gets its own LIGHT Stage 1: one aggregate for
+	// the sort key + only the states active filters need, so the heavy
+	// state merges run for ~stage1Limit ids only. service/operation
+	// sorts still take the single-stage path (their sort key IS the
+	// heavy argMax state — nothing to lighten).
 	var traceIDs []any
 	holders := ""
 	if f.Service != "" {
@@ -1950,6 +1998,42 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			"((maxMerge(trace_end_state) - toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6) <= %v",
 			f.MaxMs))
 	}
+	// Light Stage 1 for the no-service path (v0.8.357) — see
+	// traceStage1LightSQL. Filters ride the same HAVING so the top-N ids
+	// are correct; Stage 2 then merges the full states for ~stage1Limit
+	// ids instead of the whole window. Deep offsets grow the id budget.
+	if f.Service == "" && holders == "" {
+		if s1, ok := traceStage1LightSQL(f, having); ok {
+			budget := stage1Limit
+			if need := 2 * (f.Offset + pageLimit); need > budget {
+				budget = need
+			}
+			rows1, err := s.conn.Query(ctx, s1, f.From, f.To, budget)
+			if err != nil {
+				return nil, 0, false, fmt.Errorf("stage1-light: %w", err)
+			}
+			ids := make([]any, 0, budget)
+			for rows1.Next() {
+				var id string
+				if err := rows1.Scan(&id); err != nil {
+					rows1.Close()
+					return nil, 0, false, err
+				}
+				ids = append(ids, id)
+			}
+			rows1.Close()
+			if err := rows1.Err(); err != nil {
+				return nil, 0, false, err
+			}
+			if len(ids) == 0 {
+				return []TraceRow{}, 0, false, nil
+			}
+			traceIDs = ids
+			holders = strings.Repeat("?,", len(ids))
+			holders = holders[:len(holders)-1]
+		}
+	}
+
 	havingSQL := ""
 	if len(having) > 0 {
 		havingSQL = " HAVING " + strings.Join(having, " AND ")

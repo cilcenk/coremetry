@@ -175,10 +175,21 @@ spec:
             httpGet: { path: /api/health, port: http }
             periodSeconds: 5
             failureThreshold: 3
+          # v0.8.339 (HA audit H3) — liveness split from readiness.
+          # /api/health 503s on overload ON PURPOSE (drain out of the LB);
+          # pointing liveness at it made kubelet KILL overloaded pods,
+          # destroying every buffered span. /livez = "process alive" only.
           livenessProbe:
-            httpGet: { path: /api/health, port: http }
+            httpGet: { path: /livez, port: http }
             periodSeconds: 15
             failureThreshold: 4
+          # Boot can legitimately take minutes (CH connect retry + schema
+          # migrations); without a startupProbe the liveness budget killed
+          # slow boots into a CrashLoop.
+          startupProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 10
+            failureThreshold: 30
           resources: {{- toYaml .Values.resources | nindent 12 }}
       volumes:
         - name: config

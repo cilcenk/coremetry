@@ -244,6 +244,7 @@ func SkipPath(method, path string) bool {
 		"/api/auth/oidc/start",
 		"/api/auth/oidc/callback",
 		"/api/health",
+		"/livez", // v0.8.339 — kubelet liveness; no auth, no dependencies
 		"/api/version":
 		return true
 	}

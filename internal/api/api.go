@@ -49,6 +49,11 @@ import (
 
 type Server struct {
 	addr        string
+	// chPing* back the 5s-cached CH reachability read on /api/health
+	// (v0.8.339) — see chReachable.
+	chPingMu sync.Mutex
+	chPingAt time.Time
+	chPingOK bool
 	// httpSrv is the live http.Server once Start() runs — kept so main
 	// can Shutdown() it during the ordered v0.8.336 teardown (stop
 	// ACCEPTING before draining consumers; a bare ListenAndServe had no
@@ -602,6 +607,15 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/runbooks/executions/{id}/steps/{stepId}", auth.RequireAnyRole(editorRoles, s.execStepAction))
 	mux.HandleFunc("POST   /api/runbooks/executions/{id}/cancel",         auth.RequireAnyRole(editorRoles, s.cancelExecution))
 	mux.HandleFunc("GET /api/health", s.getHealth)
+	// v0.8.339 (HA audit H3) — liveness split from readiness. /api/health
+	// 503s on overload BY DESIGN (pull the pod from the LB to drain);
+	// pointing the LIVENESS probe at it made kubelet KILL overloaded pods
+	// — destroying every buffered item and crash-looping through the
+	// backlog. /livez answers one question only: is the process alive.
+	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	// Alias for the k8s readinessProbe convention. Same body +
 	// same 503-on-overload behaviour so a `httpGet: { path:
 	// /healthz }` probe pulls overloaded pods out of the
@@ -8739,20 +8753,30 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	// (envoy "outlier_detection", k8s readinessProbe) can take
 	// this pod out of rotation until it drains. The body still
 	// renders for operators inspecting curl output.
+	// v0.8.339 (HA audit H3) — readiness honesty: ALL FIVE ingest queues
+	// (exemplars + span_links were invisible here) and a cached CH ping.
+	// The audited failure: CH down with fast connection-refused → flushers
+	// drop instantly → queues stay EMPTY → health reported "ok" while 100%
+	// of telemetry was discarded. The ping (3s timeout, 5s cache) makes
+	// readiness track the actual write path, so the LB stops routing and
+	// the collector's own queue holds data instead of our discard path.
 	spansLen, spansCap := s.ing.Spans.QueueLen(), s.ing.Spans.Capacity()
 	logsLen, logsCap := s.ing.Logs.QueueLen(), s.ing.Logs.Capacity()
 	metricsLen, metricsCap := s.ing.Metrics.QueueLen(), s.ing.Metrics.Capacity()
+	exLen, exCap := s.ing.Exemplars.QueueLen(), s.ing.Exemplars.Capacity()
+	slLen, slCap := s.ing.SpanLinks.QueueLen(), s.ing.SpanLinks.Capacity()
 	overloaded := isOverloaded(spansLen, spansCap) ||
 		isOverloaded(logsLen, logsCap) ||
-		isOverloaded(metricsLen, metricsCap)
-	load := "ok"
-	if overloaded {
-		load = "overloaded"
-	} else if isDegraded(spansLen, spansCap) ||
+		isOverloaded(metricsLen, metricsCap) ||
+		isOverloaded(exLen, exCap) ||
+		isOverloaded(slLen, slCap)
+	degraded := isDegraded(spansLen, spansCap) ||
 		isDegraded(logsLen, logsCap) ||
-		isDegraded(metricsLen, metricsCap) {
-		load = "degraded"
-	}
+		isDegraded(metricsLen, metricsCap) ||
+		isDegraded(exLen, exCap) ||
+		isDegraded(slLen, slCap)
+	chOK := s.chReachable(r.Context())
+	load, code := healthVerdict(overloaded, degraded, chOK)
 	body := map[string]interface{}{
 		"status":           load,
 		"spans_queued":     spansLen,
@@ -8770,12 +8794,55 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"spans_accepted":   s.ing.Spans.Accepted(),
 		"logs_accepted":    s.ing.Logs.Accepted(),
 		"metrics_accepted": s.ing.Metrics.Accepted(),
+		"exemplars_queued":         exLen,
+		"exemplars_capacity":       exCap,
+		"exemplars_dropped":        s.ing.Exemplars.Dropped(),
+		"exemplars_write_failed":   s.ing.Exemplars.WriteFailed(),
+		"span_links_queued":        slLen,
+		"span_links_capacity":      slCap,
+		"span_links_dropped":       s.ing.SpanLinks.Dropped(),
+		"span_links_write_failed":  s.ing.SpanLinks.WriteFailed(),
+		"clickhouse":               map[bool]string{true: "ok", false: "unreachable"}[chOK],
 	}
 	w.Header().Set("Content-Type", "application/json")
-	if overloaded {
-		w.WriteHeader(http.StatusServiceUnavailable)
+	if code != http.StatusOK {
+		w.WriteHeader(code)
 	}
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// healthVerdict maps the two pressure signals + CH reachability onto the
+// readiness (status, http code) pair (v0.8.339). Pure + table-tested:
+// CH-unreachable is a 503 even with EMPTY queues — the fast-refuse
+// outage keeps queues drained while everything is being discarded.
+func healthVerdict(overloaded, degraded, chOK bool) (string, int) {
+	switch {
+	case !chOK:
+		return "clickhouse-unreachable", http.StatusServiceUnavailable
+	case overloaded:
+		return "overloaded", http.StatusServiceUnavailable
+	case degraded:
+		return "degraded", http.StatusOK
+	default:
+		return "ok", http.StatusOK
+	}
+}
+
+// chReachable is the cached CH ping behind /api/health (v0.8.339).
+// 5s cache so the 5s-period readiness probe costs at most one ping per
+// window across all callers; 3s timeout so a black-holed CH can't make
+// the probe itself hang past its own deadline.
+func (s *Server) chReachable(ctx context.Context) bool {
+	s.chPingMu.Lock()
+	defer s.chPingMu.Unlock()
+	if time.Since(s.chPingAt) < 5*time.Second {
+		return s.chPingOK
+	}
+	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	s.chPingOK = s.store.Ping(pctx) == nil
+	s.chPingAt = time.Now()
+	return s.chPingOK
 }
 
 // isOverloaded returns true when the queue is past 90% capacity.

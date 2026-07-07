@@ -664,8 +664,22 @@ func main() {
 	// path. ES failure here is fatal so a misconfigured external cluster
 	// surfaces at boot, not at the first user query.
 	logsInner, err := buildLogStore(cfg, store)
+	esBootDegraded := false
 	if err != nil {
-		log.Fatalf("logs backend: %v", err)
+		// v0.8.347 (HA audit H8) — an unreachable external ES used to be
+		// log.Fatalf in EVERY mode: any pod restart during an ES outage
+		// (liveness kill, node drain, rollout) turned "logs are down"
+		// into "the entire APM is down". ES is an optional READ backend —
+		// boot degraded on the CH logstore instead and let the retry
+		// loop below (plus any UI settings save) restore ES when it
+		// answers again.
+		if cfg.Logs.Backend == "elasticsearch" {
+			log.Printf("[logs] ELASTICSEARCH UNREACHABLE AT BOOT (%v) — starting DEGRADED on the ClickHouse logstore; will retry ES every 30s", err)
+			logsInner = logstore.NewCH(store)
+			esBootDegraded = true
+		} else {
+			log.Fatalf("logs backend: %v", err)
+		}
 	}
 	// v0.8.232 — every consumer holds the Switchable so an admin save on
 	// Settings → Elasticsearch swaps the live backend for all of them
@@ -677,6 +691,33 @@ func main() {
 		newNamespaceResolver(store), esSettingsFromConfig(cfg))
 	if err := logsMgr.LoadPersisted(ctx, store); err != nil {
 		log.Printf("[logs] persisted settings load failed (env config stays active): %v", err)
+	}
+	if esBootDegraded {
+		// Retry the env-seeded ES until it answers, then hot-swap it in —
+		// UNLESS something else (UI save via ESManager, persisted-blob
+		// refresh) already restored an ES backend in the meantime.
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+				}
+				if logsStore.Backend() == "elasticsearch" {
+					log.Printf("[logs] ES already restored by settings — boot-retry loop exiting")
+					return
+				}
+				retry, rerr := buildLogStore(cfg, store)
+				if rerr != nil {
+					continue // still down; stay degraded on CH
+				}
+				logsStore.Swap(retry)
+				log.Printf("[logs] ELASTICSEARCH RECOVERED — logs backend restored from the degraded CH fallback")
+				return
+			}
+		}()
 	}
 	go logsMgr.StartConfigRefresh(ctx, store, 30*time.Second)
 	log.Printf("[logs] read backend: %s", logsStore.Backend())

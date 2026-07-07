@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useMemo } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
@@ -20,6 +20,8 @@ import { api, type UserRow } from '@/lib/api';
 import { fmtNum, fmtFixed, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
 } from '@/lib/types';
@@ -36,19 +38,33 @@ const TABS: { key: string; label: string; hint: string }[] = [
   { key: 'ignored',      label: 'Ignored',      hint: 'Permanently silenced' },
 ];
 
+// Exception-inbox sort keys the SERVER understands (v0.8.318 — the
+// ORDER BY runs in ClickHouse across the whole paginated set). The
+// DataTable column ids below are exactly these values, so dt.sort.id
+// forwards straight to the fetch after a sanitize.
 type SortKey = 'state' | 'type' | 'service' | 'occurrences' | 'firstSeen' | 'lastSeen' | 'assignee';
-type SortDir = 'asc' | 'desc';
+const SORT_KEYS: readonly SortKey[] =
+  ['state', 'type', 'service', 'occurrences', 'firstSeen', 'lastSeen', 'assignee'];
+const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
 
-// State's severity-style ordering (worst at top) moved server-side with
-// the v0.8.318 sort migration — see exceptionGroupsOrderBy's multiIf.
-const NATURAL_DIR: Record<SortKey, SortDir> = {
-  state: 'desc', type: 'asc', service: 'asc',
-  occurrences: 'desc', firstSeen: 'desc', lastSeen: 'desc', assignee: 'asc',
-};
+// Exception inbox columns — shared DataTable primitive in serverSort
+// mode (Services template, v0.8.251): the hook owns the sort UX, the
+// `s_exception-inbox` URL param and the persisted widths; the backend
+// owns the ordering, so `sortValue` is never invoked here (it is the
+// sortable marker + naturalDir carrier). State's severity-style
+// ordering (worst at top) stays server-side — see
+// exceptionGroupsOrderBy's multiIf.
+const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
+  { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 100 },
+  { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc',  width: 400 },
+  { id: 'service',     label: 'Service',     sortValue: g => g.service,     naturalDir: 'asc',  width: 150 },
+  { id: 'occurrences', label: 'Occurrences', sortValue: g => g.occurrences, numeric: true,      width: 100 },
+  { id: 'firstSeen',   label: 'First seen',  sortValue: g => g.firstSeen,   width: 150 },
+  { id: 'lastSeen',    label: 'Last seen',   sortValue: g => g.lastSeen,    width: 150 },
+  { id: 'assignee',    label: 'Assignee',    sortValue: g => g.assignee,    naturalDir: 'asc',  width: 160 },
+];
 
-// Problems-specific sort + severity ordering — kept separate from the
-// exception inbox table because the columns don't overlap.
-type PSortKey = 'priority' | 'severity' | 'service' | 'metric' | 'value' | 'rule' | 'started' | 'status';
+// Problems-specific severity + priority ordering.
 const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
 // P1 ranks above P2 ranks above P3 (lower number = more urgent).
 const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
@@ -58,10 +74,27 @@ const PRIO_RANK: Record<string, number> = { P1: 3, P2: 2, P3: 1 };
 // border; the f-err/f-warn tints keep the urgency cue at rest. The
 // old per-chip color-mix palette (v0.5.469) was replaced when these
 // moved onto the shared facetbar in v0.8.39.
-const P_NATURAL_DIR: Record<PSortKey, SortDir> = {
-  priority: 'desc', severity: 'desc', service: 'asc', metric: 'asc',
-  value: 'desc', rule: 'asc', started: 'desc', status: 'asc',
-};
+
+// Alert-rules columns — shared DataTable primitive, CLIENT sort: the
+// section is a single capped fetch (limit 200, no pager), so the rows
+// being sorted are the fully loaded set. The priority accessor keeps
+// the old cmp's composite ordering — priority bucket, then severity,
+// then start time — with each term scaled so it can't cross into the
+// next (startedAt/1e9 stays < 1e10 until year 2286).
+const PROBLEM_COLS: DataTableColumn<Problem>[] = [
+  { id: 'priority', label: 'Priority',
+    sortValue: p => (PRIO_RANK[p.priority ?? 'P3'] ?? 0) * 1e11
+                  + (SEV_RANK[p.severity] ?? 0) * 1e10
+                  + p.startedAt / 1e9,
+    width: 90 },
+  { id: 'severity', label: 'Severity', sortValue: p => SEV_RANK[p.severity] ?? 0, width: 90 },
+  { id: 'service',  label: 'Service',  sortValue: p => p.service,   naturalDir: 'asc', width: 170 },
+  { id: 'metric',   label: 'Metric',   sortValue: p => p.metric,    naturalDir: 'asc', width: 150 },
+  { id: 'value',    label: 'Value',    sortValue: p => p.value,     numeric: true,     width: 110 },
+  { id: 'rule',     label: 'Rule',     sortValue: p => p.ruleName,  naturalDir: 'asc', width: 420 },
+  { id: 'started',  label: 'Started',  sortValue: p => p.startedAt, width: 150 },
+  { id: 'status',   label: 'Status',   sortValue: p => p.status,    naturalDir: 'asc', width: 100 },
+];
 
 export default function ProblemsPage() {
   const { user } = useAuth();
@@ -137,9 +170,22 @@ export default function ProblemsPage() {
   // Selected group for the full in-page detail view (null = list).
   const [detail, setDetail] = useState<ExceptionGroup | null>(null);
 
-  // Sort state must precede the fetch effect that consumes it (v0.8.318).
-  const [sortBy, setSortBy] = useState<SortKey>('lastSeen');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Sort lives in the shared DataTable hook, serverSort mode
+  // (v0.8.251 Services template): the hook owns the header UX, the
+  // `s_exception-inbox` URL param and localStorage persistence; the
+  // fetch below forwards the sanitized pair so a stale persisted id
+  // (old column schema, hand-edited URL) never reaches the backend
+  // ORDER BY. Must precede the fetch effect that consumes it.
+  const dt = useDataTable<ExceptionGroup>({
+    storageKey: 'exception-inbox',
+    columns: EXC_COLS,
+    rows: data ?? [],
+    serverSort: true,
+    initialSort: DEFAULT_EXC_SORT,
+  });
+  const sortOk = (SORT_KEYS as readonly string[]).includes(dt.sort.id ?? '');
+  const sortBy: SortKey = sortOk ? dt.sort.id as SortKey : DEFAULT_EXC_SORT.id;
+  const sortDir = sortOk ? dt.sort.dir : DEFAULT_EXC_SORT.dir;
 
   // Exception groups inbox — separate query because it depends
   // on tab + service filter; couldn't be folded into the shared
@@ -160,11 +206,26 @@ export default function ProblemsPage() {
       .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); })
       .catch(() => setData(null));
   };
-  // Page reset on filter change is owned by setTab/setService/setTeam now
-  // (they delete ?page=); sort/search reset it themselves. Single effect
-  // drives the fetch.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(refreshExceptionGroups, [tab, service, ownerTeam, sreTeam, page, sortBy, sortDir, committedSearch]);
+  // Page reset on filter change is owned by setTab/setService/setTeam
+  // (they delete ?page=); search resets it itself. A SORT change also
+  // invalidates the page offset — that reset lives INSIDE the fetch
+  // effect, guarded by a sig ref, so (a) a deep-linked ?page= survives
+  // mount, and (b) sorting while on page N doesn't fire a wasted fetch
+  // for the stale offset first (refreshExceptionGroups has no
+  // cancellation — two in-flight fetches would race). It can't ride
+  // the hook's onSortChange either: the hook's URL write and setPage
+  // are separate same-tick setSearchParams calls, and the second would
+  // clobber the first (the v0.8.253 URL-overwrite class).
+  const sortSig = `${sortBy}.${sortDir}`;
+  const lastSortSigRef = useRef(sortSig);
+  useEffect(() => {
+    if (lastSortSigRef.current !== sortSig) {
+      lastSortSigRef.current = sortSig;
+      if (page !== 0) { setPage(0); return; } // effect re-runs with page 0
+    }
+    refreshExceptionGroups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, service, ownerTeam, sreTeam, page, sortSig, committedSearch]);
 
   useEffect(() => {
     api.services({ from: 0, to: 0 })
@@ -194,12 +255,6 @@ export default function ProblemsPage() {
   // old client-side sort of one 50-row server page mis-prioritized, and
   // the client search read as "no results" for matches on other pages.
   const filtered = data ?? [];
-
-  const toggleSort = (col: SortKey) => {
-    setPage(0); // a new ordering invalidates the current page offset
-    if (sortBy === col) setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(col); setSortDir(NATURAL_DIR[col]); }
-  };
 
   const userById = useMemo(() => {
     const m = new Map<string, UserRow>();
@@ -325,20 +380,11 @@ export default function ProblemsPage() {
         )}
         {data && filtered.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th style={{ width: 24 }}></th>
-                  <SortTh col="state"       label="State"       sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                  <SortTh col="type"        label="Exception"   sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                  <SortTh col="service"     label="Service"     sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                  <SortTh col="occurrences" label="Occurrences" sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                  <SortTh col="firstSeen"   label="First seen"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                  <SortTh col="lastSeen"    label="Last seen"   sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                  <SortTh col="assignee"    label="Assignee"    sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                  {isAdmin && <th style={{ width: 240 }}>Actions</th>}
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} leading={[24]} trailing={isAdmin ? [240] : undefined} />
+              <DataTableHead dt={dt}
+                leading={<th style={{ width: 24 }}></th>}
+                trailing={isAdmin ? <th style={{ width: 240 }}>Actions</th> : undefined} />
               <tbody>
                 {filtered.map(g => {
                   const open = expanded.has(g.fingerprint);
@@ -485,8 +531,6 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // it's acknowledged / resolved. Default 'open' otherwise.
   const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>(
     searchParams.get('problem') ? 'all' : 'open');
-  const [sortBy, setSortBy] = useState<PSortKey>('priority');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Triage drawer state — id of the problem currently shown
   // in the right-side panel. Replaces the v0.5.x inline "Why?"
   // expansion; the same causal-correlation panel now lives
@@ -615,39 +659,27 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const open = data?.filter(p => p.status === 'open').length ?? 0;
   const resolved = data?.filter(p => p.status === 'resolved').length ?? 0;
 
-  const sorted = useMemo(() => {
-    if (!data) return data;
-    // Severity chip filter stays client-side; priority is filtered
-    // server-side via the priority query param so the limit cap
-    // bites the right bucket. Keeping the severity client-side
-    // filter avoids a refetch on every chip toggle for that axis.
-    const filtered = data.filter(p => sevSet.has(p.severity));
-    const cmp = (a: Problem, b: Problem): number => {
-      switch (sortBy) {
-        case 'priority': {
-          const ra = PRIO_RANK[a.priority ?? 'P3'] ?? 0;
-          const rb = PRIO_RANK[b.priority ?? 'P3'] ?? 0;
-          if (ra !== rb) return ra - rb;
-          // Same priority bucket — break ties by severity then
-          // by start time so the operator gets a stable order
-          // within a bucket.
-          const sa = SEV_RANK[a.severity] ?? 0;
-          const sb = SEV_RANK[b.severity] ?? 0;
-          if (sa !== sb) return sa - sb;
-          return a.startedAt - b.startedAt;
-        }
-        case 'severity': return (SEV_RANK[a.severity] ?? 0) - (SEV_RANK[b.severity] ?? 0);
-        case 'service':  return a.service.localeCompare(b.service);
-        case 'metric':   return a.metric.localeCompare(b.metric);
-        case 'value':    return a.value - b.value;
-        case 'rule':     return a.ruleName.localeCompare(b.ruleName);
-        case 'started':  return a.startedAt - b.startedAt;
-        case 'status':   return a.status.localeCompare(b.status);
-      }
-    };
-    const arr = [...filtered].sort(cmp);
-    return sortDir === 'desc' ? arr.reverse() : arr;
-  }, [data, sortBy, sortDir, sevSet]);
+  // Severity chip filter stays client-side; priority is filtered
+  // server-side via the priority query param so the limit cap
+  // bites the right bucket. Keeping the severity client-side
+  // filter avoids a refetch on every chip toggle for that axis.
+  const rows = useMemo(
+    () => (data ?? []).filter(p => sevSet.has(p.severity)),
+    [data, sevSet]);
+  // Shared DataTable primitive, client sort (PROBLEM_COLS carries the
+  // per-column accessors + natural directions the old cmp/toggleSort
+  // pair encoded). Sort + widths persist under 'alert-rules'; the URL
+  // param is `s_alert-rules`, namespaced so it can't collide with the
+  // exception inbox's `s_exception-inbox` on the same page.
+  const dt = useDataTable<Problem>({
+    storageKey: 'alert-rules',
+    columns: PROBLEM_COLS,
+    rows,
+    initialSort: { id: 'priority', dir: 'desc' },
+  });
+  // Preserve the tri-state contract (undefined loading / null error /
+  // rows) the render below branches on.
+  const sorted = data == null ? data : dt.sortedRows;
 
   // Counts per severity for the chip labels — operator sees
   // "critical (3)" instead of guessing how many would land.
@@ -656,11 +688,6 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     for (const p of data ?? []) counts[p.severity] = (counts[p.severity] ?? 0) + 1;
     return counts;
   }, [data]);
-
-  const toggleSort = (col: PSortKey) => {
-    if (sortBy === col) setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
-    else { setSortBy(col); setSortDir(P_NATURAL_DIR[col]); }
-  };
 
   // Whole section collapses when there's nothing AND filter is
   // 'open' — no point in dead space when the operator's most-
@@ -804,9 +831,10 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
       )}
       {sorted && sorted.length > 0 && (
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} leading={[28]} trailing={[170, 90]} />
+            <DataTableHead dt={dt}
+              leading={
                 <th style={{ width: 28 }}>
                   <input type="checkbox"
                     checked={sorted.length > 0 && sorted.every(p => selectedIds.has(p.id))}
@@ -820,18 +848,8 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                     onClick={e => e.stopPropagation()}
                     title="Select all visible" />
                 </th>
-                <PSortTh col="priority" label="Priority" sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <PSortTh col="severity" label="Severity" sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <PSortTh col="service"  label="Service"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <PSortTh col="metric"   label="Metric"   sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <PSortTh col="value"    label="Value"    sort={sortBy} dir={sortDir} onSort={toggleSort} align="right" />
-                <PSortTh col="rule"     label="Rule"     sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <PSortTh col="started"  label="Started"  sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <PSortTh col="status"   label="Status"   sort={sortBy} dir={sortDir} onSort={toggleSort} />
-                <th>Assignee</th>
-                <th>Triage</th>
-              </tr>
-            </thead>
+              }
+              trailing={<><th>Assignee</th><th>Triage</th></>} />
             <tbody>
               {sorted.map(p => {
                 const isAnomaly = p.ruleId?.startsWith('anomaly:');
@@ -1380,44 +1398,6 @@ function AssigneeCell({ problem, currentUserEmail, onChanged }: {
     </span>
   );
 }
-
-// SortTh is the generic accessible sort-header cell. Replaces the
-// pre-v0.4.79 SortTh + PSortTh copy-paste pair (they only differed
-// in the SortKey type parameter, which Go-style generics let us
-// unify cleanly). Click + Enter + Space all toggle — operators
-// with screen readers and keyboard-only users can now sort the
-// table the same way as mouse users, which was the audit blocker.
-function SortTh<K extends string>({ col, label, sort, dir, onSort, align }: {
-  col: K; label: string;
-  sort: K; dir: SortDir;
-  onSort: (c: K) => void;
-  align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`}
-        style={{ textAlign: align ?? 'left' }}
-        aria-sort={active ? (dir === 'desc' ? 'descending' : 'ascending') : 'none'}>
-      <button type="button"
-        onClick={() => onSort(col)}
-        style={{
-          all: 'unset', display: 'inline-flex', alignItems: 'baseline',
-          gap: 4, width: '100%', cursor: 'pointer',
-          justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
-        }}
-        aria-label={`Sort by ${label}${active ? ` (currently ${dir === 'desc' ? 'descending' : 'ascending'})` : ''}`}>
-        {label}
-        <span className="sort-arrow">{active ? (dir === 'desc' ? '▼' : '▲') : '↕'}</span>
-      </button>
-    </th>
-  );
-}
-
-// PSortTh kept as a type-narrowed alias so the existing render
-// sites don't need to be touched — TS picks the right K.
-// Eliminating it entirely would mean retyping every call site
-// with explicit <PSortKey>; not worth the churn.
-const PSortTh = SortTh<PSortKey>;
 
 // fmtAge — compact "Nm" / "Nh" / "Ns" formatter for the deploy
 // correlation tag. ageSeconds is always positive (deploy was

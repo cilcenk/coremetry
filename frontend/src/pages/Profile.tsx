@@ -7,6 +7,7 @@ import { FlameDiff } from '@/components/FlameDiff';
 import { MethodHotspots } from '@/components/MethodHotspots';
 import { BreakdownBar } from '@/components/KindBadge';
 import { CopyButton } from '@/components/CopyButton';
+import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { tsLong, fmtNum } from '@/lib/utils';
@@ -119,13 +120,8 @@ function ProfileDetailInner() {
                   borderRadius: 4, padding: '2px 8px',
                 }}>
                   vs baseline <code>{baselineId.slice(0, 12)}…</code>
-                  <button onClick={() => setBaseline('')}
-                    style={{
-                      background: 'transparent', border: 0,
-                      color: 'var(--text2)', cursor: 'pointer',
-                      padding: 0, fontSize: 12,
-                    }}
-                    title="Clear baseline">✕</button>
+                  <Button variant="ghost" size="sm" onClick={() => setBaseline('')}
+                    title="Clear baseline">✕</Button>
                 </span>
               )}
               <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 'auto' }}>

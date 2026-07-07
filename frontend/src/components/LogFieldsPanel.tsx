@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 import { getRaw, setRaw } from '@/lib/storage';
 import type { CSSProperties } from 'react';
 
@@ -93,11 +94,11 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
           </div>
         );
       })}
-      <button type="button" className="sec"
-        style={{ fontSize: 10.5, padding: '2px 7px', marginTop: 2 }}
+      <Button variant="secondary" size="sm"
+        style={{ marginTop: 2 }}
         onClick={() => onToggleColumn(field)}>
         {isColumn ? '− Remove table column' : '+ Add table column'}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -135,6 +136,9 @@ export function LogFieldsPanel({
   }, [columns, needle]);
 
   if (!open) {
+    // Deliberately NOT the shared <Button> atom: this is the collapsed
+    // rail affordance (vertical writing-mode, stretches the panel edge),
+    // a structural anatomy the atom's variants can't express (U1 batch 2).
     return (
       <button type="button" onClick={toggleOpen}
         title="Show the fields panel"
@@ -197,9 +201,8 @@ export function LogFieldsPanel({
           value={needle}
           onChange={e => setNeedle(e.target.value)}
           style={{ flex: 1, minWidth: 0, fontSize: 11.5, padding: '3px 6px' }} />
-        <button type="button" onClick={toggleOpen} className="sec"
-          title="Hide the fields panel"
-          style={{ fontSize: 11, padding: '2px 6px' }}>«</button>
+        <Button variant="secondary" size="sm" onClick={toggleOpen}
+          title="Hide the fields panel">«</Button>
       </div>
 
       <div style={groupTitle}>Selected fields</div>

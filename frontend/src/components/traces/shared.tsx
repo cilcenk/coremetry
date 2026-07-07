@@ -78,6 +78,11 @@ export function DurationBar({ ms, err, max }: { ms: number; err: boolean; max: n
 
 // QuickChip — a clickable pill for the quick-filter row. `dot` paints a leading
 // service-colour swatch; `tone="err"` reads the label red (the error count).
+// Deliberately NOT the shared <Button> atom or .segmented (U1 batch 2
+// judgement): this is the facet-chip anatomy (.facet/.on in globals.css).
+// It stays hand-rolled because it's a real <button> for keyboard semantics,
+// and the global `button:hover` rule out-specifies `.facet:hover` — the
+// existing .facet chips are all <span role="button">s for that reason.
 export function QuickChip({
   active, onClick, children, dot, tone,
 }: {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
@@ -388,8 +389,8 @@ function CallDrawer({ call, rates, onClose }: { call: AICall; rates: AIRateTable
             {call.provider} · {call.model || '—'} · {call.durationMs} ms
           </span>
           <span style={{ flex: 1 }} />
-          <button onClick={onClose} className="sec"
-            style={{ fontSize: 14, padding: '2px 10px' }}>×</button>
+          <Button variant="ghost" size="sm" onClick={onClose}
+            title="Close">×</Button>
         </div>
         <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>

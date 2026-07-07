@@ -89,8 +89,8 @@ export function InboxTriageDrawer({ item, onClose, onOpenSource }: {
             </span>
           )}
           <span style={{ flex: 1 }} />
-          <button type="button" onClick={onClose} className="sec"
-            title="Close (Esc)" style={{ fontSize: 12, padding: '3px 9px' }}>✕</button>
+          <Button variant="ghost" size="sm" onClick={onClose}
+            title="Close (Esc)">✕</Button>
         </div>
 
         <div style={{ padding: '14px 18px' }}>

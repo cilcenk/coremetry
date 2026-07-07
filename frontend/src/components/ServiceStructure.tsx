@@ -109,16 +109,30 @@ export function ServiceStructure({ service, since = '10m', defaultOpen = false }
           )}
           {data?.roots && data.roots.length > 0 && (
             <>
+              {/* View + scope toggles — the shared .segmented anatomy
+                  (v0.8.307 one-design-language rule) instead of the old
+                  hand-rolled ViewTab pills. */}
               <div style={{
                 display: 'flex', gap: 6, marginBottom: 10,
                 fontSize: 12, flexWrap: 'wrap', alignItems: 'center',
               }}>
-                <ViewTab active={view === 'tree'}  onClick={() => setView('tree')}  label="Tree"
-                         hint="Chronological waterfall — what the service does end-to-end" />
-                <ViewTab active={view === 'flame'} onClick={() => setView('flame')} label="Flame"
-                         hint="Where time is actually spent — width = total time across sampled traces" />
-                <ViewTab active={view === 'topology'} onClick={() => setView('topology')} label="Topology"
-                         hint="Service-to-service projection of the same sampled traces — who this service actually calls" />
+                <div className="segmented" style={{ fontSize: 12 }}>
+                  <button type="button" className={view === 'tree' ? 'active' : ''}
+                          onClick={() => setView('tree')}
+                          title="Chronological waterfall — what the service does end-to-end">
+                    Tree
+                  </button>
+                  <button type="button" className={view === 'flame' ? 'active' : ''}
+                          onClick={() => setView('flame')}
+                          title="Where time is actually spent — width = total time across sampled traces">
+                    Flame
+                  </button>
+                  <button type="button" className={view === 'topology' ? 'active' : ''}
+                          onClick={() => setView('topology')}
+                          title="Service-to-service projection of the same sampled traces — who this service actually calls">
+                    Topology
+                  </button>
+                </div>
                 {/* Scope toggle. Same idea as Datadog APM's
                     "service profile" vs "trace flame" split:
                     do you want to see only this service's
@@ -126,10 +140,18 @@ export function ServiceStructure({ service, since = '10m', defaultOpen = false }
                     services' contribution too. */}
                 <span style={{ flex: 1 }} />
                 <span style={{ color: 'var(--text3)', fontSize: 11 }}>Scope</span>
-                <ViewTab active={scope === 'cross'}    onClick={() => setScope('cross')}    label="Cross-service"
-                         hint="Include downstream service / DB / queue spans called from this service — total round-trip cost" />
-                <ViewTab active={scope === 'internal'} onClick={() => setScope('internal')} label="Internal only"
-                         hint="Clip the walk at the service boundary — what this service does in its own process" />
+                <div className="segmented" style={{ fontSize: 12 }}>
+                  <button type="button" className={scope === 'cross' ? 'active' : ''}
+                          onClick={() => setScope('cross')}
+                          title="Include downstream service / DB / queue spans called from this service — total round-trip cost">
+                    Cross-service
+                  </button>
+                  <button type="button" className={scope === 'internal' ? 'active' : ''}
+                          onClick={() => setScope('internal')}
+                          title="Clip the walk at the service boundary — what this service does in its own process">
+                    Internal only
+                  </button>
+                </div>
               </div>
               {view === 'tree'     && <AggregatedStructure roots={data.roots} />}
               {view === 'flame'    && <AggregateFlame      roots={data.roots} />}
@@ -142,21 +164,3 @@ export function ServiceStructure({ service, since = '10m', defaultOpen = false }
   );
 }
 
-function ViewTab({ active, onClick, label, hint }: {
-  active: boolean; onClick: () => void; label: string; hint: string;
-}) {
-  return (
-    <button onClick={onClick} title={hint}
-      style={{
-        padding: '4px 12px',
-        background: active ? 'var(--bg2)' : 'transparent',
-        color: active ? 'var(--text)' : 'var(--text2)',
-        border: '1px solid var(--border)',
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontWeight: active ? 600 : 400,
-      }}>
-      {label}
-    </button>
-  );
-}

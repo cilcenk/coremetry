@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 import { IconSparkles } from './icons';
 
 // CopilotExplain — drop-in Explain button that calls the
@@ -75,13 +76,12 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
 
   return (
     <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
-      <button onClick={run} disabled={busy} className="sec"
-        style={{ padding: '5px 12px', fontSize: 12, color: 'var(--accent2)',
-                 display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <Button variant="secondary" size="sm" onClick={run} disabled={busy}
+        style={{ color: 'var(--accent2)' }}>
         {busy
           ? <><IconSparkles /> <span>Thinking…</span></>
           : (label ?? <><IconSparkles /> <span>AI explain</span></>)}
-      </button>
+      </Button>
       {error && (
         <div style={{
           padding: 10, borderRadius: 6, fontSize: 12,

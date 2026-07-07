@@ -764,13 +764,8 @@ name ~ checkout`}
                           Seçim · {fmtNum(boxSel.count)} span · {tFmt(boxSel.timeFromNs)}–{tFmt(boxSel.timeToNs)}
                           {' '}· {boxSel.lowDurMs >= 1 ? Math.round(boxSel.lowDurMs) : boxSel.lowDurMs.toFixed(1)}–{Math.round(boxSel.highDurMs)} ms
                         </span>
-                        <button type="button" onClick={() => setBoxSel(null)}
-                          title="Seçimi kapat"
-                          style={{
-                            background: 'transparent', border: '1px solid var(--border)',
-                            borderRadius: 4, color: 'var(--text2)', cursor: 'pointer',
-                            fontSize: 11, lineHeight: 1, padding: '2px 7px',
-                          }}>✕</button>
+                        <Button variant="ghost" size="sm" onClick={() => setBoxSel(null)}
+                          title="Seçimi kapat">✕</Button>
                       </div>
                       <BubbleUpPanel
                         baseline={baseline}

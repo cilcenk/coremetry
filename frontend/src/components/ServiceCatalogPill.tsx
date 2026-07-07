@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
+import { Button } from '@/components/ui/Button';
 import type { ServiceMetadata } from '@/lib/types';
 
 // ServiceCatalogPill — Datadog "service catalog" lite. Shows
@@ -40,11 +41,10 @@ export function ServiceCatalogPill({ service }: { service: string }) {
   if (!hasAny && !editing) {
     if (!isEditor) return null;
     return (
-      <button className="sec"
-        onClick={() => setEditing(true)}
-        style={{ fontSize: 11, padding: '3px 10px' }}>
+      <Button variant="secondary" size="sm"
+        onClick={() => setEditing(true)}>
         + Add catalog metadata
-      </button>
+      </Button>
     );
   }
 
@@ -94,12 +94,8 @@ export function ServiceCatalogPill({ service }: { service: string }) {
         <Link key={i} href={l.url} title={l.url}>{l.label}</Link>
       ))}
       {isEditor && (
-        <button onClick={() => setEditing(true)}
-          style={{
-            background: 'transparent', border: 0, cursor: 'pointer',
-            color: 'var(--text3)', padding: '0 6px', fontSize: 14,
-          }}
-          title="Edit catalog metadata">✎</button>
+        <Button variant="ghost" size="sm" onClick={() => setEditing(true)}
+          title="Edit catalog metadata">✎</Button>
       )}
     </span>
   );
@@ -210,14 +206,12 @@ function CatalogEditor({ initial, onSave, onCancel }: {
           onChange={ls => update({ customLinks: ls })} />
       </div>
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, marginTop: 4 }}>
-        <button onClick={submit} disabled={busy}
-          style={{ fontSize: 12, padding: '4px 12px' }}>
+        <Button size="sm" onClick={submit} disabled={busy}>
           {busy ? 'Saving…' : 'Save'}
-        </button>
-        <button className="sec" onClick={onCancel} disabled={busy}
-          style={{ fontSize: 12, padding: '4px 12px' }}>
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -270,23 +264,14 @@ function CustomLinksEditor({ links, onChange }: {
             placeholder="https://grafana.internal/d/abc"
             onChange={e => set(i, { url: e.target.value })}
             style={{ flex: 1 }} />
-          <button type="button" onClick={() => remove(i)}
-            title="Remove link"
-            style={{
-              fontSize: 12, color: 'var(--text3)',
-              background: 'transparent', border: 0, cursor: 'pointer',
-              padding: '0 6px',
-            }}>×</button>
+          <Button variant="ghost" size="sm" onClick={() => remove(i)}
+            title="Remove link">×</Button>
         </div>
       ))}
-      <button type="button" onClick={add}
-        style={{
-          fontSize: 11, padding: '3px 10px', alignSelf: 'flex-start',
-          background: 'var(--bg3)', border: '1px solid var(--border)',
-          borderRadius: 4, color: 'var(--accent2)', cursor: 'pointer',
-        }}>
+      <Button variant="secondary" size="sm" onClick={add}
+        style={{ alignSelf: 'flex-start', color: 'var(--accent2)' }}>
         + Add link
-      </button>
+      </Button>
     </div>
   );
 }

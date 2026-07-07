@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/components/AuthProvider';
+import { Button } from '@/components/ui/Button';
 import { useShortcuts, type Shortcut } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
@@ -204,18 +205,13 @@ export function SavedViewsBar({ page }: { page: string }) {
             )}
           </button>
           {isModified && (
-            <button type="button" onClick={() => apply(v)} title="Revert to saved filter"
-              style={{
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                color: 'rgb(187,128,9)', padding: 0, lineHeight: 1, fontSize: 12,
-              }}>↺</button>
+            <Button variant="ghost" size="sm" onClick={() => apply(v)}
+              title="Revert to saved filter"
+              style={{ color: 'rgb(187,128,9)' }}>↺</Button>
           )}
           {(v.ownerId === user?.id || isAdmin) && (
-            <button type="button" onClick={() => remove(v)} title="Delete"
-              style={{
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                color: 'var(--text3)', padding: 0, lineHeight: 1, fontSize: 11,
-              }}>×</button>
+            <Button variant="ghost" size="sm" onClick={() => remove(v)}
+              title="Delete">×</Button>
           )}
         </span>
         );
@@ -252,10 +248,9 @@ export function SavedViewsBar({ page }: { page: string }) {
               Share with team
             </label>
           )}
-          <button type="button" onClick={save}
-            style={{ padding: '2px 10px', fontSize: 11 }}>
+          <Button size="sm" onClick={save}>
             Save
-          </button>
+          </Button>
         </span>
       )}
     </div>

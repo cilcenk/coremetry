@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { Button } from '@/components/ui/Button';
 import type { ChatMessage } from '@/lib/types';
 
 // CopilotChat (v0.6.53) — global in-app AI assistant. A fixed
@@ -93,7 +94,10 @@ export function CopilotChat() {
 
   return (
     <>
-      {/* Launcher */}
+      {/* Launcher — deliberately NOT the shared <Button> atom: a
+          circular fixed-position FAB is its own anatomy (48px round
+          accent disc), not a text button; the atom's variants have
+          nothing to offer it (U1 batch 2 judgement call). */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
@@ -125,11 +129,11 @@ export function CopilotChat() {
             <span style={{ fontWeight: 600, fontSize: 13 }}>✨ Coremetry AI</span>
             <span style={{ flex: 1 }} />
             {turns.length > 0 && (
-              <button onClick={() => setTurns([])} className="sec"
-                style={{ fontSize: 11, padding: '2px 8px' }} title="Clear conversation">Clear</button>
+              <Button variant="secondary" size="sm" onClick={() => setTurns([])}
+                title="Clear conversation">Clear</Button>
             )}
-            <button onClick={() => setOpen(false)} className="sec"
-              style={{ fontSize: 14, padding: '2px 8px' }} title="Close">✕</button>
+            <Button variant="ghost" size="sm" onClick={() => setOpen(false)}
+              title="Close">✕</Button>
           </div>
 
           {/* Messages */}
@@ -139,8 +143,8 @@ export function CopilotChat() {
                 <div style={{ marginBottom: 10 }}>Ask about your telemetry — grounded in live data.</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {SAMPLE_QUESTIONS.map(q => (
-                    <button key={q} onClick={() => send(q)} className="sec"
-                      style={{ fontSize: 12, textAlign: 'left', padding: '6px 10px' }}>{q}</button>
+                    <Button key={q} variant="secondary" size="sm" onClick={() => send(q)}
+                      style={{ textAlign: 'left' }}>{q}</Button>
                   ))}
                 </div>
               </div>
@@ -165,10 +169,9 @@ export function CopilotChat() {
                 background: 'var(--bg)', color: 'var(--text)',
                 border: '1px solid var(--border)', borderRadius: 6,
               }} />
-            <button type="submit" disabled={busy || !input.trim()}
-              style={{ padding: '7px 14px', fontSize: 13 }}>
+            <Button type="submit" disabled={busy || !input.trim()}>
               {busy ? '…' : 'Send'}
-            </button>
+            </Button>
           </form>
         </div>
       )}

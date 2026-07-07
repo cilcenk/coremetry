@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ServiceMap, ServiceMapNode } from '@/lib/types';
+import { Button } from '@/components/ui/Button';
 import { hashColor, isMessagingDep } from '@/lib/utils';
 
 // ServiceMapGraph renders {nodes, edges} as an SVG graph. Two
@@ -193,17 +194,11 @@ export function ServiceMapGraph({
   return (
     <div ref={wrapRef} style={{ width: '100%', position: 'relative' }}>
       {canReset && (
-        <button onClick={resetView}
+        <Button variant="secondary" size="sm" onClick={resetView}
           title="Reset zoom + pan"
-          style={{
-            position: 'absolute', top: 8, right: 8, zIndex: 2,
-            fontSize: 11, padding: '3px 8px',
-            background: 'var(--bg2)', border: '1px solid var(--border)',
-            borderRadius: 4, color: 'var(--text2)',
-            cursor: 'pointer',
-          }}>
+          style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
           Reset · {Math.round(view.scale * 100)}%
-        </button>
+        </Button>
       )}
       <svg ref={svgRef}
            viewBox={`${view.vx} ${view.vy} ${width / view.scale} ${height / view.scale}`}

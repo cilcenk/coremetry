@@ -6,6 +6,7 @@ import { Spinner } from './Spinner';
 import { CopilotExplain } from './CopilotExplain';
 import { TracePeekDrawer } from './TracePeekDrawer';
 import { IconSparkles } from './icons';
+import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
 import { useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
@@ -544,12 +545,12 @@ function DeployImpactButton({ service, deploys }: {
 
   return (
     <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
-      <button onClick={run} disabled={busy} className="sec"
-        style={{ padding: '5px 12px', fontSize: 12, color: 'var(--accent2)',
-                 display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      <Button variant="secondary" size="sm" onClick={run} disabled={busy}
+        leftIcon={<IconSparkles />}
+        style={{ color: 'var(--accent2)' }}
         title={`Compare ±10 min around the latest deploy (${latest.version})`}>
-        <IconSparkles /> <span>{busy ? 'Thinking…' : `Explain deploy ${latest.version}`}</span>
-      </button>
+        {busy ? 'Thinking…' : `Explain deploy ${latest.version}`}
+      </Button>
       {error && (
         <div style={{
           padding: 10, borderRadius: 6, fontSize: 12,

@@ -556,10 +556,10 @@ export function ServiceGraph({
           </button>
         </div>
       </div>
-      <button type="button" onClick={fit}
-        style={{ position: 'absolute', right: 10, top: 10, fontSize: 12, padding: '4px 10px', background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', cursor: 'pointer' }}>
+      <Button variant="secondary" size="sm" onClick={fit}
+        style={{ position: 'absolute', right: 10, top: 10 }}>
         Fit
-      </button>
+      </Button>
       {/* HoverCard suppressed while the detail panel is open — the panel owns
           the right rail and a hover card behind it just flickers. */}
       {!selected && hover && nodeById.get(hover) && <HoverCard node={nodeById.get(hover)!} />}

@@ -189,8 +189,8 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 6, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 12, fontWeight: 600 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: healthToken(focusErr(nb.nodes, focus)) }} />
           {focus}
-          <button onClick={onClear} title="Back to the service picker"
-            style={{ marginLeft: 2, border: 'none', background: 'transparent', color: 'var(--text3)', cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>✕</button>
+          <Button variant="ghost" size="sm" onClick={onClear}
+            title="Back to the service picker" style={{ marginLeft: 2 }}>✕</Button>
         </span>
         <div className="seg">
           <button className={hops === 1 ? 'on' : ''} onClick={() => onHops(1)}>1 hop</button>

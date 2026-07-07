@@ -314,6 +314,14 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	for _, s := range services {
 		serviceNames = append(serviceNames, s.Name)
 	}
+
+	// v0.8.352 (perf P2-A) — batched prefetch: ONE GROUP BY query per
+	// DISTINCT (metric, window) pair (+ one per MinSamples count window)
+	// instead of one measure + one count query per (rule, service). The
+	// measured ~70k evaluator queries/hour collapse to ~tens; evaluateOne
+	// consumes the maps below. See prefetch.go.
+	pre := prefetchMeasures(ctx, e.store, rules, time.Now())
+
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
@@ -329,7 +337,7 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 			continue
 		}
 		for _, svc := range ruleEvalTargets(r, serviceNames) {
-			e.evaluateOne(ctx, r, svc)
+			e.evaluateOne(ctx, r, svc, pre)
 		}
 	}
 
@@ -457,7 +465,7 @@ func ruleEvalTargets(r chstore.AlertRule, serviceNames []string) []string {
 	return serviceNames
 }
 
-func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string) {
+func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string, pre *tickMeasures) {
 	// Saved-search log alerts (v0.5.242) bypass the per-service
 	// span-metric path entirely. The KQL itself carries any
 	// service / pod / level filter the operator wants; the
@@ -471,6 +479,13 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	if service == "" {
 		return
 	}
+	window := time.Duration(r.WindowSec) * time.Second
+	// v0.8.352 (perf P2-A) — windows the 5m MV serves consume the per-tick
+	// batched prefetch (see prefetch.go). Sub-5m custom windows keep the
+	// per-service raw path below: they're rare (builtins are 5m/10m) and
+	// the 5m MV grid can't reconstruct them (useSummaryMV).
+	batched := pre != nil && useSummaryMV(window)
+
 	// Sample floor (v0.5.128). For sample-dependent metrics
 	// (error_rate / percentiles / avg_ms) a single bad request
 	// in a low-traffic window pushes the value to scary levels
@@ -478,10 +493,29 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	// MinSamples. request_rate / error_count are absolute and
 	// inherently sample-aware, so the gate doesn't apply.
 	if r.MinSamples > 0 && metricNeedsSampleFloor(r.Metric) {
-		count, err := e.measureCount(ctx, service, time.Duration(r.WindowSec)*time.Second)
-		if err != nil {
-			log.Printf("[evaluator] measure-count %s/%s: %v", r.ID, service, err)
-			return
+		var count uint64
+		counted := false
+		if batched {
+			counts, failed, ok := pre.countFor(int(r.WindowSec))
+			if failed {
+				// Batched count read errored this tick (logged at
+				// prefetch) — skip, same as a per-service error.
+				return
+			}
+			if ok {
+				count = counts[service] // absent = no MV buckets = 0 spans
+				counted = true
+			}
+		}
+		if !counted {
+			// Sub-5m window, or a defensive fallback when the pair was
+			// never prefetched (a collectMeasureKeys mismatch — bug).
+			var err error
+			count, err = e.measureCount(ctx, service, window)
+			if err != nil {
+				log.Printf("[evaluator] measure-count %s/%s: %v", r.ID, service, err)
+				return
+			}
 		}
 		if count < uint64(r.MinSamples) {
 			// Also clear any stamped breach so a sustain gate
@@ -494,10 +528,39 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 		}
 	}
 
-	value, err := e.measure(ctx, service, r.Metric, time.Duration(r.WindowSec)*time.Second)
-	if err != nil {
-		log.Printf("[evaluator] measure %s/%s: %v", r.ID, service, err)
-		return
+	var value float64
+	measured := false
+	if batched {
+		vals, failed, ok := pre.measureFor(r.Metric, int(r.WindowSec))
+		if failed {
+			// Batched read errored this tick (logged at prefetch) —
+			// skip every service on this rule, same blast radius as
+			// the old per-service measure() error.
+			return
+		}
+		if ok {
+			v, present := vals[service]
+			if !present {
+				// Zero traffic in the window. absentMeasure reproduces
+				// what the per-service query returned for an empty
+				// result (0 / NaN / skip) — see prefetch.go.
+				av, evaluate := absentMeasure(r.Metric)
+				if !evaluate {
+					return
+				}
+				v = av
+			}
+			value = v
+			measured = true
+		}
+	}
+	if !measured {
+		var err error
+		value, err = e.measure(ctx, service, r.Metric, window)
+		if err != nil {
+			log.Printf("[evaluator] measure %s/%s: %v", r.ID, service, err)
+			return
+		}
 	}
 
 	breached := compare(value, r.Comparator, r.Threshold)
@@ -1099,40 +1162,28 @@ func (e *Evaluator) defaultAssignee(ctx context.Context, service string) string 
 	return md.SRETeam
 }
 
-// useSummaryMV decides whether a measure() / measureCount() call
-// for the given alert window can ride the 5-minute MV instead of
-// scanning raw spans. v0.6.12 — every basic RED metric the
-// evaluator measures (count, error_rate, error_count, request_rate,
-// avg/p50/p95/p99 latency) has an aggregating-state counterpart in
-// service_summary_5m, so windows >= 5min are served from the MV at
-// constant cost. Sub-5min windows fall back to raw spans (with
-// bounds) because the MV's 5-min granularity can't reconstruct
-// them faithfully — single eval tick over a smaller window is fine
-// to spans-scan since the WHERE is already (service_name, time)
-// indexed-bound.
+// useSummaryMV decides whether a measure() / measureCount() call for the
+// given alert window can ride the 5-minute MV instead of scanning raw
+// spans (v0.6.12). v0.8.352 — the boundary AND the v0.8.315 aligned-window
+// math below moved to chstore/evaluator_reads.go so the batched
+// (MeasureAllServices) and per-service paths share ONE implementation;
+// these wrappers keep the evaluator's sub-5m raw path + the existing
+// contract tests (mv_routing_test.go, mv_window_test.go) on the same
+// single source.
 func useSummaryMV(window time.Duration) bool {
-	return window >= 5*time.Minute
+	return chstore.UseSummaryMV(window)
 }
 
-// mvBucket is service_summary_5m's bucket width.
-const mvBucket = 5 * time.Minute
-
-// mvWindowStart aligns the window cutoff DOWN to the MV's bucket grid
-// (v0.8.315). The MV filter runs on time_bucket — the bucket START — so an
-// unaligned `now-window` cutoff excluded the bucket containing it and a
-// "5-minute" rule read as little as ~1 minute of data (the still-filling
-// bucket only). Down-alignment over-covers by <1 bucket instead;
-// count/rate metrics normalize back via scaleToWindow/mvCoveredSeconds.
-// time.Truncate aligns on the UTC epoch — the same grid as ClickHouse's
-// toStartOfInterval on the UTC-typed column.
+// mvWindowStart aligns the window cutoff DOWN to the MV's 5m bucket grid
+// (v0.8.315) — see chstore.MVWindowStart for the full incident story.
 func mvWindowStart(now time.Time, window time.Duration) time.Time {
-	return now.Add(-window).Truncate(mvBucket)
+	return chstore.MVWindowStart(now, window)
 }
 
 // mvCoveredSeconds is the real span the aligned MV read covers — always
 // ≥ the nominal window (window + up-to-299s drift).
 func mvCoveredSeconds(now time.Time, window time.Duration) float64 {
-	return now.Sub(mvWindowStart(now, window)).Seconds()
+	return chstore.MVCoveredSeconds(now, window)
 }
 
 // scaleToWindow normalizes an absolute count observed over `covered`
@@ -1140,10 +1191,7 @@ func mvCoveredSeconds(now time.Time, window time.Duration) float64 {
 // meaning ("50 errors in 5 min" stays a 5-minute quantity even though the
 // aligned read spans up to 5m+299s).
 func scaleToWindow(n, windowSec, coveredSec float64) float64 {
-	if coveredSec <= 0 {
-		return n
-	}
-	return n * windowSec / coveredSec
+	return chstore.ScaleToWindow(n, windowSec, coveredSec)
 }
 
 func (e *Evaluator) measureCount(ctx context.Context, service string, window time.Duration) (uint64, error) {
@@ -1340,64 +1388,19 @@ func (e *Evaluator) measure(ctx context.Context, service, metric string, window 
 	return 0, fmt.Errorf("unknown metric %q", metric)
 }
 
-// transportFilter returns:
-//   - where:     denominator population predicate (WHERE narrows
-//     the span set we're measuring against)
-//   - numerator: numerator predicate for *_rate metrics (counts the
-//     "bad" rows within the population). Unused for latency/count
-//     metrics.
-//
-// All fragments are literal SQL — no user input — so they're safe
-// to concatenate.
+// transportFilter returns the denominator population predicate + the
+// *_rate numerator predicate for a transport-scoped metric. v0.8.352 —
+// the mapping moved to chstore.TransportFilter so the batched
+// MeasureAllServices routing and this per-service raw path can never
+// drift; this wrapper keeps the sub-5m path readable.
 func transportFilter(metric string) (where, numerator string, ok bool) {
-	switch {
-	case strings.HasPrefix(metric, "http_5xx_"):
-		return "kind='server' AND http_method != ''",
-			"http_status >= 500", true
-	case strings.HasPrefix(metric, "http_4xx_"):
-		return "kind='server' AND http_method != ''",
-			"http_status >= 400 AND http_status < 500", true
-	case strings.HasPrefix(metric, "http_"):
-		return "kind='server' AND http_method != ''",
-			"status_code='error'", true
-	case strings.HasPrefix(metric, "db_"):
-		return "db_system != ''",
-			"status_code='error'", true
-	case strings.HasPrefix(metric, "rpc_"):
-		return "rpc_system != ''",
-			"status_code='error'", true
-	case strings.HasPrefix(metric, "mq_publish_"):
-		return "kind='producer'",
-			"status_code='error'", true
-	case strings.HasPrefix(metric, "mq_consume_"):
-		return "kind='consumer'",
-			"status_code='error'", true
-	}
-	return "", "", false
+	return chstore.TransportFilter(metric)
 }
 
-// transportOp pulls the aggregate suffix off a transport metric:
-//
-//	http_5xx_rate          → error_rate (5xx-narrowed by transportFilter)
-//	http_p99_ms            → p99_ms
-//	db_error_rate          → error_rate
-//	mq_publish_error_rate  → error_rate
+// transportOp pulls the aggregate suffix off a transport metric
+// (http_p99_ms → p99_ms). Single source: chstore.TransportOp (v0.8.352).
 func transportOp(metric string) string {
-	switch {
-	case strings.HasSuffix(metric, "_rate"):
-		return "error_rate"
-	case strings.HasSuffix(metric, "_p99_ms"):
-		return "p99_ms"
-	case strings.HasSuffix(metric, "_p95_ms"):
-		return "p95_ms"
-	case strings.HasSuffix(metric, "_p50_ms"):
-		return "p50_ms"
-	case strings.HasSuffix(metric, "_avg_ms"):
-		return "avg_ms"
-	case strings.HasSuffix(metric, "_count"):
-		return "count"
-	}
-	return ""
+	return chstore.TransportOp(metric)
 }
 
 func compare(value float64, op string, threshold float64) bool {

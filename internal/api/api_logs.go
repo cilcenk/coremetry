@@ -31,6 +31,16 @@ import (
 // cost (v0.8.x — operator asked to ease ES request pressure).
 const logsTailCadence = 10 * time.Second
 
+// v0.8.350 (HA 🟡6) — Go-side ceilings for the logs read paths that
+// degrade on a slow/unreachable backend (ErrBackendSlow → 200
+// {degraded:true}, extending the v0.8.331 trace-pivot contract).
+// The ES transport's 15s ResponseHeaderTimeout is the tighter wire
+// bound; these keep the CH backend + goroutine lifetimes bounded too.
+const (
+	logsSearchBudget  = 30 * time.Second // /logs main search
+	logsContextBudget = 10 * time.Second // /logs/context, per half-window
+)
+
 // tailStep is the pure cursor-advance for the live-tail loop. Given the
 // current forward cursor `sinceNs`, the ids already emitted at exactly that
 // ns (`boundary`), and the oldest-first batch a forward read returned, it
@@ -250,8 +260,26 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 				"nextCursor": page.NextCursor,
 			}, nil
 		}
-		page, err := s.logs.Search(ctx, f)
+		// v0.8.350 (HA 🟡6) — the MAIN search path now degrades like the
+		// trace branch above: slow/unreachable backend → 200
+		// {degraded:true} + empty list instead of a 5xx, so an ES
+		// brownout renders "backend slow" on /logs, not a red error
+		// wall. 30s Go-side ceiling (the ES transport's 15s response-
+		// header timeout is the tighter bound); caching the degraded
+		// payload for the 15s TTL is deliberate back-pressure. Genuine
+		// query errors still fail loudly (only ErrBackendSlow degrades).
+		page, err := logstore.SearchWithTimeout(ctx, s.logs, f, logsSearchBudget)
 		if err != nil {
+			if errors.Is(err, logstore.ErrBackendSlow) {
+				log.Printf("[logs] search degraded (backend=%s, service=%q): %v",
+					s.logs.Backend(), f.Service, err)
+				return map[string]interface{}{
+					"total":    0,
+					"logs":     []*logstore.LogRecord{},
+					"degraded": true,
+					"reason":   "log backend slow/unreachable",
+				}, nil
+			}
 			// Surface the full backend error (ES carries the authz/index reason
 			// in the response body via res.String()) in the pod log so the
 			// operator can grep "[logs]" instead of only seeing it in the API
@@ -523,12 +551,35 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:n=%d", ts, service, n)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
-		beforePage, err := s.logs.Search(ctx, beforeF)
+		// v0.8.350 (HA 🟡6) — a slow/unreachable backend degrades the
+		// modal to 200 {degraded:true} + empty halves instead of a 5xx.
+		// Each half-window gets its own bounded budget (SearchWithTimeout
+		// maps deadline/dial/transport failures to ErrBackendSlow; a
+		// genuine query error still fails loudly).
+		degradedPayload := func(cause error) map[string]any {
+			log.Printf("[logs] context degraded (backend=%s, svc=%q): %v",
+				s.logs.Backend(), service, cause)
+			return map[string]any{
+				"pivotTs":  ts,
+				"service":  service,
+				"before":   []*logstore.LogRecord{},
+				"after":    []*logstore.LogRecord{},
+				"degraded": true,
+				"reason":   "log backend slow/unreachable",
+			}
+		}
+		beforePage, err := logstore.SearchWithTimeout(ctx, s.logs, beforeF, logsContextBudget)
 		if err != nil {
+			if errors.Is(err, logstore.ErrBackendSlow) {
+				return degradedPayload(err), nil
+			}
 			return nil, err
 		}
-		afterPage, err := s.logs.Search(ctx, afterF)
+		afterPage, err := logstore.SearchWithTimeout(ctx, s.logs, afterF, logsContextBudget)
 		if err != nil {
+			if errors.Is(err, logstore.ErrBackendSlow) {
+				return degradedPayload(err), nil
+			}
 			return nil, err
 		}
 		before := beforePage.Logs
@@ -584,9 +635,27 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 		field, f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
 		q.Get("from"), q.Get("to"), q.Get("search"))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		return s.logs.FieldStats(ctx, f, field, 5)
+		res, err := s.logs.FieldStats(tctx, f, field, 5)
+		if err != nil {
+			// v0.8.350 (HA 🟡6) — slow/unreachable backend degrades the
+			// accordion to 200 {degraded:true} + empty values instead of
+			// a 5xx (LogFieldStats carries degraded?/reason? in types.ts).
+			if mapped := logstore.MapBackendSlow(err, tctx, ctx); errors.Is(mapped, logstore.ErrBackendSlow) {
+				log.Printf("[logs] fieldstats degraded (backend=%s, field=%q): %v",
+					s.logs.Backend(), field, err)
+				return map[string]any{
+					"field":    field,
+					"total":    0,
+					"values":   []logstore.FieldValueCount{},
+					"degraded": true,
+					"reason":   "log backend slow/unreachable",
+				}, nil
+			}
+			return nil, err
+		}
+		return res, nil
 	})
 }
 
@@ -623,8 +692,24 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 		// the same ceiling so the api pod releases the goroutine +
 		// response buffers even if the cluster keeps churning (the ES
 		// soft-timeout in the query body is the tighter inner bound).
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		return s.logs.Histogram(ctx, f, bucketSec, groupBy)
+		series, err := s.logs.Histogram(tctx, f, bucketSec, groupBy)
+		if err != nil {
+			// v0.8.350 (HA 🟡6) — slow/unreachable backend → 200 with an
+			// EMPTY series list instead of a 5xx. This endpoint's wire
+			// shape is a bare ARRAY (the /explore + /logs histogram
+			// clients map over it), so unlike the object-shaped logs
+			// paths there is no room for a degraded flag without a
+			// breaking shape change — the chart renders empty and the
+			// paired /logs search response carries the degraded banner.
+			if mapped := logstore.MapBackendSlow(err, tctx, ctx); errors.Is(mapped, logstore.ErrBackendSlow) {
+				log.Printf("[logs] timeseries degraded (backend=%s, svc=%q): %v",
+					s.logs.Backend(), f.Service, err)
+				return []logstore.LogSeries{}, nil
+			}
+			return nil, err
+		}
+		return series, nil
 	})
 }

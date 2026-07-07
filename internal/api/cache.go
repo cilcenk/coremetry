@@ -277,7 +277,21 @@ func (s *Server) serveCached(w http.ResponseWriter, r *http.Request, key string,
 		writeErr(w, err)
 		return
 	}
-	s.storeCached(r.Context(), key, body, ttl)
+	// v0.8.350 (HA 🟡5) — the response must not wait on Redis. L1 is
+	// set synchronously (in-process, same-node burst coalescing needs
+	// it before this handler returns); the L2 (Redis) write detaches
+	// onto its own goroutine + 2s context. Pre-v0.8.350 this was a
+	// synchronous storeCached: with a blackholed Redis (node lost
+	// without an RST) every MISS paid the full client dial/retry stall
+	// a second time AFTER the upstream query had already succeeded.
+	// The SWR refreshKey path keeps its synchronous storeCached — it
+	// already runs on a detached background goroutine.
+	s.l1.set(key, body, minDur(ttl, l1TTL))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		s.storeL2(ctx, key, body, ttl)
+	}()
 	w.Header().Set("Content-Type", "application/json")
 	if skipRead {
 		s.stats.record("BYPASS", key)
@@ -301,14 +315,24 @@ func writeCacheHit(w http.ResponseWriter, tier string, body []byte) {
 // storeCached writes the envelope to Redis and the bare body
 // to L1. Redis TTL is staleFactor × softTtl so the SWR window
 // has room to breathe past nominal expiry. Errors are logged
-// but never fatal.
+// but never fatal. Callers on a request-serving path must NOT
+// call this synchronously — see the serveCached miss path
+// (v0.8.350), which sets L1 inline and detaches the L2 write.
+// The remaining synchronous callers (refreshKey, the warmer)
+// already run on background goroutines.
 func (s *Server) storeCached(ctx context.Context, key string, body []byte, ttl time.Duration) {
+	s.storeL2(ctx, key, body, ttl)
+	s.l1.set(key, body, minDur(ttl, l1TTL))
+}
+
+// storeL2 is the Redis half of storeCached (split out in v0.8.350 so
+// the miss path can run it async while keeping the L1 set synchronous).
+func (s *Server) storeL2(ctx context.Context, key string, body []byte, ttl time.Duration) {
 	if env, err := wrapEnvelope(body); err == nil {
 		if err := s.cache.Set(ctx, key, env, ttl*staleFactor); err != nil {
 			log.Printf("[cache] set %s: %v", key, err)
 		}
 	}
-	s.l1.set(key, body, minDur(ttl, l1TTL))
 }
 
 // refreshKey is the background half of SWR. Runs the upstream

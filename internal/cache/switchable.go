@@ -59,6 +59,10 @@ func (s *SwitchableCache) Set(ctx context.Context, key string, value []byte, ttl
 	return s.Current().Set(ctx, key, value, ttl)
 }
 
+func (s *SwitchableCache) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	return s.Current().SetNX(ctx, key, value, ttl)
+}
+
 func (s *SwitchableCache) Del(ctx context.Context, key string) error {
 	return s.Current().Del(ctx, key)
 }

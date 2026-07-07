@@ -414,14 +414,32 @@ func SearchWithTimeout(ctx context.Context, st Store, f Filter, timeout time.Dur
 	if err == nil {
 		return page, nil
 	}
-	// Our own deadline firing can surface as a backend-specific error string
-	// (the CH driver wraps ctx errors); check tctx directly — but only when
-	// the PARENT is still live, so a client disconnect (context.Canceled all
-	// the way up) keeps its honest cancellation error.
-	if isBackendSlow(err) || (tctx.Err() == context.DeadlineExceeded && ctx.Err() == nil) {
-		return nil, fmt.Errorf("%w: %v", ErrBackendSlow, err)
+	return nil, MapBackendSlow(err, tctx, ctx)
+}
+
+// MapBackendSlow classifies a failed backend call: slow/unreachable →
+// ErrBackendSlow (wrapped, original cause preserved for logs), genuine
+// query errors (ES 400, bad field, …) pass through unchanged. v0.8.350
+// (HA 🟡6) — exported so the /logs search, histogram, field-stats and
+// context handlers can extend the v0.8.331 trace-pivot degrade contract
+// (200 {degraded:true} instead of 5xx) to calls that aren't plain
+// Search (Histogram, FieldStats).
+//
+// opCtx is the context the backend call actually ran under (usually a
+// WithTimeout child); parent is the caller's context. Our own deadline
+// firing can surface as a backend-specific error string (the CH driver
+// wraps ctx errors), so opCtx is checked directly — but only while the
+// PARENT is still live: a client disconnect (context.Canceled all the
+// way up) keeps its honest cancellation error, so healthy backends
+// never get degraded payloads cached on their behalf.
+func MapBackendSlow(err error, opCtx, parent context.Context) error {
+	if err == nil {
+		return nil
 	}
-	return nil, err
+	if isBackendSlow(err) || (opCtx.Err() == context.DeadlineExceeded && parent.Err() == nil) {
+		return fmt.Errorf("%w: %v", ErrBackendSlow, err)
+	}
+	return err
 }
 
 // isBackendSlow classifies an error as "slow/unreachable" (→ ErrBackendSlow)

@@ -1252,6 +1252,11 @@ export interface LogFieldStats {
   field: string;
   total: number;
   values: { value: string; count: number }[];
+  // v0.8.350 (HA 🟡6) — slow/unreachable log backend degrades to HTTP 200
+  // {degraded:true, reason} + empty values instead of a 5xx, same contract
+  // as LogsResponse (v0.8.332). The accordion renders its empty state.
+  degraded?: boolean;
+  reason?: string;
 }
 
 export interface MetricInfo {

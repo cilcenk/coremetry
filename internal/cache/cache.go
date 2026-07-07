@@ -21,6 +21,14 @@ import (
 type Cache interface {
 	Get(ctx context.Context, key string) ([]byte, bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+	// SetNX sets key=value only when the key doesn't already exist
+	// (Redis SET NX semantics) and reports whether the claim was won.
+	// A lightweight cross-pod dedup primitive (v0.8.350 — the
+	// dependencies-cache warmer claims one warm cycle per fleet window),
+	// NOT a lock: no token, no release, the TTL is the sole lifetime.
+	// For contended long-lived leadership use Lock/LeaderHolder instead.
+	// Noop returns true — a single-instance deployment always "wins".
+	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
 	Del(ctx context.Context, key string) error
 	// ScanPrefix returns every value whose key matches the given
 	// prefix (Redis SCAN MATCH + MGET). Returned values are the
@@ -91,6 +99,11 @@ func NewNoop() (Cache, Lock) { return noopCache{}, noopLock{} }
 
 func (noopCache) Get(context.Context, string) ([]byte, bool, error)   { return nil, false, nil }
 func (noopCache) Set(context.Context, string, []byte, time.Duration) error { return nil }
+func (noopCache) SetNX(context.Context, string, []byte, time.Duration) (bool, error) {
+	// Always-win: with no Redis there are no peers to dedup against, so
+	// the caller (e.g. the cache warmer) must do its own work.
+	return true, nil
+}
 func (noopCache) Del(context.Context, string) error                   { return nil }
 func (noopCache) ScanPrefix(context.Context, string) ([][]byte, error) { return nil, nil }
 func (noopCache) DelPrefix(context.Context, string) error              { return nil }

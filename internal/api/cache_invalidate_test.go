@@ -48,6 +48,9 @@ type publishCall struct {
 
 func (f *fakeCache) Get(context.Context, string) ([]byte, bool, error)         { return nil, false, nil }
 func (f *fakeCache) Set(context.Context, string, []byte, time.Duration) error  { return nil }
+func (f *fakeCache) SetNX(context.Context, string, []byte, time.Duration) (bool, error) {
+	return true, nil
+}
 func (f *fakeCache) Del(context.Context, string) error                         { return nil }
 func (f *fakeCache) ScanPrefix(_ context.Context, _ string) ([][]byte, error) {
 	f.mu.Lock()

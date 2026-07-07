@@ -1025,6 +1025,26 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpSrv.Shutdown(ctx)
 }
 
+// warmDepsClaimKey is the fleet-wide SETNX claim for one warmer cycle
+// (v0.8.350, HA 🟡4). No release path on purpose: the TTL (= the warm
+// tick) is the claim's whole lifetime, so a crashed winner's claim
+// simply expires into the next window.
+const warmDepsClaimKey = "coremetry:warm:deps"
+
+// warmClaim reports whether THIS pod should run the current warm cycle.
+// SETNX semantics: the first pod each window wins; the rest skip (their
+// readers are served from the shared Redis L2 the winner populates).
+// Redis errors fail OPEN — a pod with no reachable Redis has no shared
+// L2 and must warm its own L1. Package-level func over the Cache
+// interface so the claim behaviour is unit-testable without a Server.
+func warmClaim(ctx context.Context, c cache.Cache, ttl time.Duration) bool {
+	ok, err := c.SetNX(ctx, warmDepsClaimKey, []byte("1"), ttl)
+	if err != nil {
+		return true
+	}
+	return ok
+}
+
 // warmDependenciesCache primes the hottest read endpoints on
 // a 25s loop so morning-triage requests always land on a
 // warm cache. Each warm pass writes through storeCached(),
@@ -1092,6 +1112,21 @@ func (s *Server) warmDependenciesCache() {
 		s.storeCached(ctx, key, body, useTTL)
 	}
 	for {
+		// v0.8.350 (HA 🟡4) — cross-pod dedup: ONE warm cycle per fleet
+		// window, not per pod. A short SETNX claim (TTL = the tick)
+		// elects this window's warmer; losers skip the cycle — the
+		// winner's results land in shared Redis via storeCached, so
+		// every pod's readers hit warm L2 entries regardless of who
+		// ran the GROUP-BYs. Redis errors fail OPEN (claim granted):
+		// without a reachable Redis there is no shared L2, so each pod
+		// must keep warming its own L1.
+		claimCtx, cancelClaim := context.WithTimeout(context.Background(), 2*time.Second)
+		claimed := warmClaim(claimCtx, s.cache, tick)
+		cancelClaim()
+		if !claimed {
+			time.Sleep(tick)
+			continue
+		}
 		to := time.Now()
 		from := to.Add(-warmWin)
 		warm("databases", "databases:"+cacheBucket(from, to), ttl,
@@ -8477,6 +8512,9 @@ func (s *Server) setProblemAssignee(w http.ResponseWriter, r *http.Request) {
 	}
 	details, _ := json.Marshal(map[string]any{"id": id, "assignee": body.Assignee})
 	s.audit(r, "problem.assign", "problem", id, string(details))
+	// v0.8.350 (HA 🟡9) — same cross-pod eviction as acknowledgeProblems:
+	// the assignee chip must show on every replica's next /problems read.
+	s.cacheInvalidatePrefix(r.Context(), "problems")
 	// v0.8.289 (operator request) — when a Problem is assigned to a PERSON
 	// (email assignee) and it actually changed, email them the assignment.
 	if prev != nil {
@@ -8535,6 +8573,13 @@ func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 	// table without bloating the audit_log row count.
 	details, _ := json.Marshal(map[string]any{"ids": body.IDs, "acknowledged": n})
 	s.audit(r, "problem.acknowledge", "problem", "", string(details))
+	// v0.8.350 (HA 🟡9) — cross-pod read-your-writes: evict every
+	// problems-derived cache namespace (the "problems" prefix covers
+	// problems: / problems-count: / problems-buckets:) on ALL replicas —
+	// L2 DelPrefix + own L1 + "prefix:" pub/sub broadcast — so an ack on
+	// pod A is visible through pod B's next read instead of after the
+	// 5s TTL × SWR stale window (~15s of a "still open" ghost).
+	s.cacheInvalidatePrefix(r.Context(), "problems")
 	writeJSON(w, map[string]any{"acknowledged": n})
 }
 

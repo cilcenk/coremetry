@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -366,7 +367,19 @@ func esAuthMode(apiKey, username string) string {
 func NewES(cfg ESConfig) (*ESStore, error) {
 	cfg.defaults()
 
-	transport := &http.Transport{}
+	// v0.8.350 (HA 🟡6) — client-side network bounds. A bare Transport
+	// has NO dial or response deadlines: the "timeout" params Coremetry
+	// sends in query bodies are ES-side soft budgets, so a blackholed ES
+	// node (lost without an RST) left every logs request hanging on the
+	// OS TCP timeout. Dial 2s (in-cluster/-DC round trip); response
+	// headers 15s — above every soft query budget we use, below the
+	// 20-30s handler ctx ceilings, so a wedged node surfaces as a
+	// net.Error timeout that logstore.MapBackendSlow turns into an
+	// ErrBackendSlow degrade instead of a browser-visible stall.
+	transport := &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 15 * time.Second,
+	}
 	if cfg.InsecureSkipVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}

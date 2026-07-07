@@ -22,6 +22,31 @@ func New(url string) (Cache, Lock, error) {
 		c, l := NewNoop()
 		return c, l, fmt.Errorf("parse redis url: %w", err)
 	}
+	// v0.8.350 (HA 🟡5) — client-level network bounds. go-redis defaults
+	// are DialTimeout 5s + 3 retries: a blackholed Redis (node lost
+	// without an RST) made every L1-miss API request stall 10-20s
+	// synchronously inside serveCached's cache.Get. 500ms is generous
+	// for an in-cluster Redis; retries are disabled because the cache is
+	// best-effort — a failed round-trip falls through to ClickHouse.
+	// Only defaults are overridden: an explicit ?dial_timeout=… /
+	// ?read_timeout=… / ?max_retries=… in the URL wins. NOTE go-redis
+	// semantics: MaxRetries -1 (not 0) disables retries; 0 means
+	// "default 3". Pub/sub reads are unaffected (the PubSub channel
+	// loop reads with no deadline). Boot ping below keeps its 3s outer
+	// ctx; recovery from a failed boot is owned by StartRedisReprobe
+	// (v0.8.341, H4).
+	if opts.DialTimeout == 0 {
+		opts.DialTimeout = 500 * time.Millisecond
+	}
+	if opts.ReadTimeout == 0 {
+		opts.ReadTimeout = 500 * time.Millisecond
+	}
+	if opts.WriteTimeout == 0 {
+		opts.WriteTimeout = 500 * time.Millisecond
+	}
+	if opts.MaxRetries == 0 {
+		opts.MaxRetries = -1
+	}
 	cli := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -51,6 +76,13 @@ func (r *redisCache) Get(ctx context.Context, key string) ([]byte, bool, error) 
 
 func (r *redisCache) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
 	return r.cli.Set(ctx, key, value, ttl).Err()
+}
+
+// SetNX — cross-pod dedup claim (v0.8.350). One Redis round-trip;
+// the TTL is the claim's whole lifetime (no release path on purpose —
+// see the Cache interface doc).
+func (r *redisCache) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	return r.cli.SetNX(ctx, key, value, ttl).Result()
 }
 
 func (r *redisCache) Del(ctx context.Context, key string) error {

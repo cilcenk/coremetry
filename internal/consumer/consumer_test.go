@@ -32,8 +32,11 @@ func TestConsumer_WriteFailedCountsFlushErrors(t *testing.T) {
 	boom := errors.New("ch insert boom")
 	// BatchSize 1 → each item dispatches + flushes immediately, so the counter
 	// reaches 10 without depending on the flush-interval tick.
+	// FlushRetryBase tiny: v0.8.340 retries each batch 3× before counting
+	// writeFailed — same contract, just not at production backoff speed.
 	c := New[int]("test-fail", Options{
 		BatchSize: 1, BufferSize: 100, FlushInterval: 5 * time.Millisecond, Workers: 1,
+		FlushRetryBase: time.Millisecond,
 	}, func(_ context.Context, batch []int) error { return boom })
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,7 +136,7 @@ func TestDrainBoundedWhenFlushersWedged(t *testing.T) {
 	// and never answers.
 	c := New[int]("wedge-test", Options{
 		BatchSize: 5, BufferSize: 100, FlushInterval: time.Hour, Workers: 1,
-		FlushTimeout: time.Second,
+		FlushTimeout: time.Second, FlushRetryBase: time.Millisecond,
 	}, func(ctx context.Context, b []int) error {
 		select {
 		case <-block:
@@ -159,8 +162,82 @@ func TestDrainBoundedWhenFlushersWedged(t *testing.T) {
 			t.Fatalf("accounting hole: dropped %d + writeFailed %d != 40 accepted",
 				c.Dropped(), c.WriteFailed())
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatalf("Stop() hung >15s with a wedged flusher — shutdown must be bounded")
+	case <-time.After(20 * time.Second):
+		t.Fatalf("Stop() hung >20s with a wedged flusher — shutdown must be bounded")
 	}
 	close(block)
+}
+
+// v0.8.340 (HA audit H2) — regression: fail-fast CH outage drained the
+// ENTIRE 500k buffer into writeFailed at wire speed. A flush error was
+// logged and the batch discarded immediately, so a 30s ClickHouse restart
+// (connection refused answers in ms) lost every batch the workers could
+// pull — the buffer never buffered. Contract now: flusher retries the SAME
+// batch with backoff (bounded attempts) before declaring writeFailed; a
+// transient error therefore loses NOTHING, and while retrying, the worker
+// slot stays occupied so backpressure propagates naturally.
+func TestFlushRetriesTransientErrors(t *testing.T) {
+	var calls atomic.Int64
+	var delivered atomic.Int64
+	c := New[int]("retry-test", Options{
+		BatchSize: 10, BufferSize: 100, FlushInterval: 10 * time.Millisecond,
+		Workers: 1, FlushTimeout: time.Second, FlushRetryBase: 10 * time.Millisecond,
+	}, func(_ context.Context, b []int) error {
+		if calls.Add(1) <= 2 {
+			return errors.New("transient: connection refused")
+		}
+		delivered.Add(int64(len(b)))
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	for i := 0; i < 10; i++ {
+		c.Add(i)
+	}
+	deadline := time.After(5 * time.Second)
+	for delivered.Load() != 10 {
+		select {
+		case <-deadline:
+			t.Fatalf("batch not delivered after transient errors: calls=%d delivered=%d writeFailed=%d",
+				calls.Load(), delivered.Load(), c.WriteFailed())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if c.WriteFailed() != 0 {
+		t.Fatalf("transient errors must not count writeFailed, got %d", c.WriteFailed())
+	}
+	cancel()
+	c.Stop()
+}
+
+// Persistent failure still gives up — after the bounded attempts the batch
+// is counted (writeFailed) and the worker moves on, so a poison batch or a
+// long outage degrades to counted drop-mode instead of blocking forever.
+func TestFlushGivesUpAfterBoundedRetries(t *testing.T) {
+	var calls atomic.Int64
+	c := New[int]("giveup-test", Options{
+		BatchSize: 10, BufferSize: 100, FlushInterval: 10 * time.Millisecond,
+		Workers: 1, FlushTimeout: time.Second, FlushRetryBase: 5 * time.Millisecond,
+	}, func(_ context.Context, b []int) error {
+		calls.Add(1)
+		return errors.New("permanent")
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	for i := 0; i < 10; i++ {
+		c.Add(i)
+	}
+	deadline := time.After(5 * time.Second)
+	for c.WriteFailed() != 10 {
+		select {
+		case <-deadline:
+			t.Fatalf("writeFailed=%d after %d calls, want 10", c.WriteFailed(), calls.Load())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want exactly 3 (1 + 2 retries)", got)
+	}
+	cancel()
+	c.Stop()
 }

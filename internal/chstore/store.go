@@ -248,6 +248,14 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		TLS:  tlsCfg,
 		Compression:     &clickhouse.Compression{Method: clickhouse.CompressionLZ4},
 		DialTimeout:     dialTimeout,
+		// v0.8.340 (HA audit H2) — the driver's default ReadTimeout is
+		// 300s: a CH that ACCEPTS the TCP connection and never answers
+		// (keeper pause, asymmetric partition) held every query — and
+		// every ingest flusher — for five minutes. Server-side
+		// max_execution_time never fires when the query never executes.
+		// 30s covers the slowest legitimate reads (heatmap budget is 3s,
+		// bulk inserts single-digit seconds) with generous margin.
+		ReadTimeout: 30 * time.Second,
 		MaxOpenConns:    maxConns,
 		MaxIdleConns:    maxConns / 2,
 		ConnMaxLifetime: time.Hour,

@@ -30,7 +30,20 @@ type Options struct {
 	// by the driver's 300s default ReadTimeout, and shutdown (Stop
 	// waits on flushers) inherited whichever was worse. Defaults 60s.
 	FlushTimeout time.Duration
+	// FlushRetryBase is the first retry backoff (v0.8.340, HA audit
+	// H2); the second retry waits 4×. Zero = the 2s production
+	// default. Exposed mainly so tests run in milliseconds.
+	FlushRetryBase time.Duration
 }
+
+// flushAttempts is the total tries per batch (1 + 2 retries,
+// v0.8.340). A fail-fast CH outage used to drain the ENTIRE buffer
+// into writeFailed at wire speed — the flusher logged and discarded
+// each batch in milliseconds, so the 500k-item buffer never buffered.
+// Retrying the SAME batch keeps the worker slot occupied, which is
+// exactly the backpressure that lets the buffer absorb a short outage;
+// a persistent failure still degrades to COUNTED drop-mode.
+const flushAttempts = 3
 
 // Consumer is a generic, channel-based batch consumer with
 // backpressure plus a parallel flush stage. Producers call Add
@@ -52,6 +65,12 @@ type Consumer[T any] struct {
 	// silent data loss the operator otherwise can't see. Surfaced on
 	// /admin/stats (v0.8.x). Distinct from `dropped` (receiver buffer full).
 	writeFailed atomic.Int64
+	// draining flips when shutdown-drain begins (v0.8.340): flushers
+	// then make a SINGLE attempt per remaining batch — retry-with-
+	// backoff against a wedged CH would multiply the teardown time per
+	// batch and blow the pod's terminationGracePeriod (getting
+	// SIGKILLed mid-drain loses more than skipping retries does).
+	draining atomic.Bool
 	// accepted is a monotonic counter of items the consumer received
 	// (including ones it later dropped from the channel-full path —
 	// well, actually NO, dropped items never enter; this counts only
@@ -151,6 +170,10 @@ func (c *Consumer[T]) loop(ctx context.Context) {
 		case <-ticker.C:
 			dispatch()
 		case <-ctx.Done():
+			// Single-attempt mode BEFORE the drain dispatches below —
+			// misplacing this after the loop re-introduces 3×-retry
+			// teardown times against a wedged CH (v0.8.340).
+			c.draining.Store(true)
 			// drain any remaining items, then close so flushers exit.
 		drain:
 			for {
@@ -182,13 +205,36 @@ func (c *Consumer[T]) flusher() {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
+	retryBase := c.opts.FlushRetryBase
+	if retryBase <= 0 {
+		retryBase = 2 * time.Second
+	}
 	for batch := range c.flushQ {
-		fctx, cancel := context.WithTimeout(context.Background(), timeout)
-		err := c.flushFn(fctx, batch)
-		cancel()
+		attempts := flushAttempts
+		if c.draining.Load() {
+			attempts = 1
+		}
+		var err error
+		for attempt := 1; attempt <= attempts; attempt++ {
+			// Fresh bounded ctx per attempt — a timed-out first try must
+			// not eat the retries' budget.
+			fctx, cancel := context.WithTimeout(context.Background(), timeout)
+			err = c.flushFn(fctx, batch)
+			cancel()
+			if err == nil {
+				break
+			}
+			if attempt < attempts {
+				backoff := retryBase * time.Duration(1<<(2*(attempt-1))) // base, 4×base
+				log.Printf("[consumer/%s] flush attempt %d/%d failed (%v) — retrying in %s",
+					c.name, attempt, attempts, err, backoff)
+				time.Sleep(backoff)
+			}
+		}
 		if err != nil {
 			c.writeFailed.Add(int64(len(batch)))
-			log.Printf("[consumer/%s] flush error (%d items lost): %v", c.name, len(batch), err)
+			log.Printf("[consumer/%s] flush error after %d attempts (%d items lost): %v",
+				c.name, attempts, len(batch), err)
 		}
 	}
 }

@@ -533,6 +533,11 @@ func main() {
 	// the resolved log store regardless of mode. Non-worker modes
 	// construct it but never Start() — keeps the wiring symmetric.
 	evalr := evaluator.New(store, time.Minute, lockImpl, notifier)
+	// v0.8.354 — sustain/cooldown stamps write-through to Redis so a leader
+	// failover (or every maxUnavailable:0 deploy) no longer resets ForSec
+	// clocks / punches CooldownSec holes. cacheImpl is the Switchable, so
+	// the v0.8.344 Noop→Redis hot-swap applies transparently.
+	evalr.SetStampCache(cacheImpl)
 	if mode.worker {
 		// ── Alert evaluator (background — opens & resolves problems) ─────
 		go evalr.Start(ctx)

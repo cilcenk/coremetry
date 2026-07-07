@@ -45,6 +45,11 @@ type Evaluator struct {
 	// window are suppressed to absorb threshold-jitter flap.
 	lastResolved map[breachKey]time.Time
 	breachMu     sync.Mutex
+	// stamps mirrors breachSince/lastResolved writes to Redis and
+	// lazily hydrates in-memory misses, so the sustain/cooldown
+	// clocks survive leader failover + rolling deploys (v0.8.354 —
+	// HA audit 🟡#2; see stamps.go). nil or Noop = in-memory only.
+	stamps cache.Cache
 }
 
 type breachKey struct {
@@ -520,10 +525,7 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 		if count < uint64(r.MinSamples) {
 			// Also clear any stamped breach so a sustain gate
 			// doesn't carry over once the service warms up.
-			key := breachKey{RuleID: r.ID, Service: service}
-			e.breachMu.Lock()
-			delete(e.breachSince, key)
-			e.breachMu.Unlock()
+			e.clearBreach(ctx, breachKey{RuleID: r.ID, Service: service})
 			return
 		}
 	}
@@ -572,26 +574,22 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	// semantics as Prometheus' `for:` directive. Open problems
 	// don't pass through here; the breach has already been
 	// promoted, refresh continues via the existing path.
+	// v0.8.354 — the stamp is Redis-mirrored (stamps.go) so a
+	// leader failover mid-sustain doesn't restart the clock.
 	key := breachKey{RuleID: r.ID, Service: service}
 	now := time.Now()
 	if breached && r.ForSec > 0 {
-		e.breachMu.Lock()
-		first, seen := e.breachSince[key]
-		if !seen {
-			e.breachSince[key] = now
-			e.breachMu.Unlock()
+		first, existing := e.breachStart(ctx, key, now, r.ForSec)
+		if !existing {
 			return // first sighting — wait for sustain
 		}
-		e.breachMu.Unlock()
 		if now.Sub(first) < time.Duration(r.ForSec)*time.Second {
 			return // still inside the sustain window
 		}
 		// Past the sustain — fall through to open.
 	}
 	if !breached {
-		e.breachMu.Lock()
-		delete(e.breachSince, key)
-		e.breachMu.Unlock()
+		e.clearBreach(ctx, key)
 	}
 
 	open, err := e.store.FindOpenProblem(ctx, r.ID, service)
@@ -603,11 +601,10 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 		// just auto-resolved, hold off re-opening until the
 		// cooldown window passes. Threshold-jitter near the
 		// boundary stops producing OPEN/RESOLVED churn.
+		// v0.8.354 — resolvedAt hydrates the Redis mirror on an
+		// in-memory miss so a failover can't punch the cooldown.
 		if r.CooldownSec > 0 {
-			e.breachMu.Lock()
-			rt, seen := e.lastResolved[key]
-			e.breachMu.Unlock()
-			if seen && now.Sub(rt) < time.Duration(r.CooldownSec)*time.Second {
+			if rt, seen := e.resolvedAt(ctx, key); seen && now.Sub(rt) < time.Duration(r.CooldownSec)*time.Second {
 				return
 			}
 		}
@@ -673,10 +670,9 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 			log.Printf("[evaluator] resolve problem: %v", err)
 		} else {
 			// Stamp the resolution so v0.5.129's CooldownSec
-			// gate can suppress immediate re-opens.
-			e.breachMu.Lock()
-			e.lastResolved[key] = time.Now()
-			e.breachMu.Unlock()
+			// gate can suppress immediate re-opens — Redis-
+			// mirrored so the gate survives failover (v0.8.354).
+			e.stampResolved(ctx, key, time.Now(), r.CooldownSec)
 			log.Printf("[evaluator] PROBLEM RESOLVED: %s · %s", service, r.Metric)
 		}
 	}
@@ -719,25 +715,20 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 
 	// Sustained-breach + cooldown machinery same as the metric
 	// path — key on (rule, "" service) so the maps stay
-	// segregated from per-service rules.
+	// segregated from per-service rules. Stamps ride the same
+	// Redis mirror as the metric path (v0.8.354).
 	key := breachKey{RuleID: r.ID, Service: ""}
 	if breached && r.ForSec > 0 {
-		e.breachMu.Lock()
-		first, seen := e.breachSince[key]
-		if !seen {
-			e.breachSince[key] = now
-			e.breachMu.Unlock()
+		first, existing := e.breachStart(ctx, key, now, r.ForSec)
+		if !existing {
 			return
 		}
-		e.breachMu.Unlock()
 		if now.Sub(first) < time.Duration(r.ForSec)*time.Second {
 			return
 		}
 	}
 	if !breached {
-		e.breachMu.Lock()
-		delete(e.breachSince, key)
-		e.breachMu.Unlock()
+		e.clearBreach(ctx, key)
 	}
 
 	open, err := e.store.FindOpenProblem(ctx, r.ID, "")
@@ -746,10 +737,7 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 	switch {
 	case breached && !hasOpen:
 		if r.CooldownSec > 0 {
-			e.breachMu.Lock()
-			rt, seen := e.lastResolved[key]
-			e.breachMu.Unlock()
-			if seen && now.Sub(rt) < time.Duration(r.CooldownSec)*time.Second {
+			if rt, seen := e.resolvedAt(ctx, key); seen && now.Sub(rt) < time.Duration(r.CooldownSec)*time.Second {
 				return
 			}
 		}
@@ -792,9 +780,7 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 		if err := e.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[evaluator] resolve log-query problem: %v", err)
 		} else {
-			e.breachMu.Lock()
-			e.lastResolved[key] = now
-			e.breachMu.Unlock()
+			e.stampResolved(ctx, key, now, r.CooldownSec)
 			log.Printf("[evaluator] PROBLEM RESOLVED (log_query): %s", r.Name)
 		}
 	}
@@ -872,9 +858,9 @@ func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
 		}
 		// Clear the cooldown stamp so the next time the source
 		// emits and breaches again, a fresh problem can open.
-		e.breachMu.Lock()
-		delete(e.lastResolved, breachKey{RuleID: p.RuleID, Service: p.Service})
-		e.breachMu.Unlock()
+		// Mirror-delete included (v0.8.354) — a fresh leader must
+		// clear stamps only the previous leader held in memory.
+		e.clearResolved(ctx, breachKey{RuleID: p.RuleID, Service: p.Service})
 		resolved++
 		log.Printf("[evaluator] PROBLEM AUTO-RESOLVED (source silent): %s · %s", p.Service, p.Metric)
 	}

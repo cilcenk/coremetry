@@ -47,6 +47,10 @@ func (s *Store) EnforceRetention(ctx context.Context) error {
 		{"logs",          "retention.logs",     s.ret.LogsDays},
 		{"metric_points", "retention.metrics",  s.ret.MetricsDays},
 		{"profiles",      "retention.profiles", s.ret.SpansDays}, // profiles share spans default
+		// v0.8.328 — exemplars ride the SPANS horizon (key AND default): an
+		// exemplar outliving its trace is a dead link. Mirrors the
+		// SetRetention plan entry.
+		{"exemplars",     "retention.spans",    s.ret.SpansDays},
 	}
 	overrides, _ := s.GetRetention(ctx)
 	overrideMap := map[string]string{

@@ -346,14 +346,22 @@ func main() {
 	spanConsumer   := consumer.New("spans",   opts, store.InsertSpans)
 	logConsumer    := consumer.New("logs",    opts, store.InsertLogs)
 	metricConsumer := consumer.New("metrics", opts, store.InsertMetrics)
+	// v0.8.328 — OTLP metric exemplars (cross-signal pivot). Same batching
+	// machinery + flush cadence as the metric rows they arrived with.
+	exemplarConsumer := consumer.New("exemplars", opts, store.InsertExemplars)
 	if mode.ingest {
 		spanConsumer.Start(ctx)
 		logConsumer.Start(ctx)
 		metricConsumer.Start(ctx)
+		exemplarConsumer.Start(ctx)
 	}
 
 	// ── OTLP ingester ─────────────────────────────────────────────────────────
 	ing := otlp.NewIngester(spanConsumer, logConsumer, metricConsumer)
+	ing.SetExemplars(exemplarConsumer)
+	// require_trace_context default true — a stored exemplar exists to be
+	// clicked through to its trace (v0.8.328).
+	ing.SetExemplarPolicy(cfg.Exemplars.RequireTraceContext)
 
 	// ── Autocomplete cache (acache, v0.8.80) ──────────────────────────────────
 	// Redis-backed picker facets (service / operation / attribute-value names)

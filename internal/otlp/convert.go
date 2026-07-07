@@ -155,23 +155,38 @@ func ConvertLogs(req *logscollpb.ExportLogsServiceRequest) []*chstore.Log {
 
 // ── Metric conversion ─────────────────────────────────────────────────────────
 
-func ConvertMetrics(req *metricscollpb.ExportMetricsServiceRequest) []*chstore.MetricPoint {
+// ConvertMetrics returns the metric points plus the OTLP exemplars extracted
+// from their datapoints (v0.8.328 — previously dp.Exemplars was silently
+// dropped, pivot-audit §2). Exemplar rows carry the SAME series fingerprint
+// as their datapoint's metric row — the metric→trace pivot join key. The
+// require-trace-context gate is NOT applied here (pure conversion, unit-
+// testable); the Ingester's addExemplar applies it so HTTP + gRPC share one
+// policy + one set of counters.
+func ConvertMetrics(req *metricscollpb.ExportMetricsServiceRequest) ([]*chstore.MetricPoint, []*chstore.ExemplarRow) {
 	var out []*chstore.MetricPoint
+	var exs []*chstore.ExemplarRow
 	for _, rm := range req.ResourceMetrics {
-		svcName, hostName := "unknown", ""
+		svcName, svcInstance, hostName := "unknown", "", ""
 		resK, resV := attrsToArrays(nil)
 		if rm.Resource != nil {
 			svcName = attrStr(rm.Resource.Attributes, "service.name", "unknown")
+			// service.instance.id is half of the fingerprint's resource
+			// identity. Read here (the only place the OTLP resource is in
+			// hand) — it is NOT a metric_points column and doesn't need to
+			// be: it's baked into series_fingerprint.
+			svcInstance = attrStr(rm.Resource.Attributes, "service.instance.id", "")
 			hostName = attrStr(rm.Resource.Attributes, "host.name", "")
 			resK, resV = attrsToArrays(rm.Resource.Attributes)
 		}
 		for _, sm := range rm.ScopeMetrics {
 			for _, m := range sm.Metrics {
-				out = append(out, convertMetric(m, svcName, hostName, resK, resV)...)
+				pts, mexs := convertMetric(m, svcName, svcInstance, hostName, resK, resV)
+				out = append(out, pts...)
+				exs = append(exs, mexs...)
 			}
 		}
 	}
-	return out
+	return out, exs
 }
 
 // temporalityStr maps the OTLP aggregation-temporality enum to the
@@ -189,7 +204,10 @@ func temporalityStr(t metricspb.AggregationTemporality) string {
 	}
 }
 
-func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []string) []*chstore.MetricPoint {
+func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, resK, resV []string) ([]*chstore.MetricPoint, []*chstore.ExemplarRow) {
+	// base computes the series fingerprint ONCE per datapoint (v0.8.328) —
+	// the same value lands on the metric row and on every exemplar row of
+	// that datapoint (the consistency invariant convert_test.go pins).
 	base := func(instrument string, startNs, timeNs uint64, val float64, cnt uint64, sum, mn, mx float64, attrs []*commonpb.KeyValue) *chstore.MetricPoint {
 		attrK, attrV := attrsToArrays(attrs)
 		return &chstore.MetricPoint{
@@ -200,14 +218,18 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 			StartTime: time.Unix(0, int64(startNs)).UTC(),
 			Value: val, Count: cnt, SumValue: sum, MinValue: mn, MaxValue: mx,
 			AttrKeys: attrK, AttrValues: attrV, ResKeys: resK, ResValues: resV,
+			SeriesFingerprint: SeriesFingerprint(m.Name, attrs, svcName, svcInstance),
 		}
 	}
 	var out []*chstore.MetricPoint
+	var exs []*chstore.ExemplarRow
 	switch d := m.Data.(type) {
 	case *metricspb.Metric_Gauge:
 		for _, dp := range d.Gauge.DataPoints {
-			out = append(out, base("gauge", dp.StartTimeUnixNano, dp.TimeUnixNano,
-				numberVal(dp), 0, 0, 0, 0, dp.Attributes))
+			p := base("gauge", dp.StartTimeUnixNano, dp.TimeUnixNano,
+				numberVal(dp), 0, 0, 0, 0, dp.Attributes)
+			out = append(out, p)
+			exs = appendExemplars(exs, dp.Exemplars, p, dp.TimeUnixNano)
 		}
 	case *metricspb.Metric_Sum:
 		for _, dp := range d.Sum.DataPoints {
@@ -215,6 +237,7 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 				numberVal(dp), 0, 0, 0, 0, dp.Attributes)
 			p.Temporality = temporalityStr(d.Sum.AggregationTemporality)
 			out = append(out, p)
+			exs = appendExemplars(exs, dp.Exemplars, p, dp.TimeUnixNano)
 		}
 	case *metricspb.Metric_Histogram:
 		for _, dp := range d.Histogram.DataPoints {
@@ -239,6 +262,7 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 				p.BucketCounts = append([]uint64(nil), dp.BucketCounts...)
 			}
 			out = append(out, p)
+			exs = appendExemplars(exs, dp.Exemplars, p, dp.TimeUnixNano)
 		}
 	case *metricspb.Metric_ExponentialHistogram:
 		for _, dp := range d.ExponentialHistogram.DataPoints {
@@ -247,10 +271,14 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 			if dp.Count > 0 {
 				avg = sum / float64(dp.Count)
 			}
-			out = append(out, base("exp_histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
-				avg, dp.Count, sum, 0, 0, dp.Attributes))
+			p := base("exp_histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
+				avg, dp.Count, sum, 0, 0, dp.Attributes)
+			out = append(out, p)
+			exs = appendExemplars(exs, dp.Exemplars, p, dp.TimeUnixNano)
 		}
 	case *metricspb.Metric_Summary:
+		// SummaryDataPoint carries NO exemplars field in the OTLP proto —
+		// nothing to extract here (pivot-audit §2).
 		for _, dp := range d.Summary.DataPoints {
 			avg := 0.0
 			if dp.Count > 0 {
@@ -260,7 +288,45 @@ func convertMetric(m *metricspb.Metric, svcName, hostName string, resK, resV []s
 				avg, dp.Count, dp.Sum, 0, 0, dp.Attributes))
 		}
 	}
-	return out
+	return out, exs
+}
+
+// appendExemplars converts one datapoint's OTLP exemplars into ExemplarRows
+// carrying the datapoint's metric-row identity (fingerprint / metric /
+// service). No dedup or sampling at ingest (v0.8.328 design call: exemplar
+// volume is producer-bounded — SDKs keep ~1 per series per export).
+func appendExemplars(dst []*chstore.ExemplarRow, exemplars []*metricspb.Exemplar, p *chstore.MetricPoint, dpTimeNs uint64) []*chstore.ExemplarRow {
+	for _, ex := range exemplars {
+		ts := ex.TimeUnixNano
+		if ts == 0 {
+			// Producer omitted the exemplar timestamp — anchor to the
+			// datapoint. A 1970 row would sit outside every query window
+			// and be unreachable forever.
+			ts = dpTimeNs
+		}
+		var attrs map[string]string
+		if len(ex.FilteredAttributes) > 0 {
+			attrs = make(map[string]string, len(ex.FilteredAttributes))
+			for _, kv := range ex.FilteredAttributes {
+				attrs[kv.Key] = anyValStr(kv.Value)
+			}
+		}
+		dst = append(dst, &chstore.ExemplarRow{
+			Fingerprint: p.SeriesFingerprint,
+			Metric:      p.Metric,
+			Service:     p.ServiceName,
+			Time:        time.Unix(0, int64(ts)).UTC(),
+			Value:       numberVal(ex), // Exemplar satisfies numberDP (AsDouble/AsInt oneof)
+			// parentID (not hexID): OTel "no trace context" arrives as nil
+			// bytes OR all-zero bytes depending on the SDK — both must
+			// collapse to "" so the require-trace-context gate sees them
+			// identically (same disagreement parentID handles for spans).
+			TraceID:       parentID(ex.TraceId),
+			SpanID:        parentID(ex.SpanId),
+			FilteredAttrs: attrs,
+		})
+	}
+	return dst
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

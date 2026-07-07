@@ -161,41 +161,67 @@ func (s *Store) InsertLogs(ctx context.Context, logs []*Log) error {
 	return batch.Send()
 }
 
-func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
-	ctx = asyncInsertCtx(ctx)
-	// v0.5.358 — explicit column list because the schema gained
-	// bucket_bounds + bucket_counts at the end. Named INSERT
-	// avoids surprises if the column order ever changes again,
-	// and gives a clear error on a stale schema rather than
-	// silently writing into the wrong column.
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO metric_points
+// metricsInsertSQL builds the named `INSERT INTO metric_points (…)`
+// statement. v0.5.358 introduced the explicit column list (clear error on a
+// stale schema instead of silent positional drift); v0.8.328 makes
+// series_fingerprint CONDITIONAL on s.hasSeriesFpCol — on an external
+// Distributed install where the ALTER never reached metric_points_local,
+// binding it would kill every metric batch with code 16 (the op_group /
+// v0.8.186 failure shape). Pure so the column/value alignment is unit-tested.
+func metricsInsertSQL(withSeriesFp bool) string {
+	sql := `INSERT INTO metric_points
 		(metric, instrument, description, unit,
 		 service_name, host_name, time, start_time,
 		 value, count, sum_value, min_value, max_value,
 		 attr_keys, attr_values, res_keys, res_values,
-		 bucket_bounds, bucket_counts, temporality)`)
+		 bucket_bounds, bucket_counts, temporality`
+	if withSeriesFp {
+		sql += ", series_fingerprint"
+	}
+	return sql + ")"
+}
+
+// metricAppendArgs builds the positional Append() arguments for one metric
+// point in the EXACT order of metricsInsertSQL, appending series_fingerprint
+// LAST iff withSeriesFp — the same lockstep guarantee spanAppendArgs gives
+// the spans INSERT (v0.8.186 discipline).
+func metricAppendArgs(p *MetricPoint, withSeriesFp bool) []any {
+	// Histogram-only payloads come through with arrays
+	// populated; everything else uses empty slices so the
+	// CH default-array behaviour kicks in.
+	bounds := p.BucketBounds
+	counts := p.BucketCounts
+	if bounds == nil {
+		bounds = []float64{}
+	}
+	if counts == nil {
+		counts = []uint64{}
+	}
+	args := []any{
+		p.Metric, p.Instrument, p.Description, p.Unit,
+		p.ServiceName, p.HostName, p.Time, p.StartTime,
+		p.Value, p.Count, p.SumValue, p.MinValue, p.MaxValue,
+		p.AttrKeys, p.AttrValues, p.ResKeys, p.ResValues,
+		bounds, counts, p.Temporality,
+	}
+	if withSeriesFp {
+		args = append(args, p.SeriesFingerprint)
+	}
+	return args
+}
+
+func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
+	ctx = asyncInsertCtx(ctx)
+	// series_fingerprint is bound ONLY when the column is actually present
+	// on the table the write fans out to (s.hasSeriesFpCol, probed once at
+	// boot) — see metricsInsertSQL for the failure mode this prevents.
+	withSeriesFp := s.hasSeriesFpCol
+	batch, err := s.conn.PrepareBatch(ctx, metricsInsertSQL(withSeriesFp))
 	if err != nil {
 		return fmt.Errorf("prepare metrics: %w", err)
 	}
 	for _, p := range pts {
-		// Histogram-only payloads come through with arrays
-		// populated; everything else uses empty slices so the
-		// CH default-array behaviour kicks in.
-		bounds := p.BucketBounds
-		counts := p.BucketCounts
-		if bounds == nil {
-			bounds = []float64{}
-		}
-		if counts == nil {
-			counts = []uint64{}
-		}
-		if err := batch.Append(
-			p.Metric, p.Instrument, p.Description, p.Unit,
-			p.ServiceName, p.HostName, p.Time, p.StartTime,
-			p.Value, p.Count, p.SumValue, p.MinValue, p.MaxValue,
-			p.AttrKeys, p.AttrValues, p.ResKeys, p.ResValues,
-			bounds, counts, p.Temporality,
-		); err != nil {
+		if err := batch.Append(metricAppendArgs(p, withSeriesFp)...); err != nil {
 			return fmt.Errorf("append metric: %w", err)
 		}
 	}

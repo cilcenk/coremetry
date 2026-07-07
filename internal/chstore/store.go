@@ -54,6 +54,21 @@ type Store struct {
 	// and the path is byte-identical to pre-v0.8.186.
 	hasOpGroupCol bool
 
+	// hasSeriesFpCol records whether metric_points actually carries the
+	// `series_fingerprint` column (v0.8.328, cross-signal pivot). Same
+	// hazard class as hasOpGroupCol: it is an EXPLICIT Go-written column on
+	// the INGEST path (convert.go computes it, the metric_points INSERT
+	// binds it), so on an external Distributed install with
+	// cfg.ClusterName unset the ALTER would land on the wrapper only,
+	// never on metric_points_local, and EVERY metric batch would be lost
+	// with code 16 — the exact failure that broke prod twice (cluster
+	// v0.8.185, op_group v0.8.186). The ALTER is therefore gated on
+	// tableIsExternalDistributed and this probe decides whether the
+	// INSERT includes the column. When false, metric rows land without a
+	// fingerprint (0 = legacy sentinel) and the exemplar pivot degrades
+	// to the metric+service fallback read — ingest never breaks.
+	hasSeriesFpCol bool
+
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
 	// problem into an existing incident on a service that calls
@@ -1075,6 +1090,36 @@ func (s *Store) migrate(ctx context.Context) error {
 		TTL toDate(time) + INTERVAL %d DAY
 		SETTINGS index_granularity = 8192`, md),
 
+		// exemplars — v0.8.328, cross-signal pivot Phase 1a. One row per
+		// OTLP metric exemplar (previously dropped at ingest). The
+		// metric→trace pivot reads WHERE series_fingerprint IN (…) AND a
+		// timestamp window — a pure primary-key scan on this ORDER BY, no
+		// JOIN. series_fingerprint is the same xxhash64 identity stored on
+		// metric_points.series_fingerprint (otlp.SeriesFingerprint).
+		//   - trace_id / span_id: plain String (hex, same encoding as
+		//     spans.trace_id → same-type joins). NOT LowCardinality:
+		//     high-cardinality IDs make the dict overhead exceed its value.
+		//   - filtered_attributes: Map — exemplar attr sets are tiny and
+		//     read whole; no per-key indexOf() access pattern to serve.
+		//   - TTL from retention.spans (%[1]d, NOT MetricsDays) ON PURPOSE:
+		//     an exemplar's payload IS its trace link, so an exemplar that
+		//     outlives its trace is a dead click. SetRetention keeps this
+		//     in lockstep with operator edits to retention.spans.
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS exemplars (
+			series_fingerprint UInt64,
+			metric_name   LowCardinality(String),
+			service_name  LowCardinality(String),
+			timestamp     DateTime64(9) CODEC(Delta, ZSTD(3)),
+			value         Float64      CODEC(Gorilla, ZSTD(3)),
+			trace_id      String       DEFAULT '' CODEC(ZSTD(3)),
+			span_id       String       DEFAULT '' CODEC(ZSTD(3)),
+			filtered_attributes Map(LowCardinality(String), String)
+		) ENGINE = MergeTree()
+		PARTITION BY toDate(timestamp)
+		ORDER BY (series_fingerprint, timestamp)
+		TTL toDate(timestamp) + INTERVAL %[1]d DAY
+		SETTINGS index_granularity = 8192`, sd),
+
 		// Pre-aggregated topology edges (v0.5.108). The service-
 		// level topology view used to run a self-join on the spans
 		// table per request — at billions-of-spans-per-day scale
@@ -1707,6 +1752,37 @@ func (s *Store) migrate(ctx context.Context) error {
 		} else {
 			log.Printf("[chstore] dropped operation_group_summary_5m MV (op_group absent — its insert trigger would block ingest)")
 		}
+	}
+
+	// series_fingerprint — v0.8.328 cross-signal pivot: the persisted metric
+	// series identity (see hasSeriesFpCol on the Store struct). EXPLICIT
+	// Go-written column on the metric_points INGEST path, so it gets the
+	// op_group treatment, NOT a slot in the generic alters slice: on an
+	// external Distributed `metric_points` with cfg.ClusterName unset the
+	// ALTER would reach the wrapper only — CH forwards DEFAULT columns to
+	// the shards (PR #7377) and every metric INSERT would die with code 16
+	// (the v0.8.186 failure shape, this class broke prod twice). Skip + log
+	// there; the probe below then keeps the INSERT column list honest.
+	// Forward-only: old parts read the DEFAULT 0 (= "no identity" sentinel).
+	const seriesFpAlter = `ALTER TABLE metric_points ADD COLUMN IF NOT EXISTS series_fingerprint UInt64 DEFAULT 0`
+	if s.tableIsExternalDistributed(ctx, "metric_points") {
+		log.Printf("[chstore] external Distributed `metric_points` with cluster_name unset — SKIPPING series_fingerprint ALTER (it can't reach metric_points_local; adding it to the wrapper only would break every metric INSERT with code 16). Exemplar pivots degrade to the metric+service fallback; set config.clickhouse.cluster_name to enable them.")
+	} else if err := s.execDDL(ctx, seriesFpAlter); err != nil {
+		return fmt.Errorf("alter table (series_fingerprint): %w", err)
+	}
+
+	// Probe whether series_fingerprint is genuinely present on the table the
+	// WRITE path inserts into — in distributed mode this select routes to
+	// metric_points_local, so it correctly reads false when the column never
+	// reached the shards (skipped ALTER above, or an operator-managed schema
+	// that pre-dates it). Mirrors the hasOpGroupCol probe exactly, incl. the
+	// maybeCloseRows error-path discipline (v0.8.185 boot-panic).
+	sfRows, sfErr := s.conn.Query(ctx,
+		`SELECT series_fingerprint FROM metric_points WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(sfRows, sfErr)
+	s.hasSeriesFpCol = sfErr == nil
+	if !s.hasSeriesFpCol {
+		log.Printf("[chstore] `series_fingerprint` column not present on metric_points (%v) — INSERT omits it; exemplar reads fall back to metric+service (expected on an external Distributed cluster with cluster_name unset)", sfErr)
 	}
 
 	// Materialized views — pre-aggregate the high-volume spans table into

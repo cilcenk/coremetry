@@ -85,6 +85,35 @@ type MetricPoint struct {
 	// histogram read path deltas cumulative series before bucketing
 	// so a cumulative heatmap doesn't grow monotonically to the right.
 	Temporality string
+	// v0.8.328 — persisted series identity (cross-signal pivot).
+	// xxhash64 over metric name + sorted dp attrs + service.name/
+	// service.instance.id, computed per datapoint by
+	// otlp.SeriesFingerprint. Joins metric_points ↔ exemplars so the
+	// metric→trace pivot is a primary-key scan. 0 = legacy row
+	// (pre-v0.8.328) — readers treat 0 as "no identity", never match it.
+	SeriesFingerprint uint64
+}
+
+// ExemplarRow is one OTLP metric exemplar normalised for the `exemplars`
+// table (v0.8.328). Extracted by otlp/convert.go from Sum / Gauge /
+// Histogram / ExponentialHistogram datapoints (Summary carries no exemplars
+// in the OTLP proto). Fingerprint is the SAME SeriesFingerprint stored on the
+// datapoint's metric_points row — the join key of the metric→trace pivot.
+type ExemplarRow struct {
+	Fingerprint uint64
+	Metric      string
+	Service     string
+	Time        time.Time
+	Value       float64
+	// TraceID / SpanID are lowercase hex (same encoding as spans.trace_id so
+	// the pivot is a same-type join); "" when the producer had no sampled
+	// trace context. The require-trace-context ingest gate drops empty-trace
+	// rows by default — a stored exemplar exists to be clicked through.
+	TraceID string
+	SpanID  string
+	// FilteredAttrs are the attrs the producer's aggregation filtered OFF the
+	// series (OTLP filtered_attributes) — shown as context on the pivot UI.
+	FilteredAttrs map[string]string
 }
 
 // ── API response types ────────────────────────────────────────────────────────

@@ -29,6 +29,12 @@ type Ingester struct {
 	Spans   *consumer.Consumer[*chstore.Span]
 	Logs    *consumer.Consumer[*chstore.Log]
 	Metrics *consumer.Consumer[*chstore.MetricPoint]
+	// Exemplars (v0.8.328) — OTLP metric exemplars extracted alongside the
+	// metric points (cross-signal pivot). Its flusher batches into
+	// chstore.InsertExemplars with the same consumer machinery / flush
+	// cadence as Metrics. nil-safe: addExemplar no-ops the enqueue (counters
+	// still tick) on pods where main didn't wire it.
+	Exemplars *consumer.Consumer[*chstore.ExemplarRow]
 
 	// pipeline (v0.5.263) — ingest-time drop / enrich rules. nil = no rules
 	// (the engine is a no-op-on-empty, so passing it through is fine too).
@@ -37,6 +43,16 @@ type Ingester struct {
 	spansDropped   atomic.Uint64
 	logsDropped    atomic.Uint64
 	metricsDropped atomic.Uint64
+
+	// exemplar policy + counters (v0.8.328). exemplarsNoTraceOK is the
+	// INVERTED config exemplars.require_trace_context so the zero value
+	// (false) matches the config default (require=true) — an Ingester built
+	// without SetExemplarPolicy still gates correctly. Counters follow the
+	// pipeline-drop atomics above: droppedNoTrace is an INTENTIONAL policy
+	// drop (a trace-less exemplar can't be clicked through), not data loss.
+	exemplarsNoTraceOK      bool
+	exemplarsIngested       atomic.Uint64
+	exemplarsDroppedNoTrace atomic.Uint64
 
 	// autocomplete (v0.8.80) — Redis-backed picker-facet cache. nil-safe:
 	// ObserveSpan short-circuits on a nil/disabled store, so pods without
@@ -67,6 +83,23 @@ func (ing *Ingester) SpansDroppedByPipeline() uint64 { return ing.spansDropped.L
 // counters — pipeline drops are INTENTIONAL, not data loss.
 func (ing *Ingester) LogsDroppedByPipeline() uint64    { return ing.logsDropped.Load() }
 func (ing *Ingester) MetricsDroppedByPipeline() uint64 { return ing.metricsDropped.Load() }
+
+// SetExemplars wires the exemplar consumer (v0.8.328). Called from main();
+// nil keeps addExemplar counting but not enqueueing (api-only pods).
+func (ing *Ingester) SetExemplars(c *consumer.Consumer[*chstore.ExemplarRow]) { ing.Exemplars = c }
+
+// SetExemplarPolicy applies config exemplars.require_trace_context (default
+// true). require=false stores trace-less exemplars too — useful when the
+// operator wants the value/attr context even without a click-through target.
+func (ing *Ingester) SetExemplarPolicy(requireTraceContext bool) {
+	ing.exemplarsNoTraceOK = !requireTraceContext
+}
+
+// ExemplarsIngested / ExemplarsDroppedNoTrace are the two v0.8.328 exemplar
+// ingest totals surfaced on /admin/stats (SystemStats.Exemplars), following
+// the pipeline-counter accessor pattern above.
+func (ing *Ingester) ExemplarsIngested() uint64       { return ing.exemplarsIngested.Load() }
+func (ing *Ingester) ExemplarsDroppedNoTrace() uint64 { return ing.exemplarsDroppedNoTrace.Load() }
 
 func NewIngester(
 	spans *consumer.Consumer[*chstore.Span],
@@ -118,6 +151,22 @@ func (ing *Ingester) addMetric(m *chstore.MetricPoint) bool {
 	return ing.Metrics.Add(m)
 }
 
+// addExemplar applies the require-trace-context gate (v0.8.328) then forwards
+// to the exemplar consumer. Accept-but-discard on a policy drop, like the
+// pipeline drops — the caller's accounting is unaffected. Returns false only
+// when the consumer buffer was full.
+func (ing *Ingester) addExemplar(ex *chstore.ExemplarRow) bool {
+	if ex.TraceID == "" && !ing.exemplarsNoTraceOK {
+		ing.exemplarsDroppedNoTrace.Add(1)
+		return true
+	}
+	ing.exemplarsIngested.Add(1)
+	if ing.Exemplars == nil {
+		return true // pod without the exemplar consumer wired — count only
+	}
+	return ing.Exemplars.Add(ex)
+}
+
 // HTTPHandler returns an http.Handler that accepts OTLP/HTTP (protobuf + JSON).
 func HTTPHandler(ing *Ingester) http.Handler {
 	mux := http.NewServeMux()
@@ -165,9 +214,14 @@ func (ing *Ingester) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	pts := ConvertMetrics(&req)
+	pts, exs := ConvertMetrics(&req)
 	for _, p := range pts {
 		ing.addMetric(p)
+	}
+	// v0.8.328 — OTLP exemplars ride the same request; the gate + counters
+	// live in addExemplar so gRPC shares them.
+	for _, ex := range exs {
+		ing.addExemplar(ex)
 	}
 	writeProtoResp(w, r, &metricscollpb.ExportMetricsServiceResponse{})
 }

@@ -76,12 +76,22 @@ func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string
 		val   string
 		table string
 		col   string // timestamp column the TTL is computed against
+		// persist writes the system_settings override row. False for
+		// tables that RIDE another signal's key (exemplars ← retention.spans)
+		// so the shared key is upserted exactly once per apply.
+		persist bool
 	}
 	plans := []tbl{
-		{"retention.spans", sp.Spans, "spans", "time"},
-		{"retention.logs", sp.Logs, "logs", "time"},
-		{"retention.metrics", sp.Metrics, "metric_points", "time"},
-		{"retention.profiles", sp.Profiles, "profiles", "start_time"},
+		{"retention.spans", sp.Spans, "spans", "time", true},
+		// v0.8.328 — exemplars follow the SPANS retention on purpose (not
+		// metrics): an OTLP exemplar's payload is its trace link, and an
+		// exemplar outliving its trace is a dead click. Keyed off the same
+		// retention.spans value so an operator TTL edit propagates here in
+		// the same apply.
+		{"retention.spans", sp.Spans, "exemplars", "timestamp", false},
+		{"retention.logs", sp.Logs, "logs", "time", true},
+		{"retention.metrics", sp.Metrics, "metric_points", "time", true},
+		{"retention.profiles", sp.Profiles, "profiles", "start_time", true},
 	}
 	for _, p := range plans {
 		if p.val == "" {
@@ -130,7 +140,10 @@ func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string
 			// errored "Engine Distributed doesn't support TTL clause" each cycle.)
 			log.Printf("[chstore] retention TTL on %s not applied: %v — set chstore.cluster_name or apply TTL on the per-shard local table; the override is still recorded", p.table, err)
 		}
-		// Persist the override.
+		// Persist the override (once per key — ride-along tables skip).
+		if !p.persist {
+			continue
+		}
 		if err := s.upsertSetting(ctx, p.key, p.val, actor); err != nil {
 			return fmt.Errorf("persist %s: %w", p.key, err)
 		}

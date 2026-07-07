@@ -136,14 +136,23 @@ func (s *Store) ShardSkipSetting() string { return s.shardSkipSetting() }
 // keeps its byte-identical behaviour — the column probe downstream still
 // gates the write path on the column's actual presence.
 func (s *Store) spansIsExternalDistributed(ctx context.Context) bool {
+	return s.tableIsExternalDistributed(ctx, "spans")
+}
+
+// tableIsExternalDistributed is the table-generic form of the check above
+// (v0.8.328 — the series_fingerprint ALTER on metric_points carries the exact
+// same code-16 hazard as op_group on spans). Same semantics: only a bare
+// Distributed engine with cfg.ClusterName UNSET is the dangerous external
+// case; probe errors read false so behaviour never changes on a hiccup.
+func (s *Store) tableIsExternalDistributed(ctx context.Context, table string) bool {
 	if s.clusterMode() {
-		return false // adaptDDL owns spans_local + ON CLUSTER
+		return false // adaptDDL owns <table>_local + ON CLUSTER
 	}
 	var engine string
 	err := s.conn.QueryRow(ctx, `
 		SELECT engine FROM system.tables
-		WHERE database = currentDatabase() AND name = 'spans'
-		LIMIT 1`).Scan(&engine)
+		WHERE database = currentDatabase() AND name = ?
+		LIMIT 1`, table).Scan(&engine)
 	if err != nil {
 		return false // unknown → don't change behaviour; column probe still guards writes
 	}
@@ -314,6 +323,13 @@ var defaultShardPolicy = map[string]string{
 	"logs":                 "cityHash64(service_name)",
 	"metric_points":        "cityHash64(service_name)",
 	"profiles":             "cityHash64(service_name)",
+	// v0.8.328 — exemplars shard by series fingerprint so the canonical
+	// `series_fingerprint IN (…)` pivot read is shard-local per series
+	// (all rows of one series co-locate; the fingerprint set of one chart
+	// touches few shards). toString because the fingerprint is UInt64 and
+	// cityHash64 wants a hashable arg shape consistent with the other
+	// policies.
+	"exemplars":            "cityHash64(toString(series_fingerprint))",
 	"trace_summary_5m":     "cityHash64(trace_id)",
 	// v0.5.422 — trace_summary_1d MV columns are only `day` +
 	// `trace_count_state` (HLL state); trace_id isn't projected.
@@ -738,6 +754,10 @@ var highVolumeTables = map[string]bool{
 	"logs":          true,
 	"metric_points": true,
 	"profiles":      true,
+	// v0.8.328 — OTLP metric exemplars: written on the ingest path next to
+	// metric_points, so it needs the same `_local` + Distributed-wrapper
+	// treatment (shard policy above keeps each series' rows co-located).
+	"exemplars": true,
 	// Materialized views feeding off the high-volume base tables —
 	// each shard aggregates its own slice, the Distributed wrapper
 	// fans queries out across shards and merges.

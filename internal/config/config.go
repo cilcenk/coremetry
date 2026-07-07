@@ -32,6 +32,7 @@ type Config struct {
 	Logs       LogsConfig      `yaml:"logs"`
 	AI         AIConfig        `yaml:"ai"`
 	Background BackgroundConfig `yaml:"background"`
+	Exemplars  ExemplarsConfig `yaml:"exemplars"`
 	// PublicURL is the operator-facing base URL of this
 	// Coremetry deployment (e.g. https://coremetry.bank.local).
 	// Notification bodies (Slack / Teams / Zoom / email /
@@ -158,6 +159,22 @@ type ESFieldsConfig struct {
 	Message        string `yaml:"message"`         // env: COREMETRY_ES_FIELD_MESSAGE     (default message)
 	SeverityText   string `yaml:"severity_text"`   // env: COREMETRY_ES_FIELD_SEVERITY_TEXT   (default log.level)
 	SeverityNumber string `yaml:"severity_number"` // env: COREMETRY_ES_FIELD_SEVERITY_NUMBER (default "" — skipped)
+}
+
+// ExemplarsConfig gates OTLP metric-exemplar ingest (v0.8.328, cross-signal
+// pivot). RequireTraceContext (yaml exemplars.require_trace_context, default
+// TRUE) drops exemplars that carry no trace_id — a stored exemplar exists to
+// be clicked through to its trace, so trace-less ones are dead weight unless
+// the operator explicitly wants them.
+//
+// Zero-value handling: the default lives in the `defaults` var (true) and
+// Load unmarshals the YAML ON TOP of it — an absent key keeps true while an
+// explicit `require_trace_context: false` is honoured. A post-load zero-fill
+// (the retention-days pattern) would be WRONG for a bool: it can't tell
+// "unset" from "operator said false". Same mechanism as
+// Background.LogAnomalyEnabled.
+type ExemplarsConfig struct {
+	RequireTraceContext bool `yaml:"require_trace_context"`
 }
 
 // RedisConfig is fully optional. When URL is empty Coremetry runs in
@@ -351,6 +368,9 @@ var defaults = Config{
 		StatusProbeTimeout:    5 * time.Second,
 		LogAnomalyEnabled:     true,
 	},
+	// v0.8.328 — exemplars without trace context are dropped by default;
+	// yaml merges over this so only an explicit false disables the gate.
+	Exemplars: ExemplarsConfig{RequireTraceContext: true},
 }
 
 // applyBackgroundDefaults fills zero-valued duration fields on

@@ -22,8 +22,9 @@ type PurgeResult struct {
 // CREATE statements in store.go / chmigrate; TestPurgeAllowlistExcludesConfig
 // pins that no config table leaks in.
 var telemetryPurgeTables = []string{
-	// raw signals
-	"spans", "logs", "metric_points", "profiles",
+	// raw signals (exemplars = OTLP metric exemplars, v0.8.328 — pure
+	// telemetry, regenerates from new ingest)
+	"spans", "logs", "metric_points", "profiles", "exemplars",
 	// RED / aggregation MVs
 	"service_summary_5m", "operation_summary_5m", "operation_group_summary_5m",
 	"db_summary_5m", "db_caller_summary_5m",

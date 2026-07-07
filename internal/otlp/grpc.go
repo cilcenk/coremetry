@@ -97,9 +97,14 @@ type metricsGRPC struct {
 }
 
 func (s *metricsGRPC) Export(_ context.Context, req *metricscollpb.ExportMetricsServiceRequest) (*metricscollpb.ExportMetricsServiceResponse, error) {
-	pts := ConvertMetrics(req)
+	pts, exs := ConvertMetrics(req)
 	for _, p := range pts {
 		s.ing.addMetric(p)
+	}
+	// v0.8.328 — OTLP exemplars; gate + counters shared with the HTTP path
+	// via addExemplar.
+	for _, ex := range exs {
+		s.ing.addExemplar(ex)
 	}
 	return &metricscollpb.ExportMetricsServiceResponse{}, nil
 }

@@ -16,12 +16,25 @@ import (
 // scans for distinct service / operation counts. Designed to stay
 // sub-second even at 40M traces / day.
 type SystemStats struct {
-	Snapshot SystemSnapshot `json:"snapshot"`
-	Tables   []TableStat    `json:"tables"`
-	History  []DayStat      `json:"history"`
-	Ingest   IngestRates    `json:"ingest"`
-	Drops    IngestDrops    `json:"drops"`
-	Health   SystemHealth   `json:"health"`
+	Snapshot  SystemSnapshot `json:"snapshot"`
+	Tables    []TableStat    `json:"tables"`
+	History   []DayStat      `json:"history"`
+	Ingest    IngestRates    `json:"ingest"`
+	Drops     IngestDrops    `json:"drops"`
+	Health    SystemHealth   `json:"health"`
+	Exemplars ExemplarIngest `json:"exemplars"`
+}
+
+// ExemplarIngest — the two OTLP metric-exemplar ingest totals (cumulative
+// since process start, v0.8.328). DroppedNoTrace counts the require-trace-
+// context policy gate (INTENTIONAL, like the pipeline drops — never in the
+// loss alarm); buffer/write loss for accepted exemplars is visible through
+// the exemplars consumer like every other signal. Populated by the API
+// getSystemStats handler from the live Ingester atomics; GetSystemStats
+// (CH-only) leaves it zero so chstore keeps no otlp dependency.
+type ExemplarIngest struct {
+	Ingested       int64 `json:"ingested"`
+	DroppedNoTrace int64 `json:"droppedNoTrace"`
 }
 
 // SystemHealth surfaces config/boot conditions that silently degrade reads, so

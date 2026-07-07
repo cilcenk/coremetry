@@ -1303,6 +1303,10 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 			st.Drops.SpansPipeline = int64(s.ing.SpansDroppedByPipeline())
 			st.Drops.LogsPipeline = int64(s.ing.LogsDroppedByPipeline())
 			st.Drops.MetricsPipeline = int64(s.ing.MetricsDroppedByPipeline())
+			// v0.8.328 — OTLP exemplar ingest totals (accepted vs dropped by
+			// the require-trace-context gate), same Ingester-atomics pattern.
+			st.Exemplars.Ingested = int64(s.ing.ExemplarsIngested())
+			st.Exemplars.DroppedNoTrace = int64(s.ing.ExemplarsDroppedNoTrace())
 		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state.

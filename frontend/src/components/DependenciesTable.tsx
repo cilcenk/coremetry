@@ -171,12 +171,15 @@ export function DependenciesTable({
     ...(hasClusterCol
       ? [{ id: 'cluster', label: 'Cluster', sortValue: (r: DepRow) => r.cluster ?? '', naturalDir: NATURAL.cluster, width: 120 } as DataTableColumn<DepRow>]
       : []),
-    { id: 'name', label: kind === 'db' ? 'Instance' : 'Destination', sortValue: r => nameOf(r), naturalDir: NATURAL.name, width: 210 },
     // db.name only makes sense for databases — Kafka/RabbitMQ/etc.
     // (kind === 'queue') have no db.name, so the column is db-only.
+    // v0.8.368 (operator-requested): Database sits BEFORE Instance —
+    // System | Database | Instance | Calls reads engine → logical DB
+    // → physical host, matching how operators scan the page.
     ...(kind === 'db'
       ? [{ id: 'database', label: 'Database', sortValue: (r: DepRow) => r.dbName ?? '', naturalDir: 'asc', width: 120 } as DataTableColumn<DepRow>]
       : []),
+    { id: 'name', label: kind === 'db' ? 'Instance' : 'Destination', sortValue: r => nameOf(r), naturalDir: NATURAL.name, width: 210 },
     { id: 'spanCount', label: 'Calls', sortValue: r => r.spanCount, numeric: true, naturalDir: NATURAL.spanCount, width: 96 },
     // v0.8.364 (Stage-2 M1) — messaging-only producer/consumer
     // split. Rates are precomputed by the page (it owns the window
@@ -353,6 +356,35 @@ export function DependenciesTable({
                         )}
                       </td>
                     )}
+                    {/* v0.5.315 / dedicated Database column — one host
+                        serving N databases (Oracle SID/service,
+                        PostgreSQL / MongoDB / MSSQL DB) → row is keyed
+                        on (host, dbName). Surfaced as its own column
+                        (was an inline ⛁ chip) so the operator can scan
+                        + sort by database. '—' for the 'default'
+                        fallback (OTel instrumentation didn't emit
+                        db.name). v0.8.368: rendered BEFORE Instance to
+                        match the reordered header. */}
+                    {kind === 'db' && (
+                      <td>
+                        {r.dbName && r.dbName !== 'default' ? (
+                          <span title={`db.name = ${r.dbName}`}
+                            style={{
+                              fontSize: 10,
+                              padding: '1px 6px', borderRadius: 3,
+                              background: 'var(--bg3)',
+                              border: '1px solid var(--border)',
+                              color: 'var(--text2)',
+                              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                              verticalAlign: 'middle',
+                            }}>
+                            ⛁ {r.dbName}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text3)' }}>—</span>
+                        )}
+                      </td>
+                    )}
                     <td onClick={e => e.stopPropagation()}>
                       <Link to={exploreHref(r)}
                             style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 500 }}
@@ -383,34 +415,6 @@ export function DependenciesTable({
                         </span>
                       )}
                     </td>
-                    {/* v0.5.315 / dedicated Database column — one host
-                        serving N databases (Oracle SID/service,
-                        PostgreSQL / MongoDB / MSSQL DB) → row is keyed
-                        on (host, dbName). Surfaced as its own column
-                        (was an inline ⛁ chip) so the operator can scan
-                        + sort by database. '—' for the 'default'
-                        fallback (OTel instrumentation didn't emit
-                        db.name). */}
-                    {kind === 'db' && (
-                      <td>
-                        {r.dbName && r.dbName !== 'default' ? (
-                          <span title={`db.name = ${r.dbName}`}
-                            style={{
-                              fontSize: 10,
-                              padding: '1px 6px', borderRadius: 3,
-                              background: 'var(--bg3)',
-                              border: '1px solid var(--border)',
-                              color: 'var(--text2)',
-                              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                              verticalAlign: 'middle',
-                            }}>
-                            ⛁ {r.dbName}
-                          </span>
-                        ) : (
-                          <span style={{ color: 'var(--text3)' }}>—</span>
-                        )}
-                      </td>
-                    )}
                     <td className="mono" style={{ textAlign: 'right' }}>
                       {fmtNum(r.spanCount)}
                       {compare && <TrendDelta cur={r.spanCount} prior={r.priorSpanCount} kind="neutral" />}

@@ -302,9 +302,33 @@ func main() {
 	}
 
 	// ── ClickHouse ────────────────────────────────────────────────────────────
-	store, err := chstore.New(cfg.ClickHouse, cfg.Retention)
-	if err != nil {
-		log.Fatalf("clickhouse: %v\n\nMake sure ClickHouse is running:\n  docker run -d --name coremetry-ch -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-server:24.8-alpine", err)
+	// v0.8.353 (HA audit yellow) — bounded connect retry instead of instant
+	// Fatalf. A CH outage used to CrashLoopBackOff every pod: after the
+	// outage ended, kubelet's backoff (up to 5m) kept the fleet dark for
+	// minutes MORE, and with maxUnavailable:0 a concurrent rollout could
+	// leave zero ready pods (the otelcol zero-addresses shape). We retry
+	// inside the startupProbe budget (10s×30 = 5m, v0.8.339) and leave
+	// ~1m of headroom for schema migrations after the connect succeeds.
+	var store *chstore.Store
+	{
+		deadline := time.Now().Add(4 * time.Minute)
+		attempt := 0
+		for {
+			attempt++
+			var cherr error
+			store, cherr = chstore.New(cfg.ClickHouse, cfg.Retention)
+			if cherr == nil {
+				if attempt > 1 {
+					log.Printf("[chstore] connected after %d attempts", attempt)
+				}
+				break
+			}
+			if time.Now().After(deadline) {
+				log.Fatalf("clickhouse (gave up after %d attempts over 4m): %v\n\nMake sure ClickHouse is running:\n  docker run -d --name coremetry-ch -p 9000:9000 -p 8123:8123 clickhouse/clickhouse-server:24.8-alpine", attempt, cherr)
+			}
+			log.Printf("[chstore] connect attempt %d failed (%v) — retrying in 10s", attempt, cherr)
+			time.Sleep(10 * time.Second)
+		}
 	}
 	defer store.Close()
 

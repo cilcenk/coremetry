@@ -64,6 +64,38 @@ type SlowQueryRow struct {
 // pruning helps for the time window, and CH's index on
 // service_name doesn't help here since we don't filter on it.
 // 30s execution-time guard keeps the worst case bounded.
+// slowQueriesGlobalSQL builds the global slow-queries scan. Pure —
+// pinned by TestSlowQueriesGlobalSQLNoAliasShadow (v0.8.362,
+// operator-reported: picking a database type on /slow-queries
+// 500'd). The sample-system aggregate MUST NOT be aliased back to
+// the bare `db_system` column name: with the db_system WHERE
+// filter present, ClickHouse resolves the WHERE identifier to the
+// SELECT alias and rejects the query with code 184 "Aggregate
+// function any(db_system) is found in WHERE".
+func slowQueriesGlobalSQL(where, shardSetting string) string {
+	return `
+		SELECT
+			service_name,
+			replaceRegexpAll(
+				replaceRegexpAll(db_statement, '''[^'']*''', '__P__'),
+				'\\b[0-9]+(\\.[0-9]+){0,1}\\b', '__P__'
+			)                                          AS norm_stmt,
+			any(db_statement)                          AS sample_stmt,
+			any(db_system)                             AS db_sys,
+			count()                                    AS cnt,
+			avg(duration / 1e6)                        AS avg_ms,
+			quantile(0.95)(duration / 1e6)             AS p95_ms,
+			quantile(0.99)(duration / 1e6)             AS p99_ms,
+			max(duration / 1e6)                        AS max_ms,
+			countIf(status_code = 'error')             AS err_cnt
+		FROM spans ` + where + `
+		GROUP BY service_name, norm_stmt
+		ORDER BY (cnt * avg_ms) DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 30,
+		         ` + shardSetting
+}
+
 func (s *Store) GetSlowQueriesGlobal(
 	ctx context.Context, from, to time.Time, dbSystem string, limit int,
 ) ([]SlowQueryRow, error) {
@@ -78,27 +110,7 @@ func (s *Store) GetSlowQueriesGlobal(
 	if dbSystem != "" {
 		wc.add("db_system = ?", dbSystem)
 	}
-	sql := `
-		SELECT
-			service_name,
-			replaceRegexpAll(
-				replaceRegexpAll(db_statement, '''[^'']*''', '__P__'),
-				'\\b[0-9]+(\\.[0-9]+){0,1}\\b', '__P__'
-			)                                          AS norm_stmt,
-			any(db_statement)                          AS sample_stmt,
-			any(db_system)                             AS db_system,
-			count()                                    AS cnt,
-			avg(duration / 1e6)                        AS avg_ms,
-			quantile(0.95)(duration / 1e6)             AS p95_ms,
-			quantile(0.99)(duration / 1e6)             AS p99_ms,
-			max(duration / 1e6)                        AS max_ms,
-			countIf(status_code = 'error')             AS err_cnt
-		FROM spans ` + wc.sql() + `
-		GROUP BY service_name, norm_stmt
-		ORDER BY (cnt * avg_ms) DESC
-		LIMIT ?
-		SETTINGS max_execution_time = 30,
-		         ` + s.shardSkipSetting()
+	sql := slowQueriesGlobalSQL(wc.sql(), s.shardSkipSetting())
 	args := append(wc.args, limit)
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {

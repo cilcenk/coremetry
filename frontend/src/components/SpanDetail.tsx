@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/types';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
@@ -19,7 +19,7 @@ const PANEL_STORAGE_KEY = 'coremetry-span-panel-w';
 // import just for the standalone fallback path.
 const SPAN_LOG_WINDOW_BUFFER_NS = 60_000_000_000;
 
-export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
+export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true }: {
   span: SpanRow;
   onClose: () => void;
   // Trace-anchored log lookup window (Unix ns), threaded down from the Trace
@@ -28,6 +28,10 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
   // mounts fall back to the span's OWN window ± buffer below.
   logsFrom?: number;
   logsTo?: number;
+  // serviceLinks=false suppresses the service-page links (v0.8.371) —
+  // the anonymous /public/trace viewer must not advertise in-app
+  // navigation its recipients can't open.
+  serviceLinks?: boolean;
 }) {
   const attrs = Object.entries(span.attributes ?? {});
   const res = Object.entries(span.resourceAttributes ?? {});
@@ -173,6 +177,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
   }, [onClose]);
 
   return (
+    <ServiceLinkCtx.Provider value={serviceLinks}>
     <div id="span-panel" style={{ width: panelW }}>
       <div className="span-panel-resizer"
            title="Drag to resize · double-click to reset"
@@ -367,6 +372,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo }: {
         )}
       </div>
     </div>
+    </ServiceLinkCtx.Provider>
   );
 }
 
@@ -441,17 +447,37 @@ function clipMethod(name: string, maxChars = 48): string {
   return '…' + name.slice(name.length - maxChars + 1);
 }
 
+// serviceHref — the attribute keys whose value IS a service identity
+// get a link to that service's page (v0.8.371, operator-requested:
+// "service ismine tıklayınca o service sayfasına gidebilmek").
+function serviceHref(k: string, v: string): string | null {
+  if (!v) return null;
+  if (k === 'Service' || k === 'service.name' || k === 'peer.service') {
+    return `/service?name=${encodeURIComponent(v)}`;
+  }
+  return null;
+}
+
+// ServiceLinkCtx toggles the links panel-wide without threading a
+// prop through every Section/KV/Row call (v0.8.371).
+const ServiceLinkCtx = createContext(true);
+
 function Row({ k, v, mono, pre, copyable }: {
   k: string; v: string; mono?: boolean; pre?: boolean; copyable?: boolean;
 }) {
   const style: React.CSSProperties = {};
   if (mono) style.wordBreak = 'break-all';
   if (pre) style.whiteSpace = 'pre-wrap';
+  const linksOn = useContext(ServiceLinkCtx);
+  const href = linksOn ? serviceHref(k, v) : null;
   return (
     <tr>
       <td>{k}</td>
       <td style={style}>
-        {v}
+        {href
+          ? <Link to={href} title={`Open ${v} service page`}
+              style={{ color: 'var(--accent)' }}>{v}</Link>
+          : v}
         {copyable && v && <CopyButton value={v} title={`Copy ${k.toLowerCase()}`} />}
       </td>
     </tr>

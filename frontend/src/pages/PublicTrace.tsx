@@ -148,7 +148,9 @@ function PublicTraceInner() {
           <div id="td-wf">
             <TraceWaterfall spans={data.spans} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
-          {sel && <SpanDetail span={sel} onClose={closeSpanPanel} />}
+          {/* serviceLinks off: anonymous recipients can't open in-app
+              service pages (v0.8.371). */}
+          {sel && <SpanDetail span={sel} onClose={closeSpanPanel} serviceLinks={false} />}
         </div>
       )}
 

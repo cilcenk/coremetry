@@ -210,6 +210,153 @@ func TestFlushRetriesTransientErrors(t *testing.T) {
 	c.Stop()
 }
 
+// v0.8.355 (HA audit 🟡#1) — the buffers were bounded by ITEM COUNT only:
+// 5 consumers × 500k items of 15-25KB Java stack-trace log bodies behind a
+// stalled-but-alive ClickHouse ≈ multi-GB → kubelet OOMKill destroys ALL
+// buffered data. Contract: with a sizer (NewSized) + Options.ByteBudget,
+// Add rejects on the APPROXIMATE byte total even while item capacity
+// remains, counting the loss in Dropped() like a count-full reject.
+func TestByteBudgetRejectsWhileCountCapacityRemains(t *testing.T) {
+	c := NewSized("bytes-full", Options{
+		BatchSize: 10, BufferSize: 1000, FlushInterval: time.Hour,
+		ByteBudget: 350,
+	}, func(int) int { return 100 }, func(context.Context, []int) error { return nil })
+	// Deliberately NOT started — items park in the channel exactly like
+	// they would behind a stalled CH, so the rejection is deterministic.
+	for i := 0; i < 3; i++ {
+		if !c.Add(i) {
+			t.Fatalf("Add(%d) rejected at %d/350 bytes — budget is inclusive", i, (i+1)*100)
+		}
+	}
+	if got := c.BufferedBytes(); got != 300 {
+		t.Fatalf("BufferedBytes() = %d; want 300 (3 × 100-byte items)", got)
+	}
+	if c.Add(99) {
+		t.Fatalf("4th Add accepted at 400 > 350 budget — byte cap not enforced")
+	}
+	if got := c.Dropped(); got != 1 {
+		t.Fatalf("Dropped() = %d; want 1 — a byte-full reject must be COUNTED like a count-full one", got)
+	}
+	if got := c.BufferedBytes(); got != 300 {
+		t.Fatalf("BufferedBytes() = %d after reject; want 300 — a rejected item must release its reservation", got)
+	}
+	if q, capacity := c.QueueLen(), c.Capacity(); q != 3 || capacity != 1000 {
+		t.Fatalf("queue %d/%d — item capacity had plenty of room; the reject must have been byte-driven", q, capacity)
+	}
+	if got := c.Accepted(); got != 3 {
+		t.Fatalf("Accepted() = %d; want 3 — rejected items never count as accepted", got)
+	}
+}
+
+// Bytes are released when a batch LEAVES the pipeline (flush completion),
+// so a byte-full consumer accepts again once ClickHouse drains it.
+func TestByteBudgetReleasedAfterFlush(t *testing.T) {
+	gate := make(chan struct{})
+	c := NewSized("bytes-release", Options{
+		BatchSize: 1, BufferSize: 100, FlushInterval: 5 * time.Millisecond,
+		Workers: 1, ByteBudget: 200,
+	}, func(int) int { return 100 }, func(_ context.Context, b []int) error {
+		<-gate // hold the batch in-flight like a slow CH insert
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	if !c.Add(1) || !c.Add(2) {
+		t.Fatalf("first two Adds must fit the 200-byte budget exactly (inclusive)")
+	}
+	if c.Add(3) {
+		t.Fatalf("Add accepted at 300 > 200 while both items were still in the pipeline")
+	}
+	if got := c.Dropped(); got != 1 {
+		t.Fatalf("Dropped() = %d; want 1", got)
+	}
+	close(gate) // CH recovers — both batches flush
+	if !waitFor(func() bool { return c.BufferedBytes() == 0 }, 2*time.Second) {
+		t.Fatalf("BufferedBytes() = %d; want 0 after all batches flushed — flush must release the budget", c.BufferedBytes())
+	}
+	if !c.Add(4) {
+		t.Fatalf("Add rejected after flush released the budget — recovery path broken")
+	}
+	cancel()
+	c.Stop()
+}
+
+// Shutdown against a wedged flush stage: EVERY item leaves the pipeline as
+// either writeFailed (bounded flush timed out) or dropped (drain-abandon) —
+// and BOTH exits must release their byte reservation, or the accounting
+// leaks shut and BufferedBytes() lies to /admin/stats forever.
+func TestByteBudgetReleasedOnWedgedShutdown(t *testing.T) {
+	c := NewSized("bytes-wedge", Options{
+		BatchSize: 5, BufferSize: 100, FlushInterval: time.Hour, Workers: 1,
+		FlushTimeout: time.Second, FlushRetryBase: time.Millisecond,
+		ByteBudget: 1 << 20,
+	}, func(int) int { return 100 }, func(ctx context.Context, b []int) error {
+		<-ctx.Done() // wedged CH: accepts the conn, never answers
+		return ctx.Err()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	c.Start(ctx)
+	for i := 0; i < 40; i++ {
+		if !c.Add(i) {
+			t.Fatalf("Add(%d) rejected with byte + item headroom to spare", i)
+		}
+	}
+	if got := c.BufferedBytes(); got != 4000 {
+		t.Fatalf("BufferedBytes() = %d; want 4000 before shutdown", got)
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() { c.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("Stop() hung >20s — bounded-drain regression")
+	}
+	if c.Dropped()+c.WriteFailed() != 40 {
+		t.Fatalf("accounting hole: dropped %d + writeFailed %d != 40 accepted", c.Dropped(), c.WriteFailed())
+	}
+	if got := c.BufferedBytes(); got != 0 {
+		t.Fatalf("BufferedBytes() = %d after every item was dropped/failed; want 0 — an exit path leaked its reservation", got)
+	}
+}
+
+// New (no sizer) keeps the pre-v0.8.355 count-only contract byte-identically
+// — even with ByteBudget set — and NewSized with budget 0 disables the cap
+// too. BufferedBytes() stays 0 in both disabled modes.
+func TestByteAccountingDisabledWithoutSizerOrBudget(t *testing.T) {
+	// Budget set, but built via New: no sizer → count-only behavior.
+	c := New("no-sizer", Options{
+		BatchSize: 10, BufferSize: 5, FlushInterval: time.Hour, ByteBudget: 1,
+	}, func(context.Context, []int) error { return nil })
+	for i := 0; i < 5; i++ {
+		if !c.Add(i) {
+			t.Fatalf("Add(%d) rejected — a 1-byte budget must be inert without a sizer", i)
+		}
+	}
+	if got := c.BufferedBytes(); got != 0 {
+		t.Fatalf("BufferedBytes() = %d without a sizer; want 0", got)
+	}
+	if c.Add(5) {
+		t.Fatalf("count-full Add accepted — the item cap must keep working when bytes are disabled")
+	}
+	if got := c.Dropped(); got != 1 {
+		t.Fatalf("Dropped() = %d; want 1 from the count-full reject", got)
+	}
+
+	// Sizer present, but budget 0: disabled — huge items sail through.
+	c2 := NewSized("budget-zero", Options{
+		BatchSize: 10, BufferSize: 5, FlushInterval: time.Hour,
+	}, func(int) int { return 1 << 30 }, func(context.Context, []int) error { return nil })
+	for i := 0; i < 5; i++ {
+		if !c2.Add(i) {
+			t.Fatalf("Add(%d) rejected with ByteBudget 0 — zero must mean DISABLED", i)
+		}
+	}
+	if got := c2.BufferedBytes(); got != 0 {
+		t.Fatalf("BufferedBytes() = %d with ByteBudget 0; want 0 (no accounting when disabled)", got)
+	}
+}
+
 // Persistent failure still gives up — after the bounded attempts the batch
 // is counted (writeFailed) and the worker moves on, so a poison batch or a
 // long outage degrades to counted drop-mode instead of blocking forever.

@@ -331,6 +331,18 @@ type IngestionConfig struct {
 	BufferSize    int           `yaml:"buffer_size"`
 	FlushInterval time.Duration `yaml:"flush_interval"`
 	Workers       int           `yaml:"workers"`
+	// ByteBudgetMB caps the APPROXIMATE megabytes EACH signal consumer
+	// may hold in memory — channel backlog + accumulating and in-flight
+	// batches (v0.8.355, HA audit 🟡#1). BufferSize alone bounds item
+	// COUNT; with fat items (15-25KB Java stack-trace log bodies) a
+	// 500k-item buffer behind a stalled ClickHouse is multi-GB and the
+	// kubelet OOMKill destroys ALL buffered signals — a counted drop
+	// loses less. ×5 math: the budget is PER consumer and there are 5
+	// (spans / logs / metrics / exemplars / span_links), so worst-case
+	// buffered memory ≈ 5 × ByteBudgetMB — the 512 default bounds it at
+	// ~2.5GB, sized for typical 4-8GB pods. Explicit 0 disables the
+	// byte cap (count-only, pre-v0.8.355 behavior).
+	ByteBudgetMB int `yaml:"byte_budget_mb"`
 }
 
 var defaults = Config{
@@ -353,8 +365,10 @@ var defaults = Config{
 	// (12k/sec average, 50k/sec burst). Workers parallelise the CH
 	// insert path so a 200ms stall on one flush doesn't queue up
 	// behind it. BufferSize 500k gives ~10s of burst headroom even
-	// when all workers are mid-flush.
-	Ingestion:  IngestionConfig{BatchSize: 10_000, BufferSize: 500_000, FlushInterval: 2 * time.Second, Workers: 8},
+	// when all workers are mid-flush. ByteBudgetMB 512 additionally
+	// caps each of the 5 consumers by BYTES (≈2.5GB total worst case)
+	// so fat items can't turn that headroom into an OOMKill (v0.8.355).
+	Ingestion:  IngestionConfig{BatchSize: 10_000, BufferSize: 500_000, FlushInterval: 2 * time.Second, Workers: 8, ByteBudgetMB: 512},
 	Auth: AuthConfig{
 		TokenTTL:        24 * time.Hour,
 		InitialAdmin:    "admin@coremetry.local",
@@ -509,6 +523,14 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("COREMETRY_INGEST_FLUSH_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			cfg.Ingestion.FlushInterval = d
+		}
+	}
+	// Byte budget per consumer (v0.8.355) — n >= 0 accepted: an explicit
+	// 0 DISABLES the byte cap (unlike the knobs above, zero is a valid
+	// operator choice here, not a missing value).
+	if v := os.Getenv("COREMETRY_INGEST_BYTE_BUDGET_MB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.Ingestion.ByteBudgetMB = n
 		}
 	}
 	if v := os.Getenv("COREMETRY_JWT_SECRET"); v != "" {

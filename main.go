@@ -368,17 +368,21 @@ func main() {
 		BufferSize:    cfg.Ingestion.BufferSize,
 		FlushInterval: cfg.Ingestion.FlushInterval,
 		Workers:       cfg.Ingestion.Workers,
+		// v0.8.355 (HA 🟡#1) — byte budget alongside the item cap: fat
+		// log bodies during a CH stall used to grow 5×500k items into
+		// multi-GB and OOMKill the pod (losing EVERYTHING uncounted).
+		ByteBudget: int64(cfg.Ingestion.ByteBudgetMB) * 1024 * 1024,
 	}
-	spanConsumer := consumer.New("spans", opts, store.InsertSpans)
-	logConsumer := consumer.New("logs", opts, store.InsertLogs)
-	metricConsumer := consumer.New("metrics", opts, store.InsertMetrics)
+	spanConsumer := consumer.NewSized("spans", opts, chstore.SpanApproxBytes, store.InsertSpans)
+	logConsumer := consumer.NewSized("logs", opts, chstore.LogApproxBytes, store.InsertLogs)
+	metricConsumer := consumer.NewSized("metrics", opts, chstore.MetricPointApproxBytes, store.InsertMetrics)
 	// v0.8.328 — OTLP metric exemplars (cross-signal pivot). Same batching
 	// machinery + flush cadence as the metric rows they arrived with.
-	exemplarConsumer := consumer.New("exemplars", opts, store.InsertExemplars)
+	exemplarConsumer := consumer.NewSized("exemplars", opts, chstore.ExemplarRowApproxBytes, store.InsertExemplars)
 	// v0.8.329 — OTel span links (cross-signal pivot Phase 1b). Same batching
 	// machinery + flush cadence as the spans they arrived with; rows land in
 	// span_links and fan into span_links_reverse via its MV.
-	spanLinkConsumer := consumer.New("span_links", opts, store.InsertSpanLinks)
+	spanLinkConsumer := consumer.NewSized("span_links", opts, chstore.SpanLinkRowApproxBytes, store.InsertSpanLinks)
 	// v0.8.336 (HA audit H1) — consumers run on their OWN context, NOT the
 	// signal ctx: the drain must begin only AFTER the OTLP servers stop
 	// accepting. On the signal ctx the loops started draining at SIGTERM

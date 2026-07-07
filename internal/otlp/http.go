@@ -4,9 +4,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
@@ -230,13 +234,29 @@ func (ing *Ingester) handleTraces(w http.ResponseWriter, r *http.Request) {
 			dropped++
 		}
 	}
-	if dropped > 0 {
-		log.Printf("[otlp/http] traces: dropped %d spans (buffer full)", dropped)
-	}
 	// v0.8.329 — span links ride the same request; the invalid gate +
-	// counters live in addSpanLink so gRPC shares them.
+	// counters live in addSpanLink so gRPC shares them. Derived side-signal
+	// (v0.8.345): link-buffer drops never reject the batch — see the
+	// gRPC trace Export comment; drops ride the consumer's counter only.
 	for _, l := range links {
 		ing.addSpanLink(l)
+	}
+	if dropped > 0 {
+		log.Printf("[otlp/http] traces: dropped %d/%d spans (buffer full)", dropped, len(spans))
+		if dropped == len(spans) {
+			writeThrottled(w, r, "all spans rejected: "+bufferFullMsg)
+			return
+		}
+		// Partial acceptance → 200 + PartialSuccess (v0.8.345, HA audit H5;
+		// OTLP spec §"Partial Success"). The old empty 200 made the
+		// collector delete its copy of the dropped spans — silent loss.
+		writeProtoResp(w, r, &tracecollpb.ExportTraceServiceResponse{
+			PartialSuccess: &tracecollpb.ExportTracePartialSuccess{
+				RejectedSpans: int64(dropped),
+				ErrorMessage:  bufferFullMsg,
+			},
+		})
+		return
 	}
 	writeProtoResp(w, r, &tracecollpb.ExportTraceServiceResponse{})
 }
@@ -248,8 +268,28 @@ func (ing *Ingester) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logs := ConvertLogs(&req)
+	dropped := 0
 	for _, l := range logs {
-		ing.addLog(l)
+		// v0.8.345 (HA audit H5) — Add result was discarded: a 100% drop
+		// still answered an empty 200, so the collector deleted its copy
+		// and never slowed down. See the gRPC logs Export.
+		if !ing.addLog(l) {
+			dropped++
+		}
+	}
+	if dropped > 0 {
+		log.Printf("[otlp/http] logs: dropped %d/%d records (buffer full)", dropped, len(logs))
+		if dropped == len(logs) {
+			writeThrottled(w, r, "all log records rejected: "+bufferFullMsg)
+			return
+		}
+		writeProtoResp(w, r, &logscollpb.ExportLogsServiceResponse{
+			PartialSuccess: &logscollpb.ExportLogsPartialSuccess{
+				RejectedLogRecords: int64(dropped),
+				ErrorMessage:       bufferFullMsg,
+			},
+		})
+		return
 	}
 	writeProtoResp(w, r, &logscollpb.ExportLogsServiceResponse{})
 }
@@ -261,13 +301,33 @@ func (ing *Ingester) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pts, exs := ConvertMetrics(&req)
+	dropped := 0
 	for _, p := range pts {
-		ing.addMetric(p)
+		// v0.8.345 (HA audit H5) — Add result was discarded; see handleLogs.
+		if !ing.addMetric(p) {
+			dropped++
+		}
 	}
 	// v0.8.328 — OTLP exemplars ride the same request; the gate + counters
-	// live in addExemplar so gRPC shares them.
+	// live in addExemplar so gRPC shares them. Derived side-signal
+	// (v0.8.345): exemplar-buffer drops never reject the batch — see the
+	// gRPC metrics Export comment; drops ride the consumer's counter only.
 	for _, ex := range exs {
 		ing.addExemplar(ex)
+	}
+	if dropped > 0 {
+		log.Printf("[otlp/http] metrics: dropped %d/%d points (buffer full)", dropped, len(pts))
+		if dropped == len(pts) {
+			writeThrottled(w, r, "all data points rejected: "+bufferFullMsg)
+			return
+		}
+		writeProtoResp(w, r, &metricscollpb.ExportMetricsServiceResponse{
+			PartialSuccess: &metricscollpb.ExportMetricsPartialSuccess{
+				RejectedDataPoints: int64(dropped),
+				ErrorMessage:       bufferFullMsg,
+			},
+		})
+		return
 	}
 	writeProtoResp(w, r, &metricscollpb.ExportMetricsServiceResponse{})
 }
@@ -295,4 +355,29 @@ func writeProtoResp(w http.ResponseWriter, r *http.Request, msg proto.Message) {
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.Write(b)
 	}
+}
+
+// writeThrottled answers a FULLY-rejected batch (v0.8.345, HA audit H5)
+// per OTLP spec §"OTLP/HTTP Throttling": 429 Too Many Requests with a
+// Retry-After header so the collector's retry queue KEEPS its copy and
+// backs off — the old empty 200 made it delete the data it was still
+// holding, i.e. indefinite silent loss with zero backpressure. Zero
+// items were accepted, so the whole-batch retry the 429 triggers cannot
+// duplicate anything. Body is a google.rpc.Status (OTLP spec
+// §"Failures": error responses carry a Status message), marshaled with
+// the same JSON/protobuf pick as writeProtoResp.
+func writeThrottled(w http.ResponseWriter, r *http.Request, msg string) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(throttleRetryDelay/time.Second)))
+	st := &statuspb.Status{Code: int32(codes.ResourceExhausted), Message: msg}
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		b, _ := protojson.Marshal(st)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write(b)
+		return
+	}
+	b, _ := proto.Marshal(st)
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.WriteHeader(http.StatusTooManyRequests)
+	w.Write(b)
 }

@@ -1,7 +1,9 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Empty } from './Spinner';
 import { Sparkline } from './Sparkline';
+import { TrendDelta } from './TrendDelta';
+import { Button } from './ui/Button';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
@@ -41,6 +43,27 @@ export interface DepRow {
   // surfaced with a badge and zero RED stats — the drill-down
   // panel (e.g. OracleDB receiver) is the actionable surface.
   source?: 'spans' | 'receiver';
+  // v0.8.364 (Stage-2 M1) — messaging-only producer/consumer split,
+  // p50, and prior-window deltas. The PAGE computes the /min rates
+  // (it owns the window length); raw counts ride along for the
+  // error-percentage tooltips. All optional — DB rows never set
+  // them and the columns only render for kind='queue'.
+  producePerMin?: number;
+  consumePerMin?: number;
+  produceCount?: number;
+  consumeCount?: number;
+  produceErrors?: number;
+  consumeErrors?: number;
+  p50DurationMs?: number;
+  // Prior equal-length window (compare=prior) — undefined when the
+  // row had no prior twin, so delta badges stay hidden.
+  priorSpanCount?: number;
+  priorErrorCount?: number;
+  priorProducePerMin?: number;
+  priorConsumePerMin?: number;
+  priorAvgMs?: number;
+  priorP50Ms?: number;
+  priorP99Ms?: number;
 }
 
 type SortKey = 'system' | 'cluster' | 'name' | 'spanCount' | 'errorRate' | 'avg' | 'p99';
@@ -54,7 +77,7 @@ const NATURAL: Record<SortKey, 'asc' | 'desc'> = {
 // header label and the click-through DSL pre-filter so a row
 // click lands on /explore scoped to that system+instance.
 export function DependenciesTable({
-  rows, kind, range,
+  rows, kind, range, compare, extraControls, openRowKey, onOpenRowChange,
 }: {
   rows: DepRow[];
   // 'db' → uses instance + filters by db.system; 'queue' → uses
@@ -64,13 +87,33 @@ export function DependenciesTable({
   // breakdown query. Same window the parent /databases or
   // /messaging page uses for the overview.
   range: TimeRange;
+  // v0.8.364 (Stage-2 M1) — when true, rows carry prior* fields and
+  // the metric cells render TrendDelta badges (endpoints pattern).
+  compare?: boolean;
+  // Extra page-owned controls (e.g. the "Compare vs prior" toggle)
+  // rendered inside the filter row so the page keeps one strip.
+  extraControls?: ReactNode;
+  // v0.8.364 — controlled drawer mode for URL-first pages. When
+  // onOpenRowChange is provided the parent owns which row is open
+  // (openRowKey, same `system|cluster|name` shape as the internal
+  // key) and receives the clicked row (null = close). Uncontrolled
+  // pages (/databases) keep the internal useState behaviour.
+  openRowKey?: string | null;
+  onOpenRowChange?: (row: DepRow | null) => void;
 }) {
   const [systemFilter, setSystemFilter] = useState<string>('');
   const [search, setSearch] = useState('');
-  // Which row's drawer is open. Stores `system|name` so the
-  // drawer survives sort + filter changes (system+name are
-  // stable identifiers).
-  const [openKey, setOpenKey] = useState<string | null>(null);
+  // Which row's drawer is open. Stores `system|cluster|name` so the
+  // drawer survives sort + filter changes (stable identifiers).
+  // Controlled mode (v0.8.364) hands ownership to the parent so
+  // /messaging can drive it from the ?destination= URL param.
+  const [openKeyState, setOpenKeyState] = useState<string | null>(null);
+  const controlled = onOpenRowChange !== undefined;
+  const openKey = controlled ? (openRowKey ?? null) : openKeyState;
+  const setOpen = (row: DepRow | null, key: string | null) => {
+    if (controlled) onOpenRowChange!(row);
+    else setOpenKeyState(key);
+  };
   // #1 sparkline + #6 health-chip source. One DBTrend per
   // (dbSystem, instance, dbName); we join to the overview rows
   // by (system, instance, dbName) — see trendFor below. null =
@@ -135,8 +178,23 @@ export function DependenciesTable({
       ? [{ id: 'database', label: 'Database', sortValue: (r: DepRow) => r.dbName ?? '', naturalDir: 'asc', width: 120 } as DataTableColumn<DepRow>]
       : []),
     { id: 'spanCount', label: 'Calls', sortValue: r => r.spanCount, numeric: true, naturalDir: NATURAL.spanCount, width: 96 },
+    // v0.8.364 (Stage-2 M1) — messaging-only producer/consumer
+    // split. Rates are precomputed by the page (it owns the window
+    // length); zero-produce / zero-consume destinations sort to the
+    // bottom naturally.
+    ...(kind === 'queue'
+      ? [
+          { id: 'produce', label: 'Produce/min', sortValue: (r: DepRow) => r.producePerMin ?? 0, numeric: true, naturalDir: 'desc', width: 116 } as DataTableColumn<DepRow>,
+          { id: 'consume', label: 'Consume/min', sortValue: (r: DepRow) => r.consumePerMin ?? 0, numeric: true, naturalDir: 'desc', width: 116 } as DataTableColumn<DepRow>,
+        ]
+      : []),
     { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
     { id: 'avg', label: 'Avg', sortValue: r => r.avgDurationMs, numeric: true, naturalDir: NATURAL.avg, width: 90 },
+    // v0.8.364 — P50 alongside P99 (queue-only; the DB grid keeps
+    // its existing shape). Same TDigest state the MV always had.
+    ...(kind === 'queue'
+      ? [{ id: 'p50', label: 'P50', sortValue: (r: DepRow) => r.p50DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 } as DataTableColumn<DepRow>]
+      : []),
     { id: 'p99', label: 'P99', sortValue: r => r.p99DurationMs, numeric: true, naturalDir: NATURAL.p99, width: 90 },
     // #1 — non-sortable RED sparkline column. No sortValue so the
     // shared DataTable head renders it as a plain (un-clickable)
@@ -241,6 +299,7 @@ export function DependenciesTable({
                  ? 'Search system / instance / caller…'
                  : 'Search system / destination / caller…'}
                style={{ width: 280 }} />
+        {extraControls}
         <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 'auto' }}>
           {dt.sortedRows.length} of {rows.length}
         </span>
@@ -260,7 +319,7 @@ export function DependenciesTable({
               const isOpen = openKey === rowKey;
               return (
                 <Fragment key={`${rowKey}|${i}`}>
-                  <tr onClick={() => setOpenKey(isOpen ? null : rowKey)}
+                  <tr onClick={() => setOpen(isOpen ? null : r, isOpen ? null : rowKey)}
                       style={{ cursor: 'pointer',
                                // scale-audit v0.8.203 — skip off-screen rows
                                // (matches the instance table below); at a bank
@@ -352,12 +411,46 @@ export function DependenciesTable({
                         )}
                       </td>
                     )}
-                    <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(r.spanCount)}</td>
+                    <td className="mono" style={{ textAlign: 'right' }}>
+                      {fmtNum(r.spanCount)}
+                      {compare && <TrendDelta cur={r.spanCount} prior={r.priorSpanCount} kind="neutral" />}
+                    </td>
+                    {/* v0.8.364 (Stage-2 M1) — producer/consumer split.
+                        Per-kind error % badge (scale-free, same
+                        semantics as the row's Err % column) instead of
+                        raw error counts; the tooltip carries the raw
+                        numbers for the postmortem screenshot. */}
+                    {kind === 'queue' && (
+                      <>
+                        <KindRateCell perMin={r.producePerMin} count={r.produceCount}
+                          errors={r.produceErrors} priorPerMin={r.priorProducePerMin}
+                          compare={compare} what="produce" />
+                        <KindRateCell perMin={r.consumePerMin} count={r.consumeCount}
+                          errors={r.consumeErrors} priorPerMin={r.priorConsumePerMin}
+                          compare={compare} what="consume" />
+                      </>
+                    )}
                     <td className="mono" style={{ textAlign: 'right' }}>
                       <span className={`badge b-${errCls}`}>{r.errorRate.toFixed(2)}%</span>
+                      {compare && <TrendDelta cur={r.errorCount} prior={r.priorErrorCount} kind="lowerBetter" />}
                     </td>
-                    <td className="mono" style={{ textAlign: 'right' }}>{r.avgDurationMs.toFixed(1)}ms</td>
-                    <td className="mono" style={{ textAlign: 'right' }}>{r.p99DurationMs.toFixed(1)}ms</td>
+                    <td className="mono" style={{ textAlign: 'right' }}>
+                      {r.avgDurationMs.toFixed(1)}ms
+                      {compare && <TrendDelta cur={r.avgDurationMs} prior={r.priorAvgMs} kind="lowerBetter" />}
+                    </td>
+                    {kind === 'queue' && (
+                      <td className="mono" style={{ textAlign: 'right' }}>
+                        {r.p50DurationMs === undefined
+                          ? <span style={{ color: 'var(--text3)' }}>—</span>
+                          : <>{r.p50DurationMs.toFixed(1)}ms</>}
+                        {compare && r.p50DurationMs !== undefined
+                          && <TrendDelta cur={r.p50DurationMs} prior={r.priorP50Ms} kind="lowerBetter" />}
+                      </td>
+                    )}
+                    <td className="mono" style={{ textAlign: 'right' }}>
+                      {r.p99DurationMs.toFixed(1)}ms
+                      {compare && <TrendDelta cur={r.p99DurationMs} prior={r.priorP99Ms} kind="lowerBetter" />}
+                    </td>
                     {/* #1 Trend + #6 health chips. Sparkline plots
                         the call-rate (rps) over the window; it flips
                         red/amber when the trend's CURRENT error rate
@@ -385,10 +478,21 @@ export function DependenciesTable({
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={9 + (hasClusterCol ? 1 : 0) + (kind === 'db' ? 1 : 0)} style={{
+                      {/* colSpan tracks the conditional columns: base 9
+                          + cluster + Database (db) + produce/consume/p50
+                          (queue, v0.8.364). */}
+                      <td colSpan={9 + (hasClusterCol ? 1 : 0) + (kind === 'db' ? 1 : 0) + (kind === 'queue' ? 3 : 0)} style={{
                         background: 'var(--bg1)', padding: '12px 16px',
                         borderTop: '1px solid var(--border)',
                       }}>
+                        {/* v0.8.364 — explicit ✕ affordance (pairs with
+                            the page-level Esc handler on /messaging;
+                            row re-click still toggles too). */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2 }}>
+                          <Button variant="ghost" size="sm" aria-label="Close detail"
+                            title="Close detail (Esc)"
+                            onClick={() => setOpen(null, null)}>✕</Button>
+                        </div>
                         <DetailDrawer
                           system={r.system}
                           cluster={r.cluster ?? '(default)'}
@@ -406,6 +510,44 @@ export function DependenciesTable({
         </table>
       </div>
     </>
+  );
+}
+
+// fmtPerMin — Produce/min · Consume/min cells (v0.8.364). Sub-10
+// rates keep one decimal so a trickle topic doesn't read "0";
+// larger rates round to locale ints (the endpoints fmtRate shape).
+// '—' when the backend predates the split (rolling deploy).
+function fmtPerMin(v?: number): string {
+  if (v === undefined || v === null) return '—';
+  return v < 10 ? v.toFixed(1) : fmtNum(Math.round(v));
+}
+
+// KindRateCell — one Produce/min or Consume/min cell (v0.8.364,
+// Stage-2 M1). Renders the rate, a per-kind error % badge when that
+// side errored (percentage, not raw count: scale-free and it reads
+// on the same axis as the row's Err % column — the raw counts live
+// in the tooltip), and the compare=prior delta badge.
+function KindRateCell({ perMin, count, errors, priorPerMin, compare, what }: {
+  perMin?: number;
+  count?: number;
+  errors?: number;
+  priorPerMin?: number;
+  compare?: boolean;
+  what: 'produce' | 'consume';
+}) {
+  const errPct = count && count > 0 && errors ? (errors / count) * 100 : 0;
+  const errTone = errPct > 5 ? 'err' : errPct > 0 ? 'warn' : null;
+  return (
+    <td className="mono" style={{ textAlign: 'right' }}>
+      {fmtPerMin(perMin)}
+      {errTone && (
+        <span className={`badge b-${errTone}`} style={{ marginLeft: 4, fontSize: 9 }}
+          title={`${fmtNum(errors ?? 0)} of ${fmtNum(count ?? 0)} ${what} spans errored`}>
+          {errPct.toFixed(1)}%
+        </span>
+      )}
+      {compare && <TrendDelta cur={perMin ?? 0} prior={priorPerMin} kind="neutral" />}
+    </td>
   );
 }
 

@@ -13,7 +13,7 @@ import { ArrowUp, ArrowDown } from 'lucide-react';
 // drawer's header RED strip shares the exact same delta affordance
 // as the table cells (one design language; an import cycle
 // Endpoints ↔ DetailDrawer is avoided by hosting it here).
-// v0.8.362 (Stage-2 M1) — promoted verbatim from pages/endpoints/
+// v0.8.364 (Stage-2 M1) — promoted verbatim from pages/endpoints/
 // to components/: the messaging overview (DependenciesTable, a
 // components/-level file) adopted compare=prior, and components/
 // must not import from pages/. Props unchanged; still the single

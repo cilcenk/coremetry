@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Spinner } from '@/components/Spinner';
+import { Sparkline } from '@/components/Sparkline';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -85,6 +86,14 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
     ? callers.filter(c => c.role && c.role !== 'producer' && c.role !== 'consumer')
     : callers;
 
+  // v0.8.364 (Stage-2 M1) — produce/consume series off
+  // messaging_caller_summary_5m (kind × time_bucket). Optional
+  // (`?? []`): a stale pre-M1 cached payload simply renders the
+  // drawer without sparklines mid-rolling-deploy.
+  const msgSeries = kind === 'queue' && 'series' in data
+    ? (data as MessagingDetail).series ?? []
+    : [];
+
   return (
     <div>
       {/* Aggregate strip on top — same numbers as the row but
@@ -101,6 +110,36 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
         <Stat label="Avg"       value={`${data.avgDurationMs.toFixed(1)} ms`} />
         <Stat label="P99"       value={`${data.p99DurationMs.toFixed(1)} ms`} />
       </div>
+
+      {/* v0.8.364 — produce vs consume rate over the window (5-min
+          buckets, rendered per-minute). Splits the aggregate call
+          rate by span kind so a producer surge with a stalled
+          consumer reads instantly. Colours mirror the RoleBadge
+          tones below (producer = accent, consumer = ok). */}
+      {msgSeries.length > 1 && (
+        <div style={{ display: 'flex', gap: 28, marginBottom: 14, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)',
+                          textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>
+              Produce /min
+            </div>
+            <Sparkline
+              values={msgSeries.map(p => p.produceCount / 5)}
+              width={220} height={26} unit="/min"
+              title="produce rate · 5-min buckets" />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)',
+                          textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>
+              Consume /min
+            </div>
+            <Sparkline
+              values={msgSeries.map(p => p.consumeCount / 5)}
+              width={220} height={26} color="var(--ok)" unit="/min"
+              title="consume rate · 5-min buckets" />
+          </div>
+        </div>
+      )}
 
       {/* Oracle-specific drill-down — only renders when the system
           is oracle. Reads the oracledb-receiver-flavoured metrics

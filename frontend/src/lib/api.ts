@@ -713,10 +713,13 @@ export const api = {
     get<import('./types').DBTrend[] | null>(
       `/api/databases/trends?from=${fromNs}&to=${toNs}`),
   // /messaging overview — parallel shape for queues / topics
-  // (Kafka / RabbitMQ / IBM MQ / NATS / etc.).
-  messaging: (fromNs: number, toNs: number) =>
+  // (Kafka / RabbitMQ / IBM MQ / NATS / etc.). compare='prior'
+  // (v0.8.364) merges the immediately-preceding equal-length
+  // window onto each row as prior* fields — opt-in, doubles the
+  // backend scan.
+  messaging: (fromNs: number, toNs: number, compare?: 'prior') =>
     get<import('./types').MessagingInstance[] | null>(
-      `/api/messaging?from=${fromNs}&to=${toNs}`),
+      `/api/messaging?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
   // Detail drawers — per-(service, pod) caller breakdown + top
   // operations for one (system, instance) tuple. Drives the
   // row-click drawer on /databases and /messaging.

@@ -364,6 +364,19 @@ export interface MessagingDetail {
   p99DurationMs: number;
   callers: DBCallerBreakdown[];
   topOps: DBOpStat[];
+  // v0.8.364 (Stage-2 M1) — per-5-min produce/consume counts from
+  // messaging_caller_summary_5m (kind × time_bucket dimensions).
+  // Optional so a stale pre-M1 cached payload can't crash the
+  // drawer mid-rolling-deploy.
+  series?: MsgKindPoint[];
+}
+
+// MsgKindPoint — one 5-minute bucket of the messaging drawer's
+// produce/consume series (v0.8.364). timeS = bucket start, unix s.
+export interface MsgKindPoint {
+  timeS: number;
+  produceCount: number;
+  consumeCount: number;
 }
 
 // OracleMetrics — payload of /api/databases/oracle. Mirrors the
@@ -519,6 +532,26 @@ export interface MessagingInstance {
   errorRate: number;
   avgDurationMs: number;
   p99DurationMs: number;
+  // v0.8.364 (Stage-2 M1) — full quantile grid off the existing
+  // TDigest state (0.5/0.95/0.99). Optional: a warm cached payload
+  // from a pre-M1 backend may lack them mid-rolling-deploy.
+  p50DurationMs?: number;
+  p95DurationMs?: number;
+  // v0.8.364 — producer/consumer split (raw window counts; the
+  // page divides by window minutes for the /min columns). Spans of
+  // other kinds count toward spanCount but neither bucket.
+  produceCount?: number;
+  consumeCount?: number;
+  produceErrors?: number;
+  consumeErrors?: number;
+  // Prior equal-length window — present only with compare=prior.
+  priorSpanCount?: number;
+  priorErrorCount?: number;
+  priorProduceCount?: number;
+  priorConsumeCount?: number;
+  priorAvgMs?: number;
+  priorP50Ms?: number;
+  priorP99Ms?: number;
   callers: string[];
 }
 

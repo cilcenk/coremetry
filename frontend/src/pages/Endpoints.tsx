@@ -15,7 +15,7 @@ import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
-import { TrendDelta } from '@/pages/endpoints/TrendDelta';
+import { TrendDelta } from '@/components/TrendDelta';
 import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
 import { encodeEndpointParam, decodeEndpointParam } from '@/pages/endpoints/endpointParam';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -817,7 +817,7 @@ function DependencyStrip({ service, deps }: {
   );
 }
 
-// TrendDelta moved to pages/endpoints/TrendDelta.tsx (v0.8.360) so the
+// TrendDelta moved to components/TrendDelta.tsx (v0.8.360 → endpoints/, v0.8.362 → components/) so the
 // detail drawer's header RED strip shares the exact same delta chip.
 
 // fmtRate — Req/min cell (v0.8.356). Sub-10 rates keep one decimal

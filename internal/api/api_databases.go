@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
 func (s *Server) getDatabases(w http.ResponseWriter, r *http.Request) {
@@ -109,12 +111,73 @@ func (s *Server) getRedisMetrics(w http.ResponseWriter, r *http.Request) {
 
 // getMessaging is the parallel handler for queues / topics
 // (Kafka / RabbitMQ / IBM MQ / etc.). Same caching semantics.
+//
+// v0.8.364 (Stage-2 M1) — optional ?compare=prior (the endpoints
+// v0.5.404 pattern): a second scan of the SAME MVs over the
+// immediately-preceding equal-length window, merged onto the
+// current rows by (system, cluster, destination) identity. Opt-in
+// because it doubles the CH cost.
 func (s *Server) getMessaging(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
+	compare := r.URL.Query().Get("compare") == "prior"
+	// Cache key hashes all inputs (window + compare). The default
+	// read keeps the pre-M1 key byte-identical so the background
+	// warm loop in api.go (warm("messaging", …)) still primes the
+	// slot the page load hits; compare rides its own slot.
 	key := "messaging:" + cacheBucket(from, to)
+	if compare {
+		key = "messaging:cmp:" + cacheBucket(from, to)
+	}
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetMessaging(ctx, from, to)
+		rows, err := s.store.GetMessaging(ctx, from, to)
+		if err != nil {
+			return nil, err
+		}
+		if !compare || len(rows) == 0 {
+			return rows, nil
+		}
+		// Prior window: same length, shifted back by exactly the
+		// window width so the comparison stays apples-to-apples.
+		// Rollup variant skips the top-callers pass — the delta
+		// merge only reads counts + quantiles. Prior failure is
+		// non-fatal: return current rows without trends rather
+		// than 500'ing the page.
+		dur := to.Sub(from)
+		priorRows, err := s.store.GetMessagingRollup(ctx, from.Add(-dur), from)
+		if err != nil {
+			return rows, nil
+		}
+		mergeMessagingPrior(rows, priorRows)
+		return rows, nil
 	})
+}
+
+// mergeMessagingPrior copies the prior-window counters onto the
+// current rows by (system, cluster, destination) identity — the
+// same key GetMessaging groups by, so a destination that moved
+// rank between windows still matches. Rows absent from the prior
+// window keep zero Prior* fields (omitempty → absent in JSON →
+// the frontend renders no delta badge). Pure — table-driven
+// tested in messaging_prior_test.go (v0.8.364).
+func mergeMessagingPrior(cur, prior []chstore.MessagingInstance) {
+	type key struct{ system, cluster, dest string }
+	idx := make(map[key]*chstore.MessagingInstance, len(prior))
+	for i := range prior {
+		idx[key{prior[i].System, prior[i].Cluster, prior[i].Destination}] = &prior[i]
+	}
+	for i := range cur {
+		p, ok := idx[key{cur[i].System, cur[i].Cluster, cur[i].Destination}]
+		if !ok {
+			continue
+		}
+		cur[i].PriorSpanCount = p.SpanCount
+		cur[i].PriorErrorCount = p.ErrorCount
+		cur[i].PriorProduceCount = p.ProduceCount
+		cur[i].PriorConsumeCount = p.ConsumeCount
+		cur[i].PriorAvgMs = p.AvgMs
+		cur[i].PriorP50Ms = p.P50Ms
+		cur[i].PriorP99Ms = p.P99Ms
+	}
 }
 
 // getMessagingDetail is the parallel handler for queues /

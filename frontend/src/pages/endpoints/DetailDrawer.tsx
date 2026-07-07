@@ -7,7 +7,7 @@ import { useEndpointDetail, useEndpointSplit } from '@/lib/queries';
 import { fmtNum, timeRangeToNs, tsLong } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, EndpointRow, EndpointDetail, EndpointSplitValue } from '@/lib/types';
-import { TrendDelta } from './TrendDelta';
+import { TrendDelta } from '@/components/TrendDelta';
 import { trimHistogram, type EndpointRef } from './endpointParam';
 
 // EndpointDetailDrawer — v0.8.360 (Stage-2 slice E2). Row click on

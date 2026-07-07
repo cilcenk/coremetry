@@ -17,8 +17,8 @@ import (
 // noisy caller doesn't drown the bigger consumers; UI shows the
 // full list on click-through to the instance detail.
 type DBInstance struct {
-	System     string   `json:"system"`     // db.system: postgresql / redis / oracle / mongo / mysql / cassandra / elasticsearch / …
-	Instance   string   `json:"instance"`   // peer.service when populated, else 'unknown' (host)
+	System   string `json:"system"`   // db.system: postgresql / redis / oracle / mongo / mysql / cassandra / elasticsearch / …
+	Instance string `json:"instance"` // peer.service when populated, else 'unknown' (host)
 	// DBName — v0.5.315. Per-database split within the same host.
 	// Oracle SID / service name, PostgreSQL / MongoDB / MSSQL
 	// database name, Redis db index (when distinguishable). Falls
@@ -27,17 +27,17 @@ type DBInstance struct {
 	DBName     string   `json:"dbName,omitempty"`
 	SpanCount  uint64   `json:"spanCount"`
 	ErrorCount uint64   `json:"errorCount"`
-	ErrorRate  float64  `json:"errorRate"`  // 0..100
+	ErrorRate  float64  `json:"errorRate"` // 0..100
 	AvgMs      float64  `json:"avgDurationMs"`
 	P99Ms      float64  `json:"p99DurationMs"`
-	Callers    []string `json:"callers"`    // top-5 calling services
+	Callers    []string `json:"callers"` // top-5 calling services
 	// Source telegraphs the data origin. Empty / "spans" =
 	// span-derived (the historical default). "receiver" = the
 	// row was discovered via the OpenTelemetry oracledb (or
 	// similar) receiver and has no application traffic, so the
 	// RED stats are zero and the click-through to the
 	// receiver-specific panel is the actionable surface.
-	Source     DBSource `json:"source,omitempty"`
+	Source DBSource `json:"source,omitempty"`
 }
 
 // MessagingInstance is the parallel structure for /messaging —
@@ -54,21 +54,48 @@ type DBInstance struct {
 // themselves there).
 //
 // Cluster resolves in priority order:
-//   1. `server.address`              — bootstrap host (most reliable)
-//   2. `messaging.kafka.bootstrap.servers` — kafka-specific
-//   3. `messaging.kafka.cluster.name`      — newer semconv
-//   4. `peer.service`                — coarse fallback
-//   5. `(default)`                   — single-cluster install
+//  1. `server.address`              — bootstrap host (most reliable)
+//  2. `messaging.kafka.bootstrap.servers` — kafka-specific
+//  3. `messaging.kafka.cluster.name`      — newer semconv
+//  4. `peer.service`                — coarse fallback
+//  5. `(default)`                   — single-cluster install
 type MessagingInstance struct {
-	System      string   `json:"system"`      // kafka / rabbitmq / ibmmq / nats / sqs / kinesis
-	Cluster     string   `json:"cluster"`     // bootstrap host / cluster name / "(default)"
-	Destination string   `json:"destination"` // queue / topic name (resolved from messaging.destination.name or peer.service)
-	SpanCount   uint64   `json:"spanCount"`
-	ErrorCount  uint64   `json:"errorCount"`
-	ErrorRate   float64  `json:"errorRate"`
-	AvgMs       float64  `json:"avgDurationMs"`
-	P99Ms       float64  `json:"p99DurationMs"`
-	Callers     []string `json:"callers"`
+	System      string  `json:"system"`      // kafka / rabbitmq / ibmmq / nats / sqs / kinesis
+	Cluster     string  `json:"cluster"`     // bootstrap host / cluster name / "(default)"
+	Destination string  `json:"destination"` // queue / topic name (resolved from messaging.destination.name or peer.service)
+	SpanCount   uint64  `json:"spanCount"`
+	ErrorCount  uint64  `json:"errorCount"`
+	ErrorRate   float64 `json:"errorRate"`
+	AvgMs       float64 `json:"avgDurationMs"`
+	// v0.8.364 (Stage-2 M1) — full quantile grid. The MV state is
+	// quantilesTDigestState(0.5, 0.95, 0.99); pre-M1 only element
+	// 3 (p99) was projected out of the merge.
+	P50Ms float64 `json:"p50DurationMs"`
+	P95Ms float64 `json:"p95DurationMs"`
+	P99Ms float64 `json:"p99DurationMs"`
+	// v0.8.364 (Stage-2 M1) — producer/consumer split. Sourced from
+	// messaging_caller_summary_5m (the kind dimension lives on that
+	// MV; messaging_summary_5m collapses it). Raw counts, not
+	// rates: the caller knows the window length, and equal-length
+	// prior windows make count deltas identical to rate deltas.
+	// Spans of other kinds (client/server/internal brokers chatter)
+	// count toward SpanCount but neither split bucket.
+	ProduceCount  uint64 `json:"produceCount"`
+	ConsumeCount  uint64 `json:"consumeCount"`
+	ProduceErrors uint64 `json:"produceErrors"`
+	ConsumeErrors uint64 `json:"consumeErrors"`
+	// Prior* — same rollup over the immediately-preceding
+	// equal-length window. Populated only when /api/messaging runs
+	// with compare=prior (v0.8.364; the endpoints v0.5.404
+	// pattern). omitempty keeps the default payload unchanged.
+	PriorSpanCount    uint64   `json:"priorSpanCount,omitempty"`
+	PriorErrorCount   uint64   `json:"priorErrorCount,omitempty"`
+	PriorProduceCount uint64   `json:"priorProduceCount,omitempty"`
+	PriorConsumeCount uint64   `json:"priorConsumeCount,omitempty"`
+	PriorAvgMs        float64  `json:"priorAvgMs,omitempty"`
+	PriorP50Ms        float64  `json:"priorP50Ms,omitempty"`
+	PriorP99Ms        float64  `json:"priorP99Ms,omitempty"`
+	Callers           []string `json:"callers"`
 }
 
 // clusterExpr is the shared CH expression for resolving a
@@ -329,6 +356,22 @@ type MessagingDetail struct {
 	P99Ms       float64             `json:"p99DurationMs"`
 	Callers     []DBCallerBreakdown `json:"callers"` // same shape — service / pod / RED
 	TopOps      []DBOpStat          `json:"topOps"`  // statement = span name (send / receive / process)
+	// Series — v0.8.364 (Stage-2 M1). Per-5-minute produce/consume
+	// counts across the window, straight off
+	// messaging_caller_summary_5m (kind + time_bucket are both
+	// dimensions there, so the split series is one bounded merged-
+	// state GROUP BY — no raw-spans read). Drives the drawer's
+	// produce/consume sparklines.
+	Series []MsgKindPoint `json:"series"`
+}
+
+// MsgKindPoint is one 5-minute bucket of the messaging detail's
+// produce/consume series (v0.8.364). TimeS is the bucket start in
+// unix seconds; counts are spans in that bucket by span kind.
+type MsgKindPoint struct {
+	TimeS        int64  `json:"timeS"`
+	ProduceCount uint64 `json:"produceCount"`
+	ConsumeCount uint64 `json:"consumeCount"`
 }
 
 func (s *Store) GetMessagingDetail(
@@ -359,6 +402,7 @@ func (s *Store) GetMessagingDetail(
 		System: system, Cluster: cluster, Destination: destination,
 		Callers: []DBCallerBreakdown{},
 		TopOps:  []DBOpStat{},
+		Series:  []MsgKindPoint{},
 	}
 
 	// MV-backed aggregate over messaging_caller_summary_5m. The
@@ -429,6 +473,47 @@ func (s *Store) GetMessagingDetail(
 		out.Callers = append(out.Callers, b)
 	}
 
+	// Produce/consume series — v0.8.364 (Stage-2 M1). The caller MV
+	// already carries kind + time_bucket, so the split-by-time read
+	// is a single bounded merged-state GROUP BY (window/5min buckets
+	// × ≤2 kinds; LIMIT 5000 covers >17 days). ORDER BY t lets the
+	// fold below build the ascending series in one pass. Failure is
+	// non-fatal — the drawer renders without sparklines.
+	sRows, err := s.conn.Query(ctx, `
+		SELECT toUnixTimestamp(time_bucket) AS t,
+		       kind,
+		       countMerge(span_count_state) AS c
+		FROM messaging_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		  AND msg_system = ? AND cluster = ? AND destination = ?
+		  AND kind IN ('producer', 'consumer')
+		GROUP BY t, kind
+		ORDER BY t
+		LIMIT 5000
+		SETTINGS max_execution_time = 8`,
+		from, to, system, cluster, destination)
+	if err == nil {
+		for sRows.Next() {
+			var t int64
+			var kind string
+			var c uint64
+			if err := sRows.Scan(&t, &kind, &c); err != nil {
+				continue
+			}
+			if n := len(out.Series); n == 0 || out.Series[n-1].TimeS != t {
+				out.Series = append(out.Series, MsgKindPoint{TimeS: t})
+			}
+			p := &out.Series[len(out.Series)-1]
+			switch kind {
+			case "producer":
+				p.ProduceCount += c
+			case "consumer":
+				p.ConsumeCount += c
+			}
+		}
+		sRows.Close()
+	}
+
 	// Top operations — for messaging the span name is the
 	// useful pivot (e.g. "publish kafka.orders" / "consume
 	// kafka.orders"). No truncation needed; OTel span names
@@ -461,7 +546,7 @@ func (s *Store) GetMessagingDetail(
 // argIfNeeded returns []any{arg} when the predicate contains a
 // "?" placeholder, otherwise nil. Lets the detail queries share
 // one SQL string between "instance = ?" and the special
-// "(peer_service = '' OR IS NULL)" no-arg branch.
+// "(peer_service = ” OR IS NULL)" no-arg branch.
 func argIfNeeded(predicate string, arg string) []any {
 	if strings.Contains(predicate, "?") {
 		return []any{arg}
@@ -711,6 +796,35 @@ func (s *Store) discoverReceiverInstances(
 // per row + the WHERE prunes by msg_system on the indexed column
 // first.
 func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]MessagingInstance, error) {
+	return s.getMessaging(ctx, from, to, true)
+}
+
+// GetMessagingRollup — v0.8.364 (Stage-2 M1). Prior-window read
+// for the /api/messaging compare=prior merge. Identical rollup to
+// GetMessaging minus the top-callers pass: the delta badges only
+// consume counts + quantiles, so the prior scan skips the extra
+// MV trip (the endpoints SkipStatus pattern, v0.5.404).
+func (s *Store) GetMessagingRollup(ctx context.Context, from, to time.Time) ([]MessagingInstance, error) {
+	return s.getMessaging(ctx, from, to, false)
+}
+
+// applyMsgKindSplit folds one (kind, calls, errors) rollup row from
+// messaging_caller_summary_5m onto its overview row. Producer /
+// consumer land in the split buckets; every other span kind
+// (client/server/internal broker chatter) intentionally counts
+// toward SpanCount only. Pure — table-driven tested (v0.8.364).
+func applyMsgKindSplit(r *MessagingInstance, kind string, calls, errs uint64) {
+	switch kind {
+	case "producer":
+		r.ProduceCount += calls
+		r.ProduceErrors += errs
+	case "consumer":
+		r.ConsumeCount += calls
+		r.ConsumeErrors += errs
+	}
+}
+
+func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCallers bool) ([]MessagingInstance, error) {
 	if from.IsZero() {
 		from = time.Now().Add(-1 * time.Hour)
 	}
@@ -721,7 +835,9 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 	// Pre-aggregated by (msg_system, cluster, destination, 5min);
 	// the cluster + destination derived expressions are
 	// materialised at INSERT time so the read joins on plain
-	// string equality.
+	// string equality. v0.8.364 — p50/p95 projected out of the
+	// same TDigest state that already served p99 (elements 1/2 of
+	// the 0.5/0.95/0.99 grid); zero extra scan cost.
 	rows, err := s.conn.Query(ctx, `
 		SELECT msg_system,
 		       cluster,
@@ -730,6 +846,8 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 		       countMerge(error_count_state)                           AS error_count,
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0)             AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
@@ -746,13 +864,15 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 	idxByKey := map[key]int{}
 	for rows.Next() {
 		var r MessagingInstance
-		var avgMs, p99Ms *float64
+		var avgMs, p50Ms, p95Ms, p99Ms *float64
 		if err := rows.Scan(&r.System, &r.Cluster, &r.Destination,
-			&r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
+			&r.SpanCount, &r.ErrorCount, &avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
 			return nil, err
 		}
 		// v0.5.301 — NaN/Inf scrub before JSON marshal.
 		r.AvgMs = safeF(avgMs)
+		r.P50Ms = safeF(p50Ms)
+		r.P95Ms = safeF(p95Ms)
 		r.P99Ms = safeF(p99Ms)
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
@@ -765,6 +885,45 @@ func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]Messagi
 		return nil, err
 	}
 	if len(out) == 0 {
+		return out, nil
+	}
+
+	// Producer/consumer split — v0.8.364 (Stage-2 M1). The kind
+	// dimension only exists on messaging_caller_summary_5m; one
+	// bounded merged-state GROUP BY per page load rolls it up to
+	// (system, cluster, destination, kind) and the fold distributes
+	// it onto the overview rows. Rows outside the top-200 overview
+	// simply don't match the index and are dropped. Failure is
+	// non-fatal — the split columns render as zero.
+	kRows, err := s.conn.Query(ctx, `
+		SELECT msg_system,
+		       cluster,
+		       destination,
+		       kind,
+		       countMerge(span_count_state)  AS c,
+		       countMerge(error_count_state) AS e
+		FROM messaging_caller_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		  AND kind IN ('producer', 'consumer')
+		GROUP BY msg_system, cluster, destination, kind
+		ORDER BY c DESC
+		LIMIT 2000
+		SETTINGS max_execution_time = 8`, from, to)
+	if err == nil {
+		for kRows.Next() {
+			var system, cluster, destination, kind string
+			var c, e uint64
+			if err := kRows.Scan(&system, &cluster, &destination, &kind, &c, &e); err != nil {
+				continue
+			}
+			if i, ok := idxByKey[key{system, cluster, destination}]; ok {
+				applyMsgKindSplit(&out[i], kind, c, e)
+			}
+		}
+		kRows.Close()
+	}
+
+	if !includeCallers {
 		return out, nil
 	}
 

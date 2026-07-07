@@ -1944,6 +1944,39 @@ func traceStage1LightSQL(f TraceFilter, having []string) (string, bool) {
 		         optimize_aggregation_in_order = 1`, true
 }
 
+// traceStage2MaxIDs bounds how many trace ids Stage 1 may hand to
+// Stage 2's IN list. clickhouse-go interpolates bind args client-side,
+// so each id costs ~35 bytes ('<32 hex>' + comma) of query text and
+// the server parses at most max_query_size (default 256 KiB = 262144).
+// 6000 ids ≈ 210 KiB leaves headroom for the rest of the statement.
+// v0.8.363 — found via self-telemetry (coremetry-monolithic error
+// span): Stage 2 died with code 62 "Syntax error at position 262126"
+// — the inlined id list crossed the parser budget exactly there.
+const traceStage2MaxIDs = 6000
+
+// traceStage1Budget resolves the light Stage-1 id budget for a page:
+// grows with offset (page N needs offset+page ids — both stages sort
+// by the same key and apply the same HAVING, so the first
+// offset+pageLimit ids are exactly the page candidates; 2× is dup /
+// drift slack), floors at stage1Limit, and refuses (ok=false → the
+// caller keeps the single-stage full-window scan, slower but correct)
+// when even the un-slacked need would blow the Stage-2 IN-list byte
+// budget. Pure — table-tested (v0.8.363).
+func traceStage1Budget(offset, pageLimit, stage1Limit int) (int, bool) {
+	need := 2 * (offset + pageLimit)
+	budget := stage1Limit
+	if need > budget {
+		budget = need
+	}
+	if budget > traceStage2MaxIDs {
+		if offset+pageLimit > traceStage2MaxIDs {
+			return 0, false
+		}
+		budget = traceStage2MaxIDs
+	}
+	return budget, true
+}
+
 func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	if f.Limit == 0 {
 		f.Limit = 50
@@ -1951,10 +1984,14 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	pageLimit := f.Limit + 1
 	// Stage 1 over-selects so a Stage 2 sort by non-time
 	// columns still surfaces a reasonable page from the
-	// service's recent slice.
+	// service's recent slice. Clamped to the Stage-2 IN-list
+	// byte budget (v0.8.363).
 	stage1Limit := pageLimit * 10
 	if stage1Limit < 200 {
 		stage1Limit = 200
+	}
+	if stage1Limit > traceStage2MaxIDs {
+		stage1Limit = traceStage2MaxIDs
 	}
 
 	// v0.8.357 (operator-reported: /traces 30-60m çok yavaş) — the
@@ -2031,11 +2068,8 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// are correct; Stage 2 then merges the full states for ~stage1Limit
 	// ids instead of the whole window. Deep offsets grow the id budget.
 	if f.Service == "" && holders == "" {
-		if s1, ok := traceStage1LightSQL(f, having); ok {
-			budget := stage1Limit
-			if need := 2 * (f.Offset + pageLimit); need > budget {
-				budget = need
-			}
+		budget, budgetOK := traceStage1Budget(f.Offset, pageLimit, stage1Limit)
+		if s1, ok := traceStage1LightSQL(f, having); ok && budgetOK {
 			rows1, err := s.conn.Query(ctx, s1, f.From, f.To, budget)
 			if err != nil {
 				return nil, 0, false, fmt.Errorf("stage1-light: %w", err)

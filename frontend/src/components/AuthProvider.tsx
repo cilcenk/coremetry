@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, setUnauthorizedHandler, type AuthUser } from '@/lib/api';
 import { isPublicPath, normalizePath } from '@/lib/auth-paths';
+import { savePostLoginRedirect, consumePostLoginRedirect } from '@/lib/postLoginRedirect';
 
 interface AuthState {
   user: AuthUser | null;
@@ -20,7 +21,7 @@ export function useAuth(): AuthState {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -30,6 +31,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUnauthorizedHandler(() => {
       setUser(null);
       if (!isPublicPath(window.location.pathname)) {
+        // Keep the full deep link (path + query + hash) so signing
+        // back in lands where the expired session was (v0.8.367).
+        savePostLoginRedirect(window.location.pathname + window.location.search + window.location.hash);
         navigate('/login');
       }
     });
@@ -51,12 +55,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (loading) return;
     const path = normalizePath(pathname ?? '');
     if (!user && !isPublicPath(path)) {
+      // Capture the pasted deep link before bouncing (v0.8.367,
+      // operator-reported — Dynatrace-style restore after login).
+      savePostLoginRedirect((pathname ?? '') + (search ?? '') + (hash ?? ''));
       navigate('/login');
     }
+    // Authed on /login (fresh local login) or on the default landing
+    // ('/', where the OIDC callback drops us): restore the captured
+    // deep link when one exists; plain logins keep going to '/'.
     if (user && path === '/login') {
-      navigate('/');
+      navigate(consumePostLoginRedirect() ?? '/');
+    } else if (user && path === '/') {
+      const target = consumePostLoginRedirect();
+      if (target) navigate(target);
     }
-  }, [loading, user, pathname, navigate]);
+  }, [loading, user, pathname, search, hash, navigate]);
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await api.login(email, password);

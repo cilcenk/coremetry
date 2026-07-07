@@ -310,18 +310,25 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 		return
 	}
 
+	serviceNames := make([]string, 0, len(services))
+	for _, s := range services {
+		serviceNames = append(serviceNames, s.Name)
+	}
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
 		}
-		targets := []string{r.Service}
-		if r.Service == "" {
-			targets = make([]string, 0, len(services))
-			for _, s := range services {
-				targets = append(targets, s.Name)
-			}
+		// v0.8.342 (HA audit H9) — log-query rules evaluate ONCE per rule:
+		// the KQL carries its own filters and evaluateLogQuery ignores the
+		// service param, yet the wildcard expansion below used to fan the
+		// SAME rule into one identical ES search per service — 1000
+		// services = 1000 searches per tick, and during an ES brownout
+		// each burned its timeout SEQUENTIALLY, stalling ALL alerting.
+		if r.LogQuery != "" {
+			e.evaluateLogQuery(ctx, r)
+			continue
 		}
-		for _, svc := range targets {
+		for _, svc := range ruleEvalTargets(r, serviceNames) {
 			e.evaluateOne(ctx, r, svc)
 		}
 	}
@@ -436,6 +443,18 @@ func (e *Evaluator) cascadeResolveIncidents(ctx context.Context) {
 		})
 		log.Printf("[evaluator] INCIDENT AUTO-RESOLVED: %s (%d problems, all cleared)", inc.ID, ro.ProblemCount)
 	}
+}
+
+// ruleEvalTargets expands a rule to its evaluation targets: the pinned
+// service, or every recent service for a wildcard (service="") rule.
+// Log-query rules NEVER reach this — they are hoisted to a single
+// evaluateLogQuery call in evaluateAll (v0.8.342, HA audit H9). Pure so
+// the fan-out multiplicity is table-tested.
+func ruleEvalTargets(r chstore.AlertRule, serviceNames []string) []string {
+	if r.Service != "" {
+		return []string{r.Service}
+	}
+	return serviceNames
 }
 
 func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string) {

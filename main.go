@@ -443,6 +443,18 @@ func main() {
 			log.Printf("[cache] redis ready at %s", cfg.Redis.URL)
 		}
 	}
+	// v0.8.341 (H4) — switchable indirection, wired ALWAYS. Every consumer
+	// below (LeaderHolders, evaluator, anomaly, retention, SSE bridge,
+	// cluster membership, api.Server) captures its Cache/Lock at
+	// construction; wrapping here lets the Redis re-probe (started after srv
+	// exists, below) hot-swap the real impls in after a failed boot ping —
+	// pre-fix, a 3s Redis blip at boot condemned the pod to Noop
+	// always-leader for its LIFETIME (N pods × duplicate workers, dead L2).
+	// Healthy boots wrap the real impl from the start: behavior is
+	// unchanged, cost is one atomic pointer load per call.
+	cacheSw := cache.NewSwitchableCache(cacheImpl)
+	lockSw := cache.NewSwitchableLock(lockImpl)
+	cacheImpl, lockImpl = cacheSw, lockSw
 	// v0.8.212 — multi-pod HA hazard: Redis was configured (operator wants a
 	// distributed leader lock) but the connection failed, so this pod runs the
 	// always-leader Noop. In a multi-pod deployment EVERY pod becomes leader →
@@ -796,6 +808,28 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetLockDegraded(lockDegraded) // v0.8.212 — duplicate-worker HA warning on /admin/stats
+	// v0.8.341 (H4) — Redis configured but down at boot: background re-probe
+	// until it answers, then hot-swap the real cache+lock into the
+	// switchables every consumer already holds. On recovery:
+	//   - lockDegraded clears on /admin/stats (no pod restart needed);
+	//   - LeaderHolders demote off the always-leader Noop on their next
+	//     heartbeat and race the REAL lock — the fleet converges from
+	//     N leaders to exactly 1 per worker within one refresh cadence;
+	//   - the SSE bridge + L1-invalidation subscribers are re-kicked (their
+	//     boot-time Subscribe latched onto the Noop's never-delivering
+	//     channel; re-calling opens a real Redis subscription — the stale
+	//     goroutines idle harmlessly until shutdown).
+	// Probe stops after the first success — steady-state Redis failures
+	// surface per-call, as they always have.
+	if lockDegraded {
+		cache.StartRedisReprobe(ctx, 15*time.Second, func() (cache.Cache, cache.Lock, error) {
+			return cache.New(cfg.Redis.URL)
+		}, cacheSw, lockSw, func() {
+			srv.SetLockDegraded(false)
+			bus.StartBridge(ctx)
+			srv.StartCacheInvalidation(ctx)
+		})
+	}
 	srv.SetLogstoreESManager(logsMgr) // v0.8.232 — Settings → Elasticsearch (UI-managed logs backend)
 	srv.SetCluster(clusterSvc)
 	srv.SetAutocomplete(acStore) // v0.8.80 — picker fast path; nil-safe, falls back to CH

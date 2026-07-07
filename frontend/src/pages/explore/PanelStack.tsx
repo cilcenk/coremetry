@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { SpanMetricSeries, MetricExemplar, ChartAnnotation } from '@/lib/types';
+import type { SpanMetricSeries, MetricExemplar, ChartAnnotation, OtlpExemplar } from '@/lib/types';
 import type { TSSeries, TSThreshold } from '@/components/viz/TimeSeriesPanel';
 import { seriesColor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
@@ -56,6 +56,27 @@ function exemplarMarkersFor(
   return out;
 }
 
+// otlpMarkersFor — v0.8.332 (pivot Phase 3): ◆ markers from REAL OTLP
+// exemplars for a single-series catalogue-metric panel. Anchored at the
+// SERIES value nearest the exemplar timestamp — same convention as
+// exemplarMarkersFor above: the glyph must sit ON the rendered line (the
+// exemplar's own recorded value can be wildly off-scale against an avg/sum-
+// aggregated series). kind:'otlp' renders in --purple, distinct from the
+// span-derived slow/error tints.
+function otlpMarkersFor(
+  points: { time: number; value: number | null }[],
+  exemplars: OtlpExemplar[],
+): NonNullable<TSSeries['exemplars']> {
+  const out: NonNullable<TSSeries['exemplars']> = [];
+  for (const e of exemplars) {
+    if (!e.traceId) continue;
+    const v = valueAtCursor(points, e.ts / 1e9);
+    if (!isFinite(v)) continue;
+    out.push({ time: e.ts, value: v, traceId: e.traceId, kind: 'otlp' });
+  }
+  return out;
+}
+
 export function buildPanels(
   state: BuilderState,
   byLetter: Record<string, SpanMetricSeries[] | undefined>,
@@ -66,6 +87,10 @@ export function buildPanels(
   // "+N more" must come from this total, not the capped slice. Falls back to
   // the received series count when absent (resolver / metric paths).
   totalByLetter: Record<string, number | undefined> = {},
+  // v0.8.332 (pivot Phase 3) — letter → REAL OTLP exemplars for catalogue-
+  // metric queries (useExploreQueries gates the fetch to single-service,
+  // no-splitBy queries; [] everywhere else).
+  otlpExemplarsByLetter: Record<string, OtlpExemplar[]> = {},
 ): PanelData[] {
   const out: PanelData[] = [];
   for (const q of state.queries) {
@@ -90,6 +115,17 @@ export function buildPanels(
         exemplars: ex.length ? ex : undefined,
       };
     });
+    // v0.8.332 (pivot Phase 3) — attach the OTLP ◆ only when the panel is a
+    // single unambiguous series. The fetch gate already skips group-by
+    // queries; this guards the residual case of an unexpected fan-out (an
+    // exemplar can't be attributed to one line of many without fingerprints).
+    const otlp = otlpExemplarsByLetter[q.letter] ?? [];
+    if (otlp.length > 0 && labeled.length === 1) {
+      const ex = otlpMarkersFor(labeled[0].points, otlp);
+      if (ex.length > 0) {
+        labeled[0] = { ...labeled[0], exemplars: [...(labeled[0].exemplars ?? []), ...ex] };
+      }
+    }
     // Biggest-by-area win the panel slots (MQE precedent).
     const ranked = labeled
       .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value ?? 0), 0) }))

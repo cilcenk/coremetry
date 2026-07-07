@@ -57,6 +57,17 @@ export function traceLogWindow(
   return { from: min - buffer, to: max + buffer };
 }
 
+// CorrelatedLogsResult — v0.8.332 (pivot Phase 3): the trace-logs read
+// carries the backend's degraded contract through. When the log backend is
+// slow/unreachable the server answers HTTP 200 {degraded:true, reason} with
+// empty lists (api_logs.go, pivot Phase 2) instead of an error — the caller
+// renders a warning chip, never a blocked/failed tab.
+export interface CorrelatedLogsResult {
+  logs: LogRow[];
+  degraded?: boolean;
+  reason?: string;
+}
+
 // useCorrelatedLogs — the traces→logs join: every log line sharing this
 // trace_id (optionally narrowed to one span_id). Backs the Trace-detail "Logs"
 // sub-tab and the log-row "trace →" round-trip. Disabled until a traceId
@@ -74,11 +85,11 @@ export function useCorrelatedLogs(
   const limit = opts?.limit ?? 200;
   const from = opts?.from;
   const to = opts?.to;
-  return useQuery<LogRow[]>({
+  return useQuery<CorrelatedLogsResult>({
     queryKey: ['otel', 'correlated-logs', traceId ?? '', spanId ?? '', limit, from ?? 0, to ?? 0],
     queryFn: async () => {
       const res = await api.logs({ traceId: traceId!, spanId, limit, from, to });
-      return res?.logs ?? [];
+      return { logs: res?.logs ?? [], degraded: res?.degraded, reason: res?.reason };
     },
     enabled: !!traceId,
     staleTime: 30_000,

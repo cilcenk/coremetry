@@ -1218,6 +1218,12 @@ export interface LogsResponse {
   // omitted (Go `omitempty`) on the last page — the UI stops
   // paging when it's absent. Pass it back verbatim as LogsParams.after.
   nextCursor?: string;
+  // v0.8.332 (pivot Phase 3) — the trace-logs path (?traceId=) degrades to
+  // HTTP 200 {degraded:true, reason} + empty lists instead of a 5xx when the
+  // log backend is slow/unreachable (api_logs.go, pivot Phase 2). The Trace
+  // Logs tab renders a warning chip; the tab never blocks.
+  degraded?: boolean;
+  reason?: string;
 }
 
 // /api/notifications/log (v0.8.247 backend, v0.8.263 UI) — one sent
@@ -2769,6 +2775,39 @@ export interface SpanExemplar {
   durationNs: number;
   statusCode: string;
   timeUnixNs: number;
+}
+
+// v0.8.332 (pivot Phase 3) — a REAL OTLP exemplar from GET /api/exemplars:
+// the SDK-recorded {value, trace} sample attached to a metric data point at
+// ingest (pivot Phase 1), as opposed to the span-DERIVED SpanExemplar /
+// MetricExemplar above. `ts` is unix ns; `attrs` are the exemplar's filtered
+// attributes (Go omitempty).
+export interface OtlpExemplar {
+  ts: number;
+  value: number;
+  traceId: string;
+  spanId: string;
+  attrs?: Record<string, string>;
+}
+
+// v0.8.332 — one OTel span-link row from GET /api/traces/{id}/links
+// (chstore.SpanLink JSON verbatim). Both directions project the same
+// columns: an OUTGOING row belongs to the viewed trace (linkedTraceId is the
+// other trace); an INCOMING row belongs to the OTHER trace (traceId is the
+// other trace, linkedTraceId is the one being viewed).
+export interface SpanLink {
+  traceId: string;
+  spanId: string;
+  linkedTraceId: string;
+  linkedSpanId: string;
+  timeUnixNs: number;
+  serviceName: string;
+  attrs?: Record<string, string>;
+}
+
+export interface TraceLinks {
+  outgoing: SpanLink[];
+  incoming: SpanLink[];
 }
 
 // v0.8.232 — UI-managed logstore (Settings → Elasticsearch). Snapshot

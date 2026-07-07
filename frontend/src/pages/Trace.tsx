@@ -1,5 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -71,7 +72,15 @@ function TraceDetailInner() {
     tab !== 'logs' ? undefined
     : logsQuery.isLoading ? undefined
     : logsQuery.isError ? null
-    : (logsQuery.data ?? []);
+    : (logsQuery.data?.logs ?? []);
+  // v0.8.332 (pivot Phase 3) — a slow/unreachable log backend answers HTTP
+  // 200 {degraded:true, reason} with empty lists instead of an error; the
+  // Logs tab shows a warning chip over the (partial/empty) table and never
+  // blocks on the backend.
+  const logsDegraded: string | null =
+    tab === 'logs' && logsQuery.data?.degraded
+      ? (logsQuery.data.reason || 'log backend slow/unreachable')
+      : null;
 
   useEffect(() => {
     if (!id) return;
@@ -224,6 +233,24 @@ function TraceDetailInner() {
     }
     return hits;
   }, [spans, spanFilter]);
+
+  // v0.8.332 (pivot Phase 3) — log→trace deep-link scroll. selectedId is
+  // already URL-seeded from ?span= (the wf-sel row style applies through the
+  // existing selection state); what was missing is bringing that row into
+  // view on a long waterfall. Fires ONCE, only when the page OPENED with
+  // ?span= (LogTable's trace link now appends it) — user clicks never scroll.
+  const urlSpanRef = useRef<string | null>(searchParams.get('span'));
+  useEffect(() => {
+    const want = urlSpanRef.current;
+    if (!want || !spans || spans.length === 0) return;
+    urlSpanRef.current = null; // once per page load
+    if (!spans.some(s => s.spanId === want)) return;
+    // rAF: the waterfall rows render in this same commit — scroll after paint.
+    // On ?tab=logs the waterfall isn't mounted and the selector finds nothing.
+    requestAnimationFrame(() => {
+      document.querySelector('.wf-sel')?.scrollIntoView({ block: 'center' });
+    });
+  }, [spans]);
 
   // Early return AFTER every hook so the hook call order is
   // stable across renders (react-hooks/rules-of-hooks). When
@@ -390,6 +417,10 @@ function TraceDetailInner() {
                 <span><b>Source:</b> Tempo fallback · Coremetry sampled this trace out, the spans were read from the external Tempo backend.</span>
               </div>
             )}
+            {/* v0.8.332 (pivot Phase 3) — OTel span links, both directions.
+                Renders NOTHING for the (vast) majority of traces that carry
+                no links; see LinkedTracesSection. */}
+            <LinkedTracesSection id={id} />
             <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <CopilotExplain kind="trace" id={id} label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
               <CompareTracesButton aId={id} />
@@ -430,7 +461,7 @@ function TraceDetailInner() {
             )}
 
             {tab === 'logs' && (
-              <TraceLogsPanel logs={logs} />
+              <TraceLogsPanel logs={logs} degraded={logsDegraded} />
             )}
           </>
         )}
@@ -528,15 +559,99 @@ function TabBtn({ active, onClick, children }: {
   );
 }
 
+// LinkedTracesSection — v0.8.332 (pivot Phase 3). OTel span links for this
+// trace, BOTH directions, from /api/traces/{id}/links (span_links +
+// span_links_reverse PK scans, pivot Phase 2). Lazy fetch-on-render with
+// staleTime = the endpoint's 30s serveCached TTL. Space discipline: renders
+// NOTHING until data arrives AND at least one link exists — most traces
+// carry no links and the header must not grow a permanent empty section
+// (no spinner either, for the same reason).
+function LinkedTracesSection({ id }: { id: string }) {
+  const q = useQuery({
+    queryKey: ['trace-links', id],
+    queryFn: () => api.traceLinks(id),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+  // Flatten both directions into display rows, deduped by (direction, other
+  // trace): a batch consumer declares one link per consumed span, but the
+  // operator pivots per TRACE. Self-links (spans linking within this same
+  // trace) are skipped — "links to itself" is noise on this surface.
+  const rows = useMemo(() => {
+    const d = q.data;
+    if (!d) return [];
+    const seen = new Set<string>();
+    const out: { dir: 'out' | 'in'; other: string; attrs: number }[] = [];
+    for (const l of d.outgoing ?? []) {
+      const key = `out:${l.linkedTraceId}`;
+      if (!l.linkedTraceId || l.linkedTraceId === id || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ dir: 'out', other: l.linkedTraceId, attrs: Object.keys(l.attrs ?? {}).length });
+    }
+    for (const l of d.incoming ?? []) {
+      const key = `in:${l.traceId}`;
+      if (!l.traceId || l.traceId === id || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ dir: 'in', other: l.traceId, attrs: Object.keys(l.attrs ?? {}).length });
+    }
+    return out;
+  }, [q.data, id]);
+  if (rows.length === 0) return null;
+  return (
+    <div style={{
+      marginBottom: 10, padding: '6px 10px',
+      background: 'var(--bg2)',
+      border: '1px solid var(--border)',
+      borderLeft: '3px solid var(--accent2)',
+      borderRadius: 4,
+      fontSize: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+    }}>
+      <span style={{
+        fontSize: 11, fontWeight: 600, color: 'var(--text2)',
+        textTransform: 'uppercase', letterSpacing: '0.3px',
+      }} title="OTel span links — causal pointers this trace declares (→) or receives (←), e.g. producer→consumer or batch fan-in">
+        ⛓ Linked traces
+      </span>
+      {rows.map(r => (
+        <span key={`${r.dir}:${r.other}`}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ color: 'var(--text3)', fontSize: 11 }}
+            title={r.dir === 'out' ? 'This trace links to' : 'Linked from another trace'}>
+            {r.dir === 'out' ? '→ links to' : '← linked from'}
+          </span>
+          <Link to={`/trace?id=${r.other}`}
+            style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+            {r.other.slice(0, 8)}…
+          </Link>
+          <CopyButton value={r.other} title="Copy linked trace ID" />
+          {r.attrs > 0 && (
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}
+              title="Link attributes on the span link">
+              · {r.attrs} attr{r.attrs === 1 ? '' : 's'}
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // TraceLogsPanel — flat list of log entries that share this trace
 // id, ordered chronologically. Layout mirrors Uptrace's trace→logs
 // tab: timestamp · severity · service · message preview, with the
 // span_id shown as a smaller tag so the operator can correlate
 // "this log line belongs to that span".
-function TraceLogsPanel({ logs }: { logs: LogRow[] | null | undefined }) {
+// v0.8.332 — `degraded` (a reason string) marks the pivot Phase 2 partial-
+// result contract: warn chip instead of the "no logs" empty state (which
+// would misread as an instrumentation gap), table still renders, tab never
+// blocks.
+function TraceLogsPanel({ logs, degraded }: {
+  logs: LogRow[] | null | undefined;
+  degraded?: string | null;
+}) {
   if (logs === undefined) return <Spinner />;
   if (logs === null) return <Empty icon="⚠" title="Failed to load logs" />;
-  if (logs.length === 0) {
+  if (logs.length === 0 && !degraded) {
     return <Empty icon="≡" title="No logs for this trace">
       Make sure your collector ships logs with the W3C trace context (trace_id + span_id) populated.
     </Empty>;
@@ -549,6 +664,13 @@ function TraceLogsPanel({ logs }: { logs: LogRow[] | null | undefined }) {
   const sorted = [...logs].sort((a, b) => a.timestamp - b.timestamp);
   return (
     <>
+      {degraded && (
+        <div style={{ padding: '0 10px 6px' }}>
+          <span className="badge b-warn" title={degraded}>
+            ⚠ Log backend slow/unreachable — partial results
+          </span>
+        </div>
+      )}
       <div style={{
         display: 'flex', gap: 10, padding: '6px 10px',
         fontSize: 11, color: 'var(--text3)',

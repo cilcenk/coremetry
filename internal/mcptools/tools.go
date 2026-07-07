@@ -38,6 +38,12 @@
 //   - search_logs
 //   - get_trace
 //   - query_metric
+//
+// Cross-signal pivot tools (v0.8.333, pivots.go):
+//   - get_logs_for_trace
+//   - get_exemplar_traces
+//   - get_linked_traces
+//   - get_metrics_for_span
 package mcptools
 
 import (
@@ -64,7 +70,7 @@ type Deps struct {
 // the given MCP server. Idempotent — calling twice overwrites
 // with the latest closures, but that's a logic-error pattern
 // the mcp package logs about.
-// ToolList returns the 7 telemetry tools as plain mcp.Tool values
+// ToolList returns the full telemetry tool set as plain mcp.Tool values
 // closed over the given Deps, WITHOUT registering them on an MCP
 // server. v0.6.53 — the in-app chatbot reuses this exact set as its
 // function-calling backend: it maps each tool's Name / Description /
@@ -82,6 +88,12 @@ func ToolList(d Deps) []mcp.Tool {
 		searchLogsTool(d),
 		getTraceTool(d),
 		queryMetricTool(d),
+		// v0.8.333 — cross-signal pivot tools (pivots.go, pivot Phase 4):
+		// trace↔log↔metric moves at MCP/copilot parity with the UI.
+		getLogsForTraceTool(d),
+		getExemplarTracesTool(d),
+		getLinkedTracesTool(d),
+		getMetricsForSpanTool(d),
 	}
 }
 

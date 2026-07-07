@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Zap, ChevronRight, ChevronDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -38,6 +38,11 @@ import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 // fully-broken endpoint beats a slow-but-healthy one even at
 // equal traffic. Used as the default sort affordance via the
 // "Sort by impact" preset button.
+//
+// v0.8.356 — the sort now runs SERVER-side; the backend's impact
+// expression (chstore.endpointsOrderBy) mirrors this formula
+// exactly. This accessor stays as the column's sortable marker
+// (serverSort mode never invokes it).
 function impactOf(r: EndpointRow): number {
   const errFactor = 1 + (r.errorRate / 100);
   return r.calls * r.p99Ms * errFactor;
@@ -47,20 +52,37 @@ function impactOf(r: EndpointRow): number {
 // Body order must match these (non-sortable Method/Status/Trend/Traces
 // omit sortValue but still resize). `impact` is headerHidden — the
 // "Worst by impact" preset sorts by it without rendering a column.
+//
+// v0.8.356 — serverSort mode: sortable column ids must stay in
+// lockstep with the backend whitelist (chstore.endpointsOrderBy);
+// SORT_KEYS below sanitizes stale persisted ids before they reach
+// the fetch. New MV-backed columns: Req/min, P50, P95.
 const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   { id: 'service',   label: 'Service',    sortValue: r => r.service,   naturalDir: 'asc', width: 150 },
-  { id: 'path',      label: 'Path',       sortValue: r => r.path,      naturalDir: 'asc', width: 280 },
-  { id: 'method',    label: 'Method',     width: 72 },
-  { id: 'calls',     label: 'Calls',      sortValue: r => r.calls,     numeric: true, width: 90 },
-  { id: 'errors',    label: 'Errors',     sortValue: r => r.errors,    numeric: true, width: 82 },
-  { id: 'errorRate', label: 'Error rate', sortValue: r => r.errorRate, numeric: true, width: 96 },
-  { id: 'status',    label: 'Status',     width: 150 },
-  { id: 'avgMs',     label: 'Avg',        sortValue: r => r.avgMs,     numeric: true, width: 86 },
-  { id: 'p99Ms',     label: 'P99',        sortValue: r => r.p99Ms,     numeric: true, width: 86 },
+  { id: 'path',      label: 'Path',       sortValue: r => r.path,      naturalDir: 'asc', width: 260 },
+  { id: 'method',    label: 'Method',     width: 68 },
+  { id: 'calls',     label: 'Calls',      sortValue: r => r.calls,     numeric: true, width: 84 },
+  { id: 'errors',    label: 'Errors',     sortValue: r => r.errors,    numeric: true, width: 76 },
+  { id: 'errorRate', label: 'Error rate', sortValue: r => r.errorRate, numeric: true, width: 92 },
+  { id: 'status',    label: 'Status',     width: 140 },
+  { id: 'reqPerMin', label: 'Req/min',    sortValue: r => r.reqPerMin ?? 0, numeric: true, width: 84 },
+  { id: 'avgMs',     label: 'Avg',        sortValue: r => r.avgMs,     numeric: true, width: 78 },
+  { id: 'p50Ms',     label: 'P50',        sortValue: r => r.p50Ms ?? 0, numeric: true, width: 72 },
+  { id: 'p95Ms',     label: 'P95',        sortValue: r => r.p95Ms ?? 0, numeric: true, width: 72 },
+  { id: 'p99Ms',     label: 'P99',        sortValue: r => r.p99Ms,     numeric: true, width: 72 },
   { id: 'trend',     label: 'Trend',      width: 120 },
   { id: 'traces',    label: 'Traces',     width: 64 },
   { id: 'impact',    label: 'Impact',     sortValue: impactOf, headerHidden: true },
 ];
+
+// Sort ids the backend ORDER BY whitelist accepts — anything else
+// (stale localStorage from the pre-v0.8.356 schema, hand-edited
+// URLs) falls back to calls DESC before it reaches the fetch.
+const SORT_KEYS = [
+  'service', 'path', 'calls', 'errors', 'errorRate',
+  'avgMs', 'p50Ms', 'p95Ms', 'p99Ms', 'reqPerMin', 'impact',
+] as const;
+const DEFAULT_ENDPOINTS_SORT = { id: 'calls', dir: 'desc' as const };
 
 export default function EndpointsPage() {
   const navigate = useNavigate();
@@ -139,6 +161,29 @@ export default function EndpointsPage() {
 
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
+  // v0.8.356 — serverSort mode (v0.8.251 Services / v0.8.318 inbox
+  // pattern): the hook owns the header UX, the `s_endpoints` URL
+  // param and localStorage persistence; the fetch below forwards the
+  // sanitized pair and CH does the ORDER BY before the LIMIT — true
+  // global top-N per sort, not the top-N-by-calls page reordered.
+  // The hook must precede the query that consumes dt.sort, so its
+  // rows come through a state mirror synced from the query result.
+  const [tableRows, setTableRows] = useState<EndpointRow[]>([]);
+  // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
+  // row, Enter/o open its service detail, "/" focuses the path filter.
+  const dt = useDataTable<EndpointRow>({
+    storageKey: 'endpoints',
+    columns: ENDPOINT_COLS,
+    rows: tableRows,
+    serverSort: true,
+    initialSort: DEFAULT_ENDPOINTS_SORT,
+    onOpen: r => navigate(`/service?name=${encodeURIComponent(r.service)}`),
+    searchRef,
+  });
+  const sortOk = (SORT_KEYS as readonly string[]).includes(dt.sort.id ?? '');
+  const sortBy = sortOk ? (dt.sort.id as string) : DEFAULT_ENDPOINTS_SORT.id;
+  const sortDir = sortOk ? dt.sort.dir : DEFAULT_ENDPOINTS_SORT.dir;
+
   const rowsQ = useEndpoints({
     from, to,
     service: service || undefined,
@@ -147,25 +192,17 @@ export default function EndpointsPage() {
     limit,
     compare: compare ? 'prior' : undefined,
     groupBy: bySignature ? 'signature' : undefined,
+    sort: sortBy,
+    dir: sortDir,
   });
   const rows: EndpointRow[] | null | undefined =
     rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data ?? [];
+  useEffect(() => { setTableRows(rowsQ.data ?? []); }, [rowsQ.data]);
 
   // Cluster picker options — mirror Services page so symmetry is
   // intuitive for operators landing here after filtering there.
   const clustersQ = useClusters(from, to);
   const clusterOptions = clustersQ.data ?? [];
-
-  // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
-  // row, Enter/o open its service detail, "/" focuses the path filter.
-  const dt = useDataTable<EndpointRow>({
-    storageKey: 'endpoints',
-    columns: ENDPOINT_COLS,
-    rows: rows ?? [],
-    initialSort: { id: 'calls', dir: 'desc' },
-    onOpen: r => navigate(`/service?name=${encodeURIComponent(r.service)}`),
-    searchRef,
-  });
 
   const totalCalls = (rows ?? []).reduce((s, r) => s + r.calls, 0);
   const totalErrors = (rows ?? []).reduce((s, r) => s + r.errors, 0);
@@ -204,7 +241,8 @@ export default function EndpointsPage() {
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {rows && (
               <>
-                Top {fmtNum(rows.length)} by calls
+                Top {fmtNum(rows.length)} by{' '}
+                {ENDPOINT_COLS.find(c => c.id === sortBy)?.label.toLowerCase() ?? sortBy}
                 {rows.length >= limit && (
                   <span style={{ color: 'var(--warn)', marginLeft: 6 }}
                         title="Result hit the limit — long-tail endpoints may be hidden">
@@ -352,10 +390,13 @@ export default function EndpointsPage() {
                           <span className={`badge ${errCls}`}>{r.errorRate.toFixed(2)}%</span>
                         </td>
                         <td><StatusBreakdown r={r} /></td>
+                        <td className="num mono">{fmtRate(r.reqPerMin)}</td>
                         <td className="num mono">
                           {r.avgMs.toFixed(1)} ms
                           {compare && <TrendDelta cur={r.avgMs} prior={r.priorAvgMs} kind="lowerBetter" />}
                         </td>
+                        <td className="num mono">{fmtMs(r.p50Ms)}</td>
+                        <td className="num mono">{fmtMs(r.p95Ms)}</td>
                         <td className="num mono">
                           {r.p99Ms.toFixed(0)} ms
                           {compare && <TrendDelta cur={r.p99Ms} prior={r.priorP99Ms} kind="lowerBetter" />}
@@ -392,7 +433,8 @@ export default function EndpointsPage() {
                       {isExpanded && (
                         <tr>
                           <td />
-                          <td colSpan={11} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
+                          {/* v0.8.356 — 14 body columns (Req/min, P50, P95 added) */}
+                          <td colSpan={14} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
                             <DependencyStrip
                               service={r.service}
                               deps={depsByService[r.service]} />
@@ -406,10 +448,16 @@ export default function EndpointsPage() {
               </table>
             </div>
             <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
-              Path source priority: <code>http.route</code> (templated) →
-              {' '}<code>url.path</code> → <code>http.target</code>.
+              {/* v0.8.356 — the default read rides the spanmetrics_1m MV,
+                  whose route dimension is filled from http.route with an
+                  http.target fallback at ingest; the url.path fallback only
+                  applies on the cluster-filtered raw path. */}
+              Path source priority: {cluster
+                ? <><code>http.route</code> (templated) → <code>url.path</code> → <code>http.target</code></>
+                : <><code>http.route</code> (templated) → <code>http.target</code></>}.
               Server / consumer spans only — outbound client spans count under
-              the callee's row.
+              the callee's row. P50/P95/P99 are true window quantiles
+              (tdigest).
             </div>
           </>
         )}
@@ -762,6 +810,23 @@ function TrendDelta({ cur, prior, kind }: {
       {abs.toFixed(0)}%
     </span>
   );
+}
+
+// fmtRate — Req/min cell (v0.8.356). Sub-10 rates keep one decimal
+// ("3.2") so low-traffic endpoints don't all read "0"; larger rates
+// round to locale ints. "—" for a mid-rolling-deploy older backend
+// that doesn't ship the field yet.
+function fmtRate(v?: number): string {
+  if (v === undefined || v === null) return '—';
+  return v < 10 ? v.toFixed(1) : fmtNum(Math.round(v));
+}
+
+// fmtMs — P50/P95 cells (v0.8.356). One decimal under 10ms (cache
+// hits, health checks), whole ms above. "—" when the backend
+// predates the field (rolling deploy).
+function fmtMs(v?: number): string {
+  if (v === undefined || v === null) return '—';
+  return (v < 10 ? v.toFixed(1) : v.toFixed(0)) + ' ms';
 }
 
 // compactNum — 12345 → "12.3k". Keeps the pill width bounded

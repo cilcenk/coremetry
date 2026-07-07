@@ -2,26 +2,34 @@ package chstore
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
 // EndpointRow is one (service, path) tuple's RED rollup for the
 // /endpoints page. Path resolves to http.route when the SDK
-// emits the templated form (e.g. "/api/users/{id}"); falls back
-// to url.path (the concrete request path) when route is empty
-// — matches the operator-confirmed v0.5.365 priority order so
-// frameworks that already route-template don't blow cardinality
-// while plainly-instrumented services still surface useful
-// rows.
+// emits the templated form (e.g. "/api/users/{id}") with an
+// http.target fallback (the ingest column's chain — v0.8.356 MV
+// path); the legacy raw path (cluster filter only) additionally
+// falls back to url.path, matching the operator-confirmed
+// v0.5.365 priority order.
 type EndpointRow struct {
-	Service    string  `json:"service"`
-	Path       string  `json:"path"`
-	Method     string  `json:"method,omitempty"`
-	Calls      uint64  `json:"calls"`
-	Errors     uint64  `json:"errors"`
-	ErrorRate  float64 `json:"errorRate"`
-	AvgMs      float64 `json:"avgMs"`
-	P99Ms      float64 `json:"p99Ms"`
+	Service   string  `json:"service"`
+	Path      string  `json:"path"`
+	Method    string  `json:"method,omitempty"`
+	Calls     uint64  `json:"calls"`
+	Errors    uint64  `json:"errors"`
+	ErrorRate float64 `json:"errorRate"`
+	AvgMs     float64 `json:"avgMs"`
+	P99Ms     float64 `json:"p99Ms"`
+	// v0.8.356 — MV-backed columns (Stage-2 slice E1). True window
+	// quantiles from the spanmetrics_1m tdigest states (the old raw
+	// CTE approximated window p99 as max(per-bucket p99)) plus
+	// req/min throughput (calls / window minutes) so the operator
+	// compares endpoints across window widths.
+	P50Ms     float64 `json:"p50Ms"`
+	P95Ms     float64 `json:"p95Ms"`
+	ReqPerMin float64 `json:"reqPerMin"`
 	// v0.5.370 — call-rate sparkline (30 buckets across the
 	// requested window). Lets the operator eye-scan "is this
 	// endpoint steady / spiking / dying" from the table row
@@ -60,33 +68,6 @@ type EndpointRow struct {
 	PriorP99Ms   float64 `json:"priorP99Ms,omitempty"`
 }
 
-// GetEndpoints aggregates RED stats per (service_name, derived
-// endpoint path) over the window. Returns top `limit` rows by
-// call count so a high-cardinality path (concrete IDs that
-// slipped past the http.route fallback) doesn't dominate the
-// JSON payload.
-//
-// Path resolution priority (matches operator config v0.5.365):
-//  1. spans.http_route (LowCardinality column populated by the
-//     OTel ingest path)
-//  2. attr_values[indexOf(attr_keys, 'http.route')] (alt-conv
-//     SDKs that put it in attrs)
-//  3. attr_values[indexOf(attr_keys, 'url.path')]
-//  4. attr_values[indexOf(attr_keys, 'http.target')] (older
-//     semconv)
-//
-// Span filter: kind != 'client' / 'producer' so we count
-// inbound requests only — outbound client / messaging-producer
-// spans land under the callee's row, not the caller's.
-//
-// v0.5.386 — operator-reported: rows looked sparse vs reality.
-// Root cause: previous filter was `kind IN ('server','consumer')`
-// which dropped every span whose SDK left SpanKind unspecified.
-// OTLP's UNSPECIFIED gets mapped to 'internal' on ingest (see
-// internal/otlp/convert.go kindStr default branch), which is the
-// case for a lot of manual instrumentation + older SDKs +
-// frameworks that don't auto-decorate kind. We now keep any
-// span with a real path that isn't an OUTGOING call.
 // opSig* are the read-time ID-collapsing regexes for the Endpoints
 // "Group by shape" toggle, applied IN ORDER (UUID first so the numeric/hex
 // rules don't chew its runs). v0.8.x — ALIGNED with the ingest-time
@@ -115,23 +96,427 @@ const (
 // the GROUP-BY projection; the per-bucket CTE re-computes the quantile over
 // the normalized group, so p99/error-rate stay exact (no MV, no ingest
 // fan-out). Placeholder + rules match templater.NormalizeOperation.
+//
+// v0.8.356 — the regex patterns bind as ? args (opSigArgs) instead of
+// being inlined. Root cause of the broken "Group by shape" toggle:
+// clickhouse-go v2 flips a statement into SERVER-SIDE parameter mode
+// whenever the query text matches `{.+:.+}` (query_parameters.go) —
+// the inlined `[0-9a-fA-F]{8}` quantifier braces plus the ':id'
+// literal satisfied that regex, so every positional arg then failed
+// with "unsupported query parameter type" and the whole endpoint
+// 500'd. Binding the patterns keeps the braces out of the SQL text.
+// Every opSigWrap call site MUST splice opSigArgs() at the matching
+// placeholder position.
 func opSigWrap(expr string) string {
 	return `replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(` + expr +
-		`, '` + OpSigReUUID + `', ':id')` +
-		`, '` + OpSigReHex + `', '/:id')` +
-		`, '` + OpSigReNum + `', '/:id')`
+		`, ?, ':id'), ?, '/:id'), ?, '/:id')`
 }
 
-func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service string, search string, cluster string, limit int, bySignature bool) ([]EndpointRow, error) {
-	if limit <= 0 || limit > 10000 {
-		limit = 500
+// opSigArgs returns the bind args for ONE opSigWrap expansion, in
+// placeholder order (UUID first so the numeric/hex rules don't chew
+// its runs — same ordering contract as the consts above).
+func opSigArgs() []any { return []any{OpSigReUUID, OpSigReHex, OpSigReNum} }
+
+// EndpointsQuery bundles the /endpoints read inputs (v0.8.356) —
+// the arg list outgrew a flat signature when server-side sort +
+// the MV/raw dispatch landed.
+type EndpointsQuery struct {
+	From, To    time.Time
+	Service     string
+	Search      string
+	Cluster     string
+	Limit       int
+	BySignature bool
+	// Sort / Dir (v0.8.356) — server-side global ordering, whitelisted
+	// via endpointsOrderBy. Before this the backend always returned
+	// top-N by calls and the client re-sorted that page — "top by p95"
+	// was really "top-N-by-calls, reordered".
+	Sort, Dir string
+	// SkipStatus skips the raw-spans status/method sidecar — set by the
+	// compare=prior read, which only needs calls/errors/avg/p99 for the
+	// delta merge.
+	SkipStatus bool
+}
+
+// endpointsOrderBy maps the UI sort ids onto whitelisted ORDER BY
+// clauses (v0.8.356, same pattern as exceptionGroupsOrderBy
+// v0.8.318) — caller input never reaches the SQL string — with a
+// deterministic (service, path) tiebreak so equal-value rows keep a
+// stable order across refetches. Unknown ids/dirs fall back to the
+// historical calls DESC. Column aliases exist in BOTH the MV read
+// and the raw fallback, so the two paths share this mapper.
+func endpointsOrderBy(sort, dir string) string {
+	col, ok := map[string]string{
+		"service":   "service_name",
+		"path":      "path",
+		"calls":     "calls",
+		"errors":    "errors",
+		"errorRate": "error_rate",
+		"avgMs":     "avg_ms",
+		"p50Ms":     "p50_ms",
+		"p95Ms":     "p95_ms",
+		"p99Ms":     "p99_ms",
+		// reqPerMin = calls / windowMinutes with a constant divisor per
+		// query — ordering by calls is the identical permutation, and it
+		// saves binding the divisor into the ORDER BY.
+		"reqPerMin": "calls",
+		// Composite "fix me first" score — matches the frontend's
+		// impactOf(): calls × p99 × (1 + errorRate).
+		"impact": "calls * p99_ms * (1 + error_rate / 100.0)",
+	}[sort]
+	if !ok {
+		return "ORDER BY calls DESC, service_name ASC, path ASC"
 	}
-	if from.IsZero() {
-		from = time.Now().Add(-1 * time.Hour)
+	d := "DESC"
+	if dir == "asc" {
+		d = "ASC"
 	}
-	if to.IsZero() {
-		to = time.Now()
+	return "ORDER BY " + col + " " + d + ", service_name ASC, path ASC"
+}
+
+// GetEndpoints dispatches the /endpoints read (v0.8.356, Stage-2
+// slice E1). Default path reads the spanmetrics_1m MV (MV-first
+// invariant — the old raw CTE was a bounded full-scan of spans at
+// billion-span scale; on the reference install it ran 16-19s cold
+// and sometimes tripped its own 15s cap). The raw path survives
+// ONLY for the cluster filter: cluster is derived from res/attr
+// arrays (clusterExpr) which the MV doesn't carry as a dimension.
+//
+// Known trade-off, documented: spans.http_route is populated at
+// ingest from http.route with an http.target fallback
+// (internal/otlp/convert.go) — the MV path therefore does NOT see
+// url.path-only spans the raw CTE's coalesce chain caught. Those
+// are the untemplated, cardinality-bomb paths; losing them from
+// the DEFAULT view is acceptable (they still appear under the
+// cluster-filtered raw path).
+func (s *Store) GetEndpoints(ctx context.Context, q EndpointsQuery) ([]EndpointRow, error) {
+	if q.Limit <= 0 || q.Limit > 10000 {
+		q.Limit = 500
 	}
+	if q.From.IsZero() {
+		q.From = time.Now().Add(-1 * time.Hour)
+	}
+	if q.To.IsZero() {
+		q.To = time.Now()
+	}
+	if q.Cluster != "" {
+		return s.getEndpointsRaw(ctx, q)
+	}
+	return s.GetEndpointsMV(ctx, q)
+}
+
+// endpointsWindowMinutes returns the reqPerMin divisor — window
+// width in minutes, floored at 1 so sub-minute windows don't
+// inflate the rate (same guard QueryTraceGroups' perMin uses).
+func endpointsWindowMinutes(from, to time.Time) float64 {
+	m := to.Sub(from).Minutes()
+	if m < 1 {
+		return 1
+	}
+	return m
+}
+
+// spanmetricsSource returns the FROM source for spanmetrics_1m reads
+// (v0.8.356). The doorway MVs (v0.8.50) never made it into
+// highVolumeTables, so on a chstore-owned cluster adaptDDL turns
+// them into PER-SHARD MVs (FROM spans_local, Replicated inner) with
+// NO Distributed wrapper — a bare-name read silently returns one
+// shard's slice (verified: the 2-shard reference install returned
+// roughly half the calls). cluster() fans the read across one
+// replica per shard —
+// states are additive across shards and replicas within a shard are
+// identical, so this is the true cluster total (same pattern as
+// sysstats' cluster(cn, system.parts) read). With ClusterName unset
+// (operator-managed external cluster) we can't enumerate shards and
+// read the connected node — same posture as every other
+// spanmetrics_1m reader (metricresolve, exemplar).
+//
+// TODO(v0.8.356-follow-up): the real fix is promoting the
+// spanmetrics_* doorway MVs into highVolumeTables + a
+// dropCombinedMV migration so they get the _local + Distributed
+// wrapper shape like the *_5m summaries — that also heals the
+// /explore doorway + exemplar reads, which undercount today. When
+// that lands this helper collapses to the bare name.
+func (s *Store) spanmetricsSource() string {
+	if cn := strings.TrimSpace(s.cfg.ClusterName); cn != "" {
+		return "cluster('" + cn + "', currentDatabase(), 'spanmetrics_1m')"
+	}
+	return "spanmetrics_1m"
+}
+
+// GetEndpointsMV is the spanmetrics_1m-backed /endpoints read
+// (v0.8.356). One MV scan produces the whole table: RED counts via
+// countMerge/countIfMerge/sumMerge, TRUE window p50/p95/p99 via a
+// two-level tdigest merge (per-bucket -MergeState in the CTE, final
+// -Merge across buckets — the raw CTE could only max() per-bucket
+// p99s), and the three 30-bucket sparklines rebuilt from the MV's
+// 1-minute time_bucket series. Sparkline buckets floor at the MV
+// grain (1min): a 5m window ships 5 buckets, not 30 — the frontend
+// bucketsToSeries derives the axis from array length, so variable
+// length is safe.
+//
+// HTTP status-class pills + the method chip need http_status /
+// http_method, which the MV does NOT carry — those come from ONE
+// bounded raw-spans sidecar over the returned top-N keys only
+// (endpointStatusSidecar), skipped for compare=prior reads.
+func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]EndpointRow, error) {
+	// Align the window start to the MV grain so the first bucket is
+	// wholly inside [from, to] rather than half-clipped.
+	from := q.From.Truncate(time.Minute)
+	windowSec := q.To.Unix() - from.Unix()
+	if windowSec <= 0 {
+		windowSec = 60
+	}
+	// 30 sparkline buckets, floored at the 1-minute MV grain (a 5m
+	// window gets 5 one-minute buckets; a 24h window gets 30 48-min
+	// buckets).
+	bucketSec := windowSec / 30
+	if bucketSec < 60 {
+		bucketSec = 60
+	}
+	nBuckets := int((windowSec + bucketSec - 1) / bucketSec)
+	if nBuckets < 1 {
+		nBuckets = 1
+	}
+
+	// Group-by projection: raw route by default, ID-collapsed
+	// signature when the operator toggles "group by shape". The
+	// signature transform is a plain string rewrite over the MV's
+	// http_route dimension, and tdigest states merge exactly across
+	// the collapsed groups — so the toggle rides the MV too.
+	pathProj := "http_route"
+	if q.BySignature {
+		pathProj = opSigWrap("http_route")
+	}
+
+	where := "time_bucket >= ? AND time_bucket <= ?" +
+		" AND kind NOT IN ('client', 'producer')" +
+		" AND http_route != ''"
+	// Placeholder order follows appearance in the SQL text: the
+	// signature-regex args (inside pathProj, when present) and the
+	// intDiv bucket args sit in the SELECT list, BEFORE the WHERE.
+	var args []any
+	if q.BySignature {
+		args = append(args, opSigArgs()...)
+	}
+	args = append(args, from.Unix(), bucketSec, from, q.To)
+	if q.Service != "" {
+		where += " AND service_name = ?"
+		args = append(args, q.Service)
+	}
+	if q.Search != "" {
+		// Filter on the raw route (like the raw path filters the raw
+		// pathExpr) so normalization only affects clustering.
+		where += " AND positionCaseInsensitive(http_route, ?) > 0"
+		args = append(args, q.Search)
+	}
+	args = append(args, nBuckets, nBuckets, nBuckets, q.Limit)
+
+	sql := `
+		WITH per_bucket AS (
+		  SELECT service_name,
+		         ` + pathProj + `                                 AS path,
+		         intDiv(toUnixTimestamp(time_bucket) - ?, ?)      AS b,
+		         countMerge(calls_state)                          AS bv,
+		         countIfMerge(error_state)                        AS bv_err,
+		         sumMerge(duration_sum_state)                     AS bv_sum_dur,
+		         arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 4) / 1e6 AS bv_p99,
+		         quantilesTDigestMergeState(0.5, 0.9, 0.95, 0.99)(duration_q_state) AS q_state
+		  FROM ` + s.spanmetricsSource() + `
+		  WHERE ` + where + `
+		  GROUP BY service_name, path, b
+		)
+		SELECT service_name,
+		       path,
+		       sum(bv)                                          AS calls,
+		       sum(bv_err)                                      AS errors,
+		       sum(bv_err) * 100.0 / nullIf(sum(bv), 0)         AS error_rate,
+		       sum(bv_sum_dur) / nullIf(sum(bv), 0) / 1e6       AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 3) / 1e6 AS p95_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 4) / 1e6 AS p99_ms,
+		       arrayMap(i ->
+		         toFloat64(coalesce(arrayElement(groupArray(bv), indexOf(groupArray(b), i)), 0)),
+		         range(0, ?)
+		       )                                                AS sparkline,
+		       arrayMap(i ->
+		         toFloat64(coalesce(arrayElement(groupArray(bv_err), indexOf(groupArray(b), i)), 0)),
+		         range(0, ?)
+		       )                                                AS errors_sparkline,
+		       arrayMap(i ->
+		         toFloat64(coalesce(arrayElement(groupArray(bv_p99), indexOf(groupArray(b), i)), 0)),
+		         range(0, ?)
+		       )                                                AS p99_sparkline
+		FROM per_bucket
+		GROUP BY service_name, path
+		` + endpointsOrderBy(q.Sort, q.Dir) + `
+		LIMIT ?
+		SETTINGS max_execution_time = 15`
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	windowMin := endpointsWindowMinutes(q.From, q.To)
+	out := []EndpointRow{}
+	for rows.Next() {
+		var r EndpointRow
+		var errRate, avgMs, p50Ms, p95Ms, p99Ms *float64
+		var sparkline, errorsSparkline, p99Sparkline []float64
+		if err := rows.Scan(
+			&r.Service, &r.Path,
+			&r.Calls, &r.Errors, &errRate, &avgMs, &p50Ms, &p95Ms, &p99Ms,
+			&sparkline, &errorsSparkline, &p99Sparkline,
+		); err != nil {
+			return nil, err
+		}
+		r.ErrorRate = safeF(errRate)
+		r.AvgMs = safeF(avgMs)
+		r.P50Ms = safeF(p50Ms)
+		r.P95Ms = safeF(p95Ms)
+		r.P99Ms = safeF(p99Ms)
+		r.ReqPerMin = float64(r.Calls) / windowMin
+		r.Sparkline = sparkline
+		r.ErrorsSparkline = errorsSparkline
+		r.P99Sparkline = p99Sparkline
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !q.SkipStatus && len(out) > 0 {
+		// Best-effort decoration: a sidecar failure degrades the Status
+		// pills / Method chip to "—" instead of failing the whole table
+		// (the RED columns above are already final).
+		_ = s.endpointStatusSidecar(ctx, q, out)
+	}
+	return out, nil
+}
+
+// endpointStatusSidecar fills Http2xx..Http5xx + Method for rows
+// the MV read returned (v0.8.356 decision: keep the status-class
+// pills via ONE bounded raw-spans query over the top-N keys rather
+// than dropping them — the MV's status_code dimension is span
+// status ok/error, not the HTTP class). Bounds: time WHERE on the
+// (service_name, time) PK prefix, service/route IN-lists from the
+// already-LIMITed result set, LIMIT with cross-product headroom,
+// max_execution_time. Uses the dedicated http_status UInt16 column
+// (minmax-indexed) — cheaper than the attr_values lookup the old
+// CTE did, same ingest source (internal/otlp/convert.go).
+func (s *Store) endpointStatusSidecar(ctx context.Context, q EndpointsQuery, rowsOut []EndpointRow) error {
+	services := make([]string, 0, 16)
+	paths := make([]string, 0, len(rowsOut))
+	seenSvc := map[string]struct{}{}
+	seenPath := map[string]struct{}{}
+	for i := range rowsOut {
+		if _, ok := seenSvc[rowsOut[i].Service]; !ok {
+			seenSvc[rowsOut[i].Service] = struct{}{}
+			services = append(services, rowsOut[i].Service)
+		}
+		if _, ok := seenPath[rowsOut[i].Path]; !ok {
+			seenPath[rowsOut[i].Path] = struct{}{}
+			paths = append(paths, rowsOut[i].Path)
+		}
+	}
+	// Same projection as the MV read so signature-mode keys
+	// (/orders/:id) match the grouped rows.
+	pathProj := "http_route"
+	if q.BySignature {
+		pathProj = opSigWrap("http_route")
+	}
+	// The IN-lists cross-product can match (svc, path) combos outside
+	// the requested row set (two services sharing "/health"); 3x+100
+	// headroom keeps the group scan bounded while making truncation of
+	// a requested key unlikely. A truncated key just keeps empty pills.
+	sidecarLimit := 3*len(rowsOut) + 100
+	// pathProj appears twice (SELECT + WHERE) — splice its regex args
+	// at both placeholder positions when signature mode is on.
+	var args []any
+	if q.BySignature {
+		args = append(args, opSigArgs()...)
+	}
+	args = append(args, q.From, q.To, services)
+	if q.BySignature {
+		args = append(args, opSigArgs()...)
+	}
+	args = append(args, paths, sidecarLimit)
+	rows, err := s.conn.Query(ctx, `
+		SELECT service_name,
+		       `+pathProj+`                              AS path,
+		       anyHeavy(http_method)                     AS method,
+		       countIf(http_status BETWEEN 200 AND 299)  AS http_2xx,
+		       countIf(http_status BETWEEN 300 AND 399)  AS http_3xx,
+		       countIf(http_status BETWEEN 400 AND 499)  AS http_4xx,
+		       countIf(http_status BETWEEN 500 AND 599)  AS http_5xx
+		FROM spans
+		WHERE time >= ? AND time <= ?
+		  AND kind NOT IN ('client', 'producer')
+		  AND service_name IN (?)
+		  AND `+pathProj+` IN (?)
+		GROUP BY service_name, path
+		LIMIT ?
+		SETTINGS max_execution_time = 10`,
+		args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type key struct{ svc, path string }
+	idx := make(map[key]int, len(rowsOut))
+	for i := range rowsOut {
+		idx[key{rowsOut[i].Service, rowsOut[i].Path}] = i
+	}
+	for rows.Next() {
+		var svc, path, method string
+		var h2, h3, h4, h5 uint64
+		if err := rows.Scan(&svc, &path, &method, &h2, &h3, &h4, &h5); err != nil {
+			return err
+		}
+		if i, ok := idx[key{svc, path}]; ok {
+			rowsOut[i].Method = method
+			rowsOut[i].Http2xx = h2
+			rowsOut[i].Http3xx = h3
+			rowsOut[i].Http4xx = h4
+			rowsOut[i].Http5xx = h5
+		}
+	}
+	return rows.Err()
+}
+
+// getEndpointsRaw is the legacy raw-spans read (the pre-v0.8.356
+// GetEndpoints), retained ONLY for the cluster filter: clusterExpr
+// derives the cluster from res/attr arrays, a dimension
+// spanmetrics_1m doesn't carry. Upgraded in the same slice so both
+// paths return the same shape: true window p50/p95/p99 via
+// per-bucket quantilesTDigestState merged in the outer level (the
+// old max(per-bucket p99) shipped here since v0.5.370), reqPerMin,
+// and the shared endpointsOrderBy whitelist.
+//
+// Path resolution priority (matches operator config v0.5.365):
+//  1. spans.http_route (LowCardinality column populated by the
+//     OTel ingest path)
+//  2. attr_values[indexOf(attr_keys, 'http.route')] (alt-conv
+//     SDKs that put it in attrs)
+//  3. attr_values[indexOf(attr_keys, 'url.path')]
+//  4. attr_values[indexOf(attr_keys, 'http.target')] (older
+//     semconv)
+//
+// Span filter: kind != 'client' / 'producer' so we count
+// inbound requests only — outbound client / messaging-producer
+// spans land under the callee's row, not the caller's.
+//
+// v0.5.386 — operator-reported: rows looked sparse vs reality.
+// Root cause: previous filter was `kind IN ('server','consumer')`
+// which dropped every span whose SDK left SpanKind unspecified.
+// OTLP's UNSPECIFIED gets mapped to 'internal' on ingest (see
+// internal/otlp/convert.go kindStr default branch), which is the
+// case for a lot of manual instrumentation + older SDKs +
+// frameworks that don't auto-decorate kind. We keep any span
+// with a real path that isn't an OUTGOING call.
+func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]EndpointRow, error) {
+	from, to := q.From, q.To
+	service, search, cluster := q.Service, q.Search, q.Cluster
+	limit, bySignature := q.Limit, q.BySignature
 	// Build a typed args slice; placeholders are positional so we
 	// must guard against the optional service/search clauses
 	// being absent.
@@ -166,19 +551,25 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	}
 	// v0.5.370 — single-pass aggregation including sparkline.
 	// Inner per-bucket CTE keys on (service, path, b) and
-	// records per-bucket call+error+sum_dur+max_p99 plus a
+	// records per-bucket call+error+sum_dur+p99 plus a
 	// representative method via anyHeavy. Outer GROUP BY
 	// (service, path) collapses the buckets, sums the counts,
-	// derives error_rate + avg, takes max(p99_per_bucket) as
-	// the conservative window p99 (same merge idiom topology
-	// MVs use), and arrayMap-rebuilds the dense 30-element
-	// sparkline from the sparse (b_idx, b_vals) groupArrays.
+	// derives error_rate + avg, merges the per-bucket tdigest
+	// states into true window p50/p95/p99 (v0.8.356), and
+	// arrayMap-rebuilds the dense 30-element sparkline from the
+	// sparse (b_idx, b_vals) groupArrays.
 	const sparkBuckets = 30
 	bucketNs := (to.UnixNano() - from.UnixNano()) / int64(sparkBuckets)
 	if bucketNs <= 0 {
 		bucketNs = 1
 	}
-	allArgs := []any{from.UnixNano(), bucketNs}
+	// v0.8.356 — signature-regex args (inside pathProj, when present)
+	// lead: pathProj sits first in the inner SELECT list.
+	var allArgs []any
+	if bySignature {
+		allArgs = append(allArgs, opSigArgs()...)
+	}
+	allArgs = append(allArgs, from.UnixNano(), bucketNs)
 	allArgs = append(allArgs, args...)
 	// Three sparkline arrayMaps, each parameterised by
 	// sparkBuckets → three ? placeholders for range(0, ?).
@@ -198,7 +589,12 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 	if bySignature {
 		pathProj = opSigWrap(pathExpr)
 	}
-	q := `
+	// v0.8.356 — per-bucket tdigest states merged in the outer level
+	// give TRUE window p50/p95/p99 (parity with the MV path); the old
+	// max(per-bucket p99) overstated spiky endpoints. Per-bucket p99
+	// (sparkline only) switched quantile→quantileTDigest — bounded
+	// memory at any bucket population.
+	sql := `
 		WITH per_bucket AS (
 		  SELECT service_name,
 		         ` + pathProj + `                                AS path,
@@ -210,7 +606,8 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		         countIf(` + statusExpr + ` BETWEEN 400 AND 499) AS bv_4xx,
 		         countIf(` + statusExpr + ` BETWEEN 500 AND 599) AS bv_5xx,
 		         sum(duration)                                   AS bv_sum_dur,
-		         quantile(0.99)(duration) / 1e6                  AS bv_p99,
+		         quantileTDigest(0.99)(duration) / 1e6           AS bv_p99,
+		         quantilesTDigestState(0.5, 0.95, 0.99)(duration) AS q_state,
 		         anyHeavy(http_method)                           AS bv_method
 		  FROM spans
 		  WHERE time >= ? AND time <= ?
@@ -225,7 +622,9 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		       sum(bv_err)                                      AS errors,
 		       sum(bv_err) * 100.0 / nullIf(sum(bv), 0)         AS error_rate,
 		       sum(bv_sum_dur) / nullIf(sum(bv), 0) / 1e6       AS avg_ms,
-		       max(bv_p99)                                      AS p99_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(q_state), 2) / 1e6 AS p95_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(q_state), 3) / 1e6 AS p99_ms,
 		       sum(bv_2xx)                                      AS http_2xx,
 		       sum(bv_3xx)                                      AS http_3xx,
 		       sum(bv_4xx)                                      AS http_4xx,
@@ -244,22 +643,23 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		       )                                                AS p99_sparkline
 		FROM per_bucket
 		GROUP BY service_name, path
-		ORDER BY calls DESC
+		` + endpointsOrderBy(q.Sort, q.Dir) + `
 		LIMIT ?
 		SETTINGS max_execution_time = 15`
-	rows, err := s.conn.Query(ctx, q, allArgs...)
+	rows, err := s.conn.Query(ctx, sql, allArgs...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	windowMin := endpointsWindowMinutes(from, to)
 	out := []EndpointRow{}
 	for rows.Next() {
 		var r EndpointRow
-		var avgMs, p99Ms, errRate *float64
+		var avgMs, p50Ms, p95Ms, p99Ms, errRate *float64
 		var sparkline, errorsSparkline, p99Sparkline []float64
 		if err := rows.Scan(
 			&r.Service, &r.Path, &r.Method,
-			&r.Calls, &r.Errors, &errRate, &avgMs, &p99Ms,
+			&r.Calls, &r.Errors, &errRate, &avgMs, &p50Ms, &p95Ms, &p99Ms,
 			&r.Http2xx, &r.Http3xx, &r.Http4xx, &r.Http5xx,
 			&sparkline, &errorsSparkline, &p99Sparkline,
 		); err != nil {
@@ -267,7 +667,10 @@ func (s *Store) GetEndpoints(ctx context.Context, from, to time.Time, service st
 		}
 		r.ErrorRate = safeF(errRate)
 		r.AvgMs = safeF(avgMs)
+		r.P50Ms = safeF(p50Ms)
+		r.P95Ms = safeF(p95Ms)
 		r.P99Ms = safeF(p99Ms)
+		r.ReqPerMin = float64(r.Calls) / windowMin
 		r.Sparkline = sparkline
 		r.ErrorsSparkline = errorsSparkline
 		r.P99Sparkline = p99Sparkline

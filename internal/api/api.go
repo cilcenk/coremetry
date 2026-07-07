@@ -2202,12 +2202,12 @@ func (s *Server) getServiceAttrs(w http.ResponseWriter, r *http.Request) {
 }
 
 // getEndpoints — v0.5.365. Per-endpoint RED rollup driven from
-// the OTel http.route / url.path attributes on server / consumer
-// spans. Operator-asked: a /services-like top-level view, but
-// keyed on the inbound request path instead of the service. Top
-// N by call volume — high-cardinality concrete paths (IDs that
-// slipped past the http.route fallback) still surface but
-// natural drop-off keeps the table scannable.
+// the OTel http.route attribute on server / consumer spans.
+// Operator-asked: a /services-like top-level view, but keyed on
+// the inbound request path instead of the service. Top N by the
+// requested sort (v0.8.356 — server-side ORDER BY before the
+// LIMIT; default calls DESC) so the table is a true global
+// ranking, not a re-sorted top-N-by-calls page.
 func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to := parseFromTo(r, time.Hour)
@@ -2236,9 +2236,23 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	// v0.8.x — Uptrace-style "group by shape": cluster paths carrying IDs
 	// (/orders/8421) into a normalized signature (/orders/:id) at read time.
 	bySignature := q.Get("groupBy") == "signature"
-	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d:cmp=%v:sig=%v", cacheBucket(from, to), service, search, cluster, limit, compare, bySignature)
+	// v0.8.356 — server-side global sort (whitelisted in
+	// chstore.endpointsOrderBy; unknown ids fall back to calls DESC).
+	// Rides the cache key like every other input.
+	sortBy := q.Get("sort")
+	sortDir := q.Get("dir")
+	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s", cacheBucket(from, to), service, search, cluster, limit, compare, bySignature, sortBy, sortDir)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		rows, err := s.store.GetEndpoints(ctx, from, to, service, search, cluster, limit, bySignature)
+		// v0.8.356 — default path reads the spanmetrics_1m MV; the raw
+		// CTE survives only behind the cluster filter (dimension the MV
+		// lacks). Dispatch lives in chstore.GetEndpoints.
+		eq := chstore.EndpointsQuery{
+			From: from, To: to,
+			Service: service, Search: search, Cluster: cluster,
+			Limit: limit, BySignature: bySignature,
+			Sort: sortBy, Dir: sortDir,
+		}
+		rows, err := s.store.GetEndpoints(ctx, eq)
 		if err != nil {
 			return nil, err
 		}
@@ -2247,10 +2261,14 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		}
 		// Prior window: same length, shifted back by exactly the
 		// window width so the comparison stays apples-to-apples.
+		// SkipStatus: the delta merge only reads calls/errors/avg/p99,
+		// so the prior read skips the status/method sidecar.
 		dur := to.Sub(from)
-		priorFrom := from.Add(-dur)
-		priorTo := from
-		priorRows, err := s.store.GetEndpoints(ctx, priorFrom, priorTo, service, search, cluster, limit, bySignature)
+		prior := eq
+		prior.From = from.Add(-dur)
+		prior.To = from
+		prior.SkipStatus = true
+		priorRows, err := s.store.GetEndpoints(ctx, prior)
 		if err != nil {
 			// Prior failure is non-fatal — return current rows
 			// without trends rather than 500'ing the page.

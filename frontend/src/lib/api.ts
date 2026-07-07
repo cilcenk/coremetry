@@ -1352,7 +1352,10 @@ export const api = {
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
   metricHistogram: (params: MetricQueryParams) =>
     get<HistogramResult | null>(`/api/metrics/histogram?${qs(params)}`),
-  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature' }) =>
+  // v0.8.356 — sort/dir: server-side global ordering (whitelisted
+  // backend-side; ORDER BY runs before the LIMIT so "top by p95" is
+  // the true global top-N, not the top-N-by-calls page reordered).
+  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature'; sort?: string; dir?: 'asc' | 'desc' }) =>
     get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
   serviceAttrs: (service: string, from: number, to: number, opts?: { top?: number; samples?: number }) =>
     get<ServiceAttrsResponse>(

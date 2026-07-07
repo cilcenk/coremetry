@@ -2058,6 +2058,13 @@ export interface EndpointRow {
   errorRate: number;
   avgMs: number;
   p99Ms: number;
+  // v0.8.356 — MV-backed columns (spanmetrics_1m): true window
+  // quantiles + req/min throughput. Optional so a mid-rolling-
+  // deploy page against an older backend renders "—" instead of
+  // crashing on undefined.toFixed.
+  p50Ms?: number;
+  p95Ms?: number;
+  reqPerMin?: number;
   // v0.5.371 — 30-bucket call-rate sparkline across the
   // requested window. Same shape as OperationSummary.sparkline
   // and the spanmetrics sparkline — the operator learns the

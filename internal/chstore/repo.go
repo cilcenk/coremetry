@@ -1977,6 +1977,16 @@ func traceStage1Budget(offset, pageLimit, stage1Limit int) (int, bool) {
 	return budget, true
 }
 
+// tracePostAggFiltered reports whether the filter carries a
+// post-aggregate predicate (one that only Stage 2's HAVING can
+// evaluate). The service path must NOT bound Stage 1 by recency when
+// one is active — see the v0.8.365 comment at the subquery switch.
+// (RequireServices / Search / attr filters disqualify the MV path
+// upstream, so they never reach here.) Pure — table-tested.
+func tracePostAggFiltered(f TraceFilter) bool {
+	return f.HasError || f.RootOnly || f.MinMs > 0 || f.MaxMs > 0
+}
+
 func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow, uint64, bool, error) {
 	if f.Limit == 0 {
 		f.Limit = 50
@@ -2006,7 +2016,23 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// heavy argMax state — nothing to lighten).
 	var traceIDs []any
 	holders := ""
-	if f.Service != "" {
+	serviceSubquery := false
+	if f.Service != "" && tracePostAggFiltered(f) {
+		// v0.8.365 — self-telemetry follow-up: the recency-bounded
+		// Stage 1 below is BLIND to the post-aggregate filters
+		// (hasError / minMs / maxMs / rootOnly). On a busy service
+		// errors are rare, so "the stage1Limit most recent trace ids"
+		// often contains zero matches and the page comes back empty
+		// while matching traces exist in the window (ground truth: 18
+		// error traces, API 0). With any post-aggregate filter active,
+		// narrow Stage 2 by an IN-subquery over the service index
+		// instead — every trace the service participated in inside the
+		// window stays eligible, the HAVING then filters them. Costs a
+		// wider Stage-2 merge, bounded by the window + LIMIT +
+		// max_execution_time; without filters the fast recency path
+		// below is unchanged.
+		serviceSubquery = true
+	} else if f.Service != "" {
 		rows1, err := s.conn.Query(ctx, `
 			SELECT trace_id
 			FROM trace_service_index_5m
@@ -2120,12 +2146,22 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		order = "ASC"
 	}
 
-	// Whether stage 2 narrows by trace_id (service path) or
-	// scans the bucket window (no-service path) — same SELECT,
-	// different WHERE.
+	// Whether stage 2 narrows by trace_id ids (service fast path),
+	// by an index subquery (service + post-aggregate filters,
+	// v0.8.365), or scans the bucket window (no-service path) —
+	// same SELECT, different WHERE.
 	traceIDClause := ""
-	if holders != "" {
+	var idArgs []any
+	if serviceSubquery {
+		traceIDClause = `trace_id IN (
+			SELECT trace_id FROM trace_service_index_5m
+			WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+			GROUP BY trace_id
+		) AND `
+		idArgs = []any{f.Service, f.From, f.To}
+	} else if holders != "" {
 		traceIDClause = "trace_id IN (" + holders + ") AND "
+		idArgs = traceIDs
 	}
 
 	stage2 := `
@@ -2146,7 +2182,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		         optimize_read_in_order = 1,
 		         optimize_aggregation_in_order = 1`
 
-	args := append([]any{}, traceIDs...)
+	args := append([]any{}, idArgs...)
 	args = append(args, f.From, f.To, pageLimit, f.Offset)
 	rows2, err := s.conn.Query(ctx, stage2, args...)
 	if err != nil {

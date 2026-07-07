@@ -41,3 +41,31 @@ func TestTraceStage1Budget(t *testing.T) {
 		})
 	}
 }
+
+// v0.8.365 — the service path's recency-bounded Stage 1 is blind to
+// post-aggregate filters: "the stage1Limit most recent ids" often
+// holds zero matches while matching traces exist in the window
+// (self-telemetry ground truth: 18 error traces, API returned 0).
+// tracePostAggFiltered decides when the IN-subquery form replaces
+// the bounded id list.
+func TestTracePostAggFiltered(t *testing.T) {
+	cases := []struct {
+		name string
+		f    TraceFilter
+		want bool
+	}{
+		{"plain service browse stays fast-path", TraceFilter{Service: "checkout"}, false},
+		{"hasError forces subquery", TraceFilter{Service: "checkout", HasError: true}, true},
+		{"minMs forces subquery", TraceFilter{MinMs: 250}, true},
+		{"maxMs forces subquery", TraceFilter{MaxMs: 10}, true},
+		{"rootOnly forces subquery", TraceFilter{RootOnly: true}, true},
+		{"sort alone does not", TraceFilter{Service: "checkout", Sort: "duration"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := tracePostAggFiltered(c.f); got != c.want {
+				t.Fatalf("tracePostAggFiltered(%+v) = %v, want %v", c.f, got, c.want)
+			}
+		})
+	}
+}

@@ -17,8 +17,9 @@ import { LazyMount } from '@/components/LazyMount';
 import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
-import { ServiceProfilingPanel } from '@/components/ServiceProfilingPanel';
 import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
+import { DetailsPropsStrip } from './service/DetailsPropsStrip';
+import { RpsByOperation } from './service/RpsByOperation';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -413,19 +414,17 @@ function ServiceDetailInner() {
             )}
             {tab === 'details' && (
               <>
-                {/* v0.5.302 — Above-the-fold panels stay eager
-                    (operator sees them instantly); everything
-                    further down wraps in <LazyMount> so it
-                    fetches only when scrolled into view. Before:
-                    Details open fired ~12 parallel CH queries
-                    in a burst → CH busy → blank-then-pop flash.
-                    Now: 3 immediate queries, the rest queue
-                    progressively. Mounted panels stay mounted
-                    so scroll-back keeps the data. */}
-                {/* v0.8.366 — Operator-requested trim: ServiceNeighbors moved
-                    to the Overview tab (replacing its flat Neighbors block);
-                    ServiceInfra retired (instances/infra live on /hosts).
-                    Above-the-fold (eager): ServiceCharts. */}
+                {/* v0.8.370 — Dynatrace-style reorganization (operator-
+                    approved mockup): a properties strip on top, then three
+                    question-grouped sections in a 2-col grid instead of the
+                    old single-column stack. LazyMount discipline unchanged
+                    (v0.5.302): eager = strip + RED charts; every grid cell
+                    below mounts ~200px from the viewport. Profiling tile
+                    dropped (operator: not in use); RPS-by-operation card
+                    added — zero new fetches, it reuses the page's
+                    operations summary. */}
+                <DetailsPropsStrip service={svc} range={range} />
+                <div className="dtl-sech">Performance</div>
                 <ServiceCharts service={svc} range={range}
                   onZoom={(fromUnixSec, toUnixSec) => {
                     setRange({
@@ -434,43 +433,36 @@ function ServiceDetailInner() {
                       toMs: Math.round(toUnixSec * 1000),
                     });
                   }} />
-                {/* Below-the-fold (lazy): each panel waits
-                    until ~200px from the viewport before mounting
-                    + fetching. minHeight is sized to the typical
-                    rendered panel so the page doesn't jump as
-                    panels resolve. */}
-                {/* Profiling tile — Dynatrace-style "Top methods"
-                    card. Self-hides when the service hasn't
-                    pushed profiles, so it's a no-op for
-                    services not yet wired up. */}
-                <LazyMount minHeight={120}>
-                  <ServiceProfilingPanel service={svc} range={range} />
-                </LazyMount>
-                {/* Attrs browser (v0.5.381) — "what attrs is my
-                    SDK emitting" answered without opening a
-                    trace. Self-hides when no sample data lands
-                    yet (fresh services). */}
-                <LazyMount minHeight={120}>
-                  <ServiceAttrsPanel service={svc} range={range} />
-                </LazyMount>
-                <LazyMount minHeight={300}>
-                  <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
-                </LazyMount>
-                <LazyMount minHeight={140}>
-                  <ServiceClusterBreakdown service={svc} range={range} />
-                </LazyMount>
-                <LazyMount minHeight={300}>
-                  <DBQueriesPanel   service={svc}
+                <div className="ov-grid dtl-cols ov-mb">
+                  <LazyMount minHeight={360}>
+                    <ServiceLatencyHeatmap service={svc} range={range} />
+                  </LazyMount>
+                  <RpsByOperation operations={operations} range={range}
+                    onOpenOperations={() => setTab('operations')} />
+                </div>
+                <div className="dtl-sech">Data &amp; structure</div>
+                <div className="ov-grid dtl-cols ov-mb">
+                  <LazyMount minHeight={300}>
+                    <DBQueriesPanel service={svc}
                                     from={rangeNs.from}
                                     to={rangeNs.to}
                                     defaultOpen />
-                </LazyMount>
-                <LazyMount minHeight={360}>
-                  <ServiceLatencyHeatmap service={svc} range={range} />
-                </LazyMount>
-                {/* Recent rollouts — moved to the bottom of Details (v0.8.83).
-                    #deploys anchor preserved so the /deploys "history →" link
-                    still scrolls here; LazyMount fetches on intersection. */}
+                  </LazyMount>
+                  <LazyMount minHeight={300}>
+                    <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
+                  </LazyMount>
+                </div>
+                <div className="dtl-sech">Runtime &amp; rollouts</div>
+                <div className="ov-grid dtl-cols ov-mb">
+                  <LazyMount minHeight={140}>
+                    <ServiceClusterBreakdown service={svc} range={range} />
+                  </LazyMount>
+                  <LazyMount minHeight={120}>
+                    <ServiceAttrsPanel service={svc} range={range} />
+                  </LazyMount>
+                </div>
+                {/* Recent rollouts — #deploys anchor preserved so the
+                    /deploys "history →" link still scrolls here. */}
                 <div id="deploys">
                   <LazyMount minHeight={160}>
                     <DeployHistoryPanel service={svc} />

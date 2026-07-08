@@ -45,6 +45,11 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            # v0.8.390 — operator-reported: the release notes cite the git
+            # tag verbatim (v0.8.389) but semver {{version}} STRIPS the v,
+            # so pulls of the documented tag 404'd. Publish the git-tag
+            # spelling too; both now work.
+            type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
       # amd64 only by default — building arm64 via QEMU on the free
       # ubuntu-latest runner takes 15–20 min per release. OpenShift
@@ -89,6 +94,11 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            # v0.8.390 — operator-reported: the release notes cite the git
+            # tag verbatim (v0.8.389) but semver {{version}} STRIPS the v,
+            # so pulls of the documented tag 404'd. Publish the git-tag
+            # spelling too; both now work.
+            type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
       - name: Build + push
         uses: docker/build-push-action@v7

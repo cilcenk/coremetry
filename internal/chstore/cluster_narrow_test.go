@@ -91,3 +91,23 @@ func TestEndpointsRawFiltersClusterNarrowing(t *testing.T) {
 		t.Fatalf("service-scoped must not narrow\n%s", sql2)
 	}
 }
+
+// v0.8.392 — operator-reported (prod, 18 clusters): /api/services with
+// a cluster filter 500'd ~1.3s in — too fast for the 20s execution
+// cap, the signature of ClickHouse's memory guard (code 241) killing
+// the GROUP BY hash table. The heavy fallback scans now spill to disk
+// instead of dying. Values pinned: 2 GiB spill threshold, 8 GiB
+// per-query ceiling (the topology writer's prod-proven pair).
+func TestHeavyScanSpill(t *testing.T) {
+	for _, want := range []string{
+		"max_bytes_before_external_group_by = 2000000000",
+		"max_memory_usage = 8000000000",
+	} {
+		if !strings.Contains(heavyScanSpill, want) {
+			t.Errorf("heavyScanSpill missing %q\n%s", want, heavyScanSpill)
+		}
+	}
+	if !strings.HasPrefix(heavyScanSpill, ",") {
+		t.Error("heavyScanSpill must start with a comma — it appends to an existing SETTINGS list")
+	}
+}

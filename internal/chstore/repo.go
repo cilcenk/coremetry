@@ -491,22 +491,73 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 // LowCardinality column, so this is a cheap dict GROUP BY even at
 // billion-span scale. Empty deploy_env is excluded: "no env" is
 // the picker's default state, not a value.
-func (s *Store) ListEnvironments(ctx context.Context, from, to time.Time) ([]string, error) {
-	if from.IsZero() {
-		from = time.Now().Add(-1 * time.Hour)
+// envEnumWindow resolves the enumeration scan window (v0.8.389,
+// operator-reported: "release" env missing from the picker). The
+// UNSEARCHED list keeps the cheap 1h clamp (busiest envs — feature
+// branches made the set unbounded); an explicit SEARCH widens to 24h
+// so a quiet-but-real env (a release branch that deployed this
+// morning) is findable by name. Still time-bounded + exec-capped;
+// deploy_env is a typed LC column, no derive. Pure — table-tested.
+func envEnumWindow(from, to time.Time, q string) time.Time {
+	clamp := time.Hour
+	if strings.TrimSpace(q) != "" {
+		clamp = 24 * time.Hour
 	}
+	if floor := to.Add(-clamp); from.Before(floor) {
+		return floor
+	}
+	return from
+}
+
+// ListEnvironments enumerates deploy_env values for the picker
+// (v0.8.383; reworked v0.8.389 — operator-reported: LIMIT 50 +
+// ALPHABETICAL order starved later names once feature-branch envs
+// (int-feature-*) exploded the set: "release" sorted past the cap
+// and never appeared. Now count-ordered (busiest first, ties by
+// name), optional case-insensitive substring q, and a total so the
+// picker can say "+N more — type to refine" instead of implying
+// completeness).
+func (s *Store) ListEnvironments(ctx context.Context, from, to time.Time, q string, limit int) (envs []string, total uint64, err error) {
 	if to.IsZero() {
 		to = time.Now()
 	}
-	from = clampClusterFrom(from, to)
-	return s.scanClusters(ctx, `
+	if from.IsZero() {
+		from = to.Add(-1 * time.Hour)
+	}
+	from = envEnumWindow(from, to, q)
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	where := "time >= ? AND time <= ? AND deploy_env != ''"
+	args := []any{from, to}
+	if strings.TrimSpace(q) != "" {
+		where += " AND positionCaseInsensitive(deploy_env, ?) > 0"
+		args = append(args, strings.TrimSpace(q))
+	}
+	names, err := s.scanClusters(ctx, `
 		SELECT deploy_env
 		FROM spans
-		WHERE time >= ? AND time <= ? AND deploy_env != ''
+		WHERE `+where+`
 		GROUP BY deploy_env
-		ORDER BY deploy_env
-		LIMIT 50
-		SETTINGS max_execution_time = 8`, from, to)
+		ORDER BY count() DESC, deploy_env ASC
+		LIMIT `+strconv.Itoa(limit)+`
+		SETTINGS max_execution_time = 8`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	// Same-scan-shape total (LC dict pass) so the picker can label
+	// truncation honestly. Soft-fails to len(names).
+	total = uint64(len(names))
+	row := s.conn.QueryRow(ctx, `
+		SELECT uniqExact(deploy_env)
+		FROM spans
+		WHERE `+where+`
+		SETTINGS max_execution_time = 8`, args...)
+	var t uint64
+	if err := row.Scan(&t); err == nil && t > total {
+		total = t
+	}
+	return names, total, nil
 }
 
 // GetServiceEnvironments returns the distinct environments ONE

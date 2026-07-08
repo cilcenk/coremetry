@@ -1156,13 +1156,13 @@ func (s *Server) warmDependenciesCache() {
 		// so the Topbar picker's very first fetch after login lands
 		// warm. The store-side 1h scan clamp keeps this a cheap
 		// LowCardinality dict GROUP BY per tick.
-		warm("environments", "environments:"+cacheBucket(from.Add(-23*time.Hour), to), 60*time.Second,
+		warm("environments", "environments:"+cacheBucket(from.Add(-23*time.Hour), to)+":q=", 60*time.Second,
 			func(ctx context.Context) (any, error) {
-				names, err := s.store.ListEnvironments(ctx, from.Add(-23*time.Hour), to)
+				names, total, err := s.store.ListEnvironments(ctx, from.Add(-23*time.Hour), to, "", 50)
 				if err != nil {
 					return nil, err
 				}
-				return map[string]any{"environments": names}, nil
+				return map[string]any{"environments": names, "total": total}, nil
 			})
 		warm("services-metadata", "services-metadata", 60*time.Second,
 			func(ctx context.Context) (any, error) {
@@ -1227,15 +1227,23 @@ func (s *Server) getClusters(w http.ResponseWriter, r *http.Request) {
 // scan to the most recent hour (clusterScanWindow precedent) — the
 // env set is deploy-stable, so a wider scan only burns read
 // bandwidth.
+// v0.8.389 (operator-reported): feature-branch envs exploded the set
+// past the old alphabetical LIMIT 50 — "release" never surfaced.
+// The list is now count-ordered with an optional ?q= substring
+// search (search widens the store-side scan clamp 1h→24h so quiet
+// envs are findable) and ships `total` so the picker labels
+// truncation. q rides the cache key (free-text precedent: the
+// services search key).
 func (s *Server) getEnvironments(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, 24*time.Hour)
-	key := "environments:" + cacheBucket(from, to)
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	key := "environments:" + cacheBucket(from, to) + ":q=" + q
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		names, err := s.store.ListEnvironments(ctx, from, to)
+		names, total, err := s.store.ListEnvironments(ctx, from, to, q, 50)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"environments": names}, nil
+		return map[string]any{"environments": names, "total": total}, nil
 	})
 }
 

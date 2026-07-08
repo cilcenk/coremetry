@@ -139,8 +139,11 @@ export const api = {
   // the server defaults to a 24h window and clamps the enumeration
   // scan to the most recent hour anyway (env sets are deploy-stable),
   // so every caller shares ONE bounded cache rung.
-  environments: () =>
-    get<{ environments: string[] }>('/api/environments'),
+  // v0.8.389 — optional substring search (?q=) + total for honest
+  // truncation labelling; the list is count-ordered server-side.
+  environments: (q?: string) =>
+    get<{ environments: string[]; total?: number }>(
+      `/api/environments${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   // Per-service env list — the Envs chip group on the Service detail
   // header (v0.8.383, the operator's "same mobile-bff in int/uat/prep"
   // case).

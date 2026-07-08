@@ -154,3 +154,28 @@ func TestEnvScopeProblems(t *testing.T) {
 		t.Fatalf("map error must not filter: %q", wc4.sql())
 	}
 }
+
+// v0.8.389 — operator-reported: feature-branch envs pushed the set
+// past the alphabetical LIMIT 50, so "release" never surfaced and
+// search found nothing. Pins the enumeration window rule: cheap 1h
+// clamp unsearched, 24h reach for explicit searches.
+func TestEnvEnumWindow(t *testing.T) {
+	to := time.Now()
+	deepFrom := to.Add(-72 * time.Hour)
+
+	if got := envEnumWindow(deepFrom, to, ""); !got.Equal(to.Add(-time.Hour)) {
+		t.Fatalf("unsearched clamp: got %v, want to-1h", got)
+	}
+	if got := envEnumWindow(deepFrom, to, "release"); !got.Equal(to.Add(-24*time.Hour)) {
+		t.Fatalf("searched clamp: got %v, want to-24h", got)
+	}
+	// A window narrower than the clamp is respected as-is.
+	narrow := to.Add(-10 * time.Minute)
+	if got := envEnumWindow(narrow, to, "release"); !got.Equal(narrow) {
+		t.Fatalf("narrow window must pass through: got %v", got)
+	}
+	// Whitespace-only q = no search.
+	if got := envEnumWindow(deepFrom, to, "   "); !got.Equal(to.Add(-time.Hour)) {
+		t.Fatalf("blank q must keep the 1h clamp: got %v", got)
+	}
+}

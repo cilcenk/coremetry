@@ -423,6 +423,12 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 	req.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+		// Some self-hosted gateways (vLLM behind KServe/route
+		// auth, Azure-style proxies) authenticate on a bare
+		// `api-key` header instead of Bearer (v0.8.384,
+		// operator's air-gapped test LLM). Sending both is
+		// harmless — servers read the one they know.
+		req.Header.Set("api-key", apiKey)
 	}
 	resp, err := s.cli.Do(req)
 	if err != nil {

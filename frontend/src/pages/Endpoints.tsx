@@ -113,18 +113,37 @@ export default function EndpointsPage() {
     return next;
   }, { replace: true });
 
-  // v0.5.389 — limit lifted to 2000 default, with an explicit
-  // "load top 5000" toggle so the operator can pull the long
-  // tail when they need it. Backend caps at 5000; values above
-  // that get clamped server-side.
-  const [limit, setLimit] = useState<number>(2000);
-  // v0.5.404 — prior-window comparison toggle. Off by default
-  // since it doubles backend CH scan cost; operator opts in
-  // when they want trend arrows next to each metric.
-  const [compare, setCompare] = useState<boolean>(false);
-  // v0.8.x — Uptrace-style "group by shape": cluster paths carrying IDs
-  // (/orders/8421) into a normalized signature (/orders/:id) at read time.
-  const [bySignature, setBySignature] = useState<boolean>(false);
+  // v0.8.376 (Stage-2 slice E4) — compare / limit / shape moved into
+  // the URL (read directly from params each render + write with
+  // replace:true, the same pattern cluster/service above use — no
+  // local mirror, so no sig-guard needed) so Copy-link and
+  // SavedViewsBar reproduce the exact view.
+  //
+  // limit (v0.5.389): 2000 default, explicit "top 5000" toggle;
+  // backend clamps. Snapped to the two rungs so the URL can't carry
+  // an unbounded cardinality into the server cache key.
+  const limit = params.get('limit') === '5000' ? 5000 : 2000;
+  const setLimit = (v: number) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v === 5000) next.set('limit', '5000'); else next.delete('limit');
+    return next;
+  }, { replace: true });
+  // compare (v0.5.404): prior-window comparison, off by default —
+  // doubles backend scan cost, operator opts in.
+  const compare = params.get('compare') === 'prior';
+  const setCompare = (v: boolean) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('compare', 'prior'); else next.delete('compare');
+    return next;
+  }, { replace: true });
+  // shape (v0.8.x): Uptrace-style "group by shape" — cluster paths
+  // carrying IDs (/orders/8421) into a signature (/orders/:id).
+  const bySignature = params.get('shape') === '1';
+  const setBySignature = (v: boolean) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('shape', '1'); else next.delete('shape');
+    return next;
+  }, { replace: true });
   // v0.5.406 — row expansion + per-service dependency cache.
   // Clicking the "▶" chevron on a row reveals a strip showing
   // which services this endpoint's service typically calls

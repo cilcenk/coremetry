@@ -60,6 +60,33 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	return &Page{Total: int(total), Logs: out, NextCursor: next}, nil
 }
 
+// chSeverityBandExpr — v0.8.377, operator-reported: the severity
+// histogram showed wrong band counts (the old expr emitted raw
+// severity_text verbatim plus toString(severity_num) numeric strings
+// the frontend prefix-matched into 'debug' — SDKs emitting only
+// severity_number rendered their ERRORS as DEBUG). Canonical banding,
+// text takes precedence over the number (mirrors the ES filters-agg
+// path + frontend severityBandOf):
+//   - text non-empty: upper(severity_text) prefix → band. ERROR =
+//     FATAL* | ERR* (ERR catches err/error/error:), WARN*, INFO*,
+//     DEBUG*, TRACE*; any other non-empty text → OTHER.
+//   - text empty: OTel severity_number ranges — ERROR 17-24,
+//     WARN 13-16, INFO 9-12, DEBUG 5-8, TRACE 1-4; 0/>24 → OTHER.
+// Shape-tested in clickhouse_severity_band_test.go.
+const chSeverityBandExpr = `multiIf(
+		startsWith(upper(severity_text), 'FATAL') OR startsWith(upper(severity_text), 'ERR'), 'ERROR',
+		startsWith(upper(severity_text), 'WARN'), 'WARN',
+		startsWith(upper(severity_text), 'INFO'), 'INFO',
+		startsWith(upper(severity_text), 'DEBUG'), 'DEBUG',
+		startsWith(upper(severity_text), 'TRACE'), 'TRACE',
+		severity_text != '', 'OTHER',
+		severity_num BETWEEN 17 AND 24, 'ERROR',
+		severity_num BETWEEN 13 AND 16, 'WARN',
+		severity_num BETWEEN 9 AND 12, 'INFO',
+		severity_num BETWEEN 5 AND 8, 'DEBUG',
+		severity_num BETWEEN 1 AND 4, 'TRACE',
+		'OTHER')`
+
 // Histogram buckets log volume server-side via the same logs
 // table. Whitelisted groupBy options ("service", "severity",
 // or "" for total) map to indexed LowCardinality columns so the
@@ -76,7 +103,10 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	case "service":
 		groupExpr = "service_name"
 	case "severity":
-		groupExpr = "if(severity_text != '', severity_text, toString(severity_num))"
+		// v0.8.377 — canonical bands (6 values max, so the LIMIT 20
+		// top_groups cap never truncates). Was raw text / numeric
+		// strings; see chSeverityBandExpr.
+		groupExpr = chSeverityBandExpr
 	}
 
 	from, to := f.From, f.To

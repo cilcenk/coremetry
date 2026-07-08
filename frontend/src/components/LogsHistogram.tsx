@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
+import { severityBandOf } from '@/lib/severityBand';
 
 // LogsHistogram — Kibana-Discover-style stacked-area histogram
 // for /logs. Same filter shape as the table below; severity-
@@ -52,8 +53,16 @@ const SEV_RANK: Record<string, number> = {
   OTHER: 0,
 };
 
+// v0.8.377 — unknown names (numeric severity_number strings from
+// pre-fix cached payloads, exotic vocabularies) resolve through the
+// canonical band before falling back, so '17' paints as ERROR red +
+// stacks at the error rank instead of purple at the top.
 function colorFor(name: string): string {
-  return SEV_COLORS[name.toUpperCase()] ?? 'var(--purple)';
+  return SEV_COLORS[name.toUpperCase()] ?? SEV_COLORS[severityBandOf(name)] ?? 'var(--purple)';
+}
+
+function rankOf(name: string): number {
+  return SEV_RANK[name.toUpperCase()] ?? SEV_RANK[severityBandOf(name)] ?? 0;
 }
 
 export function LogsHistogram({ range, filter, onRangeSelect }: {
@@ -324,8 +333,7 @@ function buildStack(input: Series[]) {
   for (const s of input) for (const p of s.points) timeSet.add(p.t);
   const times = Array.from(timeSet).sort((a, b) => a - b);
   // Per-series indexed counts.
-  const sorted = input.slice().sort((a, b) =>
-    (SEV_RANK[a.name.toUpperCase()] ?? 0) - (SEV_RANK[b.name.toUpperCase()] ?? 0));
+  const sorted = input.slice().sort((a, b) => rankOf(a.name) - rankOf(b.name));
   // Cumulative running total per time bucket — each band rides
   // on top of the previous.
   const cumRun = new Array(times.length).fill(0);

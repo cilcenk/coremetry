@@ -25,6 +25,7 @@ import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass } from '@/lib/utils';
+import { severityBandOf } from '@/lib/severityBand';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
   extractHighlightTerms,
@@ -87,12 +88,19 @@ const LVL_FACETS: Array<{ key: string; label: string; min: number }> = [
 // DEBUG / TRACE / OTHER, any casing) to one of the four chip
 // buckets. FATAL folds into ERROR; TRACE + OTHER fold into DEBUG —
 // so the four chips always sum to the grand total.
+// v0.8.377 — routes through severityBandOf so NUMERIC series names
+// ('17', '9', …) from pre-fix cached payloads / exotic backends band
+// by their OTel range instead of all falling into debug (the
+// operator-reported bug: severity_number-only SDKs showed ERRORS as
+// DEBUG). The fixed backends emit canonical names, which the prefix
+// logic recognises trivially.
 function bandToFacet(name: string): 'error' | 'warn' | 'info' | 'debug' {
-  const u = name.toUpperCase();
-  if (u.startsWith('FATAL') || u.startsWith('ERROR')) return 'error';
-  if (u.startsWith('WARN')) return 'warn';
-  if (u.startsWith('INFO')) return 'info';
-  return 'debug'; // DEBUG / TRACE / OTHER / unknown
+  switch (severityBandOf(name)) {
+    case 'ERROR': return 'error';
+    case 'WARN':  return 'warn';
+    case 'INFO':  return 'info';
+    default:      return 'debug'; // DEBUG / TRACE / OTHER
+  }
 }
 
 type SevSeries = { name: string; points: { t: number; v: number }[] };

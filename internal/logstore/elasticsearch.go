@@ -1509,12 +1509,12 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 // handles bucketing server-side and we just stitch the response.
 // histogramGroupField maps a groupBy selector to the ES keyword field
 // it aggregates on. Empty string = no grouping (total-only histogram).
+// groupBy=severity does NOT route through here anymore (v0.8.377) —
+// it gets canonical server-side banding via buildSeverityHistogramBody
+// instead of a terms agg on one configured field.
 func (s *ESStore) histogramGroupField(groupBy string) string {
-	switch groupBy {
-	case "service":
+	if groupBy == "service" {
 		return s.fields.Service + ".keyword"
-	case "severity":
-		return s.fields.SeverityTx + ".keyword"
 	}
 	return ""
 }
@@ -1542,16 +1542,7 @@ func (s *ESStore) histogramGroupField(groupBy string) string {
 // stacked builders union present timestamps and fill 0), add the ES
 // soft-timeout, drop track_total_hits, enable request_cache.
 func buildHistogramBody(query any, timestampField, groupField string, bucketSec int, esTimeout string) map[string]any {
-	dateAgg := map[string]any{
-		"date_histogram": map[string]any{
-			"field":          timestampField,
-			"fixed_interval": fmt.Sprintf("%ds", bucketSec),
-			// v0.8.3 — was 0. 0 materialises every empty interval per
-			// severity term; the CH path never does this. 1 = parity
-			// with CH's sparse output (stacked builders fill gaps with 0).
-			"min_doc_count": 1,
-		},
-	}
+	dateAgg := histogramDateAgg(timestampField, bucketSec)
 	var aggs map[string]any
 	if groupField != "" {
 		// v0.5.396 — operator-reported: stacked severity histogram
@@ -1597,19 +1588,168 @@ func buildHistogramBody(query any, timestampField, groupField string, bucketSec 
 	}
 }
 
+// histogramDateAgg — the shared date_histogram sub-agg for both
+// histogram body builders. min_doc_count:1 is the v0.8.3 incident
+// guard (0 materialises every empty interval per group → dense grid
+// → api-pod CPU climb; CH's output is sparse, stacked builders fill
+// gaps with 0).
+func histogramDateAgg(timestampField string, bucketSec int) map[string]any {
+	return map[string]any{
+		"date_histogram": map[string]any{
+			"field":          timestampField,
+			"fixed_interval": fmt.Sprintf("%ds", bucketSec),
+			"min_doc_count":  1,
+		},
+	}
+}
+
+// severityBandDef — one canonical severity band. Text prefixes are
+// matched case-insensitively against every candidate keyword field;
+// NumGte..NumLte is the OTel severity_number range for the band
+// (used only when the numeric field is configured).
+type severityBandDef struct {
+	Name     string
+	Prefixes []string
+	NumGte   int
+	NumLte   int
+}
+
+// severityBands — v0.8.377 canonical banding, shared between the ES
+// filters-agg builder and the response stitcher (iteration order =
+// series order). Prefix decisions (documented, both backends agree):
+//   - ERROR = "fatal" + "err": "err" catches err / error / error: /
+//     erro and any suffixed variant; nothing else in the severity
+//     vocabulary starts with "err", and FATAL folds into ERROR at
+//     band level (the row-level FATAL color distinction lives in the
+//     table, not the histogram).
+//   - WARN = "warn" (warn / warning), INFO = "info" (info /
+//     information), DEBUG = "debug", TRACE = "trace".
+//   - OTel severity_number ranges: ERROR 17-24, WARN 13-16,
+//     INFO 9-12, DEBUG 5-8, TRACE 1-4. 0 / >24 / unset → OTHER.
+var severityBands = []severityBandDef{
+	{Name: "ERROR", Prefixes: []string{"fatal", "err"}, NumGte: 17, NumLte: 24},
+	{Name: "WARN", Prefixes: []string{"warn"}, NumGte: 13, NumLte: 16},
+	{Name: "INFO", Prefixes: []string{"info"}, NumGte: 9, NumLte: 12},
+	{Name: "DEBUG", Prefixes: []string{"debug"}, NumGte: 5, NumLte: 8},
+	{Name: "TRACE", Prefixes: []string{"trace"}, NumGte: 1, NumLte: 4},
+}
+
+// severityCandidateKeywordFields — the DEDUPED list of keyword fields
+// the severity bands probe, ".keyword"-suffixed consistent with the
+// old terms agg + FieldStats. Mirrors the fallback chain mapHit /
+// expandShorthand already use when READING severity back: configured
+// SeverityTx first, then the common shipper shapes. This is the
+// v0.8.377 root cause: the old terms agg aggregated ONE configured
+// text field while row extraction fell back across all of these —
+// logs whose severity lives in a sibling field vanished from bands.
+func severityCandidateKeywordFields(severityTx string) []string {
+	cands := []string{severityTx, "level", "log.level", "severity_text", "severity"}
+	seen := make(map[string]struct{}, len(cands))
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		if c == "" {
+			continue
+		}
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c+".keyword")
+	}
+	return out
+}
+
+// buildSeverityHistogramBody — v0.8.377, operator-reported: the
+// severity-stacked histogram (/logs + service Logs tab) showed wrong
+// band counts on the external-ES test env. The old shape (terms agg
+// on SeverityTx+".keyword", size 50 / shard_size 500) only saw ONE
+// field and surfaced raw values (mixed casing, numeric strings) the
+// frontend then mis-banded. This builder replaces it for
+// groupBy=severity with a fixed keyed `filters` aggregation — one
+// filter per canonical band, each a bool.should over:
+//   - a case-insensitive `prefix` query per (candidate keyword field
+//     × band prefix). prefix supports case_insensitive on ES 7.10+/
+//     8.x — query_string does NOT (house pitfall). Unmapped candidate
+//     fields match nothing, no error.
+//   - when severityNoField is configured: a range on the OTel
+//     severity_number band.
+//
+// Cheaper than the old terms agg (5 cacheable filters vs a
+// 50/500-sized terms collection) and a single _search as before.
+// All v0.8.3 cost guards preserved: size:0, min_doc_count:1,
+// track_total_hits:false, soft timeout (request_cache is set on the
+// SearchRequest by the caller). total_buckets rides alongside so the
+// caller keeps synthesising OTHER = total − sum(bands) (v0.5.396) —
+// OTHER now captures genuinely unrecognised levels (e.g. "notice",
+// custom vocabularies) plus docs with no severity field at all.
+// PURE — unit-tested in elasticsearch_severity_histogram_test.go.
+func buildSeverityHistogramBody(query any, timestampField string, candidateFields []string, severityNoField string, bucketSec int, esTimeout string) map[string]any {
+	dateAgg := histogramDateAgg(timestampField, bucketSec)
+	bandFilters := make(map[string]any, len(severityBands))
+	for _, b := range severityBands {
+		should := make([]any, 0, len(candidateFields)*len(b.Prefixes)+1)
+		for _, field := range candidateFields {
+			for _, p := range b.Prefixes {
+				should = append(should, map[string]any{
+					"prefix": map[string]any{
+						field: map[string]any{"value": p, "case_insensitive": true},
+					},
+				})
+			}
+		}
+		if severityNoField != "" {
+			should = append(should, map[string]any{
+				"range": map[string]any{
+					severityNoField: map[string]any{"gte": b.NumGte, "lte": b.NumLte},
+				},
+			})
+		}
+		bandFilters[b.Name] = map[string]any{
+			"bool": map[string]any{"should": should, "minimum_should_match": 1},
+		}
+	}
+	return map[string]any{
+		"size":  0,
+		"query": query,
+		"aggs": map[string]any{
+			"groups": map[string]any{
+				"filters": map[string]any{"filters": bandFilters},
+				"aggs":    map[string]any{"buckets": dateAgg},
+			},
+			"total_buckets": dateAgg,
+		},
+		"track_total_hits": false,
+		"timeout":          esTimeout,
+	}
+}
+
 func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupBy string) ([]LogSeries, error) {
 	if bucketSec <= 0 {
 		bucketSec = 30
 	}
 	groupField := s.histogramGroupField(groupBy)
+	sevBanded := groupBy == "severity"
 
 	// Bounded window + window-narrowed dailies (v0.8.109).
 	f.From, f.To = clampWindow(f.From, f.To)
 
-	body, err := json.Marshal(buildHistogramBody(
-		s.buildQuery(f), s.fields.Timestamp, groupField, bucketSec,
-		esTimeseriesTimeoutFromEnv("10s"),
-	))
+	var bodyMap map[string]any
+	if sevBanded {
+		// v0.8.377 — canonical server-side banding (see
+		// buildSeverityHistogramBody). Same single _search.
+		bodyMap = buildSeverityHistogramBody(
+			s.buildQuery(f), s.fields.Timestamp,
+			severityCandidateKeywordFields(s.fields.SeverityTx),
+			s.fields.SeverityNo, bucketSec,
+			esTimeseriesTimeoutFromEnv("10s"),
+		)
+	} else {
+		bodyMap = buildHistogramBody(
+			s.buildQuery(f), s.fields.Timestamp, groupField, bucketSec,
+			esTimeseriesTimeoutFromEnv("10s"),
+		)
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		return nil, err
 	}
@@ -1665,24 +1805,41 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		return pts
 	}
 
-	if groupField == "" {
+	if !sevBanded && groupField == "" {
 		return []LogSeries{{Name: "_total", Points: parseBuckets(raw.Aggregations["buckets"])}}, nil
 	}
-	groups, _ := raw.Aggregations["groups"].(map[string]any)
-	bs, _ := groups["buckets"].([]any)
-	out := make([]LogSeries, 0, len(bs)+1)
-	for _, b := range bs {
-		bm, _ := b.(map[string]any)
-		name, _ := bm["key"].(string)
-		out = append(out, LogSeries{Name: name, Points: parseBuckets(bm["buckets"])})
+	var out []LogSeries
+	if sevBanded {
+		// v0.8.377 — keyed filters agg: buckets is a MAP keyed by band
+		// name, not the terms agg's array. Iterate severityBands so the
+		// series order is canonical (ERROR first); skip empty bands so
+		// the legend stays sparse like the old terms output.
+		groups, _ := raw.Aggregations["groups"].(map[string]any)
+		bmap, _ := groups["buckets"].(map[string]any)
+		out = make([]LogSeries, 0, len(severityBands)+1)
+		for _, band := range severityBands {
+			bm, _ := bmap[band.Name].(map[string]any)
+			if pts := parseBuckets(bm["buckets"]); len(pts) > 0 {
+				out = append(out, LogSeries{Name: band.Name, Points: pts})
+			}
+		}
+	} else {
+		groups, _ := raw.Aggregations["groups"].(map[string]any)
+		bs, _ := groups["buckets"].([]any)
+		out = make([]LogSeries, 0, len(bs)+1)
+		for _, b := range bs {
+			bm, _ := b.(map[string]any)
+			name, _ := bm["key"].(string)
+			out = append(out, LogSeries{Name: name, Points: parseBuckets(bm["buckets"])})
+		}
 	}
 	// v0.5.396 — synthesise "OTHER" band from
-	// (total - sum-of-named-groups) per bucket. Catches anything
-	// the size=50 terms agg still missed PLUS the
-	// sum_other_doc_count (docs ES partially saw but didn't
-	// surface as their own bucket). Without this, the stacked
-	// chart visibly undercounts vs the total table — which is
-	// what the operator hit.
+	// (total - sum-of-named-groups) per bucket. For groupBy=service:
+	// anything the size=50 terms agg missed plus sum_other_doc_count.
+	// For groupBy=severity (v0.8.377): unrecognised level vocabularies
+	// ("notice", custom levels) + docs with no severity field at all.
+	// Without this, the stacked chart visibly undercounts vs the total
+	// table — which is what the operator hit.
 	totalPts := parseBuckets(raw.Aggregations["total_buckets"])
 	if len(totalPts) > 0 {
 		// Index each named series by timestamp for fast lookup.
@@ -1697,7 +1854,12 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		for _, p := range totalPts {
 			rem := p.V - byT[p.T]
 			if rem < 0 {
-				rem = 0 // float rounding paranoia (shouldn't happen with int64)
+				// v0.8.377 — reachable on the severity path: a doc whose
+				// severity TEXT band disagrees with its severity NUMBER
+				// band matches two filters, so sum(bands) can exceed the
+				// total. Clamp; the bands themselves stay right for every
+				// self-consistent doc.
+				rem = 0
 			}
 			otherPts = append(otherPts, LogPoint{T: p.T, V: rem})
 			otherTotal += rem

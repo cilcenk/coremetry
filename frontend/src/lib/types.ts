@@ -2923,6 +2923,68 @@ export interface SlowQueryRow extends DBQueryStat {
   stmtHash?: string;
 }
 
+// DBStmtDetail — v0.8.378 (Stage-2 slice D2). One payload for the
+// /slow-queries statement detail drawer (/api/databases/statements/
+// detail): window summary, 5m-grain trend, per-service caller breakdown,
+// true exemplar trace pivots. Every section is null when its backend
+// read failed — the drawer renders per-section fallbacks, never blanks.
+export interface DBStmtSummary {
+  sampleStatement: string;
+  dbSystem: string;
+  dbName: string;
+  calls: number;
+  errors: number;
+  totalMs: number;
+  avgMs: number;
+  p95Ms: number;
+  p99Ms: number;
+  maxMs: number;
+  // Prior-window values — present only on ?compare=prior responses
+  // (Endpoints v0.5.404 pattern). Absent = statement is NEW.
+  priorCalls?: number;
+  priorErrors?: number;
+  priorAvgMs?: number;
+  priorP95Ms?: number;
+}
+
+export interface DBStmtTrendPoint {
+  tsNs: number;
+  calls: number;
+  errors: number;
+  avgMs: number;
+  p95Ms: number;
+}
+
+export interface DBStmtCaller {
+  service: string;
+  calls: number;
+  errors: number;
+  avgMs: number;
+  p95Ms: number;
+  totalMs: number;
+  priorCalls?: number;
+  priorErrors?: number;
+  priorAvgMs?: number;
+  priorP95Ms?: number;
+}
+
+export interface DBStmtDetail {
+  // The v0.8.375 stmt_hash echoed back as a decimal string.
+  stmtHash: string;
+  // '?'-normalized display form (re-derived from the bucket sample);
+  // absent when the summary section missed — fall back to the row.
+  statement?: string;
+  fromNs: number;
+  toNs: number;
+  summary: DBStmtSummary | null;
+  trend: DBStmtTrendPoint[] | null;
+  // Bucket width of the trend series in seconds (5m-grain multiple) —
+  // densify sparse buckets against [fromNs, toNs] with this step.
+  trendBucketSec?: number;
+  callers: DBStmtCaller[] | null;
+  exemplars: { slowTraceId?: string; errorTraceId?: string } | null;
+}
+
 // Exemplar — single representative span looked up to bridge a
 // metric chart point to a sample trace (Datadog / Honeycomb /
 // Grafana exemplar pattern). Returned by /api/spans/exemplar.

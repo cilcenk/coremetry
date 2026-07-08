@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -9,6 +9,8 @@ import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { encodeStmtParam, decodeStmtParam } from '@/pages/slowqueries/stmtParam';
+import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
 
@@ -87,6 +89,33 @@ export default function SlowQueriesPage() {
     ? Array.from(new Set(rows.map(r => r.dbSystem).filter(Boolean))).sort()
     : [];
 
+  // v0.8.378 — URL-first statement detail drawer (Stage-2 slice D2).
+  // Row click writes ?stmt=<hash>[|<system>] with replace:true;
+  // Esc/✕/overlay clears it (plus the drawer-owned ?stmtcmp compare
+  // flag so a closed drawer leaves no dangling state). Keyed on the
+  // v0.8.375 persistent identity, so a copied link resolves the same
+  // statement class in any window. The expand chevron keeps its
+  // inline sample + Copilot strip — two affordances, one row.
+  const [params, setParams] = useSearchParams();
+  const stmtRef = useMemo(() => decodeStmtParam(params.get('stmt')), [params]);
+  const openStmt = (r: SlowQueryRow) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.set('stmt', encodeStmtParam({ hash: r.stmtHash!, system: dbSystem }));
+    return next;
+  }, { replace: true });
+  const closeStmt = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('stmt');
+    next.delete('stmtcmp');
+    return next;
+  }, { replace: true });
+  // Statement-text fallback for the drawer header while its payload
+  // loads. Same hash can appear once per service — any row of the
+  // class carries the same normalized statement, so first match is fine.
+  const stmtRow = stmtRef
+    ? (rows ?? []).find(r => r.stmtHash === stmtRef.hash)
+    : undefined;
+
   // Shared sortable + resizable table. Called unconditionally (hooks
   // rule) with [] while loading; default sort = total time desc to match
   // the backend's wall-clock ordering on first paint.
@@ -150,10 +179,21 @@ export default function SlowQueriesPage() {
                     : r.p99Ms > 200 ? 'var(--warn)' : undefined;
                   return (
                     <>
+                      {/* v0.8.378 — row click opens the statement detail
+                          drawer (URL-first, keyed on stmtHash); the chevron
+                          cell keeps the inline sample+Copilot expand. Rows
+                          from a pre-D1 cache entry (no stmtHash) fall back
+                          to the expand toggle. */}
                       <tr key={key}
-                        onClick={() => setExpanded(isExpanded ? null : key)}
+                        onClick={() => r.stmtHash
+                          ? openStmt(r)
+                          : setExpanded(isExpanded ? null : key)}
                         style={{ cursor: 'pointer' }}>
-                        <td>
+                        <td onClick={e => {
+                          e.stopPropagation();
+                          setExpanded(isExpanded ? null : key);
+                        }}
+                          title={isExpanded ? 'Hide sample' : 'Show a real sample inline'}>
                           <span style={{ fontSize: 10, color: 'var(--text3)' }}>
                             {isExpanded ? '▼' : '▶'}
                           </span>
@@ -282,6 +322,15 @@ export default function SlowQueriesPage() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {stmtRef && (
+          <StmtDetailDrawer
+            refObj={stmtRef}
+            row={stmtRow}
+            range={range}
+            onClose={closeStmt}
+          />
         )}
       </div>
     </>

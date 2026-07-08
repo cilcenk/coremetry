@@ -584,6 +584,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/correlate/context", s.getCorrelationContext)
 	s.registerPivotRoutes(mux) // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
 	s.registerEndpointsDetailRoutes(mux) // v0.8.360 — /endpoints detail drill-down (histogram / status / exceptions / failing traces / split), endpoints_detail.go
+	s.registerDBStmtDetailRoutes(mux)    // v0.8.378 — /slow-queries statement drill-down (trend / callers / exemplars / compare), dbstmt_detail.go
 	mux.HandleFunc("GET /api/spans/heatmap", s.spanHeatmap)
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)

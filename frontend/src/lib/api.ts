@@ -640,6 +640,12 @@ export const api = {
   // time. Optional db_system narrows to one engine.
   slowQueries: (params: { from?: number; to?: number; db_system?: string; limit?: number }) =>
     get<import('./types').SlowQueryRow[]>(`/api/databases/slow-queries?${qs(params)}`),
+  // v0.8.378 — statement detail drill-down (Stage-2 slice D2). One
+  // payload with per-section null tolerance, keyed on the v0.8.375
+  // stmt_hash decimal string; compare=prior adds prior* fields to the
+  // summary + callers (Endpoints v0.5.404 pattern).
+  dbStmtDetail: (params: { hash: string; system?: string; db?: string; from: number; to: number; compare?: 'prior' }) =>
+    get<import('./types').DBStmtDetail>(`/api/databases/statements/detail?${qs(params)}`),
 
   // AI observability (v0.5.163). Admin-only read endpoints.
   aiCalls: (params: { surface?: string; provider?: string; status?: string; from?: number; to?: number; limit?: number }) =>

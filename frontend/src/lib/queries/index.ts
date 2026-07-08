@@ -58,5 +58,5 @@ export { useUsers, useCustomRoles } from './users';
 export { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from './events';
 export { useInbox, useInboxCount } from './inbox';
 export { useProfiles, useProfileHotspots } from './profiles';
-export { useSlowQueries } from './databases';
+export { useSlowQueries, useDBStmtDetail } from './databases';
 export { useEndpoints, useEndpointDetail, useEndpointSplit } from './endpoints';

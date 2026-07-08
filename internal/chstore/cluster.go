@@ -272,6 +272,8 @@ var tablesWithoutTraceID = map[string]bool{
 	"service_summary_5m":   true,
 	"db_summary_5m":        true,
 	"db_caller_summary_5m": true,
+	// v0.8.375 — statement-identity MV projects stmt_hash, never trace_id.
+	"db_statement_summary_5m": true,
 	"topology_edges_5m":    true,
 	"topology_op_edges_5m": true,
 	// v0.5.435 — MVs/aggregates that join highVolumeTables in
@@ -355,6 +357,13 @@ var defaultShardPolicy = map[string]string{
 	// reads filtered by it land on one shard.
 	"db_summary_5m":        "cityHash64(db_system)",
 	"db_caller_summary_5m": "cityHash64(service_name)",
+	// v0.8.375 (Stage-2 D1) — statement-identity rollup. Like the other
+	// spans-fed MVs the key is largely decorative (the insert trigger
+	// writes shard-local, reads fan out via the wrapper), but it's honest
+	// about the dominant keyed filter: D2's statement detail reads
+	// `WHERE stmt_hash = ?`. toString because cityHash64 wants the same
+	// arg shape the exemplars fingerprint policy uses for a UInt64.
+	"db_statement_summary_5m": "cityHash64(toString(stmt_hash))",
 	// v0.5.435 — remaining sharded MVs/aggregates. For MVs the
 	// shard key is largely decorative (auto-triggered writes land
 	// local, reads always fan-out via Distributed) but is honest
@@ -797,6 +806,13 @@ var highVolumeTables = map[string]bool{
 	"topology_op_edges_5m": true,
 	"db_summary_5m":        true,
 	"db_caller_summary_5m": true,
+	// v0.8.375 (Stage-2 D1) — statement-identity rollup, an MV reading
+	// FROM spans like its db_* siblings above. Registered here ON DAY ONE
+	// so adaptDDL emits the `_local` + Distributed-wrapper shape — the
+	// spanmetrics_* MVs skipped this step and every bare-name read
+	// silently returned ONE shard's slice (the v0.8.356/358 undercount
+	// class). Creation is gated on hasDBStmtHashCol in migrate().
+	"db_statement_summary_5m": true,
 	// v0.5.435 — remaining sharded MVs/aggregates the post-v0.5.426
 	// /scale-audit revealed. Same gap shape: bare-name Replicated
 	// per shard, no Distributed wrapper → cluster reads silently

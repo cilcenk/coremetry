@@ -69,6 +69,18 @@ type Store struct {
 	// to the metric+service fallback read — ingest never breaks.
 	hasSeriesFpCol bool
 
+	// hasDBStmtHashCol records whether the spans table actually carries the
+	// `db_stmt_hash` column (v0.8.375, Stage-2 D1 — persistent DB-statement
+	// identity). Unlike op_group / series_fingerprint the column is
+	// MATERIALIZED (CH-computed at insert, the `cluster` precedent), so the
+	// INSERT projection never mentions it and a wrapper/local mismatch can't
+	// break ingest — this flag exists for the READ+MV side: it gates the
+	// db_statement_summary_5m MV (whose SELECT references the column;
+	// creating it without the column would code-16 every span INSERT — the
+	// v0.8.186 class) and routes GetSlowQueriesGlobal between the MV read
+	// and the raw-spans fallback.
+	hasDBStmtHashCol bool
+
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
 	// problem into an existing incident on a service that calls
@@ -1903,6 +1915,66 @@ func (s *Store) migrate(ctx context.Context) error {
 		log.Printf("[chstore] `series_fingerprint` column not present on metric_points (%v) — INSERT omits it; exemplar reads fall back to metric+service (expected on an external Distributed cluster with cluster_name unset)", sfErr)
 	}
 
+	// db_stmt_hash — v0.8.375, Stage-2 D1: persistent DB-statement identity
+	// (pages-enhancement-audit §2 / Faz D, approved default: INGEST-TIME
+	// fingerprint). xxHash64 over the literal-normalized db.statement,
+	// computed AT INSERT by ClickHouse via a MATERIALIZED expression — the
+	// `cluster` column precedent (v0.8.132), deliberately NOT the
+	// op_group/series_fingerprint explicit-INSERT shape:
+	//   • MATERIALIZED columns are never part of the INSERT projection and
+	//     are ERASED when a Distributed wrapper forwards blocks (CH PR
+	//     #7377), so the wrapper/local-mismatch class that broke prod twice
+	//     (v0.8.185 cluster, v0.8.186 op_group) physically cannot kill
+	//     ingest here.
+	//   • Rolling deploy has NO data gap: old pods' INSERTs never mention
+	//     the column, and the server computes it for their rows the moment
+	//     the ALTER lands — an explicit column would have written DEFAULT 0
+	//     for every old-pod span until the fleet converged.
+	//   • New pods against an un-migrated schema are equally safe: the
+	//     INSERT doesn't name the column, so nothing can code-16.
+	// The expression is hash-parity-PINNED with the Go normalizer
+	// (NormalizeDBStatement / DBStmtHash, dbstmt.go — vectors captured from
+	// live CH 24.8), so read paths compute the same identity Go-side.
+	// Gated like op_group: on an external Distributed `spans` with
+	// cluster_name unset the ALTER can't reach spans_local — skip + log,
+	// and the probe below keeps the MV + read dispatch honest.
+	dbStmtHashAlter := `ALTER TABLE spans ADD COLUMN IF NOT EXISTS db_stmt_hash UInt64 MATERIALIZED ` + dbStmtHashExpr
+	if s.spansIsExternalDistributed(ctx) {
+		log.Printf("[chstore] external Distributed `spans` with cluster_name unset — SKIPPING db_stmt_hash ALTER (it can't reach spans_local). Statement-identity MV disabled, /slow-queries stays on the raw-spans path; set config.clickhouse.cluster_name to enable it.")
+	} else if err := s.execDDL(ctx, dbStmtHashAlter); err != nil {
+		return fmt.Errorf("alter table (db_stmt_hash): %w", err)
+	}
+
+	// Probe whether db_stmt_hash is genuinely resolvable on the table reads
+	// hit — in distributed mode this routes to spans_local, so it correctly
+	// reads false when the column never reached the shards (skipped ALTER
+	// above, or an operator-managed schema that pre-dates it). Mirrors the
+	// hasOpGroupCol / hasSeriesFpCol probes exactly, incl. the
+	// maybeCloseRows error-path discipline (v0.8.185 boot-panic).
+	dhRows, dhErr := s.conn.Query(ctx,
+		`SELECT db_stmt_hash FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(dhRows, dhErr)
+	s.hasDBStmtHashCol = dhErr == nil
+	if !s.hasDBStmtHashCol {
+		log.Printf("[chstore] `db_stmt_hash` column not resolvable on spans (%v) — db_statement_summary_5m MV disabled, /slow-queries reads stay on the raw-spans path (expected on an external Distributed cluster with cluster_name unset)", dhErr)
+	}
+
+	// Defensive recovery (mirrors the op_group guard, v0.8.186): when
+	// db_stmt_hash is genuinely absent, DROP db_statement_summary_5m if it
+	// lingers from a prior boot. Its SELECT references db_stmt_hash, so its
+	// insert-trigger would fail with code 16 on every span INSERT — which
+	// under default CH semantics aborts the source INSERT too, blocking ALL
+	// ingest. Idempotent; only fires when the column is truly missing, so
+	// the healthy path never touches the MV. The creation loop below also
+	// skips recreating it while hasDBStmtHashCol is false.
+	if !s.hasDBStmtHashCol {
+		if err := s.execDDL(ctx, `DROP VIEW IF EXISTS db_statement_summary_5m`); err != nil {
+			log.Printf("[chstore] could not drop stale db_statement_summary_5m MV (db_stmt_hash absent): %v", err)
+		} else {
+			log.Printf("[chstore] dropped db_statement_summary_5m MV (db_stmt_hash absent — its insert trigger would block ingest)")
+		}
+	}
+
 	// Materialized views — pre-aggregate the high-volume spans table into
 	// summary tables that read paths can hit instead of scanning raw rows.
 	// New MVs go here; AggregatingMergeTree lets us combine count/sum/quantile
@@ -2191,6 +2263,53 @@ func (s *Store) migrate(ctx context.Context) error {
 		 FROM spans
 		 WHERE db_system != ''
 		 GROUP BY db_system, instance, db_name, service_name, host_name, time_bucket`,
+
+		// db_statement_summary_5m — v0.8.375, Stage-2 D1: per-(db_system,
+		// db.name, service, statement-hash, 5-min) rollup keyed by the
+		// PERSISTENT statement identity spans.db_stmt_hash (xxHash64 of the
+		// literal-normalized db.statement, computed at insert — dbstmt.go).
+		// Gives the /slow-queries global catalog an MV read — the raw path
+		// regex-normalized + GROUP BY'd every db-span in the window per page
+		// load — and gives D2 its statement detail/trend/caller source
+		// (service is a dim, so per-statement caller breakdown is a GROUP BY
+		// away). Dims follow the db_caller_summary_5m style (db_system +
+		// db.name + service); stmt_hash carries the identity. One capped
+		// sample statement per bucket via anyState — the read path
+		// re-normalizes the sample Go-side (NormalizeDBStatement) for the
+		// display form, which is hash-consistent with the grouping by
+		// construction (the parity contract in dbstmt.go). duration_max_state
+		// keeps the catalog's MaxMs column intact — quantile states can't
+		// produce a true max. WHERE db_stmt_hash != 0 ⇔ db_statement != ''
+		// (the raw path's filter; the 0 sentinel is pinned in dbstmt_test.go).
+		//
+		// GATED: created ONLY while hasDBStmtHashCol is true (see the
+		// creation loop) — its SELECT references db_stmt_hash, so creating it
+		// against a column-less spans table would code-16 every span INSERT
+		// and block ALL ingest (the op_group / v0.8.186 lesson). In cluster
+		// mode this is a proper highVolumeTables member (_local + Distributed
+		// wrapper via adaptDDL) — NOT the spanmetrics_* per-shard mistake
+		// (v0.8.356/358 one-shard undercount class).
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS db_statement_summary_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (db_system, db_name, service_name, stmt_hash, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 90 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   db_system,
+		   coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') AS db_name,
+		   service_name,
+		   db_stmt_hash                                  AS stmt_hash,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   anyState(substring(db_statement, 1, 8192))    AS sample_stmt_state,
+		   countState()                                  AS span_count_state,
+		   countIfState(status_code = 'error')           AS error_count_state,
+		   sumState(duration)                            AS duration_sum_state,
+		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state,
+		   maxState(duration)                            AS duration_max_state
+		 FROM spans
+		 WHERE db_stmt_hash != 0
+		 GROUP BY db_system, db_name, service_name, stmt_hash, time_bucket`,
 
 		// spanmetrics_calls_5m: per-(service, status_code, 5min)
 		// pre-aggregation of the spanmetrics processor's calls
@@ -2522,6 +2641,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		// op_group-agnostic and created unconditionally. Cheap substring
 		// match on the CREATE — the MV name is unique in the statement.
 		if !s.hasOpGroupCol && strings.Contains(q, "operation_group_summary_5m") {
+			continue
+		}
+		// Same guard class for db_statement_summary_5m (v0.8.375, Stage-2
+		// D1): its SELECT reads db_stmt_hash — creating it while the column
+		// is absent (external Distributed cluster, cluster_name unset) would
+		// block ALL ingest with code 16. The defensive DROP above already
+		// removed any stale copy.
+		if !s.hasDBStmtHashCol && strings.Contains(q, "db_statement_summary_5m") {
 			continue
 		}
 		if err := s.execDDL(ctx, q); err != nil {

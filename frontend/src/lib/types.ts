@@ -2916,6 +2916,11 @@ export interface RolloutsResult {
 // install?".
 export interface SlowQueryRow extends DBQueryStat {
   service: string;
+  // stmtHash — persistent statement identity (v0.8.375, Stage-2 D1):
+  // spans.db_stmt_hash as a DECIMAL STRING (a uint64 in a JSON number
+  // loses precision past 2^53). D2 keys the statement detail view on it.
+  // Optional: absent on responses served from a pre-D1 cache entry.
+  stmtHash?: string;
 }
 
 // Exemplar — single representative span looked up to bridge a

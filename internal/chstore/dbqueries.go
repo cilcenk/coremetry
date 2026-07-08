@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -48,6 +49,15 @@ type DBQueryStat struct {
 type SlowQueryRow struct {
 	DBQueryStat
 	Service string `json:"service"`
+	// StmtHash — persistent statement identity (v0.8.375, Stage-2 D1):
+	// spans.db_stmt_hash / chstore.DBStmtHash as a DECIMAL STRING, because
+	// a uint64 in JSON silently loses precision past 2^53 in JS and D2
+	// keys the statement detail view on this value (same reason pivot
+	// fingerprints ride URLs as decimal strings). Additive: MV-path rows
+	// carry the stored column, raw-path rows compute it Go-side from the
+	// sample (hash-consistent by the dbstmt.go parity contract); empty
+	// only on pre-D1 cached responses.
+	StmtHash string `json:"stmtHash,omitempty"`
 }
 
 // GetSlowQueriesGlobal — the cross-service slow-query catalog.
@@ -96,11 +106,61 @@ func slowQueriesGlobalSQL(where, shardSetting string) string {
 		         ` + shardSetting
 }
 
+// slowQueriesUseMV — v0.8.375 (Stage-2 D1) dispatcher condition, pure so
+// the routing is table-tested. The MV path needs (a) the db_stmt_hash
+// column + its MV to exist (hasCol — the boot probe, which also gated the
+// MV's creation) and (b) an MV-eligible window: the 5-minute bucket grain
+// can't resolve narrower windows (the UseSummaryMV boundary the evaluator
+// established in v0.6.12). Same dispatcher shape as endpoints.go
+// GetEndpoints (v0.8.356): one condition, two whole paths, no mid-query
+// mixing.
+func slowQueriesUseMV(hasCol bool, from, to time.Time) bool {
+	return hasCol && UseSummaryMV(to.Sub(from))
+}
+
+// slowQueriesGlobalMVSQL builds the MV-backed catalog read over
+// db_statement_summary_5m (v0.8.375, Stage-2 D1). Pure — pinned by
+// TestSlowQueriesGlobalMVSQL. Grouping is (service, stmt_hash): the MV's
+// finer db_system/db_name dims fold together exactly like the raw path's
+// (service, norm_stmt) grouping folds across systems. Same alias rule as
+// slowQueriesGlobalSQL: the sample-system aggregate is `db_sys`, NEVER
+// `AS db_system` — with the optional db_system WHERE filter present,
+// ClickHouse would resolve the WHERE identifier to the SELECT alias and
+// reject the query with code 184 (the v0.8.362 incident).
+func slowQueriesGlobalMVSQL(where string) string {
+	return `
+		SELECT
+			service_name,
+			stmt_hash,
+			anyMerge(sample_stmt_state)                 AS sample_stmt,
+			any(db_system)                              AS db_sys,
+			countMerge(span_count_state)                AS cnt,
+			countIfMerge(error_count_state)             AS err_cnt,
+			sumMerge(duration_sum_state) / 1e6          AS total_ms,
+			arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
+			arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms,
+			maxMerge(duration_max_state) / 1e6          AS max_ms
+		FROM db_statement_summary_5m ` + where + `
+		GROUP BY service_name, stmt_hash
+		ORDER BY total_ms DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 30`
+}
+
 func (s *Store) GetSlowQueriesGlobal(
 	ctx context.Context, from, to time.Time, dbSystem string, limit int,
 ) ([]SlowQueryRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
+	}
+	// v0.8.375 — MV-first dispatch (Stage-2 D1). The raw scan below
+	// regex-normalizes + GROUP BYs every db-span in the window per page
+	// load; the MV read merges pre-aggregated 5-minute states instead.
+	// The raw path SURVIVES as the fallback for sub-5m windows and for
+	// installs where the db_stmt_hash column couldn't land (external
+	// Distributed cluster with cluster_name unset — probe-driven).
+	if slowQueriesUseMV(s.hasDBStmtHashCol, from, to) {
+		return s.getSlowQueriesGlobalMV(ctx, from, to, dbSystem, limit)
 	}
 	const placeholder = "__P__"
 	var wc whereClause
@@ -129,6 +189,65 @@ func (s *Store) GetSlowQueriesGlobal(
 		r.ErrorCount = int(errCnt)
 		r.TotalMs = float64(cnt) * r.AvgMs
 		r.Statement = strings.ReplaceAll(r.Statement, placeholder, "?")
+		// v0.8.375 — persistent identity on the raw path too: computed
+		// Go-side from the sample. Hash-consistent with the MV path's
+		// stored stmt_hash by the dbstmt.go parity contract, so a D2
+		// deep-link keyed off a raw-window row resolves the same class.
+		r.StmtHash = strconv.FormatUint(DBStmtHash(r.SampleStatement), 10)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// getSlowQueriesGlobalMV is the db_statement_summary_5m read behind
+// GetSlowQueriesGlobal (v0.8.375, Stage-2 D1). Response shape is
+// byte-compatible with the raw path: Statement is the '?'-normalized
+// display form (re-derived from the bucket sample via
+// NormalizeDBStatement — any sample of a hash class normalizes to the
+// class's canonical form by construction), TotalMs comes straight from
+// the duration sum (≡ cnt×avg), and MaxMs from the dedicated max state.
+// safeF on every merged float: TDigest/aggregate merges can yield NaN on
+// edge-case states and encoding/json rejects NaN (the v0.5.301 500-class).
+func (s *Store) getSlowQueriesGlobalMV(
+	ctx context.Context, from, to time.Time, dbSystem string, limit int,
+) ([]SlowQueryRow, error) {
+	// Snap the window start DOWN to the MV's 5-minute grid so a rolling
+	// window covers whole buckets (the GetDBTrends trick — an unaligned
+	// cutoff would half-clip the first bucket).
+	bucketStart := from.Truncate(5 * time.Minute)
+	var wc whereClause
+	wc.add("time_bucket >= ?", bucketStart)
+	wc.add("time_bucket <= ?", to)
+	if dbSystem != "" {
+		wc.add("db_system = ?", dbSystem)
+	}
+	sql := slowQueriesGlobalMVSQL(wc.sql())
+	args := append(wc.args, limit)
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query slow queries (mv): %w", err)
+	}
+	defer rows.Close()
+	out := []SlowQueryRow{}
+	for rows.Next() {
+		var r SlowQueryRow
+		var stmtHash, cnt, errCnt uint64
+		var totalMs, p95, p99, maxMs float64
+		if err := rows.Scan(&r.Service, &stmtHash, &r.SampleStatement, &r.DBSystem,
+			&cnt, &errCnt, &totalMs, &p95, &p99, &maxMs); err != nil {
+			return nil, err
+		}
+		r.Count = int(cnt)
+		r.ErrorCount = int(errCnt)
+		r.TotalMs = safeF(&totalMs)
+		if cnt > 0 {
+			r.AvgMs = r.TotalMs / float64(cnt)
+		}
+		r.P95Ms = safeF(&p95)
+		r.P99Ms = safeF(&p99)
+		r.MaxMs = safeF(&maxMs)
+		r.Statement = NormalizeDBStatement(r.SampleStatement)
+		r.StmtHash = strconv.FormatUint(stmtHash, 10)
 		out = append(out, r)
 	}
 	return out, rows.Err()

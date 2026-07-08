@@ -182,7 +182,12 @@ func (s *Service) chatAnthropicWithTools(ctx context.Context, system string, msg
 	}
 
 	body := map[string]any{
-		"model": model, "max_tokens": 1500, "system": system,
+		"model": model,
+		// v0.8.393 (AI audit A2) — was 1500: the budget Explain already
+		// learned is too small for reasoning models (v0.8.384 lesson,
+		// copilot.go openAICompletionTokens). On qwen3.5-2b the thinking
+		// tokens alone could exhaust 1500 and the answer arrived empty.
+		"max_tokens": openAICompletionTokens, "system": system,
 		"messages": apiMsgs, "tools": apiTools,
 	}
 	raw, _ := json.Marshal(body)
@@ -291,7 +296,9 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 		return ChatTurn{}, err
 	}
 	body := map[string]any{
-		"model": model, "max_tokens": 1500, "temperature": 0.2,
+		"model": model,
+		// v0.8.393 (AI audit A2) — 1500 → the shared 4096 budget; see above.
+		"max_tokens": openAICompletionTokens, "temperature": 0.2,
 		"messages": apiMsgs, "tools": apiTools,
 	}
 	raw, _ := json.Marshal(body)

@@ -65,7 +65,15 @@ var wellKnown = map[string]string{
 // pushes the key as a parameter. For numeric ops we cast to Float64 so that
 // even string-stored attributes compare correctly when they parse.
 func (f FilterExpr) SQL() (string, []any, error) {
-	return f.sql("")
+	return f.sql("", wellKnown)
+}
+
+// SQLForMetricPoints resolves against metric_points' column set
+// (v0.8.381): only service/host typed columns exist there, so every
+// other wellKnown key falls to the attr/res array lookups instead of
+// referencing a spans-only column ClickHouse would reject.
+func (f FilterExpr) SQLForMetricPoints() (string, []any, error) {
+	return f.sql("", metricPointsWellKnown)
 }
 
 // SQLAliased is the alias-qualified twin of SQL: every column reference is
@@ -77,7 +85,7 @@ func (f FilterExpr) SQL() (string, []any, error) {
 // caller (relations.go uses the fixed literals "c" / "p"), never threaded
 // from user input. Keys and values still flow exclusively as `?` params.
 func (f FilterExpr) SQLAliased(alias string) (string, []any, error) {
-	return f.sql(alias)
+	return f.sql(alias, wellKnown)
 }
 
 // qualCol prefixes a well-known column expression (which may itself be a
@@ -111,7 +119,7 @@ func qualArr(alias, expr string) string {
 	return r.Replace(expr)
 }
 
-func (f FilterExpr) sql(alias string) (string, []any, error) {
+func (f FilterExpr) sql(alias string, wellKnown map[string]string) (string, []any, error) {
 	op := strings.ToUpper(strings.TrimSpace(f.Op))
 	if op == "" {
 		op = "="
@@ -225,6 +233,35 @@ func ApplyFilters(wc *whereClause, filters []FilterExpr) {
 		sql, args, err := f.SQL()
 		if err != nil || sql == "" {
 			continue // silently skip — UI validates first
+		}
+		wc.add(sql, args...)
+	}
+}
+
+// metricPointsWellKnown resolves filter keys against metric_points'
+// ACTUAL columns (v0.8.381, audit-found: picking deployment.environment
+// in the Explore metric filter referenced the spans-only deploy_env
+// column and 500'd). Only service/host typed columns exist there; the
+// env keys map straight to the resource-array lookup (either semconv
+// spelling matches, mirroring what deploy_env gives spans), and every
+// other key falls through to the generic datapoint-attr lookup.
+var metricPointsWellKnown = map[string]string{
+	"service.name": "service_name", "service_name": "service_name", "service": "service_name",
+	"host.name": "host_name", "host_name": "host_name",
+	"deployment.environment":      metricEnvExpr,
+	"deployment.environment.name": metricEnvExpr,
+}
+
+const metricEnvExpr = "coalesce(nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''), " +
+	"res_values[indexOf(res_keys, 'deployment.environment')])"
+
+// ApplyMetricFilters is ApplyFilters for metric_points reads
+// (v0.8.381): identical semantics, metric-aware column resolution.
+func ApplyMetricFilters(wc *whereClause, filters []FilterExpr) {
+	for _, f := range filters {
+		sql, args, err := f.SQLForMetricPoints()
+		if err != nil || sql == "" {
+			continue
 		}
 		wc.add(sql, args...)
 	}

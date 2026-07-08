@@ -48,7 +48,10 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, err
 	}
 	wc.add("time >= ?", f.From)
 	wc.add("time <= ?", f.To)
-	ApplyFilters(&wc, f.Filters)
+	// v0.8.381 — metric_points lacks most spans-typed columns; the
+	// metric-aware variant reroutes those keys to array lookups
+	// (deployment.environment picked in the Explore filter 500'd).
+	ApplyMetricFilters(&wc, f.Filters)
 
 	step := f.StepSeconds
 	if step <= 0 {

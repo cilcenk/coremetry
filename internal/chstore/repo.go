@@ -234,7 +234,7 @@ func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 // Pass `since` for a relative window (now-since … now), or non-zero `from`/`to`
 // for an absolute window (overrides since).
 func (s *Store) GetServices(ctx context.Context, since time.Duration, from, to time.Time) ([]ServiceSummary, error) {
-	return s.GetServicesFilteredIn(ctx, since, from, to, "", nil, "", "", 0, 0, "")
+	return s.GetServicesFilteredIn(ctx, since, from, to, "", nil, "", "", 0, 0, "", "")
 }
 
 // GetServicesFiltered keeps the prior surface intact (no
@@ -242,7 +242,7 @@ func (s *Store) GetServices(ctx context.Context, since time.Duration, from, to t
 // is the variant the API uses when the operator filtered by
 // owner / SRE team.
 func (s *Store) GetServicesFiltered(ctx context.Context, since time.Duration, from, to time.Time, nameMatch, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
-	return s.GetServicesFilteredIn(ctx, since, from, to, nameMatch, nil, sort, dir, limit, offset, "")
+	return s.GetServicesFilteredIn(ctx, since, from, to, nameMatch, nil, sort, dir, limit, offset, "", "")
 }
 
 // servicesSortExpr maps a UI-side sort key to a CH ORDER BY
@@ -631,12 +631,11 @@ func (s *Store) GetServiceClusterBreakdown(
 // row matches an owner-team / SRE-team filter; the spans
 // query then groups across just the allowed names. nil /
 // empty list = no constraint.
-// cluster (when non-empty) narrows results to spans whose
-// derived k8s/openshift cluster name matches exactly. The
-// match is on the resolved string returned by
-// clusterDeriveExpr — operators pass the cluster name they
-// see in the /api/clusters dropdown.
-func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int, cluster string) ([]ServiceSummary, error) {
+// servicesListWhere builds the WHERE for the raw-spans services
+// listing (GetServicesFilteredIn). Factored pure (no conn) so the
+// v0.8.385 SQL-shape tests can pin the cluster + env conjuncts
+// without a live ClickHouse — the env_filter_test.go pattern.
+func (s *Store) servicesListWhere(since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, cluster, env string) whereClause {
 	var wc whereClause
 	if !from.IsZero() {
 		wc.add("time >= ?", from)
@@ -668,6 +667,27 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 		// the indexOf scan until they age out.
 		wc.add(s.clusterExpr()+" = ?", cluster)
 	}
+	if env != "" {
+		// v0.8.385 (env-separation Phase 2) — global ?env= filter.
+		// deploy_env is a typed LowCardinality column, so unlike the
+		// cluster derive this conjunct is a cheap direct comparison
+		// (same precedent as TraceFilter.Env, v0.8.383).
+		wc.add("deploy_env = ?", env)
+	}
+	return wc
+}
+
+// cluster (when non-empty) narrows results to spans whose
+// derived k8s/openshift cluster name matches exactly. The
+// match is on the resolved string returned by
+// clusterDeriveExpr — operators pass the cluster name they
+// see in the /api/clusters dropdown.
+// env (when non-empty) narrows to spans.deploy_env — the global
+// Topbar env picker (v0.8.385, env-separation Phase 2). Same
+// raw-fallback semantics as cluster, but CHEAPER: deploy_env is a
+// typed LowCardinality column, no indexOf derive needed.
+func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int, cluster, env string) ([]ServiceSummary, error) {
+	wc := s.servicesListWhere(since, from, to, nameMatch, serviceIn, cluster, env)
 	// scale-audit v0.8.201 — defensive cap on the limit<=0 wrapper path
 	// (GetServices passes limit=0) so this raw-spans GROUP BY can't return an
 	// unbounded result at billion-span scale.

@@ -1257,6 +1257,26 @@ func (s *Server) getServiceEnvironments(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// servicesUseMV is the /api/services MV fast-path gate. The
+// service_summary_5m MV writes a row every 5 minutes (sub-5m windows
+// would read empty) and carries NEITHER a cluster NOR an env
+// dimension — either filter disqualifies the MV and the read falls
+// to the bounded raw-spans path (cluster since v0.5.372, env since
+// v0.8.385 — env-separation Phase 2, cluster-parity raw-fallback,
+// NO MV changes). Factored pure so env_gate_test.go pins it.
+func servicesUseMV(window time.Duration, cluster, env string) bool {
+	return window >= 5*time.Minute && cluster == "" && env == ""
+}
+
+// servicesListKey builds the /api/services cache key from ALL
+// inputs (hash-all-inputs rule; the v0.5.187 class). env joined in
+// v0.8.385 — without it an env-filtered page would cross-poison the
+// unfiltered one inside the same 30s bucket.
+func servicesListKey(useMV bool, limit, offset int, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env string, withTotal bool) string {
+	return fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:bucket=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s:cl=%s:env=%s:wt=%t",
+		useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, withTotal)
+}
+
 func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
@@ -1300,6 +1320,10 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// k8s.cluster.name / openshift.cluster.name / cluster
 	// resource-attr matches. Empty = no constraint.
 	cluster := strings.TrimSpace(q.Get("cluster"))
+	// Global env filter (v0.8.385, env-separation Phase 2) — the
+	// Topbar picker's ?env=. Narrows to spans.deploy_env with the
+	// same raw-fallback semantics as cluster (the MV has no env dim).
+	env := strings.TrimSpace(q.Get("env"))
 	if from.IsZero() {
 		from = time.Now().Add(-since)
 	}
@@ -1309,11 +1333,11 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// MV-backed fast path. The MV writes a row every 5 minutes, so windows
 	// shorter than ~5 min would return empty — fall through to the raw
 	// scan in that case (small window = small scan, also fast).
-	// MV path doesn't carry a cluster dimension — force raw
-	// scan when a cluster filter is set. Trade-off: full scan
-	// over the window, but bounded by the filter so the cost
-	// stays proportional to the chosen cluster's traffic.
-	useMV := to.Sub(from) >= 5*time.Minute && cluster == ""
+	// MV path doesn't carry a cluster or env dimension — force raw
+	// scan when either filter is set. Trade-off: full scan over the
+	// window, but bounded by the filter so the cost stays
+	// proportional to the chosen slice's traffic.
+	useMV := servicesUseMV(to.Sub(from), cluster, env)
 	// Bucket from/to to 30s alignment for the cache key. The
 	// raw `q.Get("from")` is wall-clock ns and changes every
 	// request, so the legacy key was effectively per-request
@@ -1326,8 +1350,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// is the slowest part — see the limit+1 hasMore trick below).
 	withTotal := q.Get("withTotal") == "1"
 	bucket := cacheBucket(from, to)
-	key := fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:bucket=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s:cl=%s:wt=%t",
-		useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, withTotal)
+	key := servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, withTotal)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
@@ -1372,7 +1395,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		if useMV {
 			rows, err = s.store.GetServicesAggFilteredIn(ctx, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
 		} else {
-			rows, err = s.store.GetServicesFilteredIn(ctx, since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster)
+			rows, err = s.store.GetServicesFilteredIn(ctx, since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster, env)
 		}
 		if err != nil {
 			return nil, err
@@ -2260,6 +2283,15 @@ func (s *Server) getServiceAttrs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// endpointsListKey builds the /api/endpoints cache key from ALL
+// inputs (hash-all-inputs rule; the v0.5.187 class). env joined in
+// v0.8.385 — without it an env-filtered table would cross-poison the
+// unfiltered one inside the same 30s bucket.
+func endpointsListKey(bucket, service, search, cluster, env string, limit int, compare, bySignature bool, sortBy, sortDir string) string {
+	return fmt.Sprintf("endpoints:%s:%s:%s:%s:env=%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s",
+		bucket, service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir)
+}
+
 // getEndpoints — v0.5.365. Per-endpoint RED rollup driven from
 // the OTel http.route attribute on server / consumer spans.
 // Operator-asked: a /services-like top-level view, but keyed on
@@ -2273,6 +2305,11 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	service := q.Get("service")
 	search := q.Get("search")
 	cluster := q.Get("cluster")
+	// Global env filter (v0.8.385, env-separation Phase 2) — the
+	// Topbar picker's ?env=. Forces the raw-spans path (deploy_env
+	// conjunct) exactly like cluster; the spanmetrics_1m MV has no
+	// env dimension and stays untouched.
+	env := strings.TrimSpace(q.Get("env"))
 	limit := parseInt(q.Get("limit"), 500)
 	// v0.5.389 — operator-reported: top-N was undercounting the
 	// long tail. v0.5.395 — raised to 10000 + frontend exposes
@@ -2300,14 +2337,15 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	// Rides the cache key like every other input.
 	sortBy := q.Get("sort")
 	sortDir := q.Get("dir")
-	key := fmt.Sprintf("endpoints:%s:%s:%s:%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s", cacheBucket(from, to), service, search, cluster, limit, compare, bySignature, sortBy, sortDir)
+	key := endpointsListKey(cacheBucket(from, to), service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.356 — default path reads the spanmetrics_1m MV; the raw
-		// CTE survives only behind the cluster filter (dimension the MV
-		// lacks). Dispatch lives in chstore.GetEndpoints.
+		// CTE survives only behind the cluster + env filters
+		// (dimensions the MV lacks). Dispatch lives in
+		// chstore.GetEndpoints.
 		eq := chstore.EndpointsQuery{
 			From: from, To: to,
-			Service: service, Search: search, Cluster: cluster,
+			Service: service, Search: search, Cluster: cluster, Env: env,
 			Limit: limit, BySignature: bySignature,
 			Sort: sortBy, Dir: sortDir,
 		}

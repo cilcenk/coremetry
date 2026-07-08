@@ -21,6 +21,7 @@ import { fmtNum, fmtFixed, timeRangeToNs, rowClickHandlers } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getItem, setItem } from '@/lib/storage';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 
@@ -33,6 +34,11 @@ import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 export default function ServicesPage() {
   const navigate = useNavigate();
   const [range, setRange] = useUrlRange('30m');
+  // Global env filter (v0.8.385, env-separation Phase 2) — written by
+  // the Topbar EnvPicker, read here and forwarded to /api/services.
+  // Non-empty env forces the backend's bounded raw-spans path (the
+  // service MV has no env dim — same trade-off as the cluster filter).
+  const [env] = useUrlEnv();
   const [data, setData] = useState<Service[] | null | undefined>(undefined);
   const [sparklines, setSparklines] = useState<Record<string, SparklineBucket[]>>({});
   // Batch runtime fetch — one query for every service in the
@@ -207,6 +213,10 @@ export default function ServicesPage() {
       ownerTeam: ownerTeam || undefined,
       sreTeam: sreTeam || undefined,
       cluster: cluster || undefined,
+      // Global Topbar env filter (v0.8.385) — server-side deploy_env
+      // conjunct on the raw path, so the page is correct across
+      // pagination, not just the loaded 50 rows.
+      env: env || undefined,
       withTotal: '1',
     }).then(resp => {
       if (cancelled) return;
@@ -214,17 +224,23 @@ export default function ServicesPage() {
       setHasMore(resp?.hasMore ?? false);
       setTotal(resp?.total ?? null);
       const names = (resp?.services ?? []).map(s => s.name);
-      if (names.length > 0) {
+      // Sparklines ride the 5m summary MV, which has NO env dimension
+      // (v0.8.385 kept it that way — cluster-parity raw-fallback, no
+      // MV changes). Under an env filter an all-environment thumbnail
+      // next to env-filtered numbers would silently mismatch, so we
+      // skip the fetch and the cells degrade to value-only (the same
+      // look as an empty MV window); the table footer says why.
+      if (names.length > 0 && !env) {
         api.serviceSparklines(r, names).then(d => { if (!cancelled) setSparklines(d ?? {}); }).catch(() => {});
       }
     }).catch(() => { if (!cancelled) { setData(null); setHasMore(false); } });
     return () => { cancelled = true; };
-  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster]);
+  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env]);
 
   // Reset to page 0 whenever the search filter, time range,
-  // sort, or team / cluster filter changes — staying on page 5
+  // sort, or team / cluster / env filter changes — staying on page 5
   // of an old result set when the operator re-orders is jarring.
-  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster]);
+  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env]);
 
   // Pre-fetch the cluster options on first mount and whenever
   // the time range changes. The /api/clusters response is
@@ -462,7 +478,7 @@ export default function ServicesPage() {
               <button className="sec" type="button"
                 disabled={total == null || page >= Math.ceil(total / PAGE_SIZE) - 1}
                 onClick={() => { if (total != null) setPage(Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)); }}
-                title={total != null ? `Last page (${Math.max(1, Math.ceil(total / PAGE_SIZE))})` : 'Last page unavailable with a cluster filter'}
+                title={total != null ? `Last page (${Math.max(1, Math.ceil(total / PAGE_SIZE))})` : 'Last page unavailable with a cluster or env filter'}
                 style={{ padding: '3px 8px', fontSize: 11 }}>
                 Last ⏭
               </button>
@@ -636,6 +652,15 @@ export default function ServicesPage() {
             </div>
             <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text3)' }}>
               {sorted.length} services · sorted by <b style={{ color: 'var(--accent2)' }}>{sortBy}</b> {sortDir}
+              {/* v0.8.385 — empty-state honesty: the sparkline source
+                  (5m summary MV) has no env dimension, so under an env
+                  filter the thumbnails are omitted rather than showing
+                  all-environment shapes next to env-filtered numbers. */}
+              {env && (
+                <span title="Sparklines aggregate across all environments (their materialized view has no env dimension), so they are hidden while an environment filter is active.">
+                  {' '}· env <b style={{ color: 'var(--accent2)' }}>{env}</b> — sparklines hidden (all-environment source)
+                </span>
+              )}
             </div>
           </>
         )}

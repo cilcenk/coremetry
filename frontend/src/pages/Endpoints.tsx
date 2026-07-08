@@ -14,6 +14,7 @@ import { useEndpoints, useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { TrendDelta } from '@/components/TrendDelta';
 import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
@@ -92,6 +93,11 @@ export default function EndpointsPage() {
   const [params, setParams] = useSearchParams();
   // Global time window (UX#2) — URL-persisted + carried across pages.
   const [range, setRange] = useUrlRange('30m');
+  // Global env filter (v0.8.385, env-separation Phase 2) — written by
+  // the Topbar EnvPicker. Forwarded to /api/endpoints, where it forces
+  // the bounded raw-spans path with a deploy_env conjunct (the
+  // spanmetrics_1m MV has no env dim — same trade-off as cluster).
+  const [env] = useUrlEnv();
   const [search, setSearch] = useState(() => params.get('search') ?? '');
   // "/" focuses this filter via the shared table keyboard-nav.
   const searchRef = useRef<HTMLInputElement>(null);
@@ -234,6 +240,9 @@ export default function EndpointsPage() {
     service: service || undefined,
     search: search.trim() || undefined,
     cluster: cluster || undefined,
+    // Global Topbar env filter (v0.8.385) — rides the params object,
+    // so it's part of the React Query key automatically.
+    env: env || undefined,
     limit,
     compare: compare ? 'prior' : undefined,
     groupBy: bySignature ? 'signature' : undefined,
@@ -506,8 +515,9 @@ export default function EndpointsPage() {
               {/* v0.8.356 — the default read rides the spanmetrics_1m MV,
                   whose route dimension is filled from http.route with an
                   http.target fallback at ingest; the url.path fallback only
-                  applies on the cluster-filtered raw path. */}
-              Path source priority: {cluster
+                  applies on the raw path, which the cluster filter (v0.8.356)
+                  and the env filter (v0.8.385) both force. */}
+              Path source priority: {(cluster || env)
                 ? <><code>http.route</code> (templated) → <code>url.path</code> → <code>http.target</code></>
                 : <><code>http.route</code> (templated) → <code>http.target</code></>}.
               Server / consumer spans only — outbound client spans count under

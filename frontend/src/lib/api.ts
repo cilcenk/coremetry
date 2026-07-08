@@ -113,6 +113,10 @@ export const api = {
     // on the backend since the service MV doesn't carry the
     // cluster dim.
     cluster?: string;
+    // Global env filter (spans.deploy_env — the Topbar picker,
+    // v0.8.385). Same raw-fallback semantics as cluster, but the
+    // conjunct is a typed LowCardinality column (cheaper).
+    env?: string;
     // v0.7.44 — opt-in distinct-service total for the First/Last pager.
     // Default off keeps the hot path count-free.
     withTotal?: '1';
@@ -1377,7 +1381,9 @@ export const api = {
   // v0.8.356 — sort/dir: server-side global ordering (whitelisted
   // backend-side; ORDER BY runs before the LIMIT so "top by p95" is
   // the true global top-N, not the top-N-by-calls page reordered).
-  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature'; sort?: string; dir?: 'asc' | 'desc' }) =>
+  // env (v0.8.385): the global Topbar picker — like cluster it forces
+  // the backend's raw-spans path (spanmetrics_1m has no env dim).
+  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; env?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature'; sort?: string; dir?: 'asc' | 'desc' }) =>
     get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an

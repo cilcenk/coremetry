@@ -2,9 +2,15 @@ package chstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 )
+
+// errEndpointsMVEnv — GetEndpointsMV's refusal when called with an
+// env filter (v0.8.385). See the guard inside GetEndpointsMV.
+var errEndpointsMVEnv = errors.New(
+	"endpoints MV path cannot filter by env: spanmetrics_1m has no deploy_env dimension — route through GetEndpoints (raw fallback)")
 
 // EndpointRow is one (service, path) tuple's RED rollup for the
 // /endpoints page. Path resolves to http.route when the SDK
@@ -125,6 +131,13 @@ type EndpointsQuery struct {
 	Service     string
 	Search      string
 	Cluster     string
+	// Env narrows to spans.deploy_env — the global Topbar env picker
+	// (v0.8.385, env-separation Phase 2). Like Cluster it forces the
+	// raw-spans path: spanmetrics_1m carries no env dimension and the
+	// approved strategy is cluster-parity raw-fallback, NO MV changes.
+	// Unlike the cluster derive, deploy_env is a typed LowCardinality
+	// column, so the conjunct is cheap.
+	Env         string
 	Limit       int
 	BySignature bool
 	// Sort / Dir (v0.8.356) — server-side global ordering, whitelisted
@@ -136,6 +149,50 @@ type EndpointsQuery struct {
 	// compare=prior read, which only needs calls/errors/avg/p99 for the
 	// delta merge.
 	SkipStatus bool
+}
+
+// forcesRaw reports whether the query carries a filter dimension the
+// spanmetrics_1m MV does not have — cluster (res/attr derive,
+// v0.8.356) or env (deploy_env, v0.8.385). Either one sends the read
+// down the bounded raw-spans path. Pinned by env_filter_phase2_test.go.
+func (q EndpointsQuery) forcesRaw() bool {
+	return q.Cluster != "" || q.Env != ""
+}
+
+// endpointsRawFilters builds the OPTIONAL AND-conjuncts of the raw
+// /endpoints read's WHERE (service / path-substring / cluster / env)
+// plus their bind args in placeholder order — appended by the caller
+// right after the mandatory [from, to] pair. Factored pure (no conn)
+// so the v0.8.385 SQL-shape tests can pin the env conjunct without a
+// live ClickHouse, the env_filter_test.go pattern.
+//
+// Cluster (v0.5.372) matches the same derive expression as the
+// /services page so an operator who filtered there sees a symmetric
+// set here: clusterExpr coalesces six resource/attr keys
+// (k8s.cluster.name, openshift.cluster.name, cluster — res + attr
+// arrays) into one canonical string. Env (v0.8.385) is the global
+// Topbar picker's deploy_env — a typed LowCardinality column, no
+// derive needed. Empty filter = no conjunct ("all").
+func (s *Store) endpointsRawFilters(q EndpointsQuery, pathExpr string) (string, []any) {
+	var sql strings.Builder
+	var args []any
+	if q.Service != "" {
+		sql.WriteString(" AND service_name = ?")
+		args = append(args, q.Service)
+	}
+	if q.Search != "" {
+		sql.WriteString(" AND positionCaseInsensitive(" + pathExpr + ", ?) > 0")
+		args = append(args, q.Search)
+	}
+	if q.Cluster != "" {
+		sql.WriteString(" AND " + s.clusterExpr() + " = ?")
+		args = append(args, q.Cluster)
+	}
+	if q.Env != "" {
+		sql.WriteString(" AND deploy_env = ?")
+		args = append(args, q.Env)
+	}
+	return sql.String(), args
 }
 
 // endpointsOrderBy maps the UI sort ids onto whitelisted ORDER BY
@@ -179,8 +236,10 @@ func endpointsOrderBy(sort, dir string) string {
 // invariant — the old raw CTE was a bounded full-scan of spans at
 // billion-span scale; on the reference install it ran 16-19s cold
 // and sometimes tripped its own 15s cap). The raw path survives
-// ONLY for the cluster filter: cluster is derived from res/attr
-// arrays (clusterExpr) which the MV doesn't carry as a dimension.
+// ONLY for the cluster + env filters: cluster is derived from
+// res/attr arrays (clusterExpr) and env is spans.deploy_env —
+// dimensions the MV doesn't carry (v0.8.385 kept it that way:
+// cluster-parity raw-fallback, NO MV changes).
 //
 // Known trade-off, documented: spans.http_route is populated at
 // ingest from http.route with an http.target fallback
@@ -199,7 +258,7 @@ func (s *Store) GetEndpoints(ctx context.Context, q EndpointsQuery) ([]EndpointR
 	if q.To.IsZero() {
 		q.To = time.Now()
 	}
-	if q.Cluster != "" {
+	if q.forcesRaw() {
 		return s.getEndpointsRaw(ctx, q)
 	}
 	return s.GetEndpointsMV(ctx, q)
@@ -265,6 +324,15 @@ func (s *Store) spanmetricsSourceFor(table string) string {
 // bounded raw-spans sidecar over the returned top-N keys only
 // (endpointStatusSidecar), skipped for compare=prior reads.
 func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]EndpointRow, error) {
+	// v0.8.385 — the MV REFUSES an env filter rather than silently
+	// ignoring it: spanmetrics_1m has no deploy_env dimension, so
+	// honouring the call would return all-env numbers under an env
+	// filter (the silent-unfiltered class the env-separation audit
+	// bans). Callers must route env through GetEndpoints, which
+	// dispatches to the raw path.
+	if q.Env != "" {
+		return nil, errEndpointsMVEnv
+	}
 	// Align the window start to the MV grain so the first bucket is
 	// wholly inside [from, to] rather than half-clipped.
 	from := q.From.Truncate(time.Minute)
@@ -489,9 +557,10 @@ func (s *Store) endpointStatusSidecar(ctx context.Context, q EndpointsQuery, row
 }
 
 // getEndpointsRaw is the legacy raw-spans read (the pre-v0.8.356
-// GetEndpoints), retained ONLY for the cluster filter: clusterExpr
-// derives the cluster from res/attr arrays, a dimension
-// spanmetrics_1m doesn't carry. Upgraded in the same slice so both
+// GetEndpoints), retained ONLY for the cluster + env filters:
+// clusterExpr derives the cluster from res/attr arrays and env is
+// spans.deploy_env (v0.8.385) — dimensions spanmetrics_1m doesn't
+// carry. Upgraded in the same slice so both
 // paths return the same shape: true window p50/p95/p99 via
 // per-bucket quantilesTDigestState merged in the outer level (the
 // old max(per-bucket p99) shipped here since v0.5.370), reqPerMin,
@@ -520,7 +589,6 @@ func (s *Store) endpointStatusSidecar(ctx context.Context, q EndpointsQuery, row
 // with a real path that isn't an OUTGOING call.
 func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]EndpointRow, error) {
 	from, to := q.From, q.To
-	service, search, cluster := q.Service, q.Search, q.Cluster
 	limit, bySignature := q.Limit, q.BySignature
 	// Build a typed args slice; placeholders are positional so we
 	// must guard against the optional service/search clauses
@@ -532,28 +600,8 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 		nullIf(attr_values[indexOf(attr_keys, 'http.target')], ''),
 		''
 	)`
-	args := []any{from, to}
-	whereSvc := ""
-	if service != "" {
-		whereSvc = " AND service_name = ?"
-		args = append(args, service)
-	}
-	whereSearch := ""
-	if search != "" {
-		whereSearch = " AND positionCaseInsensitive(" + pathExpr + ", ?) > 0"
-		args = append(args, search)
-	}
-	// v0.5.372 — cluster filter, same derive expression as the
-	// /services page so an operator who filtered there sees a
-	// symmetric set here. clusterDeriveExpr coalesces six
-	// resource/attr keys (k8s.cluster.name, openshift.cluster.name,
-	// cluster — across res + attr arrays) into a single canonical
-	// string. Empty cluster filter = "all clusters".
-	whereCluster := ""
-	if cluster != "" {
-		whereCluster = " AND " + s.clusterExpr() + " = ?"
-		args = append(args, cluster)
-	}
+	filterSQL, filterArgs := s.endpointsRawFilters(q, pathExpr)
+	args := append([]any{from, to}, filterArgs...)
 	// v0.5.370 — single-pass aggregation including sparkline.
 	// Inner per-bucket CTE keys on (service, path, b) and
 	// records per-bucket call+error+sum_dur+p99 plus a
@@ -617,7 +665,7 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 		  FROM spans
 		  WHERE time >= ? AND time <= ?
 		    AND kind NOT IN ('client', 'producer')
-		    AND ` + pathExpr + ` != ''` + whereSvc + whereSearch + whereCluster + `
+		    AND ` + pathExpr + ` != ''` + filterSQL + `
 		  GROUP BY service_name, path, b
 		)
 		SELECT service_name,

@@ -20,10 +20,11 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 // whole-query-string snapshots. Viewer-visible — it's a read filter,
 // not an admin control.
 //
-// Phase 1 consumers: /traces (list + aggregated + volume strip + CSV).
-// Other pages ignore `?env=` until their backends grow the filter
-// (env-separation Phase 2+) — the title says so instead of implying a
-// global effect.
+// Consumers: /traces (Phase 1, v0.8.383 — list + aggregated + volume
+// strip + CSV) and /services + /endpoints (Phase 2, v0.8.385 —
+// cluster-parity raw-fallback). Other pages ignore `?env=` until
+// their backends grow the filter (Phase 3+) — the title says so
+// instead of implying a global effect.
 export function EnvPicker() {
   const [env, setEnv] = useUrlEnv();
 
@@ -52,7 +53,7 @@ export function EnvPicker() {
       className="env-picker"
       value={env}
       aria-label="Environment filter"
-      title={'Filter by deployment environment (deployment.environment.name).\nApplies to Traces today; more pages follow in upcoming releases.'}
+      title={'Filter by deployment environment (deployment.environment.name).\nApplies to Traces, Services and Endpoints today; more pages follow in upcoming releases.'}
       onChange={e => setEnv(e.target.value)}
     >
       <option value="">All environments</option>

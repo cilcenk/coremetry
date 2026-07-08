@@ -31,7 +31,7 @@ import { withProblemParam } from './problemLink';
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
   { key: 'open',         label: 'Inbox',        hint: 'New + acknowledged + regressed' },
-  { key: 'new',          label: 'New',          hint: 'Untouched since first occurrence' },
+  { key: 'new',          label: 'Open',         hint: 'Untouched since first occurrence' }, // v0.8.382: NEW is the first-seen badge
   { key: 'acknowledged', label: 'Acknowledged', hint: 'Someone is on it' },
   { key: 'regressed',    label: 'Regressed',    hint: 'Resolved but happening again' },
   { key: 'resolved',     label: 'Resolved',     hint: 'Closed out' },
@@ -1330,7 +1330,14 @@ function StateBadge({ s }: { s: ExceptionGroupState }) {
     s === 'acknowledged' ? 'b-info' :
     s === 'resolved'     ? 'b-ok'   :
                            'b-gray';
-  return <span className={`badge ${cls}`}>{s.toUpperCase()}</span>;
+  // v0.8.382 (operator-reported): the untriaged state used to render
+  // "NEW" — the same word as the yellow first-seen-recently badge next
+  // to the exception type, so genuinely-new arrivals were
+  // indistinguishable from merely-untriaged weeks-old groups. The
+  // STATE is "nobody triaged this yet" → OPEN; NEW stays reserved for
+  // the first-seen marker.
+  const label = s === 'new' ? 'OPEN' : s.toUpperCase();
+  return <span className={`badge ${cls}`} title={s === 'new' ? 'Untriaged (state: new)' : undefined}>{label}</span>;
 }
 
 function humanize(err: unknown): string {

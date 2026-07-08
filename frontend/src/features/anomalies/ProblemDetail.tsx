@@ -21,7 +21,9 @@ import { Button } from '@/components/ui/Button';
 // as such.
 
 const STATE_LABEL: Record<ExceptionGroupState, string> = {
-  new: 'NEW', regressed: 'REGRESSED', acknowledged: 'ACK', resolved: 'RESOLVED', ignored: 'IGNORED',
+  // 'new' renders OPEN (v0.8.382): NEW is reserved for the yellow
+  // first-seen-recently badge on the list — same rule as StateBadge.
+  new: 'OPEN', regressed: 'REGRESSED', acknowledged: 'ACK', resolved: 'RESOLVED', ignored: 'IGNORED',
 };
 const STATE_BADGE: Record<ExceptionGroupState, string> = {
   new: 'b-err', regressed: 'b-err', acknowledged: 'b-warn', resolved: 'b-ok', ignored: 'b-gray',

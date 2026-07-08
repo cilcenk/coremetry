@@ -68,16 +68,18 @@ var extraServices = []Service{
 	svc("openbanking-gateway", rtGo, "obgw-prod-1", "obgw-prod-2"),
 	svc("consent-service", rtGo, "consent-prod-1", "consent-prod-2"),
 	svc("atm-service", rtGo, "atm-prod-1", "atm-prod-2"),
-	svc("cash-management", rtGo, "cash-prod-1"),
+	// v0.8.383 — cash/chargeback/treasury/dwh grew a second pod so every
+	// service's pool spans ≥2 demo envs (envForPod is index-round-robin).
+	svc("cash-management", rtGo, "cash-prod-1", "cash-prod-2"),
 	// Post-transaction
 	svc("dispute-service", rtDotnet, "disp-prod-1", "disp-prod-2"),
-	svc("chargeback-service", rtDotnet, "chgbk-prod-1"),
+	svc("chargeback-service", rtDotnet, "chgbk-prod-1", "chgbk-prod-2"),
 	svc("rewards-service", rtGo, "rwd-prod-1", "rwd-prod-2"),
 	// Treasury / data
-	svc("treasury-service", rtRust, "treas-prod-1"),
+	svc("treasury-service", rtRust, "treas-prod-1", "treas-prod-2"),
 	svc("position-service", rtRust, "pos-prod-1", "pos-prod-2"),
 	svc("market-data-service", rtRust, "mkt-prod-1", "mkt-prod-2"),
-	svc("datawarehouse-etl", rtPy, "dwh-prod-1"),
+	svc("datawarehouse-etl", rtPy, "dwh-prod-1", "dwh-prod-2"),
 }
 
 type scenarioReg struct {

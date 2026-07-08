@@ -158,6 +158,11 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
         ? (n.system || n.name)
         : (n.name !== n.id ? n.name : undefined),
       dbName: n.dbName || undefined,
+      // v0.8.383 — carry the env annotation so the service tab's
+      // neighborhood shows the same env chips as /service-map's focus
+      // view (this inline adapter dropping fields is the v0.8.322 bug
+      // class).
+      env: n.env || undefined,
     })),
     edges: nb.edges.map(e => ({
       caller: e.source,

@@ -42,6 +42,15 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
     queryFn: () => api.serviceClusters(service, from, to),
     enabled: !!service, staleTime: STALE, retry: false,
   });
+  // v0.8.383 (env-separation 0c) — which deployment environments this
+  // service emitted from in the window (the operator's "same
+  // mobile-bff in int/uat/prep" case). Bounded per-service GROUP BY
+  // deploy_env server-side, 60s cached; drops out like every group.
+  const envsQ = useQuery({
+    queryKey: ['svc-envs', service, from, to],
+    queryFn: () => api.serviceEnvironments(service, from, to),
+    enabled: !!service, staleTime: STALE, retry: false,
+  });
   const instancesQ = useQuery({
     queryKey: ['svc-instances-strip', service, range.preset],
     queryFn: () => api.serviceInstances(service, range.preset || '15m'),
@@ -56,9 +65,10 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
   const last = rollouts.length ? rollouts[rollouts.length - 1] : null;
   const version = last?.versionAfter || null;
   const clusters = (clustersQ.data?.clusters ?? []).map(c => c.cluster).filter(c => c && c !== '(default)');
+  const envs = envsQ.data?.environments ?? [];
   const pods = instancesQ.data?.length ?? 0;
 
-  if (!tech && !version && clusters.length === 0 && pods === 0) return null;
+  if (!tech && !version && clusters.length === 0 && envs.length === 0 && pods === 0) return null;
 
   const chip: React.CSSProperties = {
     border: '1px solid var(--border)', borderRadius: 3, background: 'var(--bg2)',
@@ -81,6 +91,11 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
               deployed {tsRel(last.timeUnixNs)}
             </a>
           )}
+        </Prop>
+      )}
+      {envs.length > 0 && (
+        <Prop k="Envs">
+          {envs.map(e => <span key={e} style={{ ...chip, marginRight: 4 }}>{e}</span>)}
         </Prop>
       )}
       {clusters.length > 0 && (

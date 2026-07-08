@@ -18,6 +18,7 @@ export const STORAGE_KEYS = {
   theme:            'coremetry-theme',
   density:          'coremetry-density',
   range:            'coremetry-range',
+  env:              'coremetry-env',
   lang:             'coremetry.lang',
   rum:              'coremetry-rum',
   recentServices:   'coremetry.recentServices',

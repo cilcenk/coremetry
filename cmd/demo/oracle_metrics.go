@@ -216,7 +216,11 @@ func oracleReceiverMetrics(startNs, nowNs uint64) []*metricspb.ResourceMetrics {
 				kvStr("oracledb.instance.name", inst.name),
 				kvStr("service.instance.id", svcInstID),
 				kvStr("db.system", "oracle"),
-				kvStr("deployment.environment", "demo"),
+				// v0.8.383 — no environment attr: the Oracle RAC is
+				// shared cross-env infrastructure (topology's infra
+				// nodes deliberately don't inherit an env either), and
+				// emitting one here would pollute /api/environments
+				// with a fourth pseudo-env next to int/uat/prep.
 			}},
 			ScopeMetrics: []*metricspb.ScopeMetrics{{
 				Scope:   &commonpb.InstrumentationScope{Name: "otelcol/oracledbreceiver"},

@@ -130,6 +130,19 @@ export const api = {
   // selector on the service detail page.
   clusters: (fromNs: number, toNs: number) =>
     get<{ clusters: string[] }>(`/api/clusters?from=${fromNs}&to=${toNs}`),
+  // Distinct deployment environments (spans.deploy_env) — options for
+  // the global Topbar env picker (v0.8.383). Deliberately param-less:
+  // the server defaults to a 24h window and clamps the enumeration
+  // scan to the most recent hour anyway (env sets are deploy-stable),
+  // so every caller shares ONE bounded cache rung.
+  environments: () =>
+    get<{ environments: string[] }>('/api/environments'),
+  // Per-service env list — the Envs chip group on the Service detail
+  // header (v0.8.383, the operator's "same mobile-bff in int/uat/prep"
+  // case).
+  serviceEnvironments: (svc: string, fromNs: number, toNs: number) =>
+    get<{ environments: string[] } | null>(
+      `/api/services/${encodeURIComponent(svc)}/environments?from=${fromNs}&to=${toNs}`),
   // Per-cluster RED breakdown for one service. Used by the
   // Service detail page when traffic spans 2+ clusters.
   serviceClusters: (svc: string, fromNs: number, toNs: number) =>
@@ -1973,6 +1986,10 @@ export interface AggregateParams {
   maxMs?: number | string;
   from?: number;
   to?: number;
+  // env — global Topbar environment filter (?env=, v0.8.383). First-class
+  // param (NOT an injected FilterExpr) so it survives the backend's
+  // filterGroup-supersedes-filters rule.
+  env?: string;
   filters?: string;     // JSON-encoded FilterExpr[]
   // filterGroup — grouped AND/OR builder JSON (v0.8.x gap-2). When present it
   // SUPERSEDES `filters` server-side; a flat-AND group is byte-identical to
@@ -2008,6 +2025,10 @@ export interface TracesParams {
   maxMs?: number | string;
   from?: number;
   to?: number;
+  // env — global Topbar environment filter (?env=, v0.8.383). First-class
+  // param (NOT an injected FilterExpr) so it survives the backend's
+  // filterGroup-supersedes-filters rule.
+  env?: string;
   filters?: string;     // JSON-encoded FilterExpr[]
   // filterGroup — grouped AND/OR builder JSON (v0.8.x gap-2). Supersedes
   // `filters` server-side when present; flat-AND is byte-identical so this is

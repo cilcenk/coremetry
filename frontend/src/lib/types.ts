@@ -2532,6 +2532,13 @@ export interface ServiceMapNode {
   // for SDKs that don't ship cluster resource attrs;
   // "multi" when the service spans more than one cluster.
   cluster?: string;
+  // v0.8.383 — deployment environment chip (deploy_env-led derive,
+  // v0.8.380). Carried only on the MV-backed paths (serviceGraph
+  // adapters); the sampled /api/service-map response doesn't compute
+  // it, so it stays undefined there and no chip renders. A service
+  // live in several envs carries the edge-dominant value — strict
+  // per-env node separation is a deferred slice (env-separation §5).
+  env?: string;
 }
 
 export interface ServiceMapEdge {

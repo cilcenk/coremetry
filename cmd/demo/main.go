@@ -104,10 +104,13 @@ var services = map[string]Service{
 	"limits-service":       {"limits-service", []string{"limits-prod-1", "limits-prod-2"}, "dotnet", ".NET", "8.0.4", ".NET 8.0.4"},
 	"forex-service":        {"forex-service", []string{"forex-prod-1", "forex-prod-2"}, "rust", "rust", "1.78.0", "rustc 1.78.0 (9b00956e5 2024-04-29)"},
 	"notification-service": {"notification-service", []string{"notif-prod-1", "notif-prod-2"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
-	"sms-service":          {"sms-service", []string{"sms-prod-1"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
-	"email-service":        {"email-service", []string{"mail-prod-1"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
+	// v0.8.383 — sms/email/audit grew a second pod so EVERY service's
+	// pod pool spans ≥2 of demoEnvs (envForPod is index-round-robin;
+	// a 1-pod service could only ever live in one env).
+	"sms-service":          {"sms-service", []string{"sms-prod-1", "sms-prod-2"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
+	"email-service":        {"email-service", []string{"mail-prod-1", "mail-prod-2"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
 	"aml-service":          {"aml-service", []string{"aml-prod-1", "aml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
-	"audit-service":        {"audit-service", []string{"audit-prod-1"}, "java", "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
+	"audit-service":        {"audit-service", []string{"audit-prod-1", "audit-prod-2"}, "java", "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
 	"fraud-ml-service":     {"fraud-ml-service", []string{"fraudml-prod-1", "fraudml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
 }
 
@@ -170,6 +173,56 @@ func clusterFor(serviceName string) string {
 		h *= 16777619
 	}
 	return demoClusters[int(h)%len(demoClusters)]
+}
+
+// demoEnvs — the operator's three-stage test pipeline (int → uat →
+// prep). v0.8.383 (env-separation Phase 0c): the demo emits ONLY the
+// current-semconv `deployment.environment.name` key so the new-key
+// ingest path (v0.8.379) is exercised end to end — the legacy
+// `deployment.environment` spelling stays covered by java-demo.
+var demoEnvs = []string{"int", "uat", "prep"}
+
+// fnv32 — FNV-1a over a string; same algorithm podIP / clusterFor
+// inline. Shared here so envForPod's stagger is deterministic.
+func fnv32(s string) uint32 {
+	var h uint32 = 2166136261
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
+}
+
+// envForPod deterministically maps a service INSTANCE (pod) to one of
+// demoEnvs — RESOURCE-level, never per-span: every span/log/metric a
+// pod emits carries the same environment, exactly like a real process
+// deployed into one env. Assignment is round-robin over the pod's
+// index in its service's pool, offset by a hash of the service name
+// so env membership staggers across services (not every service's
+// pod-1 lands in "int"). Properties this buys:
+//   - every multi-pod service exists in 2-3 envs — the operator's
+//     "same mobile-bff in int/uat/prep" case, visible on env chips,
+//     /api/environments and the ?env= trace filter;
+//   - stable across restarts: rollPodGeneration only suffixes pod
+//     names, the index (and thus each service's env SET) is fixed;
+//   - deterministic per emitted resource within a process.
+//
+// Pods not found in the pool (ad-hoc fallback services) hash by pod
+// name so they stay deterministic too.
+func envForPod(svc Service, pod string) string {
+	idx := -1
+	for i, p := range svc.Pods {
+		if p == pod {
+			idx = i
+			break
+		}
+	}
+	h := fnv32(svc.Name)
+	if idx < 0 {
+		h = fnv32(pod)
+		idx = 0
+	}
+	return demoEnvs[(int(h)+idx)%len(demoEnvs)]
 }
 
 // teamsFor maps a demo service to a plausible owner team (ug-team) + SRE team
@@ -399,7 +452,10 @@ func (t *Trace) Send() error {
 			kvStr("k8s.pod.ip", podIP(pod)),
 			kvStr("k8s.namespace.name", "demo"),
 			kvStr("k8s.cluster.name", clusterFor(s.Name)),
-			kvStr("deployment.environment", "demo"),
+			// v0.8.383 — per-INSTANCE environment, current semconv key
+			// only (see demoEnvs). Resource-level: every span this pod
+			// emits in this batch carries the same env.
+			kvStr("deployment.environment.name", envForPod(s, pod)),
 			kvStr("service.version", "1.0.0"),
 		}
 		// ug-team (owner) + sy-team (SRE) as RESOURCE attrs (v0.8.97) so
@@ -1220,6 +1276,10 @@ func sendLog(service string, severity int32, sevText, body string, traceID, span
 			kvStr("service.instance.id", pod),
 			kvStr("k8s.pod.name", pod),
 			kvStr("k8s.cluster.name", clusterFor(s.Name)),
+			// v0.8.383 — logs carry the pod's env too (resource-level
+			// coherence across signals; readies the Phase-4 log-env
+			// derive with real data).
+			kvStr("deployment.environment.name", envForPod(s, pod)),
 		}},
 		ScopeLogs: []*logspb.ScopeLogs{{
 			Scope:      &commonpb.InstrumentationScope{Name: "coremetry-demo"},
@@ -1690,7 +1750,8 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 				kvStr("service.instance.id", pod),
 				kvStr("k8s.pod.name", pod),
 				kvStr("k8s.cluster.name", clusterFor(s.Name)),
-				kvStr("deployment.environment", "demo"),
+				// v0.8.383 — same per-instance env as the pod's spans.
+				kvStr("deployment.environment.name", envForPod(s, pod)),
 			}},
 			ScopeMetrics: []*metricspb.ScopeMetrics{{
 				Scope:   &commonpb.InstrumentationScope{Name: "coremetry-demo"},

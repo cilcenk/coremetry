@@ -1271,6 +1271,11 @@ canvas { max-width: 100%; }
   cursor: default;
 }
 
+/* v0.8.383 — global env picker (Topbar, next to the range picker).
+   Inherits the base input/select tokens; sized to match .trp-btn so
+   the two controls read as one group. */
+.env-picker { padding: 4px 8px; font-size: 12px; max-width: 180px; flex-shrink: 0; }
+
 /* Time range picker (Grafana-style) */
 .trp { position: relative; }
 .trp-btn { display: inline-flex; align-items: center; padding: 5px 10px; font-size: 12px; }
@@ -1679,6 +1684,10 @@ canvas { max-width: 100%; }
 .topo-node.ext { border-style: dashed; background: var(--bg0); }
 .topo-name { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topo-sub { font-size: 9.5px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+/* v0.8.383 — node env chip ("int"/"uat"/"prep" next to the service
+   name). Token-level only; renders solely when the MV path carries
+   ServiceMapNode.env (v0.8.380 derive). */
+.topo-envchip { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 8.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--accent); background: var(--accent-bg); border: 1px solid var(--border); border-radius: 3px; vertical-align: 1px; }
 .topo-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .topo-dot.green { background: var(--ok); }
 .topo-dot.amber { background: var(--warn); }

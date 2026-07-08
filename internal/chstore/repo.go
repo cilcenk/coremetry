@@ -480,6 +480,59 @@ func (s *Store) ListClusters(ctx context.Context, from, to time.Time) ([]string,
 		SETTINGS max_execution_time = 8`, from, to)
 }
 
+// ListEnvironments returns the distinct deployment environments
+// (spans.deploy_env) observed in the window — the source for the
+// global Topbar env picker (v0.8.383, env-separation Phase 1).
+// Mirrors ListClusters' budget shape: the env set is deploy-stable
+// (an env with observable services emits spans every few minutes),
+// so enumeration never scans more than clusterScanWindow before
+// `to` — but unlike the cluster derive, deploy_env is a typed
+// LowCardinality column, so this is a cheap dict GROUP BY even at
+// billion-span scale. Empty deploy_env is excluded: "no env" is
+// the picker's default state, not a value.
+func (s *Store) ListEnvironments(ctx context.Context, from, to time.Time) ([]string, error) {
+	if from.IsZero() {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	from = clampClusterFrom(from, to)
+	return s.scanClusters(ctx, `
+		SELECT deploy_env
+		FROM spans
+		WHERE time >= ? AND time <= ? AND deploy_env != ''
+		GROUP BY deploy_env
+		ORDER BY deploy_env
+		LIMIT 50
+		SETTINGS max_execution_time = 8`, from, to)
+}
+
+// GetServiceEnvironments returns the distinct environments ONE
+// service emitted spans from in the window — drives the Envs chip
+// group on the Service detail header (v0.8.383, env-separation
+// Phase 0c; the operator's "same mobile-bff in int/uat/prep" case).
+// service_name leads the WHERE so the (service_name, time) primary
+// key prunes the scan; deploy_env is LowCardinality so the GROUP BY
+// is a dict pass. Empty env excluded — single-env installs simply
+// render no chip group.
+func (s *Store) GetServiceEnvironments(ctx context.Context, service string, from, to time.Time) ([]string, error) {
+	if to.IsZero() {
+		to = time.Now()
+	}
+	if from.IsZero() {
+		from = to.Add(-1 * time.Hour)
+	}
+	return s.scanClusters(ctx, `
+		SELECT deploy_env
+		FROM spans
+		WHERE service_name = ? AND time >= ? AND time <= ? AND deploy_env != ''
+		GROUP BY deploy_env
+		ORDER BY deploy_env
+		LIMIT 10
+		SETTINGS max_execution_time = 8`, service, from, to)
+}
+
 // scanClusters runs a single-string-column cluster query and collects the
 // distinct names. Shared by the fast column path and the derive fallback.
 func (s *Store) scanClusters(ctx context.Context, sql string, args ...any) ([]string, error) {
@@ -1298,6 +1351,18 @@ type TraceFilter struct {
 	// dot/underscore/dash naming so the value can flow safely into the
 	// SELECT clause.
 	ExtraAttrs []string
+	// Env narrows to spans emitted from ONE deployment environment
+	// (spans.deploy_env — v0.8.383, env-separation Phase 1, the global
+	// Topbar picker's ?env=). Deliberately a first-class field rather
+	// than an injected FilterExpr: FilterRoot SUPERSEDES Filters, so an
+	// appended env leaf would silently vanish whenever the operator has
+	// a grouped OR/nested filter active — and wrapping the group one
+	// level deeper would hit the depth cap (nested groups' own Groups
+	// are ignored). As its own always-AND conjunct it composes with
+	// every filter mode. Non-empty Env disqualifies the trace_summary
+	// MV fast-path (the MV has no env dimension — cluster-style
+	// raw-fallback, operator-approved, NO MV changes).
+	Env        string
 	Filters    []FilterExpr // advanced filter chips (AND-joined)
 	// FilterRoot is the optional grouped AND/OR builder (v0.8.x trace-query
 	// gap-2). When non-nil it SUPERSEDES Filters: buildGetTracesWhere calls
@@ -1440,6 +1505,13 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 	if f.MaxMs > 0 {
 		wc.add("duration <= ?", int64(f.MaxMs*1e6))
 	}
+	// Environment narrowing (v0.8.383) — always ANDed, independent of
+	// the Filters/FilterRoot supersede rule below (see TraceFilter.Env).
+	// deploy_env is a typed LowCardinality column, so this is a cheap
+	// dict comparison on the raw path.
+	if f.Env != "" {
+		wc.add("deploy_env = ?", f.Env)
+	}
 	// Grouped AND/OR builder supersedes the flat Filters when present
 	// (v0.8.x gap-2). A flat-AND FilterRoot routes straight through
 	// ApplyFilters inside ApplyFilterGroup, so the legacy path stays
@@ -1531,6 +1603,10 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	if !f.From.IsZero() && !f.To.IsZero() &&
 		f.To.Sub(f.From) >= 5*time.Minute &&
 		f.Search == "" && f.TraceID == "" &&
+		// v0.8.383 — an env filter disqualifies the MV fast-path:
+		// trace_summary_5m has no env dimension (cluster precedent —
+		// bounded raw fallback, NO MV changes).
+		f.Env == "" &&
 		len(f.Filters) == 0 &&
 		!f.FilterRoot.hasPredicate() &&
 		len(f.RequireServices) == 0 &&
@@ -2272,6 +2348,11 @@ type AggregateFilter struct {
 	HasError  bool
 	MinMs     float64
 	MaxMs     float64
+	// Env — spans.deploy_env narrowing (v0.8.383, ?env=). First-class
+	// for the same reason as TraceFilter.Env: it must survive the
+	// FilterRoot-supersedes-Filters rule and the FilterGroup depth cap.
+	// Non-empty disqualifies the trace_summary MV fast-path below.
+	Env       string
 	Filters   []FilterExpr
 	// FilterRoot — grouped AND/OR builder (v0.8.x gap-2). Supersedes Filters
 	// when non-nil; flat-AND is byte-identical to the legacy path, OR /
@@ -2301,6 +2382,8 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	}
 	if (f.GroupBy == "service" || f.GroupBy == "operation" || f.GroupBy == "") &&
 		f.GroupAttr == "" && f.Search == "" &&
+		// v0.8.383 — env filter forces the raw path (no env dim in the MV).
+		f.Env == "" &&
 		len(f.Filters) == 0 &&
 		!f.FilterRoot.hasPredicate() &&
 		!f.From.IsZero() && !f.To.IsZero() &&
@@ -2338,6 +2421,10 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	// the root-cause rationale.
 	if f.HasError {
 		wc.add("status_code = 'error'")
+	}
+	// v0.8.383 — env narrowing, always ANDed (see AggregateFilter.Env).
+	if f.Env != "" {
+		wc.add("deploy_env = ?", f.Env)
 	}
 	if f.FilterRoot != nil {
 		ApplyFilterGroup(&wc, *f.FilterRoot)

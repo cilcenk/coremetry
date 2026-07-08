@@ -400,6 +400,9 @@ func (s *Server) Start() error {
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
 	mux.HandleFunc("GET /api/clusters", s.getClusters)
+	// v0.8.383 — distinct deploy_env values in the window; feeds the
+	// global Topbar environment picker (env-separation Phase 1).
+	mux.HandleFunc("GET /api/environments", s.getEnvironments)
 	mux.HandleFunc("GET /api/admin/system-stats", s.getSystemStats)
 	// v0.5.328 — ClickHouse self-stats: slow queries, in-flight
 	// merges, part-count hotspots, replication queue lag. Admin
@@ -434,6 +437,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/{name}/bundle",    s.getServiceBundle)
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)
 	mux.HandleFunc("GET /api/services/{name}/clusters",  s.getServiceClusterBreakdown)
+	// v0.8.383 — per-service env chips (Service header Envs group).
+	mux.HandleFunc("GET /api/services/{name}/environments", s.getServiceEnvironments)
 	mux.HandleFunc("GET /api/services/{name}/neighbors", s.getServiceNeighbors)
 	// v0.6.29 — Service dependency impact scorer ("blast
 	// radius"). Open Problem on service X → which OTHER
@@ -1146,6 +1151,19 @@ func (s *Server) warmDependenciesCache() {
 				}
 				return map[string]any{"clusters": names}, nil
 			})
+		// v0.8.383 — env picker options. Mirrors the clusters warm
+		// entry (same key shape as getEnvironments' default window)
+		// so the Topbar picker's very first fetch after login lands
+		// warm. The store-side 1h scan clamp keeps this a cheap
+		// LowCardinality dict GROUP BY per tick.
+		warm("environments", "environments:"+cacheBucket(from.Add(-23*time.Hour), to), 60*time.Second,
+			func(ctx context.Context) (any, error) {
+				names, err := s.store.ListEnvironments(ctx, from.Add(-23*time.Hour), to)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"environments": names}, nil
+			})
 		warm("services-metadata", "services-metadata", 60*time.Second,
 			func(ctx context.Context) (any, error) {
 				return s.store.ListServiceMetadata(ctx)
@@ -1197,6 +1215,45 @@ func (s *Server) getClusters(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		return map[string]any{"clusters": names}, nil
+	})
+}
+
+// getEnvironments returns the distinct deployment environments
+// (spans.deploy_env) observed in the requested window — the option
+// list for the global Topbar env picker (v0.8.383, env-separation
+// Phase 1). Mirrors getClusters: 60s serveCached TTL (+ SWR + the
+// warmer below keeps the first click after login warm), bucketed
+// from/to key, empty env excluded store-side. The store clamps the
+// scan to the most recent hour (clusterScanWindow precedent) — the
+// env set is deploy-stable, so a wider scan only burns read
+// bandwidth.
+func (s *Server) getEnvironments(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, 24*time.Hour)
+	key := "environments:" + cacheBucket(from, to)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		names, err := s.store.ListEnvironments(ctx, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"environments": names}, nil
+	})
+}
+
+// getServiceEnvironments returns the distinct environments ONE
+// service emitted from in the window — the Envs chip group on the
+// Service detail header (v0.8.383, env-separation Phase 0c).
+// Same shape as getServiceClusterBreakdown: cached on the
+// (service, window) tuple so range toggles share a query.
+func (s *Server) getServiceEnvironments(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	from, to := parseFromTo(r, time.Hour)
+	key := fmt.Sprintf("service-envs:%s:%s", name, cacheBucket(from, to))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		names, err := s.store.GetServiceEnvironments(ctx, name, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"environments": names}, nil
 	})
 }
 
@@ -2929,6 +2986,10 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		MaxMs:    parseFloat(q.Get("maxMs")),
 		AttrKey:  q.Get("attrKey"),
 		AttrVal:  q.Get("attrVal"),
+		// v0.8.383 — global env picker (?env=). First-class filter so it
+		// survives the FilterRoot-supersedes-Filters rule; rides the
+		// RawQuery cache key below like every other param.
+		Env:      strings.TrimSpace(q.Get("env")),
 		Sort:     q.Get("sort"),
 		Order:    q.Get("order"),
 		Limit:    parseInt(q.Get("limit"), 50),
@@ -3043,6 +3104,9 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 		MaxMs:    parseFloat(q.Get("maxMs")),
 		AttrKey:  q.Get("attrKey"),
 		AttrVal:  q.Get("attrVal"),
+		// v0.8.383 — ?env= parity with /api/traces so the CSV export
+		// matches exactly what's on screen.
+		Env:      strings.TrimSpace(q.Get("env")),
 		Sort:     q.Get("sort"),
 		Order:    q.Get("order"),
 		Limit:    limit,
@@ -3136,6 +3200,8 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 		HasError:  q.Get("hasError") == "true",
 		MinMs:     parseFloat(q.Get("minMs")),
 		MaxMs:     parseFloat(q.Get("maxMs")),
+		// v0.8.383 — global env picker (?env=); rides the RawQuery key.
+		Env:       strings.TrimSpace(q.Get("env")),
 		Sort:      q.Get("sort"),
 		Order:     q.Get("order"),
 		Limit:     parseInt(q.Get("limit"), 100),

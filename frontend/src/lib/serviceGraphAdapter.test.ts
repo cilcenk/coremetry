@@ -14,7 +14,7 @@ describe('serviceGraphToMap', () => {
     scope: 'neighborhood',
     focus: 'checkout',
     nodes: [
-      { id: 'checkout', name: 'checkout', kind: 'service', calls: 1000, errors: 20, errorRate: 2, rate: 33 },
+      { id: 'checkout', name: 'checkout', kind: 'service', env: 'uat', calls: 1000, errors: 20, errorRate: 2, rate: 33 },
       { id: 'db:oracle', name: 'oracle', kind: 'db', system: 'oracle', calls: 400, errors: 0, errorRate: 0, rate: 13 },
     ] as ServiceGraphResponse['nodes'],
     edges: [
@@ -41,6 +41,16 @@ describe('serviceGraphToMap', () => {
   it('carries the MV edge RED through (rate, errorRate fraction, avg/p99 ms)', () => {
     const m = serviceGraphToMap(g);
     expect(m.edges[0]).toMatchObject({ rate: 13, errorRate: 0.01, avgMs: 12, p99Ms: 90 });
+  });
+
+  // v0.8.383 — the adapter used to DROP GraphNode.env, which is why the
+  // topology env chips never rendered despite full server-side plumbing
+  // (deploy_env-led derive, v0.8.380). Pin the carry: set → passes
+  // through, unset → undefined (no chip).
+  it('carries the env annotation through (and leaves it undefined when absent)', () => {
+    const m = serviceGraphToMap(g);
+    expect(m.nodes[0].env).toBe('uat');
+    expect(m.nodes[1].env).toBeUndefined();
   });
 
   it('tolerates empty/missing arrays', () => {

@@ -26,6 +26,10 @@ export function serviceGraphToMap(g: ServiceGraphResponse): ServiceMap {
       // v0.8.297 — carry the db.name enrichment so the pill can show
       // WHICH database, not just the engine.
       dbName: n.dbName || undefined,
+      // v0.8.383 — carry the env annotation (deploy_env-led derive,
+      // v0.8.380); dropping it here was why the topology env chips
+      // never rendered despite being fully plumbed server-side.
+      env: n.env || undefined,
     })),
     edges: (g.edges ?? []).map(e => ({
       caller: e.source,

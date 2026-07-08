@@ -652,7 +652,7 @@ function NodeDetail({ node, onClose, onRecenter, onOpen }: {
     <PanelShell
       title={node.name}
       dot={healthToken(node.errorRate)}
-      sub={`${node.kind}${node.system ? ` · ${node.system}` : ''}${node.kind === 'database' && node.dbName ? ` · db.name=${node.dbName}` : ''}`}
+      sub={`${node.kind}${node.system ? ` · ${node.system}` : ''}${node.kind === 'database' && node.dbName ? ` · db.name=${node.dbName}` : ''}${node.env ? ` · env=${node.env}` : ''}`}
       onClose={onClose}
     >
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>

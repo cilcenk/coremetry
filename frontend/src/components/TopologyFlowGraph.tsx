@@ -339,11 +339,18 @@ export function TopologyFlowGraph({
               `${n.service}${n.kind ? ` · ${n.kind}` : ''}\n` +
               `${n.spanCount.toLocaleString()} spans · ${(n.errorRate * 100).toFixed(2)}% error` +
               (n.dbName ? `\ndb.name: ${n.dbName}` : '') +
-              (n.cluster ? `\ncluster: ${n.cluster}` : '')
+              (n.cluster ? `\ncluster: ${n.cluster}` : '') +
+              (n.env ? `\nenv: ${n.env}` : '')
             }>
             <span className={`topo-dot ${level}`} />
             <div style={{ minWidth: 0 }}>
-              <div className="topo-name">{displayLabel(n)}</div>
+              <div className="topo-name">
+                {displayLabel(n)}
+                {/* v0.8.383 — env chip: lights up on the MV path where the
+                    adapter carries GraphNode.env (deploy_env-led derive,
+                    v0.8.380). The sampled global map has no env → no chip. */}
+                {n.env && <span className="topo-envchip">{n.env}</span>}
+              </div>
               <div className="topo-sub">
                 {isDep ? (depInstanceLabel(n) ?? depLabel(n.kind!)) : `${n.spanCount.toLocaleString()} span`}
               </div>

@@ -35,6 +35,7 @@ import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries, RelationFilter, RelationKind } from '@/lib/types';
@@ -149,6 +150,12 @@ function TracesPageInner() {
   const [searchParams] = useSearchParams();
 
   const [range, setRange] = useUrlRange('30m');
+  // Global env filter (v0.8.383) — written by the Topbar EnvPicker,
+  // consumed here as a first-class server param on the list/aggregate
+  // fetches (+ volume strip + CSV). /traces is the Phase-1 consumer;
+  // it applies to List + Aggregated — Relations/Shapes follow with
+  // env-separation Phase 2+.
+  const [env] = useUrlEnv();
   const [view, setView] = useState<View>(() => {
     const v = searchParams.get('view');
     return v === 'aggregate' || v === 'shapes' || v === 'relations' ? v : 'list';
@@ -238,6 +245,12 @@ function TracesPageInner() {
   useEffect(() => {
     const qs = buildQuery([
       ['range',    encodeRange(range)],
+      // Global env filter rides this page's URL like range does — this
+      // effect rebuilds the whole query string, so omitting it here
+      // would wipe the Topbar picker's ?env= on any local state write
+      // (v0.8.383; the useUrlEnv localStorage mirror would survive, but
+      // the URL must stay the shareable source of truth).
+      ['env',      env],
       ['view',     view !== 'list' ? view : ''],
       ['viz',      viz !== 'volume' ? viz : ''],
       ['sort',     sort !== 'time' ? sort : ''],
@@ -270,7 +283,7 @@ function TracesPageInner() {
     if (typeof window !== 'undefined' && target !== window.location.search) {
       navigate(`/traces${target}`, { preventScrollReset: true, replace: true });
     }
-  }, [range, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam, extraCols, relation, navigate]);
+  }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam, extraCols, relation, navigate]);
 
   // ── List fetch ───────────────────────────────────────────────────────────
   const listRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -293,6 +306,9 @@ function TracesPageInner() {
       maxMs: filter.maxMs || undefined,
       hasError: filter.hasError || undefined,
       rootOnly: filter.rootOnly || undefined,
+      // Global Topbar env filter (v0.8.383) — first-class param so it
+      // composes with filters AND filterGroup server-side.
+      env: env || undefined,
       services: filter.requireServices.length ? filter.requireServices : undefined,
       // Grouped builder supersedes the flat filters when an OR/nested group is
       // active; flat-AND encodes to '' so the legacy filters path stays in use.
@@ -306,7 +322,7 @@ function TracesPageInner() {
       setData(null);
     });
     return () => { cancelled = true; };
-  }, [view, listRangeNs, sort, order, page, filter, advFilters, advGroupParam, extraCols, showTotal, retryNonce]);
+  }, [view, listRangeNs, sort, order, page, filter, env, advFilters, advGroupParam, extraCols, showTotal, retryNonce]);
 
   // ── Relations fetch (Gap 3) ────────────────────────────────────────────────
   // Structural self-join over raw spans. Fires only in relations view, and
@@ -372,10 +388,17 @@ function TracesPageInner() {
     // filter is active we therefore omit the flat filters here rather than send
     // a misleading partial predicate; the table + aggregate below still apply
     // the full group. The chart reflects the service/search context only.
+    // v0.8.383 — the env context ALWAYS rides the chart's flat filters
+    // (spanMetric's filter compiler maps deployment.environment →
+    // deploy_env): env is global context like service/search, not part
+    // of the operator's ad-hoc predicate group, so it applies even in
+    // grouped mode where the group itself is omitted (see above).
+    const chartFilters: FilterExpr[] = (!grouped && advFilters.length) ? [...advFilters] : [];
+    if (env) chartFilters.push({ k: 'deployment.environment', op: '=', v: [env] });
     const common = {
       from, to, step,
       search: filter.search || undefined,
-      filters: (!grouped && advFilters.length) ? JSON.stringify(advFilters) : undefined,
+      filters: chartFilters.length ? JSON.stringify(chartFilters) : undefined,
       dsl: filter.service ? `service.name = "${filter.service.replace(/"/g, '\\"')}"` : undefined,
     };
     let cancelled = false;
@@ -387,7 +410,7 @@ function TracesPageInner() {
       .then(([count, errors, p50]) => { if (!cancelled) setVolSeries({ count, errors, p50 }); })
       .catch(() => { if (!cancelled) setVolSeries(null); });
     return () => { cancelled = true; };
-  }, [view, listRangeNs, filter.service, filter.search, advFilters, grouped]);
+  }, [view, listRangeNs, filter.service, filter.search, env, advFilters, grouped]);
 
   // ── Aggregate fetch ──────────────────────────────────────────────────────
   const aggRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -406,11 +429,13 @@ function TracesPageInner() {
       hasError: filter.hasError || undefined,
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
+      // Global Topbar env filter (v0.8.383).
+      env: env || undefined,
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
     }).then(a => { if (!cancelled) setAgg(a); }).catch(() => { if (!cancelled) setAgg(null); });
     return () => { cancelled = true; };
-  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam]);
+  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, filter, env, advFilters, advGroupParam]);
 
   // apply commits the draft as the live filter (overrideService sidesteps the
   // picker auto-commit race).
@@ -716,6 +741,7 @@ function TracesPageInner() {
               if (filter.maxMs)    p.set('maxMs',    filter.maxMs);
               if (filter.hasError) p.set('hasError', 'true');
               if (filter.rootOnly) p.set('rootOnly', 'true');
+              if (env) p.set('env', env); // v0.8.383 — export matches the on-screen env filter
               if (filter.requireServices.length) p.set('services', filter.requireServices.join(','));
               if (advFilters.length) p.set('filters', JSON.stringify(advFilters));
               if (extraCols.length)  p.set('extraAttrs', extraCols.join(','));

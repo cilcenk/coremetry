@@ -315,6 +315,12 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
+				// Reasoning-model fallbacks (v0.8.384, matching the
+				// Explain path): vLLM ≥0.24 puts the answer in
+				// `reasoning` with content:null; deepseek-r1/Qwen3
+				// style servers use `reasoning_content`.
+				ReasoningContent string `json:"reasoning_content"`
+				Reasoning        string `json:"reasoning"`
 				// Raw objects on purpose (v0.8.373): Gemini's compat
 				// endpoint attaches provider extras (extra_content →
 				// thought_signature) that MUST survive the replay;
@@ -336,6 +342,17 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 	}
 	msg := parsed.Choices[0].Message
 	turn.Text = msg.Content
+	// Reasoning-model fallback (v0.8.384): content empty → the answer
+	// lives in reasoning_content / reasoning; strip any leading
+	// <think> block the same way Explain does. Only when there are no
+	// tool calls — a tool-call turn legitimately has empty content.
+	if strings.TrimSpace(turn.Text) == "" && len(msg.ToolCalls) == 0 {
+		if alt := strings.TrimSpace(msg.ReasoningContent); alt != "" {
+			turn.Text = stripThinking(alt)
+		} else if alt := strings.TrimSpace(msg.Reasoning); alt != "" {
+			turn.Text = stripThinking(alt)
+		}
+	}
 	for _, raw := range msg.ToolCalls {
 		var tc struct {
 			ID       string `json:"id"`
@@ -391,6 +408,9 @@ func (s *Service) openAIChatTransport(ctx context.Context) (url string, hdrs map
 	h := map[string]string{"Content-Type": "application/json"}
 	if apiKey != "" {
 		h["Authorization"] = "Bearer " + apiKey
+		// Bare api-key twin for vLLM/KServe-style gateways —
+		// same rationale as the Explain path (v0.8.384).
+		h["api-key"] = apiKey
 	}
 	return strings.TrimRight(base, "/") + "/chat/completions", h, m, nil
 }

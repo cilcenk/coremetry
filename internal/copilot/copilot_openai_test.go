@@ -231,3 +231,58 @@ func TestChatOpenAIToolCallRawPreserved(t *testing.T) {
 		t.Fatalf("legacy reconstruction broken:\n%s", last)
 	}
 }
+
+// v0.8.384 — operator's air-gapped local LLM (vLLM 0.24 behind a
+// KServe-style gateway): (1) the gateway authenticates on a bare
+// `api-key` header, not Authorization: Bearer; (2) the model returns
+// content:null with the whole answer in the `reasoning` field. Chat
+// used to come back empty on both counts.
+func TestChatOpenAIVLLMReasoningAndAPIKeyHeader(t *testing.T) {
+	const vllmStyle = `{"choices":[{"message":{"role":"assistant","content":null,` +
+		`"reasoning":"Merhaba! Size nasıl yardımcı olabilirim?"},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":14,"completion_tokens":10}}`
+
+	var gotAuth, gotAPIKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotAPIKey = r.Header.Get("api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(vllmStyle))
+	}))
+	defer srv.Close()
+	s := New("openai", "sekret", "qwen-local")
+	s.Configure("openai", "sekret", "qwen-local", srv.URL, false, true)
+
+	turn, err := s.chatOpenAIWithTools(context.Background(), "sys",
+		[]ChatMessage{{Role: "user", Text: "Merhaba"}}, nil)
+	if err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	if turn.Text != "Merhaba! Size nasıl yardımcı olabilirim?" {
+		t.Fatalf("reasoning fallback missed: %q", turn.Text)
+	}
+	if gotAuth != "Bearer sekret" || gotAPIKey != "sekret" {
+		t.Fatalf("headers: Authorization=%q api-key=%q — both must carry the key", gotAuth, gotAPIKey)
+	}
+
+	// A tool-call turn with empty content must NOT get reasoning text
+	// glued on (empty content is legitimate there).
+	const toolStyle = `{"choices":[{"message":{"content":null,"reasoning":"thinking...",` +
+		`"tool_calls":[{"id":"c1","type":"function","function":{"name":"list_problems","arguments":"{}"}}]}}],` +
+		`"usage":{"prompt_tokens":1,"completion_tokens":1}}`
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(toolStyle))
+	}))
+	defer srv2.Close()
+	s2 := New("openai", "", "m")
+	s2.Configure("openai", "", "m", srv2.URL, false, true)
+	turn2, err := s2.chatOpenAIWithTools(context.Background(), "sys",
+		[]ChatMessage{{Role: "user", Text: "q"}}, nil)
+	if err != nil {
+		t.Fatalf("tool turn: %v", err)
+	}
+	if turn2.Text != "" || len(turn2.ToolCalls) != 1 {
+		t.Fatalf("tool turn contaminated: text=%q calls=%d", turn2.Text, len(turn2.ToolCalls))
+	}
+}

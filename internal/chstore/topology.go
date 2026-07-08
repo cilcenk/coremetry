@@ -415,6 +415,28 @@ func (s *Store) GetEdgeInstances(ctx context.Context, parentService, system, kin
 // dedupes them at read time by keeping the highest version. A
 // background goroutine in internal/topology calls this every
 // 5 minutes; the API never invokes the heavy join directly.
+
+// topoEnvChainSQL is the ONE env-derivation chain every topology pass
+// uses (v0.8.380, audit-found bug: three passes read only the legacy
+// deployment.environment attr and ignored the typed deploy_env column,
+// so deployment.environment.name emitters — the operator's int/uat/
+// prep test envs — got no env chip at all; a fourth pass, the
+// queue→consumer edge, had the same miss). deploy_env leads: ingest
+// (v0.8.379) populates it for BOTH semconv spellings; the raw-attr
+// lookups remain for rows ingested before that fix, then the
+// namespace fallbacks. prefix qualifies columns in joined scopes
+// ("c." / ""). Pinned by TestTopoEnvChainSQL.
+func topoEnvChainSQL(prefix string) string {
+	return `coalesce(
+				nullIf(` + prefix + `deploy_env, ''),
+				nullIf(` + prefix + `res_values[indexOf(` + prefix + `res_keys, 'deployment.environment.name')], ''),
+				nullIf(` + prefix + `res_values[indexOf(` + prefix + `res_keys, 'deployment.environment')], ''),
+				nullIf(` + prefix + `res_values[indexOf(` + prefix + `res_keys, 'service.namespace')], ''),
+				nullIf(` + prefix + `res_values[indexOf(` + prefix + `res_keys, 'k8s.namespace.name')], ''),
+				''
+			)`
+}
+
 func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) error {
 	end := bucketStart.Add(5 * time.Minute)
 
@@ -455,12 +477,13 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			-- chain across child + parent so the operator's
 			-- prod/stage chip reads the same way regardless of
 			-- which side the env came from.
-			coalesce(
-				nullIf(c.res_values[indexOf(c.res_keys, 'deployment.environment')], ''),
-				nullIf(c.res_values[indexOf(c.res_keys, 'service.namespace')], ''),
-				nullIf(c.res_values[indexOf(c.res_keys, 'k8s.namespace.name')], ''),
-				''
-			) AS c_env
+			-- v0.8.380 (audit-found): the typed deploy_env column leads
+			-- the chain — it is populated for BOTH semconv spellings at
+			-- ingest (v0.8.379), while the raw attr lookup below only
+			-- knew the legacy key and missed
+			-- deployment.environment.name emitters entirely. The new
+			-- spelling is also added for pre-v0.8.379 rows.
+			` + topoEnvChainSQL("c.") + ` AS c_env
 		SELECT
 			toDateTime(?, 'UTC') AS time_bucket,
 			p.service_name        AS parent_service,
@@ -485,12 +508,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		FROM spans AS c
 		GLOBAL INNER JOIN (
 			SELECT trace_id, span_id, service_name,
-			       coalesce(
-			         nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
-			         nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
-			         nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
-			         ''
-			       ) AS env
+			       ` + topoEnvChainSQL("") + ` AS env
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		) AS p
@@ -542,12 +560,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			-- child_env stays empty for infra targets — db/queue/
 			-- external nodes don't inherit the caller's env (they
 			-- ARE cross-env infra).
-			coalesce(
-				nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
-				nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
-				nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
-				''
-			) AS p_env,
+			` + topoEnvChainSQL("") + ` AS p_env,
 			-- v0.7.31 — messaging.destination (topic) so each Kafka topic is a
 			-- DISTINCT queue node (queue:<system>:<topic>) instead of every
 			-- topic on a broker collapsing into one queue:<system> hairball.
@@ -683,12 +696,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			-- Consumer's env (the receiver) — child_env on the
 			-- queue→consumer edge so the operator sees which env
 			-- consumes from a queue when multiple envs share one.
-			coalesce(
-				nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
-				nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
-				nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
-				''
-			) AS c_env
+			` + topoEnvChainSQL("") + ` AS c_env
 		SELECT
 			toDateTime(?, 'UTC')                                AS time_bucket,
 			queue_source                                        AS parent_service,

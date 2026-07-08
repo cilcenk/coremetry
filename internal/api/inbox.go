@@ -88,6 +88,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	service := strings.TrimSpace(q.Get("service"))
 	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
 	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
+	// v0.8.387 — global ?env= picker, service-scoped semantics shared
+	// with /problems (envKeepsRow): keep rows whose service ran in the
+	// env in the last hour, plus service-less (global) rows. Applied
+	// post-merge so all three sources filter identically.
+	env := strings.TrimSpace(q.Get("env"))
 	statusFilter := strings.TrimSpace(q.Get("status")) // open (default) | all
 	if statusFilter == "" {
 		statusFilter = "open"
@@ -97,8 +102,8 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 
-	cacheKey := fmt.Sprintf("inbox:status=%s:svc=%s:owner=%s:sre=%s:limit=%d",
-		statusFilter, service, ownerTeam, sreTeam, limit)
+	cacheKey := fmt.Sprintf("inbox:status=%s:svc=%s:owner=%s:sre=%s:env=%s:limit=%d",
+		statusFilter, service, ownerTeam, sreTeam, env, limit)
 	s.serveCached(w, r, cacheKey, 10*time.Second, func(ctx context.Context) (any, error) {
 		items := make([]InboxItem, 0, 256)
 
@@ -170,6 +175,27 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			items = filtered
+		}
+
+		// Env filter (v0.8.387) — one cached-map lookup covers the whole
+		// merged list (no per-poll query beyond it). Soft-fails to
+		// UNFILTERED on a map error, matching envScopeProblems: a
+		// transient CH blip must never hide a firing P1. envKeepsRow
+		// pins the row semantics (empty-service rows always survive).
+		if env != "" {
+			if members, err := s.store.EnvMemberServices(ctx, env); err == nil {
+				memberSet := make(map[string]bool, len(members))
+				for _, m := range members {
+					memberSet[m] = true
+				}
+				filtered := items[:0]
+				for _, it := range items {
+					if envKeepsRow(it.Service, memberSet) {
+						filtered = append(filtered, it)
+					}
+				}
+				items = filtered
+			}
 		}
 
 		// Team enrichment — one batch lookup over the service

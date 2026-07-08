@@ -35,6 +35,25 @@ func matchesTeamFilter(rowOwner, rowSRE, wantOwner, wantSRE string) bool {
 	return true
 }
 
+// envKeepsRow reports whether a triage row — identified by its
+// service — survives the global env filter (v0.8.387, env-separation
+// Phase 3). Semantics mirror chstore.applyEnvServiceScope exactly, so
+// the /inbox merged-list filter and the /problems SQL conjunct cannot
+// drift:
+//
+//   - service == "" always survives: global (log-query) monitors are
+//     env-unattributable; hiding a firing global alert because the
+//     operator narrowed to uat is a triage hazard.
+//   - otherwise the service must be a member of the selected env per
+//     the 60s-cached 1h service→env map (multi-env services are
+//     members of every env they run in, so their rows still show).
+//
+// Pure + table-tested. Callers only invoke it when an env IS selected
+// and the member set resolved successfully (error path = unfiltered).
+func envKeepsRow(service string, members map[string]bool) bool {
+	return service == "" || members[service]
+}
+
 // servicesForTeam resolves an owner/SRE team pick to the sorted set of
 // services that belong to it, per the operator-curated catalog `mds`
 // (keyed by service). It reuses matchesTeamFilter so the resolution is

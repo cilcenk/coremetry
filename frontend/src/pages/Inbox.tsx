@@ -8,6 +8,7 @@ import { useInbox } from '@/lib/queries';
 import { tsLong, fmtFixed } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
 import { resolveSelectedItem } from '@/lib/inboxDrawer';
@@ -98,11 +99,17 @@ export default function InboxPage() {
   const openDrawer = (it: InboxItem) => setParam('item', it.id);
   const closeDrawer = () => setParam('item', null);
 
+  // Global env picker (v0.8.387) — service-scoped: the server keeps
+  // rows whose service ran in the env in the last hour (+ service-
+  // less global alerts), same semantics as /problems. Hint chip in
+  // the facet bar spells it out.
+  const [env] = useUrlEnv();
   const inboxQ = useInbox({
     status: statusFilter,
     service: serviceFilter || undefined,
     ownerTeam: ownerFilter || undefined,
     sreTeam: sreFilter || undefined,
+    env: env || undefined,
     limit: 300,
   });
   const data: InboxItem[] | null | undefined =
@@ -222,6 +229,16 @@ export default function InboxPage() {
               </span>
             );
           })}
+
+          {/* Env hint chip (v0.8.387) — non-interactive; the pick lives
+              in the Topbar EnvPicker. Surfaces the service-scoped
+              semantics so the operator doesn't read rows as per-env. */}
+          {env && (
+            <span className="badge b-info" style={{ cursor: 'help' }}
+              title={`Showing items on services seen in "${env}" during the last hour (global environment picker). Triage rows carry no environment of their own — a row on a multi-env service still shows, and service-less (global) alerts always show.`}>
+              env: {env} — service-scoped
+            </span>
+          )}
 
           <span style={{ marginLeft: 'auto' }} />
 

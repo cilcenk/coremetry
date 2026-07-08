@@ -21,10 +21,13 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 // not an admin control.
 //
 // Consumers: /traces (Phase 1, v0.8.383 — list + aggregated + volume
-// strip + CSV) and /services + /endpoints (Phase 2, v0.8.385 —
-// cluster-parity raw-fallback). Other pages ignore `?env=` until
-// their backends grow the filter (Phase 3+) — the title says so
-// instead of implying a global effect.
+// strip + CSV), /services + /endpoints (Phase 2, v0.8.385 —
+// cluster-parity raw-fallback), and /problems + /inbox + the sidebar
+// problems badge (Phase 3, v0.8.387 — SERVICE-scoped: problems carry
+// no env dimension, so the filter keeps rows whose service ran in
+// the env; the pages carry their own hint chip). Other pages ignore
+// `?env=` until their backends grow the filter (Phase 4+) — the
+// title says so instead of implying a global effect.
 export function EnvPicker() {
   const [env, setEnv] = useUrlEnv();
 
@@ -53,7 +56,7 @@ export function EnvPicker() {
       className="env-picker"
       value={env}
       aria-label="Environment filter"
-      title={'Filter by deployment environment (deployment.environment.name).\nApplies to Traces, Services and Endpoints today; more pages follow in upcoming releases.'}
+      title={'Filter by deployment environment (deployment.environment.name).\nApplies to Traces, Services, Endpoints, Problems and Inbox today; more pages follow in upcoming releases.\nOn Problems/Inbox the filter is service-scoped: rows whose service runs in the environment.'}
       onChange={e => setEnv(e.target.value)}
     >
       <option value="">All environments</option>

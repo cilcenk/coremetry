@@ -20,6 +20,7 @@ import { api, type UserRow } from '@/lib/api';
 import { fmtNum, fmtFixed, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type {
@@ -642,12 +643,19 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // Query key hash stays stable regardless of toggle order, and the
   // backend cache key (sorted+FNV digest) matches.
   const prioParam = useMemo(() => [...prioSet].sort(), [prioSet]);
+  // Global env picker (v0.8.387 — env-separation Phase 3). SERVICE-
+  // scoped on problems: the server keeps rows whose service ran in
+  // the env in the last hour (+ service-less global alerts) — a
+  // problem row carries no env of its own. The hint chip below spells
+  // that out so the semantics aren't mistaken for a per-env value.
+  const [env] = useUrlEnv();
   const problemsQ = useProblems({
     status: statusFilter === 'all' ? undefined : statusFilter,
     service: serviceFilter || undefined,
     priority: prioParam,
     ownerTeam: ownerTeam || undefined,
     sreTeam: sreTeam || undefined,
+    env: env || undefined,
     limit: 200,
   });
   const data: Problem[] | null | undefined = problemsQ.isLoading
@@ -780,6 +788,15 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+        {/* Env hint chip (v0.8.387) — non-interactive: the pick lives in
+            the Topbar EnvPicker; this only surfaces the SEMANTICS so an
+            operator doesn't read the rows as per-env values. */}
+        {env && (
+          <span className="badge b-info" style={{ cursor: 'help' }}
+            title={`Showing problems on services seen in "${env}" during the last hour (global environment picker). Problems carry no environment of their own — a problem on a multi-env service still shows, and service-less (global) alerts always show. The exception inbox above is not env-scoped yet.`}>
+            env: {env} — service-scoped
+          </span>
+        )}
         <span style={{ marginLeft: 'auto', color: 'var(--text3)', fontSize: 12 }}>
           {open} open · {resolved} resolved
         </span>

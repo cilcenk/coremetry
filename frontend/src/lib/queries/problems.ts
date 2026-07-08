@@ -19,6 +19,10 @@ export function useProblems(filter: {
   priority?: string[];
   ownerTeam?: string;
   sreTeam?: string;
+  // v0.8.387 — the global ?env= picker; service-scoped on problems
+  // (rows whose service ran in the env in the last hour + global
+  // service-less alerts). Part of the key via the filter object.
+  env?: string;
   limit?: number;
 }) {
   return useQuery<Problem[]>({
@@ -42,10 +46,15 @@ export function useProblems(filter: {
 // capped the displayed badge at 200 silently on installs with
 // >200 open problems; the new path returns the true count via
 // a single COUNT(*) on the server.
-export function useOpenProblemCount() {
+// env (v0.8.387) — the sidebar passes the global picker's value so
+// the badge agrees with the env-filtered /problems list (same
+// ProblemFilter.Env conjunct server-side; still one COUNT query per
+// poll — the env→services map is 60s-cached on the server).
+export function useOpenProblemCount(env?: string) {
   return useQuery<{ count: number }, Error, number>({
-    queryKey: ['problems', 'count', { status: 'open' }],
-    queryFn: async () => (await api.problemsCount({ status: 'open' })) ?? { count: 0 },
+    queryKey: ['problems', 'count', { status: 'open', env: env || '' }],
+    queryFn: async () =>
+      (await api.problemsCount({ status: 'open', env: env || undefined })) ?? { count: 0 },
     select: (r) => r.count,
     refetchInterval: 30_000,
     staleTime: 25_000,

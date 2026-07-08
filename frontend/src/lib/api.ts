@@ -1102,6 +1102,7 @@ export const api = {
   inbox: (params: {
     status?: 'open' | 'all'; service?: string;
     ownerTeam?: string; sreTeam?: string;
+    env?: string; // v0.8.387 — service-scoped, same semantics as /api/problems
     limit?: number;
   } = {}) =>
     get<import('./types').InboxItem[] | null>(`/api/inbox?${qs(params)}`),
@@ -1485,13 +1486,16 @@ export const api = {
       body: JSON.stringify({ assignee }),
     }),
 
-  problems: (params: { status?: string; service?: string; severity?: string; priority?: string[]; ownerTeam?: string; sreTeam?: string; limit?: number }) =>
+  // env (v0.8.387) — the global Topbar picker, service-scoped on
+  // problems: the server keeps rows whose service ran in the env in
+  // the last hour (plus service-less global alerts).
+  problems: (params: { status?: string; service?: string; severity?: string; priority?: string[]; ownerTeam?: string; sreTeam?: string; env?: string; limit?: number }) =>
     get<Problem[] | null>(`/api/problems?${qs({ ...params, priority: params.priority?.join(',') })}`),
   // v0.5.398 — sidebar-badge count endpoint. Returns just the
   // matching row count, no rows. Replaces the prior approach
   // of fetching limit=200 and counting the array — the badge
   // capped at 200 silently on installs with >200 open problems.
-  problemsCount: (params: { status?: string; service?: string; severity?: string } = {}) =>
+  problemsCount: (params: { status?: string; service?: string; severity?: string; env?: string } = {}) =>
     get<{ count: number }>(`/api/problems/count?${qs(params)}`),
 
   // ── SLOs ─────────────────────────────────────────────────────────────────

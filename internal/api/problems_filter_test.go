@@ -100,3 +100,41 @@ func TestServicesForTeam(t *testing.T) {
 		})
 	}
 }
+
+// v0.8.387 — env-separation Phase 3: the /inbox merged-list env
+// filter. envKeepsRow must stay bit-identical to chstore's
+// applyEnvServiceScope SQL semantics (service='' carve-out + strict
+// membership), so /problems and /inbox agree under the same ?env=.
+func TestEnvKeepsRow(t *testing.T) {
+	members := map[string]bool{"payments": true, "mobile-bff": true}
+	tests := []struct {
+		name    string
+		service string
+		keep    bool
+	}{
+		// Global (service-less) rows ALWAYS survive — log-query
+		// monitors are env-unattributable; an env pick must never
+		// hide a firing global alert.
+		{"empty service survives", "", true},
+		{"member survives", "payments", true},
+		{"multi-env member survives", "mobile-bff", true},
+		// A service absent from the map (env-less infra, or simply
+		// not in this env) is hidden — consistent with what
+		// /services and /traces show under the same env pick.
+		{"non-member hidden", "oracle-rac", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := envKeepsRow(tt.service, members); got != tt.keep {
+				t.Errorf("envKeepsRow(%q) = %v, want %v", tt.service, got, tt.keep)
+			}
+		})
+	}
+	// Empty member set: only global rows remain (honest empty env).
+	if envKeepsRow("payments", map[string]bool{}) {
+		t.Error("empty member set must hide service rows")
+	}
+	if !envKeepsRow("", map[string]bool{}) {
+		t.Error("empty member set must still keep global rows")
+	}
+}

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { useHealth, useOpenProblemCount, useInboxCount } from '@/lib/queries';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useT } from '@/lib/i18n';
 import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { TelescopeIcon } from './TelescopeIcon';
@@ -138,7 +139,11 @@ export function Sidebar() {
   // Problems section, so the sidebar badge and the page row
   // count never drift.
   const healthQ = useHealth();
-  const openProblems = useOpenProblemCount().data ?? 0;
+  // v0.8.387 — the /problems badge follows the global env picker so
+  // the number it shows equals the rows the env-filtered /problems
+  // page renders (service-scoped semantics, resolved server-side).
+  const [env] = useUrlEnv();
+  const openProblems = useOpenProblemCount(env).data ?? 0;
   // v0.8.288 (Option B) — the /inbox triage badge sums all three sources
   // (not-resolved problems + open exceptions + active anomalies).
   const inboxCount = useInboxCount().data ?? 0;

@@ -9,6 +9,7 @@ import type { InboxItem } from '@/lib/types';
 export function useInbox(filter: {
   status?: 'open' | 'all'; service?: string;
   ownerTeam?: string; sreTeam?: string;
+  env?: string; // v0.8.387 — global picker, service-scoped (matches /problems)
   limit?: number;
 }) {
   return useQuery<InboxItem[]>({

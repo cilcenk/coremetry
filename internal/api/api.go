@@ -8427,9 +8427,15 @@ func (s *Server) countProblems(w http.ResponseWriter, r *http.Request) {
 	f := chstore.ProblemFilter{
 		Status: q.Get("status"), Service: q.Get("service"),
 		Severity: q.Get("severity"),
+		// v0.8.387 — global ?env= picker (service-scoped, see
+		// ProblemFilter.Env). The sidebar badge passes it so badge
+		// and /problems list agree; the env→services resolution
+		// rides the 60s-cached map, so the 30s-per-user poll adds
+		// no query beyond this COUNT.
+		Env: strings.TrimSpace(q.Get("env")),
 	}
-	key := fmt.Sprintf("problems-count:status=%s:svc=%s:sev=%s",
-		f.Status, f.Service, f.Severity)
+	key := fmt.Sprintf("problems-count:status=%s:svc=%s:sev=%s:env=%s",
+		f.Status, f.Service, f.Severity, f.Env)
 	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
 		n, err := s.store.CountProblems(ctx, f)
 		if err != nil {
@@ -8452,9 +8458,13 @@ func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := chstore.ProblemFilter{
 		Status: q.Get("status"), Service: q.Get("service"),
+		// v0.8.387 — same service-scoped env narrowing as the list +
+		// count endpoints (ProblemFilter.Env resolves it in SQL), so
+		// chip counts can't disagree with the rows under an env pick.
+		Env:   strings.TrimSpace(q.Get("env")),
 		Limit: 2000,
 	}
-	key := fmt.Sprintf("problems-buckets:status=%s:svc=%s", f.Status, f.Service)
+	key := fmt.Sprintf("problems-buckets:status=%s:svc=%s:env=%s", f.Status, f.Service, f.Env)
 	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
 		probs, err := s.store.ListProblems(ctx, f)
 		if err != nil {
@@ -8507,6 +8517,12 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	f := chstore.ProblemFilter{
 		Status: q.Get("status"), Service: q.Get("service"),
 		Severity: q.Get("severity"), Priority: prios,
+		// v0.8.387 — env-separation Phase 3: the global ?env= picker.
+		// Service-scoped semantics (problems carry no env dimension;
+		// ProblemFilter.Env narrows to services seen in the env in the
+		// last hour via the 60s-cached map). Resolved in SQL inside
+		// ListProblems so this list, /count and /buckets agree.
+		Env:   strings.TrimSpace(q.Get("env")),
 		Limit: parseInt(q.Get("limit"), 100),
 	}
 	// Sidebar polls this endpoint per user every 30s — at 100 logged-in
@@ -8517,8 +8533,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	for _, p := range prios {
 		prioMap[p] = true
 	}
-	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:limit=%d",
-		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Limit)
+	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:limit=%d",
+		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, f.Limit)
 	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
 		probs, err := s.store.ListProblems(ctx, f)
 		if err != nil {

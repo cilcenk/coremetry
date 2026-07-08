@@ -857,7 +857,17 @@ type ProblemFilter struct {
 	// gets the most recent P1 rows up to Limit, not the most recent
 	// rows that happen to be P1.
 	Priority []string
-	Limit    int
+	// Env (v0.8.387 — env-separation Phase 3) narrows to problems
+	// whose SERVICE ran in the given deployment environment within
+	// the last hour, per the 60s-cached service→env map. Problems
+	// carry no env dimension (state table keyed rule+service, values
+	// computed over all-env metrics), so this is the only honest env
+	// semantics — see env_members.go. Applied in SQL (service IN …)
+	// by ListProblems AND CountProblems so list / count / buckets /
+	// sidebar badge agree, and Limit bites AFTER the env narrowing.
+	// service='' (global log-query) rows always survive. Empty = off.
+	Env   string
+	Limit int
 }
 
 // CountProblems returns the row count matching the same filter
@@ -874,6 +884,7 @@ func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, err
 	if f.Service      != "" { wc.add("service = ?", f.Service) }
 	if f.Severity     != "" { wc.add("severity = ?", f.Severity) }
 	if f.RuleIDPrefix != "" { wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix) }
+	s.envScopeProblems(ctx, &wc, f.Env) // v0.8.387 — same conjunct as ListProblems, badge agrees
 	row := s.conn.QueryRow(ctx, `
 		SELECT count()
 		FROM problems FINAL `+wc.sql()+`
@@ -891,6 +902,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	if f.Service      != "" { wc.add("service = ?", f.Service) }
 	if f.Severity     != "" { wc.add("severity = ?", f.Severity) }
 	if f.RuleIDPrefix != "" { wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix) }
+	s.envScopeProblems(ctx, &wc, f.Env) // v0.8.387 — service-scoped env narrowing (env_members.go)
 	if f.Limit == 0 { f.Limit = 100 }
 
 	// v0.5.406 — bound the query at 8s. Without this CH could run

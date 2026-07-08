@@ -136,6 +136,15 @@ type Store struct {
 	clusterMapFor time.Duration // the `since` clusterMapVal was built with
 	clusterMapVal map[string][]string
 
+	// envMap* (v0.8.387, env-separation Phase 3) — the service→envs
+	// twin of clusterMap* above, backing the /problems env filter.
+	// Same P2-C discipline: 60s single-entry cache keyed by `since`,
+	// replace-never-mutate, returned SHARED (read-only callers).
+	envMapMu  sync.RWMutex
+	envMapAt  time.Time
+	envMapFor time.Duration // the `since` envMapVal was built with
+	envMapVal map[string][]string
+
 	deploysMu    sync.Mutex
 	deploysCache map[string]deploysCacheEntry
 }
@@ -153,6 +162,7 @@ const alertRulesCacheTTL = 30 * time.Second
 const (
 	svcMetaCacheTTL    = 30 * time.Second
 	clusterMapCacheTTL = 60 * time.Second
+	envMapCacheTTL     = 60 * time.Second // v0.8.387 — env twin of clusterMapCacheTTL
 	deploysCacheTTL    = 15 * time.Second
 	deploysCacheMax    = 64 // distinct (service-set, window) keys kept
 )

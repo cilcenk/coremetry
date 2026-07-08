@@ -25,6 +25,22 @@ import (
 // clusterMode reports whether Distributed-CH schema should be used.
 func (s *Store) clusterMode() bool { return strings.TrimSpace(s.cfg.ClusterName) != "" }
 
+// mvStorageName resolves the storage object a schema probe/DDL must
+// touch for an MV (v0.8.388): promoted MVs (highVolumeTables) live as
+// <name>_local per shard in cluster mode; unpromoted ones
+// (spanmetrics_*, operation_group_summary_5m — the v0.8.356 per-shard
+// class) keep the bare name everywhere. The TDigest boot probe used
+// to blanket-append _local, so on this cluster the unpromoted MVs
+// probed a non-existent table → isTDigest=0 → a FALSE "upgrading …"
+// log plus a no-op drop/recreate on EVERY boot (D1-audit finding).
+// Pinned by TestMVStorageName.
+func (s *Store) mvStorageName(mv string) string {
+	if s.clusterMode() && highVolumeTables[mv] {
+		return mv + "_local"
+	}
+	return mv
+}
+
 // clusterNameError validates a CONFIGURED cluster_name against the server's
 // system.clusters definitions (v0.8.280 — the other half of the v0.8.213
 // fail-fast: 213 catches cluster_name UNSET against external-Distributed spans;

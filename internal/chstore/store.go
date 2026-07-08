@@ -2858,10 +2858,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		if mv == "operation_group_summary_5m" && !s.hasOpGroupCol {
 			continue
 		}
-		probeTarget := mv
-		if s.clusterMode() {
-			probeTarget = mv + "_local"
-		}
+		probeTarget := s.mvStorageName(mv)
 		var isTDigest uint8
 		probe := fmt.Sprintf(`
 			SELECT count() > 0
@@ -2872,10 +2869,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			  AND positionUTF8(type, 'TDigest') > 0`, probeTarget)
 		if err := s.conn.QueryRow(ctx, probe).Scan(&isTDigest); err == nil && isTDigest == 0 {
 			log.Printf("[chstore] upgrading %s MV (reservoir quantilesState → quantilesTDigestState, ~15x smaller) — past buckets dropped", mv)
-			dropTarget := mv
-			if s.clusterMode() {
-				dropTarget = mv + "_local"
-			}
+			dropTarget := s.mvStorageName(mv)
 			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
 				return fmt.Errorf("drop %s for TDigest upgrade: %w", mv, err)
 			}

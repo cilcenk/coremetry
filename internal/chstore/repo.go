@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -635,7 +636,40 @@ func (s *Store) GetServiceClusterBreakdown(
 // listing (GetServicesFilteredIn). Factored pure (no conn) so the
 // v0.8.385 SQL-shape tests can pin the cluster + env conjuncts
 // without a live ClickHouse — the env_filter_test.go pattern.
-func (s *Store) servicesListWhere(since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, cluster, env string) whereClause {
+// clusterMemberServices resolves a cluster name to the services that
+// ran in it, from the 60s-cached 1h-clamped service→cluster map
+// (v0.8.386). Sorted for deterministic SQL; empty on lookup failure
+// or an unknown name — callers MUST treat empty as "don't narrow",
+// never as "no services". Bounded: the map itself caps at 1000
+// services × 50 clusters.
+func (s *Store) clusterMemberServices(ctx context.Context, cluster string) []string {
+	// Conn-less Stores (pure SQL-shape tests) may still carry a
+	// SEEDED map cache; only a real cache miss needs the conn.
+	s.clusterMapMu.RLock()
+	fresh := s.clusterMapVal != nil && s.clusterMapFor == time.Hour &&
+		time.Since(s.clusterMapAt) < clusterMapCacheTTL
+	s.clusterMapMu.RUnlock()
+	if !fresh && s.conn == nil {
+		return nil
+	}
+	m, err := s.GetServiceClusterMap(ctx, time.Hour)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for svc, clusters := range m {
+		for _, c := range clusters {
+			if c == cluster {
+				out = append(out, svc)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Store) servicesListWhere(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, cluster, env string) whereClause {
 	var wc whereClause
 	if !from.IsZero() {
 		wc.add("time >= ?", from)
@@ -661,6 +695,30 @@ func (s *Store) servicesListWhere(since time.Duration, from, to time.Time, nameM
 		wc.add("service_name IN ("+strings.Join(holders, ",")+")", args...)
 	}
 	if cluster != "" {
+		// v0.8.386 (operator-reported: /api/services 500 on SOME of
+		// prod's 18 clusters) — on an external Distributed spans with
+		// no promoted cluster column, this conjunct is the per-row
+		// res/attr DERIVE over the whole window; at prod volume that
+		// blows max_execution_time/memory, and cache warmth made it
+		// look cluster-specific. Narrow by the 60s-cached cluster→
+		// services map FIRST: service_name is the PK prefix, so the
+		// derive then runs only over the member services' granules.
+		// Membership is the map's 1h-clamped view (infra-stable, same
+		// tolerance the picker uses); the retained conjunct keeps the
+		// NUMBERS exact per cluster. Lookup failure or an unknown
+		// cluster name falls back to the old full-window behaviour —
+		// never an empty page from a cold map.
+		if len(serviceIn) == 0 {
+			if members := s.clusterMemberServices(ctx, cluster); len(members) > 0 {
+				holders := make([]string, len(members))
+				args := make([]any, len(members))
+				for i, n := range members {
+					holders[i] = "?"
+					args[i] = n
+				}
+				wc.add("service_name IN ("+strings.Join(holders, ",")+")", args...)
+			}
+		}
 		// Match against the promoted cluster column with a derive
 		// fallback for pre-column parts (clusterColExpr). New parts
 		// hit the indexed LowCardinality col; old parts fall back to
@@ -687,7 +745,7 @@ func (s *Store) servicesListWhere(since time.Duration, from, to time.Time, nameM
 // raw-fallback semantics as cluster, but CHEAPER: deploy_env is a
 // typed LowCardinality column, no indexOf derive needed.
 func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int, cluster, env string) ([]ServiceSummary, error) {
-	wc := s.servicesListWhere(since, from, to, nameMatch, serviceIn, cluster, env)
+	wc := s.servicesListWhere(ctx, since, from, to, nameMatch, serviceIn, cluster, env)
 	// scale-audit v0.8.201 — defensive cap on the limit<=0 wrapper path
 	// (GetServices passes limit=0) so this raw-spans GROUP BY can't return an
 	// unbounded result at billion-span scale.

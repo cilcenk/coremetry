@@ -43,7 +43,7 @@ func TestServicesListWhere_EnvConjunct(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wc := s.servicesListWhere(0, from, to, "", nil, tc.cluster, tc.env)
+			wc := s.servicesListWhere(context.Background(), 0, from, to, "", nil, tc.cluster, tc.env)
 			sql := wc.sql()
 			if !strings.Contains(sql, "deploy_env = ?") {
 				t.Fatalf("WHERE must carry the env conjunct; got %q", sql)
@@ -71,7 +71,7 @@ func TestServicesListWhere_EnvConjunct(t *testing.T) {
 
 func TestServicesListWhere_EmptyEnvMeansAll(t *testing.T) {
 	from := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
-	wc := (&Store{}).servicesListWhere(0, from, from.Add(time.Hour), "", nil, "", "")
+	wc := (&Store{}).servicesListWhere(context.Background(), 0, from, from.Add(time.Hour), "", nil, "", "")
 	if strings.Contains(wc.sql(), "deploy_env") {
 		t.Fatalf("empty env must add no deploy_env predicate; got %q", wc.sql())
 	}

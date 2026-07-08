@@ -185,6 +185,23 @@ func (s *Store) endpointsRawFilters(q EndpointsQuery, pathExpr string) (string, 
 		args = append(args, q.Search)
 	}
 	if q.Cluster != "" {
+		// v0.8.386 — same PK narrowing the /services raw path gained
+		// (operator-reported prod 500): without the promoted cluster
+		// column the derive runs per-row over the window; narrowing
+		// to the cached cluster members first keeps the derive on the
+		// member services' granules only. Skipped when the query is
+		// already service-scoped; empty membership = no narrowing
+		// (never an empty page from a cold map).
+		if q.Service == "" {
+			if members := s.clusterMemberServices(context.Background(), q.Cluster); len(members) > 0 {
+				holders := make([]string, len(members))
+				for i, n := range members {
+					holders[i] = "?"
+					args = append(args, n)
+				}
+				sql.WriteString(" AND service_name IN (" + strings.Join(holders, ",") + ")")
+			}
+		}
 		sql.WriteString(" AND " + s.clusterExpr() + " = ?")
 		args = append(args, q.Cluster)
 	}

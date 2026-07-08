@@ -7347,6 +7347,16 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 			"\n\nRecent deploy: service.version=%q first seen %d seconds before this problem opened. Consider whether this regression coincides with that deploy.",
 			p.RecentDeploy.Version, p.RecentDeploy.AgeSeconds)
 	}
+	// v0.8.394 (AI audit A1) — fuse the persisted deterministic root-cause
+	// hypothesis (RootCauseSynthesizer) into the operator-clicked explain,
+	// the SAME block the background auto-explainer injects — the operator
+	// who sees the "Root cause: X (NN%)" ribbon must not get an Explain
+	// that ignores it. Best-effort: absent/erroring hypothesis renders "".
+	if hyp, err := s.store.GetHypothesis(r.Context(), "problem", p.ID); err == nil {
+		if block := anomaly.HypothesisPromptBlockTR(hyp); block != "" {
+			user += "\n" + block
+		}
+	}
 	// v0.6.54 — multi-signal root-cause correlation. Beyond the
 	// deploy hint, gather the service's topology neighbours, error-
 	// trace exemplars, and significant log patterns around the

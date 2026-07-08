@@ -115,24 +115,48 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 		log.Printf("[problem-explainer] list: %v", err)
 		return
 	}
-	filled := 0
-	// Phase 7 — fetch the cross-signal evidence inputs ONCE per tick (shared
-	// across the batch), lazily on the first real candidate so an all-cached
-	// tick costs nothing extra.
-	var inputs evidenceInputs
-	gathered := false
+	// Candidate pass first (empty-summary rows up to the batch cap) so an
+	// all-cached tick still costs nothing extra — the evidence + hypothesis
+	// reads below only fire when there is real work.
+	candidates := make([]chstore.Problem, 0, e.batch)
 	for _, p := range problems {
-		if filled >= e.batch {
+		if len(candidates) >= e.batch {
 			break
 		}
 		if strings.TrimSpace(p.AISummary) != "" {
 			continue
 		}
-		if !gathered {
-			inputs = gatherEvidenceInputs(ctx, e.store)
-			gathered = true
+		candidates = append(candidates, p)
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	// Phase 7 — fetch the cross-signal evidence inputs ONCE per tick (shared
+	// across the batch).
+	inputs := gatherEvidenceInputs(ctx, e.store)
+	// v0.8.394 (AI audit A1) — batch-read the persisted root-cause hypotheses
+	// the RootCauseSynthesizer already computed for these problems (ONE
+	// GetHypotheses round-trip, same N+1-free join the /problems ribbon uses)
+	// so the prompt can carry the deterministic verdict instead of narrating
+	// blind. Best-effort: a read error just degrades to hypothesis-free
+	// prompts (pre-fusion behaviour), never blocks the tick.
+	ids := make([]string, 0, len(candidates))
+	for i := range candidates {
+		ids = append(ids, candidates[i].ID)
+	}
+	hyps, err := e.store.GetHypotheses(ctx, "problem", ids)
+	if err != nil {
+		log.Printf("[problem-explainer] hypotheses: %v", err)
+		hyps = nil
+	}
+	filled := 0
+	for _, p := range candidates {
+		var hyp *chstore.RootCauseHypothesis
+		if h, ok := hyps[p.ID]; ok {
+			hh := h
+			hyp = &hh
 		}
-		summary, err := e.explain(ctx, p, buildEvidenceBundle(p, inputs))
+		summary, err := e.explain(ctx, p, buildEvidenceBundle(p, inputs), hyp)
 		if err != nil {
 			log.Printf("[problem-explainer] %s: %v", p.ID, err)
 			continue
@@ -151,11 +175,29 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 	}
 }
 
-// explain composes the user prompt for one Problem + runs through
-// the Copilot with surface "problem-auto-explain". Same system
-// prompt as the operator-clicked /api/copilot/explain-problem
-// endpoint — keeps the AI's tone consistent across surfaces.
-func (e *ProblemExplainer) explain(ctx context.Context, p chstore.Problem, bundle EvidenceBundle) (string, error) {
+// explain runs one Problem's prompt through the Copilot with surface
+// "problem-auto-explain". Same system prompt as the operator-clicked
+// /api/copilot/explain-problem endpoint — keeps the AI's tone consistent
+// across surfaces.
+func (e *ProblemExplainer) explain(ctx context.Context, p chstore.Problem, bundle EvidenceBundle, hyp *chstore.RootCauseHypothesis) (string, error) {
+	// Background context — surface = "problem-auto-explain" so the
+	// /ai page can break out the auto-explain volume from operator-
+	// clicked Explains.
+	ctx = copilot.WithMeta(ctx, copilot.CallMeta{
+		Surface:   "problem-auto-explain",
+		UserID:    "system",
+		UserEmail: "",
+	})
+	return e.copilot.Explain(ctx, copilot.SystemPromptProblem(), buildProblemPrompt(p, bundle, hyp))
+}
+
+// buildProblemPrompt composes the user prompt for one Problem — the bare rule
+// facts, the persisted deterministic root-cause hypothesis (v0.8.394, AI audit
+// A1) when one exists, then the Phase 7 corroborating evidence. PURE (no
+// store, no copilot) so the fusion shape is table-testable
+// (rootcause_prompt_test.go): hypothesis absent → the prompt is byte-identical
+// to the pre-fusion shape.
+func buildProblemPrompt(p chstore.Problem, bundle EvidenceBundle, hyp *chstore.RootCauseHypothesis) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Rule: %s\n", p.RuleName)
 	fmt.Fprintf(&sb, "Service: %s\n", p.Service)
@@ -166,17 +208,14 @@ func (e *ProblemExplainer) explain(ctx context.Context, p chstore.Problem, bundl
 	if p.Description != "" {
 		fmt.Fprintf(&sb, "Description: %s\n", p.Description)
 	}
+	// v0.8.394 (AI audit A1) — the deterministic verdict FIRST: the system
+	// prompt instructs the model to trust this block as primary evidence and
+	// narrate/extend it rather than re-guess the suspect. Renders "" when the
+	// synthesizer hasn't produced a clear-suspect hypothesis yet.
+	sb.WriteString(HypothesisPromptBlockTR(hyp))
 	// Phase 7 — cross-signal fusion: hand the Copilot the corroborating
 	// evidence so the summary reads as one incident with a likely root cause,
 	// not an isolated metric blip. Empty bundle → nothing added (unchanged).
 	renderEvidence(&sb, bundle)
-	// Background context — surface = "problem-auto-explain" so the
-	// /ai page can break out the auto-explain volume from operator-
-	// clicked Explains.
-	ctx = copilot.WithMeta(ctx, copilot.CallMeta{
-		Surface:   "problem-auto-explain",
-		UserID:    "system",
-		UserEmail: "",
-	})
-	return e.copilot.Explain(ctx, copilot.SystemPromptProblem(), sb.String())
+	return sb.String()
 }

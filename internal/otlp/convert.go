@@ -36,7 +36,15 @@ func ConvertTraces(req *tracecollpb.ExportTraceServiceRequest) ([]*chstore.Span,
 		if rs.Resource != nil {
 			svcName = attrStr(rs.Resource.Attributes, "service.name", "unknown")
 			hostName = attrStr(rs.Resource.Attributes, "host.name", "")
-			deployEnv = attrStr(rs.Resource.Attributes, "deployment.environment", "")
+			// deployment.environment.name is the CURRENT semconv key
+			// (≥1.27 renamed it); deployment.environment is the legacy
+			// spelling older SDKs still emit. Multi-name fallback chain
+			// per the v0.5.471 cluster precedent — operator-reported
+			// (v0.8.379): the test env emits only the new key, so
+			// deploy_env (and every env facet/filter on top of it)
+			// stayed empty.
+			deployEnv = attrStr(rs.Resource.Attributes, "deployment.environment.name",
+				attrStr(rs.Resource.Attributes, "deployment.environment", ""))
 			resK, resV = attrsToArrays(rs.Resource.Attributes)
 		}
 		for _, ss := range rs.ScopeSpans {

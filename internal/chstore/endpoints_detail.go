@@ -361,6 +361,8 @@ type EndpointSplitRow struct {
 // '' so the shared blank-value filter drops non-HTTP spans.
 var endpointSplitDims = map[string]string{
 	"deployment.environment": "deploy_env",
+	// Current semconv spelling (≥1.27) — same typed column (v0.8.379).
+	"deployment.environment.name": "deploy_env",
 	"host.name":              "host_name",
 	"http.method":            "http_method",
 	"http.status_code":       "if(http_status = 0, '', toString(http_status))",

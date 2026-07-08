@@ -1251,6 +1251,8 @@ var WellKnownTraceCol = map[string]string{
 	"messaging.system": "msg_system",
 	"service.name":     "service_name",
 	"deployment.environment": "deploy_env",
+	// Current semconv spelling (≥1.27) — same typed column (v0.8.379).
+	"deployment.environment.name": "deploy_env",
 	"host.name":        "host_name",
 	"kind":             "kind",
 }

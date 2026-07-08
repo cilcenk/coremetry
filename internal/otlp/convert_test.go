@@ -429,3 +429,47 @@ func TestIngesterSpanLinkGateDropsInvalid(t *testing.T) {
 		t.Fatalf("droppedInvalid moved to %d, want 1", got)
 	}
 }
+
+// v0.8.379 — operator-reported: the test environments emit the CURRENT
+// semconv key deployment.environment.name (≥1.27 renamed it), while
+// ingest read only the legacy deployment.environment — deploy_env
+// stayed empty and every env facet/filter/groupBy built on the typed
+// column showed nothing. Multi-name fallback chain per the v0.5.471
+// cluster precedent; new key wins when both are present.
+func TestConvertTracesDeployEnvSemconvFallback(t *testing.T) {
+	mk := func(attrs ...*commonpb.KeyValue) *tracecollpb.ExportTraceServiceRequest {
+		return &tracecollpb.ExportTraceServiceRequest{
+			ResourceSpans: []*tracepb.ResourceSpans{{
+				Resource: &resourcepb.Resource{Attributes: append([]*commonpb.KeyValue{
+					kvStr("service.name", "mobile-bff"),
+				}, attrs...)},
+				ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{
+					TraceId: make([]byte, 16), SpanId: make([]byte, 8), Name: "op",
+				}}}},
+			}},
+		}
+	}
+	cases := []struct {
+		name string
+		req  *tracecollpb.ExportTraceServiceRequest
+		want string
+	}{
+		{"new key only", mk(kvStr("deployment.environment.name", "uat")), "uat"},
+		{"legacy key only", mk(kvStr("deployment.environment", "prep")), "prep"},
+		{"both present — new wins", mk(
+			kvStr("deployment.environment.name", "int"),
+			kvStr("deployment.environment", "legacy")), "int"},
+		{"neither", mk(), ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			spans, _ := ConvertTraces(c.req)
+			if len(spans) != 1 {
+				t.Fatalf("want 1 span, got %d", len(spans))
+			}
+			if spans[0].DeployEnv != c.want {
+				t.Fatalf("DeployEnv = %q, want %q", spans[0].DeployEnv, c.want)
+			}
+		})
+	}
+}

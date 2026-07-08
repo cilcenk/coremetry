@@ -35,6 +35,8 @@ var wellKnown = map[string]string{
 	"status":            "status_code",
 	"host.name":         "host_name",
 	"deployment.environment": "deploy_env",
+	// Current semconv spelling (≥1.27) — same typed column (v0.8.379).
+	"deployment.environment.name": "deploy_env",
 	"http.method":       "http_method",
 	"http.route":        "http_route",
 	"http.status_code":  "http_status",

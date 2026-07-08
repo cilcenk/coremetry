@@ -1,5 +1,21 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { sanitizeRedirect, savePostLoginRedirect, consumePostLoginRedirect } from './postLoginRedirect';
+
+// v0.8.390 — CI fix: the vitest environment is 'node' on purpose
+// (vitest.config.ts), and Node < 23 has no Web Storage globals — CI
+// (Node 22) failed with "sessionStorage is not defined" while newer
+// local Node ships the global. Deterministic in-memory stub either
+// way, so the suite never depends on the runtime's storage.
+beforeAll(() => {
+  const store = new Map<string, string>();
+  const stub: Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'clear'> = {
+    getItem: k => store.get(k) ?? null,
+    setItem: (k, v) => { store.set(k, String(v)); },
+    removeItem: k => { store.delete(k); },
+    clear: () => { store.clear(); },
+  };
+  Object.defineProperty(globalThis, 'sessionStorage', { value: stub, configurable: true });
+});
 
 // v0.8.367 — post-login deep-link restore. The sanitizer is the
 // security boundary: only same-origin in-app paths may be restored.

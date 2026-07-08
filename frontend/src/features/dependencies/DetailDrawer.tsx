@@ -12,6 +12,7 @@ import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
 import { MySQLPanel } from './panels/MySQLPanel';
 import { RedisPanel } from './panels/RedisPanel';
+import { WaitLockStrip, isWaitLockEngine } from './panels/WaitLockStrip';
 
 // DetailDrawer fetches and renders the per-(service, pod) caller
 // breakdown + top operations for one (system, instance) tuple.
@@ -216,6 +217,17 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
             </div>
           )}
         </div>
+      )}
+
+      {/* v0.8.391 (Stage-2 D3) — cross-engine waits & locks strip.
+          ONE common model (wait classes + lock stats) for every DB
+          engine whose receiver has any wait/lock family, fed by
+          whatever that receiver actually emits. Renders for span-
+          derived rows too: the honest per-engine empty ("no lock
+          telemetry from this receiver") is the signal to wire the
+          receiver, never a fake zero. */}
+      {kind === 'db' && isWaitLockEngine(system) && (
+        <WaitLockStrip system={system} instance={name} range={range} />
       )}
 
       {/* Oracle-specific drill-down — only renders when the system

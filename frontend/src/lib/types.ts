@@ -353,6 +353,34 @@ export interface DBDetail {
   callers: DBCallerBreakdown[];
   topOps: DBOpStat[];
 }
+
+// DBWaitLock — payload of /api/databases/waitlock (v0.8.391,
+// Stage-2 D3): the cross-engine waits & locks strip on the
+// /databases drawer. One normalized model fed by whatever each
+// OTel DB receiver actually emits. Honesty contract: a family the
+// receiver never shipped in the window is ABSENT (undefined /
+// empty), never a fake zero — the strip renders a per-engine
+// "no lock telemetry from this receiver" off that absence.
+export interface DBWaitLock {
+  // Normalized engine key: 'oracle' | 'postgresql' | 'mysql'
+  // (mariadb → mysql, postgres → postgresql).
+  system: string;
+  instance: string;
+  windowSeconds: number;
+  // false → engine has no receiver wait/lock family at all
+  // (redis etc.); the strip renders nothing.
+  supported: boolean;
+  // Wait pressure per class in waiting-seconds per elapsed second,
+  // descending. Only Oracle's receiver emits this family.
+  waitClasses: { name: string; perSec: number }[];
+  locks: {
+    waitsPerSec?: number;     // row-lock waits/s (oracle, mysql)
+    timeSec?: number;         // total lock-wait seconds over the window (mysql)
+    deadlocksPerSec?: number; // oracle (enqueue+exchange), postgresql
+    byMode?: { mode: string; value: number; unit: string }[]; // pg lock_type counts / mysql table-lock rates
+  };
+}
+
 export interface MessagingDetail {
   system: string;
   cluster: string;

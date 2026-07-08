@@ -752,6 +752,13 @@ export const api = {
   databaseDetail: (system: string, instance: string, fromNs: number, toNs: number) =>
     get<import('./types').DBDetail | null>(
       `/api/databases/detail?system=${encodeURIComponent(system)}&instance=${encodeURIComponent(instance)}&from=${fromNs}&to=${toNs}`),
+  // Cross-engine waits & locks strip (v0.8.391, Stage-2 D3) — one
+  // normalized wait/lock model per (system, instance), fed by
+  // whatever the engine's OTel receiver actually emits. Lazy:
+  // fetched only when the drawer renders the strip.
+  dbWaitLock: (system: string, instance: string, fromNs: number, toNs: number) =>
+    get<import('./types').DBWaitLock | null>(
+      `/api/databases/waitlock?system=${encodeURIComponent(system)}&instance=${encodeURIComponent(instance)}&from=${fromNs}&to=${toNs}`),
   // cluster is the bootstrap host / messaging.kafka.cluster.name
   // — defaults to "(default)" when the SPA doesn't supply one.
   // Multi-cluster Kafka / MQ deployments need it set so the

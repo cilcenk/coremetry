@@ -5,6 +5,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import type { TimeRange, OracleMetrics } from '@/lib/types';
 import {
   Stat, GaugeStat, OracleMetricDrillModal, TopSQLTable, HostLink, fmtBytes,
+  WaitClassesBar,
   type OracleDrill,
 } from './shared';
 
@@ -164,118 +165,8 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
   );
 }
 
-// WaitClassesBar renders Oracle's 10 wait classes as a single
-// stacked horizontal bar — at-a-glance "where is the DB
-// spending its time". Mirrors the System Wait Classes panel
-// in Oracle's reference Grafana dashboard. Sum of perSec
-// across classes is the total wait pressure: a 1.0 result
-// means one concurrent client fully blocked on the DB.
-function WaitClassesBar({ waits, onClickClass }: {
-  waits: { name: string; perSec: number }[];
-  onClickClass?: (cls: string) => void;
-}) {
-  const total = waits.reduce((a, w) => a + w.perSec, 0);
-  // Stable, semantic colour-per-class. user_io is the heaviest
-  // typical class so we give it the most-visible blue; commit
-  // gets green (success-coded); concurrency red (where row
-  // locks live).
-  const CLASS_COLOR: Record<string, string> = {
-    user_io:       '#388bfd',
-    system_io:     '#5b8fb9',
-    commit:        '#3fb950',
-    network:       '#a371f7',
-    concurrency:   '#f0703f',
-    application:   '#f5b343',
-    configuration: '#39c5cf',
-    scheduler:     '#db61a2',
-    cluster:       '#7d8590',
-    other:         '#6dbf5b',
-  };
-  const colorOf = (n: string) => CLASS_COLOR[n.toLowerCase()] ?? '#7d8590';
-  if (total <= 0) return null;
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 8,
-        fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
-        textTransform: 'uppercase', letterSpacing: 0.4,
-      }}>
-        System wait classes
-        <span style={{
-          fontWeight: 400, color: 'var(--text3)',
-          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-          textTransform: 'none', letterSpacing: 0,
-        }}>
-          total {total.toFixed(2)} s/s
-        </span>
-      </div>
-      <div style={{
-        display: 'flex', height: 18, borderRadius: 3, overflow: 'hidden',
-        border: '1px solid var(--border)',
-      }}>
-        {waits.map(w => {
-          const pct = (w.perSec / total) * 100;
-          if (pct < 0.5) return null; // suppress sub-pixel slivers
-          const handleClick = onClickClass ? () => onClickClass(w.name) : undefined;
-          return (
-            <div key={w.name}
-              onClick={handleClick}
-              title={`${w.name}: ${w.perSec.toFixed(3)} s/s (${pct.toFixed(1)}%)${handleClick ? ' · click to chart' : ''}`}
-              style={{
-                width: `${pct}%`, background: colorOf(w.name),
-                cursor: handleClick ? 'pointer' : 'help',
-              }} />
-          );
-        })}
-      </div>
-      <div style={{
-        display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 6, fontSize: 10,
-      }}>
-        {waits
-          .filter(w => w.perSec > 0)
-          .slice(0, 8)
-          .map(w => {
-            const handleClick = onClickClass ? () => onClickClass(w.name) : undefined;
-            const labelInner = (
-              <>
-                <span style={{
-                  width: 8, height: 8, borderRadius: 2,
-                  background: colorOf(w.name),
-                }} />
-                <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
-                  {w.name}
-                </span>
-                <span style={{ color: 'var(--text3)' }}>
-                  {w.perSec.toFixed(2)}
-                </span>
-              </>
-            );
-            if (handleClick) {
-              return (
-                <button key={w.name} type="button" onClick={handleClick}
-                  title={`Chart wait time · ${w.name}`}
-                  style={{
-                    all: 'unset', cursor: 'pointer',
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    color: 'var(--text2)',
-                  }}>
-                  {labelInner}
-                </button>
-              );
-            }
-            return (
-              <span key={w.name} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                color: 'var(--text2)',
-              }}>
-                {labelInner}
-              </span>
-            );
-          })}
-      </div>
-    </div>
-  );
-}
+// WaitClassesBar moved to shared.tsx (v0.8.391, Stage-2 D3) — the
+// cross-engine WaitLockStrip reuses the same stacked bar.
 
 function TablespaceBar({ ts, onClick }: {
   ts: { name: string; usedBytes: number; maxBytes: number; usedPct: number };

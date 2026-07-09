@@ -366,22 +366,29 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       style={{ fontWeight: 500 }}
                       title="Open this operation in Traces — service + name pre-filtered"
                     >{op.name}</Link>
-                    <Link
-                      to={detailsHref(op.name)}
-                      title="Operation-scoped charts — RPS / error rate / p50–p99 duration band + latency heatmap for just this operation"
-                      aria-label={`Open scoped charts for ${op.name}`}
-                      style={{
-                        marginLeft: 8, color: 'var(--accent2)',
-                        textDecoration: 'none', verticalAlign: 'middle',
-                        display: 'inline-flex',
-                      }}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                           stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                           aria-hidden="true">
-                        <path d="M3 3v18h18" />
-                        <path d="M7 14l4-6 4 3 5-8" />
-                      </svg>
-                    </Link>
+                    {/* v0.8.422 — raw rows only: in Normalized mode op.name is
+                        the op_group TEMPLATE ("GET /users/:id"), which matches
+                        no real span name, so ?op= scoping (spanmetrics `name`
+                        dim, legacy DSL, heatmap filter) would render three
+                        empty panels with no hint why. */}
+                    {!normalized && (
+                      <Link
+                        to={detailsHref(op.name)}
+                        title="Operation-scoped charts — RPS / error rate / p50–p99 duration band + latency heatmap for just this operation"
+                        aria-label={`Open scoped charts for ${op.name}`}
+                        style={{
+                          marginLeft: 8, color: 'var(--accent2)',
+                          textDecoration: 'none', verticalAlign: 'middle',
+                          display: 'inline-flex',
+                        }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                             aria-hidden="true">
+                          <path d="M3 3v18h18" />
+                          <path d="M7 14l4-6 4 3 5-8" />
+                        </svg>
+                      </Link>
+                    )}
                   </td>
                   <td>
                     <button

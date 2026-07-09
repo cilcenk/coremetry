@@ -44,6 +44,17 @@
 //   - get_exemplar_traces
 //   - get_linked_traces
 //   - get_metrics_for_span
+//
+// Env-awareness (v0.8.398, AI audit): list_services, get_service_health
+// and list_problems accept an OPTIONAL `env` arg (deployment
+// environment, spans.deploy_env — int/uat/prep style values) because
+// their underlying reads already support it (GetServicesFilteredIn's
+// env conjunct v0.8.385; ProblemFilter.Env service-scoped semantics
+// v0.8.387). Results echo the applied env. The other tools stay
+// env-less ON PURPOSE: search_logs/list_anomalies/query_metric reads
+// carry no env path yet (env-separation Phase 4 pending) and
+// get_trace/pivot tools are id-anchored point lookups — no silent
+// half-support.
 package mcptools
 
 import (
@@ -264,6 +275,7 @@ func clampLimit(req, defaultLim, maxLim int) int {
 
 type listServicesArgs struct {
 	NameContains string `json:"name_contains,omitempty"`
+	Env          string `json:"env,omitempty"` // v0.8.398 — deploy_env narrowing
 	RangeS       int    `json:"range_s,omitempty"`
 	Limit        int    `json:"limit,omitempty"`
 }
@@ -271,13 +283,17 @@ type listServicesArgs struct {
 func listServicesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_services",
-		Description: "List Coremetry services with their current RPS, error rate, and p99 latency. Reads the 5-minute pre-aggregate so it's cheap to call repeatedly. Use this as the entry point when investigating an incident: 'which services are unhealthy right now?'",
+		Description: "List Coremetry services with their current RPS, error rate, and p99 latency. Reads the 5-minute pre-aggregate so it's cheap to call repeatedly. Use this as the entry point when investigating an incident: 'which services are unhealthy right now?'. Pass env to scope the numbers to one deployment environment.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"name_contains": map[string]any{
 					"type":        "string",
 					"description": "Substring match against service name (case-insensitive). Empty = all services.",
+				},
+				"env": map[string]any{
+					"type":        "string",
+					"description": "Deployment environment to narrow to (spans' deploy_env, e.g. 'int', 'uat', 'prep', 'prod'). RED numbers are then computed from that environment's spans only. Empty = all environments.",
 				},
 				"range_s": map[string]any{
 					"type":        "integer",
@@ -302,11 +318,18 @@ func listServicesTool(d Deps) mcp.Tool {
 			}
 			from, to := rangeWindow(a.RangeS)
 			limit := clampLimit(a.Limit, 50, 500)
-			rows, err := d.Store.GetServicesFiltered(ctx, 0, from, to, a.NameContains, "rps", "desc", limit, 0)
+			// v0.8.398 — same read, env-capable variant (GetServicesFiltered
+			// delegates here with env=""; an env-less call stays byte-
+			// identical). Non-empty env adds the typed deploy_env conjunct.
+			rows, err := d.Store.GetServicesFilteredIn(ctx, 0, from, to, a.NameContains, nil, "rps", "desc", limit, 0, "", a.Env)
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"services": rows, "count": len(rows)}, nil
+			res := map[string]any{"services": rows, "count": len(rows)}
+			if a.Env != "" {
+				res["env"] = a.Env // echo the applied narrowing
+			}
+			return res, nil
 		},
 	}
 }
@@ -315,19 +338,24 @@ func listServicesTool(d Deps) mcp.Tool {
 
 type getServiceHealthArgs struct {
 	Service string `json:"service"`
+	Env     string `json:"env,omitempty"` // v0.8.398 — deploy_env narrowing
 	RangeS  int    `json:"range_s,omitempty"`
 }
 
 func getServiceHealthTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_service_health",
-		Description: "Get RED metrics (rate, errors, duration p99) + open problem count for one service over a window. Use after list_services to drill into a specific service's recent health.",
+		Description: "Get RED metrics (rate, errors, duration p99) + open problem count for one service over a window. Use after list_services to drill into a specific service's recent health. Pass env to scope both to one deployment environment.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"service": map[string]any{
 					"type":        "string",
 					"description": "Exact service name. Required.",
+				},
+				"env": map[string]any{
+					"type":        "string",
+					"description": "Deployment environment to narrow to (deploy_env, e.g. 'int', 'uat', 'prep'). The RED summary is computed from that environment's spans; the open-problem count uses service-scoped env semantics (problems carry no env dimension). found=false with env set can mean 'service exists but not in this env'. Empty = all environments.",
 				},
 				"range_s": map[string]any{
 					"type":        "integer",
@@ -345,22 +373,33 @@ func getServiceHealthTool(d Deps) mcp.Tool {
 				return nil, fmt.Errorf("service is required")
 			}
 			from, to := rangeWindow(a.RangeS)
-			rows, err := d.Store.GetServicesFiltered(ctx, 0, from, to, a.Service, "rps", "desc", 1, 0)
+			// v0.8.398 — env-capable variant of the same read; env=""
+			// stays byte-identical to the old GetServicesFiltered call.
+			rows, err := d.Store.GetServicesFilteredIn(ctx, 0, from, to, a.Service, nil, "rps", "desc", 1, 0, "", a.Env)
 			if err != nil {
 				return nil, err
 			}
 			if len(rows) == 0 {
-				return map[string]any{"found": false, "service": a.Service}, nil
+				res := map[string]any{"found": false, "service": a.Service}
+				if a.Env != "" {
+					res["env"] = a.Env
+				}
+				return res, nil
 			}
 			probs, _ := d.Store.CountProblems(ctx, chstore.ProblemFilter{
 				Status:  "open",
 				Service: a.Service,
+				Env:     a.Env, // v0.8.398 — service-scoped env semantics (env_members.go)
 			})
-			return map[string]any{
+			res := map[string]any{
 				"found":         true,
 				"summary":       rows[0],
 				"open_problems": probs,
-			}, nil
+			}
+			if a.Env != "" {
+				res["env"] = a.Env // echo the applied narrowing
+			}
+			return res, nil
 		},
 	}
 }
@@ -370,6 +409,7 @@ func getServiceHealthTool(d Deps) mcp.Tool {
 type listProblemsArgs struct {
 	Status   string `json:"status,omitempty"`
 	Service  string `json:"service,omitempty"`
+	Env      string `json:"env,omitempty"` // v0.8.398 — service-scoped env narrowing
 	Severity string `json:"severity,omitempty"`
 	Priority string `json:"priority,omitempty"`
 	Limit    int    `json:"limit,omitempty"`
@@ -378,12 +418,16 @@ type listProblemsArgs struct {
 func listProblemsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_problems",
-		Description: "List Coremetry Problems (alerts that fired). Default filters to status=open. Use priority=P1 for the most urgent. Each problem has rule_id + service + severity + first_seen + a priority reason explaining why it's at its current P1/P2/P3 tier. When Coremetry's deterministic correlation engine has synthesized a root-cause verdict for a problem, the row also carries rootCause {topSuspect, topScore, confidence} — treat it as the primary root-cause signal instead of guessing.",
+		Description: "List Coremetry Problems (alerts that fired). Default filters to status=open. Use priority=P1 for the most urgent. Each problem has rule_id + service + severity + first_seen + a priority reason explaining why it's at its current P1/P2/P3 tier. When Coremetry's deterministic correlation engine has synthesized a root-cause verdict for a problem, the row also carries rootCause {topSuspect, topScore, confidence} — treat it as the primary root-cause signal instead of guessing. Pass env to narrow to one deployment environment (service-scoped: problems of services that ran in that env).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"status":   map[string]any{"type": "string", "enum": []string{"", "open", "resolved"}, "description": "Default 'open'."},
-				"service":  map[string]any{"type": "string", "description": "Filter to one service."},
+				"status":  map[string]any{"type": "string", "enum": []string{"", "open", "resolved"}, "description": "Default 'open'."},
+				"service": map[string]any{"type": "string", "description": "Filter to one service."},
+				"env": map[string]any{
+					"type":        "string",
+					"description": "Deployment environment filter (e.g. 'int', 'uat', 'prep'). Problems carry no env dimension, so this is SERVICE-scoped: keeps problems whose service emitted spans in that env within the last hour, plus global service-less rules. Empty = all environments.",
+				},
 				"severity": map[string]any{"type": "string", "enum": []string{"", "critical", "warning", "info"}},
 				"priority": map[string]any{"type": "string", "enum": []string{"", "P1", "P2", "P3"}, "description": "Triage tier. P1=handle now."},
 				"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "description": "Default 25."},
@@ -403,6 +447,7 @@ func listProblemsTool(d Deps) mcp.Tool {
 			f := chstore.ProblemFilter{
 				Status:   status,
 				Service:  a.Service,
+				Env:      a.Env, // v0.8.398 — service-scoped env semantics (env_members.go)
 				Severity: a.Severity,
 				Limit:    clampLimit(a.Limit, 25, 200),
 			}
@@ -419,7 +464,11 @@ func listProblemsTool(d Deps) mcp.Tool {
 			// /problems ribbon shows. One batched GetHypotheses read;
 			// soft-fails to unenriched rows. Additive, omitempty field.
 			rows = d.Store.EnrichProblemsWithRootCause(ctx, rows)
-			return map[string]any{"problems": rows, "count": len(rows)}, nil
+			res := map[string]any{"problems": rows, "count": len(rows)}
+			if a.Env != "" {
+				res["env"] = a.Env // echo the applied narrowing (v0.8.398)
+			}
+			return res, nil
 		},
 	}
 }

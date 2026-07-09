@@ -39,6 +39,14 @@ import (
 // then one `answer`, then `done`. The single Explain call self-records
 // one ai_calls row under the "chat-guided" surface so the /ai page can
 // track guided-path quality separately from the free loop.
+//
+// v0.8.398 (AI audit env-awareness slice): the router also extracts a
+// deployment environment against the LIVE env list ("uat ortamındaki
+// hatalar", "errors in the uat environment", bare "uat") and threads
+// it into the bundles — problems via ProblemFilter.Env (service-
+// scoped), slow traces via TraceFilter.Env (deploy_env conjunct);
+// env-less data paths (service RED context, logs, deploys) state the
+// limitation in the evidence instead of silently ignoring the ask.
 
 // ─── Intent router (pure, table-tested) ─────────────────────────────
 
@@ -56,6 +64,15 @@ const (
 type guidedRoute struct {
 	Intent  guidedIntent
 	Service string // extracted entity, "" = none/global
+	// Env (v0.8.398 — AI audit env-awareness slice) is the deployment
+	// environment extracted from the question against the LIVE env
+	// list (ListEnvironments), "" = no env narrowing. Threaded into
+	// the prefetch bundles: problems → ProblemFilter.Env (service-
+	// scoped, env_members.go), slow_traces → TraceFilter.Env (direct
+	// deploy_env conjunct). Logs/deploys carry no env path yet
+	// (env-separation Phase 4 pending) — those bundles SAY so in the
+	// evidence instead of silently ignoring the ask.
+	Env string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -206,7 +223,7 @@ func indexBounded(msg, sub string) int {
 // resolves to "checkout-service" when exactly one service starts with
 // that token. Ambiguous prefixes (2+ matches) return "" — deterministic
 // beats clever.
-func extractServiceEntity(msg string, services []string) string {
+func extractServiceEntity(msg string, services, envs []string) string {
 	best := ""
 	for _, svc := range services {
 		ls := strings.ToLower(svc)
@@ -220,8 +237,17 @@ func extractServiceEntity(msg string, services []string) string {
 	if best != "" {
 		return best
 	}
+	// v0.8.398 — a token that names a LIVE deployment environment is
+	// never a service-PREFIX candidate: "uat ortamındaki hatalar" must
+	// not resolve to a "uat-gateway" service. The bounded full-name
+	// pass above still wins when the operator literally types the
+	// service name ("uat-gateway hataları").
+	envTok := map[string]bool{}
+	for _, e := range envs {
+		envTok[strings.ToLower(e)] = true
+	}
 	for _, t := range guidedTokens(msg) {
-		if len(t) < 3 || guidedStopwords[t] || !asciiNameToken(t) {
+		if len(t) < 3 || guidedStopwords[t] || envTok[t] || !asciiNameToken(t) {
 			continue
 		}
 		match, n := "", 0
@@ -246,28 +272,55 @@ func extractServiceEntity(msg string, services []string) string {
 	return ""
 }
 
+// extractEnvEntity matches the message against the LIVE environment
+// list (ListEnvironments — never a guess), the env twin of
+// extractServiceEntity's bounded full-name pass (v0.8.398). Bounded
+// matching gives both asks for free: the bare name ("uat hataları")
+// and the phrased forms ("uat ortamında/ortamı", "uat environment",
+// "env uat") all contain the standalone env token, while an
+// env-suffixed SERVICE name ("mobile-bff-uat") never leaks an env —
+// '-' is a name char, so the inner "uat" fails the boundary check.
+// Longest match wins ("preprod" beats "prod"; "prod" can't match
+// inside "preprod" anyway). Unknown env words return "" — the bundle
+// then runs env-less, deterministic beats clever. No prefix fallback:
+// env names are short, exact vocabulary.
+func extractEnvEntity(msg string, envs []string) string {
+	best := ""
+	for _, env := range envs {
+		le := strings.ToLower(env)
+		if len(le) < 2 || len(le) <= len(best) {
+			continue
+		}
+		if indexBounded(msg, le) >= 0 {
+			best = env
+		}
+	}
+	return best
+}
+
 // routeGuidedIntent is THE router: normalized keyword matching over
 // the five shapes, most-specific first. Pure — table-tested in
 // copilot_guided_test.go with Turkish + English variants.
-func routeGuidedIntent(raw string, services []string) guidedRoute {
+func routeGuidedIntent(raw string, services, envs []string) guidedRoute {
 	msg := normalizeGuidedMsg(raw)
 	toks := guidedTokens(msg)
-	svc := extractServiceEntity(msg, services)
+	svc := extractServiceEntity(msg, services, envs)
+	env := extractEnvEntity(msg, envs)
 	switch {
 	case hasSlowTraceSignal(msg):
-		return guidedRoute{guidedSlowTraces, svc}
+		return guidedRoute{guidedSlowTraces, svc, env}
 	case hasDeploySignal(toks):
-		return guidedRoute{guidedDeployImpact, svc}
+		return guidedRoute{guidedDeployImpact, svc, env}
 	case hasLogSignal(toks) && hasErrorSignal(toks):
-		return guidedRoute{guidedLogErrors, svc}
+		return guidedRoute{guidedLogErrors, svc, env}
 	case hasProblemSignal(toks):
-		return guidedRoute{guidedProblems, svc}
+		return guidedRoute{guidedProblems, svc, env}
 	case svc != "" && (hasHealthSignal(toks) || hasErrorSignal(toks)):
-		return guidedRoute{guidedServiceHealth, svc}
+		return guidedRoute{guidedServiceHealth, svc, env}
 	case hasErrorSignal(toks):
-		return guidedRoute{guidedProblems, ""}
+		return guidedRoute{guidedProblems, "", env}
 	}
-	return guidedRoute{guidedNone, ""}
+	return guidedRoute{guidedNone, "", ""}
 }
 
 // guidedRangeRe extracts "son 2 saat" / "last 30 minutes" style
@@ -370,7 +423,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	if !hasGuidedSignal(norm) {
 		return false, false // zero-cost fast path: no catalogue read
 	}
-	route := routeGuidedIntent(question, s.guidedServiceNames(ctx))
+	route := routeGuidedIntent(question, s.guidedServiceNames(ctx), s.guidedEnvNames(ctx))
 	if route.Intent == guidedNone {
 		return false, false
 	}
@@ -382,15 +435,15 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	var err error
 	switch route.Intent {
 	case guidedProblems:
-		evidence, sources, err = s.guidedProblemsBundle(ctx, emit, route.Service)
+		evidence, sources, err = s.guidedProblemsBundle(ctx, emit, route.Service, route.Env)
 	case guidedServiceHealth:
-		evidence, sources, err = s.guidedServiceHealthBundle(ctx, emit, route.Service, from, to, rangeS)
+		evidence, sources, err = s.guidedServiceHealthBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedSlowTraces:
-		evidence, sources, err = s.guidedSlowTracesBundle(ctx, emit, route.Service, from, to, rangeS)
+		evidence, sources, err = s.guidedSlowTracesBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedDeployImpact:
-		evidence, sources, err = s.guidedDeployBundle(ctx, emit, route.Service, rangeS)
+		evidence, sources, err = s.guidedDeployBundle(ctx, emit, route.Service, route.Env, rangeS)
 	case guidedLogErrors:
-		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, from, to, rangeS)
+		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may
@@ -438,67 +491,158 @@ func (s *Server) guidedServiceNames(ctx context.Context) []string {
 	return names
 }
 
+// guidedEnvNames returns the live deployment-environment list for
+// env-entity extraction (v0.8.398), the env twin of guidedServiceNames:
+// Redis-cached 60s so chat traffic costs at most one enumeration per
+// minute per replica. ListEnvironments with zero from/to resolves to
+// the last hour and is count-ordered (busiest env first — extraction's
+// equal-length tie-break follows list order, so the busiest wins).
+// Soft-fails to nil — the router then runs env-blind, which is the
+// pre-v0.8.398 behaviour.
+func (s *Server) guidedEnvNames(ctx context.Context) []string {
+	const key = "copilot:guided:envnames"
+	if b, ok, _ := s.cache.Get(ctx, key); ok && len(b) > 0 {
+		var names []string
+		if json.Unmarshal(b, &names) == nil {
+			return names
+		}
+	}
+	names, _, err := s.store.ListEnvironments(ctx, time.Time{}, time.Time{}, "", 200)
+	if err != nil {
+		return nil
+	}
+	if b, merr := json.Marshal(names); merr == nil {
+		_ = s.cache.Set(ctx, key, b, 60*time.Second)
+	}
+	return names
+}
+
 func emitGuidedStep(emit func(string, any), tool, args string) {
 	emit("step", map[string]string{"tool": tool, "args": args})
+}
+
+// withEnvArg appends the applied env to a step-event args echo so the
+// operator's progress chip shows env=uat when the bundle read was
+// env-narrowed (v0.8.398). Pure — table-tested. Bundles that CANNOT
+// apply the env (logs/deploys, Phase 4 pending) never call this —
+// the step echo only ever shows filters that were actually applied.
+func withEnvArg(argsJSON, env string) string {
+	if env == "" {
+		return argsJSON
+	}
+	if argsJSON == "" || argsJSON == "{}" {
+		return `{"env":"` + env + `"}`
+	}
+	return strings.TrimSuffix(argsJSON, "}") + `,"env":"` + env + `"}`
+}
+
+// guidedEnvlessNoteTR flags an env ask on a bundle whose data path has
+// no env dimension yet (logs + deploy markers — env-separation Phase 4
+// pending): the evidence SAYS the filter was not applied instead of
+// silently ignoring it. The narration prompt forbids inventing, so
+// this line is what keeps the 2B model from claiming "uat'ta ...".
+// Pure — table-tested (v0.8.398).
+func guidedEnvlessNoteTR(what, env string) string {
+	if env == "" {
+		return ""
+	}
+	return fmt.Sprintf("Not: %s ortam boyutu taşımıyor (env-ayrımı Faz 4 bekliyor) — %q ortam filtresi UYGULANMADI; sayılar tüm ortamların toplamı.\n", what, env)
+}
+
+// guidedProblemFilter builds the problems prefetch filter. Extracted
+// pure so the env threading (ProblemFilter.Env — service-scoped
+// semantics, env_members.go) is pinned by a table test (v0.8.398).
+func guidedProblemFilter(service, env string, limit int) chstore.ProblemFilter {
+	return chstore.ProblemFilter{Status: "open", Service: service, Env: env, Limit: limit}
+}
+
+// guidedTraceFilter builds the slow-traces prefetch filter. Extracted
+// pure so the env threading (TraceFilter.Env — direct deploy_env
+// conjunct, raw-fallback path) is pinned by a table test (v0.8.398).
+func guidedTraceFilter(service, env string, from, to time.Time) chstore.TraceFilter {
+	return chstore.TraceFilter{
+		Service: service, Env: env, From: from, To: to,
+		Sort: "duration", Order: "desc", Limit: 10, CountMode: "skip",
+	}
 }
 
 // ─── Prefetch bundles (bounded, existing reads only) ────────────────
 
 // (a) "errors/problems now" → open problems + triage priority + the
 // persisted deterministic root-cause hypotheses (v0.8.394 enrichment).
-func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any), service string) (string, string, error) {
-	emitGuidedStep(emit, "list_problems", `{"status":"open"}`)
-	probs, err := s.store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Service: service, Limit: 50})
+// env (v0.8.398) rides ProblemFilter.Env — the service-scoped
+// semantics from env_members.go; the evidence spells that out so the
+// narration never oversells the filter.
+func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any), service, env string) (string, string, error) {
+	emitGuidedStep(emit, "list_problems", withEnvArg(`{"status":"open"}`, env))
+	probs, err := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 50))
 	if err != nil {
 		return "", "", err
 	}
 	probs = chstore.EnrichProblemsWithPriority(probs)
 	emitGuidedStep(emit, "root_cause_hypotheses", "")
 	probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
-	return renderProblemsEvidenceTR(probs, service, time.Now()),
-		"açık problemler + triage önceliği + kök-neden hipotezleri (canlı)", nil
+	evidence := renderProblemsEvidenceTR(probs, service, env, time.Now())
+	src := "açık problemler + triage önceliği + kök-neden hipotezleri (canlı)"
+	if env != "" {
+		evidence += fmt.Sprintf("Not: problem kayıtları ortam boyutu taşımaz — %q filtresi servis üyeliğiyle uygulandı (bu ortamda koşan servislerin problemleri + global kurallar).\n", env)
+		src += fmt.Sprintf(", ortam: %s (servis kapsamlı)", env)
+	}
+	return evidence, src, nil
 }
 
 // (b) "service X sağlığı/health/slow" → the analyze-service context
 // bundle (buildServiceContext + renderServiceSnapshot, reused
 // verbatim) + the service's open problems with root-cause.
-func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time, rangeS int64) (string, string, error) {
+// buildServiceContext is env-BLIND (its MV reads have no env
+// dimension) — an env ask (v0.8.398) narrows only the problems
+// sub-read and prepends an honest one-liner so the model attributes
+// the RED numbers correctly instead of claiming they're env-scoped.
+func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string, any), service, env string, from, to time.Time, rangeS int64) (string, string, error) {
 	emitGuidedStep(emit, "service_context", `{"service":"`+service+`"}`)
 	cx := s.buildServiceContext(ctx, service, from, to)
 	var b strings.Builder
+	if env != "" {
+		fmt.Fprintf(&b, "Not: RED değerleri tüm ortamların toplamı (servis bağlamı ortam kırılımı yapmıyor); açık problemler %q ortamına daraltıldı.\n", env)
+	}
 	b.WriteString(renderServiceSnapshot(cx))
 	if cx.Current.Spans == 0 {
 		b.WriteString("Bu pencerede span verisi yok.\n")
 	}
-	emitGuidedStep(emit, "list_problems", `{"service":"`+service+`"}`)
-	probs, perr := s.store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Service: service, Limit: 10})
+	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
+	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil {
 		probs = chstore.EnrichProblemsWithPriority(probs)
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		if len(probs) == 0 {
 			b.WriteString("Açık problem yok.\n")
 		} else {
-			b.WriteString(renderProblemsEvidenceTR(probs, service, time.Now()))
+			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
 		}
 	}
 	src := fmt.Sprintf("servis RED özeti + baseline + en sık hatalar + deploy işaretçileri + açık problemler (son %s)", fmtAgoTR(rangeS))
+	if env != "" {
+		src += fmt.Sprintf("; RED tüm ortamlar, problemler ortam: %s", env)
+	}
 	return b.String(), src, nil
 }
 
 // (c) "en yavaş/slowest traces [service]" → duration-ranked trace
 // summaries from the trace_summary_5m fast path (Sort=duration,
-// CountMode=skip — the same shape /traces uses).
-func (s *Server) guidedSlowTracesBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time, rangeS int64) (string, string, error) {
-	emitGuidedStep(emit, "slow_traces", `{"service":"`+service+`","sort":"duration"}`)
-	rows, _, _, err := s.store.GetTraces(ctx, chstore.TraceFilter{
-		Service: service, From: from, To: to,
-		Sort: "duration", Order: "desc", Limit: 10, CountMode: "skip",
-	})
+// CountMode=skip — the same shape /traces uses). env (v0.8.398) rides
+// TraceFilter.Env — the direct deploy_env conjunct; a non-empty env
+// takes the raw-fallback path exactly like the /traces ?env= pick.
+func (s *Server) guidedSlowTracesBundle(ctx context.Context, emit func(string, any), service, env string, from, to time.Time, rangeS int64) (string, string, error) {
+	emitGuidedStep(emit, "slow_traces", withEnvArg(`{"service":"`+service+`","sort":"duration"}`, env))
+	rows, _, _, err := s.store.GetTraces(ctx, guidedTraceFilter(service, env, from, to))
 	if err != nil {
 		return "", "", err
 	}
 	src := fmt.Sprintf("duration'a göre sıralı trace listesi (son %s)", fmtAgoTR(rangeS))
-	return renderSlowTracesEvidenceTR(rows, service, rangeS), src, nil
+	if env != "" {
+		src += fmt.Sprintf(", ortam: %s", env)
+	}
+	return renderSlowTracesEvidenceTR(rows, service, env, rangeS), src, nil
 }
 
 // guidedDeployRef unifies the two deploy reads (global
@@ -511,8 +655,11 @@ type guidedDeployRef struct {
 
 // (d) "deploy etkisi/son deploy" → recent rollouts + before/after RED
 // impact (ComputeDeployImpact, single bounded CH pass per deploy,
-// capped at 3).
-func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any), service string, rangeS int64) (string, string, error) {
+// capped at 3). Deploy markers carry NO env dimension (env-separation
+// Phase 4 pending) — an env ask (v0.8.398) is answered honestly via
+// guidedEnvlessNoteTR instead of silently ignored; the step echo also
+// omits env because the filter was not applied.
+func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any), service, env string, rangeS int64) (string, string, error) {
 	// Deploy questions imply a wider horizon than the default 30m chat
 	// window — "son deploy" is rarely in the last half hour. Floor the
 	// lookback at 6h, cap 24h (GetRecentDeploys scales its CH timeout
@@ -557,14 +704,21 @@ func (s *Server) guidedDeployBundle(ctx context.Context, emit func(string, any),
 		}
 	}
 	src := "deploy işaretçileri + öncesi/sonrası RED etkisi (±10dk pencere)"
-	return renderDeployEvidenceTR(refs, impacts, lookback, time.Now()), src, nil
+	if env != "" {
+		src += "; ortam filtresi uygulanamadı (deploy verisi ortam boyutu taşımıyor)"
+	}
+	return guidedEnvlessNoteTR("deploy işaretçileri", env) +
+		renderDeployEvidenceTR(refs, impacts, lookback, time.Now()), src, nil
 }
 
 // (e) "log hataları/log errors [service]" → severity histogram totals
 // + the curated failure-pattern detector hits (both reads carry the
 // existing ES/CH cost guards; the pattern window snaps to the same
-// rungs the /anomalies endpoint uses).
-func (s *Server) guidedLogErrorsBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time, rangeS int64) (string, string, error) {
+// rungs the /anomalies endpoint uses). Logs carry NO env dimension
+// (env-separation Phase 4 pending) — an env ask (v0.8.398) is
+// answered honestly via guidedEnvlessNoteTR instead of silently
+// ignored; the step echo omits env because the filter was not applied.
+func (s *Server) guidedLogErrorsBundle(ctx context.Context, emit func(string, any), service, env string, from, to time.Time, rangeS int64) (string, string, error) {
 	emitGuidedStep(emit, "log_severity_histogram", `{"service":"`+service+`"}`)
 	bucketSec := int(rangeS / 30)
 	if bucketSec < 60 {
@@ -600,17 +754,38 @@ func (s *Server) guidedLogErrorsBundle(ctx context.Context, emit func(string, an
 		pats = pats[:5]
 	}
 	src := fmt.Sprintf("log severity histogramı + hata pattern tespitleri (son %s)", fmtAgoTR(rangeS))
-	return renderLogErrorsEvidenceTR(series, pats, service, rangeS), src, nil
+	if env != "" {
+		src += "; ortam filtresi uygulanamadı (log verisi ortam boyutu taşımıyor)"
+	}
+	return guidedEnvlessNoteTR("log verisi", env) +
+		renderLogErrorsEvidenceTR(series, pats, service, rangeS), src, nil
 }
 
 // ─── Evidence renderers (pure, table-tested) ────────────────────────
 
 const guidedMaxLines = 10
 
-func renderProblemsEvidenceTR(probs []chstore.Problem, service string, now time.Time) string {
-	scope := ""
+// guidedScopeTR renders the "(servis: X, ortam: Y)" scope fragment
+// shared by the problems + slow-traces evidence headers (v0.8.398).
+// Pure — table-tested. Empty parts drop out; both empty = "".
+func guidedScopeTR(service, env string) string {
+	var parts []string
 	if service != "" {
-		scope = fmt.Sprintf(" (servis: %s)", service)
+		parts = append(parts, "servis: "+service)
+	}
+	if env != "" {
+		parts = append(parts, "ortam: "+env)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(parts, ", ")
+}
+
+func renderProblemsEvidenceTR(probs []chstore.Problem, service, env string, now time.Time) string {
+	scope := ""
+	if sc := guidedScopeTR(service, env); sc != "" {
+		scope = " (" + sc[2:] + ")" // strip the leading ", " — header form
 	}
 	if len(probs) == 0 {
 		return "Açık problem yok" + scope + ".\n"
@@ -653,11 +828,8 @@ func renderProblemsEvidenceTR(probs []chstore.Problem, service string, now time.
 	return b.String()
 }
 
-func renderSlowTracesEvidenceTR(rows []chstore.TraceRow, service string, rangeS int64) string {
-	scope := ""
-	if service != "" {
-		scope = fmt.Sprintf(", servis: %s", service)
-	}
+func renderSlowTracesEvidenceTR(rows []chstore.TraceRow, service, env string, rangeS int64) string {
+	scope := guidedScopeTR(service, env)
 	if len(rows) == 0 {
 		return fmt.Sprintf("En yavaş trace'ler (son %s%s): bu pencerede trace bulunamadı.\n", fmtAgoTR(rangeS), scope)
 	}

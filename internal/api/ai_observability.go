@@ -107,6 +107,21 @@ func (s *Server) copilotExplain(r *http.Request, system, user string) (string, e
 	return s.copilot.Explain(ctx, system, user)
 }
 
+// copilotExplainSurface (v0.8.397) — sibling wrapper for handlers
+// whose surface label is NOT derivable from the URL path: the guided
+// chat mode answers on POST /api/copilot/chat but must land in
+// ai_calls as "chat-guided" so the /ai page can track guided-path
+// quality separately from the free tool loop's "chat" rows. The ctx
+// must already carry the user meta (copilot.WithMeta, as the chat
+// handler sets); only the surface is overridden here. Lives in the
+// wrapper's own file so CHECK 4 (make audit) keeps guarding every
+// other call site against direct s.copilot.Explain use.
+func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, user string) (string, error) {
+	meta := copilot.MetaFromContext(ctx)
+	meta.Surface = surface
+	return s.copilot.Explain(copilot.WithMeta(ctx, meta), system, user)
+}
+
 // aiSurfaceFromPath maps the request path to a short stable
 // surface label for grouping. Every /api/copilot/* endpoint has
 // a unique path so we just take the last segment with the

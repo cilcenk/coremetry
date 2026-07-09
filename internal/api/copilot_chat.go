@@ -98,6 +98,19 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := copilot.WithMeta(r.Context(), copilot.CallMeta{Surface: "chat", UserID: uid, UserEmail: email})
 
+	// v0.8.397 (AI audit A3) — guided mode first, for EVERY provider:
+	// a deterministic intent router recognises the highest-value
+	// question shapes, the server prefetches the data, and the model
+	// makes exactly ONE tool-less narration call (copilot_guided.go).
+	// Deterministic beats tool-roulette on these shapes even for
+	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
+	// drive the 5-round × 11-schema loop reliably at all. No match →
+	// the free tool loop below runs UNCHANGED.
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages); handled {
+		emit("done", map[string]bool{"ok": gok})
+		return
+	}
+
 	// Build the tool set once (closures over the live store + logs)
 	// and the LLM-facing specs from the same list.
 	tools := mcptools.ToolList(mcptools.Deps{Store: s.store, LogStore: s.logs})

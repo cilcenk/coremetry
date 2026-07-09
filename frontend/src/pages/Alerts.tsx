@@ -23,6 +23,11 @@ import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
 export default function AlertsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  // v0.8.424 — operator-reported: viewers saw + New rule / Edit /
+  // Enable / Disable / Delete (the backend already 403s via
+  // editorRoles, but the UI advertised write access). Invariant #7:
+  // viewer SEES state read-only — rules render, mutations hide.
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [range, setRange] = useUrlRange('30m');
   const [services, setServices] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
@@ -257,10 +262,12 @@ export default function AlertsPage() {
             Evaluator runs every minute. Built-in rules ship pre-configured but
             can be edited or disabled to taste.
           </span>
-          <Button variant="primary" onClick={() => showForm ? cancelForm() : setShowForm(true)}
-                  style={{ marginLeft: 'auto' }}>
-            {showForm ? 'Cancel' : '+ New alert rule'}
-          </Button>
+          {canEdit && (
+            <Button variant="primary" onClick={() => showForm ? cancelForm() : setShowForm(true)}
+                    style={{ marginLeft: 'auto' }}>
+              {showForm ? 'Cancel' : '+ New alert rule'}
+            </Button>
+          )}
         </div>
 
         {/* Noisy-rules report — surfaces rules that have opened
@@ -268,7 +275,12 @@ export default function AlertsPage() {
             "Apply" affordance that pre-fills the edit form with
             the suggested dampening values. Self-hides when no rule
             has a suggestion. */}
-        <NoisyRulesPanel rules={rules} onEditFromSuggestion={editFromSuggestion} />
+        {/* v0.8.424 — editors only: the panel is pure mutation surface
+            (Apply/Disable suggestions pre-filling the edit form a
+            viewer doesn't have). */}
+        {canEdit && (
+          <NoisyRulesPanel rules={rules} onEditFromSuggestion={editFromSuggestion} />
+        )}
 
         {showForm && (
           <div style={{
@@ -522,7 +534,9 @@ export default function AlertsPage() {
         )}
         {rules && rules.length === 0 && (
           <Empty icon="🔔" title="No alert rules"
-            action={<Button variant="primary" onClick={() => setShowForm(true)}>+ New rule</Button>}>
+            action={canEdit
+              ? <Button variant="primary" onClick={() => setShowForm(true)}>+ New rule</Button>
+              : undefined}>
             <div style={{ marginTop: 6, color: 'var(--text2)' }}>
               Alert rules turn anomaly detectors and threshold checks into
               named, routable problems — or import from your existing config
@@ -601,17 +615,21 @@ export default function AlertsPage() {
                           ↗ logs
                         </a>
                       )}
-                      <Button variant="secondary" size="sm" onClick={() => startEdit(r)}>Edit</Button>
-                      {r.enabled
-                        ? <Button variant="secondary" size="sm" onClick={() => disable(r.id)}
-                            title="Silence the rule without removing its definition">
-                            Disable
+                      {canEdit && (
+                        <>
+                          <Button variant="secondary" size="sm" onClick={() => startEdit(r)}>Edit</Button>
+                          {r.enabled
+                            ? <Button variant="secondary" size="sm" onClick={() => disable(r.id)}
+                                title="Silence the rule without removing its definition">
+                                Disable
+                              </Button>
+                            : <Button variant="secondary" size="sm" onClick={() => enable(r.id)}>Enable</Button>}
+                          <Button variant="danger" size="sm" onClick={() => remove(r.id)}
+                            title="Remove the rule entirely from ClickHouse">
+                            Delete
                           </Button>
-                        : <Button variant="secondary" size="sm" onClick={() => enable(r.id)}>Enable</Button>}
-                      <Button variant="danger" size="sm" onClick={() => remove(r.id)}
-                        title="Remove the rule entirely from ClickHouse">
-                        Delete
-                      </Button>
+                        </>
+                      )}
                     </td>
                   </tr>
                   );

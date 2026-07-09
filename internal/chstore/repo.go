@@ -3055,6 +3055,10 @@ type LogFilter struct {
 	SeverityMin uint8
 	TraceID     string
 	SpanID      string // optional: only logs attached to this span
+	// HasTrace (v0.8.406) — only rows with a trace correlation
+	// (trace_id != ''). Applied before the SinceNs branch so the
+	// count(), page read AND forward-tail all carry it.
+	HasTrace    bool
 	Limit       int
 	Offset      int
 	// Cursor (v0.7.22, SAFE-CORE) — opaque CH keyset token from a
@@ -3256,6 +3260,9 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	}
 	if f.SpanID != "" {
 		wc.add("span_id = ?", f.SpanID)
+	}
+	if f.HasTrace {
+		wc.add("trace_id != ''")
 	}
 	if f.Limit <= 0 {
 		f.Limit = 100

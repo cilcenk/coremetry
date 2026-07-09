@@ -34,6 +34,8 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		SeverityMin: f.SeverityMin,
 		TraceID:     f.TraceID,
 		SpanID:      f.SpanID,
+		HasTrace:    f.HasTrace, // v0.8.406 — trace-only filter
+
 		Limit:       f.Limit,
 		Offset:      f.Offset,
 		Cursor:      f.Cursor, // v0.7.22 — opaque CH keyset token round-trip
@@ -207,6 +209,9 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		for _, id := range f.TraceIDs {
 			args = append(args, id)
 		}
+	}
+	if f.HasTrace {
+		wc += " AND trace_id != ''" // v0.8.406 — trace-only filter
 	}
 
 	// Top-20 groups by total count (mirrors the ES path's

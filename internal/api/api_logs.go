@@ -119,6 +119,7 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
 		SeverityMin: uint8(sev),
 		TraceID:     q.Get("traceId"),
 		SpanID:      q.Get("spanId"),
+		HasTrace:    parseBoolParam(q.Get("hasTrace")), // v0.8.406 — trace-only filter
 		Limit:       logstore.LogsTailMax,
 	}
 
@@ -206,8 +207,8 @@ func logsFieldStatsKey(field string, f logstore.Filter, fromRaw, toRaw string) s
 }
 
 func logsTimeseriesKey(f logstore.Filter, fromRaw, toRaw string, bucketSec int, groupBy string) string {
-	return fmt.Sprintf("logs-ts:svc=%s:env=%s:sev=%d:trace=%s:from=%s:to=%s:b=%d:g=%s:q=%s",
-		f.Service, f.Env, f.SeverityMin, f.TraceID, fromRaw, toRaw,
+	return fmt.Sprintf("logs-ts:svc=%s:env=%s:sev=%d:trace=%s:ht=%t:from=%s:to=%s:b=%d:g=%s:q=%s",
+		f.Service, f.Env, f.SeverityMin, f.TraceID, f.HasTrace, fromRaw, toRaw,
 		bucketSec, groupBy, f.Search)
 }
 
@@ -217,8 +218,8 @@ func logsTimeseriesKey(f logstore.Filter, fromRaw, toRaw string, bucketSec int, 
 // cross-poison the unfiltered one inside the 15s TTL (the v0.5.187
 // class; pinned by logs_env_key_test.go).
 func logsSearchKey(f logstore.Filter, fromRaw, toRaw string) string {
-	return fmt.Sprintf("logs:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:lim=%d:off=%d:cur=%s:q=%s",
-		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID,
+	return fmt.Sprintf("logs:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:lim=%d:off=%d:cur=%s:q=%s",
+		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID, f.HasTrace,
 		fromRaw, toRaw, f.Limit, f.Offset, f.Cursor, f.Search)
 }
 
@@ -235,6 +236,7 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		SeverityMin: uint8(sev),
 		TraceID:     q.Get("traceId"),
 		SpanID:      q.Get("spanId"),
+		HasTrace:    parseBoolParam(q.Get("hasTrace")), // v0.8.406 — trace-only filter
 		Limit:       parseInt(q.Get("limit"), 100),
 		Offset:      parseInt(q.Get("offset"), 0),
 		// v0.7.22 (SAFE-CORE) — opaque keyset cursor. The UI passes
@@ -710,6 +712,7 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 		To:          parseTime(q.Get("to")),
 		SeverityMin: uint8(sev),
 		TraceID:     q.Get("traceId"),
+		HasTrace:    parseBoolParam(q.Get("hasTrace")), // v0.8.406 — trace-only filter
 	}
 	bucketSec := parseInt(q.Get("bucketSec"), 30)
 	// v0.5.259 — was: floor 5s. Lowered to 1s so the operator can

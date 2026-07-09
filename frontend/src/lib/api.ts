@@ -430,6 +430,7 @@ export const api = {
     to?: number;
     severity?: number;
     traceId?: string;
+    hasTrace?: boolean; // v0.8.406 — trace-only filter
     bucketSec?: number;
     groupBy?: string;
   }) =>
@@ -2092,6 +2093,9 @@ export interface LogsParams {
   severity?: number;
   traceId?: string;
   spanId?: string;
+  // hasTrace (v0.8.406) — only logs with a trace correlation
+  // (CH trace_id != '' / ES exists on the trace field shapes).
+  hasTrace?: boolean;
   from?: number;
   to?: number;
   limit?: number;

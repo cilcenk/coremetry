@@ -2273,6 +2273,31 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		must = append(must, traceTermsAny(s.fields.SpanID, s.fields.Body,
 			strings.ToLower(f.SpanID), "span"))
 	}
+	// v0.8.406 — trace-only filter (operator ask: "sadece trace'i olan
+	// loglar"). exists over the same four common trace-field spellings
+	// the TraceID lookup fans out to (+ the configured override).
+	// exists on a missing path is a cheap no-match, so wrong branches
+	// cost nothing; any one shape present keeps the doc.
+	if f.HasTrace {
+		htFields := []string{s.fields.TraceID, "trace.id", "TraceId", "trace_id", "traceId"}
+		seenHT := map[string]bool{}
+		htShould := []any{}
+		for _, fld := range htFields {
+			if fld == "" || seenHT[fld] {
+				continue
+			}
+			seenHT[fld] = true
+			htShould = append(htShould, map[string]any{
+				"exists": map[string]any{"field": fld},
+			})
+		}
+		must = append(must, map[string]any{
+			"bool": map[string]any{
+				"should":               htShould,
+				"minimum_should_match": 1,
+			},
+		})
+	}
 	if f.Service != "" {
 		// v0.7.16 — match the EXACT-value `.keyword` sub-field, not the
 		// analyzed text field. ES dynamic-maps service.name as text+keyword;

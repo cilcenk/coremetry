@@ -9807,6 +9807,12 @@ func isSafeAttrKey(s string) bool {
 	return true
 }
 
+// parseBoolParam reads a query-string boolean: "1" / "true" (any
+// case) are true, everything else false. v0.8.406.
+func parseBoolParam(s string) bool {
+	return s == "1" || strings.EqualFold(s, "true")
+}
+
 func parseInt(s string, def int) int {
 	if v, err := strconv.Atoi(s); err == nil {
 		return v

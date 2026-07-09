@@ -55,6 +55,12 @@ type Filter struct {
 	// stays primary for the existing /logs page UX.
 	TraceIDs    []string
 	SpanID      string
+	// HasTrace (v0.8.406 — operator ask: "sadece trace'i olan loglar")
+	// keeps only records with a non-empty trace correlation, so the
+	// operator can filter /logs to pivotable rows. CH: trace_id != ''.
+	// ES: exists over the four common trace-field spellings (+ the
+	// configured override) — same field fan-out as the TraceID lookup.
+	HasTrace    bool
 	Limit       int
 	Offset      int
 	// Cursor (v0.7.22, SAFE-CORE) — opaque keyset paging token.

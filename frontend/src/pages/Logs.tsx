@@ -126,10 +126,12 @@ function pickVolumeBucket(from?: number, to?: number): number {
 // string may be empty — Kibana handles "no query" cleanly.
 function buildKQLFromFilter(f: {
   service: string; search: string; severity: number; traceId: string; spanId: string;
+  hasTrace?: boolean;
 }): string {
   const parts: string[] = [];
   if (f.service) parts.push(`service.name:"${f.service.replace(/"/g, '\\"')}"`);
   if (f.traceId) parts.push(`trace.id:"${f.traceId}"`);
+  if (f.hasTrace && !f.traceId) parts.push('trace.id:*'); // v0.8.406 — trace-only filter
   if (f.spanId)  parts.push(`span.id:"${f.spanId}"`);
   if (f.severity > 0) {
     // Map OTel severity number to a level name range; Kibana's
@@ -165,6 +167,9 @@ function LogsInner() {
   const resetPaging = () => { setCursor(''); setAccRows([]); };
   const [filter, setFilter] = useState({
     service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '',
+    // hasTrace (v0.8.406 — operator ask): keep only rows with a trace
+    // correlation so every visible line can pivot to its trace.
+    hasTrace: false,
   });
   const [draft, setDraft] = useState(filter);
   // Structured field filters (Kibana Discover pill model) — separate
@@ -238,9 +243,9 @@ function LogsInner() {
   // The sig hashes only the filter-bearing params, so range-only
   // changes no-op and self-writes (which pre-store their own sig)
   // don't double-apply.
-  const urlSig = (f: { service: string; cluster: string; search: string; traceId: string; spanId: string },
+  const urlSig = (f: { service: string; cluster: string; search: string; traceId: string; spanId: string; hasTrace: boolean },
     filtersRaw: string, colsRaw: string) =>
-    JSON.stringify([f.service, f.cluster, f.search, f.traceId, f.spanId, filtersRaw, colsRaw]);
+    JSON.stringify([f.service, f.cluster, f.search, f.traceId, f.spanId, f.hasTrace, filtersRaw, colsRaw]);
   const lastUrlSigRef = useRef<string | null>(null);
   useEffect(() => {
     const filtersRaw = searchParams.get('filters') ?? '';
@@ -252,6 +257,7 @@ function LogsInner() {
       severity: 0,
       traceId:  searchParams.get('traceId') ?? '',
       spanId:   searchParams.get('spanId')  ?? '',
+      hasTrace: searchParams.get('hasTrace') === '1', // v0.8.406
     };
     const sig = urlSig(next, filtersRaw, colsRaw);
     if (sig === lastUrlSigRef.current) return;
@@ -284,6 +290,7 @@ function LogsInner() {
       p.delete('search'); // legacy alias of q — never write both
       setOrDel('traceId', f.traceId);
       setOrDel('spanId', f.spanId);
+      setOrDel('hasTrace', f.hasTrace ? '1' : ''); // v0.8.406
       setOrDel('filters', filtersRaw);
       setOrDel('cols', colsRaw);
       return p;
@@ -354,6 +361,7 @@ function LogsInner() {
     severity: filter.severity > 0 ? filter.severity : undefined,
     traceId: filter.traceId || undefined,
     spanId:  filter.spanId  || undefined,
+    hasTrace: filter.hasTrace || undefined, // v0.8.406 — trace-only filter
   });
 
   // Level-facet counts. A per-severity timeseries query feeds the
@@ -371,13 +379,14 @@ function LogsInner() {
   const volumeEnabled = (from !== undefined && to !== undefined) || !!filter.traceId;
   const volumeBucket = useMemo(() => pickVolumeBucket(from, to), [from, to]);
   const volumeQ = useQuery({
-    queryKey: ['logs', 'sev-volume', from, to, filter.service, env, compiledSearch, filter.traceId, volumeBucket],
+    queryKey: ['logs', 'sev-volume', from, to, filter.service, env, compiledSearch, filter.traceId, filter.hasTrace, volumeBucket],
     queryFn: () => api.logsTimeseries({
       from, to,
       service: filter.service || undefined,
       env:     env || undefined, // v0.8.400 — global env filter
       search:  compiledSearch || undefined,
       traceId: filter.traceId || undefined,
+      hasTrace: filter.hasTrace || undefined, // v0.8.406 — trace-only filter
       groupBy: 'severity',
       bucketSec: volumeBucket,
     }),
@@ -421,6 +430,7 @@ function LogsInner() {
       if (env) p.set('env', env); // v0.8.400 — global env filter
       if (compiledSearch) p.set('search', compiledSearch);
       if (filter.severity > 0) p.set('severity', String(filter.severity));
+      if (filter.hasTrace) p.set('hasTrace', '1'); // v0.8.406 — trace-only filter
       if (newestNsRef.current) p.set('since', String(newestNsRef.current)); // reconnect catch-up
       es = new EventSource('/api/logs/stream?' + p.toString(), { withCredentials: true });
       es.addEventListener('log', (e) => {
@@ -449,7 +459,7 @@ function LogsInner() {
       es?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, filter.service, filter.cluster, env, compiledSearch, filter.severity]);
+  }, [live, filter.service, filter.cluster, env, compiledSearch, filter.severity, filter.hasTrace]);
 
   // When live, the table renders the SSE buffer; otherwise the static
   // windowed query. Live has no loading/error gate — rows fill in as they
@@ -509,7 +519,7 @@ function LogsInner() {
   }, []);
   const apply = () => { resetPaging(); setFilter(draft); writeUrl(draft, filters); };
   const reset = () => {
-    const empty = { service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '' };
+    const empty = { service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '', hasTrace: false };
     setDraft(empty); setFilter(empty); setFilters([]); resetPaging();
     writeUrl(empty, []);
   };
@@ -532,6 +542,15 @@ function LogsInner() {
   // removes, opposite flips) live in lib/logFilters.ts.
   const addFromRow      = (key: string, value: string) => applyPills(toggleFilter(filters, key, value, false));
   const excludeFromRow  = (key: string, value: string) => applyPills(toggleFilter(filters, key, value, true));
+  // v0.8.406 — trace-only toggle. Auto-applies (facet-chip semantics,
+  // not draft/Search): state + paging + URL in one step so Copy link
+  // reproduces the view.
+  const toggleHasTrace = () => {
+    const next = { ...filter, hasTrace: !filter.hasTrace };
+    setFilter(next); setDraft(d => ({ ...d, hasTrace: next.hasTrace }));
+    resetPaging();
+    writeUrl(next, filters);
+  };
   const clearTraceLock = () => {
     const next = { ...filter, traceId: '', spanId: '' };
     setFilter(next); setDraft(d => ({ ...d, traceId: '', spanId: '' }));
@@ -629,6 +648,16 @@ function LogsInner() {
             title="Filter logs to a single trace. Time range is ignored when this is set — searches across full retention."
             className="mono"
             style={{ width: 180, fontSize: 12 }} />
+          {/* v0.8.406 — operator ask: "sadece trace'i olan loglar".
+              Keeps only rows with a trace correlation, so every
+              visible line's Trace cell can pivot to /trace. Auto-
+              applies like the severity facet chips. */}
+          <button className={filter.hasTrace ? '' : 'sec'}
+            aria-pressed={filter.hasTrace}
+            onClick={toggleHasTrace}
+            title="Show only logs correlated with a trace — every row can pivot to its trace">
+            ◆ With trace
+          </button>
           <button onClick={apply}>Search</button>
           <button className="sec" onClick={reset}>Reset</button>
           <LogShareButton />

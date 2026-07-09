@@ -58,6 +58,7 @@ func tailFilterKey(f logstore.Filter) string {
 		f.Search,
 		strconv.Itoa(int(f.SeverityMin)),
 		f.TraceID, f.SpanID,
+		strconv.FormatBool(f.HasTrace), // v0.8.406 — trace-only filter
 	} {
 		h.Write([]byte(s))
 		h.Write([]byte{0}) // field separator so ("ab","c") != ("a","bc")

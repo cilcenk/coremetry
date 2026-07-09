@@ -21,8 +21,11 @@ export type QuerySource = 'span' | 'metric';
 // Viz set — line/area/bars render on TimeSeriesPanel; stat/toplist render the
 // per-series summary (SummaryViz, Phase 4); table is the GroupTable alone;
 // heatmap keeps the LatencyHeatmap path (driven by query A).
-export type ExploreViz = 'line' | 'area' | 'bars' | 'stat' | 'toplist' | 'table' | 'heatmap';
-export const EXPLORE_VIZ: ExploreViz[] = ['line', 'area', 'bars', 'stat', 'toplist', 'table', 'heatmap'];
+export type ExploreViz = 'line' | 'area' | 'bars' | 'stacked' | 'stat' | 'toplist' | 'pie' | 'table' | 'heatmap';
+// v0.8.427 (DE5) — 'stacked' rides TimeSeriesPanel's existing TSMode
+// ('stacked' cum-sum bands, v0.8 Phase 1A); 'pie' is a SummaryViz
+// projection (share of current value), no new chart deps.
+export const EXPLORE_VIZ: ExploreViz[] = ['line', 'area', 'bars', 'stacked', 'stat', 'toplist', 'pie', 'table', 'heatmap'];
 
 // Aggregations differ per source (plan ground-truth #10): the metric query
 // API supports avg|sum|min|max|last|p50|p95|p99; span signals add

@@ -167,7 +167,7 @@ export function buildPanels(
 
 export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick, logScale, onPin, pinnableLetters }: {
   panels: PanelData[];
-  viz: 'line' | 'area' | 'bars';
+  viz: 'line' | 'area' | 'bars' | 'stacked';
   hiddenKeys: Set<string>;          // `${letter}:${label}`
   focusKey: string | null;          // `${letter}:${label}`
   zoomWindow: { from: number; to: number } | null;

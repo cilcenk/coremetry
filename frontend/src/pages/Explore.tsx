@@ -463,7 +463,7 @@ function ExploreInner() {
                     affordance for series spanning decades (p50 vs p99, RPS
                     across hot+cold services). Rides ?q= like every other
                     builder knob; only meaningful on the line/area/bars set. */}
-                {(builder.viz === 'line' || builder.viz === 'area' || builder.viz === 'bars') && (
+                {(builder.viz === 'line' || builder.viz === 'area' || builder.viz === 'bars' || builder.viz === 'stacked') && (
                   <div className="segmented" style={{ marginLeft: 4 }}>
                     <button type="button"
                       onClick={() => setBuilder(b => ({ ...b, logY: !b.logY || undefined }))}
@@ -709,7 +709,7 @@ name ~ checkout`}
                   </div>
                 )}
                 {panels.length === 0 && anyLoading && <Spinner />}
-                {(debounced.viz === 'line' || debounced.viz === 'area' || debounced.viz === 'bars') && (
+                {(debounced.viz === 'line' || debounced.viz === 'area' || debounced.viz === 'bars' || debounced.viz === 'stacked') && (
                   <PanelStack panels={panels}
                     viz={debounced.viz}
                     logScale={!!debounced.logY}
@@ -725,7 +725,7 @@ name ~ checkout`}
                       if (p) setPinPanel(p);
                     }} />
                 )}
-                {(debounced.viz === 'stat' || debounced.viz === 'toplist') && (
+                {(debounced.viz === 'stat' || debounced.viz === 'toplist' || debounced.viz === 'pie') && (
                   <SummaryViz panels={panels} mode={debounced.viz} />
                 )}
                 {/* 'table' viz: no primary panel — the GroupTable below IS the view. */}

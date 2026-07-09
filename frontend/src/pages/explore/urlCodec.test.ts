@@ -60,6 +60,15 @@ describe('?q= codec round-trip', () => {
     expect(decodeBuilder(encodeBuilder(off))?.logY).toBeUndefined();
   });
 
+  it('stacked / pie viz (v0.8.427 DE5) round-trip; unknown viz falls to line', () => {
+    const st: BuilderState = {
+      queries: [blankQuery('A')], formula: '', viz: 'stacked', step: 0,
+    };
+    expect(decodeBuilder(encodeBuilder(st))?.viz).toBe('stacked');
+    expect(decodeBuilder(encodeBuilder({ ...st, viz: 'pie' }))?.viz).toBe('pie');
+    expect(decodeBuilder(JSON.stringify({ v: 'sunburst', q: [{ l: 'A' }] }))?.viz).toBe('line');
+  });
+
   it('rejects garbage', () => {
     expect(decodeBuilder('not json')).toBeNull();
     expect(decodeBuilder('{"q":[]}')).toBeNull();

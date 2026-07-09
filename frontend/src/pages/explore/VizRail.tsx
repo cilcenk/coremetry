@@ -9,8 +9,10 @@ const VIZ_META: Record<ExploreViz, { icon: string; label: string; hint: string }
   line:    { icon: '∿', label: 'Line',    hint: 'One line per series' },
   area:    { icon: '◪', label: 'Area',    hint: 'Filled line — good for rates' },
   bars:    { icon: '▮', label: 'Bars',    hint: 'Per-bucket bars — good for counts' },
+  stacked: { icon: '▟', label: 'Stacked', hint: 'Cum-sum stacked bands — composition over time (DE5)' },
   stat:    { icon: '#', label: 'Stat',    hint: 'Big current value per series' },
   toplist: { icon: '≣', label: 'Top list', hint: 'Series ranked by current value' },
+  pie:     { icon: '◔', label: 'Pie',     hint: 'Share of current value per series — donut per query (DE5)' },
   table:   { icon: '▤', label: 'Table',   hint: 'Per-series breakdown table only' },
   heatmap: { icon: '▦', label: 'Heatmap', hint: 'Latency density (time × log-duration) — uses query A' },
 };

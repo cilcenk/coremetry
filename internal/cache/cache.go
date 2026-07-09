@@ -38,6 +38,14 @@ type Cache interface {
 	// client through the abstraction. Noop returns (nil, nil) so
 	// single-instance dev falls back to a 1-member view.
 	ScanPrefix(ctx context.Context, prefix string) ([][]byte, error)
+	// MGet batch-reads the given keys in ONE round trip (Redis MGET).
+	// The result is positionally aligned with keys: missing / expired
+	// keys yield a nil slot, never an error. Added v0.8.403 for the
+	// user-presence read (/api/users enriches every row with an
+	// online/lastSeenAt stamp) — a per-key Get loop would turn one
+	// admin page load into N sequential round trips. Noop returns
+	// all-nil slots so presence degrades to "unknown" without Redis.
+	MGet(ctx context.Context, keys []string) ([][]byte, error)
 	// Ping reports liveness of the underlying cache. Noop returns nil
 	// (treats cache-disabled mode as healthy — there's no remote to be
 	// down). Used by the status page.
@@ -105,6 +113,11 @@ func (noopCache) SetNX(context.Context, string, []byte, time.Duration) (bool, er
 	return true, nil
 }
 func (noopCache) Del(context.Context, string) error                   { return nil }
+func (noopCache) MGet(_ context.Context, keys []string) ([][]byte, error) {
+	// All-miss, positionally aligned — callers (presence enrichment)
+	// treat nil slots as "no stamp".
+	return make([][]byte, len(keys)), nil
+}
 func (noopCache) ScanPrefix(context.Context, string) ([][]byte, error) { return nil, nil }
 func (noopCache) DelPrefix(context.Context, string) error              { return nil }
 func (noopCache) Ping(context.Context) error                          { return nil }

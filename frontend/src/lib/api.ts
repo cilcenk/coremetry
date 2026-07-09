@@ -1942,6 +1942,12 @@ export interface UserRow extends AuthUser {
   authProvider: string;  // 'local' | 'oidc'
   team: string;          // free-text grouping label, '' when unassigned
   createdAt: number;     // unix ns
+  // v0.8.403 — presence. online = any authenticated API activity in
+  // the last 5 minutes (open tabs poll, so logged-in ≈ online).
+  // lastSeenAt is only present while the Redis stamp is live (TTL =
+  // the online window); absent = never seen / presence unavailable.
+  online?: boolean;
+  lastSeenAt?: number;   // unix ns
 }
 export interface CustomRole {
   name: string;

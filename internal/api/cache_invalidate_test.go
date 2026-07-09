@@ -52,6 +52,9 @@ func (f *fakeCache) SetNX(context.Context, string, []byte, time.Duration) (bool,
 	return true, nil
 }
 func (f *fakeCache) Del(context.Context, string) error                         { return nil }
+func (f *fakeCache) MGet(_ context.Context, keys []string) ([][]byte, error) {
+	return make([][]byte, len(keys)), nil
+}
 func (f *fakeCache) ScanPrefix(_ context.Context, _ string) ([][]byte, error) {
 	f.mu.Lock()
 	f.scanPrefixHits++

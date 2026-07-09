@@ -67,6 +67,10 @@ func (s *SwitchableCache) Del(ctx context.Context, key string) error {
 	return s.Current().Del(ctx, key)
 }
 
+func (s *SwitchableCache) MGet(ctx context.Context, keys []string) ([][]byte, error) {
+	return s.Current().MGet(ctx, keys)
+}
+
 func (s *SwitchableCache) ScanPrefix(ctx context.Context, prefix string) ([][]byte, error) {
 	return s.Current().ScanPrefix(ctx, prefix)
 }

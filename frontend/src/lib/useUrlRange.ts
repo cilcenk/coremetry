@@ -39,10 +39,29 @@ import { getRaw, setRaw } from './storage';
 // stable string so the memo identity only changes when the resolved range
 // actually changes (the v0.5.184 infinite-refetch trap).
 const RANGE_STORE_KEY = 'coremetry-range';
+
+// persistableRange (v0.8.409) — only RELATIVE presets may become the
+// sticky cross-page default. Operator-reported: brushing/zooming a
+// chart pins an ABSOLUTE `custom:from-to` window; persisting that
+// globally froze every subsequent page load (and F5) on a past
+// window — "yeni traceler gelmiyor, cacheten getiriyor sanırım".
+// The absolute window stays in the URL (shareable, survives refresh
+// BY CHOICE on that link), but the operator's global default keeps
+// flowing with now() like Dynatrace's timeframe selector.
+export function persistableRange(enc: string): boolean {
+  return !enc.startsWith('custom:');
+}
+
 function readStoredRange(): string | null {
-  return getRaw(RANGE_STORE_KEY);
+  const v = getRaw(RANGE_STORE_KEY);
+  // Self-heal (v0.8.409): installs that stored a frozen absolute
+  // window before this fix would stay stuck forever — treat it as
+  // unset so the defaultPreset takes over.
+  if (v && !persistableRange(v)) return null;
+  return v;
 }
 function writeStoredRange(enc: string): void {
+  if (!persistableRange(enc)) return;
   setRaw(RANGE_STORE_KEY, enc);
 }
 

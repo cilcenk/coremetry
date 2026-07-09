@@ -144,6 +144,9 @@ func registerResources(srv *mcp.Server, d Deps) {
 			if err != nil {
 				return "", err
 			}
+			// v0.8.394 — attach the persisted root-cause hypothesis summary
+			// (one batched read, soft-fails to unenriched rows).
+			rows = d.Store.EnrichProblemsWithRootCause(ctx, rows)
 			return marshalJSON(map[string]any{"problems": rows, "count": len(rows)})
 		},
 	})
@@ -375,7 +378,7 @@ type listProblemsArgs struct {
 func listProblemsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_problems",
-		Description: "List Coremetry Problems (alerts that fired). Default filters to status=open. Use priority=P1 for the most urgent. Each problem has rule_id + service + severity + first_seen + a priority reason explaining why it's at its current P1/P2/P3 tier.",
+		Description: "List Coremetry Problems (alerts that fired). Default filters to status=open. Use priority=P1 for the most urgent. Each problem has rule_id + service + severity + first_seen + a priority reason explaining why it's at its current P1/P2/P3 tier. When Coremetry's deterministic correlation engine has synthesized a root-cause verdict for a problem, the row also carries rootCause {topSuspect, topScore, confidence} — treat it as the primary root-cause signal instead of guessing.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -410,6 +413,12 @@ func listProblemsTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
+			// v0.8.394 (AI audit A1) — attach the persisted deterministic
+			// root-cause hypothesis summary (rootCause {topSuspect, topScore,
+			// confidence}) so the chat/MCP caller sees the same verdict the
+			// /problems ribbon shows. One batched GetHypotheses read;
+			// soft-fails to unenriched rows. Additive, omitempty field.
+			rows = d.Store.EnrichProblemsWithRootCause(ctx, rows)
 			return map[string]any{"problems": rows, "count": len(rows)}, nil
 		},
 	}

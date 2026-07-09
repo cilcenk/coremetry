@@ -85,6 +85,10 @@ type Server struct {
 	oidc        *auth.OIDCService // nil when SSO disabled
 	ldap        *ldap.Service     // always set; Enabled() reports config presence
 	cache       cache.Cache       // Noop when Redis isn't configured
+	// presence — throttled per-user "last authenticated activity"
+	// stamps for the admin Users page's online indicator (v0.8.403).
+	// See presence.go for the write/read paths + semantics.
+	presence    *presenceTracker
 	// sf dedupes concurrent upstream calls when a hot cache
 	// key misses or enters the SWR refresh window — see
 	// cache.go for the multi-tier read path.
@@ -256,6 +260,7 @@ func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logst
 		addr: addr, store: store, logs: logs, tails: newTailBroker(logs), ing: ing, webFS: webFS,
 		auth: authSvc, oidc: oidcSvc, ldap: ldapSvc, cache: c, notify: n, copilot: cop,
 		bus: bus,
+		presence:    newPresenceTracker(c),
 		rateSamples: map[string]rateSample{},
 		l1:          newL1Cache(1024),
 		stats:       newCacheStats(),
@@ -1009,7 +1014,12 @@ func (s *Server) Start() error {
 	// W3C propagator, so a UI click → server-span chain joins on
 	// /trace/{id}. Goes OUTSIDE cors + auth middleware so the span
 	// captures the entire request lifecycle (including 401s).
-	handler := otelhttp.NewHandler(cors(s.auth.Middleware(mux)),
+	// presence.middleware sits INSIDE auth.Middleware so claims are
+	// already resolved (JWT + trusted-header paths both covered) —
+	// v0.8.403, online indicator on the admin Users page. Throttled +
+	// fire-and-forget: zero added latency, no Redis dependency on the
+	// auth path (see presence.go).
+	handler := otelhttp.NewHandler(cors(s.auth.Middleware(s.presence.middleware(mux))),
 		"coremetry-api",
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			// "GET /api/traces/:id" — method + cardinality-collapsed
@@ -6182,6 +6192,15 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// Presence enrichment (v0.8.403): one batched MGET for every row's
+	// stamp. Best-effort — degraded Redis returns an empty map and the
+	// page renders without online/lastSeenAt rather than erroring.
+	ids := make([]string, len(users))
+	for i, u := range users {
+		ids[i] = u.ID
+	}
+	seen := s.presence.lastSeen(r.Context(), ids)
+	nowNs := time.Now().UnixNano()
 	// Strip password hashes before sending — defence in depth even though
 	// the User struct already json:"-"s them.
 	out := make([]map[string]interface{}, 0, len(users))
@@ -6201,6 +6220,15 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 			"hasPhoto": u.HasPhoto,
 			"fullName": u.FullName,
 			"org":      u.Org,
+		}
+		// v0.8.403 — presence: online = authenticated API activity in
+		// the last 5 minutes. lastSeenAt (unix ns) only while a stamp
+		// is live (TTL = online window); absent = never/unknown.
+		if stampNs, ok := seen[u.ID]; ok {
+			row["online"] = presenceOnline(stampNs, nowNs)
+			row["lastSeenAt"] = stampNs
+		} else {
+			row["online"] = false
 		}
 		// Surface customRole + resolved pages for the admin Users
 		// page. Same defensive guard as userPayload: only viewers

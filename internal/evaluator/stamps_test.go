@@ -63,6 +63,15 @@ func (f *fakeStampCache) Del(_ context.Context, key string) error {
 	f.dels++
 	return nil
 }
+func (f *fakeStampCache) MGet(_ context.Context, keys []string) ([][]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]byte, len(keys))
+	for i, k := range keys {
+		out[i] = f.vals[k]
+	}
+	return out, nil
+}
 func (f *fakeStampCache) ScanPrefix(context.Context, string) ([][]byte, error) { return nil, nil }
 func (f *fakeStampCache) DelPrefix(context.Context, string) error              { return nil }
 func (f *fakeStampCache) Ping(context.Context) error                           { return nil }

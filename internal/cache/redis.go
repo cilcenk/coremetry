@@ -89,6 +89,28 @@ func (r *redisCache) Del(ctx context.Context, key string) error {
 	return r.cli.Del(ctx, key).Err()
 }
 
+// MGet — one MGET round trip; result positionally aligned with keys,
+// nil slots for missing/expired keys (v0.8.403, presence enrichment).
+func (r *redisCache) MGet(ctx context.Context, keys []string) ([][]byte, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	vals, err := r.cli.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis mget: %w", err)
+	}
+	out := make([][]byte, len(keys))
+	for i, v := range vals {
+		if i >= len(out) {
+			break
+		}
+		if s, ok := v.(string); ok && s != "" {
+			out[i] = []byte(s)
+		}
+	}
+	return out, nil
+}
+
 // ScanPrefix returns the value of every key matching `prefix*`.
 // Uses SCAN (cursor-paginated, non-blocking) so a large keyspace
 // doesn't stall the server, then a single MGET for the values.

@@ -7,7 +7,7 @@ import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
 import { keys, useUsers, useCustomRoles } from '@/lib/queries';
 import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
-import { tsLong } from '@/lib/utils';
+import { tsLong, tsRel } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
@@ -18,6 +18,9 @@ const USER_COLS: DataTableColumn<UserRow>[] = [
   { id: 'customRole', label: 'Custom role', width: 150 },
   { id: 'team',       label: 'Team',        sortValue: u => u.team ?? '',        naturalDir: 'asc',  width: 140 },
   { id: 'provider',   label: 'Provider',    sortValue: u => u.authProvider ?? '', naturalDir: 'asc', width: 110 },
+  // v0.8.403 — presence. Sort key puts online users first, then most
+  // recently seen; never-seen (no stamp) sinks to the bottom.
+  { id: 'seen',       label: 'Last seen',   sortValue: u => u.lastSeenAt ?? 0,   naturalDir: 'desc', width: 120 },
   { id: 'created',    label: 'Created',     sortValue: u => u.createdAt,         naturalDir: 'desc', width: 170 },
   { id: 'actions',    label: 'Actions',     align: 'right', width: 230 },
 ];
@@ -67,6 +70,10 @@ export default function UsersPage() {
     }
     return users.filter(u => u.team === teamFilter);
   }, [users, teamFilter]);
+
+  // v0.8.403 — header "N online" chip. Plain derivation (no hook) so
+  // the admin-gate early return below can't trip rules-of-hooks.
+  const onlineCount = (users ?? []).filter(u => u.online).length;
 
   // Shared sortable + resizable table. Hook is ABOVE the admin gate
   // (rules-of-hooks — same reason teamFilter/filteredUsers were hoisted
@@ -118,10 +125,21 @@ export default function UsersPage() {
               {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           )}
-          <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
-            {filteredUsers?.length ?? 0}
-            {teamFilter && users && filteredUsers && filteredUsers.length !== users.length
-              ? ` of ${users.length}` : ''} users
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+            {/* v0.8.403 — presence: count over ALL loaded users (not the
+                team-filtered slice) so the header reads as a page-level
+                "who's on Coremetry right now". */}
+            {onlineCount > 0 && (
+              <span className="badge b-ok"
+                title="Users with authenticated API activity in the last 5 minutes">
+                ● {onlineCount} online
+              </span>
+            )}
+            <span style={{ color: 'var(--text3)', fontSize: 12 }}>
+              {filteredUsers?.length ?? 0}
+              {teamFilter && users && filteredUsers && filteredUsers.length !== users.length
+                ? ` of ${users.length}` : ''} users
+            </span>
           </span>
         </div>
 
@@ -202,6 +220,27 @@ export default function UsersPage() {
                       </td>
                       <td>
                         <span className="badge b-gray" style={{ textTransform: 'uppercase' }}>{u.authProvider || 'local'}</span>
+                      </td>
+                      <td>
+                        {/* v0.8.403 — presence. Online = authenticated API
+                            activity in the last 5 min (open tabs poll, so
+                            logged-in ≈ online). Stamp expires with the
+                            window, so offline rows show the last relative
+                            sighting only while it's still fresh, else "—". */}
+                        {u.online ? (
+                          <span className="badge b-ok"
+                            title="Authenticated API activity in the last 5 minutes">
+                            ● online
+                          </span>
+                        ) : u.lastSeenAt ? (
+                          <span style={{ color: 'var(--text3)', fontSize: 12 }}
+                            title={tsLong(u.lastSeenAt)}>
+                            {tsRel(u.lastSeenAt)}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text3)' }}
+                            title="No authenticated activity seen (or presence unavailable — requires Redis)">—</span>
+                        )}
                       </td>
                       <td className="mono" style={{ color: 'var(--text3)' }}>
                         {tsLong(u.createdAt)}

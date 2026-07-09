@@ -47,6 +47,39 @@ describe('serviceRedDescriptors — service → RED descriptor table', () => {
     expect(red2.rps.filters['service.name']).toBe('core-banking "eu-1"');
     expect(isResolverEligible(red2.rps)).toBe(true);
   });
+
+  // v0.8.414 (Tempo-parity T2) — operation scope collapses the split and
+  // upgrades the latency descriptor to the full percentile band. Pinned so
+  // an edit can't quietly turn the scoped view back into a by-name split
+  // (double filter+split on `name` returns one flat series — looks fine,
+  // loses the band) or knock it off the resolver tiers.
+  describe('operation-scoped variant', () => {
+    const scoped = serviceRedDescriptors('checkout', 'GET /cart');
+
+    it('pins name as a filter and drops the split', () => {
+      for (const mq of Object.values(scoped)) {
+        expect(mq.filters).toEqual({ 'service.name': 'checkout', name: 'GET /cart' });
+        expect(mq.groupBy).toEqual([]);
+      }
+    });
+
+    it('latency upgrades to the percentile band; rate/error aggs unchanged', () => {
+      expect(scoped.p99.agg).toBe('band');
+      expect(scoped.rps.agg).toBe('rate');
+      expect(scoped.err.agg).toBe('error_rate');
+    });
+
+    it('stays resolver-eligible by construction', () => {
+      for (const mq of Object.values(scoped)) {
+        expect(isResolverEligible(mq)).toBe(true);
+      }
+    });
+
+    it('empty operation ≡ unscoped (the classic split view)', () => {
+      expect(serviceRedDescriptors('checkout', undefined))
+        .toEqual(serviceRedDescriptors('checkout'));
+    });
+  });
 });
 
 describe('isResolverEligible — planner-gate boundaries', () => {

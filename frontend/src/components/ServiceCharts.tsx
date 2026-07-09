@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { MetricPanel } from './MetricPanel';
+import { OperationPicker } from './OperationPicker';
 import { EventMarkers } from './EventMarkers';
 import { Spinner } from './Spinner';
 import { CopilotExplain } from './CopilotExplain';
@@ -55,7 +56,16 @@ export function ServiceCharts({ service, range, onZoom }: {
   // below rides the SAME objects through /api/metrics/resolve, so each panel
   // draws exactly what its doorway opens (built + eligibility-pinned in
   // lib/resolverEligibility.ts).
-  const red = useMemo(() => serviceRedDescriptors(service), [service]);
+  // v0.8.414 (Tempo-parity T2) — operation scope. Picking an operation
+  // collapses the by-operation split to that single operation and
+  // upgrades the latency panel to the full percentile band (p50/p90/
+  // p95/p99, agg=band) — the Grafana/Tempo RED duration panel. '' =
+  // all operations (the classic split view). Reset on service change.
+  const [opScope, setOpScope] = useState('');
+  useEffect(() => { setOpScope(''); }, [service]);
+  const red = useMemo(
+    () => serviceRedDescriptors(service, opScope || undefined),
+    [service, opScope]);
   const { rps: rpsMq, err: errMq, p99: p99Mq } = red;
 
   const [rpsSeries, setRpsSeries] = useState<SpanMetricSeries[] | null>(null);
@@ -123,12 +133,16 @@ export function ServiceCharts({ service, range, onZoom }: {
       rate: SpanMetricSeries[]; error_rate: SpanMetricSeries[]; p99: SpanMetricSeries[];
     }> => {
       const viaLegacy = () => {
-        const dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
+        // Operation scope rides the DSL too; the 5m fallback has no
+        // band (its tdigest is 3-quantile), so the latency slot stays
+        // a single p99 line there — honest degradation, never blank.
+        let dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
+        if (opScope) dsl += ` AND name = "${opScope.replace(/"/g, '\\"')}"`;
         // Batch — one CH pass for rate + error_rate + p99 over the same
         // WHERE. Cold-cache time drops to ~1/3 of a three-call fan-out
         // because the spans scan happens once.
         return api.spanMetricBatch({
-          from: fromNs, to: toNs, groupBy: ['name'], dsl,
+          from: fromNs, to: toNs, groupBy: opScope ? [] : ['name'], dsl,
           aggs: [
             { name: 'rate',       agg: 'rate' },
             { name: 'error_rate', agg: 'error_rate' },
@@ -152,7 +166,7 @@ export function ServiceCharts({ service, range, onZoom }: {
         rate: rps?.series ?? [], error_rate: err?.series ?? [], p99: p99?.series ?? [],
       })).catch(() => viaLegacy());
     },
-    [service, rpsMq, errMq, p99Mq, effStep],
+    [service, opScope, rpsMq, errMq, p99Mq, effStep],
   );
 
   useEffect(() => {
@@ -323,6 +337,12 @@ export function ServiceCharts({ service, range, onZoom }: {
     );
   }
 
+  // Scoped titles: the split axis disappears once one operation is
+  // picked, and the latency panel becomes the percentile band.
+  const rpsTitle = opScope ? `RPS — ${opScope}` : 'RPS by operation';
+  const errTitle = opScope ? `Error rate — ${opScope}` : 'Error rate by operation';
+  const durTitle = opScope ? `Duration band — ${opScope}` : 'P99 latency by operation';
+
   return (
     <div style={{ marginBottom: 14 }}>
       {/* Compare-to-previous toggle row. Sits above the three
@@ -355,6 +375,20 @@ export function ServiceCharts({ service, range, onZoom }: {
             {m === 'off' ? 'off' : m === 'prev' ? 'prev window' : m}
           </button>
         ))}
+        {/* v0.8.414 (Tempo-parity T2) — operation scope. Narrows all
+            three RED panels to the picked operation and upgrades the
+            latency panel to the full p50–p99 percentile band, matching
+            Grafana/Tempo's span-metrics RED view. Server-debounced
+            picker; empty = the classic by-operation split. */}
+        <span style={{
+          marginLeft: 10, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700,
+        }}>Operation:</span>
+        <OperationPicker
+          service={service}
+          value={opScope}
+          onChange={setOpScope}
+          placeholder="All operations"
+          width={210} />
         <span style={{ flex: 1 }} />
         {/* AI triage button — feeds the live RED series + any
             open problems to the LLM and asks "is this service
@@ -400,8 +434,8 @@ export function ServiceCharts({ service, range, onZoom }: {
             interactions (pointerEvents:none on the container,
             auto on the marker line so the title-tooltip still
             works on hover). */}
-        <ChartCard title="RPS by operation">
-          <MetricPanel compact menuOnly title="RPS by operation" metricQuery={rpsMq}>
+        <ChartCard title={rpsTitle}>
+          <MetricPanel compact menuOnly title={rpsTitle} metricQuery={rpsMq}>
             <div style={{ position: 'relative' }}>
               <MultiLineChart series={rpsSeries ?? []} unit="rps"
                               height={180}
@@ -415,8 +449,8 @@ export function ServiceCharts({ service, range, onZoom }: {
             </div>
           </MetricPanel>
         </ChartCard>
-        <ChartCard title="Error rate by operation">
-          <MetricPanel compact menuOnly title="Error rate by operation" metricQuery={errMq}>
+        <ChartCard title={errTitle}>
+          <MetricPanel compact menuOnly title={errTitle} metricQuery={errMq}>
             <div style={{ position: 'relative' }}>
               <MultiLineChart series={errSeries ?? []} unit="%"
                               height={180}
@@ -432,8 +466,8 @@ export function ServiceCharts({ service, range, onZoom }: {
             </div>
           </MetricPanel>
         </ChartCard>
-        <ChartCard title="P99 latency by operation">
-          <MetricPanel compact menuOnly title="P99 latency by operation" metricQuery={p99Mq}>
+        <ChartCard title={durTitle}>
+          <MetricPanel compact menuOnly title={durTitle} metricQuery={p99Mq}>
             <div style={{ position: 'relative' }}>
               <MultiLineChart series={p99Series ?? []} unit="ms"
                               height={180}

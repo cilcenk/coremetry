@@ -13,9 +13,14 @@ import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 // uses the primary-key partition prune so this is cheap
 // even on a 24h window.
 // Split out of the Service.tsx monolith (v0.8.252 refactor) verbatim.
-export function ServiceLatencyHeatmap({ service, range }: {
+// v0.8.415 (Tempo-parity T3) — optional operation scope (the page's
+// ?op= selection): the distribution narrows to that one operation,
+// completing the Grafana/Tempo triple of RED band + latency histogram
+// over the same (service, operation) pair.
+export function ServiceLatencyHeatmap({ service, range, operation = '' }: {
   service: string;
   range: import('@/lib/types').TimeRange;
+  operation?: string;
 }) {
   const [data, setData] = useState<import('@/lib/types').LatencyHeatmap | null | undefined>(undefined);
   const [picked, setPicked] = useState<string>(''); // '' = all
@@ -63,10 +68,13 @@ export function ServiceLatencyHeatmap({ service, range }: {
       // coalesce across resource + span attrs needed at query time).
       f.push({ key: 'k8s.cluster.name', op: '=', value: picked });
     }
+    // `name` maps to the span-name column in the filter compiler
+    // (filterexpr.go) — same predicate the Traces page uses.
+    if (operation) f.push({ key: 'name', op: '=', value: operation });
     api.spanHeatmap({ from, to, filters: JSON.stringify(f), buckets: 60 })
       .then(r => setData(r ?? null))
       .catch(() => setData(null));
-  }, [service, from, to, collapsed, picked]);
+  }, [service, from, to, collapsed, picked, operation]);
 
   const toggle = () => {
     const next = !collapsed;
@@ -90,6 +98,19 @@ export function ServiceLatencyHeatmap({ service, range }: {
           <span style={{ color: 'var(--text3)' }}>{collapsed ? '▸' : '▾'}</span>
           Latency distribution
         </button>
+        {operation && (
+          <span title="Scoped to the operation picked in the RED charts above (?op=)."
+            style={{
+              fontSize: 11, color: 'var(--text2)',
+              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              background: 'var(--bg2)', border: '1px solid var(--border)',
+              borderRadius: 3, padding: '1px 6px',
+              maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+            {operation}
+          </span>
+        )}
         {!collapsed && clusters.length >= 2 && (
           <select value={picked}
             onChange={e => setPicked(e.target.value)}

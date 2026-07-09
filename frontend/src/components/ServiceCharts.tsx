@@ -31,7 +31,7 @@ import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 // crosshair on the other two — Datadog dashboard convention,
 // turns the three panels into one synchronised view.
 
-export function ServiceCharts({ service, range, onZoom }: {
+export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeChange }: {
   service: string;
   range: TimeRange;
   // onZoom — drag-to-select range on any of the three RED
@@ -40,6 +40,12 @@ export function ServiceCharts({ service, range, onZoom }: {
   // re-fetch for the selected window. Same shape uPlot
   // emits (unix seconds).
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // v0.8.415 (Tempo-parity T3) — operation scope is CONTROLLED by
+  // the parent (Service.tsx owns it as the ?op= URL param, house
+  // rule: URL is the source of truth) so the latency heatmap and a
+  // future OperationsTable row link ride the same selection.
+  opScope?: string;
+  onOpScopeChange?: (op: string) => void;
 }) {
   // Memoise the time bounds so a render doesn't churn the
   // query keys (same trick the Logs page uses — Date.now() in
@@ -60,9 +66,7 @@ export function ServiceCharts({ service, range, onZoom }: {
   // collapses the by-operation split to that single operation and
   // upgrades the latency panel to the full percentile band (p50/p90/
   // p95/p99, agg=band) — the Grafana/Tempo RED duration panel. '' =
-  // all operations (the classic split view). Reset on service change.
-  const [opScope, setOpScope] = useState('');
-  useEffect(() => { setOpScope(''); }, [service]);
+  // all operations (the classic split view).
   const red = useMemo(
     () => serviceRedDescriptors(service, opScope || undefined),
     [service, opScope]);
@@ -386,7 +390,7 @@ export function ServiceCharts({ service, range, onZoom }: {
         <OperationPicker
           service={service}
           value={opScope}
-          onChange={setOpScope}
+          onChange={op => onOpScopeChange?.(op)}
           placeholder="All operations"
           width={210} />
         <span style={{ flex: 1 }} />

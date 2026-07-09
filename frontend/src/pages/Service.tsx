@@ -121,6 +121,27 @@ function ServiceDetailInner() {
     return p;
   }, { replace: true });
 
+  // v0.8.415 (Tempo-parity T3) — operation scope lives in the URL
+  // (?op=) so the RED charts AND the latency heatmap ride one
+  // selection, and a copied link / refresh reproduces the exact
+  // scoped view (house rule: URL is the source of truth). '' = all.
+  const opScope = searchParams.get('op') ?? '';
+  const setOpScope = (next: string) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (next) p.set('op', next); else p.delete('op');
+    return p;
+  }, { replace: true });
+  // Operations belong to one service — navigating to another service
+  // must drop the scope. Deep links stay intact: the effect only
+  // fires on an actual svc CHANGE, not on mount.
+  const [prevSvc, setPrevSvc] = useState(svc);
+  useEffect(() => {
+    if (prevSvc === svc) return;
+    setPrevSvc(svc);
+    if (searchParams.get('op')) setOpScope('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svc]);
+
   useEffect(() => {
     if (!svc) return;
     setLoading(true);
@@ -426,6 +447,7 @@ function ServiceDetailInner() {
                 <DetailsPropsStrip service={svc} range={range} />
                 <div className="dtl-sech">Performance</div>
                 <ServiceCharts service={svc} range={range}
+                  opScope={opScope} onOpScopeChange={setOpScope}
                   onZoom={(fromUnixSec, toUnixSec) => {
                     setRange({
                       preset: 'custom',
@@ -435,7 +457,8 @@ function ServiceDetailInner() {
                   }} />
                 <div className="ov-grid dtl-cols ov-mb">
                   <LazyMount minHeight={360}>
-                    <ServiceLatencyHeatmap service={svc} range={range} />
+                    <ServiceLatencyHeatmap service={svc} range={range}
+                                           operation={opScope} />
                   </LazyMount>
                   <RpsByOperation operations={operations} range={range}
                     onOpenOperations={() => setTab('operations')} />

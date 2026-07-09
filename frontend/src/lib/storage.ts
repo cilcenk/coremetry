@@ -23,6 +23,7 @@ export const STORAGE_KEYS = {
   rum:              'coremetry-rum',
   recentServices:   'coremetry.recentServices',
   pinnedServices:   'coremetry.pinnedServices',
+  recentMetrics:    'coremetry.recentMetrics',
   sidebarWidth:     'coremetry-sidebar-w',
   sidebarCollapsed: 'coremetry-sidebar-collapsed',
   sidebarGroups:    'coremetry-sidebar-groups',

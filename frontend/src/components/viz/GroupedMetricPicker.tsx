@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Spinner } from '@/components/Spinner';
+import { getRecentMetrics, recordMetricPick } from '@/lib/recentMetrics';
 import type { MetricInfo } from '@/lib/types';
 
 // GroupedMetricPicker — searchable + faceted catalogue-metric picker.
@@ -65,6 +66,21 @@ export function GroupedMetricPicker({ value, unit, onPick }: {
       (!ql || m.name.toLowerCase().includes(ql)));
   }, [catalog, q, facet]);
 
+  // v0.8.417 (DE2) — recently-picked ring, Dynatrace Data-Explorer
+  // style. Shown only on the "browse" view (empty search, All facet)
+  // so it never displaces search results. Read once per open — the
+  // list can't change under an open popover except via our own pick,
+  // which closes it.
+  const recents = useMemo(
+    () => (open ? getRecentMetrics() : []),
+    [open]);
+  const showRecents = recents.length > 0 && !q.trim() && facet === 'all';
+  const pick = (m: MetricInfo) => {
+    recordMetricPick(m);
+    onPick(m);
+    setOpen(false);
+  };
+
   return (
     <div className="mqe-picker" ref={ref}>
       <button type="button" className="mqe-pickbtn" onClick={() => setOpen(o => !o)}
@@ -84,13 +100,35 @@ export function GroupedMetricPicker({ value, unit, onPick }: {
             ))}
           </div>
           <div className="mqe-list">
+            {showRecents && (
+              <>
+                <div className="mqe-sect">Recent</div>
+                {recents.map(m => (
+                  <button key={'r:' + m.name} type="button"
+                    className={'mqe-opt' + (m.name === value ? ' on' : '')}
+                    title={m.description || m.name}
+                    onClick={() => pick(m)}>
+                    <span className="mqe-optcol">
+                      <span className="mqe-optname">{m.name}</span>
+                      {m.description && <span className="mqe-optdesc">{m.description}</span>}
+                    </span>
+                    {m.unit && <span className="mqe-unit">{m.unit}</span>}
+                  </button>
+                ))}
+                <div className="mqe-sect">All metrics</div>
+              </>
+            )}
             {catalogQ.isLoading ? <div className="mqe-hint"><Spinner /></div>
               : filtered.length === 0 ? <div className="mqe-hint">No metrics match.</div>
               : <>
                 {filtered.map(m => (
                   <button key={m.name} type="button" className={'mqe-opt' + (m.name === value ? ' on' : '')}
-                    onClick={() => { onPick(m); setOpen(false); }}>
-                    <span className="mqe-optname">{m.name}</span>
+                    title={m.description || m.name}
+                    onClick={() => pick(m)}>
+                    <span className="mqe-optcol">
+                      <span className="mqe-optname">{m.name}</span>
+                      {m.description && <span className="mqe-optdesc">{m.description}</span>}
+                    </span>
                     {m.unit && <span className="mqe-unit">{m.unit}</span>}
                   </button>
                 ))}

@@ -1728,6 +1728,11 @@ canvas { max-width: 100%; }
 .mqe-opt:hover { background: var(--bg2); }
 .mqe-opt.on { background: var(--accent-soft); }
 .mqe-optname { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v0.8.417 (DE2) — two-line picker options: name + catalogue description. */
+.mqe-optcol { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.mqe-optcol .mqe-optname { flex: none; }
+.mqe-optdesc { font-size: 10.5px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mqe-sect { padding: 6px 8px 2px; font-size: 10px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--text3); }
 .mqe-agg, .mqe-step { font-size: 12px; }
 .mqe-alias { width: 90px; font-size: 12px; }
 .mqe-filters { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }

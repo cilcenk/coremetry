@@ -31,6 +31,7 @@ export function encodeBuilder(st: BuilderState): string {
     ...(st.viz !== 'line' ? { v: st.viz } : {}),
     ...(st.step ? { s: st.step } : {}),
     ...(st.topN ? { n: st.topN } : {}),
+    ...(st.logY ? { ly: 1 } : {}),
     ...(st.formula.trim() ? { f: st.formula.trim() } : {}),
     q: st.queries.map(q => ({
       l: q.letter,
@@ -132,6 +133,7 @@ export function decodeBuilder(s: string | null | undefined): BuilderState | null
       viz,
       step: typeof o.s === 'number' && o.s > 0 ? o.s : 0,
       topN: typeof o.n === 'number' && o.n > 0 ? o.n : undefined,
+      logY: o.ly === 1 || undefined,
     };
   } catch {
     return null;

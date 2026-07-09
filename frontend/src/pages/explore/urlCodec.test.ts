@@ -47,6 +47,19 @@ describe('?q= codec round-trip', () => {
     expect(plain?.topN).toBeUndefined();
   });
 
+  it('logY (v0.8.418 DE3 log-scale y-axis) round-trips, absent by default', () => {
+    const st: BuilderState = {
+      queries: [blankQuery('A')],
+      formula: '', viz: 'line', step: 0, logY: true,
+    };
+    expect(decodeBuilder(encodeBuilder(st))?.logY).toBe(true);
+    // off = omitted from the URL (byte-identical to pre-DE3 links) and
+    // decodes back to undefined, never false-y noise in ?q=.
+    const off = { ...st, logY: undefined };
+    expect(encodeBuilder(off)).not.toContain('ly');
+    expect(decodeBuilder(encodeBuilder(off))?.logY).toBeUndefined();
+  });
+
   it('rejects garbage', () => {
     expect(decodeBuilder('not json')).toBeNull();
     expect(decodeBuilder('{"q":[]}')).toBeNull();

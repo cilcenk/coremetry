@@ -165,7 +165,7 @@ export function buildPanels(
   return out;
 }
 
-export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick }: {
+export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick, logScale }: {
   panels: PanelData[];
   viz: 'line' | 'area' | 'bars';
   hiddenKeys: Set<string>;          // `${letter}:${label}`
@@ -173,6 +173,7 @@ export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZo
   zoomWindow: { from: number; to: number } | null;
   onZoom: (fromSec: number, toSec: number) => void;
   onExemplarClick?: (traceId: string) => void;   // open an exemplar ◆ trace
+  logScale?: boolean;               // v0.8.418 (DE3) — log10 y-axis, all panels
 }) {
   // Per-panel projections of the global hidden/focus keys.
   const perPanel = useMemo(() => panels.map(p => {
@@ -195,7 +196,8 @@ export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZo
           focusedLabel={perPanel[i].focused}
           zoomWindow={zoomWindow}
           onZoom={onZoom}
-          onExemplarClick={onExemplarClick} />
+          onExemplarClick={onExemplarClick}
+          logScale={logScale} />
       ))}
     </div>
   );

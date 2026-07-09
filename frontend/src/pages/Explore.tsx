@@ -451,6 +451,21 @@ function ExploreInner() {
                   title="En çok alanı kaplayan ilk N seriyi göster (Uptrace top10) — kalan seriler '+N more' olarak gizlenir">
                   {TOP_N_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
+                {/* v0.8.418 (DE3) — log10 y-axis. Dynatrace Data-Explorer
+                    affordance for series spanning decades (p50 vs p99, RPS
+                    across hot+cold services). Rides ?q= like every other
+                    builder knob; only meaningful on the line/area/bars set. */}
+                {(builder.viz === 'line' || builder.viz === 'area' || builder.viz === 'bars') && (
+                  <div className="segmented" style={{ marginLeft: 4 }}>
+                    <button type="button"
+                      onClick={() => setBuilder(b => ({ ...b, logY: !b.logY || undefined }))}
+                      aria-pressed={!!builder.logY}
+                      className={builder.logY ? 'active' : ''}
+                      title="Logaritmik y-ekseni — on/off. Kademeler arası (ör. 5ms p50 ile 3s p99) serileri aynı panelde okunur kılar.">
+                      log y
+                    </button>
+                  </div>
+                )}
               </>
             )}
             <span style={{ flex: 1 }} />
@@ -689,6 +704,7 @@ name ~ checkout`}
                 {(debounced.viz === 'line' || debounced.viz === 'area' || debounced.viz === 'bars') && (
                   <PanelStack panels={panels}
                     viz={debounced.viz}
+                    logScale={!!debounced.logY}
                     hiddenKeys={hiddenKeys}
                     focusKey={focusKey}
                     zoomWindow={zoomWindow}

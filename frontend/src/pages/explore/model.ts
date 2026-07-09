@@ -59,6 +59,7 @@ export interface BuilderState {
   viz: ExploreViz;
   step: number;            // seconds; 0 = auto. GLOBAL so formula buckets stay aligned.
   topN?: number;           // top-N series per panel by area (Uptrace top10). 0/undef = PANEL_SERIES_CAP.
+  logY?: boolean;          // v0.8.418 (DE3) — log10 y-axis on the line/area/bars panels.
 }
 
 export const MAX_QUERIES = 4;

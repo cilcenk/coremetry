@@ -54,7 +54,8 @@ const tailSubBuf = 8
 func tailFilterKey(f logstore.Filter) string {
 	h := fnv.New64a()
 	for _, s := range []string{
-		f.Service, f.Cluster, f.Search,
+		f.Service, f.Cluster, f.Env, // Env: v0.8.400 — env-separation Phase 4
+		f.Search,
 		strconv.Itoa(int(f.SeverityMin)),
 		f.TraceID, f.SpanID,
 	} {

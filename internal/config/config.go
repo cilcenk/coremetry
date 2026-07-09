@@ -159,6 +159,11 @@ type ESFieldsConfig struct {
 	Message        string `yaml:"message"`         // env: COREMETRY_ES_FIELD_MESSAGE     (default message)
 	SeverityText   string `yaml:"severity_text"`   // env: COREMETRY_ES_FIELD_SEVERITY_TEXT   (default log.level)
 	SeverityNumber string `yaml:"severity_number"` // env: COREMETRY_ES_FIELD_SEVERITY_NUMBER (default "" — skipped)
+	// Environment (v0.8.400 — env-separation Phase 4): the document
+	// field the ?env= filter targets. Default "" = SELF-DISCOVER via a
+	// cached field_caps over the candidate shapes (logstore
+	// es_env_field.go); set only when the pipeline uses a custom path.
+	Environment string `yaml:"environment"` // env: COREMETRY_ES_FIELD_ENV (default "" — self-discover)
 }
 
 // ExemplarsConfig gates OTLP metric-exemplar ingest (v0.8.328, cross-signal
@@ -652,6 +657,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_ES_FIELD_SEVERITY_NUMBER"); v != "" {
 		cfg.Logs.Elasticsearch.Fields.SeverityNumber = v
+	}
+	if v := os.Getenv("COREMETRY_ES_FIELD_ENV"); v != "" {
+		cfg.Logs.Elasticsearch.Fields.Environment = v
 	}
 	if v := os.Getenv("COREMETRY_AI_PROVIDER"); v != "" {
 		cfg.AI.Provider = v

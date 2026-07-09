@@ -1040,6 +1040,7 @@ func buildLogStore(cfg *config.Config, ch *chstore.Store) (logstore.Store, error
 				Body:       es.Fields.Message,
 				SeverityTx: es.Fields.SeverityText,
 				SeverityNo: es.Fields.SeverityNumber,
+				Env:        es.Fields.Environment, // v0.8.400 — "" = self-discover
 			},
 		})
 		if err != nil {
@@ -1084,6 +1085,7 @@ func esSettingsFromConfig(cfg *config.Config) logstore.ESSettings {
 			Body:       es.Fields.Message,
 			SeverityTx: es.Fields.SeverityText,
 			SeverityNo: es.Fields.SeverityNumber,
+			Env:        es.Fields.Environment, // v0.8.400 — "" = self-discover
 		},
 	}
 }

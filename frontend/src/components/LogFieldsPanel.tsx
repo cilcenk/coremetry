@@ -28,6 +28,7 @@ export interface FieldStatsScope {
   to?: number;
   service?: string;
   cluster?: string;
+  env?: string; // v0.8.400 — global ?env= deployment-environment filter
   search?: string;
   severity?: number;
   traceId?: string;

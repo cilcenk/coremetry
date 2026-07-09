@@ -424,6 +424,7 @@ export const api = {
   // the Logs source on /explore. 30s server-side cache.
   logsTimeseries: (params: {
     service?: string;
+    env?: string; // v0.8.400 — global ?env= deployment-environment filter
     search?: string;
     from?: number;
     to?: number;
@@ -450,6 +451,7 @@ export const api = {
     field: string;
     service?: string;
     cluster?: string;
+    env?: string; // v0.8.400 — global ?env= deployment-environment filter
     search?: string;
     from?: number;
     to?: number;
@@ -621,7 +623,7 @@ export const api = {
   // Datadog Context tab equivalent. Two parallel server-side
   // searches (before / after); 30-min symmetric window, capped
   // at n=200 per side.
-  logsContext: (params: { ts: number; service?: string; n?: number }) =>
+  logsContext: (params: { ts: number; service?: string; env?: string; n?: number }) =>
     get<{
       pivotTs: number; service: string;
       before: import('./types').LogRow[];
@@ -2079,6 +2081,7 @@ export interface TracesParams {
 export interface LogsParams {
   service?: string;
   cluster?: string;  // v0.5.471 — k8s/openshift cluster name
+  env?: string;      // v0.8.400 — global ?env= deployment-environment filter
   search?: string;
   severity?: number;
   traceId?: string;

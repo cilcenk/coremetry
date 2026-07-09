@@ -30,6 +30,9 @@ export function ElasticTab() {
   const [fBody, setFBody] = useState('');
   const [fSevTx, setFSevTx] = useState('');
   const [fSevNo, setFSevNo] = useState('');
+  // v0.8.400 — deployment-environment field for the ?env= filter;
+  // empty = the backend self-discovers via field_caps.
+  const [fEnv, setFEnv] = useState('');
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -50,6 +53,7 @@ export function ElasticTab() {
       setFBody(s.fields?.body || '');
       setFSevTx(s.fields?.severityTx || '');
       setFSevNo(s.fields?.severityNo || '');
+      setFEnv(s.fields?.env || '');
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);
@@ -63,6 +67,7 @@ export function ElasticTab() {
     fields: {
       timestamp: fTimestamp, traceId: fTraceId, spanId: fSpanId,
       service: fService, body: fBody, severityTx: fSevTx, severityNo: fSevNo,
+      env: fEnv,
     },
   });
 
@@ -218,6 +223,13 @@ export function ElasticTab() {
                 {fieldRow('Service', fService, setFService, 'service.name')}
                 {fieldRow('Severity (text)', fSevTx, setFSevTx, 'log.level')}
                 {fieldRow('Severity (number)', fSevNo, setFSevNo, 'empty = skip')}
+                {fieldRow('Environment', fEnv, setFEnv, 'empty = self-discover')}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                Environment backs the global env picker on /logs. Left empty,
+                Coremetry discovers the field from the index mapping
+                (deployment.environment[.name] and friends) and /logs shows an
+                honest chip when none resolves.
               </div>
             </details>
 

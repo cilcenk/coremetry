@@ -35,6 +35,15 @@ const logsTailMax = LogsTailMax
 type Filter struct {
 	Service     string
 	Cluster     string    // v0.5.471 — k8s/openshift cluster name; empty = any
+	// Env (v0.8.400 — env-separation Phase 4) — the global ?env=
+	// deployment-environment filter. CH backend: bounded res-array
+	// lookup over BOTH semconv spellings (deployment.environment.name
+	// + legacy deployment.environment). ES backend: term filter on the
+	// operator-configured fields.Env or, when that's empty, a
+	// SELF-DISCOVERED field (cached field_caps over the candidate
+	// shapes — es_env_field.go); when no field resolves, the filter is
+	// NOT applied and Page.EnvUnapplied reports it honestly.
+	Env         string
 	Search      string
 	From, To    time.Time
 	SeverityMin uint8     // OTel severity number ≥ this; 0 = no filter
@@ -79,6 +88,14 @@ type Filter struct {
 	// `>`) so a log ingested late at the boundary ns is re-read, not
 	// silently dropped (the v0.7.15 silent-drop failure).
 	SinceNs int64
+
+	// envField (v0.8.400, ES-internal) — the resolved document field
+	// the Env term filter targets, stamped by ESStore.applyEnvResolution
+	// before buildQuery runs. Unexported on purpose: callers set Env;
+	// only the ES backend (same package) resolves the field. Env set
+	// with envField empty ⇒ the ES query emits NO env clause and the
+	// backend reports Page.EnvUnapplied.
+	envField string
 }
 
 // LogRecord is the in-memory shape returned by every backend. It mirrors
@@ -107,6 +124,14 @@ type Page struct {
 	// Empty when this is the last page (fewer than Limit rows
 	// returned). Opaque to the API layer; format is backend-owned.
 	NextCursor string `json:"nextCursor,omitempty"`
+	// EnvUnapplied (v0.8.400 — env-separation Phase 4) — the backend's
+	// HONEST signal that Filter.Env was requested but could not be
+	// applied (ES: no environment field resolvable in the mapping, and
+	// none configured). The results are env-UNFILTERED; the /logs page
+	// renders a warning chip instead of silently implying a narrowed
+	// view (the v0.8.398 honesty pattern). Never set by the CH backend
+	// (the res-array conjunct always applies).
+	EnvUnapplied bool `json:"envUnapplied,omitempty"`
 }
 
 // EQLQuery — parameters for an Event Query Language sequence

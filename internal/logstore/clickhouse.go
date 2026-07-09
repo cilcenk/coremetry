@@ -27,6 +27,7 @@ func (s *CHStore) Ping(ctx context.Context) error { return s.store.Ping(ctx) }
 func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	rows, total, next, err := s.store.GetLogs(ctx, chstore.LogFilter{
 		Service:     f.Service,
+		Env:         f.Env, // v0.8.400 — env-separation Phase 4
 		Search:      f.Search,
 		From:        f.From,
 		To:          f.To,
@@ -59,6 +60,49 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 	return &Page{Total: int(total), Logs: out, NextCursor: next}, nil
 }
+
+// ── logs-table attribute lookups (v0.8.400) ─────────────────────────────────
+//
+// The Coremetry logs table stores attributes as PARALLEL ARRAYS
+// (attr_keys/attr_values + res_keys/res_values — store.go DDL), NOT
+// Map columns. The pre-v0.8.400 cluster/fieldstats expressions here
+// used `resource_attributes[...]` / `attributes[...]` map access —
+// columns that don't exist on the logs table, so any CH-backend query
+// that reached them failed with UNKNOWN_IDENTIFIER (dormant because
+// the operator's cluster/fields-panel usage rides the ES backend;
+// found by the Phase 4 audit, verified live). All three expressions
+// below use the res-array indexOf lookup (arr[0] = '' for a missing
+// key, so absent keys coalesce cleanly). Shape-pinned by
+// clickhouse_env_test.go.
+
+// chLogsEnvExpr — deployment-environment derivation for the logs
+// table (env-separation Phase 4). The topoEnvChainSQL two-spelling
+// rule, logs-local: new semconv key first, then legacy; no deploy_env
+// column leg (logs has no typed env column) and no namespace fallback.
+// MUST stay semantically identical to chstore's logsEnvChainSQL —
+// GetLogs (the /logs list) and Histogram/FieldStats (this file) filter
+// the same rows.
+const chLogsEnvExpr = `coalesce(
+			nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
+			'')`
+
+// chLogsClusterExpr — the v0.5.471 three-path cluster derivation,
+// rewritten onto the res arrays (the map-access fix above).
+const chLogsClusterExpr = `coalesce(
+			nullIf(res_values[indexOf(res_keys, 'k8s.cluster.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'openshift.cluster.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'cluster')], ''),
+			'')`
+
+// chLogsAttrLookupExpr — FieldStats' "any attribute path" value
+// expression: span attribute first, then resource attribute (same
+// precedence the old map version declared). Two positional args (the
+// field name, twice).
+const chLogsAttrLookupExpr = `coalesce(
+			nullIf(attr_values[indexOf(attr_keys, ?)], ''),
+			nullIf(res_values[indexOf(res_keys, ?)], ''),
+			'')`
 
 // chSeverityBandExpr — v0.8.377, operator-reported: the severity
 // histogram showed wrong band counts (the old expr emitted raw
@@ -119,17 +163,17 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	args := []any{from, to}
 	wc := "time >= ? AND time <= ?"
 	if f.Cluster != "" {
-		// v0.5.471 — coalesce the three resource-attribute paths
-		// the chstore.spans table also uses (clusterDeriveExpr).
-		// logs reuses the same key conventions emitted by OTel
-		// SDKs at init time.
-		wc += ` AND coalesce(
-			nullIf(resource_attributes['k8s.cluster.name'], ''),
-			nullIf(resource_attributes['openshift.cluster.name'], ''),
-			nullIf(resource_attributes['cluster'], ''),
-			''
-		) = ?`
+		// v0.5.471 — coalesce the three resource-attribute key
+		// conventions OTel SDKs emit at init time. v0.8.400: res-array
+		// lookup (the logs table has no Map columns — see the const
+		// block above).
+		wc += " AND " + chLogsClusterExpr + " = ?"
 		args = append(args, f.Cluster)
+	}
+	if f.Env != "" {
+		// v0.8.400 — env-separation Phase 4: the global ?env= filter.
+		wc += " AND " + chLogsEnvExpr + " = ?"
+		args = append(args, f.Env)
 	}
 	if f.Service != "" {
 		wc += " AND service_name = ?"
@@ -378,7 +422,9 @@ func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 	case "severity", "level", "log.level", "severity_text":
 		valueExpr = "if(severity_text != '', severity_text, toString(severity_num))"
 	default:
-		valueExpr = "coalesce(nullIf(attributes[?], ''), nullIf(resource_attributes[?], ''), '')"
+		// v0.8.400 — res-array lookup (was Map access against columns
+		// the logs table doesn't have; see the const block above).
+		valueExpr = chLogsAttrLookupExpr
 	}
 
 	from, to := f.From, f.To
@@ -395,13 +441,14 @@ func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 	args = append(args, from, to)
 	wc := "time >= ? AND time <= ?"
 	if f.Cluster != "" {
-		wc += ` AND coalesce(
-			nullIf(resource_attributes['k8s.cluster.name'], ''),
-			nullIf(resource_attributes['openshift.cluster.name'], ''),
-			nullIf(resource_attributes['cluster'], ''),
-			''
-		) = ?`
+		// v0.8.400 — res-array lookup (map-access fix, const block above).
+		wc += " AND " + chLogsClusterExpr + " = ?"
 		args = append(args, f.Cluster)
+	}
+	if f.Env != "" {
+		// v0.8.400 — env-separation Phase 4.
+		wc += " AND " + chLogsEnvExpr + " = ?"
+		args = append(args, f.Env)
 	}
 	if f.Service != "" {
 		wc += " AND service_name = ?"

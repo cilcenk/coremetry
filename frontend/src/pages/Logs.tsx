@@ -21,6 +21,7 @@ import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
@@ -146,6 +147,13 @@ function LogsInner() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [range, setRange] = useUrlRange('30m');
+  // v0.8.400 (env-separation Phase 4) — /logs consumes the GLOBAL
+  // Topbar ?env= picker. Read-only here (the picker writes); every
+  // backend round-trip below (list, histogram, facet counts, fields
+  // panel, live tail, context modal) narrows to the selected env. The
+  // ES backend answers envUnapplied:true when no environment field
+  // resolves — surfaced as the honest chip next to the toolbar.
+  const [env] = useUrlEnv();
   // Cursor accumulation (v0.8.260 — "Load more" replaced the
   // Back/Next pager; v0.7.22 keyset cursor mechanics unchanged).
   // `cursor` is the opaque `after` token of the page most recently
@@ -331,15 +339,17 @@ function LogsInner() {
     from, to,
     service: filter.service || undefined,
     cluster: filter.cluster || undefined,
+    env: env || undefined, // v0.8.400 — global env filter
     search: compiledSearch || undefined,
     severity: filter.severity > 0 ? filter.severity : undefined,
     traceId: filter.traceId || undefined,
     spanId: filter.spanId || undefined,
-  }), [from, to, filter.service, filter.cluster, compiledSearch, filter.severity, filter.traceId, filter.spanId]);
+  }), [from, to, filter.service, filter.cluster, env, compiledSearch, filter.severity, filter.traceId, filter.spanId]);
   const staticQ = useLogs({
     limit: 100, after: cursor || undefined, from, to,
     service: filter.service || undefined,
     cluster: filter.cluster || undefined,
+    env: env || undefined, // v0.8.400 — global env filter
     search: compiledSearch || undefined,
     severity: filter.severity > 0 ? filter.severity : undefined,
     traceId: filter.traceId || undefined,
@@ -361,10 +371,11 @@ function LogsInner() {
   const volumeEnabled = (from !== undefined && to !== undefined) || !!filter.traceId;
   const volumeBucket = useMemo(() => pickVolumeBucket(from, to), [from, to]);
   const volumeQ = useQuery({
-    queryKey: ['logs', 'sev-volume', from, to, filter.service, compiledSearch, filter.traceId, volumeBucket],
+    queryKey: ['logs', 'sev-volume', from, to, filter.service, env, compiledSearch, filter.traceId, volumeBucket],
     queryFn: () => api.logsTimeseries({
       from, to,
       service: filter.service || undefined,
+      env:     env || undefined, // v0.8.400 — global env filter
       search:  compiledSearch || undefined,
       traceId: filter.traceId || undefined,
       groupBy: 'severity',
@@ -407,6 +418,7 @@ function LogsInner() {
       const p = new URLSearchParams();
       if (filter.service) p.set('service', filter.service);
       if (filter.cluster) p.set('cluster', filter.cluster);
+      if (env) p.set('env', env); // v0.8.400 — global env filter
       if (compiledSearch) p.set('search', compiledSearch);
       if (filter.severity > 0) p.set('severity', String(filter.severity));
       if (newestNsRef.current) p.set('since', String(newestNsRef.current)); // reconnect catch-up
@@ -437,7 +449,7 @@ function LogsInner() {
       es?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [live, filter.service, filter.cluster, compiledSearch, filter.severity]);
+  }, [live, filter.service, filter.cluster, env, compiledSearch, filter.severity]);
 
   // When live, the table renders the SSE buffer; otherwise the static
   // windowed query. Live has no loading/error gate — rows fill in as they
@@ -469,6 +481,12 @@ function LogsInner() {
   // NOT on cursor: Load more appends below, existing expansions
   // must survive the append.
   useEffect(() => { setExpanded(new Set()); }, [range, filter, filters]);
+
+  // v0.8.400 — an env change is a NEW result set: a keyset cursor from
+  // the old set is meaningless (the v0.7.81 cursor rule) and row
+  // expansion doesn't carry over.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { resetPaging(); setExpanded(new Set()); }, [env]);
 
   // Backend mapping fields (v0.5.136 → fields panel v0.8.255).
   // Feeds the left LogFieldsPanel's "Available fields" group. CH
@@ -653,6 +671,22 @@ function LogsInner() {
           })()}
         </div>
 
+        {/* v0.8.400 — HONEST env-filter chip (the v0.8.398 pattern:
+            state that the filter could NOT apply instead of silently
+            answering unfiltered). The ES backend sets envUnapplied when
+            ?env= was requested but no environment field resolved in the
+            index mapping (self-discovery over the candidate shapes came
+            up empty and none is configured in Settings → Elasticsearch).
+            Never set by the CH backend. */}
+        {!live && !!env && !!staticQ.data?.envUnapplied && (
+          <div style={{ marginBottom: 10 }}>
+            <span className="badge b-warn"
+              title={'The env filter could not be applied on this log source: no deployment-environment field was found in the index mapping (self-discovery probed resource.deployment.environment[.name], deployment.environment[.name], labels.deployment_environment, env, environment).\nThe rows below are UNFILTERED — all environments.\nFix: set the Environment field in Settings → Elasticsearch → Document field map.'}>
+              ⚠ env “{env}” not applied — this log source has no recognisable environment field
+            </span>
+          </div>
+        )}
+
         {/* Filter pill bar (Discover revamp step 1). One pill per
             structured field filter; free text stays in the search
             box. ≠ toggles NOT (red tone), ◐ disables without
@@ -809,7 +843,7 @@ function LogsInner() {
             reading the count column. Hidden when neither a time
             range nor a trace pin is set; renders nothing on
             empty data. */}
-        <LogsHistogram range={{ from, to }} filter={{ ...filter, search: compiledSearch }}
+        <LogsHistogram range={{ from, to }} filter={{ ...filter, env, search: compiledSearch }}
           onRangeSelect={(fromNs, toNs) => {
             // Brush → narrow the window to the selection. Custom
             // ranges ride ?range= (useUrlRange) so the zoom is

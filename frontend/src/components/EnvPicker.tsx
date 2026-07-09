@@ -23,9 +23,11 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 // whole-query-string snapshots. Viewer-visible — a read filter.
 //
 // Consumers: /traces (v0.8.383), /services + /endpoints (v0.8.385),
-// /problems + /inbox + sidebar badge (v0.8.387, service-scoped).
-// Other pages ignore `?env=` until their backends grow the filter —
-// the title says so instead of implying a global effect.
+// /problems + /inbox + sidebar badge (v0.8.387, service-scoped),
+// /logs (v0.8.400 — both backends; ES self-discovers its env field
+// and reports honestly when none resolves). Other pages ignore
+// `?env=` until their backends grow the filter — the title says so
+// instead of implying a global effect.
 export function EnvPicker() {
   const [env, setEnv] = useUrlEnv();
   const listId = useId();
@@ -97,8 +99,9 @@ export function EnvPicker() {
             ? `Showing the ${fetched.length} busiest of ${total} environments — type to search all (last 24h).\n`
             : '') +
           'Filter by deployment environment (deployment.environment.name).\n' +
-          'Applies to Traces, Services, Endpoints, Problems and Inbox today; more pages follow in upcoming releases.\n' +
-          'On Problems/Inbox the filter is service-scoped: rows whose service runs in the environment.'
+          'Applies to Traces, Services, Endpoints, Problems, Inbox and Logs today; more pages follow in upcoming releases.\n' +
+          'On Problems/Inbox the filter is service-scoped: rows whose service runs in the environment.\n' +
+          'On Logs the Elasticsearch backend discovers its environment field automatically and shows a chip when none resolves.'
         }
       />
       {env && (

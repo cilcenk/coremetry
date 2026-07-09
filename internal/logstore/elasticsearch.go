@@ -223,6 +223,12 @@ type ESFieldMap struct {
 	Body       string `json:"body,omitempty"`       // default "message"
 	SeverityNo string `json:"severityNo,omitempty"` // numeric, default "" (skip if absent)
 	SeverityTx string `json:"severityTx,omitempty"` // text, default "log.level"
+	// Env (v0.8.400 — env-separation Phase 4) — the deployment-
+	// environment field the ?env= filter targets. Default "" =
+	// SELF-DISCOVER via a cached field_caps over the candidate shapes
+	// (es_env_field.go); set it only when the pipeline uses a path the
+	// candidates don't cover.
+	Env string `json:"env,omitempty"`
 }
 
 func (c *ESConfig) defaults() {
@@ -272,6 +278,10 @@ type ESStore struct {
 	// on plain paging for the life of the process (openPIT is skipped)
 	// instead of burning a doomed PIT round-trip per search.
 	pitDenied atomic.Bool
+	// envField memoises the ?env= filter-field discovery verdict
+	// (v0.8.400, es_env_field.go) — one field_caps per envFieldTTL,
+	// never per request.
+	envField esEnvFieldCache
 	// NamespaceResolver maps a service name to its namespace for the
 	// {namespace} placeholder in cfg.IndexTemplate (v0.8.231). Wired by
 	// main.go to a TTL-cached chstore.GetServiceNamespaces lookup — the
@@ -439,10 +449,14 @@ func NewES(cfg ESConfig) (*ESStore, error) {
 	// Coremetry is querying the right paths for their mapping (v0.8.228).
 	// trace_id lookups additionally fall back across trace.id/trace_id/
 	// traceId/TraceId, but everything else uses exactly these paths.
-	log.Printf("[logstore-es] field map — timestamp=%q trace_id=%q span_id=%q service=%q message=%q severity_text=%q severity_number=%q "+
+	envFieldLabel := cfg.Fields.Env
+	if envFieldLabel == "" {
+		envFieldLabel = "(self-discover)" // v0.8.400 — es_env_field.go
+	}
+	log.Printf("[logstore-es] field map — timestamp=%q trace_id=%q span_id=%q service=%q message=%q severity_text=%q severity_number=%q env=%s "+
 		"(override via COREMETRY_ES_FIELD_* to match your log mapping)",
 		cfg.Fields.Timestamp, cfg.Fields.TraceID, cfg.Fields.SpanID, cfg.Fields.Service,
-		cfg.Fields.Body, cfg.Fields.SeverityTx, cfg.Fields.SeverityNo)
+		cfg.Fields.Body, cfg.Fields.SeverityTx, cfg.Fields.SeverityNo, envFieldLabel)
 	return &ESStore{cli: cli, cfg: cfg, fields: cfg.Fields}, nil
 }
 
@@ -946,6 +960,9 @@ func (s *ESStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 	case "severity", "level":
 		field = s.fields.SeverityTx
 	}
+	// v0.8.400 — env filter (cached discovery); the fields-panel result
+	// shape has no flag — the paired /logs search carries the chip.
+	f, _ = s.applyEnvResolution(ctx, f)
 	f.From, f.To = clampWindow(f.From, f.To)
 	query := s.buildQuery(f)
 	idx := s.queryIndices(ctx, f)
@@ -1137,12 +1154,20 @@ func (s *ESStore) Ping(ctx context.Context) error {
 }
 
 func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
+	// v0.8.400 — resolve the ?env= filter field ONCE per request (cached
+	// discovery, es_env_field.go). envUnapplied is the honest "requested
+	// but not applicable on this backend" flag the Page carries out.
+	f, envUnapplied := s.applyEnvResolution(ctx, f)
 	// v0.8.x — forward-tail mode (live-tail SSE). Deliberately bypasses the
 	// PIT + search_after keyset path below: a forward tail at the live edge
 	// would open a fresh PIT per tick, re-pinning segment readers (the
 	// v0.8.3 incident shape). searchForward is a plain bounded range read.
 	if f.SinceNs > 0 {
-		return s.searchForward(ctx, f)
+		page, err := s.searchForward(ctx, f)
+		if page != nil {
+			page.EnvUnapplied = envUnapplied
+		}
+		return page, err
 	}
 	limit := f.Limit
 	if limit <= 0 || limit > 1000 {
@@ -1420,7 +1445,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		log.Printf("[es-debug] zero hits for trace_id=%q span_id=%q service=%q index=%v query=%s",
 			f.TraceID, f.SpanID, f.Service, queryIdx, string(body))
 	}
-	return &Page{Total: raw.Hits.Total.Value, Logs: out, NextCursor: next}, nil
+	return &Page{Total: raw.Hits.Total.Value, Logs: out, NextCursor: next, EnvUnapplied: envUnapplied}, nil
 }
 
 // searchForward is the live-tail read (Filter.SinceNs > 0): a plain
@@ -1730,6 +1755,10 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	groupField := s.histogramGroupField(groupBy)
 	sevBanded := groupBy == "severity"
 
+	// v0.8.400 — env filter (cached discovery). No flag out of the
+	// []LogSeries wire shape — the PAIRED /logs search response carries
+	// the EnvUnapplied chip (same pairing rule as the degraded contract).
+	f, _ = s.applyEnvResolution(ctx, f)
 	// Bounded window + window-narrowed dailies (v0.8.109).
 	f.From, f.To = clampWindow(f.From, f.To)
 
@@ -2311,6 +2340,24 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		must = append(must, map[string]any{
 			"bool": map[string]any{
 				"should":               clShould,
+				"minimum_should_match": 1,
+			},
+		})
+	}
+	// v0.8.400 — deployment-environment filter (env-separation Phase 4).
+	// f.envField is the operator-configured fields.Env or the
+	// self-discovered candidate (applyEnvResolution); both mapping
+	// shapes are matched exactly like the service/cluster filters —
+	// a .keyword-subfield term plus the exists-guarded bare term
+	// (exactTermsBothShapes, the v0.8.239 ECS-vs-dynamic lesson).
+	// Env set with NO resolved field emits NOTHING here on purpose:
+	// a term on a missing/analyzed field silently matches zero docs,
+	// so the backend reports Page.EnvUnapplied instead (honesty over
+	// a fake empty result).
+	if f.Env != "" && f.envField != "" {
+		must = append(must, map[string]any{
+			"bool": map[string]any{
+				"should":               exactTermsBothShapes(f.envField, f.Env),
 				"minimum_should_match": 1,
 			},
 		})

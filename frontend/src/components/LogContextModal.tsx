@@ -3,6 +3,7 @@ import { Modal } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import type { LogRow } from '@/lib/types';
 
 // LogContextModal — v0.5.402. Datadog "Context" tab for /logs.
@@ -32,6 +33,11 @@ export function LogContextModal({
 }) {
   const [before, setBefore] = useState<LogRow[] | null | undefined>(undefined);
   const [after,  setAfter]  = useState<LogRow[] | null | undefined>(undefined);
+  // v0.8.400 — the global ?env= filter narrows both context halves: the
+  // operator's scenario is the SAME service name deployed in several
+  // environments, and context around a pivot must not interleave the
+  // other envs' lines.
+  const [env] = useUrlEnv();
 
   useEffect(() => {
     if (!pivot) {
@@ -43,6 +49,7 @@ export function LogContextModal({
     api.logsContext({
       ts: pivot.timestamp,
       service: pivot.serviceName || undefined,
+      env: env || undefined,
       n: 50,
     })
       .then(r => {
@@ -55,7 +62,7 @@ export function LogContextModal({
         setBefore(null); setAfter(null);
       });
     return () => { cancelled = true; };
-  }, [pivot]);
+  }, [pivot, env]);
 
   // Unified chronological list with pivot inserted between the two
   // halves. Both halves arrive sorted (before DESC, after ASC) so

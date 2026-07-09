@@ -3046,6 +3046,10 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 
 type LogFilter struct {
 	Service     string
+	// Env (v0.8.400 — env-separation Phase 4) — deployment-environment
+	// filter, applied as the bounded res-array conjunct
+	// logsEnvChainSQL. Empty = all environments.
+	Env         string
 	Search      string
 	From, To    time.Time
 	SeverityMin uint8
@@ -3078,6 +3082,21 @@ type LogFilter struct {
 // must carry a bounded LIMIT. The keyset cursor lets the caller
 // page deeper without ever asking for >logsMaxLimit rows at once.
 const logsMaxLimit = 1000
+
+// logsEnvChainSQL is the logs-local deployment-environment derivation
+// (v0.8.400 — env-separation Phase 4). The topoEnvChainSQL two-spelling
+// rule (v0.8.380): the NEW semconv key deployment.environment.name
+// first, then the legacy deployment.environment — but WITHOUT the
+// deploy_env column leg (logs has no typed env column; adding one is a
+// Dilim-5-class migration this raw-fallback slice deliberately avoids)
+// and WITHOUT the namespace fallbacks (a logs row with neither key is
+// honestly env-less, not namespace-approximated). indexOf() returns 0
+// for a missing key and arr[0] is '' in CH, so absent keys coalesce
+// cleanly. Pinned by TestLogsEnvChainSQL (repo_logs_env_test.go).
+const logsEnvChainSQL = `coalesce(
+			nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''),
+			nullIf(res_values[indexOf(res_keys, 'deployment.environment')], ''),
+			'')`
 
 // logsRowKeyExpr is the ONE SQL expression that makes a log line
 // distinguishable among rows sharing a DateTime64(9) timestamp. It is
@@ -3219,6 +3238,12 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	}
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
+	}
+	if f.Env != "" {
+		// v0.8.400 — env conjunct. Built into wc BEFORE the SinceNs
+		// branch below, so the count(), the main page read AND the
+		// forward-tail read all carry it.
+		wc.add(logsEnvChainSQL+" = ?", f.Env)
 	}
 	if f.Search != "" {
 		wc.add("body LIKE ?", "%"+f.Search+"%")

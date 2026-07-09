@@ -114,6 +114,7 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
 	base := logstore.Filter{
 		Service:     q.Get("service"),
 		Cluster:     q.Get("cluster"),
+		Env:         strings.TrimSpace(q.Get("env")), // v0.8.400 — env-separation Phase 4
 		Search:      q.Get("search"),
 		SeverityMin: uint8(sev),
 		TraceID:     q.Get("traceId"),
@@ -195,12 +196,39 @@ func (s *Server) streamLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// logsFieldStatsKey / logsTimeseriesKey — the /api/logs/fieldstats and
+// /api/logs/timeseries cache keys, extracted pure alongside
+// logsSearchKey (v0.8.400) for the same hash-ALL-inputs test.
+func logsFieldStatsKey(field string, f logstore.Filter, fromRaw, toRaw string) string {
+	return fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:env=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s",
+		field, f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID,
+		fromRaw, toRaw, f.Search)
+}
+
+func logsTimeseriesKey(f logstore.Filter, fromRaw, toRaw string, bucketSec int, groupBy string) string {
+	return fmt.Sprintf("logs-ts:svc=%s:env=%s:sev=%d:trace=%s:from=%s:to=%s:b=%d:g=%s:q=%s",
+		f.Service, f.Env, f.SeverityMin, f.TraceID, fromRaw, toRaw,
+		bucketSec, groupBy, f.Search)
+}
+
+// logsSearchKey builds the /api/logs cache key. Pure + extracted
+// (v0.8.400) so the hash-ALL-inputs contract is table-testable — env
+// joined the filter set and an env-filtered response must never
+// cross-poison the unfiltered one inside the 15s TTL (the v0.5.187
+// class; pinned by logs_env_key_test.go).
+func logsSearchKey(f logstore.Filter, fromRaw, toRaw string) string {
+	return fmt.Sprintf("logs:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:lim=%d:off=%d:cur=%s:q=%s",
+		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID,
+		fromRaw, toRaw, f.Limit, f.Offset, f.Cursor, f.Search)
+}
+
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sev, _ := strconv.Atoi(q.Get("severity"))
 	f := logstore.Filter{
 		Service:     q.Get("service"),
 		Cluster:     q.Get("cluster"),
+		Env:         strings.TrimSpace(q.Get("env")), // v0.8.400 — env-separation Phase 4
 		Search:      q.Get("search"),
 		From:        parseTime(q.Get("from")),
 		To:          parseTime(q.Get("to")),
@@ -220,9 +248,7 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 	// straight to ES. Key hashes EVERY filter input; raw from/to strings keep a
 	// relative window stable within the TTL (mirrors getLogsTimeseries).
 	// (operator asked to ease ES request pressure).
-	key := fmt.Sprintf("logs:svc=%s:clu=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:lim=%d:off=%d:cur=%s:q=%s",
-		f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
-		q.Get("from"), q.Get("to"), f.Limit, f.Offset, f.Cursor, f.Search)
+	key := logsSearchKey(f, q.Get("from"), q.Get("to"))
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.330 (pivot Phase 2) — the TRACE-LOGS branch (?traceId=, the
 		// Trace Logs tab) must never block or 5xx the trace view on a slow/
@@ -254,11 +280,7 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 					s.logs.Backend(), f.Service, f.TraceID, err)
 				return nil, err
 			}
-			return map[string]interface{}{
-				"total":      page.Total,
-				"logs":       page.Logs,
-				"nextCursor": page.NextCursor,
-			}, nil
+			return logsSearchPayload(page), nil
 		}
 		// v0.8.350 (HA 🟡6) — the MAIN search path now degrades like the
 		// trace branch above: slow/unreachable backend → 200
@@ -288,12 +310,25 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 				s.logs.Backend(), f.Service, f.TraceID, err)
 			return nil, err
 		}
-		return map[string]interface{}{
-			"total":      page.Total,
-			"logs":       page.Logs,
-			"nextCursor": page.NextCursor,
-		}, nil
+		return logsSearchPayload(page), nil
 	})
+}
+
+// logsSearchPayload maps a logstore Page to the /api/logs wire shape.
+// envUnapplied (v0.8.400) is included only when set — the ES backend's
+// honest "?env= was requested but no environment field resolved" flag;
+// the /logs page renders the warning chip off it instead of silently
+// showing an unfiltered result (the v0.8.398 honesty pattern).
+func logsSearchPayload(page *logstore.Page) map[string]interface{} {
+	out := map[string]interface{}{
+		"total":      page.Total,
+		"logs":       page.Logs,
+		"nextCursor": page.NextCursor,
+	}
+	if page.EnvUnapplied {
+		out["envUnapplied"] = true
+	}
+	return out
 }
 
 // getLogsFields surfaces the searchable field paths discovered
@@ -536,20 +571,26 @@ func (s *Server) getLogsContext(w http.ResponseWriter, r *http.Request) {
 	// every line emitted immediately after it missing. Ascending makes
 	// LIMIT n return the n rows immediately AFTER the pivot. The client
 	// (LogContextModal) re-sorts the union by timestamp for display.
+	// v0.8.400 — env narrows both halves: the operator's scenario is the
+	// SAME service name deployed in 3 environments, so context around a
+	// pivot must not interleave the other envs' lines.
+	env := strings.TrimSpace(q.Get("env"))
 	beforeF := logstore.Filter{
 		Service: service,
+		Env:     env,
 		From:    pivot.Add(-30 * time.Minute),
 		To:      pivot,
 		Limit:   n,
 	}
 	afterF := logstore.Filter{
 		Service:   service,
+		Env:       env,
 		From:      pivot,
 		To:        pivot.Add(30 * time.Minute),
 		Limit:     n,
 		Ascending: true,
 	}
-	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:n=%d", ts, service, n)
+	key := fmt.Sprintf("logs-context:ts=%d:svc=%s:env=%s:n=%d", ts, service, env, n)
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.350 (HA 🟡6) — a slow/unreachable backend degrades the
 		// modal to 200 {degraded:true} + empty halves instead of a 5xx.
@@ -624,6 +665,7 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 	f := logstore.Filter{
 		Service:     q.Get("service"),
 		Cluster:     q.Get("cluster"),
+		Env:         strings.TrimSpace(q.Get("env")), // v0.8.400 — env-separation Phase 4
 		Search:      q.Get("search"),
 		From:        parseTime(q.Get("from")),
 		To:          parseTime(q.Get("to")),
@@ -631,9 +673,7 @@ func (s *Server) getLogsFieldStats(w http.ResponseWriter, r *http.Request) {
 		TraceID:     q.Get("traceId"),
 		SpanID:      q.Get("spanId"),
 	}
-	key := fmt.Sprintf("logs-fieldstats:f=%s:svc=%s:cl=%s:sev=%d:trace=%s:span=%s:from=%s:to=%s:q=%s",
-		field, f.Service, f.Cluster, f.SeverityMin, f.TraceID, f.SpanID,
-		q.Get("from"), q.Get("to"), q.Get("search"))
+	key := logsFieldStatsKey(field, f, q.Get("from"), q.Get("to"))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		tctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
@@ -664,6 +704,7 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	sev, _ := strconv.Atoi(q.Get("severity"))
 	f := logstore.Filter{
 		Service:     q.Get("service"),
+		Env:         strings.TrimSpace(q.Get("env")), // v0.8.400 — env-separation Phase 4
 		Search:      q.Get("search"),
 		From:        parseTime(q.Get("from")),
 		To:          parseTime(q.Get("to")),
@@ -683,9 +724,7 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 		bucketSec = 86400
 	}
 	groupBy := strings.TrimSpace(q.Get("groupBy"))
-	key := fmt.Sprintf("logs-ts:svc=%s:sev=%d:trace=%s:from=%s:to=%s:b=%d:g=%s:q=%s",
-		f.Service, f.SeverityMin, f.TraceID, q.Get("from"), q.Get("to"),
-		bucketSec, groupBy, q.Get("search"))
+	key := logsTimeseriesKey(f, q.Get("from"), q.Get("to"), bucketSec, groupBy)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.3 — bound the Go goroutine on BOTH backends. CH already
 		// self-caps at 30s (max_execution_time); this gives the ES path

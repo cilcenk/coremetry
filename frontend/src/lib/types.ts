@@ -1329,6 +1329,12 @@ export interface LogsResponse {
   // Logs tab renders a warning chip; the tab never blocks.
   degraded?: boolean;
   reason?: string;
+  // v0.8.400 (env-separation Phase 4) — the ES backend's honest signal
+  // that ?env= was requested but NO environment field resolved in the
+  // mapping (self-discovery came up empty and none is configured). The
+  // results are env-UNFILTERED; /logs renders a warning chip instead of
+  // silently implying a narrowed view (v0.8.398 honesty pattern).
+  envUnapplied?: boolean;
 }
 
 // /api/notifications/log (v0.8.247 backend, v0.8.263 UI) — one sent
@@ -3084,6 +3090,10 @@ export interface ESLogstoreFieldMap {
   body?: string;
   severityNo?: string;
   severityTx?: string;
+  // v0.8.400 — deployment-environment field for the ?env= filter.
+  // Empty = self-discover via a cached field_caps over the candidate
+  // shapes (backend es_env_field.go).
+  env?: string;
 }
 
 export interface ESLogstoreSnapshot {

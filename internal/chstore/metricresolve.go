@@ -257,6 +257,14 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 		return s.resolveTraceMetric(ctx, q, step)
 	}
 
+	// v0.8.410 (Tempo-parity T1) — agg "band": ONE call returns the
+	// whole p50/p90/p95/p99 percentile band (+ the usual exemplars),
+	// instead of four round-trips that each re-merge the same tdigest
+	// state. The Grafana/Tempo RED duration panel is exactly this.
+	if strings.EqualFold(q.Agg, "band") {
+		return s.resolveBand(ctx, q, step)
+	}
+
 	tier, useFine := selectMetricTier(q.From, q.To, step, s.spanmetricsCoverageStart(ctx), time.Now(), q.Filters, q.GroupBy)
 	if !useFine {
 		series, err := s.QuerySpanMetric(ctx, q.toSpanMetricFilter(step))
@@ -384,6 +392,156 @@ func (q MetricResolveQuery) toSpanMetricFilter(step int) SpanMetricFilter {
 		To:          q.To,
 		StepSeconds: step,
 	}
+}
+
+// bandQuantileLabels — the fine-tier band lines, index-aligned with
+// the doorway states' quantilesTDigestState(0.5, 0.9, 0.95, 0.99).
+var bandQuantileLabels = []string{"p50", "p90", "p95", "p99"}
+
+// bandProjection — every band quantile from ONE tdigest merge, in ms.
+// arrayMap keeps it a single state finalization per (bucket, gk) row;
+// four arrayElement projections would invite CH to merge the digest
+// four times.
+func bandProjection() string {
+	return "arrayMap(x -> toFloat64(x / 1e6), quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state))"
+}
+
+// relabelBandSeries appends the quantile label to every series'
+// GroupKey so a grouped band ("checkout|p95") stays distinguishable
+// and the exemplar GroupKey matching in the UI keeps working. Pure —
+// table-tested (v0.8.410).
+func relabelBandSeries(in []SpanMetricSeries, label string) []SpanMetricSeries {
+	out := make([]SpanMetricSeries, len(in))
+	for i, ser := range in {
+		gk := make([]string, 0, len(ser.GroupKey)+1)
+		gk = append(gk, ser.GroupKey...)
+		gk = append(gk, label)
+		out[i] = SpanMetricSeries{GroupKey: gk, Points: ser.Points}
+	}
+	return out
+}
+
+// resolveBand serves agg="band" (v0.8.410): the full percentile band
+// in one read. Fine tiers: single SQL over the doorway rollup, four
+// series per group key, exemplars attached to the p99 line (the
+// Tempo convention — dots ride the top of the band). Fallback
+// (pre-cutover window / off-tier dims): three bounded QuerySpanMetric
+// passes — the 5m/raw tdigest carries (0.5, 0.95, 0.99), so the
+// fallback band has no p90 line; an honest 3-line band beats a fake
+// interpolation.
+func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int) (MetricResolveResult, error) {
+	tier, useFine := selectMetricTier(q.From, q.To, step, s.spanmetricsCoverageStart(ctx), time.Now(), q.Filters, q.GroupBy)
+	if !useFine {
+		out := []SpanMetricSeries{}
+		for _, agg := range []string{"p50", "p95", "p99"} {
+			fq := q
+			fq.Agg = agg
+			series, err := s.QuerySpanMetric(ctx, fq.toSpanMetricFilter(step))
+			if err != nil {
+				return MetricResolveResult{}, err
+			}
+			out = append(out, relabelBandSeries(series, agg)...)
+		}
+		return MetricResolveResult{Series: out, Tier: "spans", StepSeconds: step}, nil
+	}
+
+	groupSelect := "[]::Array(String)"
+	if len(q.GroupBy) > 0 {
+		cols := make([]string, len(q.GroupBy))
+		for i, k := range q.GroupBy {
+			col, _ := tierDimColumn(k)
+			cols[i] = col
+		}
+		groupSelect = "[" + strings.Join(cols, ", ") + "]"
+	}
+	conds := []string{"time_bucket >= ?", "time_bucket <= ?"}
+	args := []any{q.From, q.To}
+	for k, v := range q.Filters {
+		col, _ := tierDimColumn(k)
+		conds = append(conds, col+" = ?")
+		args = append(args, v)
+	}
+	exemplarCols := ""
+	if q.IncludeExemplars {
+		exemplarCols = spanmetricExemplarCols()
+	}
+
+	sql := fmt.Sprintf(`
+		SELECT
+		    toUnixTimestamp(toStartOfInterval(time_bucket, INTERVAL %d SECOND)) * 1000000000 AS bucket,
+		    %s AS gk,
+		    %s AS band%s
+		FROM %s
+		WHERE %s
+		GROUP BY bucket, gk
+		ORDER BY gk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 30`,
+		step, groupSelect, bandProjection(), exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "))
+
+	rows, err := s.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return MetricResolveResult{}, fmt.Errorf("resolve band (%s): %w", tier.label, err)
+	}
+	defer rows.Close()
+
+	type bandGroup struct {
+		lines [4]*SpanMetricSeries
+	}
+	groups := make(map[string]*bandGroup)
+	var order []string
+	var exemplars []MetricExemplar
+	for rows.Next() {
+		var bucket uint64
+		var gk []string
+		var band []float64
+		var slowTrace, errTrace string
+		if q.IncludeExemplars {
+			if err := rows.Scan(&bucket, &gk, &band, &slowTrace, &errTrace); err != nil {
+				return MetricResolveResult{}, err
+			}
+		} else {
+			if err := rows.Scan(&bucket, &gk, &band); err != nil {
+				return MetricResolveResult{}, err
+			}
+		}
+		key := strings.Join(gk, "|")
+		g, ok := groups[key]
+		if !ok {
+			g = &bandGroup{}
+			for i, lbl := range bandQuantileLabels {
+				lgk := make([]string, 0, len(gk)+1)
+				lgk = append(lgk, gk...)
+				lgk = append(lgk, lbl)
+				g.lines[i] = &SpanMetricSeries{GroupKey: lgk}
+			}
+			groups[key] = g
+			order = append(order, key)
+		}
+		for i := range bandQuantileLabels {
+			v := 0.0
+			if i < len(band) {
+				v = band[i]
+			}
+			g.lines[i].Points = append(g.lines[i].Points, SpanMetricPoint{Time: int64(bucket), Value: v})
+		}
+		if q.IncludeExemplars && (slowTrace != "" || errTrace != "") {
+			exemplars = append(exemplars, MetricExemplar{
+				Time: int64(bucket), GroupKey: g.lines[3].GroupKey,
+				SlowTraceID: slowTrace, ErrorTraceID: errTrace,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return MetricResolveResult{}, err
+	}
+	out := make([]SpanMetricSeries, 0, len(order)*4)
+	for _, k := range order {
+		for _, ln := range groups[k].lines {
+			out = append(out, *ln)
+		}
+	}
+	return MetricResolveResult{Series: out, Tier: tier.label, StepSeconds: step, Exemplars: exemplars}, nil
 }
 
 // spanmetricsCoverageStart returns the earliest available spanmetrics bucket —

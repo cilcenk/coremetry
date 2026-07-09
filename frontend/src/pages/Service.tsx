@@ -131,16 +131,14 @@ function ServiceDetailInner() {
     if (next) p.set('op', next); else p.delete('op');
     return p;
   }, { replace: true });
-  // Operations belong to one service — navigating to another service
-  // must drop the scope. Deep links stay intact: the effect only
-  // fires on an actual svc CHANGE, not on mount.
-  const [prevSvc, setPrevSvc] = useState(svc);
-  useEffect(() => {
-    if (prevSvc === svc) return;
-    setPrevSvc(svc);
-    if (searchParams.get('op')) setOpScope('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [svc]);
+  // NO svc-change wipe of ?op= (v0.8.423). Every cross-service link in
+  // the app builds a fresh /service?name=X href, so a forward
+  // navigation sheds the scope naturally; the only path where svc
+  // changes with ?op= present is the browser restoring a history entry
+  // (back/forward) — where the scope is exactly what that entry
+  // encoded. The v0.8.415 wipe effect fired ONLY there, silently
+  // rewriting the restored URL (the recurring one-way-read bug class,
+  // v0.8.253/256/265/267).
 
   useEffect(() => {
     if (!svc) return;

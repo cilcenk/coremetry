@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
+import { fmtXTicks } from '@/lib/chartFmt';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Generalises the proven
 // OverviewChart uPlot wrapper (Canvas, so it also lands the "charts to Canvas"
@@ -102,7 +103,18 @@ export function TimeChart({
     });
 
     const axes: uPlot.Axis[] = [
-      { stroke: text3, grid: { show: false }, ticks: { show: false }, size: 20, font: '10px ui-monospace, monospace' },
+      {
+        stroke: text3, grid: { show: false }, ticks: { show: false }, size: 20,
+        font: '10px ui-monospace, monospace',
+        // v0.8.402 (operator-reported: the Problems occurrences chart
+        // showed only "12 AM / 12 PM" with no DAY) — uPlot's default
+        // time axis was in charge here while every other chart uses
+        // the house day-boundary formatter. fmtXTicks stamps MM-DD on
+        // the first tick of each new day; space=70 thins ticks so the
+        // wider date+time labels never overlap (the v0.8.58 pair).
+        values: (_u, sp) => fmtXTicks(sp),
+        space: 70,
+      },
       yAxis('y', 0, maxL, fmtLeft, true),
     ];
     if (hasRight) axes.push(yAxis('y2', 1, maxR, fmtRight, false));
@@ -148,7 +160,15 @@ export function TimeChart({
           if (!tt) return;
           const idx = u.cursor.idx;
           if (idx == null || u.cursor.left == null || u.cursor.left < 0) { tt.style.display = 'none'; return; }
-          const ts = new Date(times[idx] * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          // v0.8.402 — include the DAY when the chart spans more than
+          // one (the axis fix's tooltip twin: a Tuesday spike and a
+          // Wednesday spike otherwise read identically on hover).
+          const dd = new Date(times[idx] * 1000);
+          const sameDay = times.length > 1 &&
+            new Date(times[0] * 1000).toDateString() === new Date(times[times.length - 1] * 1000).toDateString();
+          const hm = dd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const ts = sameDay ? hm
+            : `${String(dd.getMonth() + 1).padStart(2, '0')}-${String(dd.getDate()).padStart(2, '0')} ${hm}`;
           const rows = series.map((s, i) => {
             const unit = s.axis === 'right' ? rightUnit : leftUnit;
             return `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${colors[i]}"></i>${s.label}</span><b>${kfmt(s.data[idx] ?? 0)}${unit}</b></div>`;

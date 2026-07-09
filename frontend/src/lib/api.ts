@@ -52,13 +52,17 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
 // signal via init.
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// v0.8.413 — heavy, deliberate admin actions (telemetry purge) may
+// legitimately outlive the 60s default; callers pass timeoutMs to
+// keep the connection open while the server works.
+async function request<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const timeoutMs = init?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   let signal = init?.signal;
   let abortTimer: ReturnType<typeof setTimeout> | undefined;
   if (!signal) {
     const ctl = new AbortController();
     signal = ctl.signal;
-    abortTimer = setTimeout(() => ctl.abort(), DEFAULT_REQUEST_TIMEOUT_MS);
+    abortTimer = setTimeout(() => ctl.abort(), timeoutMs);
   }
   try {
     const r = await fetch(API_BASE + path, { credentials: 'include', ...init, signal });
@@ -73,7 +77,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return await (r.json() as Promise<T>);
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {
-      throw new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s — try a narrower time range or fewer filters`);
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s — try a narrower time range or fewer filters`);
     }
     throw err;
   } finally {
@@ -1780,8 +1784,11 @@ export const api = {
       body: JSON.stringify({ password }),
     }),
   // Admin "factory reset" — TRUNCATE all observability data (config preserved).
+  // v0.8.413 — a factory reset on a big install runs minutes of ON
+  // CLUSTER TRUNCATEs; 5-min client window (the server detaches from
+  // the request anyway, so an abort can no longer half-purge).
   purgeTelemetry: () =>
-    request<PurgeResult>('/api/admin/purge-telemetry', { method: 'POST' }),
+    request<PurgeResult>('/api/admin/purge-telemetry', { method: 'POST', timeoutMs: 300_000 }),
   // setUserCustomRole assigns or clears the custom-role pointer
   // (v0.5.251). Only valid when the base role is viewer; server
   // rejects with 400 otherwise. Empty string clears.

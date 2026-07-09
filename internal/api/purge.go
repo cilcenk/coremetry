@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // purgeTelemetry is the "factory reset" admin action: it TRUNCATEs every
@@ -14,7 +16,16 @@ import (
 // reports per-table successes / skips / errors so the UI can show exactly what
 // happened. POST /api/admin/purge-telemetry.
 func (s *Server) purgeTelemetry(w http.ResponseWriter, r *http.Request) {
-	res, err := s.store.PurgeTelemetry(r.Context())
+	// v0.8.413 — operator-reported: the purge timed out at the client's
+	// 60s fetch abort, and because it ran on r.Context() the abort
+	// CANCELED the purge MID-WAY (partial truncate; a big test env
+	// needs well over a minute of ON CLUSTER TRUNCATEs). Detach: the
+	// purge is a deliberate, audited factory reset — once started it
+	// runs to completion even if the tab closes. 10-minute umbrella so
+	// a wedged keeper can't pin the goroutine forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	res, err := s.store.PurgeTelemetry(ctx)
 	// Audit unconditionally — a partial purge is still a state mutation the
 	// operator must see in the (preserved) audit trail.
 	s.audit(r, "telemetry.purge", "clickhouse", s.store.DatabaseName(),

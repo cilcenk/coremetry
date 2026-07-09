@@ -329,17 +329,13 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
     [openExemplar],
   );
 
-  if (loading) {
-    return (
-      <div style={{
-        background: 'var(--bg1)', border: '1px solid var(--border)',
-        borderRadius: 8, padding: 14, marginBottom: 14,
-        minHeight: 200, display: 'grid', placeItems: 'center',
-      }}>
-        <Spinner />
-      </div>
-    );
-  }
+  // v0.8.420 — NO whole-component loading return. The v0.8.414 operation
+  // picker lives in the toolbar and is fully controlled: every keystroke
+  // commits ?op= → refetch → loading=true, and an early return here
+  // replaced the ENTIRE component (focused input included) with a
+  // Spinner — typing an operation name was impossible past the first
+  // character. The toolbar now renders unconditionally; only the chart
+  // area below swaps to the spinner.
 
   // Scoped titles: the split axis disappears once one operation is
   // picked, and the latency panel becomes the percentile band.
@@ -429,6 +425,15 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
         Lejantta operasyon tıkla → sadece o seri · tekrar tıkla → tümü ·
         Ctrl/⌘+tıkla → çoklu seç
       </div>
+      {loading ? (
+        <div style={{
+          background: 'var(--bg1)', border: '1px solid var(--border)',
+          borderRadius: 8, padding: 14,
+          minHeight: 200, display: 'grid', placeItems: 'center',
+        }}>
+          <Spinner />
+        </div>
+      ) : (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {/* v0.5.480 — Each RED panel gets an EventMarkers
             overlay scoped to (service, [from, to]). The wrapper
@@ -488,6 +493,7 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
           </MetricPanel>
         </ChartCard>
       </div>
+      )}
 
       {/* Spike → exemplar drawer. Opens with just the resolved
           traceId; closing clears it. Stays mounted so the close

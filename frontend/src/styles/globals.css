@@ -1894,3 +1894,50 @@ thead th:hover .th-remove { opacity: 1; }
   border-radius: 2px;
   padding: 0;
 }
+
+/* ── Problems redesign (Variant B, Dynatrace feed) ──────────────────────────
+   Helper classes only — every color is an existing token (no new tokens,
+   no literal hex), so the dark / light / redhat palettes drive them. */
+/* 4-tile summary strip: left rail carries the status color. */
+.pb-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.pb-tile { background: var(--bg1); border: 1px solid var(--border); border-left: 3px solid var(--text3); border-radius: var(--radius-sm); padding: 10px 12px; min-width: 0; }
+.pb-tile.err { border-left-color: var(--err); }
+.pb-tile.warn { border-left-color: var(--warn); }
+.pb-tile.ok { border-left-color: var(--ok); }
+.pb-tile.accent { border-left-color: var(--accent); }
+.pb-tile .n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.pb-tile .k { font-size: 10.5px; color: var(--text3); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+/* Problem card: 4px severity rail on the left edge. */
+.pb-card { display: flex; gap: 12px; background: var(--bg1); border: 1px solid var(--border); border-left: 4px solid var(--text3); border-radius: var(--radius-sm); padding: 10px 14px; margin-bottom: 8px; cursor: pointer; min-width: 0; }
+.pb-card:hover { background: var(--bg2); }
+.pb-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pb-card.err { border-left-color: var(--err); }
+.pb-card.warn { border-left-color: var(--warn); }
+.pb-card.ok { border-left-color: var(--ok); }
+.pb-card.gray { border-left-color: var(--text3); }
+.pb-card .pb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.pb-card .pb-side { flex: 0 0 220px; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; text-align: right; font-size: 11px; color: var(--text3); }
+.pb-title { font-size: 13px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb-id { font-size: 10.5px; color: var(--text3); }
+.pb-rc { font-size: 12px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb-rc .k { color: var(--text3); font-weight: 600; }
+.pb-headline { font-size: 15px; font-weight: 700; color: var(--err); font-variant-numeric: tabular-nums; }
+/* Blast-radius pill: dot + service name. */
+.pb-pill { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg2); font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+.pb-pill.err .dot { background: var(--err); }
+/* Detail page cards. */
+.pb-sect { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px; min-width: 0; }
+.pb-sect > .h { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg2); border-radius: var(--radius-sm) var(--radius-sm) 0 0; font-size: 12px; font-weight: 700; }
+.pb-sect > .h.accent { background: var(--accent-bg); border-bottom-color: var(--accent-border); color: var(--accent2); }
+.pb-sect > .b { padding: 10px 12px; min-width: 0; }
+/* Vertical dot-line timeline. */
+.pb-tl { list-style: none; margin: 0; padding: 0; }
+.pb-tl li { position: relative; padding: 0 0 14px 20px; font-size: 12px; }
+.pb-tl li::before { content: ''; position: absolute; left: 5px; top: 14px; bottom: -2px; width: 1px; background: var(--border); }
+.pb-tl li:last-child::before { display: none; }
+.pb-tl li::after { content: ''; position: absolute; left: 1px; top: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--text3); }
+.pb-tl li.err::after { background: var(--err); }
+.pb-tl li.warn::after { background: var(--warn); }
+.pb-tl li.ok::after { background: var(--ok); }
+.pb-tl li.accent::after { background: var(--accent); }

@@ -32,6 +32,10 @@ interface Props {
   syncKey?: string;                 // uPlot.sync group for cross-chart crosshair
   fmtLeft?: (v: number) => string;  // y label formatter (left)
   fmtRight?: (v: number) => string; // y label formatter (right)
+  // Optional x-tick formatter override (unix seconds → label). Default
+  // stays the house day-boundary formatter (fmtXTicks); the Problems
+  // detail passes its windowed rule (problemTime.fmtHistTick) here.
+  fmtX?: (tsSec: number) => string;
 }
 
 function cssVar(v: string): string {
@@ -43,7 +47,7 @@ const kfmt = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed
 
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
-  deployMarkers, onBrush, syncKey, fmtLeft, fmtRight,
+  deployMarkers, onBrush, syncKey, fmtLeft, fmtRight, fmtX,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -112,8 +116,8 @@ export function TimeChart({
         // the house day-boundary formatter. fmtXTicks stamps MM-DD on
         // the first tick of each new day; space=70 thins ticks so the
         // wider date+time labels never overlap (the v0.8.58 pair).
-        values: (_u, sp) => fmtXTicks(sp),
-        space: 70,
+        values: (_u, sp) => (fmtX ? sp.map(fmtX) : fmtXTicks(sp)),
+        space: fmtX ? 90 : 70,
       },
       yAxis('y', 0, maxL, fmtLeft, true),
     ];
@@ -193,7 +197,7 @@ export function TimeChart({
     ro.observe(el);
 
     return () => { ro.disconnect(); plotRef.current?.destroy(); plotRef.current = null; };
-  }, [times, series, height, leftUnit, rightUnit, deployMarkers, onBrush, syncKey, fmtLeft, fmtRight, themeTick]);
+  }, [times, series, height, leftUnit, rightUnit, deployMarkers, onBrush, syncKey, fmtLeft, fmtRight, fmtX, themeTick]);
 
   return (
     <div className="ov-chart-wrap" style={{ position: 'relative' }}>

@@ -1314,6 +1314,12 @@ export interface LogRow {
   spanId: string;
   attributes: Record<string, string>;
   resourceAttributes: Record<string, string>;
+  // origin (v0.8.407, frontend-only) — 'span-event' marks a pseudo
+  // log row synthesized from an OTel span EVENT (exception /
+  // log-bridge record) already loaded with the trace from ClickHouse.
+  // Never set on backend rows; <LogTable> renders a small chip so
+  // operators can tell the two sources apart when merged.
+  origin?: 'span-event';
 }
 
 export interface LogsResponse {

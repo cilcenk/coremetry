@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Spinner, Empty } from '@/components/Spinner';
+import { perSpanLogSignals, spanEventLogRows, traceServicesWithoutTraceField } from '@/lib/traceEventLogs';
 import { computeCriticalPath } from '@/lib/criticalPath';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
@@ -63,12 +64,23 @@ function TraceDetailInner() {
   // traces vanish" bug. Stable per trace → no refetch churn from the key.
   const logWin = useMemo(() => traceLogWindow(spans), [spans]);
 
+  // v0.8.407 — trace↔log correlation, zero-ES leg. Span events
+  // (exceptions + log-bridge records) already ride the CH trace load;
+  // they become pseudo log rows for the Logs tab and, combined with
+  // whatever the lazy ES fetch has cached, per-span waterfall chips.
+  const eventRows = useMemo(() => spanEventLogRows(spans ?? []), [spans]);
+
   // Correlated logs ride the shared OTel hook — every log line sharing this
   // trace_id, react-query-cached. Enabled lazily (only when the Logs tab is
   // open) so the trace page stays fast for operators who never need them.
   const logsQuery = useCorrelatedLogs(
     tab === 'logs' ? id : undefined, undefined,
     { limit: 500, from: logWin?.from, to: logWin?.to });
+  // v0.8.407 — per-span correlated-row counts for the waterfall chips
+  // (span events always; ES logs once the lazy fetch has cached them).
+  const logSignals = useMemo(
+    () => perSpanLogSignals(logsQuery.data?.logs, eventRows),
+    [logsQuery.data, eventRows]);
   const logs: LogRow[] | null | undefined =
     tab !== 'logs' ? undefined
     : logsQuery.isLoading ? undefined
@@ -446,7 +458,15 @@ function TraceDetailInner() {
                 Trace <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{spans.length}</span>
               </TabBtn>
               <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
-                Logs {logs && <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length}</span>}
+                {/* v0.8.407 — count covers ES logs + span-event rows once
+                    fetched; before the lazy ES fetch a ● hints that the
+                    trace already carries log-like span events (zero-cost
+                    signal — no ES query fires until the tab opens). */}
+                Logs {logs
+                  ? <span style={{ color: 'var(--text3)', marginLeft: 4 }}>{logs.length + eventRows.length}</span>
+                  : eventRows.length > 0
+                    ? <span style={{ color: 'var(--text3)', marginLeft: 4 }} title={`${eventRows.length} span event(s) on this trace`}>●</span>
+                    : null}
               </TabBtn>
             </div>
 
@@ -464,7 +484,8 @@ function TraceDetailInner() {
                       critFocus={critFocus} onCritFocus={setCritFocus} />
                     <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
-                      focusIds={critFocus && criticalPath ? criticalPath.ids : undefined} />
+                      focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
+                      logSignals={logSignals} onLogsClick={() => setTab('logs')} />
                   </div>
                   {sel && <SpanDetail span={sel} onClose={closeSpanPanel}
                     logsFrom={logWin?.from} logsTo={logWin?.to} />}
@@ -473,7 +494,9 @@ function TraceDetailInner() {
             )}
 
             {tab === 'logs' && (
-              <TraceLogsPanel logs={logs} degraded={logsDegraded} />
+              <TraceLogsPanel logs={logs} degraded={logsDegraded}
+                eventRows={eventRows}
+                traceServices={[...new Set((spans ?? []).map(sp => sp.serviceName).filter(Boolean))]} />
             )}
           </>
         )}
@@ -657,23 +680,39 @@ function LinkedTracesSection({ id }: { id: string }) {
 // result contract: warn chip instead of the "no logs" empty state (which
 // would misread as an instrumentation gap), table still renders, tab never
 // blocks.
-function TraceLogsPanel({ logs, degraded }: {
+function TraceLogsPanel({ logs, degraded, eventRows, traceServices }: {
   logs: LogRow[] | null | undefined;
   degraded?: string | null;
+  // v0.8.407 — pseudo rows from the trace's own span events (zero-ES
+  // leg): merged into the list, shown alone when the backend has
+  // nothing / fails, so the tab is useful even without shipped logs.
+  eventRows: LogRow[];
+  traceServices: string[];
 }) {
   if (logs === undefined) return <Spinner />;
-  if (logs === null) return <Empty icon="⚠" title="Failed to load logs" />;
-  if (logs.length === 0 && !degraded) {
-    return <Empty icon="≡" title="No logs for this trace">
-      Make sure your collector ships logs with the W3C trace context (trace_id + span_id) populated.
-    </Empty>;
+  if (logs === null) {
+    // Backend errored — the span events still tell part of the story.
+    if (eventRows.length > 0) {
+      return (
+        <>
+          <div style={{ padding: '0 10px 6px' }}>
+            <span className="badge b-err">⚠ Failed to load logs — showing the trace's span events only</span>
+          </div>
+          <LogTable logs={[...eventRows].sort((a, b) => a.timestamp - b.timestamp)} hideTraceColumn />
+        </>
+      );
+    }
+    return <Empty icon="⚠" title="Failed to load logs" />;
+  }
+  if (logs.length === 0 && eventRows.length === 0 && !degraded) {
+    return <TraceLogsEmptyDiagnostics traceServices={traceServices} />;
   }
   // Ascending chronological order — lines up with the trace
   // waterfall above. Display reuses the shared <LogTable> so
   // severity colouring / row expand layout / attribute tables
   // stay consistent with the /logs page; operators don't
   // re-learn a second viewer when they drill in from a trace.
-  const sorted = [...logs].sort((a, b) => a.timestamp - b.timestamp);
+  const sorted = [...logs, ...eventRows].sort((a, b) => a.timestamp - b.timestamp);
   return (
     <>
       {degraded && (
@@ -687,10 +726,57 @@ function TraceLogsPanel({ logs, degraded }: {
         display: 'flex', gap: 10, padding: '6px 10px',
         fontSize: 11, color: 'var(--text3)',
       }}>
-        <span>{sorted.length} log line{sorted.length === 1 ? '' : 's'}</span>
+        <span>
+          {logs.length} log line{logs.length === 1 ? '' : 's'}
+          {eventRows.length > 0 && ` + ${eventRows.length} span event${eventRows.length === 1 ? '' : 's'}`}
+        </span>
       </div>
       <LogTable logs={sorted} hideTraceColumn />
     </>
+  );
+}
+
+// TraceLogsEmptyDiagnostics (v0.8.407, D leg) — "0 log" has two very
+// different causes and the old static hint couldn't tell them apart:
+// the services genuinely logged nothing, or the shipper writes logs
+// WITHOUT a trace field (correlation broken → every trace's tab is
+// empty). The logstore trace-context report (field_caps + sampled
+// coverage, 5-min server cache; viewer-safe route) names the broken
+// services so the operator gets an actionable answer. Fetched ONLY
+// when the tab is open AND empty — never on the hot path.
+function TraceLogsEmptyDiagnostics({ traceServices }: { traceServices: string[] }) {
+  const q = useQuery({
+    queryKey: ['logstore', 'trace-context'],
+    queryFn: () => api.logstoreTraceContext(),
+    staleTime: 300_000, // matches the server's 5-min serveCached TTL
+    retry: false,
+  });
+  const rep = q.data?.report;
+  const broken = rep?.available
+    ? traceServicesWithoutTraceField(traceServices, rep.services ?? [])
+    : [];
+  return (
+    <Empty icon="≡" title="No logs for this trace">
+      {broken.length > 0 ? (
+        <>
+          The log backend HAS log lines for{' '}
+          <b>{broken.join(', ')}</b> — but none of them carry a trace
+          field, so trace→log correlation can never match. Ship logs
+          with the W3C trace context (trace.id / trace_id) populated,
+          e.g. via the OTel Collector's log pipeline or your logging
+          library's OTel appender.
+        </>
+      ) : rep?.available && !rep.pivotReady ? (
+        <>
+          The log backend's trace field looks unusable
+          (field: <code>{rep.effectiveField || 'none'}</code>, type:{' '}
+          <code>{rep.effectiveType || 'absent'}</code>). Check
+          Settings → Elasticsearch → field mapping.
+        </>
+      ) : (
+        <>Make sure your collector ships logs with the W3C trace context (trace_id + span_id) populated.</>
+      )}
+    </Empty>
   );
 }
 

@@ -598,6 +598,10 @@ export const api = {
   // {available:false, reason} report, never a 5xx.
   adminLogstoreTraceContext: () =>
     get<import('./types').TraceContextPayload>(`/api/admin/logstore/trace-context`),
+  // v0.8.407 — viewer-safe twin for the Trace page's empty-Logs-tab
+  // diagnostics (same cached report, no admin gate).
+  logstoreTraceContext: () =>
+    get<import('./types').TraceContextPayload>(`/api/logstore/trace-context`),
   // Kibana saved-search interop URLs — used as download / upload
   // anchors in /admin/elastic. v0.5.467.
   kibanaExportURL: () => `/api/admin/elastic/saved-search-export`,

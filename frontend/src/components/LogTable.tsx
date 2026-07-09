@@ -413,6 +413,15 @@ function LogRow({
           );
         })}
         <td style={{ maxWidth: 480 }} title={l.body}>
+          {/* v0.8.407 — span-event pseudo rows (exceptions / log-bridge
+              records riding the trace's spans) are visibly distinct from
+              backend log rows so the merged trace Logs tab stays honest. */}
+          {l.origin === 'span-event' && (
+            <span className="badge b-gray" style={{ marginRight: 6, fontSize: 9 }}
+                  title="Synthesized from an OTel span event on this trace — not a shipped log line">
+              event
+            </span>
+          )}
           {highlightTerms && highlightTerms.length > 0
             ? highlightSegments(l.body, highlightTerms).map((s, i) =>
                 s.hl ? <mark key={i} className="log-mark">{s.text}</mark> : <span key={i}>{s.text}</span>)

@@ -143,7 +143,7 @@ export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
 
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
-  criticalPathIds, matchIds, focusIds,
+  criticalPathIds, matchIds, focusIds, logSignals, onLogsClick,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -172,6 +172,12 @@ export function TraceWaterfall({
   // normally. Tree structure is unchanged so the operator can
   // still read the call hierarchy around each match.
   matchIds?: Set<string>;
+  // v0.8.407 — trace↔log correlation chips. spanId → correlated-row
+  // count (span events always; ES logs after the Logs tab's lazy
+  // fetch has run once — react-query cache, zero extra queries).
+  // Clicking the chip jumps to the Logs tab via onLogsClick.
+  logSignals?: Map<string, { n: number; err: boolean }>;
+  onLogsClick?: (spanId: string) => void;
   // Critical-path FOCUS mode — rows outside this set get .wf-dim,
   // on top of (not instead of) the .wf-critical left stripe.
   // Undefined = focus off. Independent from criticalPathIds so
@@ -572,6 +578,26 @@ export function TraceWaterfall({
                 {s.statusCode === 'error' && (
                   <span className="wf-err-dot" title="Error">●</span>
                 )}
+                {(() => {
+                  // v0.8.407 — "logs in context": correlated log/event
+                  // count for THIS span; click opens the Logs tab.
+                  const lc = logSignals?.get(s.spanId);
+                  if (!lc || lc.n === 0) return null;
+                  return (
+                    <span
+                      onClick={e => { e.stopPropagation(); onLogsClick?.(s.spanId); }}
+                      title={`${lc.n} correlated log line${lc.n === 1 ? '' : 's'} / span event${lc.n === 1 ? '' : 's'} — open Logs tab`}
+                      style={{
+                        flexShrink: 0, cursor: onLogsClick ? 'pointer' : 'default',
+                        fontSize: 10, lineHeight: 1, padding: '1px 4px',
+                        borderRadius: 3, border: '1px solid var(--border)',
+                        color: lc.err ? 'var(--err)' : 'var(--text3)',
+                        fontFamily: 'ui-monospace, monospace',
+                      }}>
+                      ≡{lc.n}
+                    </span>
+                  );
+                })()}
                 <span className="wf-pct" title="Share of total trace duration">
                   {durPctLabel}%
                 </span>

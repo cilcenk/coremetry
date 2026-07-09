@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { Button } from '@/components/ui/Button';
+import { panelsToCSV } from './exploreCsv';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtSmart } from '@/lib/chartFmt';
 import { fmtNum } from '@/lib/utils';
@@ -81,9 +83,27 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onFocus }: {
 
   if (rows.length === 0) return null;
 
+  // v0.8.412 (Data-Explorer parity DE1) — export the full result set
+  // (every series point, long format) as CSV. Client-only Blob; no
+  // request, no size surprise (the rows are already in memory).
+  const exportCSV = () => {
+    const blob = new Blob([panelsToCSV(panels)], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `coremetry-explore-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   return (
     <div className="table-wrap" style={{ marginTop: 12 }}
       onMouseLeave={() => onFocus(null)}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 8px 0' }}>
+        <Button variant="secondary" size="sm" onClick={exportCSV}
+          title="Download every series point (long format: query, series, unit, time, value)">
+          ⤓ CSV
+        </Button>
+      </div>
       <table style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} />

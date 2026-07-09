@@ -56,14 +56,28 @@ export function isResolverEligible(mq: MetricQuery): boolean {
 // and all three aggs are rollup-served — eligible by construction (pinned by
 // resolverEligibility.test.ts so a descriptor edit can't silently knock the
 // charts back onto the 5m path).
-export function serviceRedDescriptors(service: string): {
+// v0.8.414 (Tempo-parity T2) — optional operation scope: with an
+// operation picked the split collapses (one operation = one series
+// set) and the latency panel upgrades from a single p99 line to the
+// full percentile BAND (agg=band, v0.8.410) — the Grafana/Tempo RED
+// duration panel. name is a tier dim, band is rollup-served, so the
+// scoped descriptors stay eligible by construction.
+export function serviceRedDescriptors(service: string, operation?: string): {
   rps: MetricQuery; err: MetricQuery; p99: MetricQuery;
 } {
-  const filters = { 'service.name': service };
-  const groupBy = ['name'];
+  const filters: Record<string, string> = { 'service.name': service };
+  let groupBy: string[] = ['name'];
+  if (operation) {
+    filters['name'] = operation;
+    groupBy = [];
+  }
   return {
     rps: metricQuery({ metric: 'calls_total', agg: 'rate', unit: 'rps', filters, groupBy }),
     err: metricQuery({ metric: 'calls_total', agg: 'error_rate', unit: '%', filters, groupBy }),
-    p99: metricQuery({ metric: 'duration_milliseconds_bucket', agg: 'p99', unit: 'ms', filters, groupBy }),
+    p99: metricQuery({
+      metric: 'duration_milliseconds_bucket',
+      agg: operation ? 'band' : 'p99',
+      unit: 'ms', filters, groupBy,
+    }),
   };
 }

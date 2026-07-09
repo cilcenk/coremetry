@@ -451,6 +451,83 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 	return out, true
 }
 
+// operationMVPlan — resolved shape of an operation_summary_5m
+// fast-path query: which service/operation the WHERE pins and what
+// the gk array selects.
+type operationMVPlan struct {
+	serviceFilter string
+	nameFilter    string
+	groupSelect   string
+}
+
+// operationMVGate (v0.8.425) — the PURE eligibility half shared by
+// tryOperationMVFastPath and its batched peer, so it can be
+// table-tested without a CH connection. Semantics:
+//
+//   • GroupBy keys limited to name/operation + service.name.
+//   • Filters limited to `service.name = X` and — new in v0.8.425 —
+//     `name = Y` single-value equality. The name filter is what the
+//     operation-scoped RED view (v0.8.414, filters {service.name,
+//     name} groupBy []) emits; before this gate change those queries
+//     fell through to raw-spans scans on every ≥5m fallback window
+//     while their unscoped siblings rode the MV.
+//   • The operation axis must be present SOMEWHERE: either as a
+//     groupBy split (hasName) or pinned by a name filter.
+//   • Service scope stays mandatory (groupBy service.name or a
+//     service filter) — a cross-service single-operation scan is
+//     probably not what the operator meant (v0.5.269 refusal kept).
+func operationMVGate(groupBy []string, filters []FilterExpr) (operationMVPlan, bool) {
+	var p operationMVPlan
+	hasName, hasService := false, false
+	for _, k := range groupBy {
+		switch k {
+		case "name", "operation":
+			hasName = true
+		case "service.name", "service_name":
+			hasService = true
+		default:
+			return p, false
+		}
+	}
+	for _, fe := range filters {
+		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
+			p.serviceFilter = fe.Values[0]
+			continue
+		}
+		if (fe.Key == "name" || fe.Key == "operation") && fe.Op == "=" && len(fe.Values) == 1 {
+			p.nameFilter = fe.Values[0]
+			continue
+		}
+		return p, false
+	}
+	if !hasName && p.nameFilter == "" {
+		return p, false
+	}
+	if !hasService && p.serviceFilter == "" {
+		return p, false
+	}
+	switch {
+	case hasService && hasName:
+		// Match the operator's groupBy order so the chip tuple
+		// "service / operation" reads naturally.
+		if len(groupBy) >= 2 && (groupBy[0] == "service.name" || groupBy[0] == "service_name") {
+			p.groupSelect = "[service_name, name]"
+		} else {
+			p.groupSelect = "[name, service_name]"
+		}
+	case hasName:
+		p.groupSelect = "[name]"
+	case hasService:
+		// name pinned by filter, split by service.
+		p.groupSelect = "[service_name]"
+	default:
+		// name pinned by filter, no split at all (the scoped RED
+		// panels' shape) — one flat series.
+		p.groupSelect = "[]::Array(String)"
+	}
+	return p, true
+}
+
 // tryOperationMVFastPath (v0.5.269) routes eligible
 // QuerySpanMetric queries to operation_summary_5m — the same
 // pattern as tryServiceMVFastPath but with operation as the
@@ -487,42 +564,15 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 		return nil, false
 	}
 
-	// GroupBy gate: must include "name"; service.name is
-	// optional. Normalise so the SQL emit is deterministic.
-	hasName := false
-	hasService := false
-	for _, k := range f.GroupBy {
-		switch k {
-		case "name", "operation":
-			hasName = true
-		case "service.name", "service_name":
-			hasService = true
-		default:
-			return nil, false
-		}
-	}
-	if !hasName {
-		return nil, false
-	}
-
-	// Filter gate. effectiveFastPathFilters resolves a flat-AND FilterRoot's
-	// leaves to the legacy slice so a grouped `service.name = X` stays
+	// Shared gate (v0.8.425) — groupBy/filter eligibility + gk plan.
+	// effectiveFastPathFilters resolves a flat-AND FilterRoot's leaves
+	// to the legacy slice so a grouped `service.name = X` stays
 	// MV-eligible (v0.8.x gap-2).
-	var serviceFilter string
-	for _, fe := range f.effectiveFastPathFilters() {
-		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
-			serviceFilter = fe.Values[0]
-			continue
-		}
+	plan, ok := operationMVGate(f.GroupBy, f.effectiveFastPathFilters())
+	if !ok {
 		return nil, false
 	}
-
-	// If groupBy is just ["name"] WITHOUT a service filter,
-	// the MV scan would mix operations from every service —
-	// probably not what the operator wanted. Refuse.
-	if !hasService && serviceFilter == "" {
-		return nil, false
-	}
+	serviceFilter := plan.serviceFilter
 
 	field := f.Field
 	if field == "" {
@@ -562,32 +612,17 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 		return nil, false
 	}
 
-	// Build groupSelect — order matches f.GroupBy exactly so
-	// the wire-format keys line up with what the operator
-	// asked for (service.name first if both, else just name).
-	var groupSelect string
-	switch {
-	case hasService && hasName:
-		// Match the operator's f.GroupBy order so the chip
-		// tuple "service / operation" reads naturally.
-		if len(f.GroupBy) >= 2 && (f.GroupBy[0] == "service.name" || f.GroupBy[0] == "service_name") {
-			groupSelect = "[service_name, name]"
-		} else {
-			groupSelect = "[name, service_name]"
-		}
-	case hasName && !hasService:
-		groupSelect = "[name]"
-	default:
-		// Service-only group should have been caught by the
-		// service fast-path. Defensive — refuse.
-		return nil, false
-	}
+	groupSelect := plan.groupSelect
 
 	whereClauses := []string{"time_bucket >= ?", "time_bucket <= ?"}
 	args := []any{f.From, f.To}
 	if serviceFilter != "" {
 		whereClauses = append(whereClauses, "service_name = ?")
 		args = append(args, serviceFilter)
+	}
+	if plan.nameFilter != "" {
+		whereClauses = append(whereClauses, "name = ?")
+		args = append(args, plan.nameFilter)
 	}
 
 	sql := fmt.Sprintf(`
@@ -668,34 +703,14 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 		return nil, false
 	}
 
-	// GroupBy gate: must include "name"; service.name optional.
-	hasName, hasService := false, false
-	for _, k := range f.GroupBy {
-		switch k {
-		case "name", "operation":
-			hasName = true
-		case "service.name", "service_name":
-			hasService = true
-		default:
-			return nil, false
-		}
-	}
-	if !hasName {
+	// Shared gate (v0.8.425) — a `name = Y` filter (the operation-
+	// scoped legacy batch: dsl service.name+name, groupBy []) rides
+	// the MV now instead of falling to a raw-spans scan.
+	plan, ok := operationMVGate(f.GroupBy, f.Filters)
+	if !ok {
 		return nil, false
 	}
-
-	// Filter gate: only service.name = X.
-	var serviceFilter string
-	for _, fe := range f.Filters {
-		if (fe.Key == "service.name" || fe.Key == "service_name") && fe.Op == "=" && len(fe.Values) == 1 {
-			serviceFilter = fe.Values[0]
-			continue
-		}
-		return nil, false
-	}
-	if !hasService && serviceFilter == "" {
-		return nil, false
-	}
+	serviceFilter := plan.serviceFilter
 
 	// Every spec must be MV-supported. Field must be duration_ms
 	// (the only column the MV pre-aggregates). Build aggExpr
@@ -738,20 +753,7 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 		aggExprs = append(aggExprs, expr)
 	}
 
-	// Build groupSelect — matches operator's f.GroupBy order.
-	var groupSelect string
-	switch {
-	case hasService && hasName:
-		if len(f.GroupBy) >= 2 && (f.GroupBy[0] == "service.name" || f.GroupBy[0] == "service_name") {
-			groupSelect = "[service_name, name]"
-		} else {
-			groupSelect = "[name, service_name]"
-		}
-	case hasName:
-		groupSelect = "[name]"
-	default:
-		return nil, false
-	}
+	groupSelect := plan.groupSelect
 
 	selectParts := []string{
 		fmt.Sprintf("toUnixTimestamp(toStartOfInterval(time_bucket, INTERVAL %d SECOND)) * 1000000000 AS bucket", step),
@@ -766,6 +768,10 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 	if serviceFilter != "" {
 		whereClauses = append(whereClauses, "service_name = ?")
 		args = append(args, serviceFilter)
+	}
+	if plan.nameFilter != "" {
+		whereClauses = append(whereClauses, "name = ?")
+		args = append(args, plan.nameFilter)
 	}
 
 	sql := fmt.Sprintf(`

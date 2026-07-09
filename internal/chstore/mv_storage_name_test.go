@@ -21,9 +21,12 @@ func TestMVStorageName(t *testing.T) {
 		{"service_summary_5m", "service_summary_5m_local"},   // promoted
 		{"db_summary_5m", "db_summary_5m_local"},             // promoted
 		{"db_statement_summary_5m", "db_statement_summary_5m_local"}, // promoted day-one (v0.8.375)
-		{"spanmetrics_1m", "spanmetrics_1m"},                 // unpromoted
-		{"spanmetrics_10s", "spanmetrics_10s"},               // unpromoted
-		{"spanmetrics_1s", "spanmetrics_1s"},                 // unpromoted
+		// v0.8.408 — doorway tiers PROMOTED (highVolumeTables +
+		// boot-time RENAME migration): storage is now _local, so the
+		// TDigest probe follows automatically via this map lookup.
+		{"spanmetrics_1m", "spanmetrics_1m_local"},   // promoted v0.8.408
+		{"spanmetrics_10s", "spanmetrics_10s_local"}, // promoted v0.8.408
+		{"spanmetrics_1s", "spanmetrics_1s_local"},   // promoted v0.8.408
 		{"operation_group_summary_5m", "operation_group_summary_5m"}, // unpromoted
 	}
 	for _, c := range cases {

@@ -304,6 +304,13 @@ var tablesWithoutTraceID = map[string]bool{
 	"spanmetrics_calls_5m":         true,
 	"spanmetrics_hist_5m":          true,
 	"spanmetrics_duration_5m":      true,
+	// v0.8.408 — doorway tiers promoted (the v0.8.356 TODO). trace_id
+	// appears only INSIDE argMax/argMaxIf AggregateFunction states,
+	// never as a plain column, so the env-override shard-key path
+	// must fall back to rand() here too.
+	"spanmetrics_1m":  true,
+	"spanmetrics_10s": true,
+	"spanmetrics_1s":  true,
 	"messaging_summary_5m":         true,
 	"messaging_caller_summary_5m":  true,
 	"service_callers_5m":           true,
@@ -398,6 +405,11 @@ var defaultShardPolicy = map[string]string{
 	"spanmetrics_calls_5m":          "cityHash64(service_name)",
 	"spanmetrics_hist_5m":           "cityHash64(service_name)",
 	"spanmetrics_duration_5m":       "cityHash64(service_name)",
+	// v0.8.408 — doorway tiers (decorative for MVs, honest about the
+	// dominant read filter — every doorway query leads service_name).
+	"spanmetrics_1m":  "cityHash64(service_name)",
+	"spanmetrics_10s": "cityHash64(service_name)",
+	"spanmetrics_1s":  "cityHash64(service_name)",
 	// messaging_*: destination is the highest-cardinality dim
 	// (msg_system is ~5 values, cluster is ~10). Reads from
 	// /messaging filter by (msg_system, destination) — both
@@ -691,6 +703,89 @@ func (s *Store) healBrokenReplicatedTables(ctx context.Context) error {
 	return nil
 }
 
+// promoteCombinedMVs — v0.8.408. Boot-time promotion of combined
+// MaterializedViews that joined highVolumeTables AFTER an install
+// already created them bare-name per-shard (the spanmetrics doorway
+// tiers; the v0.8.356/358 one-shard-undercount class).
+//
+// ensureDistributedWrappers can't do this: its migration path
+// deliberately renames only Replicated*-engine tables, and a combined
+// MV reports engine='MaterializedView'. RENAME TABLE works on an MV
+// and is data-preserving — the .inner_id storage (with its existing
+// ZK path) and the insert trigger both follow the view, so the result
+// is byte-identical to what adaptDDL emits on a fresh install:
+// <name>_local MV per shard + a Distributed wrapper at the bare name.
+//
+// MUST run BEFORE the migrate() MV-create loop: with the new
+// registration adaptDDL rewrites the CREATE to <name>_local, and
+// creating that next to a still-live bare MV would double-aggregate
+// every spans insert. A tier that cannot be promoted (unexpected
+// state) fails migrate() loudly — booting into double-write is worse
+// than a crash-loop the next boot can heal.
+//
+// Boot race (two pods): same posture as ensureDistributedWrappers —
+// the RENAME loser re-polls system.tables via peerRenamedTable and
+// treats "peer did it" as success; the wrapper CREATE is IF NOT
+// EXISTS.
+func (s *Store) promoteCombinedMVs(ctx context.Context, names []string) error {
+	if !s.clusterMode() {
+		return nil
+	}
+	on := s.onCluster()
+	for _, name := range names {
+		var engine string
+		err := s.conn.QueryRow(ctx, `
+			SELECT engine FROM system.tables
+			WHERE database = currentDatabase() AND name = ?`, name).Scan(&engine)
+		if err != nil {
+			// No bare table (fresh install / already promoted) — the
+			// create loop + wrapper reconcile handle the rest.
+			continue
+		}
+		if engine != "MaterializedView" {
+			// Distributed = already promoted (bare name is the wrapper);
+			// anything else isn't the shape we know how to move.
+			if engine == "Distributed" {
+				continue
+			}
+			return fmt.Errorf("promote %s: unexpected engine %s (want MaterializedView)", name, engine)
+		}
+		localName := name + "_local"
+		var hasLocal uint8
+		if err := s.conn.QueryRow(ctx, `
+			SELECT count() > 0 FROM system.tables
+			WHERE database = currentDatabase() AND name = ?`, localName).Scan(&hasLocal); err != nil {
+			return fmt.Errorf("promote %s: probe _local: %w", name, err)
+		}
+		if hasLocal == 1 {
+			// Bare MV AND _local MV both live = both trigger on every
+			// insert (double aggregation). Never auto-drop data — stop
+			// the boot and name the fix.
+			return fmt.Errorf("promote %s: both %s and %s exist — drop one manually (SHOW CREATE TABLE %s) before upgrading",
+				name, name, localName, name)
+		}
+		if err := s.conn.Exec(ctx,
+			fmt.Sprintf("RENAME TABLE %s TO %s%s", name, localName, on)); err != nil {
+			beat, perr := s.peerRenamedTable(ctx, name, localName)
+			if perr != nil || !beat {
+				return fmt.Errorf("promote %s: rename: %w", name, err)
+			}
+		}
+		wrapStmt := fmt.Sprintf(
+			"CREATE TABLE IF NOT EXISTS %s%s AS %s ENGINE = Distributed(`%s`, currentDatabase(), %s, %s)",
+			name, on, localName, s.cfg.ClusterName, localName, s.shardKeyFor(name))
+		if err := s.conn.Exec(ctx, wrapStmt); err != nil {
+			// Half-promoted (rename done, wrapper missing) self-heals:
+			// ensureDistributedWrappers rebuilds missing wrappers every
+			// boot. Fail anyway so this boot doesn't serve bare-name
+			// reads that UNKNOWN_TABLE.
+			return fmt.Errorf("promote %s: wrapper: %w", name, err)
+		}
+		log.Printf("[chstore] promoted combined MV %s → %s + Distributed wrapper (data preserved)", name, localName)
+	}
+	return nil
+}
+
 // peerRenamedTable — v0.5.434. After a RENAME TABLE failure during
 // boot-time reconciliation, check whether a peer pod beat us to it:
 // the bare name should now be gone AND `<name>_local` should be
@@ -855,6 +950,18 @@ var highVolumeTables = map[string]bool{
 	"spanmetrics_calls_5m":          true,
 	"spanmetrics_hist_5m":           true,
 	"spanmetrics_duration_5m":       true,
+	// v0.8.408 — the spanmetrics_{1m,10s,1s} DOORWAY tiers join the
+	// _local family (closes the v0.8.356 TODO). Existing cluster
+	// installs are promoted at boot by promoteCombinedMVs (RENAME
+	// bare → _local + Distributed wrapper, data preserved) BEFORE the
+	// MV create loop — creating spanmetrics_1m_local next to a
+	// live bare spanmetrics_1m would double-trigger on every spans
+	// insert. spanmetricsSourceFor collapsed to the bare name in the
+	// SAME release: cluster() over the new Distributed wrapper would
+	// count every shard N times.
+	"spanmetrics_1m":  true,
+	"spanmetrics_10s": true,
+	"spanmetrics_1s":  true,
 	"messaging_summary_5m":          true,
 	"messaging_caller_summary_5m":   true,
 	"service_callers_5m":            true,

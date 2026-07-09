@@ -2708,6 +2708,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 
+	// v0.8.408 — promote the spanmetrics doorway tiers on existing
+	// cluster installs (RENAME bare MV → _local + Distributed wrapper,
+	// data preserved) BEFORE the create loop below: with the new
+	// highVolumeTables registration adaptDDL now emits
+	// spanmetrics_1m_local etc., and creating that beside a still-live
+	// bare MV would double-aggregate every spans insert.
+	if err := s.promoteCombinedMVs(ctx, []string{
+		"spanmetrics_1m", "spanmetrics_10s", "spanmetrics_1s",
+	}); err != nil {
+		return fmt.Errorf("promote doorway MVs: %w", err)
+	}
+
 	for _, q := range mvs {
 		// Skip the operation_group_summary_5m MV when op_group isn't on the
 		// table (v0.8.186): its SELECT reads op_group, so creating it would

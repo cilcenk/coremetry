@@ -292,36 +292,24 @@ func endpointsWindowMinutes(from, to time.Time) float64 {
 	return m
 }
 
-// spanmetricsSource returns the FROM source for spanmetrics_1m reads
-// (v0.8.356). The doorway MVs (v0.8.50) never made it into
-// highVolumeTables, so on a chstore-owned cluster adaptDDL turns
-// them into PER-SHARD MVs (FROM spans_local, Replicated inner) with
-// NO Distributed wrapper — a bare-name read silently returns one
-// shard's slice (verified: the 2-shard reference install returned
-// roughly half the calls). cluster() fans the read across one
-// replica per shard —
-// states are additive across shards and replicas within a shard are
-// identical, so this is the true cluster total (same pattern as
-// sysstats' cluster(cn, system.parts) read). With ClusterName unset
-// (operator-managed external cluster) we can't enumerate shards and
-// read the connected node — same posture as every other
-// spanmetrics_1m reader (metricresolve, exemplar).
+// spanmetricsSource returns the FROM source for spanmetrics_* reads.
+// History: the doorway MVs (v0.8.50) originally missed
+// highVolumeTables, so on a chstore-owned cluster they lived as
+// PER-SHARD bare-name MVs with no Distributed wrapper — a bare read
+// returned one shard's slice, and v0.8.356/358 bridged it with a
+// cluster() fan-out here.
 //
-// TODO(v0.8.356-follow-up): the real fix is promoting the
-// spanmetrics_* doorway MVs into highVolumeTables + a
-// dropCombinedMV migration so they get the _local + Distributed
-// wrapper shape like the *_5m summaries. When that lands this
-// helper collapses to the bare name — and MUST, or cluster() over
-// a Distributed wrapper would double-count.
-//
-// v0.8.358 generalizes it to every spanmetrics_* tier: the
-// /explore doorway (all three tiers), the coverage probe, the
-// exemplar rollup, and the evaluator's mq_* plans had the same
-// one-shard undercount.
+// v0.8.408 — the real promotion LANDED: spanmetrics_{1m,10s,1s} are
+// in highVolumeTables, existing cluster installs are migrated at boot
+// by promoteCombinedMVs (RENAME bare → _local + Distributed wrapper,
+// data preserved), so the bare name IS the wrapper and already fans
+// out across shards. The helper therefore collapses to the bare name
+// — and MUST stay collapsed: cluster() over a Distributed wrapper
+// reads every shard N times (N× overcount), the exact inverse of the
+// v0.8.356 undercount. Kept as a seam (the one place every doorway
+// reader resolves its FROM); the table-driven regression test pins
+// the collapse.
 func (s *Store) spanmetricsSourceFor(table string) string {
-	if cn := strings.TrimSpace(s.cfg.ClusterName); cn != "" {
-		return "cluster('" + cn + "', currentDatabase(), '" + table + "')"
-	}
 	return table
 }
 

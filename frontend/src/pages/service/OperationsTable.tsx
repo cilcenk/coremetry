@@ -106,6 +106,14 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   const opHref = (op: string) =>
     `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}&view=list&rootOnly=false`;
 
+  // v0.8.416 (Tempo-parity T4) — row → the operation-scoped Details
+  // view (?op=, v0.8.414/415): RED triple with the percentile band +
+  // the latency heatmap narrowed to exactly this operation. The name
+  // link keeps going to Traces (operator-picked, v0.5.317); this is
+  // the metrics-shaped sibling.
+  const detailsHref = (op: string) =>
+    `/service?name=${encodeURIComponent(service)}&tab=details&op=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}`;
+
   // v0.5.374 — client-side filter. Case-insensitive substring
   // match on the operation name, same idiom as the /endpoints
   // page filter. The shared table primitive (useDataTable below)
@@ -358,6 +366,22 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       style={{ fontWeight: 500 }}
                       title="Open this operation in Traces — service + name pre-filtered"
                     >{op.name}</Link>
+                    <Link
+                      to={detailsHref(op.name)}
+                      title="Operation-scoped charts — RPS / error rate / p50–p99 duration band + latency heatmap for just this operation"
+                      aria-label={`Open scoped charts for ${op.name}`}
+                      style={{
+                        marginLeft: 8, color: 'var(--accent2)',
+                        textDecoration: 'none', verticalAlign: 'middle',
+                        display: 'inline-flex',
+                      }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                           stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                           aria-hidden="true">
+                        <path d="M3 3v18h18" />
+                        <path d="M7 14l4-6 4 3 5-8" />
+                      </svg>
+                    </Link>
                   </td>
                   <td>
                     <button

@@ -106,6 +106,13 @@ type Recorder interface {
 type CallRecord struct {
 	CreatedAt      time.Time
 	Surface        string
+	// ExchangeID (v0.8.399) — correlation key for operator feedback:
+	// the chat handler mints one id per exchange, emits it to the UI
+	// in the SSE answer event, and threads it here via CallMeta so a
+	// thumbs up/down (ai_feedback row) can be joined back to the
+	// ai_calls row it rates. Empty for surfaces that don't emit one.
+	// Provider-agnostic — pure correlation plumbing, no LLM coupling.
+	ExchangeID     string
 	Provider       string
 	Model          string
 	BaseURL        string
@@ -133,6 +140,11 @@ type CallMeta struct {
 	Surface   string
 	UserID    string
 	UserEmail string
+	// ExchangeID — see CallRecord.ExchangeID (v0.8.399). Carried in
+	// ctx so both the RecordUsage path (free chat loop) and the
+	// Explain self-recording path (guided chat) stamp the same id
+	// without new parameters on either call chain.
+	ExchangeID string
 }
 
 // WithMeta returns ctx tagged with the given CallMeta. The api
@@ -324,6 +336,7 @@ func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) 
 		rec := CallRecord{
 			CreatedAt:      started,
 			Surface:        meta.Surface,
+			ExchangeID:     meta.ExchangeID,
 			Provider:       provider,
 			Model:          model,
 			BaseURL:        baseURL,

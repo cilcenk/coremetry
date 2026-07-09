@@ -119,6 +119,7 @@ func (s *Service) RecordUsage(ctx context.Context, inTok, outTok uint32, status,
 	rec := CallRecord{
 		CreatedAt:      time.Now(),
 		Surface:        meta.Surface,
+		ExchangeID:     meta.ExchangeID,
 		Provider:       provider,
 		Model:          model,
 		BaseURL:        baseURL,

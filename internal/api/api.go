@@ -778,6 +778,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/ai/series",     auth.RequireRole(auth.RoleAdmin, s.aiSeries))
 	mux.HandleFunc("GET /api/ai/rates",      auth.RequireRole(auth.RoleAdmin, s.getAIRates))
 	mux.HandleFunc("PUT /api/ai/rates",      auth.RequireRole(auth.RoleAdmin, s.putAIRates))
+	// v0.8.399 — thumbs up/down on AI answers. Any authenticated user
+	// (NOT admin-gated like the reads above): whoever can chat can
+	// rate the answer they got — mirrors POST /api/copilot/chat.
+	mux.HandleFunc("POST /api/ai/feedback",  s.postAIFeedback)
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────

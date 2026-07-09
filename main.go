@@ -1507,6 +1507,7 @@ func (r aiCallRecorder) RecordCall(ctx context.Context, c copilot.CallRecord) {
 	row := chstore.AICall{
 		CreatedAt:      c.CreatedAt.UnixNano(),
 		Surface:        c.Surface,
+		ExchangeID:     c.ExchangeID,
 		Provider:       c.Provider,
 		Model:          c.Model,
 		BaseURL:        c.BaseURL,

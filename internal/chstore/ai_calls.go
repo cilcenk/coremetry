@@ -17,6 +17,7 @@ type AICall struct {
 	ID             string `json:"id"`
 	CreatedAt      int64  `json:"createdAt"`      // unix ns
 	Surface        string `json:"surface"`        // explain-span, explain-slo, …
+	ExchangeID     string `json:"exchangeId,omitempty"` // v0.8.399 — feedback correlation key ('' pre-v0.8.399 / non-chat)
 	Provider       string `json:"provider"`       // openai | anthropic | github
 	Model          string `json:"model"`
 	BaseURL        string `json:"baseUrl,omitempty"`
@@ -58,14 +59,14 @@ func (s *Store) InsertAICall(ctx context.Context, c AICall) error {
 		c.ResponseSample = c.ResponseSample[:SamplePromptCap]
 	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO ai_calls
-		(id, created_at, surface, provider, model, base_url,
+		(id, created_at, surface, exchange_id, provider, model, base_url,
 		 duration_ms, input_tokens, output_tokens, status,
 		 error_msg, prompt_chars, response_chars,
 		 user_id, user_email, prompt_sample, response_sample)`)
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(c.ID, created, c.Surface, c.Provider, c.Model, c.BaseURL,
+	if err := batch.Append(c.ID, created, c.Surface, c.ExchangeID, c.Provider, c.Model, c.BaseURL,
 		c.DurationMs, c.InputTokens, c.OutputTokens, c.Status,
 		c.ErrorMsg, c.PromptChars, c.ResponseChars,
 		c.UserID, c.UserEmail, c.PromptSample, c.ResponseSample); err != nil {
@@ -108,7 +109,7 @@ func (s *Store) ListAICalls(ctx context.Context, p ListAICallsParams) ([]AICall,
 		wc.add("status = ?", p.Status)
 	}
 	q := `
-		SELECT id, toUnixTimestamp64Nano(created_at), surface, provider, model, base_url,
+		SELECT id, toUnixTimestamp64Nano(created_at), surface, exchange_id, provider, model, base_url,
 		       duration_ms, input_tokens, output_tokens, status, error_msg,
 		       prompt_chars, response_chars, user_id, user_email,
 		       prompt_sample, response_sample
@@ -125,7 +126,7 @@ func (s *Store) ListAICalls(ctx context.Context, p ListAICallsParams) ([]AICall,
 	for rows.Next() {
 		var c AICall
 		if err := rows.Scan(
-			&c.ID, &c.CreatedAt, &c.Surface, &c.Provider, &c.Model, &c.BaseURL,
+			&c.ID, &c.CreatedAt, &c.Surface, &c.ExchangeID, &c.Provider, &c.Model, &c.BaseURL,
 			&c.DurationMs, &c.InputTokens, &c.OutputTokens, &c.Status, &c.ErrorMsg,
 			&c.PromptChars, &c.ResponseChars, &c.UserID, &c.UserEmail,
 			&c.PromptSample, &c.ResponseSample,
@@ -144,7 +145,7 @@ func (s *Store) GetAICall(ctx context.Context, id string) (*AICall, error) {
 		return nil, nil
 	}
 	row := s.conn.QueryRow(ctx, `
-		SELECT id, toUnixTimestamp64Nano(created_at), surface, provider, model, base_url,
+		SELECT id, toUnixTimestamp64Nano(created_at), surface, exchange_id, provider, model, base_url,
 		       duration_ms, input_tokens, output_tokens, status, error_msg,
 		       prompt_chars, response_chars, user_id, user_email,
 		       prompt_sample, response_sample
@@ -152,7 +153,7 @@ func (s *Store) GetAICall(ctx context.Context, id string) (*AICall, error) {
 		WHERE id = ? LIMIT 1`, id)
 	var c AICall
 	if err := row.Scan(
-		&c.ID, &c.CreatedAt, &c.Surface, &c.Provider, &c.Model, &c.BaseURL,
+		&c.ID, &c.CreatedAt, &c.Surface, &c.ExchangeID, &c.Provider, &c.Model, &c.BaseURL,
 		&c.DurationMs, &c.InputTokens, &c.OutputTokens, &c.Status, &c.ErrorMsg,
 		&c.PromptChars, &c.ResponseChars, &c.UserID, &c.UserEmail,
 		&c.PromptSample, &c.ResponseSample,
@@ -189,6 +190,13 @@ type AISurfaceStat struct {
 	Calls     uint64 `json:"calls"`
 	ErrorRate float64 `json:"errorRate"`
 	AvgMs     float64 `json:"avgMs"`
+	// v0.8.399 — operator thumbs up/down quality signal, merged in
+	// from ai_feedback (latest verdict per exchange wins). Zero
+	// FeedbackCount = no ratings in the window; ThumbsUpRate is only
+	// meaningful when FeedbackCount > 0 (omitempty on both keeps the
+	// old payload shape for unrated surfaces).
+	FeedbackCount uint64  `json:"feedbackCount,omitempty"`
+	ThumbsUpRate  float64 `json:"thumbsUpRate,omitempty"` // 0..1 over rated exchanges
 }
 
 type AIProviderStat struct {
@@ -259,6 +267,22 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 		st.BySurface = append(st.BySurface, row)
 	}
 	sRows.Close()
+
+	// v0.8.399 — thumbs up/down quality per surface, JOIN-free: one
+	// small second read over the tiny ai_feedback state table (FINAL
+	// so the latest verdict per exchange wins), merged into the
+	// surface rows in Go. Surfaces with feedback but no calls in the
+	// window are deliberately dropped — the /ai table is call-driven.
+	fb, err := s.aiFeedbackBySurface(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	for i := range st.BySurface {
+		if agg, ok := fb[st.BySurface[i].Surface]; ok && agg.Total > 0 {
+			st.BySurface[i].FeedbackCount = agg.Total
+			st.BySurface[i].ThumbsUpRate = float64(agg.Up) / float64(agg.Total)
+		}
+	}
 
 	pRows, err := s.conn.Query(ctx, `
 		SELECT provider, model,

@@ -1061,7 +1061,11 @@ export interface AIStats {
   inputTokens: number;
   outputTokens: number;
   distinctUsers: number;
-  bySurface: Array<{ surface: string; calls: number; errorRate: number; avgMs: number }>;
+  // feedbackCount / thumbsUpRate (v0.8.399) — thumbs up/down verdicts
+  // merged from ai_feedback; omitempty server-side, so absent = no
+  // ratings in the window (thumbsUpRate only meaningful when
+  // feedbackCount > 0; an omitted rate with count > 0 means 0%).
+  bySurface: Array<{ surface: string; calls: number; errorRate: number; avgMs: number; feedbackCount?: number; thumbsUpRate?: number }>;
   byProvider: Array<{ provider: string; model: string; calls: number; inputTokens: number; outputTokens: number }>;
 }
 
@@ -2878,9 +2882,12 @@ export interface ChatMessage {
 // One streamed event from the chat SSE. `step` = a tool the model
 // called (render as a progress chip); `answer` = final prose;
 // `error` = failure; `done` = stream closed.
+// exchangeId (v0.8.399) — server-minted correlation key for the
+// thumbs up/down feedback POST; optional for rolling-deploy safety
+// (an old backend's answer events lack it → thumbs row just hides).
 export type ChatStreamEvent =
   | { kind: 'step'; tool: string; args: string }
-  | { kind: 'answer'; text: string }
+  | { kind: 'answer'; text: string; exchangeId?: string }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
 

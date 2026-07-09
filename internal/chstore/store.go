@@ -1007,6 +1007,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			id              String,
 			created_at      DateTime64(9) DEFAULT now64(9),
 			surface         LowCardinality(String),
+			exchange_id     String DEFAULT '',
 			provider        LowCardinality(String),
 			model           LowCardinality(String),
 			base_url        String DEFAULT '',
@@ -1024,6 +1025,30 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = MergeTree
 		PARTITION BY toYYYYMM(created_at)
 		ORDER BY (created_at, surface, provider)
+		TTL toDate(created_at) + INTERVAL 90 DAY`,
+
+		// ai_feedback — operator thumbs up/down on AI answers
+		// (v0.8.399, AI audit feedback slice). One row per rated
+		// exchange, keyed by the exchange_id the chat handler mints
+		// and emits in the SSE answer event; the same id lands on the
+		// ai_calls row so quality joins back to cost/latency. Mutable
+		// state (the user can flip their verdict) → ReplacingMergeTree
+		// (version), latest wins, reads use FINAL. ORDER BY is the
+		// dedup key EXCLUSIVELY (house rule — extra columns would
+		// silently break dedup), and there is deliberately NO
+		// PARTITION BY: a re-verdict across a partition boundary
+		// would survive FINAL as a duplicate. TTL matches ai_calls'
+		// 90d so orphaned verdicts age out with the calls they rate
+		// (trace_snapshots precedent for TTL on a state table).
+		`CREATE TABLE IF NOT EXISTS ai_feedback (
+			exchange_id String,
+			surface     LowCardinality(String),
+			verdict     Int8,
+			user_email  String        DEFAULT '',
+			created_at  DateTime64(9) DEFAULT now64(9),
+			version     UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY exchange_id
 		TTL toDate(created_at) + INTERVAL 90 DAY`,
 
 		// Email subscribers — get notified when a public-visible
@@ -1742,6 +1767,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		// IF NOT EXISTS makes this a no-op on fresh installs (already in the
 		// CREATE) and re-runs.
 		`ALTER TABLE metric_points ADD COLUMN IF NOT EXISTS temporality LowCardinality(String) DEFAULT ''`,
+		// v0.8.399 — feedback correlation key on ai_calls: the chat
+		// handler mints an exchange_id per answer and the thumbs
+		// up/down (ai_feedback) joins back through it. Plain String
+		// (crypto/rand hex, high cardinality — not LowCardinality).
+		// ai_calls is NOT in highVolumeTables: chstore owns it
+		// single-node style everywhere (created by us even against
+		// external Distributed clusters), so this is the same safe
+		// shape as the monitors/users ALTERs above — no spans-style
+		// wrapper/_local hazard. Insert failures on ai_calls are
+		// log-and-drop observability rows, never span ingest.
+		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS exchange_id String DEFAULT ''`,
 		// v0.8.20 — drop the dead topology-mute setting. The
 		// "Mute on topology" chip was removed from the service detail
 		// page in v0.8.19; this migration removes the now-orphaned

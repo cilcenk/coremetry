@@ -676,6 +676,14 @@ export const api = {
     get<import('./types').AIStats>(`/api/ai/stats?${qs(params)}`),
   aiSeries: (params: { from?: number; to?: number }) =>
     get<import('./types').AICallsTimePoint[]>(`/api/ai/series?${qs(params)}`),
+  // v0.8.399 — thumbs up/down on an AI answer. exchangeId comes from
+  // the chat SSE answer event; re-posting the same id replaces the
+  // verdict (user changed their mind).
+  postAIFeedback: (body: { exchangeId: string; verdict: 1 | -1 }) =>
+    request<{ ok: boolean }>(`/api/ai/feedback`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   aiRates: () =>
     get<Record<string, import('./types').AIRate>>(`/api/ai/rates`),
   putAIRates: (rates: Record<string, import('./types').AIRate>) =>

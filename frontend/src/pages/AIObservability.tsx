@@ -138,8 +138,14 @@ export default function AIObservabilityPage() {
                     a: r.surface, b: fmtNum(r.calls),
                     c: `${(r.errorRate * 100).toFixed(1)}%`,
                     d: `${r.avgMs.toFixed(0)} ms`,
+                    // Memnuniyet (v0.8.399) — thumbs-up rate over rated
+                    // exchanges. thumbsUpRate is omitempty server-side,
+                    // so an absent rate with feedback present means 0%.
+                    e: r.feedbackCount
+                      ? `${Math.round((r.thumbsUpRate ?? 0) * 100)}% (${r.feedbackCount})`
+                      : '—',
                   }))}
-                  cols={['Surface', 'Calls', 'Err rate', 'Avg ms']}
+                  cols={['Surface', 'Calls', 'Err rate', 'Avg ms', 'Memnuniyet']}
                   onPickFirst={v => setSurface(v)} />
               )}
               {stats.byProvider.length > 0 && (
@@ -280,8 +286,10 @@ function KPI({ label, value, cls }: { label: string; value: string; cls?: 'ok' |
 
 function BreakdownTable({ title, rows, cols, onPickFirst }: {
   title: string;
-  rows: Array<{ a: string; b: string; c: string; d: string }>;
-  cols: [string, string, string, string];
+  // `e` (v0.8.399) — optional 5th column; only the by-surface table
+  // uses it (Memnuniyet), the provider table stays 4 columns.
+  rows: Array<{ a: string; b: string; c: string; d: string; e?: string }>;
+  cols: [string, string, string, string] | [string, string, string, string, string];
   onPickFirst: (v: string) => void;
 }) {
   return (
@@ -302,6 +310,9 @@ function BreakdownTable({ title, rows, cols, onPickFirst }: {
                 <td className="num mono">{r.b}</td>
                 <td className="num mono" style={{ fontSize: 11 }}>{r.c}</td>
                 <td className="num mono" style={{ fontSize: 11 }}>{r.d}</td>
+                {cols.length === 5 && (
+                  <td className="num mono" style={{ fontSize: 11 }}>{r.e ?? '—'}</td>
+                )}
               </tr>
             ))}
           </tbody>

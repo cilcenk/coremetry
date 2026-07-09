@@ -464,8 +464,14 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	}
 	// Deterministic provenance footer — appended server-side, never
 	// trusted to the model.
+	// exchangeId (v0.8.399): the id the chat handler minted rides in
+	// on CallMeta — the Explain call above already recorded it on the
+	// "chat-guided" ai_calls row, so the UI's thumbs up/down joins
+	// back to it exactly like the free tool loop's answers.
 	answer := strings.TrimSpace(raw) + "\n\nKaynak: " + sources
-	emit("answer", map[string]string{"text": answer})
+	emit("answer", map[string]string{
+		"text": answer, "exchangeId": copilot.MetaFromContext(ctx).ExchangeID,
+	})
 	return true, true
 }
 

@@ -5,6 +5,7 @@ import { timeRangeToNs } from '@/lib/utils';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { Spinner } from '@/components/Spinner';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
+import { heatmapFilters } from './heatmapFilters';
 
 // ServiceLatencyHeatmap fetches the heatmap for the current
 // service + window and renders it under a collapsible
@@ -59,19 +60,10 @@ export function ServiceLatencyHeatmap({ service, range, operation = '' }: {
   useEffect(() => {
     if (collapsed) return;
     setData(undefined);
-    const f: { key: string; op: string; value: string }[] = [
-      { key: 'service.name', op: '=', value: service },
-    ];
-    if (picked) {
-      // Hit the resource-attr key directly. The OTLP ingest path materialises
-      // k8s.cluster.name as a span attr, so a single predicate is enough (no
-      // coalesce across resource + span attrs needed at query time).
-      f.push({ key: 'k8s.cluster.name', op: '=', value: picked });
-    }
-    // `name` maps to the span-name column in the filter compiler
-    // (filterexpr.go) — same predicate the Traces page uses.
-    if (operation) f.push({ key: 'name', op: '=', value: operation });
-    api.spanHeatmap({ from, to, filters: JSON.stringify(f), buckets: 60 })
+    api.spanHeatmap({
+      from, to, buckets: 60,
+      filters: JSON.stringify(heatmapFilters(service, picked, operation)),
+    })
       .then(r => setData(r ?? null))
       .catch(() => setData(null));
   }, [service, from, to, collapsed, picked, operation]);

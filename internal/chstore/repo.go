@@ -3425,18 +3425,117 @@ func buildMetricNamesWhere(service, pattern string, since time.Time) whereClause
 	return wc
 }
 
+// buildMetricCatalogWhere assembles the metric_catalog WHERE (dims
+// only — freshness is a HAVING on the merged last_seen state, added
+// by the caller). Pure — table-tested (v0.8.396).
+func buildMetricCatalogWhere(service, pattern string) whereClause {
+	var wc whereClause
+	if service != "" {
+		wc.add("service_name = ?", service)
+	}
+	if pattern != "" {
+		like := strings.NewReplacer(`*`, `%`, `?`, `_`).Replace(pattern)
+		if !strings.ContainsAny(pattern, "*?") {
+			like = "%" + like + "%"
+		}
+		wc.add("metric ILIKE ?", like)
+	}
+	return wc
+}
+
+// listMetricNamesFromCatalog is the metric_catalog fast path
+// (v0.8.396): a few thousand catalog rows instead of the raw
+// metric_points GROUP BY that outgrew max_execution_time at prod
+// volume. Freshness rides HAVING maxMerge(last_seen_state) so a
+// long-silent metric ages out of the picker.
+func (s *Store) listMetricNamesFromCatalog(ctx context.Context, service, pattern string, limit, offset int, defaultUnlimited bool) ([]MetricInfo, int, error) {
+	wc := buildMetricCatalogWhere(service, pattern)
+	since := time.Now().Add(-metricNameLookback)
+
+	var total uint64
+	if !defaultUnlimited {
+		if err := s.conn.QueryRow(ctx,
+			`SELECT count() FROM (
+				SELECT metric FROM metric_catalog `+wc.sql()+`
+				GROUP BY metric
+				HAVING maxMerge(last_seen_state) >= ?
+			) SETTINGS max_execution_time = 10`,
+			append(append([]any{}, wc.args...), since)...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	query := `SELECT metric, anyMerge(description_state), anyMerge(unit_state), anyMerge(instrument_state)
+		 FROM metric_catalog ` + wc.sql() + `
+		 GROUP BY metric
+		 HAVING maxMerge(last_seen_state) >= ?
+		 ORDER BY metric`
+	args := append(append([]any{}, wc.args...), since)
+	if !defaultUnlimited {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
+	query += " SETTINGS max_execution_time = 10"
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []MetricInfo{}
+	for rows.Next() {
+		var m MetricInfo
+		if err := rows.Scan(&m.Name, &m.Description, &m.Unit, &m.Type); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return out, int(total), nil
+}
+
 // ListMetricNames — server-side searchable counterpart for
 // MetricNamePicker (v0.5.181). Same wildcard semantics as
 // ListServiceNames / ListOperationNames: bare query = substring,
-// `*` and `?` honoured. Reads from metric_points, bounded to the
-// last metricNameLookback so the GROUP BY prunes to a few daily
-// partitions instead of scanning all history (v0.8.311 timeout fix).
-// The 30s API cache further amortises load across concurrent operators.
+// `*` and `?` honoured.
+//
+// v0.8.396 (operator-reported PROD bug): the v0.8.311 7-day bound
+// stopped saving the raw GROUP BY at current prod volume — the scan
+// alone blows max_execution_time. Reads now go CATALOG-FIRST
+// (metric_catalog MV, instant at any scale) and fall back to the
+// bounded raw scan only when the catalog is empty or unreadable —
+// the first minutes after an upgrade (the MV populates forward
+// only) and pathological installs. An empty SEARCH result on a
+// non-empty catalog is authoritative (no fallback): the raw scan
+// would only re-find metrics silent for 7+ days, which the picker
+// hides by design.
 func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, limit, offset int) ([]MetricInfo, int, error) {
 	defaultUnlimited := limit == 0 && offset == 0 && pattern == ""
 	if limit <= 0 {
 		limit = 200
 	}
+
+	if out, total, err := s.listMetricNamesFromCatalog(ctx, service, pattern, limit, offset, defaultUnlimited); err == nil {
+		if len(out) > 0 {
+			return out, total, nil
+		}
+		// Empty catalog result: authoritative for a SEARCH (the
+		// catalog itself has rows), fallback-worthy when the whole
+		// catalog is empty (fresh upgrade window).
+		if pattern != "" || service != "" {
+			var any uint8
+			if err := s.conn.QueryRow(ctx,
+				`SELECT count() > 0 FROM metric_catalog LIMIT 1 SETTINGS max_execution_time = 5`,
+			).Scan(&any); err == nil && any == 1 {
+				return out, total, nil
+			}
+		}
+		log.Printf("[chstore] metric_catalog empty — falling back to the raw metric-name scan (fills within minutes of first ingest)")
+	} else {
+		log.Printf("[chstore] metric_catalog read failed (%v) — falling back to the raw metric-name scan", err)
+	}
+
 	wc := buildMetricNamesWhere(service, pattern, time.Now().Add(-metricNameLookback))
 
 	var total uint64

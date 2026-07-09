@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,6 +82,46 @@ func TestBuildMetricNamesWhere(t *testing.T) {
 			if tt.wantLike != "" {
 				if last := wc.args[len(wc.args)-1]; last != tt.wantLike {
 					t.Errorf("ILIKE arg = %v, want %q", last, tt.wantLike)
+				}
+			}
+		})
+	}
+}
+
+// v0.8.396 — operator-reported PROD bug: /api/metrics/names errored —
+// the raw GROUP BY over metric_points outgrew max_execution_time at
+// 1B+ points/day despite the v0.8.311 7-day bound. Reads are now
+// catalog-first (metric_catalog MV); these pin the catalog WHERE
+// builder's wildcard semantics staying identical to the raw path's.
+func TestBuildMetricCatalogWhere(t *testing.T) {
+	cases := []struct {
+		name           string
+		service, patt  string
+		wantSubs       []string
+		wantArgs       []any
+	}{
+		{"bare pattern = substring", "", "http", []string{"metric ILIKE ?"}, []any{"%http%"}},
+		{"star wildcard honoured", "", "http*", []string{"metric ILIKE ?"}, []any{"http%"}},
+		{"question wildcard honoured", "", "h?tp", []string{"metric ILIKE ?"}, []any{"h_tp"}},
+		{"service scoped", "checkout", "", []string{"service_name = ?"}, []any{"checkout"}},
+		{"both", "checkout", "jvm*", []string{"service_name = ?", "metric ILIKE ?"}, []any{"checkout", "jvm%"}},
+		{"neither = empty where", "", "", nil, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			wc := buildMetricCatalogWhere(c.service, c.patt)
+			sql := wc.sql()
+			for _, sub := range c.wantSubs {
+				if !strings.Contains(sql, sub) {
+					t.Errorf("missing %q in %q", sub, sql)
+				}
+			}
+			if len(c.wantArgs) != len(wc.args) {
+				t.Fatalf("args = %v, want %v", wc.args, c.wantArgs)
+			}
+			for i := range c.wantArgs {
+				if wc.args[i] != c.wantArgs[i] {
+					t.Errorf("arg[%d] = %v, want %v", i, wc.args[i], c.wantArgs[i])
 				}
 			}
 		})

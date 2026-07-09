@@ -2594,6 +2594,36 @@ func (s *Store) migrate(ctx context.Context) error {
 		 FROM spans
 		 GROUP BY service_name, time_bucket, trace_id`,
 
+		// metric_catalog — v0.8.396 (operator-reported PROD bug:
+		// /api/metrics/names errored — the picker's GROUP BY metric over
+		// RAW metric_points with the 7-day v0.8.311 lookback outgrew
+		// max_execution_time at 1B+ points/day). One row per
+		// (service_name, metric): the picker/catalogue read becomes an
+		// instant scan over a few thousand rows at ANY ingest volume.
+		// No PARTITION BY / TTL on purpose — cardinality is bounded by
+		// the metric catalogue itself (state-table sized); freshness is
+		// enforced read-side via maxMerge(last_seen_state) >= now()-7d,
+		// so a long-silent metric ages out of the PICKER without ever
+		// leaving the table. Registered in highVolumeTables +
+		// defaultShardPolicy + tablesWithoutTraceID day one (the D1
+		// v0.8.375 rule; the spanmetrics per-shard undercount is the
+		// counter-example). Reads fall back to the bounded raw scan
+		// while the catalog is empty (first minutes after upgrade —
+		// the MV populates forward only).
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS metric_catalog
+		 ENGINE = AggregatingMergeTree
+		 ORDER BY (service_name, metric)
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   metric,
+		   anyState(description)  AS description_state,
+		   anyState(unit)         AS unit_state,
+		   anyState(instrument)   AS instrument_state,
+		   maxState(time)         AS last_seen_state
+		 FROM metric_points
+		 GROUP BY service_name, metric`,
+
 		// span_links_reverse_mv — v0.8.329, cross-signal pivot Phase 1b.
 		// Copies every span_links row into span_links_reverse verbatim so the
 		// backlink direction ("what links TO this trace") has its own primary

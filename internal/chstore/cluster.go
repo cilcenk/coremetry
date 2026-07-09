@@ -290,6 +290,8 @@ var tablesWithoutTraceID = map[string]bool{
 	"db_caller_summary_5m": true,
 	// v0.8.375 — statement-identity MV projects stmt_hash, never trace_id.
 	"db_statement_summary_5m": true,
+	// v0.8.396 — metric-name catalog: (service, metric) rows, no trace_id.
+	"metric_catalog": true,
 	"topology_edges_5m":    true,
 	"topology_op_edges_5m": true,
 	// v0.5.435 — MVs/aggregates that join highVolumeTables in
@@ -340,6 +342,8 @@ var defaultShardPolicy = map[string]string{
 	"spans":                "cityHash64(service_name)",
 	"logs":                 "cityHash64(service_name)",
 	"metric_points":        "cityHash64(service_name)",
+	// v0.8.396 — co-locate catalog rows with their metric_points shard.
+	"metric_catalog":       "cityHash64(service_name)",
 	"profiles":             "cityHash64(service_name)",
 	// v0.8.328 — exemplars shard by series fingerprint so the canonical
 	// `series_fingerprint IN (…)` pivot read is shard-local per series
@@ -829,6 +833,10 @@ var highVolumeTables = map[string]bool{
 	// silently returned ONE shard's slice (the v0.8.356/358 undercount
 	// class). Creation is gated on hasDBStmtHashCol in migrate().
 	"db_statement_summary_5m": true,
+	// v0.8.396 — metric-name catalog MV reading FROM metric_points
+	// (prod /api/metrics/names timeout fix): registered day one per
+	// the same D1 rule.
+	"metric_catalog": true,
 	// v0.5.435 — remaining sharded MVs/aggregates the post-v0.5.426
 	// /scale-audit revealed. Same gap shape: bare-name Replicated
 	// per shard, no Distributed wrapper → cluster reads silently

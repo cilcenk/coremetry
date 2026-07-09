@@ -456,8 +456,17 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// wrapper so the ai_calls row lands as "chat-guided" — quality
 	// tracking for the guided path, separate from the free-loop
 	// "chat" rows.
+	// v0.8.404 — token streaming: the narration call streams its
+	// answer tokens as `delta` events on the chat SSE. The `answer`
+	// event below stays the UNCHANGED source of truth (full text +
+	// exchangeId feedback anchor) — old frontends that ignore `delta`
+	// render exactly as before, and when the endpoint can't stream
+	// (vLLM builds that 400 on stream:true) StreamText falls back to
+	// the buffered call transparently: zero deltas, same answer.
 	user := "SORU: " + question + "\n\nVERİ:\n" + evidence
-	raw, exErr := s.copilotExplainSurface(ctx, "chat-guided", guidedChatPrompt, user)
+	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", guidedChatPrompt, user, func(delta string) {
+		emit("delta", map[string]string{"text": delta})
+	})
 	if exErr != nil {
 		emit("error", map[string]string{"error": exErr.Error()})
 		return true, false

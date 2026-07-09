@@ -12,8 +12,9 @@ import type { ChatMessage } from '@/lib/types';
 // Conversation is ephemeral component state — closing the drawer
 // keeps it for the session; a reload clears it. Each send posts the
 // full history to /api/copilot/chat and consumes the SSE stream:
-// `step` events render as tool-call chips, `answer` fills the
-// assistant bubble.
+// `step` events render as tool-call chips, `delta` events (v0.8.404,
+// guided path) live-append tokens into the pending bubble, `answer`
+// replaces it with the final text.
 
 // exchangeId (v0.8.399) — server-minted per answer, carried on the SSE
 // answer event; enables the thumbs up/down row. verdict is the local
@@ -97,6 +98,11 @@ export function CopilotChat() {
       await api.copilotChat(history, (e) => {
         if (e.kind === 'step') {
           patchLast(t => ({ ...t, steps: [...(t.steps ?? []), e.tool] }));
+        } else if (e.kind === 'delta') {
+          // v0.8.404 — token streaming: live-append into the pending
+          // bubble. The final `answer` event REPLACES the text below
+          // (never appends), so deltas can't double-render.
+          patchLast(t => ({ ...t, text: (t.text ?? '') + e.text }));
         } else if (e.kind === 'answer') {
           patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, pending: false }));
         } else if (e.kind === 'error') {

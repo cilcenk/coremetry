@@ -25,8 +25,11 @@ import (
 // Transport: POST with the full conversation, response streamed as
 // SSE. v1 is STEP-streaming (operator decision 2026-05-28): we emit
 // a `step` event per tool call so the operator sees "⚙ list_services"
-// progress, then an `answer` event with the final prose. True
-// token-streaming (Anthropic stream:true) is a follow-up.
+// progress, then an `answer` event with the final prose. v0.8.404
+// adds token streaming to the GUIDED path (copilot_guided.go emits
+// `delta` events from StreamText, with a transparent buffered
+// fallback); this free tool loop stays buffered — tool-call streaming
+// is a different beast (see internal/copilot/stream.go header).
 //
 // Conversation is EPHEMERAL — the frontend holds history in
 // component state and sends it whole each turn; nothing persists

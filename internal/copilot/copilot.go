@@ -79,6 +79,15 @@ type Service struct {
 	ghSessTok string
 	ghSessExp time.Time
 
+	// streamUnsupported (v0.8.404) — in-proc per-(provider,baseURL,
+	// model) verdict cache for token streaming. When a stream:true
+	// probe is deterministically rejected (some vLLM builds 400 on
+	// it; some gateways answer 200+JSON ignoring the flag) the
+	// endpoint is marked here so every subsequent guided call goes
+	// straight to the buffered path instead of re-probing. Reset on
+	// Configure — a provider/model/URL change invalidates the verdict.
+	streamUnsupported map[string]bool
+
 	cli *http.Client
 
 	// recorder is the AI-observability sink (v0.5.162). Set once at
@@ -221,6 +230,9 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS, en
 	}
 	s.provider, s.apiKey, s.model, s.baseURL, s.skipTLS = provider, apiKey, model, baseURL, skipTLS
 	s.enabled = enabled
+	// v0.8.404 — the streaming-support verdicts were probed against
+	// the OLD endpoint config; a swap must re-probe.
+	s.streamUnsupported = nil
 }
 
 // buildCopilotHTTPClient — mirrors the Tempo / LDAP pattern. When
@@ -330,41 +342,52 @@ func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) 
 		out, inputTokens, outputTokens, err = s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
 	}
 
-	if s.recorder != nil {
-		meta := MetaFromContext(ctx)
-		fullPrompt := systemPrompt + "\n\n" + userPrompt
-		rec := CallRecord{
-			CreatedAt:      started,
-			Surface:        meta.Surface,
-			ExchangeID:     meta.ExchangeID,
-			Provider:       provider,
-			Model:          model,
-			BaseURL:        baseURL,
-			DurationMs:     uint32(time.Since(started).Milliseconds()),
-			InputTokens:    inputTokens,
-			OutputTokens:   outputTokens,
-			Status:         "ok",
-			PromptChars:    uint32(len(fullPrompt)),
-			ResponseChars:  uint32(len(out)),
-			UserID:         meta.UserID,
-			UserEmail:      meta.UserEmail,
-			PromptSample:   truncForSample(fullPrompt),
-			ResponseSample: truncForSample(out),
-		}
-		if err != nil {
-			rec.Status = "error"
-			rec.ErrorMsg = truncErr(err.Error())
-		}
-		// Fire-and-forget recording so the user gets their response
-		// the moment the LLM returns — CH ingest can take 5-20ms.
-		go func(r Recorder, rec CallRecord) {
-			// Bounded ctx so a stuck CH ingest can't pin a goroutine.
-			rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			r.RecordCall(rctx, rec)
-		}(s.recorder, rec)
-	}
+	s.recordNarration(ctx, started, provider, model, baseURL, systemPrompt, userPrompt, out, inputTokens, outputTokens, err)
 	return out, err
+}
+
+// recordNarration emits the single ai_calls row for a one-shot
+// narration call. Shared by Explain and StreamText (v0.8.404) so the
+// streaming twin records under exactly the same contract — one row
+// per call, fire-and-forget, errors land with status="error".
+func (s *Service) recordNarration(ctx context.Context, started time.Time,
+	provider, model, baseURL, systemPrompt, userPrompt, out string,
+	inputTokens, outputTokens uint32, err error) {
+	if s.recorder == nil {
+		return
+	}
+	meta := MetaFromContext(ctx)
+	fullPrompt := systemPrompt + "\n\n" + userPrompt
+	rec := CallRecord{
+		CreatedAt:      started,
+		Surface:        meta.Surface,
+		ExchangeID:     meta.ExchangeID,
+		Provider:       provider,
+		Model:          model,
+		BaseURL:        baseURL,
+		DurationMs:     uint32(time.Since(started).Milliseconds()),
+		InputTokens:    inputTokens,
+		OutputTokens:   outputTokens,
+		Status:         "ok",
+		PromptChars:    uint32(len(fullPrompt)),
+		ResponseChars:  uint32(len(out)),
+		UserID:         meta.UserID,
+		UserEmail:      meta.UserEmail,
+		PromptSample:   truncForSample(fullPrompt),
+		ResponseSample: truncForSample(out),
+	}
+	if err != nil {
+		rec.Status = "error"
+		rec.ErrorMsg = truncErr(err.Error())
+	}
+	// Fire-and-forget recording so the user gets their response
+	// the moment the LLM returns — CH ingest can take 5-20ms.
+	go func(r Recorder, rec CallRecord) {
+		// Bounded ctx so a stuck CH ingest can't pin a goroutine.
+		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		r.RecordCall(rctx, rec)
+	}(s.recorder, rec)
 }
 
 // truncForSample caps prompt/response samples at 4KB so a runaway
@@ -452,6 +475,17 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 	if resp.StatusCode >= 300 {
 		return "", 0, 0, fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+	return parseOpenAIChatResponse(respBody)
+}
+
+// parseOpenAIChatResponse decodes a buffered (non-streaming) OpenAI-
+// compat chat.completion body and applies the v0.8.384 answer-salvage
+// chain. Extracted from explainOpenAIWithUsage (v0.8.404) so the
+// streaming path can reuse it verbatim when a server answers a
+// stream:true request with a one-shot JSON body (200 + non-SSE
+// content-type — parsing the body we already have beats double-billing
+// a buffered retry).
+func parseOpenAIChatResponse(respBody []byte) (string, uint32, uint32, error) {
 	var parsed struct {
 		Choices []struct {
 			Message struct {
@@ -570,6 +604,14 @@ func (s *Service) explainAnthropicWithUsage(ctx context.Context, systemPrompt, u
 	if resp.StatusCode >= 300 {
 		return "", 0, 0, fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+	return parseAnthropicResponse(respBody)
+}
+
+// parseAnthropicResponse decodes a buffered (non-streaming) Messages
+// body. Extracted from explainAnthropicWithUsage (v0.8.404) so the
+// streaming path can parse a one-shot JSON answer to a stream:true
+// request (proxy that strips the flag) without a second billed call.
+func parseAnthropicResponse(respBody []byte) (string, uint32, uint32, error) {
 	var parsed struct {
 		Content []struct {
 			Type string `json:"type"`

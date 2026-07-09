@@ -2886,13 +2886,18 @@ export interface ChatMessage {
 }
 
 // One streamed event from the chat SSE. `step` = a tool the model
-// called (render as a progress chip); `answer` = final prose;
+// called (render as a progress chip); `delta` = a live answer token
+// chunk (v0.8.404, guided path only — append into the pending bubble);
+// `answer` = final prose (REPLACES any streamed deltas — it is the
+// source of truth, so old backends that never send delta and new
+// backends falling back to buffered both render identically);
 // `error` = failure; `done` = stream closed.
 // exchangeId (v0.8.399) — server-minted correlation key for the
 // thumbs up/down feedback POST; optional for rolling-deploy safety
 // (an old backend's answer events lack it → thumbs row just hides).
 export type ChatStreamEvent =
   | { kind: 'step'; tool: string; args: string }
+  | { kind: 'delta'; text: string }
   | { kind: 'answer'; text: string; exchangeId?: string }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };

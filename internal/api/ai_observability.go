@@ -122,6 +122,20 @@ func (s *Server) copilotExplainSurface(ctx context.Context, surface, system, use
 	return s.copilot.Explain(copilot.WithMeta(ctx, meta), system, user)
 }
 
+// copilotStreamSurface (v0.8.404) — streaming twin of
+// copilotExplainSurface: same surface-override + attribution contract
+// (one self-recorded ai_calls row), but answer tokens stream through
+// onDelta as they arrive. StreamText falls back to the buffered call
+// TRANSPARENTLY when the endpoint can't stream (some vLLM builds 400
+// on stream:true) — zero deltas fire and the returned full text is
+// identical to what Explain would have produced, so callers keep the
+// existing answer contract either way.
+func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user string, onDelta func(string)) (string, error) {
+	meta := copilot.MetaFromContext(ctx)
+	meta.Surface = surface
+	return s.copilot.StreamText(copilot.WithMeta(ctx, meta), system, user, onDelta)
+}
+
 // aiSurfaceFromPath maps the request path to a short stable
 // surface label for grouping. Every /api/copilot/* endpoint has
 // a unique path so we just take the last segment with the

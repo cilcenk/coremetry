@@ -12,6 +12,7 @@ export type MetricSource = 'spanmetrics' | 'tracemetrics';
 export type MetricAgg =
   | 'rate' | 'count' | 'sum' | 'avg'
   | 'p50' | 'p90' | 'p95' | 'p99'
+  | 'band' // v0.8.411 — full percentile band, one resolver call
   | 'error_rate' | 'errors';
 export type MetricUnit = 'rps' | 'ms' | '%' | 'count';
 export type MetricViz = 'line' | 'area' | 'bar' | 'stat' | 'heatmap' | 'topN';
@@ -44,6 +45,7 @@ export function defaultUnit(agg: MetricAgg): MetricUnit {
     case 'p90':
     case 'p95':
     case 'p99':
+    case 'band':
       return 'ms';
     default:
       return 'count';

@@ -108,4 +108,19 @@ describe('seriesGroupLabel', () => {
   it('falls back to the query desc when there is no group', () => {
     expect(seriesGroupLabel(q({}), [], 'count')).toBe('count');
   });
+  // v0.8.411 — agg=band folds the quantile into the LAST groupKey
+  // element (one more than splitBy); it must name the line, not be
+  // mislabeled as a split dimension.
+  it('band: bare quantile names the line', () => {
+    expect(seriesGroupLabel(q({ agg: 'band' }), ['p95'], 'desc')).toBe('p95');
+  });
+  it('band: grouped key keeps split labels aligned + appends the quantile', () => {
+    const query = q({ agg: 'band', splitBy: ['service.name'] });
+    expect(seriesGroupLabel(query, ['checkout', 'p99'], 'desc'))
+      .toBe('name=checkout \u00b7 p99');
+  });
+  it('band: non-band queries are untouched by the peel', () => {
+    const query = q({ agg: 'p95', splitBy: ['service.name'] });
+    expect(seriesGroupLabel(query, ['checkout'], 'desc')).toBe('name=checkout');
+  });
 });

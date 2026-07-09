@@ -38,6 +38,9 @@ export const AGG_OPTIONS: { v: SpanAgg; label: string; unit?: string }[] = [
   { v: 'p95',        label: 'P95',             unit: 'ms' },
   { v: 'p99',        label: 'P99',             unit: 'ms' },
   { v: 'p999',       label: 'P99.9',           unit: 'ms' },
+  // v0.8.411 — Tempo/Grafana-style duration band: p50/p90/p95/p99 in
+  // ONE resolver call, exemplars riding the p99 line.
+  { v: 'band',       label: 'Percentile band (p50-p99)', unit: 'ms' },
   { v: 'min',        label: 'Min',             unit: 'ms' },
   { v: 'max',        label: 'Max',             unit: 'ms' },
   { v: 'sum',        label: 'Sum',             unit: 'ms' },

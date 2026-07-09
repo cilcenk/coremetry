@@ -112,7 +112,7 @@ export function spanAggUnit(agg: string): string {
   if (agg === 'per_min') return '/min';
   if (agg === 'error_rate') return '%';
   if (agg === 'apdex') return '';  // 0–1 score, unitless
-  if (['avg', 'p50', 'p90', 'p95', 'p99', 'p999', 'min', 'max', 'sum'].includes(agg)) return 'ms';
+  if (['avg', 'p50', 'p90', 'p95', 'p99', 'p999', 'min', 'max', 'sum', 'band'].includes(agg)) return 'ms';
   return '';
 }
 
@@ -204,9 +204,20 @@ export function builderDesc(s: BuilderState): string {
 // go through this so an exemplar's groupKey lands on exactly the series label
 // the panel rendered (a one-character drift = invisible glyphs).
 export function seriesGroupLabel(q: BuilderQuery, groupKey: string[], desc: string): string {
-  const grp = groupKey
+  // band (v0.8.411): the resolver folds the quantile label into the
+  // LAST groupKey element (one dimension more than splitBy). Peel it
+  // off so split labels stay aligned and the quantile names the line
+  // ("p95" alone, or "service=checkout - p95" when grouped).
+  let keys = groupKey;
+  let bandLbl = '';
+  if (q.agg === 'band' && groupKey.length === q.splitBy.length + 1) {
+    bandLbl = groupKey[groupKey.length - 1];
+    keys = groupKey.slice(0, -1);
+  }
+  const grp = keys
     .map((val, gi) => `${(q.splitBy[gi] ?? 'g').replace(/^.*\./, '')}=${val}`)
     .join(', ');
+  if (bandLbl) return grp ? grp + " \u00b7 " + bandLbl : bandLbl;
   return grp || desc;
 }
 

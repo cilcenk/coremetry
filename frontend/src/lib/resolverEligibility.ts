@@ -29,6 +29,7 @@ export const TIER_DIM_KEYS = new Set([
 // exemplars and for tier-served series is the same server-side gate.
 export const EXEMPLAR_AGGS = new Set([
   'count', 'rate', 'per_min', 'errors', 'error_rate', 'apdex', 'avg', 'sum', 'p50', 'p90', 'p95', 'p99',
+  'band', // v0.8.411 - percentile band; resolver-only (no legacy twin)
 ]);
 
 // The spanmetrics names the rollup tiers materialise. Unknown metrics fail

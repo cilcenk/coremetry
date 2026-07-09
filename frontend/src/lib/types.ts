@@ -1463,7 +1463,11 @@ export interface RelationResponse {
 export type SpanAgg =
   | 'count' | 'rate' | 'per_min' | 'errors' | 'error_rate' | 'apdex'
   | 'avg' | 'sum' | 'min' | 'max'
-  | 'p50' | 'p90' | 'p95' | 'p99' | 'p999';
+  | 'p50' | 'p90' | 'p95' | 'p99' | 'p999'
+  // band (v0.8.411) — the whole p50/p90/p95/p99 percentile band from
+  // ONE resolver call (agg=band); four series per group key, the
+  // quantile label folded into groupKey's last element.
+  | 'band';
 
 export interface SpanMetricSeries {
   groupKey: string[];                  // raw tuple, joined for label

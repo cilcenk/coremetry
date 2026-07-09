@@ -49,7 +49,7 @@ export function DeployHistoryPanel({ service }: { service: string }) {
     try {
       const r = await api.copilotDeployImpact({
         service,
-        version: row.versionAfter || `rollout (${row.podsRemoved} pods)`,
+        version: row.versionAfter || (row.kind === 'restart' ? `restart (${row.podsRemoved} pods)` : `rollout (${row.podsRemoved} pods)`), // v0.8.405
         deployTimeNs: row.timeUnixNs,
         windowSec: 600,
       });

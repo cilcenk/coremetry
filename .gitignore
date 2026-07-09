@@ -84,3 +84,5 @@ skills-lock.json
 # Design handoff working dirs (prototypes must NOT enter
 # frontend/src — vite breaks on stray ./App→app.jsx imports)
 design_handoff_*/
+deployment-coremetry.yaml
+deployment-coremetry-prod.yaml

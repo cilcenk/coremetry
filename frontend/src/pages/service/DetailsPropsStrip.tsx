@@ -62,7 +62,10 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
     ? `${rt.language}${rt.runtimeVersion ? ' · ' + rt.runtimeVersion : ''}${rt.sdkVersion ? ' · otel ' + rt.sdkVersion : ''}`
     : null;
   const rollouts = rolloutsQ.data?.rollouts ?? [];
-  const last = rollouts.length ? rollouts[rollouts.length - 1] : null;
+  // v0.8.405 — the header chip means "the new code shipped": key it
+  // on the last VERSION-CHANGING rollout, not a restart/reschedule.
+  const deploys = rollouts.filter(r => r.kind !== 'restart' && r.versionAfter);
+  const last = deploys.length ? deploys[deploys.length - 1] : null;
   const version = last?.versionAfter || null;
   const clusters = (clustersQ.data?.clusters ?? []).map(c => c.cluster).filter(c => c && c !== '(default)');
   const envs = envsQ.data?.environments ?? [];

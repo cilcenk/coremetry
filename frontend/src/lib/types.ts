@@ -2940,6 +2940,10 @@ export interface DeployHistoryRow {
 // before/after RED shape as a version deploy.
 export interface Rollout {
   timeUnixNs: number;
+  // v0.8.405 — "deploy" (version changed) vs "restart" (pods replaced
+  // at the SAME version: reschedule/crash/HPA wave). Deploy chips and
+  // markers key on "deploy"; restarts render muted.
+  kind?: 'deploy' | 'restart';
   podsAdded: number;
   podsRemoved: number;
   activePods: number;

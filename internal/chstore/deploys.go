@@ -18,25 +18,25 @@ import (
 // doesn't set it (no SDK env var, no .ServiceVersion()), there
 // will be nothing to show, which is the right answer.
 type Deploy struct {
-	Service       string `json:"service"`
-	Version       string `json:"version"`
+	Service string `json:"service"`
+	Version string `json:"version"`
 	// TimeUnixNs is the first-seen timestamp of this version
 	// in the queried window — the marker position on the chart.
-	TimeUnixNs    int64  `json:"timeUnixNs"`
+	TimeUnixNs int64 `json:"timeUnixNs"`
 	// SpanCount = how many spans this version has produced
 	// since first appearance. Helps the UI dim out noise: a
 	// version that produced 3 spans is probably a stuck
 	// straggler instance, not a real deploy.
-	SpanCount     int    `json:"spanCount"`
+	SpanCount int `json:"spanCount"`
 }
 
 // RecentDeployEntry is one row from GetRecentDeploys —
 // powers the "what changed" page-top banner (v0.5.277).
 type RecentDeployEntry struct {
-	Service       string `json:"service"`
-	Version       string `json:"version"`
-	FirstSeenNs   int64  `json:"firstSeenNs"`
-	SpanCount     uint64 `json:"spanCount"`
+	Service     string `json:"service"`
+	Version     string `json:"version"`
+	FirstSeenNs int64  `json:"firstSeenNs"`
+	SpanCount   uint64 `json:"spanCount"`
 }
 
 // v0.5.278 — placeholder versions that aren't real deploys.
@@ -198,11 +198,11 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 // after) so the operator can read the delta directly without
 // math-by-eye.
 type DeployImpactStats struct {
-	Count      uint64  `json:"count"`
-	RPS        float64 `json:"rps"`
-	ErrorRate  float64 `json:"errorRate"` // 0..1
-	P99Ms      float64 `json:"p99Ms"`
-	AvgMs      float64 `json:"avgMs"`
+	Count     uint64  `json:"count"`
+	RPS       float64 `json:"rps"`
+	ErrorRate float64 `json:"errorRate"` // 0..1
+	P99Ms     float64 `json:"p99Ms"`
+	AvgMs     float64 `json:"avgMs"`
 }
 
 // DeployImpact captures a service.version transition's before/
@@ -366,15 +366,22 @@ const instanceIdExpr = `
 // it). v0.8.x — operator-reported: constant service.version made the
 // version-based markers pure noise.
 type Rollout struct {
-	TimeUnixNs    int64         `json:"timeUnixNs"`
-	PodsAdded     int           `json:"podsAdded"`
-	PodsRemoved   int           `json:"podsRemoved"`
-	ActivePods    int           `json:"activePods"` // active set size after the rollout
-	AddedPods     []string      `json:"addedPods,omitempty"`   // up to 5 sample ids
-	RemovedPods   []string      `json:"removedPods,omitempty"` // up to 5 sample ids
-	VersionBefore string        `json:"versionBefore,omitempty"`
-	VersionAfter  string        `json:"versionAfter,omitempty"`
-	Impact        *DeployImpact `json:"impact,omitempty"` // before/after RED, filled by the API layer
+	TimeUnixNs    int64    `json:"timeUnixNs"`
+	PodsAdded     int      `json:"podsAdded"`
+	PodsRemoved   int      `json:"podsRemoved"`
+	ActivePods    int      `json:"activePods"`            // active set size after the rollout
+	AddedPods     []string `json:"addedPods,omitempty"`   // up to 5 sample ids
+	RemovedPods   []string `json:"removedPods,omitempty"` // up to 5 sample ids
+	VersionBefore string   `json:"versionBefore,omitempty"`
+	// Kind (v0.8.405): "deploy" when the effective version changed
+	// across the churn, "restart" when pods were replaced at the SAME
+	// version (reschedule / node drain / crash-restart / HPA wave) —
+	// the operator-reported false-deploy class. Deploy chips, markers
+	// and impact analysis key on "deploy"; restarts render as their
+	// own muted event type.
+	Kind         string        `json:"kind"`
+	VersionAfter string        `json:"versionAfter,omitempty"`
+	Impact       *DeployImpact `json:"impact,omitempty"` // before/after RED, filled by the API layer
 }
 
 // RolloutsResult is the GetServiceRollouts payload.
@@ -485,10 +492,23 @@ func analyzeRollouts(service string, buckets []rolloutBucket) *RolloutsResult {
 	// transition. A rollout = ≥50% of the baseline pods gone AND ≥1 new
 	// pod present. Detections within `lookback` of the last are the
 	// same (staggered) rollout, not a fresh one.
-	const lookback = 2 // 2 × 5-min buckets ≈ a 10-minute rollout window
+	// v0.8.405 — lookback widened 2→3: presence smoothing (below)
+	// carries bucket i-1 into i, which delays a cutover's "old pods
+	// gone" signal by one bucket; a 2-bucket baseline then lands ON
+	// the mixed transition bucket (new pods already in base → added=0,
+	// detection lost). 3 buckets straddles smoothing + transition.
+	const lookback = 3 // ≈ a 15-minute rollout window
 	lastRolloutIdx := -100
 	for i := 1; i < len(buckets); i++ {
-		cur := podSet(buckets[i].pods)
+		// v0.8.405 (operator-reported: "deploy yapılmasa da deploy
+		// algılıyor") — bucket presence means "emitted spans that 5
+		// minutes", NOT liveness: a pod quiet for one bucket (low
+		// traffic, collector restart, sampling burst) read as
+		// "removed", then "added" when it spoke again — a fabricated
+		// rollout. Smooth presence over [i-1, i]: one quiet bucket no
+		// longer counts as a removal; a real rollout (pods actually
+		// replaced for ≥2 buckets) still trips the wider baseline.
+		cur := podSetSmoothed(buckets, i)
 		if len(cur) == 0 {
 			continue
 		}
@@ -496,12 +516,12 @@ func analyzeRollouts(service string, buckets []rolloutBucket) *RolloutsResult {
 		if j < 0 {
 			j = 0
 		}
-		base := podSet(buckets[j].pods)
+		base := podSetSmoothed(buckets, j)
 		if len(base) == 0 {
 			continue
 		}
-		added := podDiff(cur, base)   // in cur, not in baseline
-		removed := podDiff(base, cur) // in baseline, not in cur
+		added := podDiff(cur, base)      // in cur, not in baseline
+		removed := podDiff(base, cur)    // in baseline, not in cur
 		threshold := (len(base) + 1) / 2 // ceil(0.5 * len(base))
 		if len(added) < 1 || len(removed) < threshold {
 			continue
@@ -518,14 +538,29 @@ func analyzeRollouts(service string, buckets []rolloutBucket) *RolloutsResult {
 			AddedPods:   podSample(added, 5),
 			RemovedPods: podSample(removed, 5),
 		}
+		r.Kind = "restart"
 		if buckets[i].version != "" && buckets[j].version != "" && buckets[i].version != buckets[j].version {
 			r.VersionBefore = buckets[j].version
 			r.VersionAfter = buckets[i].version
+			r.Kind = "deploy"
 		}
 		res.Rollouts = append(res.Rollouts, r)
 		lastRolloutIdx = i
 	}
 	return res
+}
+
+// podSetSmoothed is bucket i's pod set unioned with bucket i-1's
+// (v0.8.405): presence = "spoke within the last ~10 minutes", so a
+// single quiet bucket can't fabricate a removal. Pure — table-tested.
+func podSetSmoothed(buckets []rolloutBucket, i int) map[string]struct{} {
+	cur := podSet(buckets[i].pods)
+	if i > 0 {
+		for p := range podSet(buckets[i-1].pods) {
+			cur[p] = struct{}{}
+		}
+	}
+	return cur
 }
 
 func podSet(xs []string) map[string]struct{} {

@@ -26,6 +26,10 @@ func TestAnalyzeRollouts(t *testing.T) {
 		wantCount   int
 		wantConst   bool
 		wantTracked bool
+		// wantKinds (v0.8.405) — expected Kind per detected rollout:
+		// "deploy" only when the effective version changed across the
+		// churn, else "restart". nil = don't care / no rollouts.
+		wantKinds []string
 	}{
 		{
 			name: "stable set → no rollout",
@@ -46,7 +50,7 @@ func TestAnalyzeRollouts(t *testing.T) {
 				mkBucket(15, "1", "q1", "q2", "q3"),
 				mkBucket(20, "1", "q1", "q2", "q3"),
 			},
-			wantCount: 1, wantConst: true, wantTracked: true,
+			wantCount: 1, wantConst: true, wantTracked: true, wantKinds: []string{"restart"},
 		},
 		{
 			name: "clean instant cutover (no mix) → 1",
@@ -56,7 +60,7 @@ func TestAnalyzeRollouts(t *testing.T) {
 				mkBucket(10, "1", "q1", "q2", "q3"),
 				mkBucket(15, "1", "q1", "q2", "q3"),
 			},
-			wantCount: 1, wantConst: true, wantTracked: true,
+			wantCount: 1, wantConst: true, wantTracked: true, wantKinds: []string{"restart"},
 		},
 		{
 			name: "gradual rollout over several buckets → coalesced to 1",
@@ -67,7 +71,7 @@ func TestAnalyzeRollouts(t *testing.T) {
 				mkBucket(15, "1", "q1", "q2", "q3"),
 				mkBucket(20, "1", "q1", "q2", "q3"),
 			},
-			wantCount: 1, wantConst: true, wantTracked: true,
+			wantCount: 1, wantConst: true, wantTracked: true, wantKinds: []string{"restart"},
 		},
 		{
 			name: "autoscale up (add, no remove) → no rollout",
@@ -97,6 +101,36 @@ func TestAnalyzeRollouts(t *testing.T) {
 			wantCount: 0, wantConst: true, wantTracked: false,
 		},
 		{
+			// v0.8.405 — operator-reported false-deploy class: bucket
+			// presence means "emitted spans that 5 minutes", so pods
+			// quiet for ONE bucket (low traffic / collector hiccup)
+			// read as removed; a simultaneously-appearing pod (HPA
+			// scale-up) completed the add+remove pattern → phantom
+			// rollout. Presence smoothing must kill it.
+			name: "one quiet bucket + HPA add → NO rollout (v0.8.405)",
+			buckets: []rolloutBucket{
+				mkBucket(0, "1", "p1", "p2", "p3", "p4"),
+				mkBucket(5, "1", "p1", "p2", "p3", "p4"),
+				mkBucket(10, "1", "p1", "p2", "x1"), // p3/p4 quiet, x1 scaled up
+				mkBucket(15, "1", "p1", "p2", "p3", "p4", "x1"),
+				mkBucket(20, "1", "p1", "p2", "p3", "p4", "x1"),
+			},
+			wantCount: 0, wantConst: true, wantTracked: true,
+		},
+		{
+			// v0.8.405 — pods genuinely replaced (≥2 buckets absent)
+			// at a CONSTANT version = reschedule/restart, not a deploy.
+			name: "real replacement, constant version → kind restart",
+			buckets: []rolloutBucket{
+				mkBucket(0, "1", "p1", "p2", "p3"),
+				mkBucket(5, "1", "p1", "p2", "p3"),
+				mkBucket(10, "1", "q1", "q2", "q3"),
+				mkBucket(15, "1", "q1", "q2", "q3"),
+				mkBucket(20, "1", "q1", "q2", "q3"),
+			},
+			wantCount: 1, wantConst: true, wantTracked: true, wantKinds: []string{"restart"},
+		},
+		{
 			name: "version changes across the rollout → versionConstant false",
 			buckets: []rolloutBucket{
 				mkBucket(0, "1.0.0", "p1", "p2", "p3"),
@@ -104,7 +138,7 @@ func TestAnalyzeRollouts(t *testing.T) {
 				mkBucket(10, "1.0.1", "q1", "q2", "q3"),
 				mkBucket(15, "1.0.1", "q1", "q2", "q3"),
 			},
-			wantCount: 1, wantConst: false, wantTracked: true,
+			wantCount: 1, wantConst: false, wantTracked: true, wantKinds: []string{"deploy"},
 		},
 	}
 	for _, tt := range tests {
@@ -118,6 +152,16 @@ func TestAnalyzeRollouts(t *testing.T) {
 			}
 			if res.InstancesTracked != tt.wantTracked {
 				t.Errorf("instancesTracked = %v, want %v", res.InstancesTracked, tt.wantTracked)
+			}
+			if tt.wantKinds != nil {
+				for i, want := range tt.wantKinds {
+					if i >= len(res.Rollouts) {
+						break
+					}
+					if got := res.Rollouts[i].Kind; got != want {
+						t.Errorf("rollout[%d].kind = %q, want %q", i, got, want)
+					}
+				}
 			}
 		})
 	}

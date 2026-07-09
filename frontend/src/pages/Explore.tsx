@@ -38,6 +38,8 @@ import {
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
 import { useExploreQueries, useExploreOverlays } from './explore/useExploreQueries';
 import { PanelStack, buildPanels } from './explore/PanelStack';
+import { queryToPanel, isPinnable } from './explore/pinToDashboard';
+import { PinToDashboardModal } from './explore/PinToDashboardModal';
 import { GroupTable } from './explore/GroupTable';
 import { SummaryViz } from './explore/SummaryViz';
 import { QueryRow } from './explore/QueryRow';
@@ -111,6 +113,12 @@ function ExploreInner() {
   // anchored on that trace instead of navigating away to /trace, keeping the
   // operator in Explore. This is the single highest-traffic cross-signal pivot.
   const [correlateAnchor, setCorrelateAnchor] = useState<PivotAnchor | null>(null);
+  // v0.8.419 (DE4) — pin-to-dashboard modal state: the Panel converted
+  // from a builder query, ready to append to a chosen dashboard.
+  const [pinPanel, setPinPanel] = useState<import('@/lib/types').Panel | null>(null);
+  const pinnableLetters = useMemo(
+    () => new Set(builder.queries.filter(isPinnable).map(q => q.letter)),
+    [builder.queries]);
 
   // ── Traces / repeats console state (pre-v2, unchanged shapes) ────────────
   const [filters, setFilters] = useState<FilterExpr[]>(
@@ -709,7 +717,13 @@ name ~ checkout`}
                     focusKey={focusKey}
                     zoomWindow={zoomWindow}
                     onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
-                    onExemplarClick={(id) => setCorrelateAnchor({ kind: 'trace', traceId: id })} />
+                    onExemplarClick={(id) => setCorrelateAnchor({ kind: 'trace', traceId: id })}
+                    pinnableLetters={pinnableLetters}
+                    onPin={letter => {
+                      const q = builder.queries.find(x => x.letter === letter);
+                      const p = q && queryToPanel(q, { step: builder.step || undefined });
+                      if (p) setPinPanel(p);
+                    }} />
                 )}
                 {(debounced.viz === 'stat' || debounced.viz === 'toplist') && (
                   <SummaryViz panels={panels} mode={debounced.viz} />
@@ -849,6 +863,10 @@ name ~ checkout`}
         <CorrelationContextDrawer
           anchor={correlateAnchor}
           onClose={() => setCorrelateAnchor(null)} />
+        {pinPanel && (
+          <PinToDashboardModal panel={pinPanel}
+            onClose={() => setPinPanel(null)} />
+        )}
       </div>
     </>
   );

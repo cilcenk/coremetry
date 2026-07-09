@@ -165,7 +165,7 @@ export function buildPanels(
   return out;
 }
 
-export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick, logScale }: {
+export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick, logScale, onPin, pinnableLetters }: {
   panels: PanelData[];
   viz: 'line' | 'area' | 'bars';
   hiddenKeys: Set<string>;          // `${letter}:${label}`
@@ -174,6 +174,10 @@ export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZo
   onZoom: (fromSec: number, toSec: number) => void;
   onExemplarClick?: (traceId: string) => void;   // open an exemplar ◆ trace
   logScale?: boolean;               // v0.8.418 (DE3) — log10 y-axis, all panels
+  // v0.8.419 (DE4) — pin a query to a dashboard. pinnableLetters gates the
+  // affordance per panel (formula / OR-group queries have no equivalent).
+  onPin?: (letter: string) => void;
+  pinnableLetters?: Set<string>;
 }) {
   // Per-panel projections of the global hidden/focus keys.
   const perPanel = useMemo(() => panels.map(p => {
@@ -197,7 +201,9 @@ export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZo
           zoomWindow={zoomWindow}
           onZoom={onZoom}
           onExemplarClick={onExemplarClick}
-          logScale={logScale} />
+          logScale={logScale}
+          onPin={onPin && !p.isFormula && pinnableLetters?.has(p.letter)
+            ? () => onPin(p.letter) : undefined} />
       ))}
     </div>
   );

@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { TimeSeriesPanel, type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { Spinner } from '@/components/Spinner';
+import { Button } from '@/components/ui/Button';
 import { publishCursor } from './cursorBus';
 import type { PanelData } from './PanelStack';
 
@@ -14,7 +15,7 @@ const SYNC_KEY = 'explore-v2';
 const PANEL_HEIGHT = 200;
 
 export const QueryPanel = memo(function QueryPanel({
-  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom, onExemplarClick, logScale,
+  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom, onExemplarClick, logScale, onPin,
 }: {
   panel: PanelData;
   mode: TSMode;
@@ -24,6 +25,10 @@ export const QueryPanel = memo(function QueryPanel({
   onZoom: (fromSec: number, toSec: number) => void;
   onExemplarClick?: (traceId: string) => void;
   logScale?: boolean;   // v0.8.418 (DE3) — TimeSeriesPanel's log10 y-axis
+  // v0.8.419 (DE4) — pin this query to a dashboard. Absent for formula
+  // panels and OR-group queries (no dashboard equivalent — see
+  // pinToDashboard.ts header), so the 📌 simply doesn't render.
+  onPin?: () => void;
 }) {
   return (
     <div style={{
@@ -49,6 +54,13 @@ export const QueryPanel = memo(function QueryPanel({
             {panel.series.length} seri{panel.more > 0 ? ` · +${panel.more} daha (alan bazlı kırpıldı)` : ''}
             {panel.unit ? ` · ${panel.unit}` : ''}
           </span>
+        )}
+        {onPin && (
+          <Button variant="ghost" size="sm" onClick={onPin}
+            title="Dashboard'a pinle — bu sorgu canlı bir panel olarak eklenir"
+            aria-label={`Pin query ${panel.letter} to a dashboard`}>
+            📌
+          </Button>
         )}
       </div>
       {panel.loading ? (

@@ -15,7 +15,13 @@ import type { ChatMessage } from '@/lib/types';
 // `step` events render as tool-call chips, `answer` fills the
 // assistant bubble.
 
-type Turn = ChatMessage & { steps?: string[]; pending?: boolean; error?: string };
+// exchangeId (v0.8.399) — server-minted per answer, carried on the SSE
+// answer event; enables the thumbs up/down row. verdict is the local
+// optimistic copy of what we last POSTed to /api/ai/feedback.
+type Turn = ChatMessage & {
+  steps?: string[]; pending?: boolean; error?: string;
+  exchangeId?: string; verdict?: 1 | -1;
+};
 
 const SAMPLE_QUESTIONS = [
   'Which services are unhealthy right now?',
@@ -49,6 +55,21 @@ export function CopilotChat() {
 
   if (!enabled) return null;
 
+  // Thumbs up/down on an answer (v0.8.399). Optimistic: flip the local
+  // verdict immediately, POST in the background, revert on failure.
+  // Toggleable = clicking the other thumb replaces the verdict
+  // (ReplacingMergeTree server-side); re-clicking the same is a no-op.
+  const rate = (idx: number, verdict: 1 | -1) => {
+    const turn = turns[idx];
+    if (!turn?.exchangeId || turn.verdict === verdict) return;
+    const prior = turn.verdict;
+    const exchangeId = turn.exchangeId;
+    setTurns(prev => prev.map((t, i) => (i === idx ? { ...t, verdict } : t)));
+    api.postAIFeedback({ exchangeId, verdict }).catch(() => {
+      setTurns(prev => prev.map((t, i) => (i === idx ? { ...t, verdict: prior } : t)));
+    });
+  };
+
   const send = async (text: string) => {
     const q = text.trim();
     if (!q || busy) return;
@@ -77,7 +98,7 @@ export function CopilotChat() {
         if (e.kind === 'step') {
           patchLast(t => ({ ...t, steps: [...(t.steps ?? []), e.tool] }));
         } else if (e.kind === 'answer') {
-          patchLast(t => ({ ...t, text: e.text, pending: false }));
+          patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, pending: false }));
         } else if (e.kind === 'error') {
           patchLast(t => ({ ...t, error: e.error, pending: false }));
         } else if (e.kind === 'done') {
@@ -150,7 +171,7 @@ export function CopilotChat() {
               </div>
             )}
             {turns.map((t, i) => (
-              <ChatBubble key={i} turn={t} />
+              <ChatBubble key={i} turn={t} onRate={v => rate(i, v)} />
             ))}
           </div>
 
@@ -179,7 +200,7 @@ export function CopilotChat() {
   );
 }
 
-function ChatBubble({ turn }: { turn: Turn }) {
+function ChatBubble({ turn, onRate }: { turn: Turn; onRate?: (v: 1 | -1) => void }) {
   const isUser = turn.role === 'user';
   return (
     <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
@@ -206,6 +227,23 @@ function ChatBubble({ turn }: { turn: Turn }) {
           ? <span style={{ color: isUser ? '#fff' : 'var(--err)' }}>⚠ {turn.error}</span>
           : turn.text || (turn.pending ? <span style={{ color: 'var(--text3)' }}>thinking…</span> : '')}
       </div>
+      {/* Thumbs row (v0.8.399) — only for completed assistant answers
+          that carry the server-minted exchangeId (old backends don't
+          send one → row hides, rolling-deploy safe). */}
+      {!isUser && !!turn.exchangeId && !turn.pending && !turn.error && onRate && (
+        <div style={{ display: 'flex', gap: 2, marginTop: 2 }}>
+          <Button variant="ghost" size="sm" onClick={() => onRate(1)}
+            title="Helpful" aria-label="Rate answer helpful"
+            style={{ padding: '0 6px', fontSize: 12, opacity: turn.verdict === 1 ? 1 : 0.4 }}>
+            👍
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => onRate(-1)}
+            title="Not helpful" aria-label="Rate answer not helpful"
+            style={{ padding: '0 6px', fontSize: 12, opacity: turn.verdict === -1 ? 1 : 0.4 }}>
+            👎
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

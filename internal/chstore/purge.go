@@ -66,6 +66,10 @@ var configPreserveTables = []string{
 	// operator-authored analysis content (manual records / notes / acks / triage)
 	"problems", "incidents", "incident_events", "incident_problems",
 	"exception_groups", "events", "runbook_executions",
+	// v0.8.399 — thumbs up/down verdicts are operator-authored quality
+	// signal; preserved even though the ai_calls rows they rate purge
+	// (the 90d TTL bounds any orphans).
+	"ai_feedback",
 }
 
 // PurgeTelemetry empties every observability-DATA table (telemetryPurgeTables),

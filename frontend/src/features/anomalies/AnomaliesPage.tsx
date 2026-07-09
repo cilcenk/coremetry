@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
@@ -18,14 +18,13 @@ import { fmtNum, fmtFixed, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { useDataTable } from '@/components/DataTable';
+import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
 } from '@/lib/types';
 import { AlertProblemDetail, ProblemDetail } from './ProblemDetail';
 import { withProblemParam } from './problemLink';
-import { fmtDurationNs, fmtStartedTs } from './problemTime';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -303,11 +302,10 @@ export default function ProblemsPage() {
     );
   }
 
-  // Variant B — a firing alert problem opens as a full-page detail on
-  // the same route (?problem=<id>), replacing the old TriageDrawer.
-  // The feed stays MOUNTED underneath (display:none) so facet / team /
-  // bulk-selection state survives "← Problems" — review-confirmed: the
-  // early-return unmount wiped a half-built bulk-ack selection.
+  // v0.8.426/428 — a firing alert problem opens as a Variant-B
+  // full-page detail on the same route (?problem=<id>). The classic
+  // table list stays MOUNTED underneath (display:none) so facet /
+  // team / bulk-selection state survives "← Problems" / Esc.
   const problemParam = searchParams.get('problem');
 
   return (
@@ -353,21 +351,7 @@ export default function ProblemsPage() {
             <option value="">All SRE teams</option>
             {sreTeamOptions.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          <select
-            value={dt.sort.id ?? DEFAULT_EXC_SORT.id}
-            onChange={e => {
-              const id = e.target.value;
-              const asc = id === 'type' || id === 'service' || id === 'assignee';
-              dt.setSort({ id, dir: asc ? 'asc' : 'desc' });
-            }}
-            aria-label="Kart sıralaması"
-            title="Kart sıralaması — CH ORDER BY tüm sayfalanmış set üzerinde çalışır (v0.8.318)"
-            style={{ marginLeft: 'auto', fontSize: 12 }}>
-            {EXC_COLS.map(c => (
-              <option key={c.id} value={c.id}>{c.label}</option>
-            ))}
-          </select>
-          <span style={{ color: 'var(--text3)', fontSize: 12 }}>
+          <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {total > 0 && (
               <>
                 {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {fmtNum(total)} groups
@@ -402,102 +386,108 @@ export default function ProblemsPage() {
           </Empty>
         )}
         {data && filtered.length > 0 && (
-          <div>
-            {filtered.map(g => {
-              const open = expanded.has(g.fingerprint);
-              // Variant B severity derivation (operator-approved):
-              // exceptions carry no severity of their own, the state
-              // supplies the urgency tone.
-              const railCls = g.state === 'new' || g.state === 'regressed' ? 'err'
-                : g.state === 'acknowledged' ? 'warn'
-                : g.state === 'resolved' ? 'ok' : 'gray';
-              return (
-                <div key={g.fingerprint} className={`pb-card ${railCls}`}
-                  role="button" tabIndex={0} aria-expanded={open}
-                  onClick={() => setDetail(g)}
-                  onKeyDown={e => {
-                    // Only keydown on the CARD itself opens — Enter/Space
-                    // inside nested controls (selects, buttons, quick-peek)
-                    // must keep their native behaviour (review-confirmed).
-                    if (e.target !== e.currentTarget) return;
-                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetail(g); }
-                  }}
-                  style={{ flexWrap: 'wrap', contentVisibility: 'auto', containIntrinsicSize: 'auto 88px' }}>
-                  <span
-                    onClick={e => { e.stopPropagation(); toggleExpand(g.fingerprint); }}
-                    title={open ? 'Hide occurrences' : 'Peek occurrences'}
-                    style={{ color: 'var(--text3)', paddingTop: 2, cursor: 'pointer' }}>
-                    {open
-                      ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
-                      : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}
-                  </span>
-                  <div className="pb-main">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      <StateBadge s={g.state} />
-                      {/* "NEW" badge: first observed in the last hour —
-                          highest-signal cue for the morning inbox scan. */}
-                      {Date.now() - g.firstSeen / 1e6 < 60 * 60 * 1000 && (
-                        <span className="badge b-warn" style={{ fontSize: 9, padding: '0 5px' }}>
-                          NEW
-                        </span>
+          <div className="table-wrap">
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} leading={[24]} trailing={isAdmin ? [240] : undefined} />
+              <DataTableHead dt={dt}
+                leading={<th style={{ width: 24 }}></th>}
+                trailing={isAdmin ? <th style={{ width: 240 }}>Actions</th> : undefined} />
+              <tbody>
+                {filtered.map(g => {
+                  const open = expanded.has(g.fingerprint);
+                  return (
+                    <Fragment key={g.fingerprint}>
+                      <tr onClick={() => setDetail(g)}
+                        onKeyDown={(e) => {
+                          // Enter/Space opens the full detail (keyboard parity
+                          // with the click). The caret cell handles the inline
+                          // quick-peek separately.
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setDetail(g);
+                          }
+                        }}
+                        tabIndex={0}
+                        role="button"
+                        aria-expanded={open}
+                        style={{ cursor: 'pointer' }}>
+                        <td style={{ color: 'var(--text3)', textAlign: 'center', cursor: 'pointer' }}
+                          title={open ? 'Hide occurrences' : 'Peek occurrences'}
+                          onClick={e => { e.stopPropagation(); toggleExpand(g.fingerprint); }}>
+                          {open
+                            ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
+                            : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}
+                        </td>
+                        <td><StateBadge s={g.state} /></td>
+                        <td>
+                          <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 11.5, color: 'var(--err)' }}>
+                            {g.type}
+                            {/* "NEW" badge: first observed in the
+                                last hour. Highest-signal column
+                                for an SRE scanning the inbox in
+                                the morning — these are the ones
+                                that didn't exist yesterday. */}
+                            {Date.now() - g.firstSeen / 1e6 < 60 * 60 * 1000 && (
+                              <span className="badge b-warn" style={{ fontSize: 9, padding: '0 5px' }}>
+                                NEW
+                              </span>
+                            )}
+                          </div>
+                          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text3)',
+                                        maxWidth: 480, overflow: 'hidden',
+                                        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                               title={g.message}>
+                            {g.message || '—'}
+                          </div>
+                        </td>
+                        <td>
+                          <Link to={`/service?name=${encodeURIComponent(g.service)}`}
+                            onClick={e => e.stopPropagation()}
+                            style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                            {g.service}
+                          </Link>
+                        </td>
+                        <td className="mono" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--err)' }}>
+                          {fmtNum(Number(g.occurrences))}
+                        </td>
+                        <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.firstSeen)}</td>
+                        <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.lastSeen)}</td>
+                        <td onClick={e => e.stopPropagation()}>
+                          {isAdmin ? (
+                            <select value={g.assignee} onChange={e => setAssignee(g, e.target.value)}
+                              style={{ fontSize: 11, maxWidth: 160 }}>
+                              <option value="">— unassigned —</option>
+                              {users.map(u => (
+                                <option key={u.id} value={u.id}>{u.email}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span style={{ fontSize: 11, color: 'var(--text2)' }}>
+                              {g.assignee ? (userById.get(g.assignee)?.email ?? g.assignee) : '—'}
+                            </span>
+                          )}
+                        </td>
+                        {isAdmin && (
+                          <td onClick={e => e.stopPropagation()}>
+                            <ActionButtons g={g} onSet={setState} />
+                          </td>
+                        )}
+                      </tr>
+                      {open && (
+                        <tr>
+                          <td colSpan={isAdmin ? 9 : 8} style={{
+                            background: 'var(--bg1)', padding: '10px 16px',
+                            borderTop: '1px solid var(--border)',
+                          }}>
+                            <SamplesPanel fingerprint={g.fingerprint} />
+                          </td>
+                        </tr>
                       )}
-                      <span className="pb-title mono" style={{ color: 'var(--err)', fontSize: 12 }} title={g.type}>
-                        {g.type}
-                      </span>
-                    </div>
-                    <div className="pb-rc mono" title={g.message}>
-                      {g.message || '—'}
-                    </div>
-                    <div className="pb-rc">
-                      <span className="k">Root cause:</span>{' '}
-                      <Link to={`/service?name=${encodeURIComponent(g.service)}`}
-                        onClick={e => e.stopPropagation()}
-                        className="mono" style={{ fontWeight: 600 }}>
-                        {g.service}
-                      </Link>
-                    </div>
-                  </div>
-                  <div className="pb-side">
-                    <span className="pb-headline">{fmtNum(Number(g.occurrences))}
-                      <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 11 }}> occurrences</span>
-                    </span>
-                    <span className="mono">First {fmtStartedTs(g.firstSeen)}</span>
-                    <span className="mono">Last {fmtStartedTs(g.lastSeen)}</span>
-                    <span onClick={e => e.stopPropagation()}>
-                      {isAdmin ? (
-                        <select value={g.assignee} onChange={e => setAssignee(g, e.target.value)}
-                          aria-label="Assignee"
-                          style={{ fontSize: 11, maxWidth: 160 }}>
-                          <option value="">— unassigned —</option>
-                          {users.map(u => (
-                            <option key={u.id} value={u.id}>{u.email}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span style={{ fontSize: 11, color: 'var(--text2)' }}>
-                          {g.assignee ? (userById.get(g.assignee)?.email ?? g.assignee) : '—'}
-                        </span>
-                      )}
-                    </span>
-                    {isAdmin && (
-                      <span onClick={e => e.stopPropagation()}>
-                        <ActionButtons g={g} onSet={setState} />
-                      </span>
-                    )}
-                  </div>
-                  {open && (
-                    <div onClick={e => e.stopPropagation()}
-                      style={{
-                        flexBasis: '100%', marginTop: 8, padding: '10px 12px',
-                        background: 'var(--bg2)', borderRadius: 'var(--radius-sm)',
-                        border: '1px solid var(--border)', cursor: 'default',
-                      }}>
-                      <SamplesPanel fingerprint={g.fingerprint} />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
         {data && total > PAGE_SIZE && (
@@ -550,14 +540,13 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const currentUserEmail = user?.email ?? '';
   const [searchParams, setSearchParams] = useSearchParams();
   // When arriving via ?problem=<id> deep link, broaden the
-  // status pivot so the detail can resolve the row even when
+  // status pivot so the drawer can resolve the row even when
   // it's acknowledged / resolved. Default 'open' otherwise.
-  // 'acknowledged' (Variant B facet) fetches 'all' server-side and
-  // narrows client-side — no new server filter semantics assumed.
-  const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved' | 'acknowledged'>(
+  const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>(
     searchParams.get('problem') ? 'all' : 'open');
-  // Variant B: the full-page detail is driven by ?problem= alone —
-  // the page-level host (ProblemsPage) reads it; this only writes.
+  // v0.8.428 (operator-reported): the list stays the CLASSIC sortable
+  // table; only the triage surface is the Variant-B full-page detail,
+  // driven by ?problem= alone (page-level host reads it; this writes).
   // v0.8.256 contract preserved: state and URL move together,
   // replace:true so triage clicks don't pile history entries.
   const openDetail = (id: string | null) => {
@@ -652,9 +641,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // that out so the semantics aren't mistaken for a per-env value.
   const [env] = useUrlEnv();
   const problemsQ = useProblems({
-    // 'acknowledged' rides the 'all' fetch (existing hook contract) and
-    // narrows client-side in the rows memo below.
-    status: statusFilter === 'all' || statusFilter === 'acknowledged' ? undefined : statusFilter,
+    status: statusFilter === 'all' ? undefined : statusFilter,
     service: serviceFilter || undefined,
     priority: prioParam,
     ownerTeam: ownerTeam || undefined,
@@ -675,11 +662,9 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // server-side via the priority query param so the limit cap
   // bites the right bucket. Keeping the severity client-side
   // filter avoids a refetch on every chip toggle for that axis.
-  // The Acknowledged facet narrows the 'all' fetch here too.
   const rows = useMemo(
-    () => (data ?? []).filter(p => sevSet.has(p.severity)
-      && (statusFilter !== 'acknowledged' || p.status === 'acknowledged')),
-    [data, sevSet, statusFilter]);
+    () => (data ?? []).filter(p => sevSet.has(p.severity)),
+    [data, sevSet]);
   // Shared DataTable primitive, client sort (PROBLEM_COLS carries the
   // per-column accessors + natural directions the old cmp/toggleSort
   // pair encoded). Sort + widths persist under 'alert-rules'; the URL
@@ -695,26 +680,6 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // rows) the render below branches on.
   const sorted = data == null ? data : dt.sortedRows;
 
-  // Status facet counts — spec §3 wants a count on every chip. Only
-  // derivable from what the CURRENT fetch loaded: the 'all' and
-  // 'acknowledged' facets fetch every status (full map); 'open' /
-  // 'resolved' fetch one status, so only their own chip gets a number.
-  // No extra fetch — an always-all fetch would let resolved churn
-  // crowd open rows out of the 200-row cap.
-  const statusCounts = useMemo(() => {
-    const c: Record<string, number | null> = { open: null, acknowledged: null, resolved: null, all: null };
-    if (!data) return c;
-    if (statusFilter === 'all' || statusFilter === 'acknowledged') {
-      c.open = data.filter(p => p.status === 'open').length;
-      c.acknowledged = data.filter(p => p.status === 'acknowledged').length;
-      c.resolved = data.filter(p => p.status === 'resolved').length;
-      c.all = data.length;
-    } else {
-      c[statusFilter] = data.length;
-    }
-    return c;
-  }, [data, statusFilter]);
-
   // Counts per severity for the chip labels — operator sees
   // "critical (3)" instead of guessing how many would land.
   const sevCounts = useMemo(() => {
@@ -722,24 +687,6 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     for (const p of data ?? []) counts[p.severity] = (counts[p.severity] ?? 0) + 1;
     return counts;
   }, [data]);
-
-  // Variant B summary strip — computed from the loaded result set only
-  // (no extra fetch). Resolved·24h can only be counted when the current
-  // facet actually loads resolved rows; otherwise it reads "—".
-  const strip = useMemo(() => {
-    const all = data ?? [];
-    const openRows = all.filter(p => p.status === 'open');
-    const dayAgoNs = (Date.now() - 24 * 3600 * 1000) * 1e6;
-    const resolved24 = statusFilter === 'open'
-      ? null
-      : all.filter(p => p.status === 'resolved' && (p.resolvedAt ?? p.startedAt) >= dayAgoNs).length;
-    return {
-      critical: openRows.filter(p => p.severity === 'critical' || p.priority === 'P1').length,
-      warning: openRows.filter(p => p.severity === 'warning' && p.priority !== 'P1').length,
-      services: new Set(openRows.map(p => p.service)).size,
-      resolved24,
-    };
-  }, [data, statusFilter]);
 
   // Whole section collapses when there's nothing AND filter is
   // 'open' — no point in dead space when the operator's most-
@@ -758,28 +705,6 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   return (
     <div style={{ marginTop: 22, marginBottom: 12 }}>
       <SectionHeader title="Alert rules" subtitle="Threshold + SLO burn detectors" />
-      {/* Variant B — 4-tile summary strip above the feed. Counts come
-          from the rows already fetched for the facet below. */}
-      <div className="pb-strip">
-        <div className="pb-tile err">
-          <div className="n">{strip.critical}</div>
-          <div className="k">Critical · P1</div>
-        </div>
-        <div className="pb-tile warn">
-          <div className="n">{strip.warning}</div>
-          <div className="k">Warning · P2</div>
-        </div>
-        <div className="pb-tile accent">
-          <div className="n">{strip.services}</div>
-          <div className="k">Affected services</div>
-        </div>
-        <div className="pb-tile ok" title={strip.resolved24 === null
-          ? 'Resolved rows are not loaded on the Open facet — switch to Resolved or All to count them.'
-          : 'Problems resolved in the last 24 hours (loaded set)'}>
-          <div className="n">{strip.resolved24 ?? '—'}</div>
-          <div className="k">Resolved · 24h</div>
-        </div>
-      </div>
       {/* One grouped facet bar (v0.8.39) — status pivot + severity +
           priority chips share the shared .facet primitive (the repo
           equivalent of the design's filter bar), replacing the old
@@ -789,12 +714,11 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
           setStatusFilter; severity/priority multi-select via toggleSev/
           togglePrio. Count + manage-rules link stay pushed right. */}
       <div className="facetbar" style={{ marginBottom: 14 }}>
-        {/* Status pivot — single-select (Variant B facet set). */}
-        {(['open', 'acknowledged', 'resolved', 'all'] as const).map(s => (
+        {/* Status pivot — single-select */}
+        {(['open', 'resolved', 'all'] as const).map(s => (
           <span key={s} onClick={() => setStatusFilter(s)}
             className={`facet${statusFilter === s ? ' on' : ''}`}>
             {s.charAt(0).toUpperCase() + s.slice(1)}
-            {statusCounts[s] != null && <span className="n">{statusCounts[s]}</span>}
           </span>
         ))}
         {/* Severity chip filter — multi-select toggle. Counts reflect
@@ -864,21 +788,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             env: {env} — service-scoped
           </span>
         )}
-        <select
-          value={dt.sort.id ?? 'priority'}
-          onChange={e => {
-            const id = e.target.value;
-            const asc = id === 'service' || id === 'metric' || id === 'rule' || id === 'status';
-            dt.setSort({ id, dir: asc ? 'asc' : 'desc' });
-          }}
-          aria-label="Kart sıralaması"
-          title="Kart sıralaması — sıralama durumu (URL + kalıcı) tablo günlerindeki gibi korunur"
-          style={{ marginLeft: 'auto', fontSize: 12 }}>
-          {PROBLEM_COLS.map(c => (
-            <option key={c.id} value={c.id}>{c.label}</option>
-          ))}
-        </select>
-        <span style={{ color: 'var(--text3)', fontSize: 12 }}>
+        <span style={{ marginLeft: 'auto', color: 'var(--text3)', fontSize: 12 }}>
           {open} open · {resolved} resolved
         </span>
         <Link to="/alerts" className="sec" style={{
@@ -928,126 +838,184 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
         </div>
       )}
       {sorted && sorted.length > 0 && (
-        <div>
-          {/* Select-all — the v0.5.83 fan-out bulk-ack workflow needs one
-              click, not one per card (review-confirmed loss in the
-              table→card move). */}
-          <label style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            fontSize: 12, color: 'var(--text2)', marginBottom: 8, cursor: 'pointer',
-          }}>
-            <input type="checkbox"
-              checked={sorted.length > 0 && sorted.every(p => selectedIds.has(p.id))}
-              onChange={e => {
-                if (e.target.checked) setSelectedIds(new Set(sorted.map(p => p.id)));
-                else setSelectedIds(new Set());
-              }} />
-            Görünen {sorted.length} problemi seç
-          </label>
-          {sorted.map(p => {
-            const isAnomaly = p.ruleId?.startsWith('anomaly:');
-            const railCls = p.status === 'resolved' ? 'ok'
-              : p.severity === 'critical' ? 'err'
-              : p.severity === 'warning' ? 'warn' : 'gray';
-            const open = () => openDetail(p.id);
-            return (
-              <div key={p.id} className={`pb-card ${railCls}`}
-                role="button" tabIndex={0}
-                onClick={open}
-                onKeyDown={e => {
-                  // Card-origin keydown only (see the inbox card note).
-                  if (e.target !== e.currentTarget) return;
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
-                }}
-                style={{
-                  contentVisibility: 'auto', containIntrinsicSize: 'auto 92px',
-                  // Subtle err tint on open critical firings (prototype cue).
-                  background: p.status === 'open' && p.severity === 'critical'
-                    ? 'color-mix(in srgb, var(--err) 7%, transparent)'
-                    : undefined,
-                }}>
-                <span onClick={e => e.stopPropagation()} style={{ paddingTop: 2 }}>
+        <div className="table-wrap">
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} leading={[28]} trailing={[170, 90]} />
+            <DataTableHead dt={dt}
+              leading={
+                <th style={{ width: 28 }}>
                   <input type="checkbox"
-                    aria-label={`Select ${p.ruleName}`}
-                    checked={selectedIds.has(p.id)}
+                    checked={sorted.length > 0 && sorted.every(p => selectedIds.has(p.id))}
                     onChange={e => {
-                      setSelectedIds(prev => {
-                        const next = new Set(prev);
-                        if (e.target.checked) next.add(p.id);
-                        else next.delete(p.id);
-                        return next;
-                      });
-                    }} />
-                </span>
-                <div className="pb-main">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                    <PriorityBadge p={p.priority} reason={p.priorityReason} />
-                    <SeverityBadge s={p.severity} />
-                    {p.status === 'open' && <span className="badge b-err">OPEN</span>}
-                    {p.status === 'acknowledged' && <span className="badge b-warn">ACK</span>}
-                    {p.status === 'resolved' && <span className="badge b-ok">RESOLVED</span>}
-                    {isAnomaly && <span className="badge b-info">ANOMALY</span>}
-                    <span className="pb-title" title={p.ruleName}>{p.ruleName}</span>
-                    <span className="pb-id mono">{p.id.slice(0, 12)}</span>
-                  </div>
-                  <div className="pb-rc" title={p.rootCause?.topSuspect || p.description || undefined}>
-                    <span className="k">Root cause:</span>{' '}
-                    <Link to={`/service?name=${encodeURIComponent(p.service)}`}
-                      onClick={e => e.stopPropagation()}
-                      className="mono" style={{ fontWeight: 600 }}>
-                      {p.service}
-                    </Link>
-                    {' — '}
-                    {p.rootCause?.topSuspect || p.description || `${p.metric} breached its threshold`}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <ClusterChips clusters={p.clusters} />
-                    {p.recentDeploy && (
-                      <span className="badge b-warn"
-                        onClick={e => e.stopPropagation()}
-                        title={`service.version=${p.recentDeploy.version} first seen ${fmtAge(p.recentDeploy.ageSeconds)} before this problem opened`}>
-                        <ArrowDownToLine size={11} strokeWidth={1.75} /> {p.recentDeploy.version} · {fmtAge(p.recentDeploy.ageSeconds)} before
-                      </span>
-                    )}
-                    {p.runbookUrl && (
-                      <a href={p.runbookUrl} target="_blank" rel="noopener"
-                        onClick={e => e.stopPropagation()}
-                        title="Open team runbook"
-                        className="badge b-info" style={{ textDecoration: 'none' }}>
-                        Runbook ↗
-                      </a>
-                    )}
-                    {p.aiSummary && (
-                      <span className="badge b-info"
-                        onClick={e => e.stopPropagation()}
-                        title={p.aiSummary} style={{ cursor: 'help' }}>
-                        <IconSparkles size={11} /> AI insight
-                      </span>
-                    )}
-                    {p.status === 'open' && p.service && (
-                      <BlastRadiusChip service={p.service} />
-                    )}
-                    <RootCauseRibbon anchor="problem" id={p.id} summary={p.rootCause} />
-                  </div>
-                </div>
-                <div className="pb-side">
-                  <span className="pb-headline">
-                    {fmtFixed(p.value, 2)}
-                    <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 12 }}> / {fmtFixed(p.threshold, 2)}</span>
-                  </span>
-                  <span className="mono">{p.metric}</span>
-                  <span className="mono">
-                    Started {fmtStartedTs(p.startedAt)} · {fmtDurationNs((p.resolvedAt || Date.now() * 1e6) - p.startedAt)}
-                  </span>
-                  <span onClick={e => e.stopPropagation()}>
-                    <AssigneeCell problem={p}
-                      currentUserEmail={currentUserEmail}
-                      onChanged={() => problemsQ.refetch()} />
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+                      if (e.target.checked) {
+                        setSelectedIds(new Set(sorted.map(p => p.id)));
+                      } else {
+                        setSelectedIds(new Set());
+                      }
+                    }}
+                    onClick={e => e.stopPropagation()}
+                    title="Select all visible" />
+                </th>
+              }
+              trailing={<><th>Assignee</th><th>Triage</th></>} />
+            <tbody>
+              {sorted.map(p => {
+                const isAnomaly = p.ruleId?.startsWith('anomaly:');
+                return (
+                  <tr key={p.id}
+                      onClick={() => openDetail(p.id)}
+                      onKeyDown={(e) => {
+                        // Keyboard accessibility — Enter/Space opens the same
+                        // Variant-B full-page detail the click does (the
+                        // service column keeps its own /service link).
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openDetail(p.id);
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      style={{
+                        cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 44px',
+                        // Subtle err tint on open critical firings (prototype cue).
+                        background: p.status === 'open' && p.severity === 'critical'
+                          ? 'color-mix(in srgb, var(--err) 7%, transparent)'
+                          : undefined,
+                      }}>
+                      <td onClick={e => e.stopPropagation()}>
+                        <input type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={e => {
+                            setSelectedIds(prev => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(p.id);
+                              else next.delete(p.id);
+                              return next;
+                            });
+                          }} />
+                      </td>
+                      <td><PriorityBadge p={p.priority} reason={p.priorityReason} /></td>
+                      <td><SeverityBadge s={p.severity} /></td>
+                      <td>
+                        <Link to={`/service?name=${encodeURIComponent(p.service)}`}
+                          onClick={e => e.stopPropagation()}
+                          style={{ fontWeight: 600 }}>
+                          {p.service}
+                        </Link>
+                        <ClusterChips clusters={p.clusters} />
+                      </td>
+                      <td className="mono">{p.metric}</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>
+                        <b style={{ color: 'var(--err)' }}>{fmtFixed(p.value, 2)}</b>
+                        <span style={{ color: 'var(--text3)' }}> / {fmtFixed(p.threshold, 2)}</span>
+                      </td>
+                      <td style={{ fontSize: 12 }}>
+                        {isAnomaly && (
+                          <span className="badge b-info" style={{ marginRight: 6 }}>ANOMALY</span>
+                        )}
+                        {p.ruleName}
+                        {p.runbookUrl && (
+                          <a href={p.runbookUrl} target="_blank" rel="noopener"
+                            onClick={e => e.stopPropagation()}
+                            title="Open team runbook"
+                            className="badge b-info"
+                            style={{ marginLeft: 8, textDecoration: 'none' }}>
+                            Runbook ↗
+                          </a>
+                        )}
+                        {p.recentDeploy && (
+                          // Deploy correlation tag — shows the
+                          // service.version that landed in the 30 min
+                          // before the problem fired. The classic
+                          // "regression coincided with deploy" signal
+                          // in a single chip. Amber so it visually
+                          // codes as "warning, look here".
+                          <span className="badge b-warn"
+                            onClick={e => e.stopPropagation()}
+                            title={`service.version=${p.recentDeploy.version} first seen ${fmtAge(p.recentDeploy.ageSeconds)} before this problem opened`}
+                            style={{ marginLeft: 8 }}>
+                            <ArrowDownToLine size={11} strokeWidth={1.75} /> {p.recentDeploy.version} · {fmtAge(p.recentDeploy.ageSeconds)} before
+                          </span>
+                        )}
+                        {p.aiSummary && (
+                          // AI auto-explain chip (v0.5.254). The
+                          // background problemExplainer fills this
+                          // within ~30s of a critical fire; tooltip
+                          // shows the full blurb so the operator
+                          // gets first-look context without
+                          // clicking through. The IconSparkles glyph is
+                          // the "Copilot output" visual anchor, matching
+                          // the existing operator-clicked Explain affordances.
+                          <span className="badge b-info"
+                            onClick={e => e.stopPropagation()}
+                            title={p.aiSummary}
+                            style={{ marginLeft: 8, cursor: 'help' }}>
+                            <IconSparkles size={11} /> AI insight
+                          </span>
+                        )}
+                        {/* v0.6.29 — blast radius chip for open
+                            problems. Lazy-fetches when the row
+                            renders; only shows when callers > 0
+                            so the chip is silent on a service
+                            with no upstream callers. Cascade
+                            count surfaces in amber. */}
+                        {p.status === 'open' && p.service && (
+                          <BlastRadiusChip service={p.service} />
+                        )}
+                        {isAnomaly && (
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                            {p.description}
+                          </div>
+                        )}
+                        {p.aiSummary && (
+                          <div style={{
+                            fontSize: 11, color: 'var(--text2)', marginTop: 4,
+                            padding: 6, borderRadius: 4,
+                            background: 'var(--accent-soft)',
+                            borderLeft: '2px solid var(--accent)',
+                            whiteSpace: 'pre-wrap',
+                          }}>
+                            {p.aiSummary}
+                          </div>
+                        )}
+                        {/* rc #3 — in-page root-cause ribbon. Collapsed chip
+                            renders from the row's persisted summary
+                            (p.rootCause, joined by the /problems handler — no
+                            fetch); expand reads the full /rootcause fan-out.
+                            The chip's own stopPropagation keeps the row's
+                            navigate-on-click intact. */}
+                        <div style={{ marginTop: p.aiSummary ? 6 : 2 }}>
+                          <RootCauseRibbon anchor="problem" id={p.id} summary={p.rootCause} />
+                        </div>
+                      </td>
+                      <td className="mono">{tsLong(p.startedAt)}</td>
+                      <td>
+                        {p.status === 'open' && <span className="badge b-err">OPEN</span>}
+                        {p.status === 'acknowledged' && <span className="badge b-warn">ACK</span>}
+                        {p.status === 'resolved' && <span className="badge b-ok">RESOLVED</span>}
+                      </td>
+                      <td onClick={e => e.stopPropagation()} style={{ fontSize: 12 }}>
+                        <AssigneeCell problem={p}
+                          currentUserEmail={currentUserEmail}
+                          onChanged={() => problemsQ.refetch()} />
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        {/* Triage — opens the right-side drawer
+                            consolidating rule details + causal
+                            correlation + AI explain + runbook
+                            AI in one panel. Replaces the v0.5.x
+                            inline "Why?" expansion and the
+                            scattered per-cell AI buttons. */}
+                        <Button variant="secondary" size="sm"
+                          onClick={() => openDetail(p.id)}>
+                          Triage ▶
+                        </Button>
+                      </td>
+                    </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -1055,10 +1023,12 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
 }
 
 // AlertProblemHost — resolves ?problem=<id> to a row and renders the
-// Variant B full-page detail. Reuses the existing useProblems hook
-// (all statuses, same 200 cap the list uses) so a deep link resolves
-// acknowledged / resolved problems too; a stale id degrades to an
-// honest empty state instead of a blank page.
+// Variant-B full-page detail. Cache-first: the list the operator
+// clicked may be a FILTERED query whose rows fall outside this host's
+// own 200-newest-any-status window on churn-heavy installs — every
+// cached problems list is searched before the broad fetch decides, so
+// a visible row can never land on "not found". Deep links resolve via
+// the fetch; a stale id degrades to an honest empty state.
 function AlertProblemHost({ id, isAdmin, onBack }: {
   id: string;
   isAdmin: boolean;
@@ -1066,17 +1036,13 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
 }) {
   const qc = useQueryClient();
   const q = useProblems({ limit: 200 });
-  // Cache-first (review-confirmed): the feed the operator clicked may
-  // be a FILTERED query (status/service/env/priority) whose rows fall
-  // outside this host's own 200-newest-any-status window on churn-heavy
-  // installs — a visible card must never land on "not found". Every
-  // cached problems list is searched before the broad fetch decides.
   const cached = useMemo(() => {
     for (const [, rows] of qc.getQueriesData<Problem[] | null>({ queryKey: keys.problems.all })) {
       const hit = Array.isArray(rows) ? rows.find(x => x.id === id) : undefined;
       if (hit) return hit;
     }
     return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qc, id, q.dataUpdatedAt]);
   const p = cached ?? (q.data ?? []).find(x => x.id === id);
   return (

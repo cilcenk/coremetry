@@ -6616,39 +6616,53 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		Limit:  parseInt(q.Get("limit"), 50),
 		Offset: parseInt(q.Get("offset"), 0),
 	}
-	// Owner/SRE team filter (v0.8.310) — resolve the pick to its member
-	// services from the catalog and constrain the query with service IN
-	// (…) so it bites BEFORE limit/offset. ANDs with an explicit
-	// ?service= when both are set (intersection). A team with no member
-	// services returns an empty page — never an unfiltered one, and
-	// never a malformed empty IN (…).
-	if ownerTeam, sreTeam := q.Get("ownerTeam"), q.Get("sreTeam"); ownerTeam != "" || sreTeam != "" {
-		mds, err := s.store.ListServiceMetadata(r.Context())
-		if err != nil { writeErr(w, err); return }
-		svcs := servicesForTeam(mds, ownerTeam, sreTeam)
-		if len(svcs) == 0 {
-			writeJSON(w, map[string]any{
-				"items": []chstore.ExceptionGroup{}, "total": 0,
-				"limit": f.Limit, "offset": f.Offset,
-			})
-			return
+	ownerTeam, sreTeam := q.Get("ownerTeam"), q.Get("sreTeam")
+	// v0.8.455 — ana triage yüzeyi (list+count, 2-3 CH sorgusu) artık
+	// serveCached'li: her tab/sort/sayfa değişimi ve eş-zamanlı her
+	// izleyici aynı sorguları tekrarlıyordu ("don't bypass serveCached
+	// on hot reads"). Anahtar RawQuery'den (hash-all-inputs: state/
+	// service/assignee/q/sort/dir/limit/offset/ownerTeam/sreTeam); TTL
+	// kardeş /api/problems ile aynı 5s, state/assign mutasyonları
+	// prefix'i anında düşürür — bayatlık operatörce görülmez.
+	key := "exc-groups:" + r.URL.RawQuery
+	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+		if ownerTeam != "" || sreTeam != "" {
+			// Owner/SRE team filter (v0.8.310) — resolve the pick to its
+			// member services and constrain with service IN (…) so it
+			// bites BEFORE limit/offset. A team with no member services
+			// returns an empty page — never an unfiltered one.
+			mds, err := s.store.ListServiceMetadata(ctx)
+			if err != nil {
+				return nil, err
+			}
+			svcs := servicesForTeam(mds, ownerTeam, sreTeam)
+			if len(svcs) == 0 {
+				return map[string]any{
+					"items": []chstore.ExceptionGroup{}, "total": 0,
+					"limit": f.Limit, "offset": f.Offset,
+				}, nil
+			}
+			f.Services = svcs
 		}
-		f.Services = svcs
-	}
-	items, err := s.store.ListExceptionGroups(r.Context(), f)
-	if err != nil { writeErr(w, err); return }
-	total, err := s.store.CountExceptionGroups(r.Context(), f)
-	if err != nil { writeErr(w, err); return }
-	// `items` can be nil from the store on an empty page — serialise
-	// as [] so the frontend never has to null-guard the array.
-	if items == nil {
-		items = []chstore.ExceptionGroup{}
-	}
-	writeJSON(w, map[string]any{
-		"items":  items,
-		"total":  total,
-		"limit":  f.Limit,
-		"offset": f.Offset,
+		items, err := s.store.ListExceptionGroups(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		total, err := s.store.CountExceptionGroups(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		// `items` can be nil from the store on an empty page — serialise
+		// as [] so the frontend never has to null-guard the array.
+		if items == nil {
+			items = []chstore.ExceptionGroup{}
+		}
+		return map[string]any{
+			"items":  items,
+			"total":  total,
+			"limit":  f.Limit,
+			"offset": f.Offset,
+		}, nil
 	})
 }
 
@@ -6702,6 +6716,9 @@ func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) 
 	if err := s.store.SetExceptionGroupState(r.Context(), r.PathValue("fp"), body.State); err != nil {
 		writeErr(w, err); return
 	}
+	// v0.8.455 — triage listesi artık cache'li; state değişimi listede
+	// ANINDA görünmeli (resolve edilen satır 5s asılı kalmasın).
+	s.cacheInvalidatePrefix(r.Context(), "exc-groups:")
 	s.audit(r, "exception_group.set_state", "exception_group", r.PathValue("fp"), fmt.Sprintf(`{"state":%q}`, body.State))
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -6714,6 +6731,7 @@ func (s *Server) assignExceptionGroup(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.AssignExceptionGroup(r.Context(), r.PathValue("fp"), body.Assignee); err != nil {
 		writeErr(w, err); return
 	}
+	s.cacheInvalidatePrefix(r.Context(), "exc-groups:") // v0.8.455 — bkz. setExceptionGroupState
 	s.audit(r, "exception_group.assign", "exception_group", r.PathValue("fp"), fmt.Sprintf(`{"assignee":%q}`, body.Assignee))
 	writeJSON(w, map[string]string{"status": "ok"})
 }

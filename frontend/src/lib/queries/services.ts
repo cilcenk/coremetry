@@ -41,7 +41,9 @@ export function useServiceMap(since: string, samples: number, diff?: string, top
     queryKey: keys.services.map(since, samples, diff, topN),
     queryFn: () => api.serviceMap(since, samples, diff, topN),
     refetchInterval: 30_000,
-    staleTime: 25_000,
+    // v0.8.462 — 25s < 30s poll penceresi tab dönüşlerinde double-fetch
+    // üretiyordu (anomalies.ts v0.4.79 deseni); eşitlendi.
+    staleTime: 30_000,
   });
 }
 

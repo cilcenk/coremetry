@@ -15,6 +15,10 @@ export function useEndpoints(params: Parameters<typeof api.endpoints>[0]) {
     queryKey: ['endpoints', 'list', params],
     queryFn: async () => (await api.endpoints(params)) ?? [],
     refetchInterval: 30_000,
+    // v0.8.462 — staleTime = refetchInterval: poll penceresi içindeki
+    // re-mount, zaten planlı arka plan poll'unun üstüne ikinci fetch
+    // atmasın (anomalies.ts'teki v0.4.79 deseninin aynısı).
+    staleTime: 30_000,
   });
 }
 

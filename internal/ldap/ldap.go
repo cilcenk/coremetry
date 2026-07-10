@@ -29,6 +29,7 @@ import (
 	"time"
 
 	goldap "github.com/go-ldap/ldap/v3"
+	"unicode/utf8"
 )
 
 // Config is the persisted LDAP connection + mapping definition.
@@ -56,6 +57,17 @@ type Config struct {
 	UserAttribute    string `json:"userAttribute"`    // sAMAccountName | uid | mail
 	EmailAttribute   string `json:"emailAttribute"`
 	DisplayAttribute string `json:"displayAttribute"`
+	// TeamAttribute (v0.8.430) — which directory attribute feeds
+	// users.team on login. Operator-reported: the default
+	// department→ou fallback surfaced the TOP division ("TEKNOLOJİ")
+	// for every user because AD stores the division there; the actual
+	// sub-team lives elsewhere (use /api/settings/ldap/inspect to find
+	// where). "" = legacy department→ou; the special value "dn-ou"
+	// takes the DEEPEST ou= RDN from the user's DN (the leaf-most OU
+	// container — typically the sub-team in OU-per-team trees); any
+	// other value is read as a literal attribute name with the legacy
+	// chain as fallback.
+	TeamAttribute string `json:"teamAttribute"`
 
 	// Group lookup
 	GroupSearchBase string `json:"groupSearchBase"`
@@ -224,6 +236,52 @@ func dirText(e *goldap.Entry, attrs ...string) string {
 		}
 	}
 	return ""
+}
+
+// deepestOU returns the leaf-most ou= component of a DN — in
+// OU-per-team directory trees (CN=user,OU=SubTeam,OU=Division,…)
+// that is the user's sub-team. Empty when the DN has no OU or fails
+// to parse.
+func deepestOU(dn string) string {
+	parsed, err := goldap.ParseDN(dn)
+	if err != nil {
+		return ""
+	}
+	for _, rdn := range parsed.RDNs {
+		for _, a := range rdn.Attributes {
+			if strings.EqualFold(a.Type, "ou") && strings.TrimSpace(a.Value) != "" {
+				return strings.TrimSpace(a.Value)
+			}
+		}
+	}
+	return ""
+}
+
+// teamFor resolves the users.team value for a directory entry per the
+// TeamAttribute config (v0.8.430) — see the Config field comment.
+func teamFor(e *goldap.Entry, c Config) string {
+	switch attr := strings.TrimSpace(c.TeamAttribute); attr {
+	case "":
+		return dirText(e, "department", "ou")
+	case "dn-ou":
+		if t := deepestOU(e.DN); t != "" {
+			return t
+		}
+		return dirText(e, "department", "ou")
+	default:
+		return dirText(e, attr, "department", "ou")
+	}
+}
+
+// teamAttrForFetch returns the extra attribute the searches must
+// request for teamFor to see it — "" when TeamAttribute is unset or
+// DN-derived (the DN always comes back).
+func teamAttrForFetch(c Config) string {
+	attr := strings.TrimSpace(c.TeamAttribute)
+	if attr == "" || attr == "dn-ou" {
+		return ""
+	}
+	return attr
 }
 
 // AuthResult bundles the authenticated user + the role we resolved
@@ -481,6 +539,9 @@ func findUser(conn *goldap.Conn, c Config, username string) (*LDAPUser, error) {
 	// v0.8.266 — directory org info (department/company + the
 	// inetOrgPerson ou/o equivalents). Absent attrs are free.
 	attrs = append(attrs, "department", "ou", "company", "o")
+	if extra := teamAttrForFetch(c); extra != "" {
+		attrs = append(attrs, extra)
+	}
 	log.Printf("[ldap] user search baseDN=%q filter=%s attrs=%v", c.BaseDN, filter, attrs)
 	req := goldap.NewSearchRequest(
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
@@ -524,7 +585,7 @@ func findUser(conn *goldap.Conn, c Config, username string) (*LDAPUser, error) {
 		Username:    firstNonEmpty(e.GetAttributeValue(c.UserAttribute), username),
 		Email:       e.GetAttributeValue(c.EmailAttribute),
 		DisplayName: e.GetAttributeValue(c.DisplayAttribute),
-		Department:  dirText(e, "department", "ou"),
+		Department:  teamFor(e, c),
 		Company:     dirText(e, "company", "o"),
 		Photo:       photoFromEntry(e),
 		Groups:      groups,
@@ -555,8 +616,14 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]LDAPUs
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
 		limit, 30, false,
 		filter,
-		[]string{"dn", c.UserAttribute, c.EmailAttribute, c.DisplayAttribute,
+		append([]string{"dn", c.UserAttribute, c.EmailAttribute, c.DisplayAttribute,
 			"department", "ou", "company", "o"},
+			func() []string {
+				if extra := teamAttrForFetch(c); extra != "" {
+					return []string{extra}
+				}
+				return nil
+			}()...),
 		nil,
 	)
 	res, err := conn.Search(req)
@@ -573,7 +640,7 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]LDAPUs
 			Username:    e.GetAttributeValue(c.UserAttribute),
 			Email:       e.GetAttributeValue(c.EmailAttribute),
 			DisplayName: e.GetAttributeValue(c.DisplayAttribute),
-			Department:  dirText(e, "department", "ou"),
+			Department:  teamFor(e, c),
 			Company:     dirText(e, "company", "o"),
 		})
 	}
@@ -588,6 +655,69 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]LDAPUs
 //      actual credential check.
 //   4. Resolve groups → role via the configured GroupRoleMap; fall
 //      back to DefaultRole.
+// InspectResult is one directory entry with EVERY attribute the
+// service account can read — the discovery affordance behind
+// GET /api/settings/ldap/inspect (v0.8.430). Operator use-case:
+// "users.team yanlış attribute'tan geliyor — alt ekip hangi
+// attribute'ta?" Binary values (photos, GUIDs) are summarized as
+// [N bytes], never shipped raw.
+type InspectResult struct {
+	DN         string              `json:"dn"`
+	DeepestOU  string              `json:"deepestOu"`  // what teamAttribute="dn-ou" would yield
+	Team       string              `json:"team"`       // what the CURRENT config yields
+	Attributes map[string][]string `json:"attributes"`
+}
+
+// InspectUser finds one user (same filter the login path uses) and
+// returns all readable attributes.
+func (s *Service) InspectUser(ctx context.Context, username string) (*InspectResult, error) {
+	c := s.rawConfig()
+	conn, err := bindAdmin(c)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	filter := strings.ReplaceAll(c.UserSearchFilter, "{{username}}", goldap.EscapeFilter(username))
+	if strings.TrimSpace(c.UserSearchFilter) == "" {
+		filter = fmt.Sprintf("(%s=%s)", c.UserAttribute, goldap.EscapeFilter(username))
+	}
+	req := goldap.NewSearchRequest(
+		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
+		2, 30, false,
+		filter,
+		[]string{"*"},
+		nil,
+	)
+	res, err := conn.Search(req)
+	if err != nil && !(goldap.IsErrorWithCode(err, goldap.LDAPResultSizeLimitExceeded) && res != nil && len(res.Entries) > 0) {
+		return nil, fmt.Errorf("inspect search: %w", err)
+	}
+	if res == nil || len(res.Entries) == 0 {
+		return nil, fmt.Errorf("no directory entry matches %q", username)
+	}
+	e := res.Entries[0]
+	attrs := make(map[string][]string, len(e.Attributes))
+	for _, a := range e.Attributes {
+		vals := make([]string, 0, len(a.Values))
+		for i, v := range a.Values {
+			// Binary heuristics: known photo attrs OR non-UTF8 content.
+			if a.Name == "thumbnailPhoto" || a.Name == "jpegPhoto" || !utf8.ValidString(v) {
+				vals = append(vals, fmt.Sprintf("[%d bytes]", len(a.ByteValues[i])))
+				continue
+			}
+			vals = append(vals, v)
+		}
+		attrs[a.Name] = vals
+	}
+	return &InspectResult{
+		DN:         e.DN,
+		DeepestOU:  deepestOU(e.DN),
+		Team:       teamFor(e, c),
+		Attributes: attrs,
+	}, nil
+}
+
 func (s *Service) Authenticate(ctx context.Context, username, password string) (*AuthResult, error) {
 	if password == "" {
 		return nil, errors.New("password required")

@@ -181,7 +181,17 @@ export function LDAPTab() {
             <input value={cfg.displayAttribute} onChange={e => update({ displayAttribute: e.target.value })}
                    placeholder="displayName" style={{ width: '100%' }} />
           </Field2>
+          <Field2 label="Team attribute" small
+            hint="boş = department→ou · dn-ou = DN'deki en derin OU (alt ekip) · veya attribute adı">
+            <input value={cfg.teamAttribute ?? ''} onChange={e => update({ teamAttribute: e.target.value })}
+                   placeholder="örn. division / dn-ou" style={{ width: '100%' }} />
+          </Field2>
         </Row>
+        {/* v0.8.430 — attribute discovery. Operator-reported: users.team
+            herkes için üst division ("TEKNOLOJİ") geliyordu çünkü AD bunu
+            department'ta tutuyor; alt ekibin HANGİ attribute'ta olduğunu
+            görmek için bir kullanıcının tüm directory attribute'larını dök. */}
+        <InspectPanel />
 
         {/* ── Section 3: Groups ──────────────────────────────────────── */}
         <SectionTitle>Group lookup (optional)</SectionTitle>
@@ -340,4 +350,74 @@ function addMapping(cfg: LDAPConfig, set: (c: LDAPConfig) => void) {
 }
 function removeMapping(cfg: LDAPConfig, set: (c: LDAPConfig) => void, i: number) {
   set({ ...cfg, groupRoleMap: cfg.groupRoleMap.filter((_, j) => j !== i) });
+}
+
+
+// InspectPanel (v0.8.430) — bir kullanıcının okunabilir TÜM directory
+// attribute'larını listeler; "Team attribute" için doğru alanı seçmeden
+// önce nereye bakacağını gösterir. Salt-okunur, isteğe bağlı çağrı —
+// liste render'ında hiçbir fetch yok.
+function InspectPanel() {
+  const [u, setU] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [res, setRes] = useState<Awaited<ReturnType<typeof api.ldapInspect>> | null>(null);
+
+  const run = async () => {
+    if (!u.trim()) return;
+    setBusy(true); setErr(''); setRes(null);
+    try {
+      setRes(await api.ldapInspect(u.trim()));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{
+      marginTop: 10, padding: '10px 12px', borderRadius: 6,
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+    }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--text2)' }}>
+          Kullanıcı incele
+        </span>
+        <input value={u} onChange={e => setU(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void run(); } }}
+          placeholder="kullanıcı adı" style={{ width: 200, fontSize: 12 }} />
+        <Button variant="secondary" size="sm" type="button" onClick={() => { void run(); }} disabled={busy || !u.trim()}>
+          {busy ? 'Sorgulanıyor…' : 'Attribute\'ları getir'}
+        </Button>
+        {err && <span style={{ fontSize: 12, color: 'var(--err)' }}>{err}</span>}
+      </div>
+      {res && (
+        <>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 6, overflowWrap: 'anywhere' }}>
+            {res.dn}
+          </div>
+          <div style={{ fontSize: 11, marginBottom: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <span>Şu anki team değeri: <b className="mono">{res.team || '—'}</b></span>
+            <span title="Team attribute = dn-ou seçilirse bu değer yazılır">
+              dn-ou verirdi: <b className="mono">{res.deepestOu || '—'}</b>
+            </span>
+          </div>
+          <div className="table-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+            <table>
+              <thead><tr><th>Attribute</th><th>Değer(ler)</th></tr></thead>
+              <tbody>
+                {Object.entries(res.attributes).sort(([a], [b]) => a.localeCompare(b)).map(([k, vs]) => (
+                  <tr key={k}>
+                    <td className="mono" style={{ whiteSpace: 'nowrap', fontSize: 11 }}>{k}</td>
+                    <td className="mono" style={{ fontSize: 11, overflowWrap: 'anywhere' }}>{vs.join(' · ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }

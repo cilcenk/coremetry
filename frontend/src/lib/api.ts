@@ -1693,6 +1693,9 @@ export const api = {
     }),
 
   // ── Settings + notification channels (admin) ─────────────────────────────
+  ldapInspect: (username: string) =>
+    get<{ dn: string; deepestOu: string; team: string; attributes: Record<string, string[]> }>(
+      `/api/settings/ldap/inspect?username=${encodeURIComponent(username)}`),
   getTeamContacts: () => get<import('./types').TeamContacts>('/api/settings/team-contacts'),
   putTeamContacts: (tc: import('./types').TeamContacts) =>
     request<import('./types').TeamContacts>('/api/settings/team-contacts', {

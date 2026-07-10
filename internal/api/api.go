@@ -836,6 +836,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("PUT  /api/settings/ldap",        auth.RequireRole(auth.RoleAdmin, s.putLDAPSettings))
 	mux.HandleFunc("POST /api/settings/ldap/test",   auth.RequireRole(auth.RoleAdmin, s.testLDAPConnection))
 	mux.HandleFunc("GET  /api/settings/ldap/search", auth.RequireRole(auth.RoleAdmin, s.searchLDAPUsers))
+	mux.HandleFunc("GET  /api/settings/ldap/inspect", auth.RequireRole(auth.RoleAdmin, s.inspectLDAPUser))
 	mux.HandleFunc("POST /api/users/from-ldap",      auth.RequireRole(auth.RoleAdmin, s.provisionLDAPUser))
 
 	// ── AI Copilot ─────────────────────────────────────────────────
@@ -5461,6 +5462,29 @@ func (s *Server) searchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError); return
 	}
 	writeJSON(w, map[string]any{"users": users})
+}
+
+// inspectLDAPUser (v0.8.430) — discovery affordance: dump every
+// readable directory attribute for one user so an admin can SEE which
+// attribute carries the sub-team before setting teamAttribute
+// (operator-reported: users.team showed the top division because AD
+// stores it in `department`). Read-only; binary values summarized.
+func (s *Server) inspectLDAPUser(w http.ResponseWriter, r *http.Request) {
+	if !s.ldap.Enabled() {
+		http.Error(w, "ldap not enabled", http.StatusBadRequest)
+		return
+	}
+	username := r.URL.Query().Get("username")
+	if strings.TrimSpace(username) == "" {
+		http.Error(w, "username required", http.StatusBadRequest)
+		return
+	}
+	res, err := s.ldap.InspectUser(r.Context(), username)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, res)
 }
 
 // provisionLDAPUser inserts a row in the users table for an LDAP

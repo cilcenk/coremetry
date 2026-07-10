@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { ServiceMap, ServiceMapNode, ServiceMapEdge } from '@/lib/types';
 import { isMessagingDep, fmtNum } from '@/lib/utils';
 import { edgeWeights } from '@/lib/edgeWeight';
@@ -6,6 +7,10 @@ import { fitViewport, zoomAt, zoomRange, type Viewport } from '@/lib/topoViewpor
 import { depInstanceLabel } from '@/lib/topoLabels';
 import { Button } from '@/components/ui/Button';
 import { useServicesMetadata } from '@/lib/queries';
+import {
+  foldTopology, defaultCollapsed, parseNsFold, encodeNsFold,
+  isNsNode, nsOfNodeId,
+} from '@/lib/topoFold';
 
 // TopologyFlowGraph — prototipteki "pill düğüm + akış animasyonlu
 // bezier kenar" topoloji görünümü. ServiceMapGraph ile AYNI props
@@ -69,7 +74,7 @@ export function TopologyFlowGraph({
   // Mesajlaşma broker'larını düşür — ServiceMapGraph'taki davranışın aynısı
   // (broadcast topic'ler topolojiyi hairball'a çevirir; messaging'in kendi
   // yüzeyi var).
-  const data = useMemo<ServiceMap>(() => {
+  const preFold = useMemo<ServiceMap>(() => {
     if (!dropMessaging) return rawData;
     if (!rawData.nodes.some(n => isMessagingDep(n.kind, n.subkind))) return rawData;
     const drop = new Set(
@@ -81,6 +86,73 @@ export function TopologyFlowGraph({
       edges: rawData.edges.filter(e => !drop.has(e.caller) && !drop.has(e.callee)),
     };
   }, [rawData]);
+
+  // ── v0.8.447 (operatör-seçimi Varyant C) — katlanabilir namespace
+  // grup kutuları. Katlanmış namespace'in üyeleri layout'tan ÖNCE tek
+  // süper-düğüme iner (pure çekirdek lib/topoFold.ts, vitest-pinli) —
+  // BFS/barycenter yerleşimi, zoom/pan ve hover kodu küçülmüş düz bir
+  // graf görür. Katla/aç state'i URL'de (?nsfold=, house rule §4):
+  // param yokken kalabalık haritada büyük namespace'ler otomatik katlı
+  // başlar (operatör şikâyeti "çok deployment'lı topolojide hull'lar
+  // küçük kalıyor"); herhangi bir toggle açık listeyi yazar, kopyalanan
+  // link aynı görünümü açar. Focus'lu servisin namespace'i asla
+  // katlanmaz (1-hop görünümde seçili düğüm kaybolmasın).
+  const metaQ = useServicesMetadata();
+  const nsOf = useCallback(
+    (svc: string) => (metaQ.data ?? {})[svc]?.namespace || undefined,
+    [metaQ.data],
+  );
+  const [params, setParams] = useSearchParams();
+  const explicitFold = useMemo(() => parseNsFold(params.get('nsfold')), [params]);
+  const collapsed = useMemo(() => {
+    const base = explicitFold ?? defaultCollapsed(preFold, nsOf);
+    const fns = focus ? nsOf(focus) : undefined;
+    if (fns && base.has(fns)) {
+      const c = new Set(base);
+      c.delete(fns);
+      return c;
+    }
+    return base;
+  }, [explicitFold, preFold, nsOf, focus]);
+  const { data, groups, bundled } = useMemo(
+    () => foldTopology(preFold, nsOf, collapsed),
+    [preFold, nsOf, collapsed],
+  );
+  const writeFold = (next: ReadonlySet<string>) => setParams(prev => {
+    const p = new URLSearchParams(prev);
+    p.set('nsfold', encodeNsFold(next));
+    return p;
+  }, { replace: true });
+  const focusNs = focus ? nsOf(focus) : undefined;
+  const collapseNs = (ns: string) => {
+    // Focus'un namespace'i katlanamaz — derivasyon zaten geri açardı;
+    // URL'e ölü bir kayıt yazıp auto-fold posture'ını dondurmayalım.
+    if (ns === focusNs) return;
+    writeFold(new Set([...collapsed, ns]));
+  };
+  const expandNs = (ns: string) => {
+    const c = new Set(collapsed);
+    c.delete(ns);
+    writeFold(c);
+  };
+
+  // Deterministik namespace rengi — TÜM (katlı + açık) ≥2 üyeli
+  // namespace'lerin sıralı listesi üzerinden indekslenir ki bir grubun
+  // katlanması diğerlerinin rengini kaydırmasın.
+  const nsColor = useMemo(() => {
+    const meta = metaQ.data ?? {};
+    const counts = new Map<string, number>();
+    for (const n of preFold.nodes) {
+      if (n.kind) continue;
+      const ns = meta[n.service]?.namespace;
+      if (ns) counts.set(ns, (counts.get(ns) ?? 0) + 1);
+    }
+    const palette = ['--accent', '--warn', '--ok', '--purple', '--teal', '--orange'];
+    const m = new Map<string, string>();
+    [...counts.entries()].filter(([, c]) => c >= 2).map(([ns]) => ns).sort()
+      .forEach((ns, i) => m.set(ns, palette[i % palette.length]));
+    return m;
+  }, [preFold.nodes, metaQ.data]);
 
   // Çift yönlü kenarları tek çizgiye indir (A→B + B→A) — ServiceMapGraph deseni.
   type RenderedEdge = { forward: ServiceMapEdge; reverse?: ServiceMapEdge };
@@ -105,7 +177,13 @@ export function TopologyFlowGraph({
     }
     return m;
   }, [data]);
-  const active = hoverNode ? (neighbours.get(hoverNode) ?? new Set([hoverNode])) : null;
+  // v0.8.447 review-fix: hover id'si mevcut grafta yoksa hover YOK say.
+  // Eski fallback (tek elemanlı set) katlı süper-düğüm genişletilince
+  // unmount olur, mouseleave hiç ateşlenmez ve bayat sentetik id her
+  // düğümü .dim'e, her kenarı 0.12 opaklığa kilitliyordu. neighbours
+  // render edilen HER düğüm için kayıt taşır — fallback yalnız bayat
+  // id durumunda tetiklenirdi, güvenle null'a iner.
+  const active = hoverNode ? (neighbours.get(hoverNode) ?? null) : null;
 
   // ── BFS katmanlı yerleşim ───────────────────────────────────────────
   // Kök = gelen kenarı olmayan düğümler; erişilemeyenler en sağ sütuna.
@@ -213,7 +291,7 @@ export function TopologyFlowGraph({
   const [panning, setPanning] = useState(false);
   const panRef = useRef<{ px: number; py: number } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).closest('.topo-node, .topo-zoomctl')) return;
+    if ((e.target as HTMLElement).closest('.topo-node, .topo-zoomctl, .topo-nshdr')) return;
     panRef.current = { px: e.clientX, py: e.clientY };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setPanning(true);
@@ -237,51 +315,45 @@ export function TopologyFlowGraph({
   // traceCount hep 0 → tüm kenarlar minimum kalınlıkta çiziliyordu).
   const { weightOf, max: edgeMax } = useMemo(() => edgeWeights(data.edges), [data.edges]);
 
-  // v0.8.437 (flow-graph d, operatör-onaylı Varyant A) — namespace
-  // hull'ları: katalogdaki deriver-dolu namespace (v0.8.436) ile aynı
-  // namespace'in servisleri yarı saydam yuvarlak bir bölgeyle sarılır.
-  // Salt dekorasyon: layout'a, zoom/pan'e, etkileşime sıfır dokunuş
-  // (pointer-events yok; SVG'de kenarların ALTINA çizilir). Kurallar:
-  // ≥2 üye (tek düğüme hull gürültü), external bağımlılıklar (kind'lı
-  // db/kafka düğümleri) ve namespace'i olmayan servisler SERBEST kalır
-  // (operatör kararı: "diğer" kovası yok). Katalog zaten sayfada yüklü
-  // (useServicesMetadata paylaşımlı cache) — ekstra fetch maliyeti yok.
-  const metaQ = useServicesMetadata();
+  // v0.8.437 (Varyant A) → v0.8.447 (Varyant C): AÇIK namespace'ler
+  // hâlâ yarı saydam kutuyla sarılır ama etiket artık TIKLANABİLİR
+  // başlık — katlar. Katlı olanlar burada hiç görünmez (üyeleri
+  // fold'da süper-düğüme indi). Kurallar aynı: ≥2 üye, kind'lı
+  // bağımlılıklar ve namespace'siz servisler SERBEST (operatör
+  // kararı: "diğer" kovası yok). Renk nsColor'dan — katla/aç
+  // toggle'ı diğer grupların rengini kaydırmaz.
   const hulls = useMemo(() => {
     const meta = metaQ.data ?? {};
-    const groups = new Map<string, { x0: number; y0: number; x1: number; y1: number; n: number }>();
+    const boxes = new Map<string, { x0: number; y0: number; x1: number; y1: number; n: number }>();
     for (const node of data.nodes) {
-      if (node.kind) continue; // external dep — free
+      if (node.kind || isNsNode(node.service)) continue; // dep / süper-düğüm — free
       const ns = meta[node.service]?.namespace;
       if (!ns) continue;
       const p = positioned.get(node.service);
       if (!p) continue;
-      const g = groups.get(ns);
+      const g = boxes.get(ns);
       if (!g) {
-        groups.set(ns, { x0: p.x, y0: p.y, x1: p.x, y1: p.y, n: 1 });
+        boxes.set(ns, { x0: p.x, y0: p.y, x1: p.x, y1: p.y, n: 1 });
       } else {
         g.x0 = Math.min(g.x0, p.x); g.y0 = Math.min(g.y0, p.y);
         g.x1 = Math.max(g.x1, p.x); g.y1 = Math.max(g.y1, p.y);
         g.n++;
       }
     }
-    // Deterministik renk: sıralı namespace listesinde indeks → chart
-    // serisi token'ları (tema değişiminde CSS var'lar kendiliğinden
-    // çözülür — useThemeTick gerekmez, SVG değerleri var() taşır).
-    const palette = ['--accent', '--warn', '--ok', '--purple', '--teal', '--orange'];
     const NODE_W = 70, NODE_H = 34, PAD = 26; // kart yarı-boyutu + nefes payı
-    return [...groups.entries()]
+    return [...boxes.entries()]
       .filter(([, g]) => g.n >= 2)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([ns, g], i) => ({
+      .map(([ns, g]) => ({
         ns,
+        n: g.n,
         x: g.x0 - NODE_W - PAD,
         y: g.y0 - NODE_H - PAD,
         w: (g.x1 - g.x0) + 2 * (NODE_W + PAD),
         h: (g.y1 - g.y0) + 2 * (NODE_H + PAD),
-        colorVar: palette[i % palette.length],
+        colorVar: nsColor.get(ns) ?? '--accent',
       }));
-  }, [data.nodes, positioned, metaQ.data]);
+  }, [data.nodes, positioned, metaQ.data, nsColor]);
 
   // Yoğunluk kapısı (ServiceGraph slice-4 kuralının aynısı): az kenarlı
   // grafikte chip'ler hep açık, kalabalıkta yalnız hover'da.
@@ -297,7 +369,7 @@ export function TopologyFlowGraph({
       onPointerUp={endPan}
       onPointerCancel={endPan}
       onDoubleClick={e => {
-        if ((e.target as HTMLElement).closest('.topo-node, .topo-zoomctl')) return;
+        if ((e.target as HTMLElement).closest('.topo-node, .topo-zoomctl, .topo-nshdr')) return;
         const r = e.currentTarget.getBoundingClientRect();
         const cx = e.clientX - r.left, cy = e.clientY - r.top;
         setVp(v => zoomAt(v, cx, cy, 1.5, kMin, kMax));
@@ -325,6 +397,10 @@ export function TopologyFlowGraph({
           const hot = hoverNode && (e.caller === hoverNode || e.callee === hoverNode);
           const dimmed = active && (!active.has(e.caller) || !active.has(e.callee));
           const mx = (a.x + b.x) / 2;
+          // Demet sayıları yön başına tutulur (fold sonrası key'ler yönlü);
+          // çift yönlü çizgide ters yönün demeti de raporlanır.
+          const fwdBundle = bundled.get(`${e.caller}|${e.callee}`) ?? 0;
+          const revBundle = re.reverse ? (bundled.get(`${re.reverse.caller}|${re.reverse.callee}`) ?? 0) : 0;
           return (
             <path key={i}
               d={`M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`}
@@ -338,6 +414,8 @@ export function TopologyFlowGraph({
                 {`${e.caller} → ${e.callee}\n${e.traceCount} traces · ${e.spanCount} spans` +
                   (e.errorCount > 0 ? ` · ${e.errorCount} errors` : '') +
                   (re.reverse ? `\n${re.reverse.caller} → ${re.reverse.callee} (çift yönlü)` : '') +
+                  (fwdBundle > 1 ? `\n${fwdBundle} kenar demetlendi (katlı grup)` : '') +
+                  (revBundle > 1 ? `\n${revBundle} kenar demetlendi (ters yön, katlı grup)` : '') +
                   (e.isNew ? '\n[NEW since baseline]' : '')}
               </title>
             </path>
@@ -345,11 +423,24 @@ export function TopologyFlowGraph({
         })}
       </svg>
 
-      {/* Namespace hull etiketleri — hull'un sol üstünde, dekoratif. */}
-      {hulls.map(h => (
-        <div key={`hull-label-${h.ns}`} className="topo-hull-label"
-          style={{ left: h.x + 14, top: h.y + 8, color: `var(${h.colorVar})` }}>
-          ns: {h.ns}
+      {/* Namespace kutu başlıkları — tıkla: grubu tek karta katla
+          (v0.8.447). Pan bu elemanda başlamaz (onPointerDown istisnası).
+          Focus'lu servisin namespace'i katlanamaz (derivasyon geri
+          açardı) — o başlık buton semantiği olmadan salt etiket kalır. */}
+      {hulls.map(h => h.ns === focusNs ? (
+        <div key={`nshdr-${h.ns}`} className="topo-nshdr"
+          style={{ left: h.x + 10, top: h.y + 6, color: `var(${h.colorVar})`, cursor: 'default' }}
+          title={`ns: ${h.ns} — odaklı servisin namespace'i katlanamaz`}>
+          ns: {h.ns} · {h.n} svc
+        </div>
+      ) : (
+        <div key={`nshdr-${h.ns}`} className="topo-nshdr"
+          style={{ left: h.x + 10, top: h.y + 6, color: `var(${h.colorVar})` }}
+          role="button" tabIndex={0}
+          title={`ns: ${h.ns} — tıkla: ${h.n} servisi tek karta katla`}
+          onClick={() => collapseNs(h.ns)}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') collapseNs(h.ns); }}>
+          ns: {h.ns} · {h.n} svc <span className="caret">▾</span>
         </div>
       ))}
 
@@ -380,6 +471,45 @@ export function TopologyFlowGraph({
         if (!p) return null;
         const dim = active && !active.has(n.service);
         const level = n.errorRate > 0.05 ? 'red' : n.errorRate > 0.01 ? 'amber' : 'green';
+        // v0.8.447 — katlı namespace süper-düğümü: tıkla → genişlet.
+        // onSelectNode ÇAĞRILMAZ (drawer servis bekler); hover sönümü
+        // ve sağlık noktası normal düğümle aynı dilde çalışır.
+        if (isNsNode(n.service)) {
+          const ns = nsOfNodeId(n.service);
+          const g = groups.find(x => x.ns === ns);
+          const colorVar = nsColor.get(ns) ?? '--accent';
+          return (
+            <div key={n.service}
+              className={'topo-node topo-nsnode' + (dim ? ' dim' : '')}
+              style={{
+                left: p.x, top: p.y, cursor: 'pointer',
+                borderColor: `color-mix(in srgb, var(${colorVar}) 55%, var(--border))`,
+              }}
+              role="button" tabIndex={0}
+              aria-label={`namespace ${ns} — genişlet`}
+              onMouseEnter={() => onHoverNode(n.service)}
+              onMouseLeave={() => onHoverNode(null)}
+              // Hover'ı genişletmeden ÖNCE temizle — pill unmount olunca
+              // mouseleave hiç gelmez, bayat sentetik id kalırdı (dim-kilit).
+              onClick={() => { onHoverNode(null); expandNs(ns); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') { onHoverNode(null); expandNs(ns); }
+              }}
+              title={
+                `ns: ${ns} — ${g?.members.length ?? 0} servis (tıkla: genişlet)\n` +
+                (g?.members.join('\n') ?? '')
+              }>
+              <span className={`topo-dot ${level}`} />
+              <div style={{ minWidth: 0 }}>
+                <div className="topo-name" style={{ color: `var(${colorVar})` }}>{ns} ▸</div>
+                <div className="topo-sub">
+                  {g?.members.length ?? 0} svc · {n.spanCount.toLocaleString()} span
+                  {n.errorRate > 0.01 ? ` · ${(n.errorRate * 100).toFixed(1)}% err` : ''}
+                </div>
+              </div>
+            </div>
+          );
+        }
         const isDep = !!n.kind;
         return (
           <div key={n.service}

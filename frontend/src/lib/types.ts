@@ -990,6 +990,9 @@ export interface LDAPConfig {
   userAttribute: string;
   emailAttribute: string;
   displayAttribute: string;
+  // v0.8.430 — users.team kaynağı: '' = department→ou; 'dn-ou' = DN'deki
+  // en derin OU; başka değer = o attribute (legacy zincir fallback).
+  teamAttribute?: string;
   groupSearchBase: string;
   groupFilter: string;
   // Workaround toggle for AD's MaxValRange / MaxReceiveBuffer

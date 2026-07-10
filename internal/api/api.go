@@ -5145,6 +5145,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// v0.8.450 — son login damgası (operatör isteği: Users sayfası).
+	// Başarısız damga geçerli girişi asla bloklamaz.
+	if terr := s.store.TouchUserLogin(r.Context(), user.ID); terr != nil {
+		log.Printf("[auth] last-login stamp failed for %q: %v", user.Email, terr)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.CookieName,
 		Value:    tok,
@@ -5358,6 +5363,7 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 		u.Team = existing.Team
 		u.CustomRole = existing.CustomRole
 		u.PasswordHash = existing.PasswordHash
+		u.LastLoginAt = existing.LastLoginAt // v0.8.450 — whole-row carry
 		// Directory values refresh on every login but never WIPE a
 		// stored value when the attribute is absent — an admin's
 		// manual fill survives a sparse directory entry.
@@ -5538,6 +5544,7 @@ func (s *Server) provisionLDAPUser(w http.ResponseWriter, r *http.Request) {
 		// have been local before. After a successful LDAP login the
 		// hash becomes irrelevant but keeping it costs nothing.
 		u.PasswordHash = existing.PasswordHash
+		u.LastLoginAt = existing.LastLoginAt // v0.8.450 — whole-row carry
 	} else {
 		idBytes := make([]byte, 8)
 		_, _ = rand.Read(idBytes)
@@ -5688,6 +5695,10 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.oidcFail(w, r, err.Error())
 		return
+	}
+	// v0.8.450 — son login damgası (OIDC yolu da sayılır).
+	if terr := s.store.TouchUserLogin(r.Context(), user.ID); terr != nil {
+		log.Printf("[oidc] last-login stamp failed for %q: %v", user.Email, terr)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     auth.CookieName,

@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 type User struct {
@@ -38,6 +39,10 @@ type User struct {
 	// in Team above). Empty for local/OIDC accounts unless set.
 	FullName string `json:"fullName,omitempty"`
 	Org      string `json:"org,omitempty"`
+	// LastLoginAt — son başarılı login (unix ns, 0 = hiç; v0.8.450).
+	// Login yolları TouchUserLogin ile damgalar; whole-row replace
+	// gereği her Upsert taşır.
+	LastLoginAt int64 `json:"lastLoginAt"`
 }
 
 // GetUserByEmail returns the latest version of a user (ReplacingMergeTree FINAL).
@@ -45,14 +50,15 @@ type User struct {
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at), photo, full_name, org
+		       toUnixTimestamp64Nano(created_at), photo, full_name, org,
+		       toUnixTimestamp64Nano(last_login_at)
 		FROM users FINAL
 		WHERE email = ? AND disabled = 0
 		LIMIT 1`, email)
 	var u User
 	var disabled uint8
 	var photo string
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo, &u.FullName, &u.Org); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo, &u.FullName, &u.Org, &u.LastLoginAt); err != nil {
 		// clickhouse-go returns sql.ErrNoRows analogue; surface as nil/nil.
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
@@ -67,14 +73,15 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error)
 func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at), photo, full_name, org
+		       toUnixTimestamp64Nano(created_at), photo, full_name, org,
+		       toUnixTimestamp64Nano(last_login_at)
 		FROM users FINAL
 		WHERE id = ? AND disabled = 0
 		LIMIT 1`, id)
 	var u User
 	var disabled uint8
 	var photo string
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo, &u.FullName, &u.Org); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo, &u.FullName, &u.Org, &u.LastLoginAt); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
@@ -94,8 +101,22 @@ func (s *Store) CountUsers(ctx context.Context) (int64, error) {
 	return int64(n), nil
 }
 
+// TouchUserLogin stamps last_login_at = now after a successful login
+// (v0.8.450). Read-modify-write like UpdatePassword — ReplacingMergeTree
+// replaces the whole row, so the fresh read carries photo/team/role
+// through. Non-fatal for callers: a failed stamp must never block a
+// valid login.
+func (s *Store) TouchUserLogin(ctx context.Context, userID string) error {
+	u, err := s.GetUserByID(ctx, userID)
+	if err != nil || u == nil {
+		return err
+	}
+	u.LastLoginAt = time.Now().UnixNano()
+	return s.UpsertUser(ctx, *u)
+}
+
 func (s *Store) UpsertUser(ctx context.Context, u User) error {
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users (id, email, password_hash, role, disabled, auth_provider, team, custom_role, photo, full_name, org)")
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users (id, email, password_hash, role, disabled, auth_provider, team, custom_role, photo, full_name, org, last_login_at)")
 	if err != nil {
 		return fmt.Errorf("prepare users: %w", err)
 	}
@@ -114,7 +135,7 @@ func (s *Store) UpsertUser(ctx context.Context, u User) error {
 	if u.Role != "viewer" {
 		custom = ""
 	}
-	if err := batch.Append(u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team, custom, string(u.Photo), u.FullName, u.Org); err != nil {
+	if err := batch.Append(u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team, custom, string(u.Photo), u.FullName, u.Org, time.Unix(0, u.LastLoginAt).UTC()); err != nil {
 		return fmt.Errorf("append user: %w", err)
 	}
 	return batch.Send()
@@ -125,7 +146,8 @@ func (s *Store) UpsertUser(ctx context.Context, u User) error {
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at), length(photo) > 0 AS has_photo, full_name, org
+		       toUnixTimestamp64Nano(created_at), length(photo) > 0 AS has_photo, full_name, org,
+		       toUnixTimestamp64Nano(last_login_at)
 		FROM users FINAL
 		WHERE disabled = 0
 		ORDER BY created_at DESC`)
@@ -137,7 +159,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var disabled, hasPhoto uint8
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &hasPhoto, &u.FullName, &u.Org); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &hasPhoto, &u.FullName, &u.Org, &u.LastLoginAt); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0
@@ -159,7 +181,8 @@ func (s *Store) ListUsersByTeam(ctx context.Context, team string) ([]User, error
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at), length(photo) > 0 AS has_photo, full_name, org
+		       toUnixTimestamp64Nano(created_at), length(photo) > 0 AS has_photo, full_name, org,
+		       toUnixTimestamp64Nano(last_login_at)
 		FROM users FINAL
 		WHERE disabled = 0 AND lower(team) = lower(?)
 		ORDER BY email`, team)
@@ -171,7 +194,7 @@ func (s *Store) ListUsersByTeam(ctx context.Context, team string) ([]User, error
 	for rows.Next() {
 		var u User
 		var disabled, hasPhoto uint8
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &hasPhoto, &u.FullName, &u.Org); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &hasPhoto, &u.FullName, &u.Org, &u.LastLoginAt); err != nil {
 			return nil, err
 		}
 		u.Disabled = disabled != 0

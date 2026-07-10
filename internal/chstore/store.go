@@ -563,9 +563,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			disabled      UInt8        DEFAULT 0,
 			auth_provider LowCardinality(String) DEFAULT 'local',   -- local | oidc
 			created_at    DateTime64(9) DEFAULT now64(9),
+			-- v0.8.450 — son başarılı login anı (operatör isteği: Users
+			-- sayfasında görünür). Epoch(0) = hiç giriş yapmadı.
+			last_login_at DateTime64(9) DEFAULT toDateTime64(0, 9),
 			version       UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
 
 		// RAG chunk deposu (v0.8.438) — doküman soru-cevap. DDL
 		// rag.go'da (ragChunksDDL) yaşar; içerik + embedding tek

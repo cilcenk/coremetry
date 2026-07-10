@@ -21,6 +21,10 @@ const USER_COLS: DataTableColumn<UserRow>[] = [
   // v0.8.403 — presence. Sort key puts online users first, then most
   // recently seen; never-seen (no stamp) sinks to the bottom.
   { id: 'seen',       label: 'Last seen',   sortValue: u => u.lastSeenAt ?? 0,   naturalDir: 'desc', width: 120 },
+  // v0.8.450 — kalıcı son LOGIN anı (operatör isteği). "Last seen"
+  // Redis-TTL'li aktivite damgası; bu kolon users tablosundan gelir
+  // ve hiç sönmez.
+  { id: 'lastLogin',  label: 'Last login',  sortValue: u => u.lastLoginAt ?? 0,  naturalDir: 'desc', width: 130 },
   { id: 'created',    label: 'Created',     sortValue: u => u.createdAt,         naturalDir: 'desc', width: 170 },
   { id: 'actions',    label: 'Actions',     align: 'right', width: 230 },
 ];
@@ -240,6 +244,17 @@ export default function UsersPage() {
                         ) : (
                           <span style={{ color: 'var(--text3)' }}
                             title="No authenticated activity seen (or presence unavailable — requires Redis)">—</span>
+                        )}
+                      </td>
+                      <td>
+                        {u.lastLoginAt ? (
+                          <span className="mono" style={{ color: 'var(--text2)', fontSize: 12 }}
+                            title={tsLong(u.lastLoginAt)}>
+                            {tsRel(u.lastLoginAt)}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text3)' }}
+                            title="Bu sürümden beri hiç giriş yapmadı">—</span>
                         )}
                       </td>
                       <td className="mono" style={{ color: 'var(--text3)' }}>

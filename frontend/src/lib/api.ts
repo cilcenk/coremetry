@@ -2043,6 +2043,10 @@ export interface UserRow extends AuthUser {
   // the online window); absent = never seen / presence unavailable.
   online?: boolean;
   lastSeenAt?: number;   // unix ns
+  // v0.8.450 — son başarılı LOGIN anı (kalıcı, users tablosunda;
+  // lastSeenAt'in Redis-TTL'li aktivite damgasından farklı). 0 /
+  // absent = hiç giriş yapmadı.
+  lastLoginAt?: number;  // unix ns
 }
 export interface CustomRole {
   name: string;

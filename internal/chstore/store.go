@@ -1664,6 +1664,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		// (value != auto) stay pinned.
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS owner_team_auto String DEFAULT ''`,
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS sre_team_auto String DEFAULT ''`,
+		// namespace (+ deriver provenance) — v0.8.436, flow-graph
+		// namespace grouping's backend precondition. Derived from
+		// service.namespace / k8s.namespace.name span resource attrs by
+		// the same scheduler tick as the team deriver; human edits pin
+		// exactly like owner/sre teams (value != auto).
+		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS namespace String DEFAULT ''`,
+		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS namespace_auto String DEFAULT ''`,
 		// Notification routing — one column carrying a JSON
 		// blob with predicates: { "services": [...],
 		// "sreTeams": [...], "ownerTeams": [...] }. Empty /

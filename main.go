@@ -1220,6 +1220,16 @@ func runServiceTeamDeriver(ctx context.Context, store *chstore.Store, lock cache
 		if n > 0 {
 			log.Printf("[team-derive] filled owner/sre team for %d service(s) from span attrs", n)
 		}
+		// v0.8.436 — namespace rides the same leader-gated tick (one
+		// bounded spans scan each; same ownership/pin semantics).
+		nn, err := store.PopulateServiceNamespacesFromSpans(ctx, window)
+		if err != nil {
+			log.Printf("[ns-derive] %v", err)
+			return
+		}
+		if nn > 0 {
+			log.Printf("[ns-derive] filled namespace for %d service(s) from span attrs", nn)
+		}
 	}
 	tick() // immediate on boot (idempotent; non-leader skips)
 	t := time.NewTicker(interval)

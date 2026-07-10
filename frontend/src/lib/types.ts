@@ -2796,6 +2796,9 @@ export interface CustomLink {
 }
 
 export interface ServiceMetadata {
+  // v0.8.436 — deriver-filled logical namespace (service.namespace /
+  // k8s.namespace.name); flow-graph gruplandırmanın veri kaynağı.
+  namespace?: string;
   service: string;
   ownerTeam?: string;
   // SRE team — platform / reliability owners (often distinct

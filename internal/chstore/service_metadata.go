@@ -61,6 +61,13 @@ type ServiceMetadata struct {
 	// equal these (or are empty); a human edit (value != auto) pins the field.
 	OwnerTeamAuto string `json:"-"`
 	SRETeamAuto   string `json:"-"`
+	// Namespace (v0.8.436) — the service's logical namespace, derived
+	// from service.namespace / k8s.namespace.name span resource attrs
+	// (deriver tick shared with teams; NamespaceAuto is the provenance
+	// pin — a manual edit where value != auto stops the deriver).
+	// Powers the flow-graph namespace grouping.
+	Namespace     string `json:"namespace,omitempty"`
+	NamespaceAuto string `json:"-"`
 }
 
 // GetServiceMetadata returns the catalog row for one service.
@@ -78,6 +85,7 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 		SELECT service, owner_team, sre_team, description, repository,
 		       runbook_url, oncall_url, chat_channel, slack_channel,
 		       custom_links, owner_team_auto, sre_team_auto,
+		       namespace, namespace_auto,
 		       toUnixTimestamp64Nano(updated_at)
 		FROM service_metadata FINAL
 		WHERE service = ?
@@ -86,7 +94,8 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 	var legacySlack, customLinks string
 	if err := row.Scan(&m.Service, &m.OwnerTeam, &m.SRETeam, &m.Description, &m.Repository,
 		&m.RunbookURL, &m.OncallURL, &m.ChatChannel, &legacySlack,
-		&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto, &m.UpdatedAt); err != nil {
+		&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto,
+		&m.Namespace, &m.NamespaceAuto, &m.UpdatedAt); err != nil {
 		// "no rows" → not yet curated; same handling pattern
 		// the rest of chstore uses.
 		return nil, nil
@@ -132,6 +141,7 @@ func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMeta
 		SELECT service, owner_team, sre_team, description, repository,
 		       runbook_url, oncall_url, chat_channel, slack_channel,
 		       custom_links, owner_team_auto, sre_team_auto,
+		       namespace, namespace_auto,
 		       toUnixTimestamp64Nano(updated_at)
 		FROM service_metadata FINAL`)
 	if err != nil {
@@ -144,7 +154,8 @@ func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMeta
 		var legacySlack, customLinks string
 		if err := rows.Scan(&m.Service, &m.OwnerTeam, &m.SRETeam, &m.Description, &m.Repository,
 			&m.RunbookURL, &m.OncallURL, &m.ChatChannel, &legacySlack,
-			&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto, &m.UpdatedAt); err != nil {
+			&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto,
+			&m.Namespace, &m.NamespaceAuto, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if m.ChatChannel == "" && legacySlack != "" {
@@ -217,6 +228,7 @@ func (s *Store) UpsertServiceMetadata(ctx context.Context, m ServiceMetadata) er
 	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO service_metadata
 		(service, owner_team, sre_team, owner_team_auto, sre_team_auto,
+		 namespace, namespace_auto,
 		 description, repository,
 		 runbook_url, oncall_url, chat_channel, custom_links,
 		 updated_at, version)`)
@@ -225,6 +237,7 @@ func (s *Store) UpsertServiceMetadata(ctx context.Context, m ServiceMetadata) er
 	}
 	now := time.Now()
 	if err := batch.Append(m.Service, m.OwnerTeam, m.SRETeam, m.OwnerTeamAuto, m.SRETeamAuto,
+		m.Namespace, m.NamespaceAuto,
 		m.Description, m.Repository,
 		m.RunbookURL, m.OncallURL, m.ChatChannel, string(clBytes),
 		now.UTC(), uint64(now.UnixNano())); err != nil {
@@ -360,6 +373,109 @@ func (s *Store) PopulateServiceTeamsFromSpans(ctx context.Context, since time.Du
 			md = ServiceMetadata{Service: svc}
 		}
 		merged, changed := mergeTeams(md, t)
+		if !changed {
+			continue
+		}
+		if err := s.UpsertServiceMetadata(ctx, merged); err != nil {
+			continue // best-effort; the next tick retries
+		}
+		updated++
+	}
+	return updated, nil
+}
+
+// ── Auto-derive namespace from span resource attrs (v0.8.436) ────────────────
+//
+// The flow-graph namespace grouping's backend precondition: every
+// service's logical namespace, resolved from span resource attributes.
+// OTel offers two spellings — semconv `service.namespace` (preferred:
+// the SDK-declared logical namespace) and `k8s.namespace.name` (the
+// k8s detector's container namespace) — checked in that order, resource
+// scope before span scope, same multiIf idiom as deriveTeamsSQL.
+const deriveNamespaceSQL = `
+SELECT service_name, argMax(ns_val, c) AS ns
+FROM (
+  SELECT service_name, ns_val, count() AS c
+  FROM (
+    SELECT service_name,
+      multiIf(
+        has(res_keys, 'service.namespace'),  res_values[indexOf(res_keys, 'service.namespace')],
+        has(res_keys, 'k8s.namespace.name'), res_values[indexOf(res_keys, 'k8s.namespace.name')],
+        has(attr_keys, 'service.namespace'),  attr_values[indexOf(attr_keys, 'service.namespace')],
+        has(attr_keys, 'k8s.namespace.name'), attr_values[indexOf(attr_keys, 'k8s.namespace.name')],
+        '') AS ns_val
+    FROM spans
+    WHERE time >= ? AND time <= ?
+      AND ( has(res_keys, 'service.namespace')  OR has(res_keys, 'k8s.namespace.name')
+         OR has(attr_keys, 'service.namespace') OR has(attr_keys, 'k8s.namespace.name') )
+    LIMIT 2000000
+  )
+  WHERE ns_val != ''
+  GROUP BY service_name, ns_val
+)
+GROUP BY service_name
+ORDER BY service_name
+LIMIT 10000
+SETTINGS max_execution_time = 30`
+
+// DeriveServiceNamespaces returns service → dominant namespace over the
+// window; services emitting neither attribute are omitted.
+func (s *Store) DeriveServiceNamespaces(ctx context.Context, since time.Duration) (map[string]string, error) {
+	to := time.Now()
+	from := to.Add(-since)
+	rows, err := s.conn.Query(ctx, deriveNamespaceSQL, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string, 64)
+	for rows.Next() {
+		var svc, ns string
+		if err := rows.Scan(&svc, &ns); err != nil {
+			return nil, err
+		}
+		if ns = strings.TrimSpace(ns); ns != "" {
+			out[svc] = ns
+		}
+	}
+	return out, rows.Err()
+}
+
+// mergeNamespace — the pure ownership half, byte-identical semantics to
+// mergeTeams: the deriver owns the field while it's empty or still
+// equals its own last write; a manual edit (value != auto) pins it.
+func mergeNamespace(md ServiceMetadata, ns string) (ServiceMetadata, bool) {
+	if ns == "" || (md.Namespace != "" && md.Namespace != md.NamespaceAuto) {
+		return md, false
+	}
+	if md.Namespace == ns && md.NamespaceAuto == ns {
+		return md, false
+	}
+	md.Namespace, md.NamespaceAuto = ns, ns
+	return md, true
+}
+
+// PopulateServiceNamespacesFromSpans mirrors PopulateServiceTeamsFromSpans
+// for the namespace field — read-merge-write per service, best-effort.
+func (s *Store) PopulateServiceNamespacesFromSpans(ctx context.Context, since time.Duration) (int, error) {
+	derived, err := s.DeriveServiceNamespaces(ctx, since)
+	if err != nil {
+		return 0, err
+	}
+	if len(derived) == 0 {
+		return 0, nil
+	}
+	existing, err := s.ListServiceMetadata(ctx)
+	if err != nil {
+		return 0, err
+	}
+	updated := 0
+	for svc, ns := range derived {
+		md, ok := existing[svc]
+		if !ok {
+			md = ServiceMetadata{Service: svc}
+		}
+		merged, changed := mergeNamespace(md, ns)
 		if !changed {
 			continue
 		}

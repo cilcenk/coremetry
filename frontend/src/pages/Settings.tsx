@@ -16,6 +16,7 @@ import { IconLock } from '@/components/icons';
 
 import { SMTPTab } from './settings/SmtpTab';
 import { ChannelsTab } from './settings/ChannelsTab';
+import { TeamRoutingTab } from './settings/TeamRoutingTab';
 import { MaintenanceTab } from './settings/MaintenanceTab';
 import { AITab } from './settings/AiTab';
 import { TempoTab } from './settings/TempoTab';
@@ -42,6 +43,7 @@ interface SettingsTab {
 const TABS: SettingsTab[] = [
   { slug: 'smtp',        label: 'SMTP',                  Comp: SMTPTab },
   { slug: 'channels',    label: 'Notification channels', Comp: ChannelsTab },
+  { slug: 'team-routing', label: 'Team routing', Comp: TeamRoutingTab },
   { slug: 'maintenance', label: 'Maintenance windows',   Comp: MaintenanceTab },
   { slug: 'ai',          label: 'AI Copilot',            Comp: AITab },
   { slug: 'tempo',       label: 'Tempo backend',         Comp: TempoTab },

@@ -1693,6 +1693,13 @@ export const api = {
     }),
 
   // ── Settings + notification channels (admin) ─────────────────────────────
+  getTeamContacts: () => get<import('./types').TeamContacts>('/api/settings/team-contacts'),
+  putTeamContacts: (tc: import('./types').TeamContacts) =>
+    request<import('./types').TeamContacts>('/api/settings/team-contacts', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tc),
+    }),
   getSMTP:    () => get<SMTPSettings>('/api/settings/smtp'),
   putSMTP:    (s: SMTPSettings) =>
     request<SMTPSettings>('/api/settings/smtp', {

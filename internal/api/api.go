@@ -917,6 +917,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("DELETE /api/dashboards/{id}", auth.RequireAnyRole(editorRoles, s.deleteDashboard))
 
 	// Settings + notification channels (admin only)
+	mux.HandleFunc("GET    /api/settings/team-contacts", auth.RequireRole(auth.RoleAdmin, s.getTeamContacts))
+	mux.HandleFunc("PUT    /api/settings/team-contacts", auth.RequireRole(auth.RoleAdmin, s.putTeamContacts))
 	mux.HandleFunc("GET    /api/settings/smtp",       auth.RequireRole(auth.RoleAdmin, s.getSMTPSettings))
 	mux.HandleFunc("PUT    /api/settings/smtp",       auth.RequireRole(auth.RoleAdmin, s.putSMTPSettings))
 	mux.HandleFunc("POST   /api/settings/smtp/test",  auth.RequireRole(auth.RoleAdmin, s.testSMTPSettings))
@@ -5733,6 +5735,43 @@ func maskedSMTP(s notify.SMTPSettings) map[string]any {
 	}
 }
 
+
+// Team routing (v0.8.429) — the team_contacts settings blob drives the
+// automatic problem-open → owner/SRE team e-mail path in internal/notify.
+// Plain addresses (not credentials): echoed back verbatim, full details
+// in the audit row.
+func (s *Server) getTeamContacts(w http.ResponseWriter, r *http.Request) {
+	tc, err := s.store.GetTeamContacts(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if tc.Contacts == nil {
+		tc.Contacts = map[string]string{}
+	}
+	writeJSON(w, tc)
+}
+
+func (s *Server) putTeamContacts(w http.ResponseWriter, r *http.Request) {
+	var body chstore.TeamContacts
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.MinSeverity != "" && body.MinSeverity != "info" && body.MinSeverity != "warning" && body.MinSeverity != "critical" {
+		http.Error(w, "minSeverity must be info | warning | critical", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.PutTeamContacts(r.Context(), body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	details, _ := json.Marshal(map[string]any{
+		"enabled": body.Enabled, "minSeverity": body.MinSeverity, "teams": len(body.Contacts),
+	})
+	s.audit(r, "settings.teamcontacts.update", "settings", chstore.TeamContactsKey, string(details))
+	writeJSON(w, body)
+}
 
 func (s *Server) getSMTPSettings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.notify.SMTP(r.Context())

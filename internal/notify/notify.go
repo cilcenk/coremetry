@@ -411,6 +411,21 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 	if p.Status == "acknowledged" {
 		return
 	}
+	// Service catalog row — shared by the team-routing mail below AND
+	// the per-channel match predicates, so it loads before either.
+	var md *chstore.ServiceMetadata
+	if md2, err := n.store.GetServiceMetadata(ctx, p.Service); err == nil {
+		md = md2
+	}
+	// Team routing (v0.8.429) — a NEW problem's first open mails the
+	// firing service's owner (ug) + SRE (sy) teams, addresses resolved
+	// from the team_contacts settings blob. Independent of the
+	// operator-configured channel list — it runs even with zero
+	// channels — and dedupes per problem via notification_log, so a
+	// severity-bump re-fire never re-mails.
+	if p.Status == "open" {
+		n.sendTeamMail(ctx, p, md)
+	}
 	channels, err := n.store.EnabledChannelsForSeverity(ctx, p.Severity)
 	if err != nil {
 		log.Printf("[notify] load channels: %v", err)
@@ -418,15 +433,6 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 	}
 	if len(channels) == 0 {
 		return
-	}
-	// Per-channel routing predicates — channels can pin to a
-	// specific service / SRE team / owner team. Empty rules
-	// mean "catch-all" (fires for every problem). We look up
-	// the service catalog row once and re-use across the
-	// channel loop so the per-channel match check is O(1).
-	var md *chstore.ServiceMetadata
-	if md2, err := n.store.GetServiceMetadata(ctx, p.Service); err == nil {
-		md = md2
 	}
 	// Enrich the in-memory problem with its cluster set so the
 	// new ChannelMatchRules.Clusters predicate (v0.5.63) has
@@ -456,6 +462,74 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		if err := n.sendOne(ctx, c, p, "problem", p.ID); err != nil {
 			log.Printf("[notify] %s (%s): %v", c.Name, c.Type, err)
 		}
+	}
+}
+
+// teamRoutingChannelName tags team-routing sends in notification_log —
+// both the operator-visible history entry and the once-per-problem
+// dedup key ride this name.
+const teamRoutingChannelName = "team-routing"
+
+// resolveTeamRecipients — pure: the deduped e-mail set for a problem's
+// owner + SRE teams. nil metadata, unnamed teams, teams without a
+// configured address, and duplicate addresses (same DL for both teams)
+// all collapse silently — the Settings UI is where gaps surface.
+func resolveTeamRecipients(md *chstore.ServiceMetadata, tc chstore.TeamContacts) []string {
+	if md == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, team := range []string{md.OwnerTeam, md.SRETeam} {
+		for _, email := range tc.EmailsForTeam(team) {
+			key := strings.ToLower(email)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, email)
+		}
+	}
+	return out
+}
+
+// sendTeamMail implements the v0.8.429 operator ask: "yeni bir problem
+// ilk defa geldiğinde ilgili sy ve ug team'e bildirim gönderilsin —
+// mailleri katalogdan alsın." Reuses the email channel path via a
+// synthetic channel so the template, SMTP handling and the
+// notification_log record are byte-identical to a hand-configured
+// e-mail channel. Soft-fail throughout — routing must never block or
+// crash the evaluator's notify path.
+func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chstore.ServiceMetadata) {
+	tc, err := n.store.GetTeamContacts(ctx)
+	if err != nil {
+		log.Printf("[notify] team-routing settings: %v", err)
+		return
+	}
+	if !tc.Enabled || !tc.SeverityAllows(p.Severity) {
+		return
+	}
+	to := resolveTeamRecipients(md, tc)
+	if len(to) == 0 {
+		return
+	}
+	// "İlk defa" — one mail per problem lifetime. The severity-bump
+	// path re-enters SendProblemAlert with status=open for the SAME
+	// problem id; the successful first send gates every retry.
+	if seen, err := n.store.HasNotification(ctx, "problem", p.ID, teamRoutingChannelName); err == nil && seen {
+		return
+	}
+	cfg, err := json.Marshal(EmailChannelConfig{Recipients: to})
+	if err != nil {
+		return
+	}
+	ch := chstore.NotificationChannel{
+		Name:   teamRoutingChannelName,
+		Type:   "email",
+		Config: cfg,
+	}
+	if err := n.sendOne(ctx, ch, p, "problem", p.ID); err != nil {
+		log.Printf("[notify] team-routing (%s → %d rcpt): %v", p.Service, len(to), err)
 	}
 }
 

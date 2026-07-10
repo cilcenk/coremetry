@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"text/template"
 	"sync"
 	"time"
 
@@ -67,6 +68,17 @@ type SlackChannelConfig struct {
 // the raw chstore.Problem so the receiver can route it however it likes.
 type WebhookChannelConfig struct {
 	URL string `json:"url"`
+	// Headers (v0.8.445) — özel istek başlıkları; harici agent
+	// platformları (GenAI Studio) auth key'lerini buradan taşır.
+	// Değerler kanal config'inde durur — kanal yönetimi zaten
+	// admin-only, Slack webhook URL'leriyle aynı gizlilik sınıfı.
+	Headers map[string]string `json:"headers,omitempty"`
+	// BodyTemplate (v0.8.445) — opsiyonel Go text/template gövdesi;
+	// boşken eski {problem, coremetryUrl} JSON'ı aynen gider (geriye
+	// uyumlu). Alanlar: {{.Problem.*}} (chstore.Problem) ve
+	// {{.CoremetryURL}}. Şablon hatası kanal kaydında yakalanır;
+	// runtime render hatasında default payload gönderilir + log.
+	BodyTemplate string `json:"bodyTemplate,omitempty"`
 }
 
 // TeamsChannelConfig — Microsoft Teams incoming webhook. Same
@@ -1263,7 +1275,86 @@ func (n *Notifier) sendWebhook(ctx context.Context, c chstore.NotificationChanne
 		"problem":      p,
 		"coremetryUrl": n.problemURL(p.ID),
 	}
-	return postJSON(ctx, wc.URL, payload)
+	// v0.8.445 — şablonlu gövde: alıcının (Studio agent tetikleyicisi,
+	// PagerDuty Events, n8n özel şeması) beklediği şekli operatör
+	// Settings'ten tanımlar. Render hatası default JSON'a düşer —
+	// bildirim şablon yüzünden ASLA kaybolmaz.
+	var body []byte
+	if strings.TrimSpace(wc.BodyTemplate) != "" {
+		if rendered, err := renderWebhookBody(wc.BodyTemplate, p, n.problemURL(p.ID)); err == nil {
+			body = rendered
+		} else {
+			log.Printf("[notify] webhook %s şablon render hatası (default gövdeye düşüldü): %v", c.Name, err)
+		}
+	}
+	if body == nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+		body = raw
+	}
+	return postRaw(ctx, wc.URL, body, wc.Headers)
+}
+
+// webhookTemplateData — şablonun gördüğü alanlar (sözleşme; alan
+// eklemek geriye uyumlu, çıkarmak DEĞİL).
+type webhookTemplateData struct {
+	Problem      chstore.Problem
+	CoremetryURL string
+}
+
+// renderWebhookBody — pure: şablon + problem → gövde. missingkey=error
+// ile yazım hataları sessizce boş string üretmek yerine hata verir
+// (ve default gövdeye düşülür).
+func renderWebhookBody(tmpl string, p chstore.Problem, url string) ([]byte, error) {
+	t, err := template.New("webhook").Option("missingkey=error").Parse(tmpl)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, webhookTemplateData{Problem: p, CoremetryURL: url}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// ValidateWebhookTemplate — kanal KAYDINDA çağrılır: parse + örnek
+// problem'le deneme render'ı; hatalı şablon hiç kaydedilmez.
+func ValidateWebhookTemplate(tmpl string) error {
+	if strings.TrimSpace(tmpl) == "" {
+		return nil
+	}
+	_, err := renderWebhookBody(tmpl, chstore.Problem{
+		ID: "sample", Service: "checkout", Severity: "critical",
+		RuleName: "sample rule", Metric: "error_rate", Value: 7.5, Threshold: 5,
+		Status: "open", StartedAt: 1_700_000_000_000_000_000,
+	}, "https://coremetry.local/problems?problem=sample")
+	return err
+}
+
+// postRaw — postJSON'un başlıklı/ham gövdeli hali (v0.8.445).
+func postRaw(ctx context.Context, endpoint string, body []byte, headers map[string]string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		if k = strings.TrimSpace(k); k != "" {
+			req.Header.Set(k, v)
+		}
+	}
+	cli := &http.Client{Timeout: 10 * time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return fmt.Errorf("post: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("webhook %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // ── WhatsApp backend (Twilio Messages API) ──────────────────────────────────

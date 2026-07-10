@@ -15,6 +15,11 @@ export function ChannelModal({ initial, onClose, onSaved }: {
   const [recipients, setRecipients] = useState((initial?.config.recipients ?? []).join(', '));
   const [webhookUrl, setWebhookUrl] = useState(initial?.config.webhookUrl ?? '');
   const [url, setUrl] = useState(initial?.config.url ?? '');
+  // v0.8.445 — webhook headers (satır başına "Ad: değer"; kayıtlı
+  // değerler güvenlik gereği geri gelmez — boş bırakılan korunur) +
+  // opsiyonel Go-template gövde.
+  const [webhookHeaders, setWebhookHeaders] = useState('');
+  const [webhookTemplate, setWebhookTemplate] = useState(initial?.config.bodyTemplate ?? '');
   // Zoom Chat Server-to-Server OAuth fields. clientSecret is
   // write-only — the GET endpoint never echoes it back, so the
   // initial value is always empty. Existing channels keep their
@@ -91,6 +96,16 @@ export function ChannelModal({ initial, onClose, onSaved }: {
       } else if (type === 'webhook') {
         if (!url) throw new Error('Webhook URL is required');
         config.url = url;
+        const hdrs: Record<string, string> = {};
+        for (const line of webhookHeaders.split('\n')) {
+          const t = line.trim();
+          if (!t) continue;
+          const i = t.indexOf(':');
+          if (i <= 0) throw new Error(`Header satırı "Ad: değer" olmalı: ${t}`);
+          hdrs[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+        }
+        if (Object.keys(hdrs).length) config.headers = hdrs;
+        if (webhookTemplate.trim()) config.bodyTemplate = webhookTemplate;
       } else if (type === 'whatsapp') {
         if (!twilioSid || !twilioToken) throw new Error('Twilio Account SID and Auth Token are required');
         if (!waFrom) throw new Error('Sender number (whatsapp:+E164) is required');
@@ -301,10 +316,26 @@ export function ChannelModal({ initial, onClose, onSaved }: {
             </>
           )}
           {type === 'webhook' && (
-            <Field label="Webhook URL (raw Problem JSON is POSTed here)">
-              <input required value={url} placeholder="https://your-receiver.example.com/incidents"
-                onChange={e => setUrl(e.target.value)} style={{ width: '100%' }} />
-            </Field>
+            <>
+              <Field label="Webhook URL (raw Problem JSON is POSTed here)">
+                <input required value={url} placeholder="https://your-receiver.example.com/incidents"
+                  onChange={e => setUrl(e.target.value)} style={{ width: '100%' }} />
+              </Field>
+              <Field label="Headers (opsiyonel — satır başına 'Ad: değer'; auth key'ler burada)">
+                <textarea rows={2} value={webhookHeaders}
+                  placeholder={initial ? 'kayıtlı — boş bırakırsan korunur' : 'Authorization: Bearer sk-…'}
+                  onChange={e => setWebhookHeaders(e.target.value)}
+                  spellCheck={false}
+                  style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+              </Field>
+              <Field label={'Gövde şablonu (opsiyonel Go template — boş = varsayılan {problem, coremetryUrl} JSON)'}>
+                <textarea rows={4} value={webhookTemplate}
+                  placeholder={'{"service":"{{.Problem.Service}}","severity":"{{.Problem.Severity}}","url":"{{.CoremetryURL}}"}'}
+                  onChange={e => setWebhookTemplate(e.target.value)}
+                  spellCheck={false}
+                  style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+              </Field>
+            </>
           )}
           {type === 'whatsapp' && (
             <>

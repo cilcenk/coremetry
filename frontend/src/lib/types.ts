@@ -1863,6 +1863,8 @@ export interface NotificationChannel {
     recipients?: string[];   // email + whatsapp 'to' list
     webhookUrl?: string;     // slack / mattermost / teams (legacy zoomchat for migration only)
     url?: string;            // generic webhook
+    headers?: Record<string, string>; // webhook (v0.8.445) — özel başlıklar (write-only; geri echo edilmez)
+    bodyTemplate?: string;   // webhook (v0.8.445) — opsiyonel Go template gövde
     verificationToken?: string; // legacy zoomchat (kept so old configs still serialise; new flow ignores)
     // Zoom Chat Server-to-Server OAuth fields.
     accountId?: string;      // zoomchat — Zoom account UUID

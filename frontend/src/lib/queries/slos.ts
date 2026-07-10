@@ -12,7 +12,8 @@ export function useSLOs() {
     queryKey: slosListKey,
     queryFn: async () => (await api.listSLOs()) ?? [],
     refetchInterval: 60_000,
-    staleTime: 50_000,
+    // v0.8.462 — 50s < 60s double-fetch aralığı kapandı (v0.4.79 deseni).
+    staleTime: 60_000,
   });
 }
 

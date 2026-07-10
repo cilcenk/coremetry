@@ -34,7 +34,7 @@ describe('withProblemParam', () => {
   });
 });
 
-// v0.8.438 (operator-reported): the exception-group full detail had the
+// v0.8.443 (operator-reported): the exception-group full detail had the
 // same "can't share as a link" gap ?problem= was fixed for in v0.8.256 —
 // it only ever lived in local state, never the URL. Same both-ways
 // contract, pinned the same way.

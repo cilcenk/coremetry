@@ -7,7 +7,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Sparkline } from '@/components/Sparkline';
 import { api } from '@/lib/api';
-import { timeRangeToNs, fmtBytes } from '@/lib/utils';
+import { timeRangeToNs, fmtBytes, fmtAgoNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -126,7 +126,7 @@ export default function HostsPage() {
                       <span className={`badge ${r.up ? 'b-ok' : 'b-gray'}`}>{r.up ? 'up' : 'stale'}</span>
                     </td>
                     <td className="num mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
-                      {fmtAgo(r.lastSeen)}
+                      {fmtAgoNs(r.lastSeen)}
                     </td>
                   </tr>
                 ))}
@@ -265,12 +265,4 @@ function TrendRow({ label, values, color }: { label: string; values: number[]; c
       <Sparkline values={values} width={420} height={34} color={color} title={label} />
     </div>
   );
-}
-
-// fmtAgo — compact "how long since the last sample" label.
-function fmtAgo(unixNs: number): string {
-  const s = Math.max(0, (Date.now() - unixNs / 1e6) / 1000);
-  if (s < 90) return `${Math.round(s)}s ago`;
-  if (s < 5400) return `${Math.round(s / 60)}m ago`;
-  return `${(s / 3600).toFixed(1)}h ago`;
 }

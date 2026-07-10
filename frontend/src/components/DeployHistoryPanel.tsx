@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import { fmtNum } from '@/lib/utils';
+import { fmtNum, fmtAgoNs } from '@/lib/utils';
 import type { Rollout, DeployImpact } from '@/lib/types';
 
 // Per-row Copilot explain state (v0.5.192). Keyed by rollout
@@ -131,7 +131,7 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                   </span>
                 )}
                 <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                  {fmtAgo(r.timeUnixNs)}
+                  {fmtAgoNs(r.timeUnixNs)}
                 </span>
                 <span style={{ flex: 1 }} />
                 {r.impact ? <DeltaChips imp={r.impact} /> : (
@@ -286,10 +286,3 @@ function ExpandedDiff({ imp }: { imp: DeployImpact }) {
   );
 }
 
-function fmtAgo(unixNs: number): string {
-  const secs = Math.max(1, Math.floor((Date.now() - unixNs / 1e6) / 1000));
-  if (secs < 60)       return `${secs}s ago`;
-  if (secs < 3600)     return `${Math.floor(secs / 60)}m ago`;
-  if (secs < 86400)    return `${Math.floor(secs / 3600)}h ago`;
-  return `${Math.floor(secs / 86400)}d ago`;
-}

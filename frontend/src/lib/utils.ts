@@ -88,6 +88,23 @@ export function fmtBytes(n: number): string {
   return `${v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)} ${units[i]}`;
 }
 
+// Canonical "ne kadar önce" çekirdeği (v0.8.463 dedup — dört bileşen
+// üç FARKLI giriş birimiyle (sec/unixNs/ms) kendi kopyasını taşıyordu;
+// CLAUDE.md'nin unit-mixing pitfall sınıfı). Giriş birimi fonksiyon
+// adında AÇIK: fmtDurShort saniye alır, fmtAgoNs unix-nanosaniye.
+// QuestionCards'ın Türkçe lehçesi bilinçli olarak yerelde kalır.
+export function fmtDurShort(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
+
+export function fmtAgoNs(unixNs: number): string {
+  return `${fmtDurShort((Date.now() - unixNs / 1e6) / 1000)} ago`;
+}
+
 export function fmtNs(ns: number): string {
   const us = ns / 1e3, ms = ns / 1e6, s = ns / 1e9;
   if (s >= 1) return s.toFixed(2) + 's';

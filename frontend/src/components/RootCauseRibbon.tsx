@@ -5,6 +5,7 @@ import { Spinner, Empty } from './Spinner';
 import { IconFlame } from './icons';
 import { api } from '@/lib/api';
 import type { RootCauseSummary, RootCause, AnomalyRootCause, ScoredCause } from '@/lib/types';
+import { fmtDurShort } from '@/lib/utils';
 
 // RootCauseRibbon (rc #3) — the in-page "Root cause: <suspect> (NN%) ▸" chip on
 // each /anomalies + /problems row. The COLLAPSED chip renders straight from the
@@ -154,7 +155,7 @@ function ExpandedBody({ rc }: { rc: RootCause | AnomalyRootCause }) {
           <Label>Recent deploy</Label>
           <div>
             <code>service.version={rc.recentDeploy.version}</code> first seen{' '}
-            <b>{fmtAgo(rc.recentDeploy.ageSeconds)}</b> before onset on{' '}
+            <b>{fmtDurShort(rc.recentDeploy.ageSeconds)}</b> before onset on{' '}
             <Link to={`/service?name=${encodeURIComponent(rc.service)}#deploys`} style={{ fontWeight: 600 }}>
               {rc.service}
             </Link>.
@@ -307,10 +308,3 @@ function pct(f: number): string {
   return `${Math.round(f * 100)}%`;
 }
 
-// fmtAgo — compact "6m" / "2h" / "3d" age (local copy; same as RootCausePanel).
-function fmtAgo(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m`;
-  if (sec < 86400) return `${Math.round(sec / 3600)}h`;
-  return `${Math.round(sec / 86400)}d`;
-}

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Spinner, Empty } from './Spinner';
 import { IconFlame } from './icons';
 import { api } from '@/lib/api';
-import { fmtFixed } from '@/lib/utils';
+import { fmtFixed, fmtDurShort } from '@/lib/utils';
 import type { RootCause, BubbleUpValue } from '@/lib/types';
 
 // RootCausePanel — the single "what changed / likely cause" surface for a
@@ -236,7 +236,7 @@ function likelyCause(
     return {
       ...deploy,
       text: <>Coincides with a <b>deploy</b> — <code>service.version={rc.recentDeploy.version}</code> first
-        seen <b>{fmtAgo(rc.recentDeploy.ageSeconds)}</b> before this problem opened.</>,
+        seen <b>{fmtDurShort(rc.recentDeploy.ageSeconds)}</b> before this problem opened.</>,
     };
   }
   const top = bubble?.values[0];
@@ -279,7 +279,7 @@ function topBubble(rc: RootCause): { key: string; values: BubbleUpValue[] } | nu
 
 // rootWindow — human window length for sub-headers ("over 18m").
 function rootWindow(rc: RootCause): string {
-  return `over ${fmtAgo((rc.toNs - rc.fromNs) / 1e9)}`;
+  return `over ${fmtDurShort((rc.toNs - rc.fromNs) / 1e9)}`;
 }
 
 // scoreColor — over-representation heat: deep red for a strong smoking gun,
@@ -292,12 +292,6 @@ function scoreColor(score: number): string {
 
 // fmtAgo — compact "6m" / "2h" / "3d" age. Local copy (the AnomaliesPage one
 // isn't exported); trivial enough not to warrant a shared-util churn.
-function fmtAgo(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m`;
-  if (sec < 86400) return `${Math.round(sec / 3600)}h`;
-  return `${Math.round(sec / 86400)}d`;
-}
 
 // pct — 0..1 fraction → whole-number percent string.
 function pct(f: number): string {

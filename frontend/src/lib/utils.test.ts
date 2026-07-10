@@ -3,7 +3,9 @@ import type { TimeRange } from './types';
 import {
   displaySpanName,
   escapeHTML,
+  fmtAgoNs,
   fmtBytes,
+  fmtDurShort,
   fmtNs,
   fmtNum,
   isMessagingDep,
@@ -217,5 +219,28 @@ describe('isMessagingDep', () => {
     // "payment-sqs-service" is a real HTTP service, not the SQS broker.
     expect(isMessagingDep('external', 'payment-sqs-service')).toBe(false);
     expect(isMessagingDep('external', 'my-kafka-proxy')).toBe(false);
+  });
+});
+
+// v0.8.463 — fmtDurShort/fmtAgoNs dedup regresyonu: dört bileşen üç
+// farklı giriş birimiyle (sec/ns/ms) kendi kopyasını taşıyordu — her
+// birim tabloda pinli (unit-mixing pitfall kuralı).
+describe('fmtDurShort / fmtAgoNs (v0.8.463)', () => {
+  it('saniye kovaları', () => {
+    expect(fmtDurShort(0)).toBe('0s');
+    expect(fmtDurShort(51)).toBe('51s');
+    expect(fmtDurShort(90)).toBe('2m');     // round
+    expect(fmtDurShort(3599)).toBe('60m');
+    expect(fmtDurShort(7200)).toBe('2h');
+    expect(fmtDurShort(172800)).toBe('2d');
+    expect(fmtDurShort(-5)).toBe('0s');     // negatif clamp
+  });
+  it('fmtAgoNs unix-NANOSANİYE alır (ms/sec değil)', () => {
+    const now = Date.now();
+    expect(fmtAgoNs((now - 51_000) * 1e6)).toBe('51s ago');
+    expect(fmtAgoNs((now - 2 * 3600_000) * 1e6)).toBe('2h ago');
+    // Yanlış birim (ms) verilirse near-epoch okunur → devasa yaş;
+    // bu satır birim sözleşmesini pinler.
+    expect(fmtAgoNs(now - 51_000)).not.toBe('51s ago');
   });
 });

@@ -626,20 +626,6 @@ export interface BreakdownPoint {
   kinds: Record<string, number>;  // category → ms summed in bucket
 }
 
-// Facet — one tag dimension (service.name, http.route, db.system, …)
-// with its top-N values for the current /explore window. Drives the
-// trace facets panel: operator scans which tags exist + frequency,
-// clicks a value to add it as a filter chip.
-export interface Facet {
-  key: string;
-  distinctValues: number;
-  values: FacetValue[];
-}
-export interface FacetValue {
-  value: string;
-  count: number;
-}
-
 // ChangedService — one row of the causal-correlation report (what
 // services moved the most around the time a problem fired). Powers
 // the "Why did this fire?" expandable on Problems and the future

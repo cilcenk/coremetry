@@ -28,7 +28,6 @@ export const STORAGE_KEYS = {
   sidebarCollapsed: 'coremetry-sidebar-collapsed',
   sidebarGroups:    'coremetry-sidebar-groups',
   spanPanelWidth:   'coremetry-span-panel-w',
-  exploreFacets:    'coremetry-explore-facets',
   exploreHistory:   'coremetry-explore-history',
   sqlBackend:       'coremetry-sql-backend',
   finopsCostPerTbMo: 'coremetry.finops.costPerTbMo',

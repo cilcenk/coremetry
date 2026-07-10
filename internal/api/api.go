@@ -591,7 +591,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/spans/metric", s.spanMetric)
 	mux.HandleFunc("POST /api/spans/metric-batch", s.spanMetricBatch)
 	mux.HandleFunc("POST /api/dashboards/data",    s.dashboardsData)
-	mux.HandleFunc("GET /api/spans/facets", s.spanFacets)
 	mux.HandleFunc("GET /api/spans/repeats", s.spanRepeats)
 	mux.HandleFunc("GET /api/spans/exemplar", s.spanExemplar)
 	// Correlated Signals (task #6) — one cross-signal pivot bundle (trace ↔ logs
@@ -4251,45 +4250,6 @@ func pickSpanMetricNames(names []string) (callsM, durationM string) {
 }
 
 // ── Span metrics (Tempo span-metrics generator + Dynatrace MDA) ──────────────
-
-// spanFacets returns top-N distinct values for each well-known tag
-// column over the supplied window + DSL filter. Powers the trace
-// facets sidebar on /explore — operator scans which tags are heavy
-// and clicks a value to add it as a filter. Datadog's "trace tag
-// explorer" pattern.
-//
-// Cached 30s on (filters, window, topValues) so an operator pivoting
-// through facet clicks doesn't pay the per-facet COUNT GROUP BY each
-// time. Cheap on its own (LowCardinality dicts on every column),
-// but the savings compound across N facet clicks.
-func (s *Server) spanFacets(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	filters, err := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
-	if err != nil {
-		http.Error(w, "invalid query DSL: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	// v0.8.x gap-2 — grouped AND/OR builder. When present it supersedes the
-	// flat filters= (a flat-AND group is byte-identical). The raw filterGroup
-	// string enters the cache key below so distinct group shapes don't poison
-	// each other.
-	root := parseFilterGroup(q.Get("filterGroup"))
-	from := parseTime(q.Get("from"))
-	to := parseTime(q.Get("to"))
-	if to.IsZero() {
-		to = time.Now()
-	}
-	if from.IsZero() {
-		from = to.Add(-1 * time.Hour)
-	}
-	topValues := parseInt(q.Get("topValues"), 8)
-	key := fmt.Sprintf("facets:%s:%s:%d",
-		q.Get("dsl")+"|"+q.Get("filters")+"|"+q.Get("filterGroup"),
-		cacheBucket(from, to), topValues)
-	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetSpanFacets(ctx, filters, root, from, to, topValues)
-	})
-}
 
 // spanRepeats — "find requests where the same span shape happened
 // N+ times" view. Powers the Explore "Repeats" result mode: the

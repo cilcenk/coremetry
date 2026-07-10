@@ -8,7 +8,6 @@ import { HeatmapCellExemplars, type HeatmapCellRef } from '@/components/HeatmapC
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { BubbleUpPanel } from '@/components/BubbleUpPanel';
-import { FacetsPanel } from '@/components/FacetsPanel';
 import { ShareButton } from '@/components/ShareButton';
 import { LogsExplorer } from '@/components/LogsExplorer';
 import { MetricsExplorer } from '@/components/MetricsExplorer';
@@ -138,15 +137,6 @@ function ExploreInner() {
     () => parseInt(searchParams.get('limit') ?? '50', 10) || 50);
   const [extraCols, setExtraCols] = useState<string[]>(
     () => (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean));
-
-  // Facets panel — traces mode only (D5). Persisted preference.
-  const [showFacets, setShowFacets] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    return getRaw(STORAGE_KEYS.exploreFacets) !== '0';
-  });
-  useEffect(() => {
-    setRaw(STORAGE_KEYS.exploreFacets, showFacets ? '1' : '0');
-  }, [showFacets]);
 
   const [services, setServices] = useState<string[]>([]);
   const [heatmap, setHeatmap] = useState<Heatmap | null | undefined>(undefined);
@@ -477,12 +467,6 @@ function ExploreInner() {
               </>
             )}
             <span style={{ flex: 1 }} />
-            {resultMode === 'traces' && (
-              <Button variant="secondary" size="sm" onClick={() => setShowFacets(v => !v)}
-                title="Toggle the trace tag explorer (discover common values per facet)">
-                {showFacets ? '× Facets' : '◫ Facets'}
-              </Button>
-            )}
           </div>
 
           {/* ASK zone — NL query box stays in the builder (D5). Applies its
@@ -661,21 +645,6 @@ name ~ checkout`}
 
         {source === 'spans' && (
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-            {/* FacetsPanel — traces mode only (D5). */}
-            {resultMode === 'traces' && showFacets && (
-              <div style={{ width: 260, flexShrink: 0 }}>
-                <FacetsPanel range={range}
-                  dsl={mode === 'advanced' ? dsl : undefined}
-                  filters={filters.length > 0 ? encodeFilters(filters) : undefined}
-                  onPickValue={(f) => {
-                    if (filters.some(x => x.k === f.k && x.op === f.op &&
-                                          (x.v?.[0] ?? '') === (f.v?.[0] ?? ''))) {
-                      return;
-                    }
-                    setFilters([...filters, f]);
-                  }} />
-              </div>
-            )}
             <div style={{ flex: 1, minWidth: 0 }}>
 
         {/* ── Metric mode · panel stack ─────────────────────────────────────── */}

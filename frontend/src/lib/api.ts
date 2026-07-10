@@ -836,9 +836,6 @@ export const api = {
   spanBreakdown: (service: string, fromNs: number, toNs: number) =>
     get<import('./types').BreakdownPoint[] | null>(
       `/api/services/${encodeURIComponent(service)}/span-breakdown?from=${fromNs}&to=${toNs}`),
-  // spanFacets — Datadog-style trace tag explorer: top-N values per
-  // well-known facet column over (window + DSL filter). Drives the
-  // /explore facets panel; click a value adds it as a filter chip.
   // spanRepeats — N+1 / fan-out finder. Picks per-(trace, group-by)
   // count + filters HAVING count >= minRepeats. Drives the
   // Explore "Repeats" result mode.
@@ -855,17 +852,6 @@ export const api = {
     if (params.minRepeats) q.set('minRepeats', String(params.minRepeats));
     if (params.limit) q.set('limit', String(params.limit));
     return get<import('./types').RepeatedSpanRow[] | null>(`/api/spans/repeats?${q}`);
-  },
-  spanFacets: (params: { from: number; to: number; dsl?: string; filters?: string; filterGroup?: string; topValues?: number }) => {
-    const q = new URLSearchParams();
-    q.set('from', String(params.from));
-    q.set('to', String(params.to));
-    if (params.dsl) q.set('dsl', params.dsl);
-    if (params.filters) q.set('filters', params.filters);
-    // filterGroup (v0.8.x gap-2) supersedes filters server-side when present.
-    if (params.filterGroup) q.set('filterGroup', params.filterGroup);
-    if (params.topValues) q.set('topValues', String(params.topValues));
-    return get<import('./types').Facet[] | null>(`/api/spans/facets?${q}`);
   },
   redisStats: () =>
     get<import('./types').RedisStats>(`/api/admin/redis-stats`),

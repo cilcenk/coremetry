@@ -2506,6 +2506,71 @@ type AggregateFilter struct {
 	Sort      string // "count"|"perMin"|"errorRate"|"avg"|"p50"|"p95"|"p99"|"max"|"name"
 	Order     string // "asc"|"desc"
 	Limit     int
+	// Having — v0.8.453 (B2-c): genel post-aggregate koşullar
+	// ("errorRate > 1 AND p95 > 500"). Yalnız compileHaving'in
+	// whitelist'inden geçer; MV fast-path'i diskalifiye ETMEZ (dış
+	// SELECT'in kolon takma adları iki yolda da aynı) — performans
+	// operatör şartı.
+	Having []HavingExpr
+}
+
+// HavingExpr — Aggregated görünümünde bir post-aggregate koşul.
+// Metric adları sort whitelist'ini aynalar; Op yalnız karşılaştırma.
+// SQL'e YALNIZ compileHaving'in kolon haritasından girer (değer her
+// zaman bind parametresi) — ham interpolasyon yok.
+type HavingExpr struct {
+	Metric string  `json:"metric"` // count|perMin|errorRate|avg|p50|p95|p99|max
+	Op     string  `json:"op"`     // > >= < <=
+	Value  float64 `json:"value"`
+}
+
+// maxHavingExprs — UI'nin makul üstü; kötü niyetli/bozuk istek
+// sınırsız koşul zinciriyle SQL şişiremesin.
+const maxHavingExprs = 8
+
+var havingCols = map[string]string{
+	"count":     "trace_count",
+	"perMin":    "per_min",
+	"errorRate": "error_rate",
+	"avg":       "avg_ms",
+	"p50":       "p50_ms",
+	"p95":       "p95_ms",
+	"p99":       "p99_ms",
+	"max":       "max_ms",
+}
+
+var havingOps = map[string]bool{">": true, ">=": true, "<": true, "<=": true}
+
+// compileHaving derler: " AND col OP ?" parçaları + bind arg'ları.
+// Bilinmeyen metric/op ve limit aşımı hatadır (HTTP katmanı 400'ler).
+// Pure — having_test.go'da tablo-testli.
+func compileHaving(hs []HavingExpr) (string, []any, error) {
+	if len(hs) == 0 {
+		return "", nil, nil
+	}
+	if len(hs) > maxHavingExprs {
+		return "", nil, fmt.Errorf("having: en fazla %d koşul (%d geldi)", maxHavingExprs, len(hs))
+	}
+	var sb strings.Builder
+	args := make([]any, 0, len(hs))
+	for _, h := range hs {
+		col, ok := havingCols[h.Metric]
+		if !ok {
+			return "", nil, fmt.Errorf("having: bilinmeyen metrik %q", h.Metric)
+		}
+		if !havingOps[h.Op] {
+			return "", nil, fmt.Errorf("having: bilinmeyen operatör %q", h.Op)
+		}
+		sb.WriteString(" AND " + col + " " + h.Op + " ?")
+		args = append(args, h.Value)
+	}
+	return sb.String(), args, nil
+}
+
+// ValidateHaving — HTTP katmanının 400 kapısı; derleyip atar.
+func ValidateHaving(hs []HavingExpr) error {
+	_, _, err := compileHaving(hs)
+	return err
 }
 
 func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]AggregateRow, error) {
@@ -2723,6 +2788,13 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		postFilter += " AND avg_ms <= ?"
 		args = append(args, f.MaxMs)
 	}
+	// v0.8.453 — genel HAVING (B2-c); whitelist derlemesi.
+	hSQL, hArgs, err := compileHaving(f.Having)
+	if err != nil {
+		return nil, err
+	}
+	postFilter += hSQL
+	args = append(args, hArgs...)
 
 	sql += `
 		GROUP BY group_key, group_extra`
@@ -2906,6 +2978,14 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 		postFilter += " AND avg_ms <= ?"
 		postArgs = append(postArgs, f.MaxMs)
 	}
+	// v0.8.453 — genel HAVING (B2-c). MV yolunun dış SELECT'i aynı
+	// kolon takma adlarını taşır; fast-path HAVING'le de hızlı kalır.
+	hSQL, hArgs, herr := compileHaving(f.Having)
+	if herr != nil {
+		return nil, herr
+	}
+	postFilter += hSQL
+	postArgs = append(postArgs, hArgs...)
 	if postFilter != "" {
 		sql += " HAVING 1=1" + postFilter
 	}

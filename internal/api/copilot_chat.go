@@ -125,6 +125,15 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// v0.8.438 — doküman RAG yolu: guided telemetri router'ı
+	// eşleşmediyse ve soru yüklü dokümanlara yeterince benziyorsa
+	// (skor tabanı) tek narration çağrısıyla kaynak atıflı cevap.
+	// Sıra bilinçli: telemetri şekilleri > dokümanlar > serbest döngü.
+	if handled, rok := s.ragChatAnswer(ctx, emit, req.Messages); handled {
+		emit("done", map[string]bool{"ok": rok})
+		return
+	}
+
 	// Build the tool set once (closures over the live store + logs)
 	// and the LLM-facing specs from the same list.
 	tools := mcptools.ToolList(mcptools.Deps{Store: s.store, LogStore: s.logs})

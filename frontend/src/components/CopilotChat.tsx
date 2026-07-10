@@ -22,6 +22,8 @@ import type { ChatMessage } from '@/lib/types';
 type Turn = ChatMessage & {
   steps?: string[]; pending?: boolean; error?: string;
   exchangeId?: string; verdict?: 1 | -1;
+  // v0.8.441 — RAG cevabının kaynak atıfları (doküman + parça).
+  sources?: import('@/lib/types').RagSource[];
 };
 
 const SAMPLE_QUESTIONS = [
@@ -104,7 +106,7 @@ export function CopilotChat() {
           // (never appends), so deltas can't double-render.
           patchLast(t => ({ ...t, text: (t.text ?? '') + e.text }));
         } else if (e.kind === 'answer') {
-          patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, pending: false }));
+          patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, sources: e.sources, pending: false }));
         } else if (e.kind === 'error') {
           patchLast(t => ({ ...t, error: e.error, pending: false }));
         } else if (e.kind === 'done') {
@@ -233,6 +235,24 @@ function ChatBubble({ turn, onRate }: { turn: Turn; onRate?: (v: 1 | -1) => void
           ? <span style={{ color: isUser ? '#fff' : 'var(--err)' }}>⚠ {turn.error}</span>
           : turn.text || (turn.pending ? <span style={{ color: 'var(--text3)' }}>thinking…</span> : '')}
       </div>
+      {/* Kaynak chip'leri (v0.8.441) — RAG cevabının dayanağı; chip
+          title'ı skoru gösterir, url kaynaklıysa sayfaya link verir. */}
+      {!isUser && !!turn.sources?.length && !turn.pending && !turn.error && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+          {turn.sources.map((src, i) => src.ref ? (
+            <a key={i} href={src.ref} target="_blank" rel="noopener"
+              className="badge b-info" style={{ textDecoration: 'none', fontSize: 10 }}
+              title={`benzerlik ${(src.score * 100).toFixed(0)}%`}>
+              📄 {src.doc} §{src.chunk}
+            </a>
+          ) : (
+            <span key={i} className="badge b-info" style={{ fontSize: 10 }}
+              title={`benzerlik ${(src.score * 100).toFixed(0)}%`}>
+              📄 {src.doc} §{src.chunk}
+            </span>
+          ))}
+        </div>
+      )}
       {/* Thumbs row (v0.8.399) — only for completed assistant answers
           that carry the server-minted exchangeId (old backends don't
           send one → row hides, rolling-deploy safe). */}

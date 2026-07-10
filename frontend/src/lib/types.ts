@@ -2933,12 +2933,40 @@ export interface ChatMessage {
 // exchangeId (v0.8.399) — server-minted correlation key for the
 // thumbs up/down feedback POST; optional for rolling-deploy safety
 // (an old backend's answer events lack it → thumbs row just hides).
+// RagSource (v0.8.438) — RAG cevabının kaynak atfı: doküman adı +
+// chunk sırası (+ url kaynağında sayfa adresi).
+export interface RagSource {
+  doc: string;
+  ref?: string;
+  chunk: number;
+  score: number;
+}
+
 export type ChatStreamEvent =
   | { kind: 'step'; tool: string; args: string }
   | { kind: 'delta'; text: string }
-  | { kind: 'answer'; text: string; exchangeId?: string }
+  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[] }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
+
+// RAG doküman katalog satırı + config görünümü (v0.8.438).
+export interface RagDocument {
+  docId: string;
+  docName: string;
+  source: string;
+  sourceRef?: string;
+  uploadedBy?: string;
+  chunks: number;
+  bytes: number;
+  updatedAt: number;
+}
+export interface RagConfigView {
+  endpoint: string;
+  model: string;
+  enabled: boolean;
+  topK?: number;
+  hasKey: boolean;
+}
 
 // Deploy impact (v0.5.189) — before/after RED + signed deltas
 // for one service.version transition. Powers the "Recent

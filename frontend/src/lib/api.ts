@@ -1042,6 +1042,26 @@ export const api = {
   // by hand). onEvent fires per `event:`/`data:` frame; the promise
   // resolves when the stream closes (the `done` event) or rejects on
   // transport error. abort via the AbortSignal.
+  // ── RAG (v0.8.438) — doküman soru-cevap yönetimi ────────────────────────
+  getRagConfig: () => get<import('./types').RagConfigView>('/api/rag/config'),
+  putRagConfig: (c: { endpoint: string; model: string; enabled: boolean; topK?: number; apiKey?: string }) =>
+    request<import('./types').RagConfigView>('/api/rag/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  listRagDocuments: () =>
+    get<{ documents: import('./types').RagDocument[]; ready: boolean }>('/api/rag/documents'),
+  uploadRagDocument: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return request<{ docId: string; chunks: number }>('/api/rag/documents', {
+      method: 'POST', body: fd,
+    });
+  },
+  deleteRagDocument: (id: string) =>
+    request<{ ok: boolean }>(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   copilotChat: async (
     messages: import('./types').ChatMessage[],
     onEvent: (e: import('./types').ChatStreamEvent) => void,

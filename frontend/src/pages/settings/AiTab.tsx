@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Spinner } from '@/components/Spinner';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { AIProvider } from '@/lib/types';
 import { IconSparkles } from '@/components/icons';
+import { Field2, FlashBox, Row } from './shared';
 
 // AITab — editable AI Copilot configuration. Admin picks a provider,
 // pastes their key, optionally sets a model, hits Save. Server stores
@@ -298,6 +299,153 @@ export function AITab() {
           </ul>
         </div>
       )}
+      <RagSection />
+    </div>
+  );
+}
+
+
+// ── RAG — doküman soru-cevap (v0.8.441) ─────────────────────────────
+// Embedding endpoint'i + doküman kataloğu. Endpoint girilmedikçe RAG
+// tamamen kapalı (chat bugünkü gibi çalışır); girilince yüklenen
+// dokümanlar chat'te kaynak atıflı cevaplara dönüşür. Wiki/URL
+// kaynağı v2'de bu panele eklenecek.
+function RagSection() {
+  const [cfg, setCfg] = useState<import('@/lib/types').RagConfigView | null | undefined>(undefined);
+  const [docs, setDocs] = useState<import('@/lib/types').RagDocument[] | null | undefined>(undefined);
+  const [apiKey, setApiKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const load = () => {
+    api.getRagConfig().then(setCfg).catch(() => setCfg(null));
+    api.listRagDocuments().then(r => setDocs(r.documents)).catch(() => setDocs(null));
+  };
+  useEffect(load, []);
+
+  if (cfg === undefined) return <div style={{ marginTop: 24 }}><Spinner /></div>;
+  if (cfg === null) return <div style={{ marginTop: 24 }}><Empty icon="📄" title="RAG ayarları yüklenemedi" /></div>;
+
+  const save = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const next = await api.putRagConfig({
+        endpoint: cfg.endpoint, model: cfg.model, enabled: cfg.enabled,
+        topK: cfg.topK, apiKey: apiKey || undefined,
+      });
+      setCfg(next); setApiKey('');
+      setMsg({ kind: 'ok', text: 'Kaydedildi.' });
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  };
+
+  const upload = async (f: File) => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.uploadRagDocument(f);
+      setMsg({ kind: 'ok', text: `${f.name}: ${r.chunks} parça indekslendi.` });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
+  };
+
+  return (
+    <div style={{ marginTop: 28, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+        Doküman soru-cevap (RAG)
+        {cfg.enabled && cfg.endpoint
+          ? <span className="badge b-ok" style={{ marginLeft: 8 }}>aktif</span>
+          : <span className="badge b-gray" style={{ marginLeft: 8 }}>kapalı</span>}
+      </h2>
+      <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 12 }}>
+        Runbook / prosedür / mimari dokümanlarını yükle; Copilot chat sorulara bu
+        dokümanlardan <b>kaynak atıflı</b> cevap versin. OpenAI-uyumlu bir
+        <code> /v1/embeddings</code> endpoint'i gerekir (vLLM/KServe'de bge-m3 önerilir).
+      </p>
+
+      <Row>
+        <Field2 label="Embedding endpoint" hint="ör. http://bge-m3.ai.svc:8000/v1">
+          <input value={cfg.endpoint} onChange={e => setCfg({ ...cfg, endpoint: e.target.value })}
+                 placeholder="http://…/v1" style={{ width: '100%' }} />
+        </Field2>
+        <Field2 label="Model" small hint="ör. BAAI/bge-m3">
+          <input value={cfg.model} onChange={e => setCfg({ ...cfg, model: e.target.value })}
+                 style={{ width: '100%' }} />
+        </Field2>
+        <Field2 label="Top-K" small hint="cevaba girecek parça sayısı (1-20)">
+          <input type="number" min={1} max={20} value={cfg.topK ?? 5}
+                 onChange={e => setCfg({ ...cfg, topK: Number(e.target.value) })}
+                 style={{ width: '100%' }} />
+        </Field2>
+      </Row>
+      <Row>
+        <Field2 label="API key (opsiyonel)" small
+          hint={cfg.hasKey ? 'kayıtlı — boş bırakırsan korunur' : 'endpoint auth istemiyorsa boş bırak'}>
+          <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+                 placeholder={cfg.hasKey ? '********' : ''} style={{ width: '100%' }} />
+        </Field2>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 18 }}>
+          <input type="checkbox" checked={cfg.enabled}
+                 onChange={e => setCfg({ ...cfg, enabled: e.target.checked })} />
+          RAG aktif
+        </label>
+        <Button onClick={() => { void save(); }} disabled={busy} style={{ marginTop: 12 }}>
+          {busy ? 'Kaydediliyor…' : 'Kaydet'}
+        </Button>
+      </Row>
+
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Dokümanlar</h3>
+        <input ref={fileRef} type="file" accept=".md,.txt" style={{ display: 'none' }}
+               onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
+        <Button variant="secondary" size="sm" type="button"
+          disabled={busy || !cfg.enabled || !cfg.endpoint}
+          title={!cfg.endpoint ? 'Önce embedding endpoint girip kaydet' : 'md / txt yükle (≤5MB)'}
+          onClick={() => fileRef.current?.click()}>
+          ⬆ Doküman yükle
+        </Button>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          Wiki/URL kaynağı bir sonraki sürümde bu panele eklenecek.
+        </span>
+      </div>
+
+      {docs === undefined && <Spinner />}
+      {docs === null && <Empty icon="📄" title="Doküman listesi yüklenemedi" />}
+      {docs && docs.length === 0 && (
+        <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>Henüz doküman yok.</p>
+      )}
+      {docs && docs.length > 0 && (
+        <div className="table-wrap" style={{ marginTop: 8 }}>
+          <table>
+            <thead><tr><th>Doküman</th><th>Kaynak</th><th>Parça</th><th>Boyut</th><th>Yükleyen</th><th></th></tr></thead>
+            <tbody>
+              {docs.map(d => (
+                <tr key={d.docId}>
+                  <td className="mono" style={{ fontSize: 12 }}>{d.docName}</td>
+                  <td><span className="badge b-gray">{d.source}</span></td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{d.chunks}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{(d.bytes / 1024).toFixed(1)} KB</td>
+                  <td style={{ fontSize: 11, color: 'var(--text2)' }}>{d.uploadedBy || '—'}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Button variant="danger" size="sm" type="button" disabled={busy}
+                      onClick={async () => {
+                        if (!confirm(`${d.docName} silinsin mi?`)) return;
+                        try { await api.deleteRagDocument(d.docId); load(); }
+                        catch (e) { setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) }); }
+                      }}>
+                      Sil
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
     </div>
   );
 }

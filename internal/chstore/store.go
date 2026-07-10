@@ -567,6 +567,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
 
+		// RAG chunk deposu (v0.8.438) — doküman soru-cevap. DDL
+		// rag.go'da (ragChunksDDL) yaşar; içerik + embedding tek
+		// tabloda, ReplacingMergeTree(version) ile senkron diff'i
+		// bedava. saved_views istisnasının savunması rag.go başında.
+		ragChunksDDL,
 		// Service catalog metadata — operator-curated per-service
 		// info (owner team, oncall channel, runbook URL, repo,
 		// description) that the spans table doesn't carry. Joins

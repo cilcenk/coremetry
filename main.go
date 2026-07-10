@@ -29,6 +29,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/correlator"
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/evaluator"
@@ -791,6 +792,10 @@ func main() {
 	// (saved via Settings → AI Copilot) win on top. Configured() returns
 	// false when no key is set; the UI hides the buttons in that case.
 	copilotSvc := copilot.New(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model)
+
+	// ── RAG (v0.8.438) — doküman soru-cevap; embedding endpoint'i
+	// Settings → AI'dan girilene dek sessizce kapalı. ──────────────
+	ragSvc := rag.New()
 	// BaseURL is provider-specific (only "openai" reads it). Apply
 	// the env-default before LoadPersisted so runtime overrides
 	// from /api/settings/ai still win on top.
@@ -802,6 +807,10 @@ func main() {
 	// who disabled AI in Settings stays disabled across a restart.
 	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL, false, true)
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
+	if err := ragSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[rag] load persisted: %v", err)
+	}
+	go ragSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
 	go copilotSvc.StartConfigRefresh(ctx, store, 30*time.Second)
@@ -882,6 +891,8 @@ func main() {
 	log.Printf("[cluster] pod id %s", clusterSvc.MyID())
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
+	srv.SetRAG(ragSvc)
+
 	// v0.8.346 (HA audit H6) — the role guard the old comment only claimed:
 	// OTLP HTTP routes 501 off the ingest role (a collector mis-pointed at
 	// an api pod used to get its Exports 200-OK'd into channels nobody

@@ -36,6 +36,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/notify"
+	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
 	"github.com/cilcenk/coremetry/internal/config"
@@ -106,6 +107,9 @@ type Server struct {
 	stats       *cacheStats
 	notify      *notify.Notifier
 	copilot     *copilot.Service  // nil when AI key not configured
+	// rag — doküman RAG servisi (v0.8.438). SetRAG ile bağlanır;
+	// nil / yapılandırılmamışken tüm RAG yolları sessizce kapalı.
+	rag         *rag.Service
 	bus         *sse.Broker       // in-process SSE pub/sub for live UI updates
 	// tempo is the external Tempo backend (v0.5.208). When
 	// configured, getTrace falls back to Tempo on a CH miss so
@@ -254,6 +258,9 @@ type rateSample struct {
 	at    time.Time
 	count int64
 }
+
+// SetRAG bağlar (v0.8.438) — cluster.Set deseninde opsiyonel bağımlılık.
+func (s *Server) SetRAG(r *rag.Service) { s.rag = r }
 
 func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, ldapSvc *ldap.Service, c cache.Cache, n *notify.Notifier, cop *copilot.Service, bus *sse.Broker) *Server {
 	return &Server{
@@ -592,7 +599,8 @@ func (s *Server) Start() error {
 	// (writes no state; same posture as /api/correlations, /api/problems). Pure
 	// orchestration over existing reads — no new CH query.
 	mux.HandleFunc("GET /api/correlate/context", s.getCorrelationContext)
-	s.registerPivotRoutes(mux) // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
+	s.registerPivotRoutes(mux)
+	s.registerRAGRoutes(mux) // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
 	s.registerEndpointsDetailRoutes(mux) // v0.8.360 — /endpoints detail drill-down (histogram / status / exceptions / failing traces / split), endpoints_detail.go
 	s.registerDBStmtDetailRoutes(mux)    // v0.8.378 — /slow-queries statement drill-down (trend / callers / exemplars / compare), dbstmt_detail.go
 	s.registerDBWaitLockRoutes(mux)      // v0.8.391 — cross-engine waits & locks strip on the /databases drawer (Stage-2 D3), db_waitlock.go

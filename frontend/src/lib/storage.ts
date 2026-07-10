@@ -30,6 +30,7 @@ export const STORAGE_KEYS = {
   spanPanelWidth:   'coremetry-span-panel-w',
   exploreHistory:   'coremetry-explore-history',
   sqlBackend:       'coremetry-sql-backend',
+  topoViewMode:     'coremetry-topo-view', // v0.8.467 — structure|flow kalıcı tercihi
   finopsCostPerTbMo: 'coremetry.finops.costPerTbMo',
   inboxPrio:        'inbox.prio',
   inboxKind:        'inbox.kind',

@@ -6345,6 +6345,12 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 			"fullName": u.FullName,
 			"org":      u.Org,
 		}
+		// v0.8.452 — kalıcı son login (v0.8.450 kolonu); 0 = hiç.
+		// listUsers el yapımı map kurduğundan struct alanı buraya
+		// AYRICA eklenmeli — v450'de unutuldu, kolon hep "—" kaldı.
+		if u.LastLoginAt > 0 {
+			row["lastLoginAt"] = u.LastLoginAt
+		}
 		// v0.8.403 — presence: online = authenticated API activity in
 		// the last 5 minutes. lastSeenAt (unix ns) only while a stamp
 		// is live (TTL = online window); absent = never/unknown.

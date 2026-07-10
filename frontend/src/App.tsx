@@ -33,6 +33,7 @@ const Runbooks          = lazy(() => import('./pages/Runbooks'));
 const Runbook           = lazy(() => import('./pages/Runbook'));
 const RunbookExecution  = lazy(() => import('./pages/RunbookExecution'));
 const Databases         = lazy(() => import('./pages/Databases'));
+const External          = lazy(() => import('./pages/External'));
 const SlowQueries       = lazy(() => import('./pages/SlowQueries'));
 const Messaging         = lazy(() => import('./pages/Messaging'));
 const Dashboards        = lazy(() => import('./pages/Dashboards'));
@@ -116,6 +117,7 @@ export default function App() {
             <Route path="/runbook-exec"  element={<RunbookExecution />} />
             <Route path="/databases"      element={<Databases />} />
             <Route path="/databases/slow-queries" element={<SlowQueries />} />
+            <Route path="/external"       element={<External />} />
             <Route path="/messaging"      element={<Messaging />} />
             <Route path="/dashboards"     element={<Dashboards />} />
             <Route path="/dashboard"      element={<Dashboard />} />

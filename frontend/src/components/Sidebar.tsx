@@ -70,6 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
       { href: '/databases',   label: 'nav.databases',  icon: Database },
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
+      { href: '/external',    label: 'nav.external',   icon: Globe }, // v0.8.446 — Wave 3 / A1
     ],
   },
   {

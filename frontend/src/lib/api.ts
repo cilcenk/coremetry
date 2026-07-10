@@ -778,6 +778,16 @@ export const api = {
   messaging: (fromNs: number, toNs: number, compare?: 'prior') =>
     get<import('./types').MessagingInstance[] | null>(
       `/api/messaging?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
+  // /external overview — one row per third-party destination in the
+  // window, from topology_edges_5m external edges (v0.8.446, Wave 3 A1).
+  external: (fromNs: number, toNs: number) =>
+    get<import('./types').ExternalHost[] | null>(
+      `/api/external?from=${fromNs}&to=${toNs}`),
+  // Drawer payload for one external host — per-caller breakdown +
+  // 5m RED trend. Fetched on drawer open only.
+  externalHost: (host: string, fromNs: number, toNs: number) =>
+    get<import('./types').ExternalHostDetail | null>(
+      `/api/external/host?host=${encodeURIComponent(host)}&from=${fromNs}&to=${toNs}`),
   // Detail drawers — per-(service, pod) caller breakdown + top
   // operations for one (system, instance) tuple. Drives the
   // row-click drawer on /databases and /messaging.

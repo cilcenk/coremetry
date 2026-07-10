@@ -605,6 +605,7 @@ func (s *Server) Start() error {
 	s.registerEndpointsDetailRoutes(mux) // v0.8.360 — /endpoints detail drill-down (histogram / status / exceptions / failing traces / split), endpoints_detail.go
 	s.registerDBStmtDetailRoutes(mux)    // v0.8.378 — /slow-queries statement drill-down (trend / callers / exemplars / compare), dbstmt_detail.go
 	s.registerDBWaitLockRoutes(mux)      // v0.8.391 — cross-engine waits & locks strip on the /databases drawer (Stage-2 D3), db_waitlock.go
+	s.registerExternalRoutes(mux)        // v0.8.446 — /external third-party API inventory from topology_edges_5m (Wave 3 / A1), external.go
 	mux.HandleFunc("GET /api/spans/heatmap", s.spanHeatmap)
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)

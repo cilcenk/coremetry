@@ -10,8 +10,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/auth"
+	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/rag"
@@ -40,13 +42,22 @@ func (s *Server) registerRAGRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET    /api/rag/documents", s.listRAGDocuments)
 	mux.HandleFunc("POST   /api/rag/documents", auth.RequireAnyRole(editorRoles, s.uploadRAGDocument))
 	mux.HandleFunc("DELETE /api/rag/documents/{id}", auth.RequireAnyRole(editorRoles, s.deleteRAGDocument))
+	mux.HandleFunc("POST   /api/rag/sync", auth.RequireAnyRole(editorRoles, s.syncRAGSources))
 }
 
 // maskedRAGConfig — APIKey asla geri dönmez (secrets kuralı).
 func maskedRAGConfig(c rag.Config) map[string]any {
+	srcs := make([]map[string]string, 0, len(c.Sources))
+	for _, sc := range c.Sources {
+		m := map[string]string{"url": sc.URL}
+		if sc.AuthHeader != "" {
+			m["authHeader"] = "********" // asla geri echo edilmez
+		}
+		srcs = append(srcs, m)
+	}
 	return map[string]any{
 		"endpoint": c.Endpoint, "model": c.Model, "enabled": c.Enabled,
-		"topK": c.TopK, "hasKey": c.APIKey != "",
+		"topK": c.TopK, "hasKey": c.APIKey != "", "sources": srcs,
 	}
 }
 
@@ -60,9 +71,23 @@ func (s *Server) putRAGConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	// Boş / sentinel key = mevcut korunur (SMTP deseni).
+	// Boş / sentinel key = mevcut korunur (SMTP deseni). Kaynak auth
+	// header'ları da aynı sözleşme: "********" gelen kaynak, mevcut
+	// config'te aynı URL varsa onun header'ını devralır.
+	cur := s.rag.Snapshot()
 	if body.APIKey == "" || body.APIKey == "********" {
-		body.APIKey = s.rag.Snapshot().APIKey
+		body.APIKey = cur.APIKey
+	}
+	for i, src := range body.Sources {
+		if src.AuthHeader == "********" {
+			body.Sources[i].AuthHeader = ""
+			for _, old := range cur.Sources {
+				if old.URL == src.URL {
+					body.Sources[i].AuthHeader = old.AuthHeader
+					break
+				}
+			}
+		}
 	}
 	if err := s.rag.SavePersisted(r.Context(), s.store, body); err != nil {
 		writeErr(w, err)
@@ -70,7 +95,7 @@ func (s *Server) putRAGConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	details, _ := json.Marshal(map[string]any{
 		"endpoint": body.Endpoint, "model": body.Model,
-		"enabled": body.Enabled, "topK": body.TopK,
+		"enabled": body.Enabled, "topK": body.TopK, "sources": len(body.Sources),
 	})
 	s.audit(r, "settings.rag.update", "settings", "rag_embedding", string(details))
 	writeJSON(w, maskedRAGConfig(body))
@@ -125,6 +150,10 @@ func (s *Server) uploadRAGDocument(w http.ResponseWriter, r *http.Request) {
 // ragIngestDocument — chunk → embed → replace. Crawler (v2) da aynı
 // yolu kullanır; source/sourceRef ayrımı buradan geçer.
 func (s *Server) ragIngestDocument(ctx context.Context, docID, name, source, sourceRef, uploadedBy, text string) (int, error) {
+	return s.ragIngestDocumentHashed(ctx, docID, name, source, sourceRef, uploadedBy, text, "")
+}
+
+func (s *Server) ragIngestDocumentHashed(ctx context.Context, docID, name, source, sourceRef, uploadedBy, text, srcHash string) (int, error) {
 	pieces := rag.ChunkText(text)
 	if len(pieces) == 0 {
 		return 0, fmt.Errorf("dokümandan metin çıkarılamadı")
@@ -138,7 +167,7 @@ func (s *Server) ragIngestDocument(ctx context.Context, docID, name, source, sou
 		chunks[i] = chstore.RagChunk{
 			DocID: docID, DocName: name, Source: source, SourceRef: sourceRef,
 			UploadedBy: uploadedBy, ChunkIdx: uint32(i),
-			Content: pieces[i], Embedding: embs[i],
+			Content: pieces[i], Embedding: embs[i], SourceHash: srcHash,
 		}
 	}
 	if err := s.store.ReplaceDocumentChunks(ctx, chunks); err != nil {
@@ -257,4 +286,111 @@ func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs
 		"sources":    sources,
 	})
 	return true, true
+}
+
+// ── URL/wiki senkronu (v0.8.442) ────────────────────────────────────
+
+// syncRAGSources — POST /api/rag/sync: yapılandırılmış tüm URL
+// kaynaklarını bir kez tarar. Manuel buton + 30 dk'lık leader-gated
+// tick aynı yolu kullanır. Sonuç özetini döner; audit'li.
+func (s *Server) syncRAGSources(w http.ResponseWriter, r *http.Request) {
+	if !s.rag.Ready() {
+		http.Error(w, "embedding endpoint yapılandırılmamış", http.StatusServiceUnavailable)
+		return
+	}
+	res := s.ragSyncPass(r.Context())
+	b, _ := json.Marshal(res)
+	s.audit(r, "rag.sync", "rag_sources", "manual", string(b))
+	writeJSON(w, res)
+}
+
+type ragSyncResult struct {
+	Sources int      `json:"sources"`
+	Pages   int      `json:"pages"`
+	Indexed int      `json:"indexed"` // yeni/değişen (yeniden embed edilen)
+	Skipped int      `json:"skipped"` // hash değişmemiş
+	Pruned  int      `json:"pruned"`  // kaynakta artık olmayan
+	Errors  []string `json:"errors,omitempty"`
+}
+
+// ragSyncPass — tek senkron geçişi. Hash-diff: sayfa içeriğinin
+// sha256'sı mevcut dokümanın source_hash'iyle aynıysa embedding
+// çağrısı hiç yapılmaz (maliyet kontrolünün kalbi). Kaybolan sayfalar
+// (bu geçişte görülmeyen, aynı kaynak prefix'li url dokümanları)
+// budanır.
+func (s *Server) ragSyncPass(ctx context.Context) ragSyncResult {
+	cfg := s.rag.Snapshot()
+	res := ragSyncResult{Sources: len(cfg.Sources)}
+	if len(cfg.Sources) == 0 {
+		return res
+	}
+	existing := map[string]chstore.RagDocument{}
+	if docs, err := s.store.ListRagDocuments(ctx); err == nil {
+		for _, d := range docs {
+			if d.Source == "url" {
+				existing[d.DocID] = d
+			}
+		}
+	}
+	httpc := &http.Client{Timeout: 20 * time.Second}
+	seen := map[string]bool{}
+	for _, src := range cfg.Sources {
+		pages, err := rag.Crawl(ctx, httpc, src)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", src.URL, err))
+		}
+		res.Pages += len(pages)
+		for _, pg := range pages {
+			docID := ragDocID(pg.URL)
+			seen[docID] = true
+			if old, ok := existing[docID]; ok && old.SourceHash == pg.Hash {
+				res.Skipped++
+				continue
+			}
+			if _, err := s.ragIngestDocumentHashed(ctx, docID, pg.Title, "url", pg.URL, "wiki-sync", pg.Text, pg.Hash); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", pg.URL, err))
+				continue
+			}
+			res.Indexed++
+		}
+	}
+	// Budama: url kaynaklı olup bu geçişte görülmeyenler. Kaynak listesi
+	// boşaltıldıysa budama YAPILMAZ (operatör kaynağı kaldırdı diye tüm
+	// indeksin silinmesi sürpriz olur — dokümanlar panelden silinebilir).
+	if res.Pages > 0 {
+		for id := range existing {
+			if !seen[id] {
+				if err := s.store.DeleteRagDocument(ctx, id); err == nil {
+					res.Pruned++
+				}
+			}
+		}
+	}
+	log.Printf("[rag-sync] sources=%d pages=%d indexed=%d skipped=%d pruned=%d errs=%d",
+		res.Sources, res.Pages, res.Indexed, res.Skipped, res.Pruned, len(res.Errors))
+	return res
+}
+
+// StartRAGSync — 30 dk'lık leader-gated arka plan senkronu (deriver
+// deseni). api rolündeki pod'larda main.go'dan başlatılır.
+func (s *Server) StartRAGSync(ctx context.Context, lock cache.Lock) {
+	const interval = 30 * time.Minute
+	leader := cache.NewLeaderHolder(lock, "coremetry:lock:rag-sync", cache.LeaderTTL(interval))
+	leader.Start(ctx)
+	tick := func() {
+		if !leader.IsLeader() || !s.rag.Ready() || len(s.rag.Snapshot().Sources) == 0 {
+			return
+		}
+		s.ragSyncPass(ctx)
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			tick()
+		}
+	}
 }

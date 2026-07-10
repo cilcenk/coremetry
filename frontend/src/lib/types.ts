@@ -2966,6 +2966,8 @@ export interface RagConfigView {
   enabled: boolean;
   topK?: number;
   hasKey: boolean;
+  // v0.8.442 — wiki/URL kaynakları (authHeader asla geri dönmez).
+  sources?: { url: string; authHeader?: string }[];
 }
 
 // Deploy impact (v0.5.189) — before/after RED + signed deltas

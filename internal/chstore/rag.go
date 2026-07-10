@@ -17,6 +17,9 @@ import (
 // version'la değiştirir — diff mantığı bedava. Hacim düşük (yüzlerce
 // doküman × onlarca chunk), FINAL okumaları bütçe içinde.
 type RagChunk struct {
+	// SourceHash (v0.8.442) — url kaynağında sayfa içeriğinin sha256'sı;
+	// senkron diff'i "hash değişmediyse yeniden embed etme" bununla yapar.
+	SourceHash string `json:"-"`
 	DocID      string            `json:"docId"`
 	DocName    string            `json:"docName"`
 	Source     string            `json:"source"` // upload | url
@@ -37,6 +40,7 @@ type RagDocument struct {
 	Chunks     uint64 `json:"chunks"`
 	Bytes      uint64 `json:"bytes"`
 	UpdatedAt  int64  `json:"updatedAt"` // unix ns
+	SourceHash string `json:"-"`
 }
 
 // RagHit — retrieval sonucu: chunk + benzerlik skoru.
@@ -55,6 +59,7 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
     chunk_idx   UInt32,
     content     String CODEC(ZSTD(3)),
     embedding   Array(Float32),
+    source_hash String DEFAULT '',
     updated_at  DateTime64(9) DEFAULT now64(9),
     version     UInt64
 ) ENGINE = ReplacingMergeTree(version)
@@ -70,14 +75,14 @@ func (s *Store) ReplaceDocumentChunks(ctx context.Context, chunks []RagChunk) er
 	version := uint64(time.Now().UnixNano())
 	ctx2 := asyncInsertCtx(ctx)
 	batch, err := s.conn.PrepareBatch(ctx2, `INSERT INTO rag_chunks
-		(doc_id, doc_name, source, source_ref, uploaded_by, chunk_idx, content, embedding, updated_at, version)`)
+		(doc_id, doc_name, source, source_ref, uploaded_by, chunk_idx, content, embedding, source_hash, updated_at, version)`)
 	if err != nil {
 		return err
 	}
 	now := time.Now()
 	for _, c := range chunks {
 		if err := batch.Append(c.DocID, c.DocName, c.Source, c.SourceRef, c.UploadedBy,
-			c.ChunkIdx, c.Content, c.Embedding, now.UTC(), version); err != nil {
+			c.ChunkIdx, c.Content, c.Embedding, c.SourceHash, now.UTC(), version); err != nil {
 			return err
 		}
 	}
@@ -102,7 +107,7 @@ func (s *Store) ListRagDocuments(ctx context.Context) ([]RagDocument, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT doc_id, anyLast(doc_name), anyLast(source), anyLast(source_ref),
 		       anyLast(uploaded_by), count() AS chunks, sum(length(content)) AS bytes,
-		       toUnixTimestamp64Nano(max(updated_at))
+		       toUnixTimestamp64Nano(max(updated_at)), anyLast(source_hash)
 		FROM rag_chunks FINAL
 		GROUP BY doc_id
 		ORDER BY doc_id
@@ -116,7 +121,7 @@ func (s *Store) ListRagDocuments(ctx context.Context) ([]RagDocument, error) {
 	for rows.Next() {
 		var d RagDocument
 		if err := rows.Scan(&d.DocID, &d.DocName, &d.Source, &d.SourceRef,
-			&d.UploadedBy, &d.Chunks, &d.Bytes, &d.UpdatedAt); err != nil {
+			&d.UploadedBy, &d.Chunks, &d.Bytes, &d.UpdatedAt, &d.SourceHash); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

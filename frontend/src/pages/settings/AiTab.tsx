@@ -314,12 +314,17 @@ function RagSection() {
   const [cfg, setCfg] = useState<import('@/lib/types').RagConfigView | null | undefined>(undefined);
   const [docs, setDocs] = useState<import('@/lib/types').RagDocument[] | null | undefined>(undefined);
   const [apiKey, setApiKey] = useState('');
+  const [sourcesText, setSourcesText] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
-    api.getRagConfig().then(setCfg).catch(() => setCfg(null));
+    api.getRagConfig().then(c => {
+      setCfg(c);
+      setSourcesText((c.sources ?? []).map(s0 =>
+        s0.authHeader ? `${s0.url} | ${s0.authHeader}` : s0.url).join('\n'));
+    }).catch(() => setCfg(null));
     api.listRagDocuments().then(r => setDocs(r.documents)).catch(() => setDocs(null));
   };
   useEffect(load, []);
@@ -330,9 +335,15 @@ function RagSection() {
   const save = async () => {
     setBusy(true); setMsg(null);
     try {
+      const sources = sourcesText.split('\n')
+        .map(l => l.trim()).filter(Boolean)
+        .map(l => {
+          const [url, hdr] = l.split('|').map(x => x.trim());
+          return hdr ? { url, authHeader: hdr } : { url };
+        });
       const next = await api.putRagConfig({
         endpoint: cfg.endpoint, model: cfg.model, enabled: cfg.enabled,
-        topK: cfg.topK, apiKey: apiKey || undefined,
+        topK: cfg.topK, apiKey: apiKey || undefined, sources,
       });
       setCfg(next); setApiKey('');
       setMsg({ kind: 'ok', text: 'Kaydedildi.' });
@@ -396,6 +407,42 @@ function RagSection() {
           {busy ? 'Kaydediliyor…' : 'Kaydet'}
         </Button>
       </Row>
+
+      {/* Wiki / URL kaynakları (v0.8.442) — satır başına bir adres;
+          auth gerekiyorsa "url | Header-Adı: değer". Kayıtlı header
+          '********' görünür ve değiştirilmezse korunur. */}
+      <div style={{ marginTop: 16 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 6px' }}>Wiki / URL kaynakları</h3>
+        <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '0 0 6px' }}>
+          Satır başına bir adres (ör. <code>https://wiki.local/display/OPS</code>) —
+          aynı host + path altındaki sayfalar taranır (≤200 sayfa, derinlik 3),
+          30 dk'da bir otomatik senkron, değişmeyen sayfa yeniden indekslenmez.
+        </p>
+        <textarea value={sourcesText} onChange={e => setSourcesText(e.target.value)}
+          rows={3} placeholder="https://wiki.banka.local/ops" spellCheck={false}
+          style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
+          <Button variant="secondary" size="sm" type="button" disabled={busy}
+            onClick={() => { void save(); }}>
+            Kaynakları kaydet
+          </Button>
+          <Button variant="secondary" size="sm" type="button"
+            disabled={busy || !cfg.enabled || !cfg.endpoint}
+            title={!cfg.endpoint ? 'Önce embedding endpoint girip kaydet' : 'Tüm kaynakları şimdi tara'}
+            onClick={async () => {
+              setBusy(true); setMsg(null);
+              try {
+                const r = await api.syncRagSources();
+                setMsg({ kind: 'ok', text: `Senkron: ${r.pages} sayfa · ${r.indexed} indekslendi · ${r.skipped} değişmemiş · ${r.pruned} silindi${r.errors?.length ? ` · ${r.errors.length} hata` : ''}` });
+                load();
+              } catch (e) {
+                setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+              } finally { setBusy(false); }
+            }}>
+            ⟳ Şimdi senkronize et
+          </Button>
+        </div>
+      </div>
 
       <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
         <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Dokümanlar</h3>

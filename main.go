@@ -892,6 +892,8 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetRAG(ragSvc)
+	// v0.8.442 — wiki/URL kaynaklarının 30 dk'lık leader-gated senkronu.
+	go srv.StartRAGSync(ctx, lockImpl)
 
 	// v0.8.346 (HA audit H6) — the role guard the old comment only claimed:
 	// OTLP HTTP routes 501 off the ingest role (a collector mis-pointed at

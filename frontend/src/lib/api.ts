@@ -1044,7 +1044,8 @@ export const api = {
   // transport error. abort via the AbortSignal.
   // ── RAG (v0.8.438) — doküman soru-cevap yönetimi ────────────────────────
   getRagConfig: () => get<import('./types').RagConfigView>('/api/rag/config'),
-  putRagConfig: (c: { endpoint: string; model: string; enabled: boolean; topK?: number; apiKey?: string }) =>
+  putRagConfig: (c: { endpoint: string; model: string; enabled: boolean; topK?: number; apiKey?: string;
+    sources?: { url: string; authHeader?: string }[] }) =>
     request<import('./types').RagConfigView>('/api/rag/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1059,6 +1060,9 @@ export const api = {
       method: 'POST', body: fd,
     });
   },
+  syncRagSources: () =>
+    request<{ sources: number; pages: number; indexed: number; skipped: number; pruned: number; errors?: string[] }>(
+      '/api/rag/sync', { method: 'POST' }),
   deleteRagDocument: (id: string) =>
     request<{ ok: boolean }>(`/api/rag/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 

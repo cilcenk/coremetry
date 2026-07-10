@@ -31,6 +31,9 @@ type Config struct {
 	APIKey   string `json:"apiKey,omitempty"`  // opsiyonel — asla geri echo edilmez
 	Enabled  bool   `json:"enabled"`
 	TopK     int    `json:"topK,omitempty"`    // 0 → 5
+	// Sources (v0.8.442) — wiki/URL kaynakları; 30 dk'lık senkron
+	// tick'i her kaynağı sınırlı crawl edip hash-diff'le indeksler.
+	Sources []CrawlSource `json:"sources,omitempty"`
 }
 
 // SettingsStore — chstore'un ihtiyaç duyulan dilimi (copilot.SettingsStore

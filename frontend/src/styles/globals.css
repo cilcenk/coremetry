@@ -1690,6 +1690,13 @@ canvas { max-width: 100%; }
 /* v0.8.437 — namespace hull etiketi (flow-graph d, Varyant A). Dekoratif;
    viewport transform'uyla birlikte ölçeklenir. */
 .topo-hull-label { position: absolute; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; opacity: .75; pointer-events: none; }
+/* v0.8.447 — Varyant C: tıklanabilir namespace kutu başlığı (katlar) +
+   katlı grubun süper-düğüm pill'i. Başlık pan istisnasında (.topo-nshdr). */
+.topo-nshdr { position: absolute; z-index: 3; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; padding: 1px 8px; background: var(--bg1); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; user-select: none; white-space: nowrap; }
+.topo-nshdr:hover { border-color: var(--accent); }
+.topo-nshdr .caret { opacity: .6; font-size: 9px; }
+.topo-nsnode { border-width: 1.5px; background: var(--bg2); }
+.topo-nsnode .topo-name { text-transform: uppercase; letter-spacing: .3px; font-weight: 700; }
 .topo-envchip { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 8.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--accent); background: var(--accent-bg); border: 1px solid var(--border); border-radius: 3px; vertical-align: 1px; }
 .topo-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .topo-dot.green { background: var(--ok); }

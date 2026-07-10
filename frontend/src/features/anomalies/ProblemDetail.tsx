@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
+import { ArrowLeft, ArrowDownToLine, Link2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtFixed, fmtNum } from '@/lib/utils';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
@@ -35,6 +35,25 @@ const STATE_LABEL: Record<ExceptionGroupState, string> = {
 const STATE_BADGE: Record<ExceptionGroupState, string> = {
   new: 'b-err', regressed: 'b-err', acknowledged: 'b-warn', resolved: 'b-ok', ignored: 'b-gray',
 };
+
+// ShareButton — copies the current address-bar URL to the clipboard.
+// The URL is already the canonical shareable link (both detail views
+// keep ?problem=<id> / ?exc=<fingerprint> in sync via problemLink.ts),
+// so this is just a one-click affordance on top of "copy from the
+// address bar" for an operator who wants to paste it into Slack.
+function ShareButton() {
+  const [copied, setCopied] = useState(false);
+  const share = () => {
+    navigator.clipboard?.writeText(window.location.href)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+  };
+  return (
+    <Button variant="secondary" size="sm" onClick={share}
+      leftIcon={<Link2 size={13} strokeWidth={1.75} />}>
+      {copied ? 'Copied' : 'Share'}
+    </Button>
+  );
+}
 
 // Esc = back — same muscle memory the old drawer had.
 function useEscBack(onBack: () => void) {
@@ -178,6 +197,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           Started {fmtStartedTs(group.firstSeen)} · {fmtDurationNs(group.lastSeen - group.firstSeen)}
         </span>
         <span className="spacer" />
+        <ShareButton />
         {isAdmin && (state === 'new' || state === 'regressed' || state === 'acknowledged') && (
           <>
             {state !== 'acknowledged' && <button className="sec" onClick={() => act('acknowledged')}>Acknowledge</button>}
@@ -350,6 +370,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
           {problem.status !== 'resolved' ? ' · ongoing' : ''}
         </span>
         <span className="spacer" />
+        <ShareButton />
         {isAdmin && problem.status === 'open' && (
           <Button variant="secondary" size="sm" onClick={() => { void ack(); }} disabled={acking}>
             {acking ? 'Acknowledging…' : 'Acknowledge'}

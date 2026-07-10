@@ -993,6 +993,10 @@ export interface LDAPConfig {
   // v0.8.430 — users.team kaynağı: '' = department→ou; 'dn-ou' = DN'deki
   // en derin OU; başka değer = o attribute (legacy zincir fallback).
   teamAttribute?: string;
+  // v0.8.434 — kaynak değerden ekip çıkarımı: ilk yakalama grubu ekip
+  // olur (ör. displayName "…ÜNVAN-Ekip" için `-([^-]+)$`); eşleşme
+  // yoksa ekip BOŞ kalır (kompozit sızmaz), geçersiz desen yok sayılır.
+  teamRegex?: string;
   groupSearchBase: string;
   groupFilter: string;
   // Workaround toggle for AD's MaxValRange / MaxReceiveBuffer

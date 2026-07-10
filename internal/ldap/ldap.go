@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,16 @@ type Config struct {
 	// other value is read as a literal attribute name with the legacy
 	// chain as fallback.
 	TeamAttribute string `json:"teamAttribute"`
+	// TeamRegex (v0.8.434) — optional extraction on the RESOLVED team
+	// source value, for directories that embed the sub-team inside a
+	// composite attribute (operator's AD: displayName carries
+	// "Ad Soyad (Bölüm) * ÜNVAN-Ekip" — TeamAttribute=displayName +
+	// TeamRegex `-([^-]+)$` yields "Ekip"). First capture group wins
+	// (whole match when the pattern has no group). NO match → team
+	// stays EMPTY on purpose: the raw composite leaking into
+	// users.team was the reported bug. Invalid pattern → ignored
+	// (raw value passes through) and logged once at Configure.
+	TeamRegex string `json:"teamRegex"`
 
 	// Group lookup
 	GroupSearchBase string `json:"groupSearchBase"`
@@ -258,19 +269,46 @@ func deepestOU(dn string) string {
 }
 
 // teamFor resolves the users.team value for a directory entry per the
-// TeamAttribute config (v0.8.430) — see the Config field comment.
+// TeamAttribute config (v0.8.430) — see the Config field comment —
+// then applies the optional TeamRegex extraction (v0.8.434).
 func teamFor(e *goldap.Entry, c Config) string {
+	var raw string
 	switch attr := strings.TrimSpace(c.TeamAttribute); attr {
 	case "":
-		return dirText(e, "department", "ou")
+		raw = dirText(e, "department", "ou")
 	case "dn-ou":
-		if t := deepestOU(e.DN); t != "" {
-			return t
+		raw = deepestOU(e.DN)
+		if raw == "" {
+			raw = dirText(e, "department", "ou")
 		}
-		return dirText(e, "department", "ou")
 	default:
-		return dirText(e, attr, "department", "ou")
+		raw = dirText(e, attr, "department", "ou")
 	}
+	return applyTeamRegex(raw, c.TeamRegex)
+}
+
+// applyTeamRegex — the pure v0.8.434 extraction half of teamFor. Empty
+// pattern or empty input pass through; a match yields the first capture
+// group (whole match without groups); NO match yields "" — see the
+// Config.TeamRegex comment for why not-raw. An invalid pattern is
+// treated as unset (Configure logs it once).
+func applyTeamRegex(raw, pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || raw == "" {
+		return raw
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return raw
+	}
+	m := re.FindStringSubmatch(raw)
+	if m == nil {
+		return ""
+	}
+	if len(m) > 1 {
+		return strings.TrimSpace(m[1])
+	}
+	return strings.TrimSpace(m[0])
 }
 
 // teamAttrForFetch returns the extra attribute the searches must
@@ -332,6 +370,13 @@ func (s *Service) rawConfig() Config {
 // a password is already saved, the old one is preserved (matches the
 // "leave empty to keep current" UX).
 func (s *Service) Configure(incoming Config) {
+	// v0.8.434 — surface a broken TeamRegex at config time (teamFor
+	// silently ignores it per the field contract).
+	if p := strings.TrimSpace(incoming.TeamRegex); p != "" {
+		if _, err := regexp.Compile(p); err != nil {
+			log.Printf("[ldap] teamRegex %q is invalid and will be IGNORED: %v", p, err)
+		}
+	}
 	incoming.Normalize()
 	s.mu.Lock()
 	defer s.mu.Unlock()

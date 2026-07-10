@@ -58,7 +58,6 @@ const Profile           = lazy(() => import('./pages/Profile'));
 const Settings          = lazy(() => import('./pages/Settings'));
 const Users             = lazy(() => import('./pages/Users'));
 const ErrorsPage        = lazy(() => import('./pages/Errors'));
-const Status            = lazy(() => import('./pages/Status'));
 const PublicStatus      = lazy(() => import('./pages/PublicStatus'));
 const PublicTrace       = lazy(() => import('./pages/PublicTrace'));
 // v0.8.9 — the ten /admin/* pages are consolidated into one System area
@@ -141,7 +140,9 @@ export default function App() {
             <Route path="/settings/:section" element={<Settings />} />
             <Route path="/users"          element={<Users />} />
             <Route path="/errors"         element={<ErrorsPage />} />
-            <Route path="/status"         element={<Status />} />
+            {/* v0.8.457 — eski /status yer imleri tek atlamada /system/stats'e
+                iner (önceden Status.tsx → /admin/stats → AdminRedirect üç duraktı). */}
+            <Route path="/status"         element={<Navigate to="/system/stats" replace />} />
             <Route path="/public-status"  element={<PublicStatus />} />
             <Route path="/public/trace"   element={<PublicTrace />} />
             {/* Consolidated System area (v0.8.9). Ten former /admin/*

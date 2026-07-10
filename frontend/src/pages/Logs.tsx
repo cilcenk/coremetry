@@ -899,7 +899,7 @@ function LogsInner() {
                 Widen the time range, drop the service/cluster filter, or
                 relax the severity floor. If unfiltered queries are also
                 empty, the logs backend (<code>COREMETRY_LOGS_BACKEND</code>)
-                may be misconfigured — check <a href="/status" style={{ color: 'var(--accent2)' }}>/status</a>.
+                may be misconfigured — check <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.
               </div>
             </Empty>
           )

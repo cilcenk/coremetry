@@ -47,7 +47,7 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 	out := make([]*LogRecord, 0, len(rows))
 	for _, l := range rows {
-		out = append(out, &LogRecord{
+		rec := &LogRecord{
 			ID:                 int64(l.ID),
 			Timestamp:          l.Timestamp,
 			Severity:           l.SeverityNumber,
@@ -58,7 +58,31 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			SpanID:             l.SpanID,
 			Attributes:         l.Attributes,
 			ResourceAttributes: l.ResourceAttributes,
-		})
+		}
+		// v0.8.466 — ES okuma yoluyla aynı görüntü dolgusu: OTLP
+		// trace_id alanı boş gelmiş (collector json_parser'sız filelog
+		// vb.) ama kimlik attribute'ta ya da gövde JSON'ında duruyorsa
+		// kolonu doldur. Yalnız dönen satırlar; pivot gerçek kolonu ister.
+		if rec.TraceID == "" || rec.SpanID == "" {
+			ft, fs := FallbackTraceContext(rec.Attributes, rec.Body)
+			// Kapsamlı sorguda yalnız filtrelenen kimlik doldurulur
+			// (ES yolundaki v0.8.466 korumasının aynısı; CH filtresi
+			// strict kolon eşitliği olduğundan pratikte no-op, ama iki
+			// backend aynı sözleşmeyi taşımalı).
+			if f.TraceID != "" && !strings.EqualFold(ft, f.TraceID) {
+				ft = ""
+			}
+			if f.SpanID != "" && !strings.EqualFold(fs, f.SpanID) {
+				fs = ""
+			}
+			if rec.TraceID == "" {
+				rec.TraceID = ft
+			}
+			if rec.SpanID == "" {
+				rec.SpanID = fs
+			}
+		}
+		out = append(out, rec)
 	}
 	return &Page{Total: int(total), Logs: out, NextCursor: next}, nil
 }

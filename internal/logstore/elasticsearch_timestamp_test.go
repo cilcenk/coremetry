@@ -136,7 +136,7 @@ func TestDocValueTimestampNs_And_MapHitPrecedence(t *testing.T) {
 		// the date mapping. The row MUST take the docvalue time, not 0.
 		src := map[string]any{"@timestamp": "definitely not a date"}
 		dv := map[string]any{"@timestamp": []any{itoa(ms)}}
-		rec := s.mapHit("doc-1", src, dv)
+		rec := s.mapHit("doc-1", src, dv, "", "")
 		if rec.Timestamp != want {
 			t.Fatalf("mapHit Timestamp = %d, want %d (docvalue must win over a bad _source string)", rec.Timestamp, want)
 		}
@@ -147,7 +147,7 @@ func TestDocValueTimestampNs_And_MapHitPrecedence(t *testing.T) {
 		cfg.defaults()
 		s := &ESStore{fields: cfg.Fields, cfg: cfg}
 		src := map[string]any{"@timestamp": "2026-06-15 10:11:19,000"} // logback comma-millis
-		rec := s.mapHit("doc-2", src, nil)
+		rec := s.mapHit("doc-2", src, nil, "", "")
 		if rec.Timestamp != want {
 			t.Fatalf("mapHit no-docvalue fallback = %d, want %d", rec.Timestamp, want)
 		}

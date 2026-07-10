@@ -1408,7 +1408,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	out := make([]*LogRecord, 0, len(raw.Hits.Hits))
 	var lastSort []any
 	for _, h := range raw.Hits.Hits {
-		out = append(out, s.mapHit(h.ID, h.Source, h.Fields))
+		out = append(out, s.mapHit(h.ID, h.Source, h.Fields, f.TraceID, f.SpanID))
 		lastSort = h.Sort
 	}
 	// Carry the PIT id forward — ES may refresh it per request, and the
@@ -1521,7 +1521,7 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 	}
 	out := make([]*LogRecord, 0, len(raw.Hits.Hits))
 	for _, h := range raw.Hits.Hits {
-		out = append(out, s.mapHit(h.ID, h.Source, h.Fields))
+		out = append(out, s.mapHit(h.ID, h.Source, h.Fields, f.TraceID, f.SpanID))
 	}
 	return &Page{Total: len(out), Logs: out}, nil
 }
@@ -2508,7 +2508,14 @@ func (s *ESStore) expandShorthand(q string) string {
 // (which can be dotted, e.g. "trace.id") and pulls each value into the
 // canonical LogRecord shape. Anything not under a known path falls into
 // the Attributes map so it's still inspectable in the UI.
-func (s *ESStore) mapHit(id string, src map[string]any, dv map[string]any) *LogRecord {
+// expectedTrace/expectedSpan (v0.8.466 review-fix): trace/span-filtreli
+// sorgularda fallback dolgusu yalnız filtrelenen kimliğe eşitse kabul
+// edilir — ES'in gövde-match'li trace araması (traceTermsAny) yapısal
+// alanı boş satırları da döndürebilir; o satırın kendi gömülü kimliği
+// FARKLI bir trace olabilir ve "trace X'in logları" görünümünde Y'ye
+// giden bir link basmak yanıltıcıdır. Kapsamsız sorguda ("" beklenen)
+// dolgu serbesttir.
+func (s *ESStore) mapHit(id string, src map[string]any, dv map[string]any, expectedTrace, expectedSpan string) *LogRecord {
 	r := &LogRecord{
 		Attributes:         map[string]string{},
 		ResourceAttributes: map[string]string{},
@@ -2571,6 +2578,26 @@ func (s *ESStore) mapHit(id string, src map[string]any, dv map[string]any) *LogR
 		s.fields.SeverityTx: true, s.fields.SeverityNo: true,
 	}
 	flatten("", src, r.Attributes, skip)
+	// v0.8.466 — operatör-reported: trace_id gövde JSON'ında / alışılmadık
+	// bir path'te olduğunda TRACE kolonu boş kalıyordu. Alan boşsa dönen
+	// satır için görüntü dolgusu: önce düzleşmiş attribute path'leri
+	// (message.trace_id, mdc.traceId …), sonra gövde JSON'ı. Pivot yine
+	// gerçek alanı ister — pivotReady teşhisi (es_trace_context.go) geçerli.
+	if r.TraceID == "" || r.SpanID == "" {
+		ft, fs := FallbackTraceContext(r.Attributes, r.Body)
+		if expectedTrace != "" && !strings.EqualFold(ft, expectedTrace) {
+			ft = ""
+		}
+		if expectedSpan != "" && !strings.EqualFold(fs, expectedSpan) {
+			fs = ""
+		}
+		if r.TraceID == "" {
+			r.TraceID = ft
+		}
+		if r.SpanID == "" {
+			r.SpanID = fs
+		}
+	}
 	// v0.5.281 — Operator-reported: Pod / Cluster columns blank on
 	// ES installs. ES flatten() dumped every non-canonical field
 	// into Attributes, but the LogTable frontend reads pod /

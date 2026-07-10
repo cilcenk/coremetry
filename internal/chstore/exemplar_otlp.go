@@ -43,6 +43,11 @@ const (
 	exemplarMaxLimit = 1000
 )
 
+// NOTE (v0.8.431, audit Faz A): the MCP tool get_exemplar_traces clamps
+// tighter on purpose — default 20 / max 100 (mcptools/pivots.go) — because
+// tool output feeds an LLM context window, not a chart. This HTTP-side
+// clamp (default 100 / max 1000) is the chart budget. The divergence is
+// intentional; keep both documented when changing either.
 func clampExemplarLimit(limit int) int {
 	if limit <= 0 {
 		return exemplarDefaultLimit
@@ -84,6 +89,29 @@ func (s *Store) InsertExemplars(ctx context.Context, rows []*ExemplarRow) error 
 	return batch.Send()
 }
 
+// Read SQL as package constants (v0.8.431, exemplar audit Faz A) so the
+// SQL-shape tests can pin the house bounds — LIMIT + max_execution_time +
+// time-bounded WHERE + the fingerprint IN predicate — without a live CH,
+// same style as msgE2ESQL.
+const exemplarsForSeriesSQL = `
+		SELECT series_fingerprint, toUnixTimestamp64Nano(timestamp) AS ts,
+		       value, trace_id, span_id, filtered_attributes
+		FROM exemplars
+		WHERE series_fingerprint IN (?)
+		  AND timestamp >= ? AND timestamp <= ?
+		ORDER BY timestamp
+		LIMIT ?
+		SETTINGS max_execution_time = 10`
+
+const exemplarsForMetricSQLTmpl = `
+		SELECT series_fingerprint, toUnixTimestamp64Nano(timestamp) AS ts,
+		       value, trace_id, span_id, filtered_attributes
+		FROM exemplars
+		WHERE %s
+		ORDER BY timestamp
+		LIMIT ?
+		SETTINGS max_execution_time = 10`
+
 // ExemplarsForSeries is the canonical metric→trace pivot read: exemplars for
 // a set of series fingerprints (one chart = the fingerprints of its plotted
 // series) inside a time window. Primary-key scan by construction — see the
@@ -97,15 +125,7 @@ func (s *Store) ExemplarsForSeries(ctx context.Context, fingerprints []uint64, f
 	if from.IsZero() || to.IsZero() {
 		return nil, fmt.Errorf("from/to are required")
 	}
-	rows, err := s.conn.Query(ctx, `
-		SELECT series_fingerprint, toUnixTimestamp64Nano(timestamp) AS ts,
-		       value, trace_id, span_id, filtered_attributes
-		FROM exemplars
-		WHERE series_fingerprint IN (?)
-		  AND timestamp >= ? AND timestamp <= ?
-		ORDER BY timestamp
-		LIMIT ?
-		SETTINGS max_execution_time = 10`,
+	rows, err := s.conn.Query(ctx, exemplarsForSeriesSQL,
 		fingerprints, from, to, clampExemplarLimit(limit))
 	if err != nil {
 		return nil, err
@@ -132,14 +152,8 @@ func (s *Store) ExemplarsForMetric(ctx context.Context, metric, service string, 
 		args = append(args, svc)
 	}
 	args = append(args, clampExemplarLimit(limit))
-	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT series_fingerprint, toUnixTimestamp64Nano(timestamp) AS ts,
-		       value, trace_id, span_id, filtered_attributes
-		FROM exemplars
-		WHERE %s
-		ORDER BY timestamp
-		LIMIT ?
-		SETTINGS max_execution_time = 10`, strings.Join(conds, " AND ")), args...)
+	rows, err := s.conn.Query(ctx, fmt.Sprintf(exemplarsForMetricSQLTmpl,
+		strings.Join(conds, " AND ")), args...)
 	if err != nil {
 		return nil, err
 	}

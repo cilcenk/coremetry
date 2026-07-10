@@ -2730,6 +2730,13 @@ export interface SystemStats {
     logsPerSec: number;
     metricsPerSec: number;
   };
+  // OTLP metric-exemplar ingest totals (cumulative since process start,
+  // v0.8.328; UI card v0.8.431 — audit Faz A). droppedNoTrace is the
+  // require-trace-context policy gate: INTENTIONAL, not loss.
+  exemplars?: {
+    ingested: number;
+    droppedNoTrace: number;
+  };
   // Cumulative ingest data-loss counters since process start (v0.8.x).
   // queueFull = receiver buffer overflow; writeFailed = ClickHouse insert
   // errored and the batch was dropped (not retried). pipeline = records

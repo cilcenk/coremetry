@@ -219,6 +219,9 @@ func getExemplarTracesTool(d Deps) mcp.Tool {
 				return nil, fmt.Errorf("service is required")
 			}
 			from, to := rangeWindow(a.RangeS)
+			// Tighter than the HTTP /api/exemplars clamp (100/1000,
+			// chstore clampExemplarLimit) ON PURPOSE: this output feeds
+			// an LLM context window, not a chart (v0.8.431 audit note).
 			limit := clampLimit(a.Limit, 20, 100)
 			rows, err := d.Store.ExemplarsForMetric(ctx, a.Metric, a.Service, from, to, limit)
 			if err != nil {

@@ -76,3 +76,49 @@ func TestClampExemplarLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestExemplarReadSQLShape — v0.8.431 (exemplar audit Faz A). The two
+// pivot read queries were the only exemplar SQL without shape tests;
+// this pins the house bounds so an edit can't silently drop a guard:
+// LIMIT placeholder, execution cap, time-bounded WHERE, the
+// fingerprint IN predicate (ExemplarsForSeries must stay a PK scan)
+// and the ORDER BY the ◆ time-anchoring relies on.
+func TestExemplarReadSQLShape(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		must []string
+	}{
+		{"ExemplarsForSeries", exemplarsForSeriesSQL, []string{
+			"FROM exemplars",
+			"series_fingerprint IN (?)",
+			"timestamp >= ? AND timestamp <= ?",
+			"ORDER BY timestamp",
+			"LIMIT ?",
+			"SETTINGS max_execution_time = 10",
+		}},
+		{"ExemplarsForMetric", exemplarsForMetricSQLTmpl, []string{
+			"FROM exemplars",
+			"WHERE %s", // conds joined at call time: metric_name/timestamp(/service_name)
+			"ORDER BY timestamp",
+			"LIMIT ?",
+			"SETTINGS max_execution_time = 10",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, frag := range tc.must {
+				if !strings.Contains(tc.sql, frag) {
+					t.Errorf("missing %q", frag)
+				}
+			}
+		})
+	}
+	// Both selects must scan the SAME column tuple the shared
+	// scanOTLPExemplars reads — positional drift between the two
+	// queries would corrupt one of the two read paths.
+	const cols = "series_fingerprint, toUnixTimestamp64Nano(timestamp) AS ts,\n\t\t       value, trace_id, span_id, filtered_attributes"
+	if !strings.Contains(exemplarsForSeriesSQL, cols) || !strings.Contains(exemplarsForMetricSQLTmpl, cols) {
+		t.Fatalf("select tuples diverged from the shared scanner order")
+	}
+}

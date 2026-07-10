@@ -221,6 +221,14 @@ export default function AdminStatsPage() {
               <KPI label="Metrics · 24h" value={fmtNum(data.snapshot.metrics24h)}
                    sub={`${fmtRate(data.ingest.metricsPerSec)} now`} />
               <KPI label="Metrics total" value={fmtNum(data.snapshot.metricsAllTime)} />
+              {/* v0.8.431 (exemplar audit Faz A) — the backend has carried
+                  these totals since v0.8.328; the card was the missing half.
+                  droppedNoTrace = require-trace-context policy gate
+                  (intentional, so no warn tint). */}
+              {data.exemplars && (
+                <KPI label="Exemplars ingested" value={fmtNum(data.exemplars.ingested)}
+                     sub={`${fmtNum(data.exemplars.droppedNoTrace)} dropped (no trace ctx)`} />
+              )}
               <KPI label="Profiles · 24h" value={fmtNum(data.snapshot.profiles24h)} />
               <KPI label="Services · 24h" value={fmtNum(data.snapshot.services24h)} />
               <KPI label="Operations · 24h" value={fmtNum(data.snapshot.operations24h)} />

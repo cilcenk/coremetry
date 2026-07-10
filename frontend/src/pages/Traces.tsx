@@ -16,7 +16,7 @@
 // only ever runs inside a useMemo([range]) (the v0.5.184 trap).
 
 import { useEffect, useMemo, useRef, useState, Suspense, Fragment } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { IconSearch } from '@/components/icons';
@@ -1188,7 +1188,7 @@ function TracesEmpty({ service, search, range, onSwitchView }: {
             <Button variant="secondary" size="sm" onClick={onSwitchView} style={{ marginLeft: 4 }}>Switch to Aggregate view →</Button>
           </>
         ) : (
-          <>Try widening the time range, dropping the service or search filter, or unticking "Root traces". If even an unfiltered query is empty, check ingest health at <a href="/status" style={{ color: 'var(--accent2)' }}>/status</a>.</>
+          <>Try widening the time range, dropping the service or search filter, or unticking "Root traces". If even an unfiltered query is empty, check ingest health at <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.</>
         )}
       </div>
     </Empty>

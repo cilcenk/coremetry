@@ -1,11 +1,10 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { X } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
-import { Sparkline } from '@/components/Sparkline';
+import { Drawer, DrawerSection, DrawerTrendRow } from '@/components/ui';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -185,12 +184,6 @@ function ExternalHostDrawer({ host, range, onClose }: {
   range: TimeRange;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const q = useQuery({
     queryKey: ['external-host', host, from, to],
@@ -210,30 +203,14 @@ function ExternalHostDrawer({ host, range, onClose }: {
   const p99Series = trend.map(p => p.p99Ms);
 
   return (
-    <>
-      <div onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-          zIndex: 30, animation: 'fadeIn 120ms ease-out',
-        }} />
-      <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0,
-        width: 'min(560px, 100vw)',
-        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, overflowY: 'auto', padding: 16,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 14, fontWeight: 600 }}>
-            {detail?.display || host}
-          </span>
-          <CategoryBadge category={detail?.category} />
-          <span style={{ flex: 1 }} />
-          <button className="sec" onClick={onClose} aria-label="Close"
-            style={{ padding: '4px 6px', display: 'inline-flex' }}>
-            <X size={14} />
-          </button>
-        </div>
+    <Drawer onClose={onClose} header={
+      <>
+        <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 14, fontWeight: 600 }}>
+          {detail?.display || host}
+        </span>
+        <CategoryBadge category={detail?.category} />
+      </>
+    }>
         {detail?.display && (
           <div style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', marginBottom: 8 }}>
             {host}
@@ -254,9 +231,9 @@ function ExternalHostDrawer({ host, range, onClose }: {
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>No buckets in this window.</div>
               ) : (
                 <div style={{ display: 'grid', gap: 6 }}>
-                  <TrendRow label="Calls" values={callsSeries} color="var(--accent2)" />
-                  <TrendRow label="Errors" values={errorSeries} color="var(--err)" />
-                  <TrendRow label="P99 ms" values={p99Series} color="var(--warn)" />
+                  <DrawerTrendRow label="Calls" values={callsSeries} color="var(--accent2)" />
+                  <DrawerTrendRow label="Errors" values={errorSeries} color="var(--err)" />
+                  <DrawerTrendRow label="P99 ms" values={p99Series} color="var(--warn)" />
                 </div>
               )}
             </DrawerSection>
@@ -300,28 +277,6 @@ function ExternalHostDrawer({ host, range, onClose }: {
             </DrawerSection>
           </>
         )}
-      </div>
-    </>
-  );
-}
-
-function DrawerSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 18 }}>
-      <div style={{
-        fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase',
-        letterSpacing: 0.5, marginBottom: 6, fontWeight: 600,
-      }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function TrendRow({ label, values, color }: { label: string; values: number[]; color: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <span style={{ fontSize: 11, color: 'var(--text2)', width: 60 }}>{label}</span>
-      <Sparkline values={values} width={420} height={34} color={color} title={label} />
-    </div>
+    </Drawer>
   );
 }

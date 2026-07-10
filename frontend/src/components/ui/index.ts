@@ -17,6 +17,8 @@ export type { CardProps } from './Card';
 export { Badge } from './Badge';
 export type { BadgeProps, Tone } from './Badge';
 
+export { Drawer, DrawerSection, DrawerTrendRow } from './Drawer';
+
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 

@@ -109,3 +109,31 @@ func TestBucketDeltasBothBranches(t *testing.T) {
 		t.Fatalf("unknown branch must pass through unchanged: got %v", got)
 	}
 }
+
+// TestBoundsGuards — v0.8.440 regression. Review-confirmed: exp-
+// histogram rescale produces same-LENGTH different-VALUE bounds; the
+// old length-only guard summed them positionally (silently wrong
+// quantiles). Pins: value-based equality + the run-splitting key.
+func TestBoundsGuards(t *testing.T) {
+	a := []float64{1, 2, 4, 8}
+	b := []float64{1, 2, 4, 8}
+	c := []float64{2, 4, 8, 16} // rescale: aynı uzunluk, farklı değerler
+	if !boundsEqual(a, b) {
+		t.Fatal("identical bounds must be equal")
+	}
+	if boundsEqual(a, c) {
+		t.Fatal("same-length different-value bounds must NOT be equal (the v0.8.440 bug)")
+	}
+	if boundsEqual(a, a[:3]) {
+		t.Fatal("length mismatch must not be equal")
+	}
+	if boundsKey(a) != boundsKey(b) {
+		t.Fatal("identical bounds must share a run key")
+	}
+	if boundsKey(a) == boundsKey(c) {
+		t.Fatal("rescaled bounds must split into a separate run")
+	}
+	if boundsKey(nil) != "" {
+		t.Fatal("empty bounds → empty key")
+	}
+}

@@ -3,6 +3,8 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
 )
 
 // HistogramSeries is the read-time shape of an explicit OTel histogram over
@@ -10,9 +12,9 @@ import (
 // bucket-count vector per time bucket, and p50/p95/p99 estimated from those
 // vectors. Drives the /metrics histogram heatmap (v0.6.56).
 type HistogramSeries struct {
-	Bounds  []float64  `json:"bounds"`  // explicit upper bounds (len N)
-	Times   []int64    `json:"times"`   // ns epoch, one per time bucket
-	Counts  [][]uint64 `json:"counts"`  // [timeBucket][bucket] summed (len N+1)
+	Bounds  []float64  `json:"bounds"` // explicit upper bounds (len N)
+	Times   []int64    `json:"times"`  // ns epoch, one per time bucket
+	Counts  [][]uint64 `json:"counts"` // [timeBucket][bucket] summed (len N+1)
 	P50     []float64  `json:"p50"`
 	P95     []float64  `json:"p95"`
 	P99     []float64  `json:"p99"`
@@ -86,7 +88,15 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 		if err := rows.Scan(&t, &attrK, &attrV, &bounds, &counts, &temporality); err != nil {
 			return nil, err
 		}
-		key := joinKV(attrK, attrV)
+		// v0.8.440 (review-confirmed) — bounds parmak izi anahtara girer:
+		// exp-histogram materializasyonu (v0.8.435) rescale/offset
+		// kaymasında AYNI seri için FARKLI bound dizileri üretir; tek
+		// anahtar altında toplansalar sayımlar pozisyonel olarak yanlış
+		// bucket'lara akar ve cumulativeToDelta uyumsuz layout'lar
+		// arasında çıkarma yapar. Her bounds-run kendi serisi olur;
+		// canonical'a değer bazında uymayanlar aşağıda dürüstçe
+		// Skipped'e düşer (yanlış quantile yerine görünmez kuyruk).
+		key := joinKV(attrK, attrV) + "\x00" + boundsKey(bounds)
 		sp, ok := seriesMap[key]
 		if !ok {
 			sp = &ser{bounds: bounds, temporality: temporality}
@@ -134,7 +144,9 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 	skipped := 0
 	for _, k := range order {
 		sp := seriesMap[k]
-		if len(sp.bounds) != len(canonical) {
+		// Uzunluk YETMEZ (v0.8.440): rescale aynı uzunlukta farklı
+		// değerli bound'lar üretebilir — değer bazında karşılaştır.
+		if !boundsEqual(sp.bounds, canonical) {
 			skipped++
 			continue
 		}
@@ -317,4 +329,34 @@ func isCounterReset(prev, cur []uint64) bool {
 		}
 	}
 	return false
+}
+
+// boundsKey — bounds dizisinin seri-anahtarı parçası (v0.8.440).
+// Float64 bit desenleri üzerinden deterministik; ayırıcı 0x1F.
+func boundsKey(b []float64) string {
+	if len(b) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i, v := range b {
+		if i > 0 {
+			sb.WriteByte(0x1f)
+		}
+		fmt.Fprintf(&sb, "%x", math.Float64bits(v))
+	}
+	return sb.String()
+}
+
+// boundsEqual — değer bazında bound karşılaştırması (v0.8.440). CH
+// Float64 roundtrip'i bit-exact olduğundan tam eşitlik doğru ölçüt.
+func boundsEqual(a, b []float64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

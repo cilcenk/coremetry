@@ -167,7 +167,7 @@ export default function ProblemsPage() {
   });
   // Selected group for the full in-page detail view (null = list).
   const [detail, setDetail] = useState<ExceptionGroup | null>(null);
-  // v0.8.438 (operator-reported): a specific exception-group problem
+  // v0.8.443 (operator-reported): a specific exception-group problem
   // couldn't be shared as a link — this detail view only ever lived in
   // `detail` local state, never the URL, unlike the alert-rule problem
   // detail's ?problem=<id> (v0.8.256/426/428). ?exc=<fingerprint> gives

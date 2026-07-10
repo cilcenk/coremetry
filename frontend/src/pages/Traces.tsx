@@ -38,6 +38,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
+import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries, RelationFilter, RelationKind } from '@/lib/types';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
@@ -174,6 +175,18 @@ function TracesPageInner() {
   const [groupAttr, setGroupAttr] = useState<string>(() => searchParams.get('groupAttr') ?? '');
   const [aggSort, setAggSort] = useState<AggSort>(() => (searchParams.get('aggSort') as AggSort) || 'count');
   const [aggOrder, setAggOrder] = useState<SortOrder>(() => (searchParams.get('aggOrder') === 'asc' ? 'asc' : 'desc'));
+  // v0.8.453 (B2-c) — genel HAVING koşulları. URL-first (?having=,
+  // codec lib/havingParam.ts); post-aggregate olduğundan MV fast-path
+  // hızını korur. Fetch + URL, 250ms debounce'lu kopyayı okur (sayfanın
+  // draft auto-apply sözleşmesi) — değer alanına "1500" yazmak tuş
+  // başına ayrı cache-key'li CH sorgusu ateşlemesin (review bulgusu;
+  // operatör şartı: performans).
+  const [having, setHaving] = useState<HavingRow[]>(() => parseHavingParam(searchParams.get('having')));
+  const [debouncedHaving, setDebouncedHaving] = useState<HavingRow[]>(having);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedHaving(having), 250);
+    return () => clearTimeout(t);
+  }, [having]);
 
   const [filter, setFilter] = useState(() => ({
     service:  searchParams.get('service') ?? '',
@@ -260,6 +273,7 @@ function TracesPageInner() {
       ['groupAttr', view === 'aggregate' && groupBy === 'attr' ? groupAttr : ''],
       ['aggSort',  view === 'aggregate' && aggSort !== 'count' ? aggSort : ''],
       ['aggOrder', view === 'aggregate' && aggOrder !== 'desc' ? aggOrder : ''],
+      ['having',   view === 'aggregate' ? encodeHavingParam(debouncedHaving) : ''],
       ['service',  filter.service],
       ['search',   filter.search],
       ['traceId',  filter.traceId],
@@ -283,7 +297,7 @@ function TracesPageInner() {
     if (typeof window !== 'undefined' && target !== window.location.search) {
       navigate(`/traces${target}`, { preventScrollReset: true, replace: true });
     }
-  }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, filter, advFilters, advGroupParam, extraCols, relation, navigate]);
+  }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, advFilters, advGroupParam, extraCols, relation, navigate]);
 
   // ── List fetch ───────────────────────────────────────────────────────────
   const listRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -433,9 +447,10 @@ function TracesPageInner() {
       env: env || undefined,
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
+      having: debouncedHaving.length ? encodeHavingParam(debouncedHaving) : undefined,
     }).then(a => { if (!cancelled) setAgg(a); }).catch(() => { if (!cancelled) setAgg(null); });
     return () => { cancelled = true; };
-  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, filter, env, advFilters, advGroupParam]);
+  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, env, advFilters, advGroupParam]);
 
   // apply commits the draft as the live filter (overrideService sidesteps the
   // picker auto-commit race).
@@ -676,6 +691,41 @@ function TracesPageInner() {
                   onChange={e => setGroupAttr(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                   style={{ width: 200 }} />
+              )}
+              {/* v0.8.453 (B2-c) — genel HAVING: grup metriği eşiği.
+                  Post-aggregate (MV fast-path hızını korur); koşullar
+                  AND'lenir, URL'de ?having= taşınır. */}
+              {having.map((h, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ color: 'var(--text3)', fontSize: 11, fontWeight: 700 }}>
+                    {i === 0 ? 'HAVING' : 'AND'}
+                  </span>
+                  <select value={h.metric} style={{ fontSize: 12 }}
+                    onChange={e => setHaving(p => p.map((x, j) =>
+                      j === i ? { ...x, metric: e.target.value as HavingMetric } : x))}>
+                    {HAVING_METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                  </select>
+                  <select value={h.op} style={{ fontSize: 12, width: 52 }}
+                    onChange={e => setHaving(p => p.map((x, j) =>
+                      j === i ? { ...x, op: e.target.value as HavingOp } : x))}>
+                    {HAVING_OPS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <input type="number" value={Number.isFinite(h.value) ? h.value : 0}
+                    onChange={e => setHaving(p => p.map((x, j) =>
+                      j === i ? { ...x, value: Number(e.target.value) } : x))}
+                    style={{ width: 76, fontSize: 12 }} />
+                  <button className="sec" type="button" aria-label="Koşulu kaldır"
+                    style={{ fontSize: 11, padding: '2px 6px' }}
+                    onClick={() => setHaving(p => p.filter((_, j) => j !== i))}>✕</button>
+                </span>
+              ))}
+              {having.length < 8 && (
+                <button className="sec" type="button"
+                  style={{ fontSize: 11, padding: '3px 8px' }}
+                  title='Grup metriği eşiği ekle — ör. "Error % > 1 AND P95 ms > 500"'
+                  onClick={() => setHaving(p => [...p, { metric: 'errorRate', op: '>', value: 1 }])}>
+                  {having.length === 0 ? '＋ Having' : '＋'}
+                </button>
               )}
             </>
           )}

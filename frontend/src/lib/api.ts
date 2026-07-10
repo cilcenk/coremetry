@@ -2133,6 +2133,9 @@ export interface AggregateParams {
   sort?: string;
   order?: SortOrder;
   limit?: number;
+  // having — v0.8.453 (B2-c): JSON-encoded HavingRow[] (lib/havingParam.ts).
+  // Post-aggregate; whitelist sunucuda da doğrulanır (400).
+  having?: string;
 }
 
 export interface ProfilesParams {

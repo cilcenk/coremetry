@@ -3304,6 +3304,22 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 	// present; rides the raw query string so the "traces-agg:"+RawQuery cache
 	// key already hashes it.
 	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
+	// v0.8.453 (B2-c) — genel HAVING: ?having=[{"metric":"errorRate",
+	// "op":">","value":1},…]. Whitelist ValidateHaving'de; RawQuery
+	// cache key'i parametreyi zaten taşıyor. Bozuk JSON / bilinmeyen
+	// metrik-operatör = 400, sessiz yutma yok.
+	if hraw := strings.TrimSpace(q.Get("having")); hraw != "" {
+		var hs []chstore.HavingExpr
+		if err := json.Unmarshal([]byte(hraw), &hs); err != nil {
+			http.Error(w, "invalid having JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := chstore.ValidateHaving(hs); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		f.Having = hs
+	}
 
 	// 20s cache. /traces aggregated tab is the default landing
 	// view; sort / group toggles re-call this and tend to repeat

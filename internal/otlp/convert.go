@@ -314,8 +314,21 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			if dp.Count > 0 {
 				avg = sum / float64(dp.Count)
 			}
+			// v0.8.435 (exemplar audit Faz D) — full fidelity: min/max
+			// were literal 0,0 and temporality was never set (unlike the
+			// explicit-histogram arm above); the native bucket structure
+			// was dropped entirely, so quantile reads degraded to avg.
 			p := base("exp_histogram", dp.StartTimeUnixNano, dp.TimeUnixNano,
-				avg, dp.Count, sum, 0, 0, dp.Attributes)
+				avg, dp.Count, sum, derefF64(dp.Min), derefF64(dp.Max), dp.Attributes)
+			p.Temporality = temporalityStr(d.ExponentialHistogram.AggregationTemporality)
+			// Materialize the exponential buckets as EXPLICIT bounds into
+			// the existing bucket_bounds/bucket_counts columns — no new
+			// schema, and the read path (percentileFromBuckets /
+			// cumulativeToDelta) works on exp rows unchanged.
+			if bounds, counts, ok := expBucketsToExplicit(dp); ok {
+				p.BucketBounds = bounds
+				p.BucketCounts = counts
+			}
 			out = append(out, p)
 			exs = appendExemplars(exs, dp.Exemplars, p, dp.TimeUnixNano)
 		}

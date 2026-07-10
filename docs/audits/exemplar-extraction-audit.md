@@ -192,7 +192,7 @@ testleri; öneriler buna uyar.
 | **A — Görünürlük + test borcu** | AdminStats exemplar ingest kartı; exemplar read-SQL shape testleri; MCP/HTTP clamp farkının kod yorumuna işlenmesi | `AdminStats.tsx`, `chstore/exemplar_otlp_test.go`, `mcptools/pivots.go` (yorum) | Düşük — salt UI + test | Önemsiz (UI kartı geri al) |
 | **B — Gruplu chart'lara ◆** | Metric read path'lerine `series_fingerprint` döndürtme (`metricquery.go`/`metricresolve.go` + `hasSeriesFpCol` fallback), tip + client eşlemesi, `useExploreQueries`'in `?fingerprints=` moduna geçişi, `PanelStack` çok-seri atfı | `chstore/metricquery.go`, `metricresolve.go`, `lib/types.ts`, `lib/api.ts`, `useExploreQueries.ts`, `PanelStack.tsx` | Orta — sorgu şekli değişir; distributed fallback (fp=0) yolu korunmalı | Kolay — client gate'i eski moda döndürmek yeter |
 | **C — Ingest tavanı (karar bekliyor)** | Seri×pencere başına exemplar cap (yaz-tarafı sampling) — bugün bilinçli yok | `internal/otlp/http.go` (gate genişletme) + sayaç | Düşük-Orta | Config default'u kapalı tutmak |
-| **D — Exp-histogram sadakati (exemplar-dışı, ayrı iş)** | scale/bucket yapısı + min/max persist | convert + şema | Orta — şema işi | — |
+| **D — Exp-histogram sadakati** ✅ v0.8.435 | min/max + temporality + bucket'lar EXPLICIT bound'lara ingest'te materialize (yeni kolon YOK — distributed dansı gerekmedi; negative-bucket/cap/scale-dışı durumlar avg-only'ye düşer) | `internal/otlp/{convert,exp_histogram}.go` | Düşük'e indi — şema değişmedi | Convert-only, geri alması trivial |
 
 Fazlar bağımsız merge edilebilir; B, A'ya bağımlı değil.
 

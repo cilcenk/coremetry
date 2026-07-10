@@ -3693,18 +3693,19 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getMetrics — v0.8.456: serveCached'e alındı (kardeş queryMetric'in
+// dakika-bucket'lı anahtar deseni). Cache'siz her izleyici/poll raw
+// metric_points taraması koşuyordu; 30s bayatlık operatörce görünmez.
 func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	pts, err := s.store.GetMetricPoints(r.Context(),
-		q.Get("name"), q.Get("service"),
-		parseTime(q.Get("from")), parseTime(q.Get("to")),
-		parseInt(q.Get("limit"), 500),
-	)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, pts)
+	name, svc := q.Get("name"), q.Get("service")
+	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
+	limit := parseInt(q.Get("limit"), 500)
+	key := fmt.Sprintf("metric-points:name=%s:svc=%s:limit=%d:from=%d:to=%d",
+		name, svc, limit, from.Unix()/60, to.Unix()/60)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetMetricPoints(ctx, name, svc, from, to, limit)
+	})
 }
 
 // ── Metric query (multi-series, attribute filters, group-by) ─────────────────
@@ -3770,12 +3771,18 @@ func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getMetricLabelValues — v0.8.456: serveCached'e alındı. Her (metric,
+// key) çifti izleyici başına 24h DISTINCT metric_points taraması
+// koşuyordu (Explore compare 2x fetch atar); etiket setleri yavaş
+// değişir, 60s bayatlık görünmez. since anahtarın parçası.
 func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
-	vals, err := s.store.MetricLabelValues(r.Context(), q.Get("metric"), q.Get("key"), since)
-	if err != nil { writeErr(w, err); return }
-	writeJSON(w, vals)
+	metric, lkey := q.Get("metric"), q.Get("key")
+	key := fmt.Sprintf("metric-labels:m=%s:k=%s:since=%s", metric, lkey, since)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.MetricLabelValues(ctx, metric, lkey, since)
+	})
 }
 
 // SpanMetricServiceRow is one row of the span-metric-derived

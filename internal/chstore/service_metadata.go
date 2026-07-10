@@ -376,6 +376,21 @@ func (s *Store) PopulateServiceTeamsFromSpans(ctx context.Context, since time.Du
 		if !changed {
 			continue
 		}
+		// v0.8.439 (review-confirmed TOCTOU) — the snapshot above may be
+		// stale (30s List cache; loop spans many round-trips) and Upsert
+		// is a whole-row replace: writing the snapshot row would silently
+		// revert a concurrent operator edit AND un-pin a mid-loop manual
+		// value. The snapshot only NOMINATES candidates; the write is
+		// re-merged onto a FRESH uncached point read.
+		if fresh, err := s.GetServiceMetadata(ctx, svc); err != nil {
+			continue
+		} else if fresh != nil {
+			m2, ok2 := mergeTeams(*fresh, t)
+			if !ok2 {
+				continue
+			}
+			merged = m2
+		}
 		if err := s.UpsertServiceMetadata(ctx, merged); err != nil {
 			continue // best-effort; the next tick retries
 		}
@@ -478,6 +493,17 @@ func (s *Store) PopulateServiceNamespacesFromSpans(ctx context.Context, since ti
 		merged, changed := mergeNamespace(md, ns)
 		if !changed {
 			continue
+		}
+		// Fresh re-read before the whole-row write — see the identical
+		// v0.8.439 TOCTOU note in PopulateServiceTeamsFromSpans.
+		if fresh, err := s.GetServiceMetadata(ctx, svc); err != nil {
+			continue
+		} else if fresh != nil {
+			m2, ok2 := mergeNamespace(*fresh, ns)
+			if !ok2 {
+				continue
+			}
+			merged = m2
 		}
 		if err := s.UpsertServiceMetadata(ctx, merged); err != nil {
 			continue // best-effort; the next tick retries

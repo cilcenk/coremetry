@@ -1,3 +1,9 @@
+> **TARİHSEL DOKÜMAN — v0.8.328 ÖNCESİ DURUM.** Buradaki "exemplar'lar
+> düşürülüyor / tablo yok" bulguları bu audit'in motive ettiği işten
+> ÖNCEKİ hali anlatır; pipeline v0.8.328–335'te şipariş edildi. Güncel
+> durum + kalan boşluklar: `docs/audits/exemplar-extraction-audit.md`
+> (v0.8.431). Satır referansları bayat olabilir.
+
 # Cross-Signal Pivot Audit (Phase 0) — 2026-07-06
 
 Goal: every signal one click from every related signal (trace ↔ log ↔ metric).

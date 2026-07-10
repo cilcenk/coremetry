@@ -151,10 +151,33 @@ export function useExploreQueries(
   const otlpResults = useQueries({
     queries: state.queries.map(q => {
       const svc = q.source === 'metric' ? pinnedService(q) : '';
-      const eligible = q.source === 'metric' && produces(q)
-        && !!q.metric && !!svc && q.splitBy.length === 0;
       const fromB = Math.floor(from / 60e9) * 60e9; // minute-bucketed unix ns
       const toB = Math.floor(to / 60e9) * 60e9;
+      // v0.8.432 (audit Faz B) — grouped charts stopped being skipped:
+      // a splitBy query rides /api/exemplars/by-series (the server maps
+      // series → fingerprints and tags items with groupKey; grouped
+      // OR-filters stay out — their filter shape can't ride the flat
+      // filters param). Ungrouped single-service charts keep the
+      // legacy endpoint verbatim.
+      const grouped = q.source === 'metric' && produces(q)
+        && !!q.metric && q.splitBy.length > 0 && !hasGroupedFilter(q);
+      const eligible = q.source === 'metric' && produces(q)
+        && !!q.metric && !!svc && q.splitBy.length === 0;
+      if (grouped) {
+        const filters = effectiveFilters(q);
+        const fstr = filters.length ? encodeFilters(filters) : undefined;
+        return {
+          queryKey: ['explore-otlp-exemplars-grouped', q.metric, svc,
+            q.splitBy.join(','), fstr ?? '', fromB, toB, 50],
+          queryFn: (): Promise<OtlpExemplar[]> =>
+            api.exemplarsBySeries({
+              metric: q.metric, service: svc || undefined, groupBy: q.splitBy,
+              filters: fstr, from: fromB, to: toB, limit: 50,
+            }).then(r => r?.items ?? []),
+          enabled: from > 0,
+          staleTime: 30_000,
+        };
+      }
       return {
         queryKey: ['explore-otlp-exemplars', q.metric, svc, fromB, toB, 50],
         queryFn: (): Promise<OtlpExemplar[]> =>

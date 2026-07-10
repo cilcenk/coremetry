@@ -183,3 +183,83 @@ func scanOTLPExemplars(rows interface {
 	}
 	return out, rows.Err()
 }
+
+// metricSeriesFPSQLTmpl — gk → fingerprint-set lookup for one chart's
+// series (v0.8.432, audit Faz B). %s slots: groupSelect, WHERE. The
+// groupSelect and filters are built with the SAME helpers the chart
+// query uses (groupKeyExpr / ApplyMetricFilters) so gk strings align
+// with SpanMetricSeries.GroupKey byte-for-byte — the API joins the two
+// on that key. groupUniqArray(8) caps per-series identity fan-out
+// (instances collapsing into one display series).
+const metricSeriesFPSQLTmpl = `
+		SELECT %s AS gk, groupUniqArray(8)(series_fingerprint) AS fps
+		FROM metric_points
+		%s
+		GROUP BY gk
+		LIMIT 1000
+		SETTINGS max_execution_time = 10`
+
+// MetricSeriesFingerprints resolves a metric chart's series (as drawn:
+// same groupBy, same filters, same window) to the series_fingerprint
+// sets behind them — the missing server half that kept the
+// /api/exemplars?fingerprints= PK-scan mode unused (audit Faz B).
+// Returns nil on installs where the fingerprint column never reached
+// the shards (hasSeriesFpCol=false, external-Distributed fallback) —
+// callers degrade to no-◆, exactly today's behavior.
+func (s *Store) MetricSeriesFingerprints(ctx context.Context, f MetricQueryFilter) (map[string][]uint64, error) {
+	if !s.hasSeriesFpCol {
+		return nil, nil
+	}
+	if f.Name == "" {
+		return nil, fmt.Errorf("metric name required")
+	}
+	now := time.Now()
+	if f.To.IsZero() {
+		f.To = now
+	}
+	if f.From.IsZero() {
+		f.From = f.To.Add(-24 * time.Hour)
+	}
+
+	var wc whereClause
+	wc.add("metric = ?", f.Name)
+	if f.Service != "" {
+		wc.add("service_name = ?", f.Service)
+	}
+	wc.add("time >= ?", f.From)
+	wc.add("time <= ?", f.To)
+	// Legacy rows (pre-v0.8.328 or fallback ingests) carry the 0
+	// sentinel — never a real identity, keep them out of the sets.
+	wc.add("series_fingerprint != 0")
+	ApplyMetricFilters(&wc, f.Filters)
+
+	groupSelect := "[]::Array(String)"
+	if len(f.GroupBy) > 0 {
+		parts := make([]string, len(f.GroupBy))
+		var groupArgs []any
+		for i, k := range f.GroupBy {
+			expr, args := groupKeyExpr(k, true)
+			parts[i] = expr
+			groupArgs = append(groupArgs, args...)
+		}
+		groupSelect = "[" + strings.Join(parts, ", ") + "]"
+		wc.args = append(groupArgs, wc.args...)
+	}
+
+	rows, err := s.conn.Query(ctx,
+		fmt.Sprintf(metricSeriesFPSQLTmpl, groupSelect, wc.sql()), wc.args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string][]uint64)
+	for rows.Next() {
+		var gk []string
+		var fps []uint64
+		if err := rows.Scan(&gk, &fps); err != nil {
+			return nil, err
+		}
+		out[strings.Join(gk, "|")] = fps
+	}
+	return out, rows.Err()
+}

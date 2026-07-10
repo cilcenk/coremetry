@@ -197,3 +197,42 @@ func TestIsHex32(t *testing.T) {
 		}
 	}
 }
+
+// TestPivotSeriesExemplarKey — v0.8.432 (audit Faz B). The by-series
+// key must hash ALL inputs (v0.5.187 rule): groupBy rides a digest that
+// is order-invariant but set-distinct; filters raw JSON folds in; the
+// window stays minute-bucketed like the sibling key.
+func TestPivotSeriesExemplarKey(t *testing.T) {
+	from := time.Unix(1_700_000_000, 0)
+	to := from.Add(30 * time.Minute)
+
+	a := pivotSeriesExemplarKey("m", "svc", []string{"host.name", "region"}, `[]`, 50, from, to)
+	b := pivotSeriesExemplarKey("m", "svc", []string{"region", "host.name"}, `[]`, 50, from, to)
+	if a != b {
+		t.Fatalf("groupBy order must not change the key:\n%s\n%s", a, b)
+	}
+	c := pivotSeriesExemplarKey("m", "svc", []string{"host.name"}, `[]`, 50, from, to)
+	if a == c {
+		t.Fatalf("distinct groupBy sets must produce distinct keys")
+	}
+	d := pivotSeriesExemplarKey("m", "svc", []string{"host.name", "region"}, `[{"k":"env"}]`, 50, from, to)
+	if a == d {
+		t.Fatalf("filters must fold into the key")
+	}
+	e := pivotSeriesExemplarKey("m2", "svc", []string{"host.name", "region"}, `[]`, 50, from, to)
+	f := pivotSeriesExemplarKey("m", "svc2", []string{"host.name", "region"}, `[]`, 50, from, to)
+	g := pivotSeriesExemplarKey("m", "svc", []string{"host.name", "region"}, `[]`, 99, from, to)
+	for i, other := range []string{e, f, g} {
+		if a == other {
+			t.Fatalf("input %d must change the key", i)
+		}
+	}
+	// Minute bucketing: seconds within the same minute share a key.
+	// (minute-aligned base — 1_700_000_000 itself sits at :20s)
+	base := time.Unix(1_699_999_980, 0)
+	h1 := pivotSeriesExemplarKey("m", "svc", nil, `[]`, 50, base.Add(10*time.Second), base.Add(30*time.Minute+20*time.Second))
+	h2 := pivotSeriesExemplarKey("m", "svc", nil, `[]`, 50, base.Add(40*time.Second), base.Add(30*time.Minute+50*time.Second))
+	if h1 != h2 {
+		t.Fatalf("window must be minute-bucketed:\n%s\n%s", h1, h2)
+	}
+}

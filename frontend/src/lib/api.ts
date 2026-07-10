@@ -408,6 +408,19 @@ export const api = {
   // (GET /api/exemplars, pivot Phase 2). Either a comma-separated
   // `fingerprints` set (PK scan) or a `metric`(+`service`) fallback.
   // 30s server-side cache — client staleTime must stay ≥ that.
+  // Grouped-chart variant (v0.8.432): send the chart's own query shape;
+  // the server resolves series → fingerprints and tags each item with
+  // the series groupKey. 30s server cache — staleTime must stay ≥ that.
+  exemplarsBySeries: (params: {
+    metric: string; service?: string; groupBy: string[];
+    filters?: string; from: number; to: number; limit?: number;
+  }) =>
+    get<{ items: import('./types').OtlpExemplar[] }>(
+      `/api/exemplars/by-series?${qs({
+        metric: params.metric, service: params.service,
+        groupBy: params.groupBy.join(','), filters: params.filters,
+        from: params.from, to: params.to, limit: params.limit,
+      })}`),
   exemplars: (params: {
     fingerprints?: string; metric?: string; service?: string;
     from: number; to: number; limit?: number;

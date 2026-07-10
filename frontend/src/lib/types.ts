@@ -3095,6 +3095,10 @@ export interface OtlpExemplar {
   traceId: string;
   spanId: string;
   attrs?: Record<string, string>;
+  // v0.8.432 (audit Faz B) — /api/exemplars/by-series items carry the
+  // chart series' groupKey so grouped charts attribute each ◆ to the
+  // right line; absent on the legacy single-series endpoint.
+  groupKey?: string[];
 }
 
 // v0.8.332 — one OTel span-link row from GET /api/traces/{id}/links

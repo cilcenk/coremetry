@@ -32,6 +32,10 @@ type SourceConfig struct {
 // shard name (`<name>_local` in cluster mode, `<name>` otherwise).
 type Plan struct {
 	Table    string    // "spans" | "logs" | "metric_points" | "profiles"
+// exemplars/span_links are EXCLUDED by decision (exemplar audit v0.8.431,
+// açık soru 4): their TTL rides retention.spans (days, not weeks) — by the
+// time a single-node→cluster migration runs, the copyable window is a
+// rounding error and the pivot degrades gracefully without it.
 	TimeCol  string    // "time" (default) | "start_time" for profiles
 	From, To time.Time // date range (inclusive on `From`, exclusive on `To`)
 }

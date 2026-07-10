@@ -37,6 +37,7 @@ import (
 	"hash/fnv"
 	"net/http"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ import (
 // api.go's Start block (its single new line for v0.8.330).
 func (s *Server) registerPivotRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/exemplars", s.getPivotExemplars)
+	mux.HandleFunc("GET /api/exemplars/by-series", s.getSeriesExemplars)
 	mux.HandleFunc("GET /api/traces/{id}/links", s.getTraceLinks)
 	mux.HandleFunc("GET /api/spans/window-metrics", s.getSpanWindowMetrics)
 }
@@ -102,6 +104,24 @@ func pivotMinuteBucket(t time.Time) int64 {
 func pivotExemplarKey(fps []uint64, metric, service string, limit int, from, to time.Time) string {
 	return fmt.Sprintf("pivot-exemplars:fp=%s:m=%s:svc=%s:lim=%d:from=%d:to=%d",
 		pivotFPDigest(fps), metric, service, limit,
+		pivotMinuteBucket(from), pivotMinuteBucket(to))
+}
+
+// pivotSeriesExemplarKey — /api/exemplars/by-series cache key from ALL
+// inputs (v0.8.432, audit Faz B): metric, service, sorted-digested groupBy
+// set, raw filters JSON, limit, minute-bucketed window. groupBy rides a
+// digest (never len()) per the v0.5.187 rule.
+func pivotSeriesExemplarKey(metric, service string, groupBy []string, filters string, limit int, from, to time.Time) string {
+	gb := append([]string(nil), groupBy...)
+	sort.Strings(gb)
+	h := fnv.New64a()
+	for _, k := range gb {
+		h.Write([]byte(k))
+		h.Write([]byte{0})
+	}
+	h.Write([]byte(filters))
+	return fmt.Sprintf("pivot-series-exemplars:m=%s:svc=%s:gb=%x:lim=%d:from=%d:to=%d",
+		metric, service, h.Sum64(), limit,
 		pivotMinuteBucket(from), pivotMinuteBucket(to))
 }
 
@@ -224,6 +244,92 @@ func (s *Server) getPivotExemplars(w http.ResponseWriter, r *http.Request) {
 			items = append(items, pivotExemplar{
 				Ts: e.TimeUnixNs, Value: e.Value,
 				TraceID: e.TraceID, SpanID: e.SpanID, Attrs: e.Attrs,
+			})
+		}
+		return map[string]any{"items": items}, nil
+	})
+}
+
+// pivotSeriesExemplar — /api/exemplars/by-series response item: the
+// pivotExemplar shape + the chart series' groupKey, so the client
+// attributes each ◆ to the right line with the SAME seriesGroupLabel
+// derivation the chart series use. Fingerprints never cross the wire
+// (uint64 → JSON precision hazard); the gk join happens server-side.
+type pivotSeriesExemplar struct {
+	pivotExemplar
+	GroupKey []string `json:"groupKey"`
+}
+
+// getSeriesExemplars serves GET /api/exemplars/by-series (v0.8.432,
+// audit Faz B): OTLP exemplars for a GROUPED catalogue-metric chart.
+// The client sends the chart's own query shape (metric, service,
+// groupBy, filters, window); the server resolves each series to its
+// fingerprint sets (MetricSeriesFingerprints — hasSeriesFpCol-gated),
+// PK-scans the exemplars, and returns items tagged with the series
+// groupKey. Installs without the fingerprint column return empty items
+// — the chart degrades to no ◆, byte-identical to the pre-Faz-B state.
+func (s *Server) getSeriesExemplars(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	metric := strings.TrimSpace(q.Get("metric"))
+	if metric == "" {
+		http.Error(w, "metric required", http.StatusBadRequest)
+		return
+	}
+	service := strings.TrimSpace(q.Get("service"))
+	var groupBy []string
+	for _, k := range strings.Split(q.Get("groupBy"), ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			groupBy = append(groupBy, k)
+		}
+	}
+	filtersRaw := q.Get("filters")
+	filters := parseFilters(filtersRaw)
+	from, to := parseFromTo(r, time.Hour)
+	limit := parseInt(q.Get("limit"), 0)
+
+	key := pivotSeriesExemplarKey(metric, service, groupBy, filtersRaw, limit, from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		fpsByGk, err := s.store.MetricSeriesFingerprints(ctx, chstore.MetricQueryFilter{
+			Name: metric, Service: service, GroupBy: groupBy,
+			Filters: filters, From: from, To: to,
+		})
+		if err != nil {
+			return nil, err
+		}
+		// Flatten with a global cap (same budget as ?fingerprints=) and
+		// remember fp → gk for the attribution below.
+		gkByFp := make(map[uint64][]string)
+		var flat []uint64
+		for gk, fps := range fpsByGk {
+			parts := []string{}
+			if gk != "" {
+				parts = strings.Split(gk, "|")
+			}
+			for _, fp := range fps {
+				if _, dup := gkByFp[fp]; dup {
+					continue
+				}
+				gkByFp[fp] = parts
+				if len(flat) < pivotMaxFingerprints {
+					flat = append(flat, fp)
+				}
+			}
+		}
+		if len(flat) == 0 {
+			return map[string]any{"items": []pivotSeriesExemplar{}}, nil
+		}
+		rows, err := s.store.ExemplarsForSeries(ctx, flat, from, to, limit)
+		if err != nil {
+			return nil, err
+		}
+		items := make([]pivotSeriesExemplar, 0, len(rows))
+		for _, e := range rows {
+			items = append(items, pivotSeriesExemplar{
+				pivotExemplar: pivotExemplar{
+					Ts: e.TimeUnixNs, Value: e.Value,
+					TraceID: e.TraceID, SpanID: e.SpanID, Attrs: e.Attrs,
+				},
+				GroupKey: gkByFp[e.Fingerprint],
 			})
 		}
 		return map[string]any{"items": items}, nil

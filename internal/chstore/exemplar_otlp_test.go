@@ -122,3 +122,21 @@ func TestExemplarReadSQLShape(t *testing.T) {
 		t.Fatalf("select tuples diverged from the shared scanner order")
 	}
 }
+
+// TestMetricSeriesFPSQLShape — v0.8.432 (audit Faz B). The gk→fps
+// lookup must keep the house bounds AND the legacy-sentinel exclusion;
+// gk alignment with the chart query is what the API's fp→series join
+// stands on.
+func TestMetricSeriesFPSQLShape(t *testing.T) {
+	for _, frag := range []string{
+		"groupUniqArray(8)(series_fingerprint)",
+		"FROM metric_points",
+		"GROUP BY gk",
+		"LIMIT 1000",
+		"SETTINGS max_execution_time = 10",
+	} {
+		if !strings.Contains(metricSeriesFPSQLTmpl, frag) {
+			t.Errorf("missing %q", frag)
+		}
+	}
+}

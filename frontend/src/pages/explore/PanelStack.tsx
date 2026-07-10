@@ -115,15 +115,38 @@ export function buildPanels(
         exemplars: ex.length ? ex : undefined,
       };
     });
-    // v0.8.332 (pivot Phase 3) — attach the OTLP ◆ only when the panel is a
-    // single unambiguous series. The fetch gate already skips group-by
-    // queries; this guards the residual case of an unexpected fan-out (an
-    // exemplar can't be attributed to one line of many without fingerprints).
+    // v0.8.332 (pivot Phase 3) — single-series panels attach the OTLP ◆
+    // wholesale. v0.8.432 (audit Faz B) — grouped items now arrive with a
+    // per-item groupKey (the /by-series endpoint's server-side fp→gk join);
+    // attribute those to their line via the SAME seriesGroupLabel
+    // derivation the chart series use. Legacy keyless items keep the
+    // single-unambiguous-series guard.
     const otlp = otlpExemplarsByLetter[q.letter] ?? [];
-    if (otlp.length > 0 && labeled.length === 1) {
-      const ex = otlpMarkersFor(labeled[0].points, otlp);
-      if (ex.length > 0) {
-        labeled[0] = { ...labeled[0], exemplars: [...(labeled[0].exemplars ?? []), ...ex] };
+    if (otlp.length > 0) {
+      const keyless = otlp.filter(e => !e.groupKey);
+      if (keyless.length > 0 && labeled.length === 1) {
+        const ex = otlpMarkersFor(labeled[0].points, keyless);
+        if (ex.length > 0) {
+          labeled[0] = { ...labeled[0], exemplars: [...(labeled[0].exemplars ?? []), ...ex] };
+        }
+      }
+      const keyed = otlp.filter(e => e.groupKey);
+      if (keyed.length > 0) {
+        const byLabel = new Map<string, OtlpExemplar[]>();
+        for (const e of keyed) {
+          const label = seriesGroupLabel(q, e.groupKey!, desc);
+          const list = byLabel.get(label) ?? [];
+          list.push(e);
+          byLabel.set(label, list);
+        }
+        for (let li = 0; li < labeled.length; li++) {
+          const mine = byLabel.get(labeled[li].label);
+          if (!mine?.length) continue;
+          const ex = otlpMarkersFor(labeled[li].points, mine);
+          if (ex.length > 0) {
+            labeled[li] = { ...labeled[li], exemplars: [...(labeled[li].exemplars ?? []), ...ex] };
+          }
+        }
       }
     }
     // Biggest-by-area win the panel slots (MQE precedent).

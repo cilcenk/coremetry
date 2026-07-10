@@ -556,6 +556,19 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
 				''
 			) AS infra_host,
+			-- v0.8.448 — leaf-client tespiti (external fallback için):
+			-- server-kind bir child'ı OLAN client span'ın hedefi
+			-- enstrümante bir servistir — o kenarı cross-service pass
+			-- üretir; external adayı yalnız CEVAPSIZ (leaf) client'lar.
+			-- Set penceresi bucket sonundan 5 dk taşar: sınırda başlayan
+			-- client'ın child'ı bir sonraki bucket'a düşebilir. Set
+			-- boyutu 5 dk'lık server-span parent_id'leri (~1-2M @ 1B/gün,
+			-- hash set olarak onlarca MB) — worker pass'i, hot path değil.
+			span_id GLOBAL NOT IN (
+				SELECT parent_id FROM spans
+				WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+				  AND kind = 'server' AND parent_id != ''
+			) AS unanswered,
 			-- v0.5.410 — derive parent_env from resource attrs.
 			-- child_env stays empty for infra targets — db/queue/
 			-- external nodes don't inherit the caller's env (they
@@ -592,18 +605,37 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 					concat('queue:', msg_system),
 				peer_service != '' AND kind = 'client',
 					concat('ext:', peer_service),
+				-- v0.8.448 — semconv fallback: hedefini yalnız
+				-- server.address / net.peer.name ile adlandıran HTTP/RPC
+				-- client'ları (standart semconv; peer.service opt-in bir
+				-- ipucu, çoğu SDK hiç set etmez). Üç kapı: leaf-only
+				-- (unanswered — cevabı olan çağrı internal'dır), http/rpc
+				-- şekilli (başıboş TCP client'ı düğüm yapma), ve bilinen
+				-- servis adı asla (cevap span'ı bu pass'ten SONRA gelen
+				-- sınır yarışına kemer-askı; /external read tarafı da
+				-- aynı seti eler).
+				kind = 'client' AND infra_host != ''
+					AND (http_method != '' OR rpc_system != '')
+					AND unanswered
+					AND infra_host GLOBAL NOT IN (
+						SELECT DISTINCT service_name FROM service_summary_5m
+						WHERE time_bucket >= toDateTime(?, 'UTC')
+					),
+					concat('ext:', infra_host),
 				''
 			) AS child,
+			-- proto/kind_out child'dan türetilir (alias zinciri) —
+			-- external dalı iki kez yazıp ıraksama riski almak yerine.
 			multiIf(
 				db_system  != '', 'db',
 				msg_system != '', 'kafka',
-				peer_service != '', 'http',
+				startsWith(child, 'ext:'), 'http',
 				''
 			) AS proto,
 			multiIf(
 				db_system  != '', 'db',
 				msg_system != '', 'queue',
-				peer_service != '', 'external',
+				startsWith(child, 'ext:'), 'external',
 				''
 			) AS kind_out,
 			-- Label format: include the instance/host (peer_service)
@@ -644,6 +676,11 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		GROUP BY parent_service, child, proto, kind_out
 		SETTINGS max_execution_time = 120,
 		         distributed_product_mode = 'global'`,
+		// v0.8.448 — arg sırası SQL'deki ? sırasını izler: önce WITH
+		// (unanswered set penceresi + bilinen-servis lookback'i), sonra
+		// SELECT (time_bucket, version), sonra WHERE penceresi.
+		bucketStart.Unix(), end.Add(5*time.Minute).Unix(),
+		bucketStart.Add(-time.Hour).Unix(),
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
 		bucketStart.Unix(), end.Unix(),

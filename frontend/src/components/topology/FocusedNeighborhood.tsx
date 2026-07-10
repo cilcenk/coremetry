@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { healthToken } from '@/lib/health';
 import { Spinner } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
+import { SampledStructureTopology } from '@/components/topology/SampledStructureTopology';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 
@@ -94,12 +96,33 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
   onClear: () => void;
 }) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+  // v0.8.467 (operatör onaylı) — odaklı topolojinin ANA görünümü artık
+  // sampled Structure (Service Details'teki "Structure for" panelinin
+  // topoloji görünümü: gerçek trace örneklerinden çağrı yapısı). Flow
+  // (MV-kenar akış grafiği) toggle'da kalır. Tercih URL'de (?tview=,
+  // house rule §4) + kalıcı (localStorage) — bir kez Flow'a dönen hep
+  // Flow açar; kopyalanan link görünümü aynen taşır.
+  const [params, setParams] = useSearchParams();
+  const view: 'structure' | 'flow' =
+    (params.get('tview') ?? getRaw(STORAGE_KEYS.topoViewMode) ?? 'structure') === 'flow'
+      ? 'flow' : 'structure';
+  const setView = (v: 'structure' | 'flow') => {
+    setRaw(STORAGE_KEYS.topoViewMode, v);
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tview', v);
+      return next;
+    }, { replace: true });
+  };
   // hops rides the query key (bounded: server clamps to 1..3, UI offers 1|2)
   // so widening the radius refetches the wider subgraph; 30s server cache.
+  // Structure modunda MV-graf sorgusu hiç atılmaz (göstermediğini
+  // fetch'leme disiplini).
   const graph = useQuery<ServiceGraphResponse>({
     queryKey: ['servicegraph', 'neighborhood', focus, hops, from, to],
     queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', hops, from, to }),
     staleTime: 30_000,
+    enabled: view === 'flow',
   });
 
   // ── signed columns + nearest-first cap over the server-walked subgraph ──
@@ -182,7 +205,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
     })),
   }), [nb]);
 
-  if (graph.isLoading) return <div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div>;
+  if (view === 'flow' && graph.isLoading) return <div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div>;
 
   const hoverNode = hover ? nb.nodes.find(n => n.id === hover) : null;
   const height = Math.round(window.innerHeight * 0.74);
@@ -197,21 +220,32 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           <Button variant="ghost" size="sm" onClick={onClear}
             title="Back to the service picker" style={{ marginLeft: 2 }}>✕</Button>
         </span>
-        <div className="seg">
-          <button className={hops === 1 ? 'on' : ''} onClick={() => onHops(1)}>1 hop</button>
-          <button className={hops === 2 ? 'on' : ''} onClick={() => onHops(2)}>2 hops</button>
+        <div className="seg" title="Structure: örneklenmiş trace'lerden gerçek çağrı yapısı · Flow: 5dk özet kenarlarından akış grafiği">
+          <button className={view === 'structure' ? 'on' : ''} onClick={() => setView('structure')}>Structure</button>
+          <button className={view === 'flow' ? 'on' : ''} onClick={() => setView('flow')}>Flow</button>
         </div>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text2)', cursor: 'pointer' }}>
-          <input type="checkbox" checked={errorsOnly} onChange={e => onErrorsOnly(e.target.checked)} /> Errors only
-        </label>
-        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-          {nb.nodes.length} of {graph.data?.nodes.length ?? 0} nodes · {nb.edges.length} edges
-          {nb.collapsed > 0 && <strong style={{ color: 'var(--warn)' }}> · +{nb.collapsed} more collapsed</strong>}
-        </span>
+        {view === 'flow' && (
+          <>
+            <div className="seg">
+              <button className={hops === 1 ? 'on' : ''} onClick={() => onHops(1)}>1 hop</button>
+              <button className={hops === 2 ? 'on' : ''} onClick={() => onHops(2)}>2 hops</button>
+            </div>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text2)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={errorsOnly} onChange={e => onErrorsOnly(e.target.checked)} /> Errors only
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+              {nb.nodes.length} of {graph.data?.nodes.length ?? 0} nodes · {nb.edges.length} edges
+              {nb.collapsed > 0 && <strong style={{ color: 'var(--warn)' }}> · +{nb.collapsed} more collapsed</strong>}
+            </span>
+          </>
+        )}
       </div>
 
+      {/* ── sampled structure (varsayılan görünüm) ──────────────────────── */}
+      {view === 'structure' && <SampledStructureTopology service={focus} />}
+
       {/* ── flow graph canvas ───────────────────────────────────────────── */}
-      <TopologyFlowGraph
+      {view === 'flow' && <TopologyFlowGraph
         data={mapData}
         focus={focus}
         hoverNode={hover}
@@ -223,10 +257,10 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
         }}
         height={height}
         dropMessaging={false}
-      />
+      />}
 
       {/* ── hover inspector ─────────────────────────────────────────────── */}
-      {hoverNode && (
+      {view === 'flow' && hoverNode && (
         <div style={{ position: 'absolute', left: 10, bottom: 44, zIndex: 5, width: 240, padding: 12, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', boxShadow: '0 6px 20px rgba(0,0,0,.28)', fontSize: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: healthToken(hoverNode.errorRate) }} />

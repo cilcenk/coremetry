@@ -1271,34 +1271,6 @@ type ServiceEdgeStats struct {
 	P99Ms     float64 `json:"p99Ms"`
 }
 
-// CallersOf returns services that called `service` (incoming dependency view).
-func (s *Store) CallersOf(ctx context.Context, service string, since time.Duration) ([]ServiceEdgeStats, error) {
-	cutoff := time.Now().Add(-since)
-	rows, err := s.conn.Query(ctx, `
-		SELECT service_name AS caller,
-		       count() AS calls,
-		       countIf(status_code = 'error') / count() * 100 AS error_rate,
-		       avg(duration) / 1e6 AS avg_ms,
-		       quantile(0.99)(duration) / 1e6 AS p99_ms
-		FROM spans
-		WHERE time >= ?
-		  AND peer_service = ?
-		  AND kind IN ('client', 'producer')
-		GROUP BY caller
-		ORDER BY calls DESC`, cutoff, service)
-	if err != nil { return nil, err }
-	defer rows.Close()
-	var out []ServiceEdgeStats
-	for rows.Next() {
-		var e ServiceEdgeStats
-		if err := rows.Scan(&e.Service, &e.Calls, &e.ErrorRate, &e.AvgMs, &e.P99Ms); err != nil {
-			return nil, err
-		}
-		out = append(out, e)
-	}
-	return out, rows.Err()
-}
-
 // CalleesOf returns services that `service` calls (outgoing dependency view).
 func (s *Store) CalleesOf(ctx context.Context, service string, since time.Duration) ([]ServiceEdgeStats, error) {
 	cutoff := time.Now().Add(-since)

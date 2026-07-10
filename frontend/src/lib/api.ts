@@ -5,7 +5,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, ServiceAttrsResponse,
-  AlertRule, Problem, ServiceEdgeStats, Exception,
+  AlertRule, Problem,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -1536,14 +1536,6 @@ export const api = {
       deploys:    import('./types').Deploy[] | null;
     }>(`/api/services/${encodeURIComponent(svc)}/bundle?${qs(params)}`);
   },
-  serviceCallers: (svc: string, since: string) =>
-    get<ServiceEdgeStats[] | null>(`/api/services/${encodeURIComponent(svc)}/callers?since=${since}`),
-  serviceCallees: (svc: string, since: string) =>
-    get<ServiceEdgeStats[] | null>(`/api/services/${encodeURIComponent(svc)}/callees?since=${since}`),
-
-  exceptions: (params: { service?: string; groupBy?: string; from?: number; to?: number; limit?: number }) =>
-    get<Exception[] | null>(`/api/exceptions?${qs(params)}`),
-
   // Errors Inbox (state-tracked exception groups). v0.5.95 switched
   // the response shape from a bare array to { items, total, limit,
   // offset } so the UI can paginate without losing the global count.

@@ -613,7 +613,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/profiles/by-span/hotspots", s.profileHotspotsForSpan)
 	mux.HandleFunc("GET /api/profiles/hotspots", s.profileHotspots)
 	mux.HandleFunc("GET /api/profiles/{id}", s.getProfile)
-	mux.HandleFunc("GET    /api/exceptions",               s.listExceptions)
 	// Errors Inbox — stateful exception groups (read = any, write = admin)
 	mux.HandleFunc("GET    /api/exception-groups",                s.listExceptionGroups)
 	mux.HandleFunc("GET    /api/exception-groups/{fp}",           s.getExceptionGroup)
@@ -623,8 +622,6 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign",    auth.RequireAnyRole(editorRoles, s.assignExceptionGroup))
 	mux.HandleFunc("GET    /api/services/{name}/operations", s.svcOperationSummary)
 	mux.HandleFunc("GET    /api/services/{name}/span-breakdown", s.svcSpanBreakdown)
-	mux.HandleFunc("GET    /api/services/{name}/callers",  s.svcCallers)
-	mux.HandleFunc("GET    /api/services/{name}/callees",  s.svcCallees)
 	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
 	mux.HandleFunc("GET    /api/problems/count",            s.countProblems)
 	mux.HandleFunc("GET    /api/problems/buckets",          s.listProblemBuckets)
@@ -6703,19 +6700,6 @@ func (s *Server) assignExceptionGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (s *Server) listExceptions(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	rows, err := s.store.GetExceptions(r.Context(), chstore.ExceptionFilter{
-		Service: q.Get("service"),
-		GroupBy: q.Get("groupBy"),
-		From:    parseTime(q.Get("from")),
-		To:      parseTime(q.Get("to")),
-		Limit:   parseInt(q.Get("limit"), 100),
-	})
-	if err != nil { writeErr(w, err); return }
-	writeJSON(w, rows)
-}
-
 // ── Service backtrace ────────────────────────────────────────────────────────
 
 // svcSpanBreakdown returns time-bucketed cumulative duration per
@@ -6779,20 +6763,6 @@ func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.GetOperationSummary(ctx, svc, since, from, to, normalized)
 	})
-}
-
-func (s *Server) svcCallers(w http.ResponseWriter, r *http.Request) {
-	since := parseDuration(r.URL.Query().Get("since"), 24*time.Hour)
-	out, err := s.store.CallersOf(r.Context(), r.PathValue("name"), since)
-	if err != nil { writeErr(w, err); return }
-	writeJSON(w, out)
-}
-
-func (s *Server) svcCallees(w http.ResponseWriter, r *http.Request) {
-	since := parseDuration(r.URL.Query().Get("since"), 24*time.Hour)
-	out, err := s.store.CalleesOf(r.Context(), r.PathValue("name"), since)
-	if err != nil { writeErr(w, err); return }
-	writeJSON(w, out)
 }
 
 // ── Public status page ──────────────────────────────────────────────────────

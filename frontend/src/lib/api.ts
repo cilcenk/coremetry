@@ -788,6 +788,15 @@ export const api = {
   externalHost: (host: string, fromNs: number, toNs: number) =>
     get<import('./types').ExternalHostDetail | null>(
       `/api/external/host?host=${encodeURIComponent(host)}&from=${fromNs}&to=${toNs}`),
+  // /hosts inventory — one row per host/pod emitting metrics in the
+  // window (v0.8.449, Wave 3 A4). Window clamped to ≤6h server-side.
+  hosts: (fromNs: number, toNs: number) =>
+    get<import('./types').HostRow[] | null>(
+      `/api/hosts?from=${fromNs}&to=${toNs}`),
+  // Host drawer — per-service breakdown + per-minute CPU/mem trend.
+  hostDetail: (host: string, fromNs: number, toNs: number) =>
+    get<import('./types').HostDetail | null>(
+      `/api/hosts/detail?host=${encodeURIComponent(host)}&from=${fromNs}&to=${toNs}`),
   // Detail drawers — per-(service, pod) caller breakdown + top
   // operations for one (system, instance) tuple. Drives the
   // row-click drawer on /databases and /messaging.

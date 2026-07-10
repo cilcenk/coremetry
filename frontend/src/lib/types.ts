@@ -3316,3 +3316,38 @@ export interface ExternalHostDetail {
   callers: ExternalCaller[];
   trend: ExternalTrendPoint[];
 }
+
+// v0.8.449 — /hosts inventory (Wave 3 / A4): one row per host/pod
+// emitting metrics in the window; the global sibling of the Service
+// Overview Instances card.
+export interface HostRow {
+  host: string;
+  zone?: string;
+  services: string[];
+  cpuPct: number;
+  memBytes: number;
+  memPct: number; // 0 when no memory limit is reported
+  up: boolean;
+  lastSeen: number; // unix ns
+}
+
+export interface HostServiceRow {
+  service: string;
+  cpuPct: number;
+  memBytes: number;
+  lastSeen: number;
+}
+
+// One minute of a host's trend; bucket = unix seconds.
+export interface HostTrendPoint {
+  bucket: number;
+  cpuPct: number;
+  memBytes: number;
+}
+
+export interface HostDetail {
+  host: string;
+  zone?: string;
+  services: HostServiceRow[];
+  trend: HostTrendPoint[];
+}

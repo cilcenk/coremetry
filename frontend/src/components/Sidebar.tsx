@@ -71,6 +71,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/databases',   label: 'nav.databases',  icon: Database },
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
       { href: '/external',    label: 'nav.external',   icon: Globe }, // v0.8.446 — Wave 3 / A1
+      { href: '/hosts',       label: 'nav.hosts',      icon: Server }, // v0.8.449 — Wave 3 / A4
     ],
   },
   {

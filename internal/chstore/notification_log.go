@@ -144,3 +144,24 @@ func newNotificationLogID() string {
 	_, _ = rand.Read(b)
 	return "nl-" + hex.EncodeToString(b)
 }
+
+// HasNotification — the "ilk defa" gate for the team-routing mail
+// (v0.8.429): has a SUCCESSFUL send for (relatedKind, relatedID,
+// channelName) already been logged? Bounded to the table's 90-day
+// retention window; the row volume is notification-scale (not span-
+// scale) so the related_id predicate without a prefix key is fine
+// under the execution cap.
+func (s *Store) HasNotification(ctx context.Context, relatedKind, relatedID, channelName string) (bool, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT 1 FROM notification_log
+		WHERE sent_at >= now() - INTERVAL 90 DAY
+		  AND related_kind = ? AND related_id = ? AND channel_name = ? AND ok = 1
+		LIMIT 1
+		SETTINGS max_execution_time = 10`,
+		relatedKind, relatedID, channelName)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	return rows.Next(), rows.Err()
+}

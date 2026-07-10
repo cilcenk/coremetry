@@ -384,3 +384,88 @@ func severityRank(s string) int {
 	}
 	return 2 // unknown → treat as warning
 }
+
+// ── Team routing (v0.8.429) ─────────────────────────────────────────────────
+//
+// Operator ask: "yeni bir problem ilk defa geldiğinde ilgili sy ve ug
+// team'e bildirim gönderilsin — mailleri katalogdan alsın." The catalog
+// carries team NAMES (service_metadata owner_team / sre_team); this
+// system_settings blob maps those names to e-mail addresses and gates
+// the automatic problem-open → team-mail path in internal/notify.
+// One settings key, no new table (invariant #6).
+
+const TeamContactsKey = "team_contacts"
+
+// TeamContacts is the "team_contacts" system_settings value.
+type TeamContacts struct {
+	Enabled bool `json:"enabled"`
+	// MinSeverity — info | warning | critical; "" defaults to warning
+	// so a fresh install doesn't mail every info-level blip.
+	MinSeverity string `json:"minSeverity,omitempty"`
+	// Contacts maps a catalog team name → e-mail address(es). Values
+	// may be comma-separated for multi-recipient teams. Lookup is
+	// case-insensitive (mixed-casing team attrs, v0.8.330 lesson).
+	Contacts map[string]string `json:"contacts"`
+}
+
+// SeverityAllows reports whether a problem of severity sev clears the
+// blob's MinSeverity floor (default warning).
+func (tc TeamContacts) SeverityAllows(sev string) bool {
+	min := tc.MinSeverity
+	if min == "" {
+		min = "warning"
+	}
+	return severityRank(sev) >= severityRank(min)
+}
+
+// EmailsForTeam resolves one catalog team name to its configured
+// addresses — case-insensitive key match, comma-split, trimmed.
+// Missing / empty team or contact yields nil (callers skip silently;
+// the Settings UI surfaces which catalog teams lack an address).
+func (tc TeamContacts) EmailsForTeam(team string) []string {
+	team = strings.TrimSpace(team)
+	if team == "" {
+		return nil
+	}
+	var raw string
+	for k, v := range tc.Contacts {
+		if strings.EqualFold(strings.TrimSpace(k), team) {
+			raw = v
+			break
+		}
+	}
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// GetTeamContacts loads the blob; a missing key returns the zero value
+// (disabled, empty map) — never an error the caller must special-case.
+func (s *Store) GetTeamContacts(ctx context.Context) (TeamContacts, error) {
+	var tc TeamContacts
+	raw, err := s.GetSetting(ctx, TeamContactsKey)
+	if err != nil || len(raw) == 0 {
+		return tc, err
+	}
+	if err := json.Unmarshal(raw, &tc); err != nil {
+		return TeamContacts{}, err
+	}
+	return tc, nil
+}
+
+// PutTeamContacts persists the blob (admin PUT path; audited at the
+// API layer like every settings write).
+func (s *Store) PutTeamContacts(ctx context.Context, tc TeamContacts) error {
+	raw, err := json.Marshal(tc)
+	if err != nil {
+		return err
+	}
+	return s.PutSetting(ctx, TeamContactsKey, raw)
+}

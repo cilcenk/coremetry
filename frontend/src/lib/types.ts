@@ -1806,6 +1806,15 @@ export interface OccurrencePoint {
 
 // ── Settings + notifications ─────────────────────────────────────────────────
 
+// TeamContacts (v0.8.429) — problem-open → team e-mail routing config.
+// Contacts maps a catalog team name (owner/SRE) to address(es);
+// comma-separated values fan out to multiple recipients.
+export interface TeamContacts {
+  enabled: boolean;
+  minSeverity?: 'info' | 'warning' | 'critical';
+  contacts: Record<string, string>;
+}
+
 export interface SMTPSettings {
   host: string;
   port: number;

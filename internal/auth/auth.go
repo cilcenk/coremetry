@@ -65,6 +65,8 @@ type Service struct {
 	// fallback path. Guarded by trustedCIDRs so a request from
 	// outside the proxy mesh can't spoof the header.
 	mu             sync.RWMutex
+	// tokens — cmk_ servis token cache'i (v0.8.444); EnableAPITokens bağlar.
+	tokens         *tokenCache
 	trustedHeader  *TrustedHeaderOptions
 	trustedCIDRs   []*net.IPNet
 	userStore      UserLookup
@@ -306,7 +308,17 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 
 		token := tokenFromRequest(r)
 		if token != "" {
-			if claims, err := s.Parse(token); err == nil {
+			// v0.8.444 — cmk_ servis token'ları: JWT değildir, parse
+			// denenmez; bellek-içi hash cache'inde aranır (istek yolunda
+			// CH yok). Harici agent platformları (GenAI Studio → MCP)
+			// bu yolla, iptal edilebilir kimlikle gelir.
+			if IsAPIToken(token) {
+				if claims := s.apiTokenClaims(token); claims != nil {
+					ctx := context.WithValue(r.Context(), userCtxKey, claims)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+			} else if claims, err := s.Parse(token); err == nil {
 				ctx := context.WithValue(r.Context(), userCtxKey, claims)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

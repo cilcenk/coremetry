@@ -572,6 +572,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		// tabloda, ReplacingMergeTree(version) ile senkron diff'i
 		// bedava. saved_views istisnasının savunması rag.go başında.
 		ragChunksDDL,
+		// API token'ları (v0.8.444) — harici agent platformları (GenAI
+		// Studio) için iptal edilebilir servis kimlikleri; DDL api_tokens.go'da.
+		apiTokensDDL,
 		// Service catalog metadata — operator-curated per-service
 		// info (owner team, oncall channel, runbook URL, repo,
 		// description) that the spans table doesn't carry. Joins

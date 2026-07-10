@@ -2960,6 +2960,18 @@ export interface RagDocument {
   bytes: number;
   updatedAt: number;
 }
+// APIToken (v0.8.444) — harici agent platformları için servis kimliği.
+// Düz token yalnız create yanıtında bir kez görünür.
+export interface APIToken {
+  id: string;
+  name: string;
+  role: string;
+  prefix: string;
+  createdBy: string;
+  createdAt: number;
+  revoked: boolean;
+}
+
 export interface RagConfigView {
   endpoint: string;
   model: string;

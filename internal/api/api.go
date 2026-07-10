@@ -600,7 +600,8 @@ func (s *Server) Start() error {
 	// orchestration over existing reads — no new CH query.
 	mux.HandleFunc("GET /api/correlate/context", s.getCorrelationContext)
 	s.registerPivotRoutes(mux)
-	s.registerRAGRoutes(mux) // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
+	s.registerRAGRoutes(mux)
+	s.registerAPITokenRoutes(mux) // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
 	s.registerEndpointsDetailRoutes(mux) // v0.8.360 — /endpoints detail drill-down (histogram / status / exceptions / failing traces / split), endpoints_detail.go
 	s.registerDBStmtDetailRoutes(mux)    // v0.8.378 — /slow-queries statement drill-down (trend / callers / exemplars / compare), dbstmt_detail.go
 	s.registerDBWaitLockRoutes(mux)      // v0.8.391 — cross-engine waits & locks strip on the /databases drawer (Stage-2 D3), db_waitlock.go

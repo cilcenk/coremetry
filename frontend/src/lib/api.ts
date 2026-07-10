@@ -1042,6 +1042,17 @@ export const api = {
   // by hand). onEvent fires per `event:`/`data:` frame; the promise
   // resolves when the stream closes (the `done` event) or rejects on
   // transport error. abort via the AbortSignal.
+  // ── API tokens (v0.8.444) — servis kimlikleri ───────────────────────────
+  listAPITokens: () => get<{ tokens: import('./types').APIToken[] }>('/api/admin/api-tokens'),
+  createAPIToken: (name: string, role: string) =>
+    request<{ token: string; record: import('./types').APIToken }>('/api/admin/api-tokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, role }),
+    }),
+  revokeAPIToken: (id: string) =>
+    request<{ ok: boolean }>(`/api/admin/api-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   // ── RAG (v0.8.438) — doküman soru-cevap yönetimi ────────────────────────
   getRagConfig: () => get<import('./types').RagConfigView>('/api/rag/config'),
   putRagConfig: (c: { endpoint: string; model: string; enabled: boolean; topK?: number; apiKey?: string;

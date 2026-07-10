@@ -892,6 +892,9 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetRAG(ragSvc)
+	// v0.8.444 — cmk_ servis token'ları: cache'i bağla (GenAI Studio →
+	// MCP kimliği). Adapter chstore→auth tip köprüsü.
+	authSvc.EnableAPITokens(ctx, tokenSourceAdapter{store})
 	// v0.8.442 — wiki/URL kaynaklarının 30 dk'lık leader-gated senkronu.
 	go srv.StartRAGSync(ctx, lockImpl)
 
@@ -1552,4 +1555,21 @@ func (r aiCallRecorder) RecordCall(ctx context.Context, c copilot.CallRecord) {
 	if err := r.store.InsertAICall(ctx, row); err != nil {
 		log.Printf("[ai-obs] insert call: %v", err)
 	}
+}
+
+
+// tokenSourceAdapter — chstore.APIToken → auth.TokenInfo köprüsü
+// (auth chstore'u import edemez; v0.8.444).
+type tokenSourceAdapter struct{ store *chstore.Store }
+
+func (a tokenSourceAdapter) ActiveHashes(ctx context.Context) (map[string]auth.TokenInfo, error) {
+	m, err := a.store.ActiveAPITokenHashes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]auth.TokenInfo, len(m))
+	for h, t := range m {
+		out[h] = auth.TokenInfo{ID: t.ID, Name: t.Name, Role: t.Role}
+	}
+	return out, nil
 }

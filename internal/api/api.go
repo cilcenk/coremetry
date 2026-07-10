@@ -614,6 +614,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/exceptions",               s.listExceptions)
 	// Errors Inbox — stateful exception groups (read = any, write = admin)
 	mux.HandleFunc("GET    /api/exception-groups",                s.listExceptionGroups)
+	mux.HandleFunc("GET    /api/exception-groups/{fp}",           s.getExceptionGroup)
 	mux.HandleFunc("GET    /api/exception-groups/{fp}/samples",   s.getExceptionGroupSamples)
 	mux.HandleFunc("GET    /api/exception-groups/{fp}/occurrences", s.getExceptionGroupOccurrences)
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/state",     auth.RequireAnyRole(editorRoles, s.setExceptionGroupState))
@@ -6587,6 +6588,21 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		"limit":  f.Limit,
 		"offset": f.Offset,
 	})
+}
+
+// getExceptionGroup resolves a single fingerprint straight from the
+// store (bypassing the paginated list) so a shared /problems?exc=<fp>
+// link can't land on "not found" just because the group fell off the
+// requester's currently-loaded page/filter (mirrors AlertProblemHost's
+// fetch fallback for ?problem=<id> on the frontend).
+func (s *Server) getExceptionGroup(w http.ResponseWriter, r *http.Request) {
+	g, err := s.store.GetExceptionGroup(r.Context(), r.PathValue("fp"))
+	if err != nil { writeErr(w, err); return }
+	if g == nil {
+		http.Error(w, `{"error":"exception group not found"}`, http.StatusNotFound)
+		return
+	}
+	writeJSON(w, g)
 }
 
 func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request) {

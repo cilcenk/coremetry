@@ -1535,6 +1535,12 @@ export const api = {
   // across the WHOLE paginated set (whitelisted columns backend-side).
   exceptionGroups: (params: { state?: string; service?: string; assignee?: string; ownerTeam?: string; sreTeam?: string; sort?: string; dir?: string; q?: string; limit?: number; offset?: number }) =>
     get<{ items: ExceptionGroup[]; total: number; limit: number; offset: number }>(`/api/exception-groups?${qs(params)}`),
+  // getExceptionGroup — point lookup by fingerprint, used to resolve a
+  // shared /problems?exc=<fp> link when the group isn't on the
+  // requester's currently-loaded page/filter. Throws on 404 (see
+  // request()); callers treat any rejection as "not found".
+  getExceptionGroup: (fingerprint: string) =>
+    get<ExceptionGroup>(`/api/exception-groups/${encodeURIComponent(fingerprint)}`),
   exceptionGroupSamples: (fingerprint: string, limit = 10) =>
     get<ExceptionSample[] | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
   exceptionGroupOccurrences: (fingerprint: string) =>

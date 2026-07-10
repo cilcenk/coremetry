@@ -24,7 +24,7 @@ import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
 } from '@/lib/types';
 import { AlertProblemDetail, ProblemDetail } from './ProblemDetail';
-import { withProblemParam } from './problemLink';
+import { withProblemParam, withExcParam } from './problemLink';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -167,6 +167,38 @@ export default function ProblemsPage() {
   });
   // Selected group for the full in-page detail view (null = list).
   const [detail, setDetail] = useState<ExceptionGroup | null>(null);
+  // v0.8.438 (operator-reported): a specific exception-group problem
+  // couldn't be shared as a link — this detail view only ever lived in
+  // `detail` local state, never the URL, unlike the alert-rule problem
+  // detail's ?problem=<id> (v0.8.256/426/428). ?exc=<fingerprint> gives
+  // it the same both-ways contract: open/close write it, and it's
+  // resolved back on mount/refresh — checking the loaded page first,
+  // then falling back to a direct fetch so a shared link still works
+  // even when the group isn't on the requester's current tab/filter/page.
+  const excParam = searchParams.get('exc');
+  const [excNotFound, setExcNotFound] = useState(false);
+  useEffect(() => {
+    if (!excParam) { setDetail(null); setExcNotFound(false); return; }
+    if (detail?.fingerprint === excParam) return;
+    const hit = (data ?? []).find(g => g.fingerprint === excParam);
+    if (hit) { setDetail(hit); setExcNotFound(false); return; }
+    let cancelled = false;
+    api.getExceptionGroup(excParam)
+      .then(g => { if (!cancelled) { setDetail(g); setExcNotFound(false); } })
+      .catch(() => { if (!cancelled) { setDetail(null); setExcNotFound(true); } });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excParam, data]);
+  const openExcDetail = (g: ExceptionGroup) => {
+    setDetail(g);
+    setExcNotFound(false);
+    setSearchParams(prev => withExcParam(prev, g.fingerprint), { replace: true });
+  };
+  const closeExcDetail = () => {
+    setDetail(null);
+    setExcNotFound(false);
+    setSearchParams(prev => withExcParam(prev, null), { replace: true });
+  };
 
   // Sort lives in the shared DataTable hook, serverSort mode
   // (v0.8.251 Services template): the hook owns the header UX, the
@@ -287,7 +319,8 @@ export default function ProblemsPage() {
 
   // Full in-page exception-group detail (prototype design-parity). Clicking a
   // row opens it; back returns to this list. Caret still toggles the inline
-  // quick-peek (SamplesPanel) so both affordances coexist.
+  // quick-peek (SamplesPanel) so both affordances coexist. Shareable via
+  // ?exc=<fingerprint> (openExcDetail/closeExcDetail keep the URL in sync).
   if (detail) {
     return (
       <>
@@ -295,9 +328,33 @@ export default function ProblemsPage() {
         <ProblemDetail
           group={detail}
           isAdmin={isAdmin}
-          onBack={() => setDetail(null)}
+          onBack={closeExcDetail}
           onChanged={() => { refreshExceptionGroups(); qc.invalidateQueries({ queryKey: keys.anomalies.all }); }}
         />
+      </>
+    );
+  }
+  // A shared ?exc=<fingerprint> link that doesn't resolve — the group
+  // was purged, or the id is stale/malformed. Honest empty state
+  // instead of silently falling through to the list.
+  if (excParam && excNotFound) {
+    return (
+      <>
+        <Topbar title="Problems" />
+        <div id="content">
+          <Empty icon="❓" title="Exception not found">
+            Bu exception grubu artık mevcut değil.{' '}
+            <Button variant="secondary" size="sm" onClick={closeExcDetail}>← Problems</Button>
+          </Empty>
+        </div>
+      </>
+    );
+  }
+  if (excParam && !excNotFound) {
+    return (
+      <>
+        <Topbar title="Problems" />
+        <div id="content"><Spinner /></div>
       </>
     );
   }
@@ -397,14 +454,14 @@ export default function ProblemsPage() {
                   const open = expanded.has(g.fingerprint);
                   return (
                     <Fragment key={g.fingerprint}>
-                      <tr onClick={() => setDetail(g)}
+                      <tr onClick={() => openExcDetail(g)}
                         onKeyDown={(e) => {
                           // Enter/Space opens the full detail (keyboard parity
                           // with the click). The caret cell handles the inline
                           // quick-peek separately.
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            setDetail(g);
+                            openExcDetail(g);
                           }
                         }}
                         tabIndex={0}

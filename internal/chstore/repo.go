@@ -3689,17 +3689,17 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 }
 
 func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, from, to time.Time, limit int) ([]MetricPointRow, error) {
+	// v0.8.454 — pencere artık opsiyonel değil: sıfır from/to varsayılan
+	// 1 saate bağlanır + max_execution_time. Önceden penceresiz çağrı tüm
+	// metric_points tarihçesini tarıyordu (hard-constraint ihlali).
+	from, to = boundWindow(from, to, time.Hour)
 	var wc whereClause
 	wc.add("metric = ?", metric)
 	if service != "" {
 		wc.add("service_name = ?", service)
 	}
-	if !from.IsZero() {
-		wc.add("time >= ?", from)
-	}
-	if !to.IsZero() {
-		wc.add("time <= ?", to)
-	}
+	wc.add("time >= ?", from)
+	wc.add("time <= ?", to)
 	if limit == 0 {
 		limit = 500
 	}
@@ -3707,7 +3707,8 @@ func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, fro
 		`SELECT time, value, count, sum_value,
 		        arrayStringConcat(arrayMap((k, v) -> concat(k, '=', v), attr_keys, attr_values), ',')
 		 FROM metric_points `+wc.sql()+
-			` ORDER BY time ASC LIMIT ?`,
+			` ORDER BY time ASC LIMIT ?
+		 SETTINGS max_execution_time = 10`,
 		append(wc.args, limit)...)
 	if err != nil {
 		return nil, err
@@ -3728,6 +3729,20 @@ func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, fro
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// boundWindow — v0.8.454: sıfır bırakılmış from/to'yu güvenli varsayılana
+// bağlar (to → now, from → to-def). Sınırsız raw tarama hard-constraint
+// ihlaliydi (GetMetricPoints / GetExceptions çağıranı pencere geçirmezse
+// tüm partisyonları tarıyordu). Pure — bound_window_test.go'da tablo-testli.
+func boundWindow(from, to time.Time, def time.Duration) (time.Time, time.Time) {
+	if to.IsZero() {
+		to = time.Now()
+	}
+	if from.IsZero() {
+		from = to.Add(-def)
+	}
+	return from, to
 }
 
 // ── WHERE clause builder ──────────────────────────────────────────────────────

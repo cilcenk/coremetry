@@ -18,13 +18,12 @@ type ExceptionFilter struct {
 // We dig the events JSON column with JSON_VALUE — slower than dedicated
 // columns, but the volume of error spans is small relative to the total.
 func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]ExceptionRow, error) {
+	// v0.8.454 — pencere zorunlu: sıfır from/to varsayılan 1 saate iner
+	// (boundWindow). Penceresiz çağrı tüm span tarihçesinde JSON kazıyordu.
+	f.From, f.To = boundWindow(f.From, f.To, time.Hour)
 	var wc whereClause
-	if !f.From.IsZero() {
-		wc.add("time >= ?", f.From)
-	}
-	if !f.To.IsZero() {
-		wc.add("time <= ?", f.To)
-	}
+	wc.add("time >= ?", f.From)
+	wc.add("time <= ?", f.To)
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
 	}
@@ -67,7 +66,8 @@ func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]Excepti
 		FROM src
 		GROUP BY `+groupCols+`
 		ORDER BY cnt DESC
-		LIMIT ?`, append(wc.args, f.Limit)...)
+		LIMIT ?
+		SETTINGS max_execution_time = 15`, append(wc.args, f.Limit)...)
 	if err != nil {
 		return nil, err
 	}

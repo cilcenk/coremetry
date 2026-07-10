@@ -155,6 +155,9 @@ func (s *Store) FindExemplar(ctx context.Context, req ExemplarReq) (*Exemplar, e
 		return nil, fmt.Errorf("unknown exemplar kind %q", req.Kind)
 	}
 
+	// v0.8.454 — max_execution_time eklendi: pencere zaten zorunluydu ama
+	// geniş bir pencerede duration-sıralı tam tarama duvara çarpabilir;
+	// UI yolu hata görmeli, sonsuza kadar beklememeli.
 	sql := fmt.Sprintf(`
 		SELECT trace_id, span_id, service_name, name,
 		       duration, status_code,
@@ -162,7 +165,8 @@ func (s *Store) FindExemplar(ctx context.Context, req ExemplarReq) (*Exemplar, e
 		FROM spans
 		WHERE %s
 		ORDER BY duration DESC
-		LIMIT 1`, strings.Join(conds, " AND "))
+		LIMIT 1
+		SETTINGS max_execution_time = 10`, strings.Join(conds, " AND "))
 
 	row := s.conn.QueryRow(ctx, sql, args...)
 	var e Exemplar

@@ -624,7 +624,16 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 	}
 	// Pull a wide candidate window so even rare messages within the group
 	// have a chance to surface, capped to bound memory.
+	//
+	// v0.8.454 — tarama artık grubun KENDİ yaşam penceresine bağlı
+	// (first_seen-1h .. last_seen+1h): grup zaten span'lerden türedi,
+	// dışındaki zamanda üyesi olamaz; slack saat-hizalama/geç-varış
+	// payı. Önceden zaman sınırı hiç yoktu — problems drawer'ın her
+	// açılışı tüm span tarihçesini duration-bağımsız tarıyordu
+	// (1B+/gün ölçeğinde hard-constraint ihlali).
 	const maxCandidates = 500
+	winFrom := time.Unix(0, g.FirstSeen).Add(-time.Hour)
+	winTo := time.Unix(0, g.LastSeen).Add(time.Hour)
 	rows, err := s.conn.Query(ctx, `
 		SELECT trace_id, span_id, toUnixTimestamp64Nano(time),
 		       coalesce(JSON_VALUE(events, '$[0].attributes."exception.message"'), '')    AS message,
@@ -632,10 +641,12 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 		       name, status_msg
 		FROM spans
 		WHERE service_name = ?
+		  AND time >= ? AND time <= ?
 		  AND events LIKE '%"exception"%'
 		  AND coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>') = ?
 		ORDER BY time DESC
-		LIMIT ?`, g.Service, g.Type, maxCandidates)
+		LIMIT ?
+		SETTINGS max_execution_time = 10`, g.Service, winFrom, winTo, g.Type, maxCandidates)
 	if err != nil {
 		return nil, err
 	}

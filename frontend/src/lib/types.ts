@@ -2736,6 +2736,8 @@ export interface SystemStats {
   exemplars?: {
     ingested: number;
     droppedNoTrace: number;
+    // v0.8.433 (Faz C) — per-series×minute ingest cap drops; 0 unless armed.
+    droppedCapped?: number;
   };
   // Cumulative ingest data-loss counters since process start (v0.8.x).
   // queueFull = receiver buffer overflow; writeFailed = ClickHouse insert

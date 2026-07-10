@@ -227,7 +227,10 @@ export default function AdminStatsPage() {
                   (intentional, so no warn tint). */}
               {data.exemplars && (
                 <KPI label="Exemplars ingested" value={fmtNum(data.exemplars.ingested)}
-                     sub={`${fmtNum(data.exemplars.droppedNoTrace)} dropped (no trace ctx)`} />
+                     sub={`${fmtNum(data.exemplars.droppedNoTrace)} dropped (no trace ctx)`
+                       + ((data.exemplars.droppedCapped ?? 0) > 0
+                         ? ` · ${fmtNum(data.exemplars.droppedCapped ?? 0)} capped`
+                         : '')} />
               )}
               <KPI label="Profiles · 24h" value={fmtNum(data.snapshot.profiles24h)} />
               <KPI label="Services · 24h" value={fmtNum(data.snapshot.services24h)} />

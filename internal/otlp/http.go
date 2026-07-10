@@ -63,6 +63,12 @@ type Ingester struct {
 	exemplarsNoTraceOK      bool
 	exemplarsIngested       atomic.Uint64
 	exemplarsDroppedNoTrace atomic.Uint64
+	// v0.8.433 (exemplar audit Faz C) — optional per-series×minute ingest
+	// cap. nil = unlimited (the default posture; exemplar volume is
+	// producer-bounded). droppedCapped is an INTENTIONAL policy drop,
+	// like droppedNoTrace — never in the loss alarm.
+	exemplarLimiter        *exemplarRateLimiter
+	exemplarsDroppedCapped atomic.Uint64
 
 	// span-link counters (v0.8.329). No policy knob: a link whose linked
 	// trace id is empty/all-zero is MALFORMED per the OTel spec (trace_id is
@@ -112,11 +118,23 @@ func (ing *Ingester) SetExemplarPolicy(requireTraceContext bool) {
 	ing.exemplarsNoTraceOK = !requireTraceContext
 }
 
+// SetExemplarCap arms the per-series×minute ingest cap (v0.8.433,
+// exemplar audit Faz C). n <= 0 keeps the unlimited default. Called at
+// boot before traffic like SetExemplarPolicy — not safe to flip live.
+func (ing *Ingester) SetExemplarCap(n int) {
+	if n > 0 {
+		ing.exemplarLimiter = newExemplarRateLimiter(n)
+	} else {
+		ing.exemplarLimiter = nil
+	}
+}
+
 // ExemplarsIngested / ExemplarsDroppedNoTrace are the two v0.8.328 exemplar
 // ingest totals surfaced on /admin/stats (SystemStats.Exemplars), following
 // the pipeline-counter accessor pattern above.
 func (ing *Ingester) ExemplarsIngested() uint64       { return ing.exemplarsIngested.Load() }
 func (ing *Ingester) ExemplarsDroppedNoTrace() uint64 { return ing.exemplarsDroppedNoTrace.Load() }
+func (ing *Ingester) ExemplarsDroppedCapped() uint64  { return ing.exemplarsDroppedCapped.Load() }
 
 // SetSpanLinks wires the span-link consumer (v0.8.329). Called from main();
 // nil keeps addSpanLink counting but not enqueueing (api-only pods).
@@ -185,6 +203,12 @@ func (ing *Ingester) addMetric(m *chstore.MetricPoint) bool {
 func (ing *Ingester) addExemplar(ex *chstore.ExemplarRow) bool {
 	if ex.TraceID == "" && !ing.exemplarsNoTraceOK {
 		ing.exemplarsDroppedNoTrace.Add(1)
+		return true
+	}
+	// Per-series×minute cap (v0.8.433, Faz C) — intentional drop, same
+	// accept-but-discard semantics as the trace gate above.
+	if ing.exemplarLimiter != nil && !ing.exemplarLimiter.allow(ex.Fingerprint, time.Now()) {
+		ing.exemplarsDroppedCapped.Add(1)
 		return true
 	}
 	ing.exemplarsIngested.Add(1)

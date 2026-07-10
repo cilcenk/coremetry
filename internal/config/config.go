@@ -180,6 +180,14 @@ type ESFieldsConfig struct {
 // Background.LogAnomalyEnabled.
 type ExemplarsConfig struct {
 	RequireTraceContext bool `yaml:"require_trace_context"`
+	// MaxPerSeriesPerMinute (v0.8.433, exemplar audit Faz C) — ingest-side
+	// cap: at most N exemplars per series_fingerprint per wall-clock
+	// minute; excess is dropped (intentional, counted separately from
+	// data loss). 0 = unlimited (the default and the pre-Faz-C behavior:
+	// exemplar volume is producer-bounded — SDKs keep ~1 per series per
+	// export — so most installs never need this). Set it when a
+	// misbehaving SDK or a custom exporter floods the exemplars table.
+	MaxPerSeriesPerMinute int `yaml:"max_per_series_per_minute"` // env: COREMETRY_EXEMPLARS_MAX_PER_SERIES_MIN
 }
 
 // RedisConfig is fully optional. When URL is empty Coremetry runs in
@@ -461,6 +469,11 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_CH_INSECURE_SKIP_VERIFY"); v == "true" || v == "1" {
 		cfg.ClickHouse.InsecureSkipVerify = true
+	}
+	if v := os.Getenv("COREMETRY_EXEMPLARS_MAX_PER_SERIES_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.Exemplars.MaxPerSeriesPerMinute = n
+		}
 	}
 	// Distributed-CH overrides — env-only deployment shouldn't
 	// have to ship a config.yaml just to flip cluster mode on.

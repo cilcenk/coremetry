@@ -407,6 +407,7 @@ func main() {
 	// require_trace_context default true — a stored exemplar exists to be
 	// clicked through to its trace (v0.8.328).
 	ing.SetExemplarPolicy(cfg.Exemplars.RequireTraceContext)
+	ing.SetExemplarCap(cfg.Exemplars.MaxPerSeriesPerMinute)
 	// v0.8.329 — span links: no policy knob (an empty/all-zero linked trace
 	// id is malformed per OTel spec, always dropped + counted).
 	ing.SetSpanLinks(spanLinkConsumer)

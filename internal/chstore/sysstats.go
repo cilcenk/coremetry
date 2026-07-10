@@ -36,6 +36,9 @@ type SystemStats struct {
 type ExemplarIngest struct {
 	Ingested       int64 `json:"ingested"`
 	DroppedNoTrace int64 `json:"droppedNoTrace"`
+	// DroppedCapped — v0.8.433 (Faz C) per-series×minute ingest cap
+	// drops; intentional like DroppedNoTrace, 0 unless the cap is armed.
+	DroppedCapped int64 `json:"droppedCapped"`
 }
 
 // SpanLinkIngest — the two OTel span-link ingest totals (cumulative since

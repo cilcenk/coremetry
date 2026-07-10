@@ -3271,3 +3271,48 @@ export interface PurgeResult {
   skipped?: string[]; // absent on this install (e.g. op_group MV)
   errors?: string[];  // per-table failures (best-effort: purge continued)
 }
+
+// v0.8.446 — /external third-party API inventory (Wave 3 / A1).
+// Rows derive from topology_edges_5m external edges (client spans
+// with a peer.service); display/category come from the server-side
+// vendor catalogue and are absent for unrecognised hosts.
+export interface ExternalHost {
+  host: string;
+  display?: string;
+  category?: string;
+  callers: number;
+  callerNames: string[];
+  calls: number;
+  errors: number;
+  errorRate: number;
+  avgMs: number;
+  p99Ms: number;
+  topLabels: string[];
+}
+
+export interface ExternalCaller {
+  service: string;
+  calls: number;
+  errors: number;
+  errorRate: number;
+  avgMs: number;
+  p99Ms: number;
+  topLabels: string[];
+}
+
+// One 5-minute bucket of a host's RED trend; bucket = unix seconds.
+export interface ExternalTrendPoint {
+  bucket: number;
+  calls: number;
+  errors: number;
+  avgMs: number;
+  p99Ms: number;
+}
+
+export interface ExternalHostDetail {
+  host: string;
+  display?: string;
+  category?: string;
+  callers: ExternalCaller[];
+  trend: ExternalTrendPoint[];
+}

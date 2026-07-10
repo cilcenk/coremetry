@@ -85,3 +85,60 @@ func TestTeamAttrForFetch(t *testing.T) {
 		t.Fatalf("explicit attr: %q", got)
 	}
 }
+
+// TestApplyTeamRegex — v0.8.434. Operator-reported: the AD displayName
+// is a composite ("Tuğberk Çimen (Teknoloji Servis Yönetimi) * YAZILIM
+// UZMANI-Moneytalks") and the SUB-TEAM is the segment after the last
+// dash. TeamRegex extracts it; every branch tabled (unit-mixing rule).
+func TestApplyTeamRegex(t *testing.T) {
+	const operatorDisplay = "Tuğberk Çimen (Teknoolji Servis Yönetimi( * YAZILIM UZMANI-Moneytalks"
+
+	tests := []struct {
+		name    string
+		raw     string
+		pattern string
+		want    string
+	}{
+		{"operator's exact composite → trailing segment",
+			operatorDisplay, `-([^-]+)$`, "Moneytalks"},
+		{"trailing whitespace trimmed",
+			"UNVAN- Ekip Adi ", `-([^-]+)$`, "Ekip Adi"},
+		{"multi-dash: LAST segment wins with the anchored pattern",
+			"A-B-C", `-([^-]+)$`, "C"},
+		{"empty pattern passes raw through",
+			operatorDisplay, "", operatorDisplay},
+		{"no capture group → whole match",
+			"team=Moneytalks", `Moneytalks`, "Moneytalks"},
+		{"NO match → empty, never the raw composite (the reported bug)",
+			"TEKNOLOJI", `-([^-]+)$`, ""},
+		{"invalid pattern is ignored → raw passes through",
+			operatorDisplay, `-([`, operatorDisplay},
+		{"empty raw stays empty",
+			"", `-([^-]+)$`, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := applyTeamRegex(tc.raw, tc.pattern); got != tc.want {
+				t.Fatalf("applyTeamRegex(%q, %q) = %q, want %q", tc.raw, tc.pattern, got, tc.want)
+			}
+		})
+	}
+}
+
+// End-to-end through teamFor: displayName source + regex — the exact
+// operator configuration this shipped for.
+func TestTeamForWithRegex(t *testing.T) {
+	e := entry("CN=Tugberk,OU=X,DC=bank,DC=local", map[string][]string{
+		"displayName": {"Tuğberk Çimen (Teknoolji Servis Yönetimi( * YAZILIM UZMANI-Moneytalks"},
+		"department":  {"TEKNOLOJI"},
+	})
+	cfg := Config{TeamAttribute: "displayName", TeamRegex: `-([^-]+)$`}
+	if got := teamFor(e, cfg); got != "Moneytalks" {
+		t.Fatalf("teamFor = %q, want Moneytalks", got)
+	}
+	// Regex also composes with the legacy chain: department has no dash
+	// → empty (not the division name — that was the original complaint).
+	if got := teamFor(e, Config{TeamRegex: `-([^-]+)$`}); got != "" {
+		t.Fatalf("legacy chain + no-match regex should yield empty, got %q", got)
+	}
+}

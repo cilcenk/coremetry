@@ -184,7 +184,12 @@ export function LDAPTab() {
           <Field2 label="Team attribute" small
             hint="boş = department→ou · dn-ou = DN'deki en derin OU (alt ekip) · veya attribute adı">
             <input value={cfg.teamAttribute ?? ''} onChange={e => update({ teamAttribute: e.target.value })}
-                   placeholder="örn. division / dn-ou" style={{ width: '100%' }} />
+                   placeholder="örn. displayName / division / dn-ou" style={{ width: '100%' }} />
+          </Field2>
+          <Field2 label="Team regex" small
+            hint={'opsiyonel — ilk yakalama grubu ekip olur; ör. "…ÜNVAN-Ekip" için -([^-]+)$ (son tireden sonrası). Eşleşme yoksa ekip boş kalır.'}>
+            <input value={cfg.teamRegex ?? ''} onChange={e => update({ teamRegex: e.target.value })}
+                   placeholder="-([^-]+)$" style={{ width: '100%', fontFamily: 'ui-monospace, monospace' }} />
           </Field2>
         </Row>
         {/* v0.8.430 — attribute discovery. Operator-reported: users.team

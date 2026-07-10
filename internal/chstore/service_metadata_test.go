@@ -108,3 +108,21 @@ func TestDeriveNamespaceSQLShape(t *testing.T) {
 		t.Fatal("resource scope must precede span scope in the multiIf")
 	}
 }
+
+// TestNamespaceAutoSurvivesUnrelatedEdit — v0.8.438 regression.
+// Review-confirmed: putServiceMetadata copied only the team *_auto
+// provenance; namespace_auto zeroed on ANY catalog edit, so
+// mergeNamespace treated the derived value as a human pin forever.
+// The pure invariant pinned here: a row whose Namespace equals its
+// (correctly carried) NamespaceAuto stays deriver-owned; the same row
+// with a ZEROED auto is treated as pinned — the bug's exact mechanism.
+func TestNamespaceAutoSurvivesUnrelatedEdit(t *testing.T) {
+	derived := ServiceMetadata{Namespace: "payments", NamespaceAuto: "payments"}
+	if got, changed := mergeNamespace(derived, "payments-v2"); !changed || got.Namespace != "payments-v2" {
+		t.Fatalf("carried auto must stay deriver-owned: %+v changed=%v", got, changed)
+	}
+	zeroedAuto := ServiceMetadata{Namespace: "payments", NamespaceAuto: ""}
+	if _, changed := mergeNamespace(zeroedAuto, "payments-v2"); changed {
+		t.Fatal("zeroed auto reads as a human pin — the handler MUST carry NamespaceAuto forward")
+	}
+}

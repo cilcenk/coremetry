@@ -1928,6 +1928,11 @@ func (s *Server) putServiceMetadata(w http.ResponseWriter, r *http.Request) {
 	if existing, _ := s.store.GetServiceMetadata(r.Context(), name); existing != nil {
 		m.OwnerTeamAuto = existing.OwnerTeamAuto
 		m.SRETeamAuto = existing.SRETeamAuto
+		// v0.8.438 — namespace_auto da aynı sınıf: PUT gövdesi taşımaz
+		// (json:"-"); kopyalanmazsa alakasız bir katalog düzenlemesi
+		// provenance'ı sıfırlar ve mergeNamespace türetilmiş namespace'i
+		// insan pini sanıp sonsuza dek günceller (review-confirmed).
+		m.NamespaceAuto = existing.NamespaceAuto
 	}
 	if err := s.store.UpsertServiceMetadata(r.Context(), m); err != nil {
 		writeErr(w, err)

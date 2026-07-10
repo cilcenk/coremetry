@@ -5,6 +5,7 @@ import { edgeWeights } from '@/lib/edgeWeight';
 import { fitViewport, zoomAt, zoomRange, type Viewport } from '@/lib/topoViewport';
 import { depInstanceLabel } from '@/lib/topoLabels';
 import { Button } from '@/components/ui/Button';
+import { useServicesMetadata } from '@/lib/queries';
 
 // TopologyFlowGraph — prototipteki "pill düğüm + akış animasyonlu
 // bezier kenar" topoloji görünümü. ServiceMapGraph ile AYNI props
@@ -236,6 +237,52 @@ export function TopologyFlowGraph({
   // traceCount hep 0 → tüm kenarlar minimum kalınlıkta çiziliyordu).
   const { weightOf, max: edgeMax } = useMemo(() => edgeWeights(data.edges), [data.edges]);
 
+  // v0.8.437 (flow-graph d, operatör-onaylı Varyant A) — namespace
+  // hull'ları: katalogdaki deriver-dolu namespace (v0.8.436) ile aynı
+  // namespace'in servisleri yarı saydam yuvarlak bir bölgeyle sarılır.
+  // Salt dekorasyon: layout'a, zoom/pan'e, etkileşime sıfır dokunuş
+  // (pointer-events yok; SVG'de kenarların ALTINA çizilir). Kurallar:
+  // ≥2 üye (tek düğüme hull gürültü), external bağımlılıklar (kind'lı
+  // db/kafka düğümleri) ve namespace'i olmayan servisler SERBEST kalır
+  // (operatör kararı: "diğer" kovası yok). Katalog zaten sayfada yüklü
+  // (useServicesMetadata paylaşımlı cache) — ekstra fetch maliyeti yok.
+  const metaQ = useServicesMetadata();
+  const hulls = useMemo(() => {
+    const meta = metaQ.data ?? {};
+    const groups = new Map<string, { x0: number; y0: number; x1: number; y1: number; n: number }>();
+    for (const node of data.nodes) {
+      if (node.kind) continue; // external dep — free
+      const ns = meta[node.service]?.namespace;
+      if (!ns) continue;
+      const p = positioned.get(node.service);
+      if (!p) continue;
+      const g = groups.get(ns);
+      if (!g) {
+        groups.set(ns, { x0: p.x, y0: p.y, x1: p.x, y1: p.y, n: 1 });
+      } else {
+        g.x0 = Math.min(g.x0, p.x); g.y0 = Math.min(g.y0, p.y);
+        g.x1 = Math.max(g.x1, p.x); g.y1 = Math.max(g.y1, p.y);
+        g.n++;
+      }
+    }
+    // Deterministik renk: sıralı namespace listesinde indeks → chart
+    // serisi token'ları (tema değişiminde CSS var'lar kendiliğinden
+    // çözülür — useThemeTick gerekmez, SVG değerleri var() taşır).
+    const palette = ['--accent', '--warn', '--ok', '--purple', '--teal', '--orange'];
+    const NODE_W = 70, NODE_H = 34, PAD = 26; // kart yarı-boyutu + nefes payı
+    return [...groups.entries()]
+      .filter(([, g]) => g.n >= 2)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([ns, g], i) => ({
+        ns,
+        x: g.x0 - NODE_W - PAD,
+        y: g.y0 - NODE_H - PAD,
+        w: (g.x1 - g.x0) + 2 * (NODE_W + PAD),
+        h: (g.y1 - g.y0) + 2 * (NODE_H + PAD),
+        colorVar: palette[i % palette.length],
+      }));
+  }, [data.nodes, positioned, metaQ.data]);
+
   // Yoğunluk kapısı (ServiceGraph slice-4 kuralının aynısı): az kenarlı
   // grafikte chip'ler hep açık, kalabalıkta yalnız hover'da.
   const labelAlways = renderedEdges.length < 8;
@@ -259,6 +306,12 @@ export function TopologyFlowGraph({
         className="topo-viewport"
         style={{ width: layoutW, height: layoutH, transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.k})` }}>
       <svg className="topo-edges" width={layoutW} height={layoutH}>
+        {hulls.map(h => (
+          <rect key={`hull-${h.ns}`} x={h.x} y={h.y} width={h.w} height={h.h} rx={24}
+            fill={`color-mix(in srgb, var(${h.colorVar}) 7%, transparent)`}
+            stroke={`color-mix(in srgb, var(${h.colorVar}) 30%, transparent)`}
+            strokeWidth={1} />
+        ))}
         {renderedEdges.map((re, i) => {
           const e = re.forward;
           const a = positioned.get(e.caller), b = positioned.get(e.callee);
@@ -291,6 +344,14 @@ export function TopologyFlowGraph({
           );
         })}
       </svg>
+
+      {/* Namespace hull etiketleri — hull'un sol üstünde, dekoratif. */}
+      {hulls.map(h => (
+        <div key={`hull-label-${h.ns}`} className="topo-hull-label"
+          style={{ left: h.x + 14, top: h.y + 8, color: `var(${h.colorVar})` }}>
+          ns: {h.ns}
+        </div>
+      ))}
 
       {/* v0.8.281 — kenar RED chip'i: hacim/dk · p99 (· err%). Veri yalnız
           MV yolunda var (adapter enrichment) — örneklenmiş global görünümde

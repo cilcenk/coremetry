@@ -1687,6 +1687,9 @@ canvas { max-width: 100%; }
 /* v0.8.383 — node env chip ("int"/"uat"/"prep" next to the service
    name). Token-level only; renders solely when the MV path carries
    ServiceMapNode.env (v0.8.380 derive). */
+/* v0.8.437 — namespace hull etiketi (flow-graph d, Varyant A). Dekoratif;
+   viewport transform'uyla birlikte ölçeklenir. */
+.topo-hull-label { position: absolute; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; opacity: .75; pointer-events: none; }
 .topo-envchip { display: inline-block; margin-left: 5px; padding: 0 4px; font-size: 8.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--accent); background: var(--accent-bg); border: 1px solid var(--border); border-radius: 3px; vertical-align: 1px; }
 .topo-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .topo-dot.green { background: var(--ok); }

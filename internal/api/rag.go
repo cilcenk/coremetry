@@ -53,6 +53,14 @@ func maskedRAGConfig(c rag.Config) map[string]any {
 		if sc.AuthHeader != "" {
 			m["authHeader"] = "********" // asla geri echo edilmez
 		}
+		// v0.8.451 — Basic auth (on-prem Azure DevOps). Kullanıcı adı
+		// sır değil, aynen döner; şifre yalnız varlık sentineliyle.
+		if sc.Username != "" {
+			m["username"] = sc.Username
+		}
+		if sc.Password != "" {
+			m["password"] = "********"
+		}
 		srcs = append(srcs, m)
 	}
 	return map[string]any{
@@ -84,6 +92,17 @@ func (s *Server) putRAGConfig(w http.ResponseWriter, r *http.Request) {
 			for _, old := range cur.Sources {
 				if old.URL == src.URL {
 					body.Sources[i].AuthHeader = old.AuthHeader
+					break
+				}
+			}
+		}
+		// v0.8.451 — Basic şifresi aynı sözleşme: "********" (veya
+		// kayıtlıyken boş bırakma) mevcut değeri devralır.
+		if src.Password == "********" || src.Password == "" {
+			body.Sources[i].Password = ""
+			for _, old := range cur.Sources {
+				if old.URL == src.URL {
+					body.Sources[i].Password = old.Password
 					break
 				}
 			}

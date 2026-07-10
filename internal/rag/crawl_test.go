@@ -74,6 +74,54 @@ func TestCrawl(t *testing.T) {
 	}
 }
 
+// v0.8.451 — Basic auth (on-prem Azure DevOps: PAT'te kullanıcı adı
+// boş). Header yolu doluysa Basic'in devreye GİRMEDİĞİ de pinlenir.
+func TestCrawlBasicAuth(t *testing.T) {
+	longText := strings.Repeat("wiki içeriği burada anlatılır. ", 10)
+	var gotUser, gotPass string
+	var gotOK bool
+	var gotHeader string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/wiki/", func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPass, gotOK = r.BasicAuth()
+		gotHeader = r.Header.Get("X-Auth")
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><p>`+longText+`</p></body></html>`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// PAT deseni: kullanıcı boş, şifre dolu.
+	if _, err := Crawl(context.Background(), srv.Client(),
+		CrawlSource{URL: srv.URL + "/wiki/", Password: "pat-123"}); err != nil {
+		t.Fatalf("crawl: %v", err)
+	}
+	if !gotOK || gotUser != "" || gotPass != "pat-123" {
+		t.Fatalf("basic auth beklendi (boş kullanıcı + PAT): ok=%v user=%q pass=%q", gotOK, gotUser, gotPass)
+	}
+
+	// Kullanıcı+şifre.
+	if _, err := Crawl(context.Background(), srv.Client(),
+		CrawlSource{URL: srv.URL + "/wiki/", Username: "svc-rag", Password: "s3cret"}); err != nil {
+		t.Fatalf("crawl: %v", err)
+	}
+	if !gotOK || gotUser != "svc-rag" || gotPass != "s3cret" {
+		t.Fatalf("basic auth: ok=%v user=%q pass=%q", gotOK, gotUser, gotPass)
+	}
+
+	// Header doluysa Basic devreye girmez (öncelik sözleşmesi).
+	if _, err := Crawl(context.Background(), srv.Client(),
+		CrawlSource{URL: srv.URL + "/wiki/", AuthHeader: "X-Auth: tok", Username: "u", Password: "p"}); err != nil {
+		t.Fatalf("crawl: %v", err)
+	}
+	if gotOK {
+		t.Fatal("AuthHeader doluyken Basic gönderilmemeli")
+	}
+	if gotHeader != "tok" {
+		t.Fatalf("header iletilmedi: %q", gotHeader)
+	}
+}
+
 func urlsOf(ps []CrawledPage) []string {
 	out := make([]string, len(ps))
 	for i, p := range ps {

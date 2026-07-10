@@ -310,11 +310,23 @@ export function AITab() {
 // tamamen kapalı (chat bugünkü gibi çalışır); girilince yüklenen
 // dokümanlar chat'te kaynak atıflı cevaplara dönüşür. Wiki/URL
 // kaynağı v2'de bu panele eklenecek.
+// SourceRow — kaynak editörünün yerel satır modeli (v0.8.451). Sunucu
+// şifreyi asla geri göndermez; hasPassword/hasHeader "kayıtlı" durumunu
+// taşır, boş bırakılan alan kayıtlıyı korur (SMTP deseni).
+type SourceRow = {
+  url: string;
+  username: string;
+  password: string;   // operatörün BU oturumda yazdığı; '' = korunur
+  authHeader: string; // '' = korunur (kayıtlıysa)
+  hasPassword: boolean;
+  hasHeader: boolean;
+};
+
 function RagSection() {
   const [cfg, setCfg] = useState<import('@/lib/types').RagConfigView | null | undefined>(undefined);
   const [docs, setDocs] = useState<import('@/lib/types').RagDocument[] | null | undefined>(undefined);
   const [apiKey, setApiKey] = useState('');
-  const [sourcesText, setSourcesText] = useState('');
+  const [sources, setSources] = useState<SourceRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -322,8 +334,14 @@ function RagSection() {
   const load = () => {
     api.getRagConfig().then(c => {
       setCfg(c);
-      setSourcesText((c.sources ?? []).map(s0 =>
-        s0.authHeader ? `${s0.url} | ${s0.authHeader}` : s0.url).join('\n'));
+      setSources((c.sources ?? []).map(s0 => ({
+        url: s0.url,
+        username: s0.username ?? '',
+        password: '',
+        authHeader: '',
+        hasPassword: s0.password === '********',
+        hasHeader: s0.authHeader === '********',
+      })));
     }).catch(() => setCfg(null));
     api.listRagDocuments().then(r => setDocs(r.documents)).catch(() => setDocs(null));
   };
@@ -335,17 +353,29 @@ function RagSection() {
   const save = async () => {
     setBusy(true); setMsg(null);
     try {
-      const sources = sourcesText.split('\n')
-        .map(l => l.trim()).filter(Boolean)
-        .map(l => {
-          const [url, hdr] = l.split('|').map(x => x.trim());
-          return hdr ? { url, authHeader: hdr } : { url };
-        });
+      // Boş şifre/header kayıtlıyken '********' sentineliyle gider —
+      // sunucu URL eşleşmesinden mevcut değeri devralır; yeni yazılan
+      // düz gider (bir daha asla geri dönmez).
+      const outSources = sources
+        .filter(s0 => s0.url.trim())
+        .map(s0 => ({
+          url: s0.url.trim(),
+          username: s0.username.trim() || undefined,
+          password: s0.password ? s0.password : (s0.hasPassword ? '********' : undefined),
+          authHeader: s0.authHeader.trim() ? s0.authHeader.trim() : (s0.hasHeader ? '********' : undefined),
+        }));
       const next = await api.putRagConfig({
         endpoint: cfg.endpoint, model: cfg.model, enabled: cfg.enabled,
-        topK: cfg.topK, apiKey: apiKey || undefined, sources,
+        topK: cfg.topK, apiKey: apiKey || undefined, sources: outSources,
       });
       setCfg(next); setApiKey('');
+      setSources(prev => prev.filter(s0 => s0.url.trim()).map(s0 => ({
+        ...s0,
+        password: '',
+        authHeader: '',
+        hasPassword: s0.hasPassword || !!s0.password,
+        hasHeader: s0.hasHeader || !!s0.authHeader.trim(),
+      })));
       setMsg({ kind: 'ok', text: 'Kaydedildi.' });
     } catch (e) {
       setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
@@ -408,19 +438,57 @@ function RagSection() {
         </Button>
       </Row>
 
-      {/* Wiki / URL kaynakları (v0.8.442) — satır başına bir adres;
-          auth gerekiyorsa "url | Header-Adı: değer". Kayıtlı header
-          '********' görünür ve değiştirilmezse korunur. */}
+      {/* Wiki / URL kaynakları (v0.8.442; v0.8.451 yapılandırılmış
+          editör) — kaynak başına URL + opsiyonel Basic kimlik
+          (on-prem Azure DevOps: kullanıcı boş, PAT şifreye) veya ham
+          header. Şifre/header kayıtlıysa boş alan korur; yeni değer
+          yazınca değişir, hiçbir sır geri echo edilmez. */}
       <div style={{ marginTop: 16 }}>
         <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 6px' }}>Wiki / URL kaynakları</h3>
         <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '0 0 6px' }}>
-          Satır başına bir adres (ör. <code>https://wiki.local/display/OPS</code>) —
-          aynı host + path altındaki sayfalar taranır (≤200 sayfa, derinlik 3),
-          30 dk'da bir otomatik senkron, değişmeyen sayfa yeniden indekslenmez.
+          Aynı host + path altındaki sayfalar taranır (≤200 sayfa, derinlik 3),
+          30 dk'da bir otomatik senkron; değişmeyen sayfa yeniden indekslenmez.
+          Kimlik isteyen wiki'de (ör. on-prem Azure DevOps) kullanıcı+şifre gir —
+          PAT kullanıyorsan kullanıcıyı boş bırak, PAT'i şifre alanına yaz.
         </p>
-        <textarea value={sourcesText} onChange={e => setSourcesText(e.target.value)}
-          rows={3} placeholder="https://wiki.banka.local/ops" spellCheck={false}
-          style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        <div style={{ display: 'grid', gap: 6 }}>
+          {sources.map((src, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input value={src.url} placeholder="https://azuredevops.banka.local/DefaultCollection/Proje/_wiki/…"
+                onChange={e => setSources(p => p.map((x, j) => j === i ? { ...x, url: e.target.value } : x))}
+                spellCheck={false}
+                style={{ flex: 3, fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+              <input value={src.username} placeholder="kullanıcı (PAT'te boş)"
+                autoComplete="off"
+                onChange={e => setSources(p => p.map((x, j) => j === i ? { ...x, username: e.target.value } : x))}
+                style={{ flex: 1, fontSize: 12 }} />
+              <input type="password" value={src.password}
+                placeholder={src.hasPassword ? '******** (kayıtlı)' : 'şifre / PAT'}
+                autoComplete="new-password"
+                title={src.hasPassword ? 'Kayıtlı — boş bırakırsan korunur' : ''}
+                onChange={e => setSources(p => p.map((x, j) => j === i ? { ...x, password: e.target.value } : x))}
+                style={{ flex: 1, fontSize: 12 }} />
+              <input value={src.authHeader}
+                placeholder={src.hasHeader ? '******** (kayıtlı header)' : 'Header: değer (ops.)'}
+                title="Ham auth header — doluysa Basic yerine bu gönderilir"
+                spellCheck={false}
+                onChange={e => setSources(p => p.map((x, j) => j === i ? { ...x, authHeader: e.target.value } : x))}
+                style={{ flex: 1, fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }} />
+              <Button variant="secondary" size="sm" type="button" aria-label="Kaynağı kaldır"
+                title="Kaynağı kaldır (kayıtlı sırrıyla birlikte)"
+                onClick={() => setSources(p => p.filter((_, j) => j !== i))}>✕</Button>
+            </div>
+          ))}
+          <div>
+            <Button variant="secondary" size="sm" type="button"
+              onClick={() => setSources(p => [...p, {
+                url: '', username: '', password: '', authHeader: '',
+                hasPassword: false, hasHeader: false,
+              }])}>
+              ＋ Kaynak ekle
+            </Button>
+          </div>
+        </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
           <Button variant="secondary" size="sm" type="button" disabled={busy}
             onClick={() => { void save(); }}>

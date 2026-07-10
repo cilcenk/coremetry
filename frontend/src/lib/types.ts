@@ -2981,7 +2981,10 @@ export interface RagConfigView {
   topK?: number;
   hasKey: boolean;
   // v0.8.442 — wiki/URL kaynakları (authHeader asla geri dönmez).
-  sources?: { url: string; authHeader?: string }[];
+  // v0.8.451 — Basic auth: username görünür döner, password yalnız
+  // "********" varlık sentineli olarak (on-prem Azure DevOps; PAT'te
+  // username boş bırakılır).
+  sources?: { url: string; authHeader?: string; username?: string; password?: string }[];
 }
 
 // Deploy impact (v0.5.189) — before/after RED + signed deltas

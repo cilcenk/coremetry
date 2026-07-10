@@ -39,9 +39,17 @@ type CrawledPage struct {
 }
 
 // CrawlSource — Settings'ten gelen tek kaynak tanımı.
+//
+// Auth iki yoldan biri (ikisi de doluysa AuthHeader kazanır):
+//   - AuthHeader: "Header: value" ham başlık (token tabanlı wiki'ler).
+//   - Username/Password: HTTP Basic (v0.8.451 — operatörün on-prem
+//     Azure DevOps wiki'si; PAT kullanımında kullanıcı adı boş,
+//     PAT şifre alanına). Password asla geri echo edilmez.
 type CrawlSource struct {
 	URL        string `json:"url"`
 	AuthHeader string `json:"authHeader,omitempty"` // "Header: value" — asla geri echo edilmez
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
 }
 
 // Crawl — kaynak URL'den başlayıp aynı host+prefix altında BFS.
@@ -74,7 +82,7 @@ func Crawl(ctx context.Context, httpc *http.Client, src CrawlSource) ([]CrawledP
 			return out, ctx.Err()
 		case <-tick.C: // nezaket hızı
 		}
-		body, err := fetchPage(ctx, httpc, it.u, src.AuthHeader)
+		body, err := fetchPage(ctx, httpc, it.u, src)
 		if err != nil {
 			continue // tek sayfa hatası taramayı durdurmaz
 		}
@@ -104,7 +112,7 @@ func Crawl(ctx context.Context, httpc *http.Client, src CrawlSource) ([]CrawledP
 	return out, nil
 }
 
-func fetchPage(ctx context.Context, httpc *http.Client, u *url.URL, authHeader string) (string, error) {
+func fetchPage(ctx context.Context, httpc *http.Client, u *url.URL, src CrawlSource) (string, error) {
 	fctx, cancel := context.WithTimeout(ctx, crawlFetchTO)
 	defer cancel()
 	req, err := http.NewRequestWithContext(fctx, http.MethodGet, u.String(), nil)
@@ -112,10 +120,14 @@ func fetchPage(ctx context.Context, httpc *http.Client, u *url.URL, authHeader s
 		return "", err
 	}
 	req.Header.Set("User-Agent", "coremetry-rag-crawler/1.0")
-	if h := strings.TrimSpace(authHeader); h != "" {
+	if h := strings.TrimSpace(src.AuthHeader); h != "" {
 		if k, v, ok := strings.Cut(h, ":"); ok {
 			req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
 		}
+	} else if src.Username != "" || src.Password != "" {
+		// v0.8.451 — HTTP Basic (on-prem Azure DevOps: PAT'te kullanıcı
+		// adı boş olabilir, Go boş kullanıcıyla da doğru başlık üretir).
+		req.SetBasicAuth(src.Username, src.Password)
 	}
 	resp, err := httpc.Do(req)
 	if err != nil {

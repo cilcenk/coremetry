@@ -77,10 +77,12 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: 'navGroup.signals',
     items: [
+      // v0.8.489 — Profiling + Monitors sidebar'dan gizlendi (operatör:
+      // "hiç kullanmıyorum"). Rotalar + Komut Paleti girişleri YAŞIYOR —
+      // profiling rakip-farkı bir yetenek, silinmedi; gezinim sadeleşti.
       { href: '/traces',     label: 'nav.traces',    icon: ListTree },
       { href: '/metrics',    label: 'nav.metrics',   icon: ChartSpline },
       { href: '/logs',       label: 'nav.logs',      icon: ScrollText },
-      { href: '/profiling',  label: 'nav.profiling', icon: Flame },
     ],
   },
   {
@@ -95,7 +97,6 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'navGroup.alerting',
     items: [
       { href: '/alerts',   label: 'nav.alerts',   icon: Bell },
-      { href: '/monitors', label: 'nav.monitors', icon: Gauge },
       { href: '/slos',     label: 'nav.slos',     icon: Target },
       // v0.6.15 — operator events (deploy / config / incident
       // markers). Editors create them via Cmd-K + manage from

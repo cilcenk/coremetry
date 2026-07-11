@@ -92,7 +92,7 @@ func (s *Server) autoCreateSLOs(w http.ResponseWriter, r *http.Request) {
 	for _, svc := range svcs {
 		// Availability suggestion
 		if !existing[svc.Name+"|"+chstore.SLITypeAvailability] && svc.SpanCount > 0 {
-			availSLI := math.Max(0, math.Min(1, 1-svc.ErrorRate))
+			availSLI := availabilityFromErrorRatePct(svc.ErrorRate)
 			target := availabilityTarget(availSLI)
 			sg := autoSLOSuggestion{
 				Service: svc.Name, SLIType: chstore.SLITypeAvailability,
@@ -218,3 +218,14 @@ func countCreated(s []autoSLOSuggestion) int {
 // context aliases honest if future edits drop the references.
 var _ = strings.TrimSpace
 var _ context.Context
+
+// availabilityFromErrorRatePct converts ServiceSummary.ErrorRate —
+// a PERCENT (both chstore producers scale ×100) — into a 0..1 SLI.
+//
+// v0.8.505 (canlı doğrulanmış bug): eski kod `1 - svc.ErrorRate`
+// yazıyordu, yani yüzdeyi kesir sanıyordu — %0.62 hatalı servis
+// "%37.7 availability" baseline'ı, %4.5 hatalı servis "0.000%"
+// (clamp) üretiyordu. Doğrusu 1 - pct/100.
+func availabilityFromErrorRatePct(pct float64) float64 {
+	return math.Max(0, math.Min(1, 1-pct/100))
+}

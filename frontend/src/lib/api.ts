@@ -1123,16 +1123,6 @@ export const api = {
       }
     }
   },
-  // copilotAnalyze (v0.8.75) — system-wide single-shot SRE analysis. The server
-  // assembles a snapshot of ALL services' RED + problems + anomalies + topology
-  // and returns the model's strict-JSON verdict (parsed, with the raw text as a
-  // fallback). No tool calling.
-  copilotAnalyze: (rangeS?: number) =>
-    request<{ analysis: import('./types').SystemAnalysis | null; raw: string; parsed: boolean }>(
-      `/api/copilot/analyze${rangeS ? `?rangeS=${rangeS}` : ''}`,
-      { method: 'POST' },
-    ),
-
   // analyzeService (v0.8.85) — per-service single-shot AI analysis. The server
   // summarises RED + baseline + top errors + deploys + neighbours and the
   // operator-configured model returns the {ozet, olasi_neden, kanit, oneriler,

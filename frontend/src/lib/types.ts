@@ -1490,19 +1490,6 @@ export interface MetricExemplar {
   errorTraceId?: string;
 }
 
-// SystemAnalysis — the strict JSON verdict from the system-wide SRE analysis
-// (POST /api/copilot/analyze). Turkish field names match the operator-authored
-// prompt contract exactly.
-export interface SystemAnalysis {
-  sistem_durumu: 'saglikli' | 'bozulma' | 'kritik';
-  ozet: string;
-  kok_neden: string;
-  etkilenen_zincir: string[];
-  bulgular: { servis: string; sorun: string; kanit: string; onem: 'yuksek' | 'orta' | 'dusuk' }[];
-  oneriler: string[];
-  guven: 'yuksek' | 'orta' | 'dusuk';
-}
-
 // AI per-service analysis (POST /api/copilot/analyze-service, v0.8.85+). The
 // server summarises the service's signals; the operator-configured model returns
 // this strict-JSON verdict. Turkish field names match the prompt contract.

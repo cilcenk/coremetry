@@ -1,30 +1,40 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowDownToLine, Link2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { fmtFixed } from '@/lib/utils';
+import { fmtFixed, fmtNum } from '@/lib/utils';
+import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { RootCausePanel } from '@/components/RootCausePanel';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { IconSparkles } from '@/components/icons';
-import { fmtDurationNs, fmtStartedTs } from './problemTime';
-import type { Problem } from '@/lib/types';
+import { TimeChart } from '@/components/charts/TimeChart';
+import { statusColor } from '@/lib/statusColor';
+import { fmtDurationNs, fmtHistTick, fmtStartedTs } from './problemTime';
+import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 
-// ProblemDetail — Variant B (Dynatrace problem feed) full-page detail
-// for a firing ALERT problem (AlertProblemDetail, ex-v0.5.80
-// TriageDrawer). A top triage bar (badges + ID + started/duration +
-// actions) over a 1.5fr/1fr grid — left column root-cause card →
-// metric card → vertical timeline; right column blast radius →
-// correlated signals → runbook.
-//
-// The exception-inbox side moved to the Variant A triage drawer
-// (ExceptionTriageDrawer in AnomalyDetailDrawer.tsx) — this file no
-// longer renders exception groups.
+// ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
+// Two surfaces share one skeleton: a top triage bar (badges + ID +
+// started/duration + actions) over a 1.5fr/1fr grid — left column
+// root-cause card → metric card → vertical timeline; right column
+// blast radius → correlated signals → sample pre block. Exception
+// groups (ProblemDetail) and firing alert problems (AlertProblemDetail,
+// which replaced the v0.5.80 TriageDrawer) render through it.
 //
 // All colors ride globals.css tokens (.pb-* helpers) so dark / light /
 // redhat themes drive them; deploy correlation renders ONLY when the
 // row carries recentDeploy — no placeholder, no extra fetch.
+
+const STATE_LABEL: Record<ExceptionGroupState, string> = {
+  // 'new' renders OPEN (v0.8.382): NEW is reserved for the yellow
+  // first-seen-recently badge on the list — same rule as StateBadge.
+  new: 'OPEN', regressed: 'REGRESSED', acknowledged: 'ACK', resolved: 'RESOLVED', ignored: 'IGNORED',
+};
+const STATE_BADGE: Record<ExceptionGroupState, string> = {
+  new: 'b-err', regressed: 'b-err', acknowledged: 'b-warn', resolved: 'b-ok', ignored: 'b-gray',
+};
 
 // ShareButton — copies the current address-bar URL to the clipboard.
 // The URL is already the canonical shareable link (both detail views
@@ -98,6 +108,216 @@ function DeployBox({ version, ageSeconds }: { version: string; ageSeconds: numbe
       </span>{' — '}
       <code className="mono">{version}</code> landed{' '}
       <b>{Math.max(1, Math.round(ageSeconds / 60))}m before</b> this problem opened.
+    </div>
+  );
+}
+
+// ── Exception-group detail ──────────────────────────────────────────────────
+
+export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
+  group: ExceptionGroup;
+  isAdmin: boolean;
+  onBack: () => void;
+  onChanged: () => void;
+}) {
+  const navigate = useNavigate();
+  const [state, setState] = useState<ExceptionGroupState>(group.state);
+  const [copied, setCopied] = useState(false);
+  useEscBack(onBack);
+
+  const samplesQ = useQuery({
+    queryKey: ['exc-samples-detail', group.fingerprint],
+    queryFn: () => api.exceptionGroupSamples(group.fingerprint, 100),
+    staleTime: 30_000,
+  });
+  const samples = samplesQ.data ?? [];
+
+  // Occurrences-over-time is a real server-side, gap-filled COUNT over the
+  // group's whole window (v0.8.309) — NOT bucketed from the sampled
+  // timestamps, which clustered near last_seen and mis-rendered any busy
+  // group as a single right-edge spike.
+  const occQ = useQuery({
+    queryKey: ['exc-occ-detail', group.fingerprint],
+    queryFn: () => api.exceptionGroupOccurrences(group.fingerprint),
+    staleTime: 30_000,
+  });
+  const occ = occQ.data ?? [];
+  // Histogram tick rule (spec): dated ticks past a 20h window. Every
+  // TimeChart input is memoized on occQ.data — the effect deps include
+  // times/series/fmtX, so per-render arrays/lambdas would tear down and
+  // rebuild the uPlot on EVERY state change, e.g. the Copy button's
+  // `copied` flip (the v0.5.184 unstable-input class).
+  const occWindowSec = occ.length >= 2 ? (occ[occ.length - 1].time - occ[0].time) / 1e9 : 0;
+  const fmtOccTick = useCallback(
+    (t: number) => fmtHistTick(t, occWindowSec),
+    [occWindowSec]);
+  const occTimes = useMemo(() => occ.map(p => p.time / 1e9), [occ]);
+  const occSeries = useMemo(() => [{
+    key: 'occ', label: 'occurrences', data: occ.map(p => p.count),
+    color: statusColor('warn'), type: 'bar' as const,
+  }], [occ]);
+
+  // Representative stack = the first sample that carries one.
+  const stack = samples.find(s => s.stacktrace)?.stacktrace ?? '';
+  const stackLines = stack ? stack.split('\n') : [];
+
+  const act = async (next: ExceptionGroupState) => {
+    setState(next);
+    try {
+      await api.setExceptionGroupState(group.fingerprint, next);
+      onChanged();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+      setState(group.state);
+    }
+  };
+  const copyStack = () => {
+    if (!stack) return;
+    navigator.clipboard?.writeText(stack).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+  };
+
+  // Cross-signal deep links — house patterns (spec §3). Window: 30m of
+  // lead-in before first seen, 10m tail after last seen.
+  const logsFrom = Math.round((group.firstSeen - 30 * 60 * 1e9) / 1e6);
+  const logsTo = Math.round((group.lastSeen + 10 * 60 * 1e9) / 1e6);
+  const logsHref = `/logs?q=${encodeURIComponent(`service.name:"${group.service.replace(/"/g, '\\"')}"`)}&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`;
+  const tracesHref = `/traces?service=${encodeURIComponent(group.service)}&hasError=true`;
+  const mapHref = `/service-map?focus=${encodeURIComponent(group.service)}`;
+
+  return (
+    <div id="content">
+      {/* Triage bar */}
+      <div className="rb-bar">
+        <Button variant="secondary" onClick={onBack} leftIcon={<ArrowLeft size={14} strokeWidth={1.75} />}>
+          Problems
+        </Button>
+        <span className={`badge ${STATE_BADGE[state]}`}>{STATE_LABEL[state]}</span>
+        <span className="badge b-gray mono">{group.fingerprint.slice(0, 12)}</span>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
+          Started {fmtStartedTs(group.firstSeen)} · {fmtDurationNs(group.lastSeen - group.firstSeen)}
+        </span>
+        <span className="spacer" />
+        <ShareButton />
+        {isAdmin && (state === 'new' || state === 'regressed' || state === 'acknowledged') && (
+          <>
+            {state !== 'acknowledged' && <button className="sec" onClick={() => act('acknowledged')}>Acknowledge</button>}
+            <button className="sec" onClick={() => act('ignored')}>Ignore</button>
+            <button onClick={() => act('resolved')}>Resolve</button>
+          </>
+        )}
+        {isAdmin && (state === 'resolved' || state === 'ignored') && (
+          <button className="sec" onClick={() => act('new')}>Reopen</button>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 14, alignItems: 'start' }}>
+        {/* ── Left column ── */}
+        <div style={{ minWidth: 0 }}>
+          <Sect title="Root cause" accent>
+            <div className="mono" style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--err)', wordBreak: 'break-all' }}>
+              {group.type}
+            </div>
+            <div className="mono" style={{ color: 'var(--text2)', fontSize: 12.5, margin: '4px 0 10px', wordBreak: 'break-word' }}>
+              {group.message || '—'}
+            </div>
+            {/* AI Analizi — auto-sends this group's service context (v0.8.89). */}
+            <AIAnalysisPanel service={group.service} />
+          </Sect>
+
+          <Sect title="Occurrences over time" sub={`${fmtNum(group.occurrences)} total`}>
+            {occ.length === 0 ? (
+              <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+                {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
+              </div>
+            ) : (
+              <TimeChart
+                times={occTimes}
+                series={occSeries}
+                height={110}
+                fmtX={fmtOccTick}
+              />
+            )}
+          </Sect>
+
+          <Sect title="Problem timeline">
+            <ul className="pb-tl">
+              <li className="err">
+                <b>Detected</b> — first occurrence
+                <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8 }}>{fmtStartedTs(group.firstSeen)}</span>
+              </li>
+              <li className="accent">
+                <b>Last occurrence</b>
+                <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8 }}>{fmtStartedTs(group.lastSeen)}</span>
+              </li>
+              {state === 'resolved' && group.resolvedAt ? (
+                <li className="ok">
+                  <b>Resolved</b>
+                  <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8 }}>{fmtStartedTs(group.resolvedAt)}</span>
+                </li>
+              ) : null}
+            </ul>
+          </Sect>
+        </div>
+
+        {/* ── Right column ── */}
+        <div style={{ minWidth: 0 }}>
+          <Sect title="Blast radius">
+            <Link to={`/service?name=${encodeURIComponent(group.service)}`}
+              className={`pb-pill${state === 'new' || state === 'regressed' ? ' err' : ''}`}
+              style={{ textDecoration: 'none', color: 'var(--accent2)' }}>
+              <span className="dot" /> <span className="mono">{group.service}</span>
+            </Link>
+          </Sect>
+
+          <Sect title="Correlated signals">
+            <SignalLink to={logsHref} label="≡ Logs" sub="service, spike window" />
+            <SignalLink to={tracesHref} label="⋮ Error traces"
+              sub={samples.length > 0 ? `${samples.length} sampled` : undefined} />
+            <SignalLink to={mapHref} label="◉ Service map" sub="focused" />
+            {/* Sample traces — click lands on the waterfall. */}
+            {samples.length > 0 && (
+              <div style={{ marginTop: 4 }}>
+                {samples.slice(0, 8).map((s, i) => (
+                  <div key={i}
+                    onClick={() => s.traceId && navigate(`/trace?id=${encodeURIComponent(s.traceId)}`)}
+                    style={{
+                      display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 2px',
+                      cursor: s.traceId ? 'pointer' : 'default', fontSize: 11,
+                    }}>
+                    <span className="mono" style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
+                      {s.traceId ? s.traceId.slice(0, 16) + '…' : '—'}
+                    </span>
+                    <span className="mono" style={{ marginLeft: 'auto', color: 'var(--text3)' }}>{fmtStartedTs(s.time)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Sect>
+
+          <Sect title="Stack trace" sub="representative sample">
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+              <Button variant="secondary" size="sm" onClick={copyStack} disabled={!stack}>
+                {copied ? 'Copied' : 'Copy'}
+              </Button>
+            </div>
+            {stackLines.length === 0 ? (
+              <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+                {samplesQ.isLoading ? 'Loading…' : 'No stack trace on the sampled occurrences.'}
+              </div>
+            ) : (
+              <pre className="mono" style={{
+                margin: 0, fontSize: 11, lineHeight: 1.65, whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere', maxHeight: 420, overflowY: 'auto',
+                background: 'var(--bg2)', borderRadius: 'var(--radius-sm)', padding: '8px 10px',
+              }}>
+                {stackLines.map((l, i) => (
+                  <div key={i} style={{ color: i === 0 ? 'var(--err)' : 'var(--text2)' }}>{l}</div>
+                ))}
+              </pre>
+            )}
+          </Sect>
+        </div>
+      </div>
     </div>
   );
 }

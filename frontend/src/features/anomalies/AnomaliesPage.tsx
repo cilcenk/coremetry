@@ -19,13 +19,11 @@ import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
-import { useTableNav } from '@/lib/useTableNav';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample, Problem,
 } from '@/lib/types';
-import { AlertProblemDetail } from './ProblemDetail';
-import { ExceptionTriageDrawer } from './AnomalyDetailDrawer';
+import { AlertProblemDetail, ProblemDetail } from './ProblemDetail';
 import { withProblemParam, withExcParam } from './problemLink';
 
 // State buckets shown as tabs along the top of the page.
@@ -54,22 +52,13 @@ const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
 // sortable marker + naturalDir carrier). State's severity-style
 // ordering (worst at top) stays server-side — see
 // exceptionGroupsOrderBy's multiIf.
-// Variant A column scheme (spec §4A): SEVERITY | PROBLEM | SERVICE |
-// IMPACT | STARTED | STATUS. SEVERITY renders as a fixed leading th
-// (exceptions carry no severity axis — every one is an error) so it's
-// outside this sortable set. The remaining spec columns map onto the
-// existing SERVER sort keys 1:1 (ids are unchanged: type/service/
-// occurrences/firstSeen/lastSeen/state/assignee) — only labels + order
-// changed, so the ClickHouse ORDER BY and persisted widths still bind.
-// Last seen + Assignee are kept (not spec columns, but existing columns
-// stay — task) as trailing detail after STATUS.
 const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
-  { id: 'type',        label: 'Problem',     sortValue: g => g.type,        naturalDir: 'asc',  width: 380 },
+  { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 100 },
+  { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc',  width: 400 },
   { id: 'service',     label: 'Service',     sortValue: g => g.service,     naturalDir: 'asc',  width: 150 },
-  { id: 'occurrences', label: 'Impact',      sortValue: g => g.occurrences, numeric: true,      width: 110 },
-  { id: 'firstSeen',   label: 'Started',     sortValue: g => g.firstSeen,   width: 150 },
-  { id: 'lastSeen',    label: 'Last seen',   sortValue: g => g.lastSeen,    width: 140 },
-  { id: 'state',       label: 'Status',      sortValue: g => g.state,       naturalDir: 'desc', width: 110 },
+  { id: 'occurrences', label: 'Occurrences', sortValue: g => g.occurrences, numeric: true,      width: 100 },
+  { id: 'firstSeen',   label: 'First seen',  sortValue: g => g.firstSeen,   width: 150 },
+  { id: 'lastSeen',    label: 'Last seen',   sortValue: g => g.lastSeen,    width: 150 },
   { id: 'assignee',    label: 'Assignee',    sortValue: g => g.assignee,    naturalDir: 'asc',  width: 160 },
 ];
 
@@ -307,17 +296,6 @@ export default function ProblemsPage() {
   // the client search read as "no results" for matches on other pages.
   const filtered = data ?? [];
 
-  // Datadog-style j/k row navigation over the exception inbox (spec §3:
-  // "j/k satır gezinme korunur"). Enter / o opens the selected row's
-  // triage drawer; Esc clears the cursor. Disabled while the Variant-B
-  // alert-problem full page is open (?problem=) — the list is mounted
-  // but display:none there, so j/k would drive a hidden table.
-  const excNav = useTableNav<ExceptionGroup>(filtered, {
-    onOpen: g => openExcDetail(g),
-    pageId: 'exception-inbox',
-    enabled: !searchParams.get('problem'),
-  });
-
   const userById = useMemo(() => {
     const m = new Map<string, UserRow>();
     users.forEach(u => m.set(u.id, u));
@@ -349,14 +327,23 @@ export default function ProblemsPage() {
     });
   };
 
-  // Variant A (spec §4A): clicking an exception-inbox row slides in a
-  // 520px triage drawer (ExceptionTriageDrawer) while the list stays
-  // MOUNTED underneath — the selected row is highlighted and facet /
-  // filter / scroll state survive, unlike the former full-page detail.
-  // Shareable via ?exc=<fingerprint> (openExcDetail/closeExcDetail keep
-  // the URL in sync, both-ways). The drawer itself renders below, after
-  // the list, so it overlays via the shared position:fixed shell.
-
+  // Full in-page exception-group detail (prototype design-parity). Clicking a
+  // row opens it; back returns to this list. Caret still toggles the inline
+  // quick-peek (SamplesPanel) so both affordances coexist. Shareable via
+  // ?exc=<fingerprint> (openExcDetail/closeExcDetail keep the URL in sync).
+  if (detail) {
+    return (
+      <>
+        <Topbar title="Problems" />
+        <ProblemDetail
+          group={detail}
+          isAdmin={isAdmin}
+          onBack={closeExcDetail}
+          onChanged={() => { refreshExceptionGroups(); qc.invalidateQueries({ queryKey: keys.anomalies.all }); }}
+        />
+      </>
+    );
+  }
   // A shared ?exc=<fingerprint> link that doesn't resolve — the group
   // was purged, or the id is stale/malformed. Honest empty state
   // instead of silently falling through to the list.
@@ -373,11 +360,7 @@ export default function ProblemsPage() {
       </>
     );
   }
-  // Cold deep-link still resolving (?exc= set, group not yet fetched):
-  // the guard is `!detail` so an in-page click — which sets `detail`
-  // synchronously — falls straight through to the list + drawer rather
-  // than flashing this spinner.
-  if (excParam && !excNotFound && !detail) {
+  if (excParam && !excNotFound) {
     return (
       <>
         <Topbar title="Problems" />
@@ -474,39 +457,29 @@ export default function ProblemsPage() {
             style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
             aria-busy={refreshing}>
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
-              <DataTableColgroup dt={dt} leading={[24, 92]} trailing={isAdmin ? [240] : undefined} />
+              <DataTableColgroup dt={dt} leading={[24]} trailing={isAdmin ? [240] : undefined} />
               <DataTableHead dt={dt}
-                leading={<><th style={{ width: 24 }}></th><th style={{ width: 92 }}>Severity</th></>}
+                leading={<th style={{ width: 24 }}></th>}
                 trailing={isAdmin ? <th style={{ width: 240 }}>Actions</th> : undefined} />
               <tbody>
-                {filtered.map((g, i) => {
+                {filtered.map(g => {
                   const open = expanded.has(g.fingerprint);
-                  // Selected row (spec §4A): the row whose triage drawer is
-                  // open gets an --accent-bg rail; the keyboard cursor (j/k)
-                  // rides the shared .row-selected class + data-row-idx.
-                  const isDrawerRow = detail?.fingerprint === g.fingerprint;
                   return (
                     <Fragment key={g.fingerprint}>
-                      <tr onClick={() => { excNav.setSelected(i); openExcDetail(g); }}
+                      <tr onClick={() => openExcDetail(g)}
                         onKeyDown={(e) => {
-                          // Enter/Space opens the triage drawer (keyboard
-                          // parity with the click). The caret cell handles
-                          // the inline quick-peek separately.
+                          // Enter/Space opens the full detail (keyboard parity
+                          // with the click). The caret cell handles the inline
+                          // quick-peek separately.
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            excNav.setSelected(i);
                             openExcDetail(g);
                           }
                         }}
                         tabIndex={0}
                         role="button"
                         aria-expanded={open}
-                        data-row-idx={i}
-                        className={excNav.selected === i ? 'row-selected' : undefined}
-                        style={{
-                          cursor: 'pointer',
-                          background: isDrawerRow ? 'var(--accent-bg)' : undefined,
-                        }}>
+                        style={{ cursor: 'pointer' }}>
                         <td style={{ color: 'var(--text3)', textAlign: 'center', cursor: 'pointer' }}
                           title={open ? 'Hide occurrences' : 'Peek occurrences'}
                           onClick={e => { e.stopPropagation(); toggleExpand(g.fingerprint); }}>
@@ -514,21 +487,17 @@ export default function ProblemsPage() {
                             ? <ChevronDown size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />
                             : <ChevronRight size={13} strokeWidth={1.75} style={{ verticalAlign: 'middle' }} />}
                         </td>
-                        {/* SEVERITY — constant ERROR chip: exceptions carry no
-                            severity axis (all are errors); the workflow state
-                            lives in the STATUS column. */}
-                        <td><span className="badge b-err">ERROR</span></td>
-                        {/* PROBLEM — type + first-seen NEW marker + message. */}
+                        <td><StateBadge s={g.state} /></td>
                         <td>
                           <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 11.5, color: 'var(--err)' }}>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.type}</span>
+                            {g.type}
                             {/* "NEW" badge: first observed in the
-                                last hour. Highest-signal marker for an
-                                SRE scanning the inbox in the morning —
-                                these are the ones that didn't exist
-                                yesterday. */}
+                                last hour. Highest-signal column
+                                for an SRE scanning the inbox in
+                                the morning — these are the ones
+                                that didn't exist yesterday. */}
                             {Date.now() - g.firstSeen / 1e6 < 60 * 60 * 1000 && (
-                              <span className="badge b-warn" style={{ fontSize: 9, padding: '0 5px', flexShrink: 0 }}>
+                              <span className="badge b-warn" style={{ fontSize: 9, padding: '0 5px' }}>
                                 NEW
                               </span>
                             )}
@@ -540,7 +509,6 @@ export default function ProblemsPage() {
                             {g.message || '—'}
                           </div>
                         </td>
-                        {/* SERVICE — mono, accent link. */}
                         <td>
                           <Link to={`/service?name=${encodeURIComponent(g.service)}`}
                             onClick={e => e.stopPropagation()}
@@ -548,16 +516,11 @@ export default function ProblemsPage() {
                             {g.service}
                           </Link>
                         </td>
-                        {/* IMPACT — occurrences (task: IMPACT = occurrences). */}
                         <td className="mono" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--err)' }}>
                           {fmtNum(Number(g.occurrences))}
                         </td>
-                        {/* STARTED — first seen. */}
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.firstSeen)}</td>
-                        {/* Last seen (kept — existing column). */}
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.lastSeen)}</td>
-                        {/* STATUS — right-aligned (spec §4A). */}
-                        <td style={{ textAlign: 'right' }}><StateBadge s={g.state} /></td>
                         <td onClick={e => e.stopPropagation()}>
                           {isAdmin ? (
                             <select value={g.assignee} onChange={e => setAssignee(g, e.target.value)}
@@ -581,7 +544,7 @@ export default function ProblemsPage() {
                       </tr>
                       {open && (
                         <tr>
-                          <td colSpan={isAdmin ? 10 : 9} style={{
+                          <td colSpan={isAdmin ? 9 : 8} style={{
                             background: 'var(--bg1)', padding: '10px 16px',
                             borderTop: '1px solid var(--border)',
                           }}>
@@ -626,18 +589,6 @@ export default function ProblemsPage() {
             only signals, the inbox above is the actionable queue. */}
         <ProblemsSection serviceFilter={service} />
       </div>
-      {/* Variant A triage drawer (spec §4A) — overlays the mounted list
-          via the shared position:fixed ui/Drawer shell. Driven by the
-          same ?exc=<fingerprint> URL contract the full-page detail used
-          (openExcDetail/closeExcDetail keep it in sync, both-ways). */}
-      {detail && (
-        <ExceptionTriageDrawer
-          group={detail}
-          isAdmin={isAdmin}
-          onChanged={() => { refreshExceptionGroups(); qc.invalidateQueries({ queryKey: keys.anomalies.all }); }}
-          onClose={closeExcDetail}
-        />
-      )}
       {problemParam && (
         <AlertProblemHost
           id={problemParam}

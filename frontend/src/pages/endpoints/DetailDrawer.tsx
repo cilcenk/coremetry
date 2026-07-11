@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { X } from 'lucide-react';
+import { Drawer } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { useEndpointDetail, useEndpointSplit } from '@/lib/queries';
@@ -42,13 +42,6 @@ export function EndpointDetailDrawer({ refObj, row, range, compare, onClose }: {
   compare: boolean;
   onClose: () => void;
 }) {
-  // Esc closes — same muscle memory as the inbox / anomaly drawers.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const detailQ = useEndpointDetail({
     service: refObj.service, path: refObj.path, from, to,
@@ -57,55 +50,33 @@ export function EndpointDetailDrawer({ refObj, row, range, compare, onClose }: {
   const detail: EndpointDetail | null | undefined =
     detailQ.isPending ? undefined : detailQ.isError ? null : detailQ.data;
 
+  // v0.8.496 (sadeleştirme #2) — kabuk ui/Drawer'a taşındı:
+  // overlay/Esc/✕ tek evden; başlık ve bölümler birebir.
   return (
-    <>
-      <div onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-          zIndex: 30, animation: 'fadeIn 120ms ease-out',
-        }} />
-      <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0,
-        width: 'min(620px, 100vw)',
-        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, overflowY: 'auto',
-        animation: 'slideInRight 180ms ease-out',
-      }}>
-        {/* Header — endpoint identity + close. */}
-        <div style={{
-          padding: '14px 18px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          {row?.method && (
-            <span className="badge b-gray" style={{ fontSize: 10 }}>{row.method}</span>
-          )}
-          {refObj.sig && (
-            <span className="badge b-info" style={{ fontSize: 10 }}
-              title="Grouped by shape — IDs in the path are collapsed to :id; the sections below aggregate every matching raw route.">
-              shape
-            </span>
-          )}
-          <span className="mono" style={{
-            fontSize: 13, fontWeight: 600, overflow: 'hidden',
-            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }} title={refObj.path}>
-            {refObj.path}
+    <Drawer onClose={onClose} width={620} header={
+      <>
+        {row?.method && (
+          <span className="badge b-gray" style={{ fontSize: 10 }}>{row.method}</span>
+        )}
+        {refObj.sig && (
+          <span className="badge b-info" style={{ fontSize: 10 }}
+            title="Grouped by shape — IDs in the path are collapsed to :id; the sections below aggregate every matching raw route.">
+            shape
           </span>
-          <Link to={`/service?name=${encodeURIComponent(refObj.service)}`}
-            className="mono" style={{ fontSize: 11, color: 'var(--accent2)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-            {refObj.service}
-          </Link>
-          <button type="button" onClick={onClose} title="Close (Esc)"
-            style={{
-              all: 'unset', cursor: 'pointer', color: 'var(--text3)',
-              display: 'inline-flex', padding: 4,
-            }}>
-            <X size={15} strokeWidth={1.75} />
-          </button>
-        </div>
-
-        <div style={{ padding: '14px 18px' }}>
+        )}
+        <span className="mono" style={{
+          fontSize: 13, fontWeight: 600, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }} title={refObj.path}>
+          {refObj.path}
+        </span>
+        <Link to={`/service?name=${encodeURIComponent(refObj.service)}`}
+          className="mono" style={{ fontSize: 11, color: 'var(--accent2)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+          {refObj.service}
+        </Link>
+      </>
+    }>
+        <div style={{ paddingTop: 10 }}>
           {/* RED strip — repeats the row so the drawer reads on its
               own in a postmortem screenshot; deltas ride the row's
               prior* fields when compare is on. */}
@@ -157,8 +128,7 @@ export function EndpointDetailDrawer({ refObj, row, range, compare, onClose }: {
             </>
           )}
         </div>
-      </div>
-    </>
+    </Drawer>
   );
 }
 

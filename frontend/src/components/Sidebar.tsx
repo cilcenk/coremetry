@@ -8,9 +8,9 @@ import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { TelescopeIcon } from './TelescopeIcon';
 import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
-  MessageSquare, ListTree, ChartSpline, ScrollText, Flame, Compass, BookText,
-  LayoutDashboard, Bell, Gauge, Target, CalendarClock, CircleGauge, Search, Hash,
-  Server, Sparkles, LayoutGrid, FileClock, Terminal, Code, Globe, type LucideIcon,
+  MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
+  LayoutDashboard, Bell, Target, CalendarClock, CircleGauge, Search, Hash,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -70,8 +70,9 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
       { href: '/databases',   label: 'nav.databases',  icon: Database },
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
-      { href: '/external',    label: 'nav.external',   icon: Globe }, // v0.8.446 — Wave 3 / A1
-      { href: '/hosts',       label: 'nav.hosts',      icon: Server }, // v0.8.449 — Wave 3 / A4
+      // v0.8.490 — External + Hosts sidebar'dan gizlendi (operatör:
+      // "gerek yok, daha sonra attribute'lardan daha iyi planlarız").
+      // Rotalar + sayfalar yaşıyor; geri gelirse tek satır.
     ],
   },
   {

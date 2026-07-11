@@ -104,7 +104,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // Now: explicit ?view=list&rootOnly=false so the operator
   // lands on the list view with every matching trace visible.
   const opHref = (op: string) =>
-    `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}&view=list&rootOnly=false`;
+    `/traces?service=${encodeURIComponent(service)}&filters=${encodeURIComponent(encodeFilters([{ k: 'name', op: '=', v: [op] }]))}&range=${encodeURIComponent(encodeRange(range))}&view=list&rootOnly=false`; // v0.8.488 — kesin isim filtresi (search değil)
 
   // v0.8.416 (Tempo-parity T4) — row → the operation-scoped Details
   // view (?op=, v0.8.414/415): RED triple with the percentile band +
@@ -478,9 +478,14 @@ function OperationMetricModal({
   const totalErrs = (op.errorsSparkline ?? []).reduce((s, v) => s + v, 0);
   const maxP99 = (op.p99Sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
   const errCls = op.errorRate >= 5 ? 'err' : op.errorRate >= 1 ? 'warn' : '';
+  // v0.8.488 — operatör-reported: drill link serbest-metin ?search=
+  // taşıyordu; arama trace'in HERHANGİ bir yerinde eşleşir ve satır
+  // KÖK operasyonu gösterdiğinden listeye başka POST'lar da düşüyordu.
+  // Artık KESİN isim filtresi (name = "<op>") gider — yalnız bu
+  // operasyonu içeren trace'ler.
   const tracesHref =
     `/traces?service=${encodeURIComponent(service)}` +
-    `&search=${encodeURIComponent(op.name)}` +
+    `&filters=${encodeURIComponent(encodeFilters([{ k: 'name', op: '=', v: [op.name] }]))}` +
     `&range=${encodeURIComponent(encodeRange(range))}` +
     `&view=list&rootOnly=false`;
 

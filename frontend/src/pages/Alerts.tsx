@@ -303,15 +303,11 @@ export default function AlertsPage() {
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {TEMPLATES.map(t => (
-                    <button key={t.id} className="sec"
+                    <Button key={t.id} variant="secondary" size="sm"
                       onClick={() => setDraft(t.draft)}
-                      title={t.description}
-                      style={{
-                        fontSize: 11, padding: '4px 10px',
-                        borderRadius: 14,
-                      }}>
+                      title={t.description}>
                       {t.label}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 <div style={{
@@ -327,12 +323,11 @@ export default function AlertsPage() {
                   </div>
                   <span style={{ flex: 1 }} />
                   {presets.length > 0 && (
-                    <button type="button" className="sec"
+                    <Button variant="secondary" size="sm"
                       onClick={exportPresets}
-                      style={{ fontSize: 11, padding: '3px 8px' }}
                       title="Download all visible presets as a JSON file">
                       ↓ Export
-                    </button>
+                    </Button>
                   )}
                   <label className="sec"
                     style={{
@@ -514,10 +509,9 @@ export default function AlertsPage() {
               { key: 'metric',  label: 'Metric',  count: metricCount },
               { key: 'watcher', label: 'Watcher', count: watcherCount },
             ] as const).map(t => (
-              <button key={t.key}
+              <Button key={t.key} size="sm"
                 onClick={() => setRuleKind(t.key)}
-                className={ruleKind === t.key ? '' : 'sec'}
-                style={{ fontSize: 12, padding: '3px 10px' }}
+                variant={ruleKind === t.key ? 'primary' : 'secondary'}
                 title={t.key === 'watcher'
                   ? 'Saved log-search alerts created via /logs Create watcher'
                   : t.key === 'metric'
@@ -528,7 +522,7 @@ export default function AlertsPage() {
                   marginLeft: 6, fontSize: 10, color: 'var(--text3)',
                   fontFamily: 'ui-monospace, monospace',
                 }}>{t.count}</span>
-              </button>
+              </Button>
             ))}
           </div>
         )}

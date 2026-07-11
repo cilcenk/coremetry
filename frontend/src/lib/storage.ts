@@ -31,6 +31,7 @@ export const STORAGE_KEYS = {
   exploreHistory:   'coremetry-explore-history',
   sqlBackend:       'coremetry-sql-backend',
   topoViewMode:     'coremetry-topo-view', // v0.8.467 — structure|flow kalıcı tercihi
+  announcementDismissed: 'coremetry-announcement-dismissed', // v0.8.486 — kapatılan duyuru revizyonu
   finopsCostPerTbMo: 'coremetry.finops.costPerTbMo',
   inboxPrio:        'inbox.prio',
   inboxKind:        'inbox.kind',

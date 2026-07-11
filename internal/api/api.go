@@ -683,6 +683,7 @@ func (s *Server) Start() error {
 	// Branding overlay — public GET so the login page can read it
 	// before authentication; PUT is admin-only and capped at 256KB
 	// to keep the logo data URI from bloating the settings table.
+	s.registerAnnouncementRoutes(mux) // v0.8.486 — sayfa-üstü duyuru şeridi (Settings'ten), announcement.go
 	mux.HandleFunc("GET /api/branding", s.getBranding)
 	mux.HandleFunc("PUT /api/branding", auth.RequireRole(auth.RoleAdmin, s.putBranding))
 	mux.HandleFunc("GET /api/anomalies/log-patterns", s.getLogPatternAnomalies)

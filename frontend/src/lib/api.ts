@@ -853,6 +853,13 @@ export const api = {
     if (params.limit) q.set('limit', String(params.limit));
     return get<import('./types').RepeatedSpanRow[] | null>(`/api/spans/repeats?${q}`);
   },
+  // v0.8.486 — sayfa-üstü duyuru şeridi (admin Settings'ten yönetir).
+  getAnnouncement: () =>
+    get<import('./announcement').AnnouncementView>(`/api/announcement`),
+  putAnnouncement: (a: import('./announcement').AnnouncementView) =>
+    request<import('./announcement').AnnouncementView>(`/api/admin/announcement`, {
+      method: 'PUT', body: JSON.stringify(a),
+    }),
   redisStats: () =>
     get<import('./types').RedisStats>(`/api/admin/redis-stats`),
   cacheStats: () =>

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
@@ -264,24 +266,37 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 // Anomaly events. COUNT-only on small state tables (no enrichment/sort), 10s
 // cache — cheap enough for the 30s sidebar poll at scale.
 func (s *Server) inboxCount(w http.ResponseWriter, r *http.Request) {
-	s.serveCached(w, r, "inbox:count", 10*time.Second, func(ctx context.Context) (any, error) {
-		openP, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "open"})
-		if err != nil {
+	// v0.8.472 (perf dalga-1 #2) — ölçülen en büyük tekil gecikme (rozet
+	// 24h p95 7.9s): 4 ARDIŞIK CH count'u 3 paralel sorguya indi
+	// (open+ack tek IN'li FINAL taraması) → soğuk maliyet toplam yerine
+	// max(). TTL 10s→15s: SWR penceresi 45s > 30s poll — rozet STALE
+	// yolundan <10ms döner; problem/exception mutasyonları inbox:count'u
+	// anında düşürür (read-your-writes).
+	s.serveCached(w, r, "inbox:count", 15*time.Second, func(ctx context.Context) (any, error) {
+		var (
+			probN, anN uint64
+			exN        int64
+		)
+		g, gctx := errgroup.WithContext(ctx)
+		g.Go(func() error {
+			var err error
+			probN, err = s.store.CountProblemsInStatuses(gctx, []string{"open", "acknowledged"})
+			return err
+		})
+		g.Go(func() error {
+			var err error
+			exN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{State: pickExceptionState("open")})
+			return err
+		})
+		g.Go(func() error {
+			var err error
+			anN, err = s.store.CountActiveAnomalyEvents(gctx, 0)
+			return err
+		})
+		if err := g.Wait(); err != nil {
 			return nil, err
 		}
-		ackP, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "acknowledged"})
-		if err != nil {
-			return nil, err
-		}
-		exN, err := s.store.CountExceptionGroups(ctx, chstore.ExceptionGroupFilter{State: pickExceptionState("open")})
-		if err != nil {
-			return nil, err
-		}
-		anN, err := s.store.CountActiveAnomalyEvents(ctx, 0)
-		if err != nil {
-			return nil, err
-		}
-		problems := openP + ackP
+		problems := probN
 		exceptions := uint64(exN)
 		return map[string]any{
 			"count":      problems + exceptions + anN,

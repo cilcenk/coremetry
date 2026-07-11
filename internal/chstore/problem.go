@@ -5,23 +5,25 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strings"
 	"time"
 )
 
 // AlertRule defines an evaluator condition. metric is one of:
-//   error_rate    — % of error spans  (operand: percentage)
-//   p99_ms / p95_ms / avg_ms / p50_ms — latency in ms
-//   request_rate  — spans per second  (typically used with `<` to detect drops)
-//   error_count   — number of error spans (absolute)
+//
+//	error_rate    — % of error spans  (operand: percentage)
+//	p99_ms / p95_ms / avg_ms / p50_ms — latency in ms
+//	request_rate  — spans per second  (typically used with `<` to detect drops)
+//	error_count   — number of error spans (absolute)
 type AlertRule struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
-	Service    string  `json:"service"`     // empty = applies to all services
-	Metric     string  `json:"metric"`      // error_rate | p99_ms | request_rate | …
-	Comparator string  `json:"comparator"`  // > | >= | < | <=
+	Service    string  `json:"service"`    // empty = applies to all services
+	Metric     string  `json:"metric"`     // error_rate | p99_ms | request_rate | …
+	Comparator string  `json:"comparator"` // > | >= | < | <=
 	Threshold  float64 `json:"threshold"`
-	WindowSec  uint32  `json:"windowSec"`   // sliding window size
-	Severity   string  `json:"severity"`    // info | warning | critical
+	WindowSec  uint32  `json:"windowSec"` // sliding window size
+	Severity   string  `json:"severity"`  // info | warning | critical
 	Enabled    bool    `json:"enabled"`
 	BuiltIn    bool    `json:"builtIn"`
 	// ForSec is the sustained-breach gate (v0.5.126): the
@@ -45,7 +47,7 @@ type AlertRule struct {
 	// RunbookURL — optional link an oncall reaches when the
 	// rule fires. Surfaces on Problem detail + alert
 	// notifications. Empty = no runbook configured.
-	RunbookURL string  `json:"runbookUrl,omitempty"`
+	RunbookURL string `json:"runbookUrl,omitempty"`
 	// LogQuery (v0.5.242) — KQL/Lucene clause that defines a
 	// "saved-search alert". When set, the evaluator counts log
 	// matches via the logstore in the rule's window and compares
@@ -56,8 +58,8 @@ type AlertRule struct {
 	// shorthand (level:error, pod:my-pod) is rewritten by the
 	// ES backend's expandShorthand so the same query works
 	// against any shipping pipeline.
-	LogQuery   string  `json:"logQuery,omitempty"`
-	CreatedAt  int64   `json:"createdAt"`   // unix nanoseconds
+	LogQuery  string `json:"logQuery,omitempty"`
+	CreatedAt int64  `json:"createdAt"` // unix nanoseconds
 }
 
 type Problem struct {
@@ -69,7 +71,7 @@ type Problem struct {
 	Metric      string  `json:"metric"`
 	Value       float64 `json:"value"`
 	Threshold   float64 `json:"threshold"`
-	Status      string  `json:"status"`     // open | resolved
+	Status      string  `json:"status"` // open | resolved
 	Description string  `json:"description"`
 	// Assignee (v0.5.209) — free-form string, two flavours:
 	//   • team name auto-set from service_metadata.owner_team
@@ -78,16 +80,16 @@ type Problem struct {
 	//   • email of a specific operator after manual claim/assign
 	// Empty = unassigned. Operator-editable via PATCH
 	// /api/problems/{id}/assignee.
-	Assignee    string  `json:"assignee,omitempty"`
-	StartedAt   int64   `json:"startedAt"`  // unix ns
-	ResolvedAt  *int64  `json:"resolvedAt,omitempty"`
+	Assignee   string `json:"assignee,omitempty"`
+	StartedAt  int64  `json:"startedAt"` // unix ns
+	ResolvedAt *int64 `json:"resolvedAt,omitempty"`
 	// RunbookURL — composed at read time from the firing
 	// alert rule (preferred) or the service catalog metadata
 	// (fallback). Not stored on the problems table; the URL
 	// is operator-curated and likely to change between when
 	// the problem opened and when an oncall reads it. NEVER
 	// scanned from CH — populated by EnrichProblems.
-	RunbookURL  string  `json:"runbookUrl,omitempty"`
+	RunbookURL string `json:"runbookUrl,omitempty"`
 	// Clusters — k8s/openshift cluster names this problem's
 	// service was active in around the time of the alert.
 	// Populated at READ time from recent span activity (NOT
@@ -127,12 +129,12 @@ type Problem struct {
 	// Not stored on the problems table — recomputed every read
 	// so a fresh deploy or a worsening value flips the bucket
 	// without requiring a re-write of the row.
-	Priority     string        `json:"priority,omitempty"`
+	Priority string `json:"priority,omitempty"`
 	// PriorityReason — short human string explaining the bucket
 	// pick ("critical + deploy 4m before", "2.5x threshold").
 	// Driven by the same logic that sets Priority; surfaces in
 	// the UI tooltip so the rule is auditable, not magic.
-	PriorityReason string      `json:"priorityReason,omitempty"`
+	PriorityReason string `json:"priorityReason,omitempty"`
 	// AISummary (v0.5.254) — short LLM-generated context blurb
 	// answering "why did this fire + what to look at first". Filled
 	// asynchronously by the problemExplainer goroutine within ~30s
@@ -140,8 +142,8 @@ type Problem struct {
 	// when the explainer hasn't run yet OR the AI Copilot isn't
 	// configured. AISummaryAt is the unix-ns timestamp of the last
 	// generation; lets the UI show "AI insight · 12s ago".
-	AISummary    string `json:"aiSummary,omitempty"`
-	AISummaryAt  int64  `json:"aiSummaryAt,omitempty"`
+	AISummary   string `json:"aiSummary,omitempty"`
+	AISummaryAt int64  `json:"aiSummaryAt,omitempty"`
 	// RootCause — compact top-suspect summary of the persisted
 	// root-cause hypothesis the worker synthesized for this problem
 	// (rc #3 of the anomaly → root-cause feature). Attached at READ
@@ -174,17 +176,17 @@ type RecentDeploy struct {
 // Blend formula (transparent on purpose — operator sees it in
 // PriorityReason and can argue with it):
 //
-//   P1 (drop-everything) when ANY of:
-//     • severity = critical AND value ≥ 2x threshold     (significant breach)
-//     • severity = critical AND deploy ≤ 5min ago        (post-deploy critical)
-//     • severity = critical AND open ≥ 4h                (stale critical)
+//	P1 (drop-everything) when ANY of:
+//	  • severity = critical AND value ≥ 2x threshold     (significant breach)
+//	  • severity = critical AND deploy ≤ 5min ago        (post-deploy critical)
+//	  • severity = critical AND open ≥ 4h                (stale critical)
 //
-//   P2 (today) when ANY of:
-//     • severity = critical                              (criticals default to P2)
-//     • severity = warning  AND value ≥ 2x threshold     (significant warning)
-//     • severity = warning  AND deploy ≤ 5min ago        (post-deploy warning)
+//	P2 (today) when ANY of:
+//	  • severity = critical                              (criticals default to P2)
+//	  • severity = warning  AND value ≥ 2x threshold     (significant warning)
+//	  • severity = warning  AND deploy ≤ 5min ago        (post-deploy warning)
 //
-//   P3 otherwise — steady warnings, info-level rules.
+//	P3 otherwise — steady warnings, info-level rules.
 //
 // "Value above threshold" only makes sense when comparator is
 // >= / >; for < comparators we use the inverse ratio. info
@@ -768,8 +770,14 @@ func (s *Store) invalidateAlertRules() {
 }
 
 func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
-	enabled := uint8(0); if r.Enabled { enabled = 1 }
-	builtIn := uint8(0); if r.BuiltIn { builtIn = 1 }
+	enabled := uint8(0)
+	if r.Enabled {
+		enabled = 1
+	}
+	builtIn := uint8(0)
+	if r.BuiltIn {
+		builtIn = 1
+	}
 	// Explicit column list — alert_rules grew runbook_url in
 	// a later migration. Without naming the columns, the
 	// ordinal arg shape would mismatch the table layout on
@@ -778,7 +786,9 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 		(id, name, service, metric, comparator, threshold, window_sec,
 		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
 		 cooldown_sec, log_query, created_at, version)`)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if err := batch.Append(r.ID, r.Name, r.Service, r.Metric, r.Comparator,
 		r.Threshold, r.WindowSec, r.Severity, enabled, builtIn,
 		r.RunbookURL, r.ForSec, r.MinSamples, r.CooldownSec, r.LogQuery,
@@ -833,7 +843,9 @@ func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error)
 			&r.WindowSec, &r.Severity, &enabled, &builtIn,
 			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
 			&r.LogQuery, &r.CreatedAt)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	r.Enabled = enabled == 1
 	r.BuiltIn = builtIn == 1
 	return &r, nil
@@ -878,12 +890,45 @@ type ProblemFilter struct {
 // FINAL on the spans is the same as the list path so the merged
 // dedup result is what counts; using a plain count() would
 // double-count rows mid-merge.
+// CountProblemsInStatuses — inbox rozetinin open+acknowledged toplamı
+// TEK FINAL taramasında (v0.8.472 perf dalga-1 #2; önceden iki ayrı
+// CountProblems çağrısıydı). Statüler sabit enum, IN bind'li.
+func (s *Store) CountProblemsInStatuses(ctx context.Context, statuses []string) (uint64, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+	holders := make([]string, len(statuses))
+	args := make([]any, len(statuses))
+	for i, st := range statuses {
+		holders[i] = "?"
+		args[i] = st
+	}
+	row := s.conn.QueryRow(ctx, `
+		SELECT count()
+		FROM problems FINAL
+		WHERE status IN (`+strings.Join(holders, ",")+`)
+		SETTINGS max_execution_time = 5`, args...)
+	var n uint64
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, error) {
 	var wc whereClause
-	if f.Status       != "" { wc.add("status = ?", f.Status) }
-	if f.Service      != "" { wc.add("service = ?", f.Service) }
-	if f.Severity     != "" { wc.add("severity = ?", f.Severity) }
-	if f.RuleIDPrefix != "" { wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix) }
+	if f.Status != "" {
+		wc.add("status = ?", f.Status)
+	}
+	if f.Service != "" {
+		wc.add("service = ?", f.Service)
+	}
+	if f.Severity != "" {
+		wc.add("severity = ?", f.Severity)
+	}
+	if f.RuleIDPrefix != "" {
+		wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix)
+	}
 	s.envScopeProblems(ctx, &wc, f.Env) // v0.8.387 — same conjunct as ListProblems, badge agrees
 	row := s.conn.QueryRow(ctx, `
 		SELECT count()
@@ -898,12 +943,22 @@ func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, err
 
 func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, error) {
 	var wc whereClause
-	if f.Status       != "" { wc.add("status = ?", f.Status) }
-	if f.Service      != "" { wc.add("service = ?", f.Service) }
-	if f.Severity     != "" { wc.add("severity = ?", f.Severity) }
-	if f.RuleIDPrefix != "" { wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix) }
+	if f.Status != "" {
+		wc.add("status = ?", f.Status)
+	}
+	if f.Service != "" {
+		wc.add("service = ?", f.Service)
+	}
+	if f.Severity != "" {
+		wc.add("severity = ?", f.Severity)
+	}
+	if f.RuleIDPrefix != "" {
+		wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix)
+	}
 	s.envScopeProblems(ctx, &wc, f.Env) // v0.8.387 — service-scoped env narrowing (env_members.go)
-	if f.Limit == 0 { f.Limit = 100 }
+	if f.Limit == 0 {
+		f.Limit = 100
+	}
 
 	// v0.5.406 — bound the query at 8s. Without this CH could run
 	// the FINAL-merge + ORDER BY started_at scan to completion no
@@ -925,7 +980,9 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 		ORDER BY started_at DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 8`, append(wc.args, f.Limit)...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 
 	var out []Problem
@@ -1054,7 +1111,9 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	if resolvedAt != nil {
 		ns := resolvedAt.UnixNano()
 		p.ResolvedAt = &ns
@@ -1204,7 +1263,9 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 		(id, rule_id, rule_name, severity, service, metric, value,
 		 threshold, status, description, assignee, started_at,
 		 resolved_at, updated_at, version)`)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	startedAt := time.Unix(0, p.StartedAt).UTC()
 	var resolvedAt *time.Time
 	if p.ResolvedAt != nil {
@@ -1287,7 +1348,9 @@ func (s *Store) CalleesOf(ctx context.Context, service string, since time.Durati
 		  AND kind IN ('client', 'producer')
 		GROUP BY callee
 		ORDER BY calls DESC`, cutoff, service)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var out []ServiceEdgeStats
 	for rows.Next() {

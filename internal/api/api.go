@@ -6682,6 +6682,7 @@ func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) 
 	// v0.8.455 — triage listesi artık cache'li; state değişimi listede
 	// ANINDA görünmeli (resolve edilen satır 5s asılı kalmasın).
 	s.cacheInvalidatePrefix(r.Context(), "exc-groups:")
+	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472
 	s.audit(r, "exception_group.set_state", "exception_group", r.PathValue("fp"), fmt.Sprintf(`{"state":%q}`, body.State))
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -8836,6 +8837,7 @@ func (s *Server) setProblemAssignee(w http.ResponseWriter, r *http.Request) {
 	// v0.8.350 (HA 🟡9) — same cross-pod eviction as acknowledgeProblems:
 	// the assignee chip must show on every replica's next /problems read.
 	s.cacheInvalidatePrefix(r.Context(), "problems")
+	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472 — rozet anında güncellensin
 	// v0.8.289 (operator request) — when a Problem is assigned to a PERSON
 	// (email assignee) and it actually changed, email them the assignment.
 	if prev != nil {
@@ -8901,6 +8903,7 @@ func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 	// pod A is visible through pod B's next read instead of after the
 	// 5s TTL × SWR stale window (~15s of a "still open" ghost).
 	s.cacheInvalidatePrefix(r.Context(), "problems")
+	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472 — rozet anında güncellensin
 	writeJSON(w, map[string]any{"acknowledged": n})
 }
 

@@ -4,6 +4,8 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useQuery } from '@tanstack/react-query';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
+import { SampledStructureTopology } from '@/components/topology/SampledStructureTopology';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useServiceMap } from '@/lib/queries';
 import { api } from '@/lib/api';
@@ -54,6 +56,21 @@ export default function ServiceMapPage() {
   // from the URL. The auto-pick effect below skips when focus is already set.
   const [searchParams, setSearchParams] = useSearchParams();
   const [focus, setFocus] = useState<string>(() => searchParams.get('focus') ?? '');
+  // v0.8.469 — odak modunda görünüm seçimi (Topology sekmesindeki v0.8.467
+  // ikizinin aynısı; AYNI ?tview= parametresi + AYNI kalıcı tercih, iki
+  // yüzey tek karar). Odaksız genel harita hep Flow — sampled yapı
+  // servis-odaklı bir agregasyondan gelir, odaksız modu yoktur.
+  const view: 'structure' | 'flow' =
+    (searchParams.get('tview') ?? getRaw(STORAGE_KEYS.topoViewMode) ?? 'structure') === 'flow'
+      ? 'flow' : 'structure';
+  const setView = (v: 'structure' | 'flow') => {
+    setRaw(STORAGE_KEYS.topoViewMode, v);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tview', v);
+      return next;
+    }, { replace: true });
+  };
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const [diff, setDiff] = useState<string>('');
   // Overview cap (v0.8.215): bound the rendered graph to the heaviest N services
@@ -136,7 +153,9 @@ export default function ServiceMapPage() {
   const focusQ = useQuery({
     queryKey: ['servicegraph', 'map-focus', focus, winFrom, winTo],
     queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', from: winFrom, to: winTo }),
-    enabled: !!focus,
+    // v0.8.469 — Structure modunda MV-graf sorgusu atılmaz (göstermediğini
+    // fetch'leme); Flow'a geçişte tetiklenir.
+    enabled: !!focus && view === 'flow',
     staleTime: 15_000,
   });
   const focusMap = useMemo(
@@ -399,12 +418,22 @@ export default function ServiceMapPage() {
                   ].filter(Boolean).join(' · ')
             } />
             <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-              showing {focus}'s 1-hop neighbourhood — {filtered?.nodes.length ?? 0} services
-            </span>
+            <div className="seg" title="Structure: örneklenmiş trace'lerden gerçek çağrı yapısı · Flow: özet kenarlardan akış grafiği">
+              <button className={view === 'structure' ? 'on' : ''} onClick={() => setView('structure')}>Structure</button>
+              <button className={view === 'flow' ? 'on' : ''} onClick={() => setView('flow')}>Flow</button>
+            </div>
+            {view === 'flow' && (
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                showing {focus}'s 1-hop neighbourhood — {filtered?.nodes.length ?? 0} services
+              </span>
+            )}
           </div>
         )}
 
+        {/* v0.8.469 — odaklı sampled yapı görünümü (varsayılan) */}
+        {focus && view === 'structure' && <SampledStructureTopology service={focus} />}
+
+        {(!focus || view === 'flow') && <>
         {data === undefined && <Spinner />}
         {data === null && (
           <Empty icon="!" title="Failed to load service map">
@@ -426,6 +455,7 @@ export default function ServiceMapPage() {
             onSelectNode={commitFocus}
           />
         )}
+        </>}
 
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
           {focus

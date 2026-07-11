@@ -8602,7 +8602,13 @@ func (s *Server) countProblems(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("problems-count:status=%s:svc=%s:sev=%s:env=%s",
 		f.Status, f.Service, f.Severity, f.Env)
-	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+	// v0.8.471 (perf dalga-1 #1) — TTL 5s→15s: SWR sert penceresi
+	// 3×TTL'dir; 5s'te pencere (15s) 30s'lik rozet poll'unun ALTINDA
+	// kalıyor ve her poll soğuk CH sorgusu ödüyordu (canlı p95 751ms).
+	// 15s'te pencere 45s > 30s → poll STALE yolundan <10ms döner, arka
+	// planda tazelenir. Ack/resolve cacheInvalidatePrefix("problems")
+	// yayınladığından read-your-writes bozulmaz.
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		n, err := s.store.CountProblems(ctx, f)
 		if err != nil {
 			return nil, err
@@ -8701,7 +8707,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:limit=%d",
 		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, f.Limit)
-	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+	// v0.8.471 — count ile aynı gerekçe (liste p95 903ms/max 3s → STALE ~10ms).
+	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		probs, err := s.store.ListProblems(ctx, f)
 		if err != nil {
 			return nil, err

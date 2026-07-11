@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Badge } from '@/components/ui';
+import { Badge, Drawer } from '@/components/ui';
 import { ClusterChips } from '@/components/ClusterChips';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
@@ -58,13 +58,6 @@ export function AnomalyDetailDrawer({ event, onClose }: {
   event: AnomalyEvent;
   onClose: () => void;
 }) {
-  // Esc closes — same triage muscle memory as the Problems drawer.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const isLogKind = event.kind === 'log_pattern' || event.kind === 'log_template_new'
     || event.kind === 'elastic_ml';
   const durationNs = Math.max(0, event.lastSeen - event.startedAt);
@@ -93,42 +86,26 @@ export function AnomalyDetailDrawer({ event, onClose }: {
     return `/logs?${p.toString()}`;
   }, [event.service, chartRange]);
 
+  // v0.8.499 (sadeleştirme #2, 5/5) — kabuk ui/Drawer'a taşındı:
+  // overlay/Esc/✕ tek evden; başlık ve gövde (ES-cost sözleşmesi
+  // dahil — histogram yalnız açıkken, tek 30s-cache'li çağrı) birebir.
   return (
-    <>
-      <div onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-          zIndex: 30, animation: 'fadeIn 120ms ease-out',
-        }} />
-      <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0,
-        width: 'min(560px, 100vw)',
-        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, overflowY: 'auto',
-        animation: 'slideInRight 180ms ease-out',
-      }}>
-        <div style={{
-          padding: '14px 18px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <Badge tone={event.status === 'active' ? 'danger' : 'success'} style={{ fontSize: 10 }}>
-            {event.status === 'active' ? 'ACTIVE' : 'CLEARED'}
-          </Badge>
-          <span className="badge b-gray" style={{ fontSize: 10 }}>{KIND_LABEL[event.kind]}</span>
-          {event.service && (
-            <Link to={`/service?name=${encodeURIComponent(event.service)}`}
-              style={{ fontWeight: 700, fontSize: 14 }}>
-              {event.service}
-            </Link>
-          )}
-          <ClusterChips clusters={event.clusters} />
-          <span style={{ flex: 1 }} />
-          <button type="button" onClick={onClose} className="sec"
-            title="Close (Esc)" style={{ fontSize: 12, padding: '3px 9px' }}>✕</button>
-        </div>
-
-        <div style={{ padding: '14px 18px' }}>
+    <Drawer onClose={onClose} width={560} header={
+      <>
+        <Badge tone={event.status === 'active' ? 'danger' : 'success'} style={{ fontSize: 10 }}>
+          {event.status === 'active' ? 'ACTIVE' : 'CLEARED'}
+        </Badge>
+        <span className="badge b-gray" style={{ fontSize: 10 }}>{KIND_LABEL[event.kind]}</span>
+        {event.service && (
+          <Link to={`/service?name=${encodeURIComponent(event.service)}`}
+            style={{ fontWeight: 700, fontSize: 14 }}>
+            {event.service}
+          </Link>
+        )}
+        <ClusterChips clusters={event.clusters} />
+      </>
+    }>
+        <div style={{ paddingTop: 10 }}>
           <div style={{
             fontWeight: 700, fontSize: 14, marginBottom: 10,
             overflowWrap: 'anywhere',
@@ -214,7 +191,6 @@ export function AnomalyDetailDrawer({ event, onClose }: {
             )}
           </div>
         </div>
-      </div>
-    </>
+    </Drawer>
   );
 }

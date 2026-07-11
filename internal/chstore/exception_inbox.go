@@ -636,14 +636,14 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 	winTo := time.Unix(0, g.LastSeen).Add(time.Hour)
 	rows, err := s.conn.Query(ctx, `
 		SELECT trace_id, span_id, toUnixTimestamp64Nano(time),
-		       coalesce(JSON_VALUE(events, '$[0].attributes."exception.message"'), '')    AS message,
+		       `+exMsgExpr+` AS message,
 		       coalesce(JSON_VALUE(events, '$[0].attributes."exception.stacktrace"'), '') AS stacktrace,
 		       name, status_msg
 		FROM spans
 		WHERE service_name = ?
 		  AND time >= ? AND time <= ?
-		  AND events LIKE '%"exception"%'
-		  AND coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>') = ?
+		  AND `+exMatchPred+`
+		  AND `+exTypeExpr+` = ?
 		ORDER BY time DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 10`, g.Service, winFrom, winTo, g.Type, maxCandidates)
@@ -701,8 +701,8 @@ func occurrencesQuery(bucketCap int, shardSkip string) string {
 		       count() AS c
 		FROM spans
 		WHERE service_name = ? AND time >= ? AND time <= ?
-		  AND events LIKE '%"exception"%'
-		  AND coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>') = ?
+		  AND ` + exMatchPred + `
+		  AND ` + exTypeExpr + ` = ?
 		GROUP BY bucket
 		ORDER BY bucket
 		LIMIT ` + fmt.Sprint(bucketCap) + `
@@ -812,12 +812,12 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 	rows, err := s.conn.Query(ctx, `
 		WITH src AS (
 		  SELECT
-		    coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'),       '<unknown>') AS ex_type,
-		    coalesce(JSON_VALUE(events, '$[0].attributes."exception.message"'),    '')          AS ex_msg,
-		    coalesce(JSON_VALUE(events, '$[0].attributes."exception.stacktrace"'), '')          AS ex_stack,
+		    `+exTypeExpr+` AS ex_type,
+		    `+exMsgExpr+`  AS ex_msg,
+		    coalesce(JSON_VALUE(events, '$[0].attributes."exception.stacktrace"'), '') AS ex_stack,
 		    service_name, time
 		  FROM spans
-		  WHERE time >= ? AND events LIKE '%"exception"%'
+		  WHERE time >= ? AND `+exMatchPred+`
 		)
 		SELECT ex_type, ex_msg, service_name,
 		       argMax(ex_stack, time) AS stacktrace,

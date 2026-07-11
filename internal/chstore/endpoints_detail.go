@@ -208,7 +208,7 @@ func (s *Store) EndpointTopExceptions(ctx context.Context, q EndpointDetailQuery
 	wc.add("time >= ?", q.From)
 	wc.add("time <= ?", q.To)
 	wc.add("service_name = ?", q.Service)
-	wc.add(`events LIKE '%"exception"%'`)
+	wc.add(exMatchPred)
 	wc.add("("+routeWC.conds[0]+" OR name = ?)", append(append([]any{}, routeWC.args...), q.Path)...)
 	args := append([]any{}, wc.args...)
 	args = append(args, limit)
@@ -217,8 +217,8 @@ func (s *Store) EndpointTopExceptions(ctx context.Context, q EndpointDetailQuery
 	// (the v0.8.312 trap only bites toStartOfInterval's DateTime).
 	rows, err := s.conn.Query(ctx, `
 		SELECT
-		  coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'),       '<unknown>') AS ex_type,
-		  argMax(coalesce(JSON_VALUE(events, '$[0].attributes."exception.message"'),    ''), time) AS ex_msg,
+		  `+exTypeExpr+` AS ex_type,
+		  argMax(`+exMsgExpr+`, time) AS ex_msg,
 		  argMax(coalesce(JSON_VALUE(events, '$[0].attributes."exception.stacktrace"'), ''), time) AS ex_stack,
 		  count() AS cnt,
 		  toUnixTimestamp64Nano(max(time)) AS last_seen

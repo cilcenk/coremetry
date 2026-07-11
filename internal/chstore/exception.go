@@ -5,6 +5,34 @@ import (
 	"time"
 )
 
+// v0.8.494 — exception hattı iki kaynaktan beslenir (operatör isteği:
+// "error.type kritik önem arz ediyor"):
+//
+//  1. exception EVENT'i olan span'ler (klasik yol — tip/mesaj/stack
+//     events JSON'ından),
+//  2. exception event'i OLMAYAN ama span-seviyesi `error.type`
+//     attribute'u taşıyan HATA span'leri (OTel stable semconv).
+//     HTTP/gRPC client instrumentation'ları DNS/connect sınıfı
+//     hatalarda (java.net.UnknownHostException…) çoğunlukla event
+//     yazmaz, yalnız error.type koyar — bu span'ler önceden triage'da
+//     tamamen görünmezdi.
+//
+// Üç fragment TEK tanımdır; beş sorgu sitesi (GetExceptions,
+// RefreshExceptionGroups, GetExceptionGroupSamples, occurrencesQuery,
+// EndpointTopExceptions) bunları paylaşır ki tip çözümü ile eşleme
+// asla birbirinden sapmasın.
+const (
+	// exMatchPred — bir span'i exception hattına sokan koşul.
+	exMatchPred = `(events LIKE '%"exception"%' OR (status_code = 'error' AND has(attr_keys, 'error.type')))`
+	// exTypeExpr — grup tipi: event tipi öncelikli (en zengin),
+	// yoksa error.type attribute'u. multiIf dalları eager değerlenir;
+	// arrayElement 0-index'te '' döndürdüğünden has() yalancı olsa da
+	// güvenlidir.
+	exTypeExpr = `multiIf(events LIKE '%"exception"%', coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>'), has(attr_keys, 'error.type'), attr_values[indexOf(attr_keys, 'error.type')], '<unknown>')`
+	// exMsgExpr — mesaj: event mesajı, attr-doğumlu grupta status_msg.
+	exMsgExpr = `if(events LIKE '%"exception"%', coalesce(JSON_VALUE(events, '$[0].attributes."exception.message"'), ''), status_msg)`
+)
+
 type ExceptionFilter struct {
 	Service  string
 	GroupBy  string // "type" | "type-service" | "full"  (default: "type-service")
@@ -27,7 +55,7 @@ func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]Excepti
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
 	}
-	wc.add("events LIKE '%\"exception\"%'")
+	wc.add(exMatchPred)
 	if f.Limit == 0 {
 		f.Limit = 100
 	}
@@ -53,8 +81,8 @@ func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]Excepti
 	rows, err := s.conn.Query(ctx, `
 		WITH src AS (
 		  SELECT
-		    coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'),    '<unknown>') AS ex_type,
-		    coalesce(JSON_VALUE(events, '$[0].attributes."exception.message"'), '')          AS ex_msg,
+		    `+exTypeExpr+` AS ex_type,
+		    `+exMsgExpr+`  AS ex_msg,
 		    service_name, time, trace_id, span_id
 		  FROM spans `+wc.sql()+`
 		)

@@ -184,7 +184,11 @@ func (s *Store) ListUsersByTeam(ctx context.Context, team string) ([]User, error
 		       toUnixTimestamp64Nano(created_at), length(photo) > 0 AS has_photo, full_name, org,
 		       toUnixTimestamp64Nano(last_login_at)
 		FROM users FINAL
-		WHERE disabled = 0 AND lower(team) = lower(?)
+		-- v0.8.487 — Türkçe-güvenli eşleşme: CH lower() ASCII-only'dir,
+		-- 'Bankacılık' gibi İ/ı'lı takım adlarında katlama çalışmıyordu;
+		-- baş/son boşluk da kırpılır (katalog etiketi ile LDAP değeri
+		-- arasında görünmez fark eşleşmeyi öldürmesin).
+		WHERE disabled = 0 AND lowerUTF8(trim(team)) = lowerUTF8(trim(?))
 		ORDER BY email`, team)
 	if err != nil {
 		return nil, err

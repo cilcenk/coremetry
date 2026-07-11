@@ -272,39 +272,44 @@ func (s *Server) inboxCount(w http.ResponseWriter, r *http.Request) {
 	// max(). TTL 10s→15s: SWR penceresi 45s > 30s poll — rozet STALE
 	// yolundan <10ms döner; problem/exception mutasyonları inbox:count'u
 	// anında düşürür (read-your-writes).
-	s.serveCached(w, r, "inbox:count", 15*time.Second, func(ctx context.Context) (any, error) {
-		var (
-			probN, anN uint64
-			exN        int64
-		)
-		g, gctx := errgroup.WithContext(ctx)
-		g.Go(func() error {
-			var err error
-			probN, err = s.store.CountProblemsInStatuses(gctx, []string{"open", "acknowledged"})
-			return err
-		})
-		g.Go(func() error {
-			var err error
-			exN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{State: pickExceptionState("open")})
-			return err
-		})
-		g.Go(func() error {
-			var err error
-			anN, err = s.store.CountActiveAnomalyEvents(gctx, 0)
-			return err
-		})
-		if err := g.Wait(); err != nil {
-			return nil, err
-		}
-		problems := probN
-		exceptions := uint64(exN)
-		return map[string]any{
-			"count":      problems + exceptions + anN,
-			"problems":   problems,
-			"exceptions": exceptions,
-			"anomalies":  anN,
-		}, nil
+	s.serveCached(w, r, "inbox:count", 15*time.Second, s.computeInboxCount)
+}
+
+// computeInboxCount — rozet toplamının tek hesabı; hem inboxCount
+// handler'ı hem 25s warm-loop (v0.8.473) aynı fonksiyonu çağırır ki
+// ısıtılan payload ile canlı payload asla ıraksamasın.
+func (s *Server) computeInboxCount(ctx context.Context) (any, error) {
+	var (
+		probN, anN uint64
+		exN        int64
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var err error
+		probN, err = s.store.CountProblemsInStatuses(gctx, []string{"open", "acknowledged"})
+		return err
 	})
+	g.Go(func() error {
+		var err error
+		exN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{State: pickExceptionState("open")})
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		anN, err = s.store.CountActiveAnomalyEvents(gctx, 0)
+		return err
+	})
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	problems := probN
+	exceptions := uint64(exN)
+	return map[string]any{
+		"count":      problems + exceptions + anN,
+		"problems":   problems,
+		"exceptions": exceptions,
+		"anomalies":  anN,
+	}, nil
 }
 
 // inboxKeepsProblem decides whether a Problem row belongs in the inbox at the

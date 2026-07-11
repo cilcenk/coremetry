@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 // /endpoints listing — server-aggregated RED rows per (service ×
@@ -19,6 +19,11 @@ export function useEndpoints(params: Parameters<typeof api.endpoints>[0]) {
     // re-mount, zaten planlı arka plan poll'unun üstüne ikinci fetch
     // atmasın (anomalies.ts'teki v0.4.79 deseninin aynısı).
     staleTime: 30_000,
+    // v0.8.511 (perf raporu #4) — serverSort açık: her kolon başlığı
+    // tıklaması / range / limit değişimi key'i yeniler ve dolu tablo
+    // + KPI şeridi skelete düşüyordu. Önceki veri, yenisi gelene dek
+    // ekranda kalır (logs.ts/Messaging'deki house deseni).
+    placeholderData: keepPreviousData,
   });
 }
 

@@ -98,17 +98,20 @@ export default function ExternalPage() {
       <div id="content">
         <div style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 12 }}>
           Third-party dependencies discovered from outbound client spans
-          (<code>peer.service</code>). Click a row for the traffic trend and
-          which services depend on it.
+          (<code>peer.service</code>, or <code>server.address</code> /{' '}
+          <code>net.peer.name</code> on unanswered HTTP/RPC calls). Click a row
+          for the traffic trend and which services depend on it.
         </div>
 
         {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && <Empty icon="✗" title="Failed to load external APIs" />}
         {rows && rows.length === 0 && (
           <Empty icon="◇" title="No external calls in this window">
-            No client spans with a <code>peer.service</code> attribute reached a
-            third-party destination. Instrumented outbound HTTP/gRPC calls will
-            appear here automatically.
+            No outbound client spans named a third-party destination via{' '}
+            <code>peer.service</code>, <code>server.address</code> or{' '}
+            <code>net.peer.name</code>. If your SDKs emit these attributes,
+            external calls appear here automatically (new traffic only —
+            history is not backfilled).
           </Empty>
         )}
         {rows && rows.length > 0 && (

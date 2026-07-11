@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { X } from 'lucide-react';
+import { Drawer } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Sparkline } from '@/components/Sparkline';
 import { TrendDelta } from '@/components/TrendDelta';
@@ -42,13 +42,6 @@ export function StmtDetailDrawer({ refObj, row, range, onClose }: {
   range: TimeRange;
   onClose: () => void;
 }) {
-  // Esc closes — same muscle memory as the endpoints/inbox drawers.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   // Compare toggle rides the URL (house rule §4 — the E4 v0.8.376
   // posture): ?stmtcmp=1, replace:true, foreign params preserved.
   const [params, setParams] = useSearchParams();
@@ -73,57 +66,35 @@ export function StmtDetailDrawer({ refObj, row, range, onClose }: {
   const sample = detail?.summary?.sampleStatement || row?.sampleStatement || '';
   const dbSystem = detail?.summary?.dbSystem || row?.dbSystem || '';
 
+  // v0.8.497 (sadeleştirme #2) — kabuk ui/Drawer'a taşındı:
+  // overlay/Esc/✕ tek evden; başlık ve bölümler birebir.
   return (
-    <>
-      <div onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-          zIndex: 30, animation: 'fadeIn 120ms ease-out',
-        }} />
-      <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0,
-        width: 'min(620px, 100vw)',
-        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, overflowY: 'auto',
-        animation: 'slideInRight 180ms ease-out',
-      }}>
-        {/* Header — statement identity + compare toggle + close. */}
-        <div style={{
-          padding: '14px 18px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <span className="badge b-gray mono" style={{ fontSize: 10 }}>{dbSystem || 'db'}</span>
-          {detail?.summary?.dbName && detail.summary.dbName !== 'default' && (
-            <span className="badge b-info mono" style={{ fontSize: 10 }}
-              title="db.name this statement class runs against">
-              {detail.summary.dbName}
-            </span>
-          )}
-          <span style={{ fontSize: 13, fontWeight: 600 }}>Statement detail</span>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}
-            title={`Persistent statement identity (stmt_hash ${refObj.hash})`}>
-            #{refObj.hash.slice(0, 8)}
+    <Drawer onClose={onClose} width={620} header={
+      <>
+        <span className="badge b-gray mono" style={{ fontSize: 10 }}>{dbSystem || 'db'}</span>
+        {detail?.summary?.dbName && detail.summary.dbName !== 'default' && (
+          <span className="badge b-info mono" style={{ fontSize: 10 }}
+            title="db.name this statement class runs against">
+            {detail.summary.dbName}
           </span>
-          <label style={{
-            fontSize: 11, display: 'flex', alignItems: 'center', gap: 4,
-            cursor: 'pointer', marginLeft: 'auto', whiteSpace: 'nowrap',
-          }}
-            title="Compare current window against the immediately-preceding equal-length window. Adds a second backend read; off by default.">
-            <input type="checkbox" checked={compare}
-              onChange={e => setCompare(e.target.checked)} />
-            vs prior
-          </label>
-          <button type="button" onClick={onClose} title="Close (Esc)"
-            style={{
-              all: 'unset', cursor: 'pointer', color: 'var(--text3)',
-              display: 'inline-flex', padding: 4,
-            }}>
-            <X size={15} strokeWidth={1.75} />
-          </button>
-        </div>
-
-        <div style={{ padding: '14px 18px' }}>
+        )}
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Statement detail</span>
+        <span className="mono" style={{ fontSize: 10, color: 'var(--text3)' }}
+          title={`Persistent statement identity (stmt_hash ${refObj.hash})`}>
+          #{refObj.hash.slice(0, 8)}
+        </span>
+        <label style={{
+          fontSize: 11, display: 'flex', alignItems: 'center', gap: 4,
+          cursor: 'pointer', marginLeft: 'auto', whiteSpace: 'nowrap',
+        }}
+          title="Compare current window against the immediately-preceding equal-length window. Adds a second backend read; off by default.">
+          <input type="checkbox" checked={compare}
+            onChange={e => setCompare(e.target.checked)} />
+          vs prior
+        </label>
+      </>
+    }>
+        <div style={{ paddingTop: 10 }}>
           {/* Normalized statement — the class identity, wrapped mono. */}
           {statement ? (
             <pre style={{
@@ -171,8 +142,7 @@ export function StmtDetailDrawer({ refObj, row, range, onClose }: {
             </>
           )}
         </div>
-      </div>
-    </>
+    </Drawer>
   );
 }
 

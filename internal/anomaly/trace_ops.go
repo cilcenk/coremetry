@@ -25,111 +25,60 @@ type TraceOpAnomaly struct {
 	LastSeenNs     int64   `json:"lastSeenNs"`
 }
 
-// DetectTraceOpAnomalies finds per-operation error spikes over
-// the last `window` against a longer trailing baseline (1h or
-// 12×window, whichever is larger). Two qualifying conditions
-// using the per-window-equivalent baseline:
-//   - baseline_per_window == 0 AND current_errors >= 3
-//     ("new error pattern", i.e. an op that started failing now)
-//   - baseline_per_window > 0 AND ratio >= 2
-//     (existing op whose error rate just doubled)
-//
-// The asymmetric baseline (5-min current vs 1-hour trailing)
-// keeps fresh spikes visible for ~1 hour — a 5m-vs-5m comparison
-// would have the spike fall into baseline within minutes,
-// flickering the anomaly section as windows slide.
-//
-// One CH query LEFT JOINs the current and trailing windows over
-// the (service_name, name) primary-key prefix, so even at 1B
-// spans/day the scan is bounded to the matching slice.
-func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window time.Duration) ([]TraceOpAnomaly, error) {
-	conn := store.Conn()
-	now := time.Now()
-	curStart := now.Add(-window)
-	baseLookback := time.Hour
-	if 12*window > baseLookback {
-		baseLookback = 12 * window
-	}
-	if baseLookback > 24*time.Hour {
-		baseLookback = 24 * time.Hour
-	}
-	baseStart := now.Add(-baseLookback)
-	// Normalisation factor: ratio of current window length to
-	// baseline lookback. We compare current_errors against
-	// baseline_errors × this factor, so e.g. 5m vs 1h needs the
-	// raw baseline divided by 12.
-	windowRatio := float64(window) / float64(baseLookback)
+// traceOpBucket is one (service, operation) pair's cur/base error
+// counts as read from the MV — input to the pure classifier.
+type traceOpBucket struct {
+	Service   string
+	Operation string
+	CurErrs   uint64
+	BaseErrs  uint64 // RAW baseline count over the whole lookback (un-normalized)
+}
 
-	// `?` placeholders carry windowRatio in the spots where we
-	// normalise the trailing baseline to the same window length
-	// as `cur`. Otherwise a 12× longer baseline would inflate
-	// base.errs and the spike check would never fire.
-	rows, err := conn.Query(ctx, `
-		WITH cur AS (
-		  SELECT service_name, name,
-		         countIf(status_code='error') AS errs,
-		         anyIf(trace_id, status_code='error') AS sample,
-		         maxIf(time, status_code='error') AS last_at
-		  FROM spans
-		  WHERE time >= ? AND time < ?
-		  GROUP BY service_name, name
-		  HAVING errs > 0
-		),
-		base AS (
-		  SELECT service_name, name,
-		         countIf(status_code='error') AS errs
-		  FROM spans
-		  WHERE time >= ? AND time < ?
-		  GROUP BY service_name, name
-		)
-		SELECT
-		  cur.service_name,
-		  cur.name,
-		  cur.errs,
-		  toUInt64(ifNull(base.errs, 0) * ?)                        AS base_errs_per_window,
-		  cur.sample,
-		  toUnixTimestamp64Nano(cur.last_at)                        AS last_ns,
-		  if(base_errs_per_window = 0,
-		     toFloat64(cur.errs),
-		     cur.errs / base_errs_per_window)                       AS ratio
-		FROM cur
-		LEFT JOIN base
-		  ON cur.service_name = base.service_name AND cur.name = base.name
-		WHERE
-		  (ifNull(base.errs, 0) = 0 AND cur.errs >= 3) OR
-		  (ifNull(base.errs, 0) > 0 AND cur.errs / (ifNull(base.errs, 0) * ?) >= 2)
-		ORDER BY ratio DESC, cur.errs DESC
-		LIMIT 50
-		SETTINGS max_execution_time = 30`,
-		curStart, now,
-		baseStart, curStart,
-		windowRatio,
-		windowRatio,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
+// classifyTraceOps applies the qualification thresholds and produces
+// the sorted anomaly list. Pure — the v0.8.504 MV rewrite extracted it
+// from the SQL so the eşik mantığı tablo-testlidir:
+//
+//   - raw baseline == 0 AND current_errors >= 3 → "new_error"
+//   - baseline > 0 AND current >= 2× pencere-normalize baseline → "error_spike"
+//
+// windowRatio = current window length / baseline lookback; the raw
+// baseline is normalized with it so a 12× longer baseline doesn't
+// inflate base counts and mask spikes.
+func classifyTraceOps(rows []traceOpBucket, windowRatio float64) []TraceOpAnomaly {
 	out := []TraceOpAnomaly{}
-	for rows.Next() {
-		var a TraceOpAnomaly
-		if err := rows.Scan(
-			&a.Service, &a.Operation,
-			&a.CurrentErrors, &a.BaselineErrors,
-			&a.SampleTraceID, &a.LastSeenNs,
-			&a.Ratio,
-		); err != nil {
-			return nil, err
+	for _, r := range rows {
+		if r.CurErrs == 0 {
+			continue
 		}
-		if a.BaselineErrors == 0 {
-			a.Kind = "new_error"
-		} else {
-			a.Kind = "error_spike"
+		basePerWindow := uint64(float64(r.BaseErrs) * windowRatio)
+		var kind string
+		var ratio float64
+		switch {
+		case r.BaseErrs == 0 && r.CurErrs >= 3:
+			kind, ratio = "new_error", float64(r.CurErrs)
+		case r.BaseErrs > 0 && basePerWindow == 0:
+			// Baseline var ama pencere-normalize edilince sıfıra
+			// yuvarlanıyor (çok seyrek tarihî hata). Eski SQL bu dalda
+			// cur/(base*ratio) ile KALİFİYE eder (payda <1 → oran şişer),
+			// raporlanan ratio'yu ise cur olarak verirdi — birebir aynı.
+			if float64(r.CurErrs)/(float64(r.BaseErrs)*windowRatio) >= 2 {
+				kind, ratio = "error_spike", float64(r.CurErrs)
+			}
+		case basePerWindow > 0 && float64(r.CurErrs)/float64(basePerWindow) >= 2:
+			kind, ratio = "error_spike", float64(r.CurErrs)/float64(basePerWindow)
 		}
-		out = append(out, a)
+		if kind == "" {
+			continue
+		}
+		out = append(out, TraceOpAnomaly{
+			Service:        r.Service,
+			Operation:      r.Operation,
+			Kind:           kind,
+			CurrentErrors:  r.CurErrs,
+			BaselineErrors: basePerWindow,
+			Ratio:          ratio,
+		})
 	}
-
 	// Stable order: new errors first (always more interesting
 	// than amplified existing ones), then spikes by ratio desc.
 	sort.SliceStable(out, func(i, j int) bool {
@@ -141,5 +90,155 @@ func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window ti
 		}
 		return out[i].CurrentErrors > out[j].CurrentErrors
 	})
-	return out, rows.Err()
+	if len(out) > 50 {
+		out = out[:50]
+	}
+	return out
+}
+
+const traceOpBucketLen = 5 * time.Minute
+
+// DetectTraceOpAnomalies finds per-operation error spikes over
+// the last `window` against a longer trailing baseline (1h or
+// 12×window, whichever is larger, capped at 24h).
+//
+// v0.8.504 (perf raporu #1): pre-MV sürüm her koşuda raw spans'i
+// İKİ kez tarıyordu (window cur + 1-24h base GROUP BY) — 60s tick'te
+// lokalde bile 10-19s/koşu, ~700K satır; 1B span/gün'de dakikada
+// milyonlarca satır. Sayımlar artık operation_summary_5m'den okunur
+// (MV-first invariant: "raw spans for an aggregate = bug"); raw
+// spans'e yalnız KALİFİYE ≤50 çiftin örnek trace'i için dar,
+// service_name-prefix'li ikinci sorgu gider. Bedel: pencereler 5m
+// bucket'a hizalanır — tespit en fazla ~5dk gecikir (v0.8.315/316'da
+// kabul edilmiş desen).
+//
+// The asymmetric baseline (window vs ≥1h trailing) keeps fresh
+// spikes visible for ~1 hour — a window-vs-window comparison would
+// have the spike fall into baseline within minutes, flickering the
+// anomaly section as windows slide.
+func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window time.Duration) ([]TraceOpAnomaly, error) {
+	conn := store.Conn()
+	now := time.Now()
+
+	// Tam-bucket hizası: MV bucket'ı kapanmadan sayımı eksiktir.
+	alignedNow := now.Truncate(traceOpBucketLen)
+	curBuckets := int(window / traceOpBucketLen)
+	if curBuckets < 1 {
+		curBuckets = 1
+	}
+	curWindow := time.Duration(curBuckets) * traceOpBucketLen
+	curStart := alignedNow.Add(-curWindow)
+
+	baseLookback := time.Hour
+	if 12*curWindow > baseLookback {
+		baseLookback = 12 * curWindow
+	}
+	if baseLookback > 24*time.Hour {
+		baseLookback = 24 * time.Hour
+	}
+	baseStart := curStart.Add(-baseLookback)
+	windowRatio := float64(curWindow) / float64(baseLookback)
+
+	// Tek MV geçişi: iç seviye (pair, is_cur) bazında state merge, dış
+	// seviye cur/base'i yan yana koyar. Kaba eleme SQL'de kalır ki
+	// LIMIT anlamlı olsun (eşiğin gevşek hâli); kesin eşik/kind
+	// sınıflaması Go'da (classifyTraceOps, tablo-testli).
+	rows, err := conn.Query(ctx, `
+		SELECT service_name, name,
+		       sumIf(errs, is_cur = 1)  AS cur_errs,
+		       sumIf(errs, is_cur = 0)  AS base_errs
+		FROM (
+		  SELECT service_name, name,
+		         time_bucket >= ? AS is_cur,
+		         countIfMerge(error_count_state) AS errs
+		  FROM operation_summary_5m
+		  WHERE time_bucket >= ? AND time_bucket < ?
+		  GROUP BY service_name, name, is_cur
+		)
+		GROUP BY service_name, name
+		HAVING cur_errs > 0 AND (
+		  (base_errs = 0 AND cur_errs >= 3) OR
+		  (base_errs > 0 AND cur_errs >= 2 * base_errs * ?)
+		)
+		ORDER BY cur_errs DESC
+		LIMIT 200
+		SETTINGS max_execution_time = 30`,
+		curStart, baseStart, alignedNow, windowRatio,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	buckets := []traceOpBucket{}
+	for rows.Next() {
+		var b traceOpBucket
+		if err := rows.Scan(&b.Service, &b.Operation, &b.CurErrs, &b.BaseErrs); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := classifyTraceOps(buckets, windowRatio)
+	if len(out) == 0 {
+		return out, nil
+	}
+
+	// İkinci, DAR raw-spans sorgusu: yalnız kalifiye çiftlerin örnek
+	// trace'i + son görülme anı. service_name PK-prefix + zaman
+	// sınırı + LIMIT — 1B span/gün'de bile küçük bir dilim. İki ayrı
+	// IN listesi kesişimin ÜST-kümesini tarar (sürücüde tuple-IN bind
+	// emsali yok); kesin çift eşlemesi aşağıdaki map'te — fazla
+	// gruplar sadece atlanır. LIMIT = 50×50 kartezyen tavanı.
+	svcs := make([]string, 0, len(out))
+	ops := make([]string, 0, len(out))
+	for _, a := range out {
+		svcs = append(svcs, a.Service)
+		ops = append(ops, a.Operation)
+	}
+	srows, err := conn.Query(ctx, `
+		SELECT service_name, name,
+		       argMax(trace_id, time)           AS sample,
+		       toUnixTimestamp64Nano(max(time)) AS last_ns
+		FROM spans
+		WHERE time >= ? AND time < ?
+		  AND status_code = 'error'
+		  AND service_name IN ?
+		  AND name IN ?
+		GROUP BY service_name, name
+		LIMIT 2500
+		SETTINGS max_execution_time = 10`,
+		curStart, alignedNow, svcs, ops,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer srows.Close()
+	type sampleKey struct{ svc, op string }
+	type sampleVal struct {
+		trace  string
+		lastNs int64
+	}
+	samples := map[sampleKey]sampleVal{}
+	for srows.Next() {
+		var svc, op, trace string
+		var lastNs int64
+		if err := srows.Scan(&svc, &op, &trace, &lastNs); err != nil {
+			return nil, err
+		}
+		samples[sampleKey{svc, op}] = sampleVal{trace, lastNs}
+	}
+	if err := srows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if s, ok := samples[sampleKey{out[i].Service, out[i].Operation}]; ok {
+			out[i].SampleTraceID = s.trace
+			out[i].LastSeenNs = s.lastNs
+		}
+	}
+	return out, nil
 }

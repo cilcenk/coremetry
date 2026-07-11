@@ -20,11 +20,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/smtp"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -678,24 +684,89 @@ func (n *Notifier) sendEmail(ctx context.Context, c chstore.NotificationChannel,
 	}
 
 	subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName)
-	body := n.buildEmailBody(p)
 
 	from := smtpCfg.From
 	fromHeader := from
 	if smtpCfg.FromName != "" {
-		fromHeader = fmt.Sprintf("%s <%s>", smtpCfg.FromName, from)
+		// mail.Address.String() RFC 2047-kodlar ve display-name'i
+		// tırnaklar — elle %s <%s> birleştirmesi Türkçe FromName'de
+		// ham 8-bit header üretiyordu.
+		fromHeader = (&mail.Address{Name: smtpCfg.FromName, Address: from}).String()
 	}
-	msg := strings.Builder{}
-	msg.WriteString("From: " + fromHeader + "\r\n")
-	msg.WriteString("To: " + strings.Join(ec.Recipients, ", ") + "\r\n")
-	msg.WriteString("Subject: " + subject + "\r\n")
-	msg.WriteString("MIME-Version: 1.0\r\n")
-	msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
-	msg.WriteString("\r\n")
-	msg.WriteString(body)
+	// v0.8.493 — multipart/alternative: text/plain fallback (eski gövde
+	// birebir) + text/html. HTML'i gösteremeyen istemci düz metni okur.
+	msg, err := composeAltEmail(fromHeader, ec.Recipients, subject,
+		n.buildEmailBody(p), n.buildEmailHTML(p))
+	if err != nil {
+		return fmt.Errorf("compose email: %w", err)
+	}
 
 	addr := net.JoinHostPort(smtpCfg.Host, strconv.Itoa(smtpCfg.Port))
-	return sendSMTP(addr, smtpCfg, from, ec.Recipients, []byte(msg.String()))
+	return sendSMTP(addr, smtpCfg, from, ec.Recipients, msg)
+}
+
+// composeAltEmail assembles a multipart/alternative RFC-5322 message:
+// plain-text part first (lowest fidelity), HTML part last — clients
+// render the last part they support. Split out of sendEmail so the
+// assembly is unit-testable without an SMTP server.
+// sanitizeHeader strips CR/LF from a header value. Service/rule names
+// arrive verbatim from OTLP ingest — a service.name containing "\r\n"
+// must never split the header block (CWE-93 header injection).
+func sanitizeHeader(v string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
+// encodeSubject RFC 2047 Q-encodes non-ASCII subjects (the subject
+// format hard-codes an em-dash, so EVERY alert subject is non-ASCII);
+// pure-ASCII strings pass through unchanged.
+func encodeSubject(s string) string {
+	return mime.QEncoding.Encode("UTF-8", sanitizeHeader(s))
+}
+
+func composeAltEmail(fromHeader string, to []string, subject, plain, htmlBody string) ([]byte, error) {
+	var alt bytes.Buffer
+	w := multipart.NewWriter(&alt)
+	// Her parça quoted-printable: (a) 8-bit UTF-8 gövde 7-bit-güvenli
+	// taşınır, (b) qp yazıcısı 76 kolonda katlar — buildEmailHTML'in
+	// tek-satır çıktısı aksi hâlde RFC 5321 §4.5.3.1.6'nın 998-oktet
+	// satır limitini aşıyordu (Postfix keyfî noktadan katlar, sıkı
+	// MTA'lar "500 Line too long" ile reddeder).
+	for _, part := range []struct{ ctype, body string }{
+		{"text/plain; charset=UTF-8", plain},
+		{"text/html; charset=UTF-8", htmlBody},
+	} {
+		pw, err := w.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {part.ctype},
+			"Content-Transfer-Encoding": {"quoted-printable"},
+		})
+		if err != nil {
+			return nil, err
+		}
+		qp := quotedprintable.NewWriter(pw)
+		if _, err := qp.Write([]byte(part.body)); err != nil {
+			return nil, err
+		}
+		if err := qp.Close(); err != nil {
+			return nil, err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+
+	sanTo := make([]string, len(to))
+	for i, t := range to {
+		sanTo[i] = sanitizeHeader(t)
+	}
+	msg := strings.Builder{}
+	msg.WriteString("From: " + sanitizeHeader(fromHeader) + "\r\n")
+	msg.WriteString("To: " + strings.Join(sanTo, ", ") + "\r\n")
+	msg.WriteString("Subject: " + encodeSubject(subject) + "\r\n")
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString("Content-Type: multipart/alternative; boundary=" + w.Boundary() + "\r\n")
+	msg.WriteString("\r\n")
+	msg.Write(alt.Bytes())
+	return []byte(msg.String()), nil
 }
 
 func (n *Notifier) buildEmailBody(p chstore.Problem) string {
@@ -714,6 +785,51 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 	if u := n.problemURL(p.ID); u != "" {
 		fmt.Fprintf(&b, "Open:       %s\n", u)
 	}
+	return b.String()
+}
+
+// buildEmailHTML renders the HTML alternative of a problem alert
+// (v0.8.493, operatör isteği). Email-safe: table layout + inline
+// styles, no external assets. Every dynamic field is HTML-escaped —
+// service names / rule names / descriptions are operator-shaped
+// free text and must never inject markup.
+func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
+	esc := html.EscapeString
+	sev := strings.ToUpper(p.Severity)
+	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
+
+	row := func(label, value string) string {
+		return `<tr><td style="padding:4px 12px 4px 0;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top">` +
+			label + `</td><td style="padding:4px 0;font-size:13px;color:#111827">` + value + `</td></tr>`
+	}
+
+	var b strings.Builder
+	b.WriteString(`<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f3f4f6">`)
+	b.WriteString(`<div style="max-width:560px;margin:0 auto;padding:24px 16px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">`)
+	b.WriteString(`<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">`)
+	// Üst şerit: severity rengi
+	b.WriteString(`<div style="height:4px;background:` + severityColor(p.Severity) + `"></div>`)
+	b.WriteString(`<div style="padding:20px">`)
+	b.WriteString(`<div style="margin-bottom:12px"><span style="display:inline-block;padding:2px 10px;border-radius:10px;background:` +
+		severityColor(p.Severity) + `;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.5px">` + esc(sev) + `</span></div>`)
+	b.WriteString(`<div style="font-size:16px;font-weight:600;color:#111827;margin-bottom:4px">` + esc(p.Service) + ` — ` + esc(p.RuleName) + `</div>`)
+	if p.Description != "" {
+		b.WriteString(`<p style="font-size:13px;color:#374151;margin:8px 0 16px;line-height:1.5">` + esc(p.Description) + `</p>`)
+	}
+	b.WriteString(`<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px">`)
+	b.WriteString(row("Metric", esc(p.Metric)))
+	b.WriteString(row("Value", fmt.Sprintf("%.2f <span style=\"color:#6b7280\">(threshold %.2f)</span>", p.Value, p.Threshold)))
+	b.WriteString(row("Started at", esc(t)))
+	if p.RunbookURL != "" {
+		b.WriteString(row("Runbook", `<a href="`+esc(p.RunbookURL)+`" style="color:#2563eb">`+esc(p.RunbookURL)+`</a>`))
+	}
+	b.WriteString(`</table>`)
+	if u := n.problemURL(p.ID); u != "" {
+		b.WriteString(`<a href="` + esc(u) + `" style="display:inline-block;padding:9px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600">Open in Coremetry</a>`)
+	}
+	b.WriteString(`</div></div>`)
+	b.WriteString(`<p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:12px">Coremetry problem alert</p>`)
+	b.WriteString(`</div></body></html>`)
 	return b.String()
 }
 
@@ -736,18 +852,31 @@ func (n *Notifier) SendMail(ctx context.Context, to []string, subject, body stri
 	from := cfg.From
 	fromHeader := from
 	if cfg.FromName != "" {
-		fromHeader = fmt.Sprintf("%s <%s>", cfg.FromName, from)
+		fromHeader = (&mail.Address{Name: cfg.FromName, Address: from}).String()
 	}
-	msg := strings.Builder{}
-	msg.WriteString("From: " + fromHeader + "\r\n")
-	msg.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
-	msg.WriteString("Subject: " + subject + "\r\n")
+	// v0.8.493 — alert yolundaki header sertleştirmesinin aynısı:
+	// CRLF temizliği + RFC 2047 subject + qp gövde.
+	sanTo := make([]string, len(to))
+	for i, t := range to {
+		sanTo[i] = sanitizeHeader(t)
+	}
+	var msg bytes.Buffer
+	msg.WriteString("From: " + sanitizeHeader(fromHeader) + "\r\n")
+	msg.WriteString("To: " + strings.Join(sanTo, ", ") + "\r\n")
+	msg.WriteString("Subject: " + encodeSubject(subject) + "\r\n")
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	msg.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
 	msg.WriteString("\r\n")
-	msg.WriteString(body)
+	qp := quotedprintable.NewWriter(&msg)
+	if _, err := qp.Write([]byte(body)); err != nil {
+		return err
+	}
+	if err := qp.Close(); err != nil {
+		return err
+	}
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	return sendSMTP(addr, cfg, from, to, []byte(msg.String()))
+	return sendSMTP(addr, cfg, from, to, msg.Bytes())
 }
 
 // sendSMTP is split out so it can be swapped in tests + handles the

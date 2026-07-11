@@ -156,6 +156,12 @@ export default function ProblemsPage() {
   const [, setServices] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [data, setData] = useState<ExceptionGroup[] | null | undefined>(undefined);
+  // v0.8.485 (sadeleştirme #3) — refetch'te tablo boşalmaz: önceki sayfa
+  // solgunlaşarak kalır, skeleton yalnız ilk yüklemede (Traces/Services/
+  // Service-detay ile aynı keep-data dili).
+  const [refreshing, setRefreshing] = useState(false);
+  const dataRef = useRef<ExceptionGroup[] | null | undefined>(undefined);
+  dataRef.current = data;
   const [total, setTotal] = useState(0);
   const PAGE_SIZE = 50;
   // Expanded fingerprint(s) — multiple groups can be open at once for compare-and-contrast.
@@ -222,7 +228,11 @@ export default function ProblemsPage() {
   // anomaly hooks above.
   const qc = useQueryClient();
   const refreshExceptionGroups = () => {
-    setData(undefined);
+    if (dataRef.current && dataRef.current.length) {
+      setRefreshing(true);
+    } else {
+      setData(undefined);
+    }
     api.exceptionGroups({
       state: tab, service: service || undefined,
       ownerTeam: ownerTeam || undefined, sreTeam: sreTeam || undefined,
@@ -233,8 +243,8 @@ export default function ProblemsPage() {
       q: committedSearch || undefined,
       limit: PAGE_SIZE, offset: page * PAGE_SIZE,
     })
-      .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); })
-      .catch(() => setData(null));
+      .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); setRefreshing(false); })
+      .catch(() => { setData(null); setRefreshing(false); });
   };
   // Page reset on filter change is owned by setTab/setService/setTeam
   // (they delete ?page=); search resets it itself. A SORT change also
@@ -443,7 +453,9 @@ export default function ProblemsPage() {
           </Empty>
         )}
         {data && filtered.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap"
+            style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
+            aria-busy={refreshing}>
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} leading={[24]} trailing={isAdmin ? [240] : undefined} />
               <DataTableHead dt={dt}

@@ -740,18 +740,16 @@ function TracesPageInner() {
                     onChange={e => setHaving(p => p.map((x, j) =>
                       j === i ? { ...x, value: Number(e.target.value) } : x))}
                     style={{ width: 76, fontSize: 12 }} />
-                  <button className="sec" type="button" aria-label="Koşulu kaldır"
-                    style={{ fontSize: 11, padding: '2px 6px' }}
-                    onClick={() => setHaving(p => p.filter((_, j) => j !== i))}>✕</button>
+                  <Button variant="secondary" size="sm" aria-label="Koşulu kaldır"
+                    onClick={() => setHaving(p => p.filter((_, j) => j !== i))}>✕</Button>
                 </span>
               ))}
               {having.length < 8 && (
-                <button className="sec" type="button"
-                  style={{ fontSize: 11, padding: '3px 8px' }}
+                <Button variant="secondary" size="sm"
                   title='Grup metriği eşiği ekle — ör. "Error % > 1 AND P95 ms > 500"'
                   onClick={() => setHaving(p => [...p, { metric: 'errorRate', op: '>', value: 1 }])}>
                   {having.length === 0 ? '＋ Having' : '＋'}
-                </button>
+                </Button>
               )}
             </>
           )}

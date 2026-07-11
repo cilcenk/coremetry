@@ -476,35 +476,31 @@ export default function ServicesPage() {
               {sorted?.length ?? 0} services{total != null ? ` · ${total} total` : ''}
               {/* v0.7.44 — First + Last jumps (Last needs the opt-in total;
                   disabled when unknown, e.g. under a cluster filter). */}
-              <button className="sec" type="button"
+              <Button variant="secondary" size="sm"
                 disabled={page === 0}
                 onClick={() => setPage(0)}
-                title="First page"
-                style={{ padding: '3px 8px', fontSize: 11 }}>
+                title="First page">
                 ⏮ First
-              </button>
-              <button className="sec" type="button"
+              </Button>
+              <Button variant="secondary" size="sm"
                 disabled={page === 0}
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                style={{ padding: '3px 10px', fontSize: 11 }}>
+                onClick={() => setPage(p => Math.max(0, p - 1))}>
                 ← Prev
-              </button>
+              </Button>
               <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
                 {page + 1}{total != null ? ` / ${Math.max(1, Math.ceil(total / PAGE_SIZE))}` : ''}
               </span>
-              <button className="sec" type="button"
+              <Button variant="secondary" size="sm"
                 disabled={!hasMore}
-                onClick={() => setPage(p => p + 1)}
-                style={{ padding: '3px 10px', fontSize: 11 }}>
+                onClick={() => setPage(p => p + 1)}>
                 Next →
-              </button>
-              <button className="sec" type="button"
+              </Button>
+              <Button variant="secondary" size="sm"
                 disabled={total == null || page >= Math.ceil(total / PAGE_SIZE) - 1}
                 onClick={() => { if (total != null) setPage(Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)); }}
-                title={total != null ? `Last page (${Math.max(1, Math.ceil(total / PAGE_SIZE))})` : 'Last page unavailable with a cluster or env filter'}
-                style={{ padding: '3px 8px', fontSize: 11 }}>
+                title={total != null ? `Last page (${Math.max(1, Math.ceil(total / PAGE_SIZE))})` : 'Last page unavailable with a cluster or env filter'}>
                 Last ⏭
-              </button>
+              </Button>
             </span>
           </div>
         )}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
-import { VirtualList } from '@/components/ui';
+import { VirtualList, Button } from '@/components/ui';
 import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
@@ -283,10 +283,9 @@ export default function SQLPlaygroundPage() {
                 Elasticsearch
               </button>
             </div>
-            <button type="button" onClick={run} disabled={running}
-              style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600 }}>
+            <Button onClick={run} disabled={running}>
               {running ? 'Running…' : 'Run'} <span style={{ color: 'var(--text3)' }}>⌘↵</span>
-            </button>
+            </Button>
             <select onChange={e => {
               const list = backend === 'elasticsearch' ? ES_SAMPLES : SAMPLES;
               const s = list.find(x => x.label === e.target.value);

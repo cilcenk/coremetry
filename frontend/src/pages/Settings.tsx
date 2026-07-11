@@ -20,6 +20,7 @@ import { TeamRoutingTab } from './settings/TeamRoutingTab';
 import { ApiTokensTab } from './settings/ApiTokensTab';
 import { MaintenanceTab } from './settings/MaintenanceTab';
 import { AITab } from './settings/AiTab';
+import { KnowledgeTab } from './settings/KnowledgeTab';
 import { TempoTab } from './settings/TempoTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
@@ -48,6 +49,9 @@ const TABS: SettingsTab[] = [
   { slug: 'api-tokens',   label: 'API Tokens', Comp: ApiTokensTab },
   { slug: 'maintenance', label: 'Maintenance windows',   Comp: MaintenanceTab },
   { slug: 'ai',          label: 'AI Copilot',            Comp: AITab },
+  // v0.8.491 — RAG/doküman/wiki bölümü AI Copilot'tan kendi sekmesine
+  // ayrıldı (operatör onaylı sadeleştirme #5); davranış birebir aynı.
+  { slug: 'knowledge',   label: 'Knowledge (RAG)',       Comp: KnowledgeTab },
   { slug: 'tempo',       label: 'Tempo backend',         Comp: TempoTab },
   { slug: 'elastic',     label: 'Elasticsearch logs',    Comp: ElasticTab },
   { slug: 'kibana',      label: 'Kibana link',           Comp: KibanaTab },

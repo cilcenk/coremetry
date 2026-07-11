@@ -247,7 +247,17 @@ function TracesPageInner() {
   const [brushPrev, setBrushPrev] = useState<TimeRange | null>(null);
 
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
+  // v0.8.478 (perf dalga-3) — refetch'te ekran boşalmaz: önceki sonuç
+  // solgunlaştırılarak ekranda kalır (keepPreviousData semantiği),
+  // skeleton yalnız İLK yüklemede. dataRef effect'lere dep eklemeden
+  // "elimde veri var mı" sorusunu cevaplar.
+  const [refreshing, setRefreshing] = useState(false);
+  const dataRef = useRef<TracesResponse | null | undefined>(undefined);
+  dataRef.current = data;
+  const [aggRefreshing, setAggRefreshing] = useState(false);
+  const aggRef = useRef<AggregateRow[] | null | undefined>(undefined);
   const [agg, setAgg] = useState<AggregateRow[] | null | undefined>(undefined);
+  aggRef.current = agg;
   const [listErr, setListErr] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [showTotal, setShowTotal] = useState(false);
@@ -303,7 +313,13 @@ function TracesPageInner() {
   const listRangeNs = useMemo(() => timeRangeToNs(range), [range]);
   useEffect(() => {
     if (view !== 'list') return;
-    setData(undefined);
+    // Önceki sayfa/sıralama/filtre sonucu ekranda kalır; yalnız ilk
+    // yüklemede skeleton (v0.8.478).
+    if (dataRef.current && dataRef.current.traces?.length) {
+      setRefreshing(true);
+    } else {
+      setData(undefined);
+    }
     setListErr(null);
     // v0.8.300 (quality bar S3) — stale-overwrite guard, same pattern as the
     // volume-strip effect below.
@@ -330,10 +346,11 @@ function TracesPageInner() {
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
       extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
       count: showTotal && !tid ? 'exact' : 'skip',
-    }).then(d => { if (!cancelled) setData(d); }).catch((e: unknown) => {
+    }).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
       if (cancelled) return;
       setListErr(e instanceof Error ? e.message : 'Request failed');
       setData(null);
+      setRefreshing(false);
     });
     return () => { cancelled = true; };
   }, [view, listRangeNs, sort, order, page, filter, env, advFilters, advGroupParam, extraCols, showTotal, retryNonce]);
@@ -353,7 +370,11 @@ function TracesPageInner() {
       setRelErr(null);
       return;
     }
-    setData(undefined);
+    if (dataRef.current && dataRef.current.traces?.length) {
+      setRefreshing(true);
+    } else {
+      setData(undefined);
+    }
     setRelErr(null);
     const { from, to } = relRangeNs;
     let cancelled = false;
@@ -430,7 +451,11 @@ function TracesPageInner() {
   const aggRangeNs = useMemo(() => timeRangeToNs(range), [range]);
   useEffect(() => {
     if (view !== 'aggregate') return;
-    setAgg(undefined);
+    if (aggRef.current && aggRef.current.length) {
+      setAggRefreshing(true);
+    } else {
+      setAgg(undefined);
+    }
     let cancelled = false; // v0.8.300 — stale-overwrite guard
     const { from, to } = aggRangeNs;
     const safeGroup = groupBy === 'attr' ? 'operation' : groupBy;
@@ -448,7 +473,8 @@ function TracesPageInner() {
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
       having: debouncedHaving.length ? encodeHavingParam(debouncedHaving) : undefined,
-    }).then(a => { if (!cancelled) setAgg(a); }).catch(() => { if (!cancelled) setAgg(null); });
+    }).then(a => { if (!cancelled) { setAgg(a); setAggRefreshing(false); } })
+      .catch(() => { if (!cancelled) { setAgg(null); setAggRefreshing(false); } });
     return () => { cancelled = true; };
   }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, env, advFilters, advGroupParam]);
 
@@ -945,7 +971,8 @@ function TracesPageInner() {
           <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')} />
         )}
         {(view === 'list' || view === 'relations') && data && traces.length > 0 && (
-          <>
+          <div style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
+            aria-busy={refreshing}>
             {/* Column toolbar — attribute columns are added via "+ Column"
                 (ColumnManager) and removed by their chips. VirtualTable's shared
                 header auto-renders the sortable/resizable data columns, so the
@@ -1020,7 +1047,7 @@ function TracesPageInner() {
                   ) : null}
                 </>
               } />
-          </>
+          </div>
         )}
 
         {/* Aggregate view. */}
@@ -1035,6 +1062,7 @@ function TracesPageInner() {
           </Empty>
         )}
         {view === 'aggregate' && agg && agg.length > 0 && (
+          <div style={{ opacity: aggRefreshing ? 0.55 : 1, transition: 'opacity 120ms' }} aria-busy={aggRefreshing}>
           <AggregateTable agg={agg} groupBy={groupBy} groupAttr={groupAttr}
             aggSort={aggSort} aggOrder={aggOrder} onSort={toggleAggSort}
             onDrill={(a) => {
@@ -1043,6 +1071,7 @@ function TracesPageInner() {
               else if (a.groupExtra) { setFilter({ ...filter, service: a.groupExtra }); setDraft({ ...draft, service: a.groupExtra }); }
               setView('list'); setPage(0);
             }} />
+          </div>
         )}
 
         {/* Shapes view. */}

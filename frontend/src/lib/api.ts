@@ -1882,15 +1882,6 @@ export const api = {
   // MGET); safe to poll at 5-10s in the admin page.
   listClusterMembers: () =>
     request<{ members: ClusterMember[]; selfId: string }>(`/api/admin/cluster`),
-  // v0.5.277 — "what changed" banner data. Open problem
-  // counts (any-service) + recent service.version transitions
-  // in the last 30 min. Cached 15s server-side; safe to poll
-  // at 30s from the AppShell.
-  recentChanges: () =>
-    request<{
-      openProblems: { critical: number; warning: number; info: number };
-      recentDeploys: { service: string; version: string; firstSeenNs: number; spanCount: number }[] | null;
-    }>(`/api/recent-changes`),
   // Pipeline rules — operator-defined drop / enrich applied
   // BEFORE the sampler at OTLP ingest (v0.5.263).
   listPipelineRules: () =>

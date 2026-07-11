@@ -983,7 +983,6 @@ func (s *Server) Start() error {
 	// v0.5.277 — "what changed" banner data. Open problem
 	// counts + recent service.version transitions. Cheap
 	// (15s cache); polled from the global AppShell.
-	mux.HandleFunc("GET    /api/recent-changes",          s.getRecentChanges)
 
 
 	// Ingest pipeline (v0.5.263) — admin-managed drop / enrich

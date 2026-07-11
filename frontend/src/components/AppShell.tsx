@@ -12,7 +12,6 @@ import { useShortcuts } from '@/lib/keyboard';
 import { isPublicPath } from '@/lib/auth-paths';
 import { useBranding } from '@/lib/branding';
 import { PageLoader } from './Spinner';
-import { WhatChangedBanner } from './WhatChangedBanner';
 import { ErrorBoundary } from './ErrorBoundary';
 
 // ALWAYS_ALLOWED — routes the custom-role guard NEVER blocks, even
@@ -128,11 +127,7 @@ export function AppShell() {
   return (
     <div id="app">
       <Sidebar />
-      {/* v0.5.277 — page-top "what changed" ribbon. Open
-          critical/warning counts + recent service.version
-          transitions. Self-hides on a quiet install. */}
       <div id="main">
-        <WhatChangedBanner />
         {/* v0.8.298 (quality bar S1) — route-scoped boundary INSIDE the
             shell: a page-render crash no longer unmounts the sidebar/nav
             (the App.tsx global boundary stays as last resort, but before

@@ -34,6 +34,7 @@ const SINCE_MAP: Record<string, string> = {
 };
 
 interface Props {
+  windowNs?: { from: number; to: number };
   service: string;
   range: TimeRange;
   info: Service | null;
@@ -163,8 +164,12 @@ function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready'
 }
 
 
-export function ServiceOverview({ service, range, info, operations }: Props) {
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+export function ServiceOverview({ service, range, windowNs, info, operations }: Props) {
+  // v0.8.480 — üst sayfa pencereyi çözdüyse AYNISI kullanılır: RED
+  // prefetch'in RQ anahtarı ancak böyle tutar (timeRangeToNs göreli
+  // aralıkta Date.now()'a bağlı, iki ayrı hesap anahtar kaçırır).
+  const computed = useMemo(() => timeRangeToNs(range), [range]);
+  const { from, to } = windowNs ?? computed;
   const windowSec = Math.max(1, (to - from) / 1e9);
 
   // One batched span-metric call: rate + error_rate + p99 + p50 over the

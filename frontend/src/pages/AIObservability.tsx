@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button } from '@/components/ui/Button';
+import { Drawer, DrawerSection } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
@@ -370,40 +370,23 @@ function CallsChart({ series }: { series: AICallsTimePoint[] }) {
   );
 }
 
+// v0.8.495 (sadeleştirme #2) — kabuk ui/Drawer'a taşındı: Esc/overlay/✕
+// davranışı tek evden; içerik (Kv grid + örnek pre blokları) birebir.
 function CallDrawer({ call, rates, onClose }: { call: AICall; rates: AIRateTable; onClose: () => void }) {
   const cost = costForCall(rates, call.model, call.inputTokens, call.outputTokens);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
   return (
-    <>
-      <div onClick={onClose}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 30 }} />
-      <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0,
-        width: 'min(680px, 100vw)',
-        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
-        zIndex: 31, overflowY: 'auto',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-      }}>
-        <div style={{
-          padding: '14px 18px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <span className={`badge ${call.status === 'ok' ? 'b-ok' : 'b-err'}`}>
-            {call.status}
-          </span>
-          <span style={{ fontWeight: 700, fontSize: 13 }}>{call.surface}</span>
-          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-            {call.provider} · {call.model || '—'} · {call.durationMs} ms
-          </span>
-          <span style={{ flex: 1 }} />
-          <Button variant="ghost" size="sm" onClick={onClose}
-            title="Close">×</Button>
-        </div>
-        <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <Drawer onClose={onClose} width={680} header={
+      <>
+        <span className={`badge ${call.status === 'ok' ? 'b-ok' : 'b-err'}`}>
+          {call.status}
+        </span>
+        <span style={{ fontWeight: 700, fontSize: 13 }}>{call.surface}</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          {call.provider} · {call.model || '—'} · {call.durationMs} ms
+        </span>
+      </>
+    }>
+        <div style={{ paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
             <Kv k="Time" v={tsLong(call.createdAt)} />
             <Kv k="Input tok" v={String(call.inputTokens)} />
@@ -441,22 +424,14 @@ function CallDrawer({ call, rates, onClose }: { call: AICall; rates: AIRateTable
             }}>{call.responseSample || '(empty)'}</pre>
           </Section>
         </div>
-      </div>
-    </>
+    </Drawer>
   );
 }
 
+// Section — DrawerSection'ın ince sarmalayıcısı; yerel kopya v0.8.495'te
+// paylaşılan primitife bağlandı.
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div style={{
-        fontSize: 11, fontWeight: 600, letterSpacing: 0.4,
-        textTransform: 'uppercase', color: 'var(--text3)',
-        marginBottom: 6,
-      }}>{title}</div>
-      {children}
-    </div>
-  );
+  return <DrawerSection title={title}>{children}</DrawerSection>;
 }
 function Kv({ k, v }: { k: string; v: string }) {
   return (

@@ -1195,6 +1195,21 @@ func (s *Server) warmDependenciesCache() {
 				}
 				return map[string]any{"environments": names, "total": total}, nil
 			})
+		// v0.8.474 (perf dalga-1 #3'ün warm ayağı; v473 refactor'ı
+		// computeInboxCount'u çıkardı, girişler bu sürümde) — rozet
+		// anahtarları: sidebar'ın 30s poll'u artık hiç CH'a inmez (her
+		// poll taze HIT); CH maliyeti sekme-başına-30s'den filo-başına-
+		// 25s'e düşer. Anahtar şekilleri handler'larla birebir
+		// (problems-count default = status=open, filtresiz).
+		warm("problems-count", "problems-count:status=open:svc=:sev=:env=", 15*time.Second,
+			func(ctx context.Context) (any, error) {
+				n, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "open"})
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"count": n}, nil
+			})
+		warm("inbox-count", "inbox:count", 15*time.Second, s.computeInboxCount)
 		warm("services-metadata", "services-metadata", 60*time.Second,
 			func(ctx context.Context) (any, error) {
 				return s.store.ListServiceMetadata(ctx)

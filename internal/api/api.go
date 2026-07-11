@@ -1201,6 +1201,17 @@ func (s *Server) warmDependenciesCache() {
 		// poll taze HIT); CH maliyeti sekme-başına-30s'den filo-başına-
 		// 25s'e düşer. Anahtar şekilleri handler'larla birebir
 		// (problems-count default = status=open, filtresiz).
+		// v0.8.475 (perf dalga-1 #4) — Wave-3 sayfaları warmer'dan sonra
+		// eklendiği için hiç ısıtılmıyordu; ilk navigasyondaki ölçülen
+		// 120-190ms soğuk-slot silinir. Pencereler sayfaların
+		// varsayılanlarıyla birebir (hosts 15m, external 1h) ki anahtar
+		// şekli handler'ınkiyle çakışsın.
+		hostsFrom := to.Add(-15 * time.Minute)
+		warm("hosts", "hosts:"+cacheBucket(hostsFrom, to), 60*time.Second,
+			func(ctx context.Context) (any, error) { return s.store.GetHosts(ctx, hostsFrom, to) })
+		extFrom := to.Add(-time.Hour)
+		warm("external", "external:"+cacheBucket(extFrom, to), 30*time.Second,
+			func(ctx context.Context) (any, error) { return s.store.GetExternalHosts(ctx, extFrom, to) })
 		warm("problems-count", "problems-count:status=open:svc=:sev=:env=", 15*time.Second,
 			func(ctx context.Context) (any, error) {
 				n, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "open"})

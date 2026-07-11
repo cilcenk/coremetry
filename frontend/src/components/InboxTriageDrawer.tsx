@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Users } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Drawer } from '@/components/ui';
 import { Empty } from '@/components/Spinner';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { useAuth } from '@/components/AuthProvider';
@@ -40,60 +41,35 @@ export function InboxTriageDrawer({ item, onClose, onOpenSource }: {
   onClose: () => void;
   onOpenSource: (it: InboxItem) => void;
 }) {
-  // Esc closes — same triage muscle memory as the anomaly / problem drawers.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const prioClass = item
     ? (item.priority === 'P1' ? 'b-err' : item.priority === 'P2' ? 'b-warn' : 'b-gray')
     : 'b-gray';
 
+  // v0.8.498 (sadeleştirme #2) — kabuk ui/Drawer'a taşındı:
+  // overlay/Esc/✕ tek evden; başlık ve gövde birebir.
   return (
-    <>
-      <div onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-          zIndex: 30, animation: 'fadeIn 120ms ease-out',
-        }} />
-      <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0,
-        width: 'min(560px, 100vw)',
-        background: 'var(--bg)', borderLeft: '1px solid var(--border)',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, overflowY: 'auto',
-        animation: 'slideInRight 180ms ease-out',
-      }}>
-        {/* Header — mirrors the row: priority + title + service + assignee. */}
-        <div style={{
-          padding: '14px 18px', borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <span className={`badge ${prioClass}`} style={{ fontSize: 10 }}>
-            {item ? item.priority : '—'}
+    <Drawer onClose={onClose} width={560} header={
+      <>
+        <span className={`badge ${prioClass}`} style={{ fontSize: 10 }}>
+          {item ? item.priority : '—'}
+        </span>
+        <span className="badge b-gray" style={{ fontSize: 10 }}>
+          {(item?.source ?? 'ITEM').toUpperCase()}
+        </span>
+        {item?.service && (
+          <Link to={`/service?name=${encodeURIComponent(item.service)}`}
+            style={{ fontWeight: 700, fontSize: 14 }}>
+            {item.service}
+          </Link>
+        )}
+        {item?.assignee && (
+          <span className="badge b-info" style={{ fontSize: 10 }}>
+            {!item.assignee.includes('@') && <Users size={11} strokeWidth={1.75} />}{item.assignee}
           </span>
-          <span className="badge b-gray" style={{ fontSize: 10 }}>
-            {(item?.source ?? 'ITEM').toUpperCase()}
-          </span>
-          {item?.service && (
-            <Link to={`/service?name=${encodeURIComponent(item.service)}`}
-              style={{ fontWeight: 700, fontSize: 14 }}>
-              {item.service}
-            </Link>
-          )}
-          {item?.assignee && (
-            <span className="badge b-info" style={{ fontSize: 10 }}>
-              {!item.assignee.includes('@') && <Users size={11} strokeWidth={1.75} />}{item.assignee}
-            </span>
-          )}
-          <span style={{ flex: 1 }} />
-          <Button variant="ghost" size="sm" onClick={onClose}
-            title="Close (Esc)">✕</Button>
-        </div>
-
-        <div style={{ padding: '14px 18px' }}>
+        )}
+      </>
+    }>
+        <div style={{ paddingTop: 10 }}>
           {item
             ? <DrawerBody item={item} onClose={onClose} onOpenSource={onOpenSource} />
             : (
@@ -103,8 +79,7 @@ export function InboxTriageDrawer({ item, onClose, onOpenSource }: {
               </Empty>
             )}
         </div>
-      </div>
-    </>
+    </Drawer>
   );
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { fmtNum, fmtAgoNs } from '@/lib/utils';
 import type { Rollout, DeployImpact } from '@/lib/types';
@@ -160,15 +161,12 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                           </span>
                         )}
                         {(st.kind === 'idle' || st.kind === 'err') && (
-                          <button className="sec"
+                          <Button variant="secondary" size="sm"
                             onClick={() => askCopilot(r)}
-                            style={{
-                              fontSize: 11, padding: '4px 10px',
-                              color: 'var(--accent2)',
-                            }}
+                            style={{ color: 'var(--accent2)' }}
                             title="Ask Copilot whether this rollout looks clean, regressed, or rollback-worthy">
                             ✨ {st.kind === 'err' ? 'Re-ask' : 'Explain'} rollout
-                          </button>
+                          </Button>
                         )}
                         {st.kind === 'err' && (
                           <span style={{

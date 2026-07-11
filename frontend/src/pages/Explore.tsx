@@ -600,7 +600,7 @@ name ~ checkout`}
                   && p.groupBy.length === repeatGroupBy.length
                   && p.groupBy.every((k, i) => repeatGroupBy[i] === k);
                 return (
-                  <button key={p.key} type="button"
+                  <Button key={p.key}
                     title={p.hint}
                     onClick={() => {
                       setRepeatGroupBy(p.groupBy);
@@ -612,10 +612,9 @@ name ~ checkout`}
                         if (extra.length > 0) setFilters([...filters, ...extra]);
                       }
                     }}
-                    className={active ? '' : 'sec'}
-                    style={{ fontSize: 11, padding: '4px 10px' }}>
+                    variant={active ? 'primary' : 'secondary'} size="sm">
                     {p.label}
-                  </button>
+                  </Button>
                 );
               })}
               <span style={VDIV} />

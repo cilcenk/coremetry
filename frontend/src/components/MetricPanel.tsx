@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CopyButton } from '@/components/CopyButton';
+import { Button } from '@/components/ui';
 import {
   describeMetricQuery,
   encodeMetricQuery,
@@ -273,15 +274,14 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
             </span>
             <span style={{ flex: 1 }} />
             <CopyButton value={describeMetricQuery(mq)} title="Copy query" />
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               aria-label="Close"
               onClick={() => setViewOpen(false)}
-              className="sec"
-              style={{ width: 22, height: 20, padding: 0, lineHeight: '16px', fontSize: 13 }}
             >
               ✕
-            </button>
+            </Button>
           </div>
           <pre
             className="mono"

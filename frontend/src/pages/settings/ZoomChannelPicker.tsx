@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from '@/components/ui';
 
 // ZoomChannel mirrors the backend ZoomChannel struct.
 interface ZoomChannelRow {
@@ -140,12 +141,11 @@ export function ZoomChannelPicker({
                 {rows ? `${filtered.length} of ${rows.length}` : ''}
               </span>
               <span style={{ marginLeft: 'auto' }}>
-                <button type="button" className="sec" disabled={busy}
-                  onClick={load} style={{ marginRight: 8, fontSize: 11 }}>
+                <Button variant="secondary" size="sm" disabled={busy}
+                  onClick={load} style={{ marginRight: 8 }}>
                   Refresh
-                </button>
-                <button type="button" onClick={() => setOpen(false)}
-                  style={{ fontSize: 12 }}>Close</button>
+                </Button>
+                <Button variant="secondary" onClick={() => setOpen(false)}>Close</Button>
               </span>
             </div>
 

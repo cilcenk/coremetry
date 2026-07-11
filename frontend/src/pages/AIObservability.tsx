@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Drawer, DrawerSection } from '@/components/ui';
+import { Button, Drawer, DrawerSection } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
@@ -184,19 +184,18 @@ export default function AIObservabilityPage() {
             <option value="error">error</option>
           </select>
           {(surface || provider || status) && (
-            <button className="sec" onClick={() => { setSurface(''); setProvider(''); setStatus(''); }}
-              style={{ fontSize: 11, padding: '3px 10px' }}>Clear</button>
+            <Button variant="secondary" size="sm"
+              onClick={() => { setSurface(''); setProvider(''); setStatus(''); }}>Clear</Button>
           )}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
             {calls ? `${calls.length} call${calls.length === 1 ? '' : 's'}` : ''}
           </span>
           {calls && calls.length > 0 && (
-            <button className="sec"
+            <Button variant="secondary" size="sm"
               onClick={() => exportCallsCSV(calls, rates)}
-              style={{ fontSize: 11, padding: '3px 10px' }}
               title="Download the currently-filtered calls as a CSV (with computed cost)">
               ↓ CSV
-            </button>
+            </Button>
           )}
         </div>
 

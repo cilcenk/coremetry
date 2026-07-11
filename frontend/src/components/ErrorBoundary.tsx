@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Button } from '@/components/ui';
 
 // ErrorBoundary — last-resort guard around the route tree.
 // React doesn't have a hooks-based equivalent, so this remains
@@ -110,15 +111,13 @@ export class ErrorBoundary extends Component<Props, State> {
 {error.name}: {error.message}
         </pre>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => { this.reset(); window.location.reload(); }}
-                  style={{ padding: '6px 14px', fontSize: 13 }}>
+          <Button onClick={() => { this.reset(); window.location.reload(); }}>
             Reload page
-          </button>
-          <button className="sec"
-                  onClick={() => { this.reset(); window.location.assign('/'); }}
-                  style={{ padding: '6px 14px', fontSize: 13 }}>
+          </Button>
+          <Button variant="secondary"
+                  onClick={() => { this.reset(); window.location.assign('/'); }}>
             Go to home
-          </button>
+          </Button>
           <a className="sec"
              href="https://github.com/cilcenk/coremetry/issues"
              target="_blank" rel="noopener"

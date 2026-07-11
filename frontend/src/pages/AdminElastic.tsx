@@ -1,6 +1,7 @@
 import { Fragment, useRef, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { fmtNum, fmtBytes } from '@/lib/utils';
@@ -323,12 +324,11 @@ export default function AdminElasticPage() {
             title="Download your /logs saved views as Kibana .ndjson — import in Kibana → Saved Objects.">
             ↓ Export to .ndjson
           </a>
-          <button type="button" className="sec"
+          <Button variant="secondary"
             onClick={() => fileRef.current?.click()}
-            style={{ padding: '4px 12px', fontSize: 12 }}
             title="Upload a Kibana saved-search .ndjson — each `type:search` doc becomes a Coremetry /logs saved view.">
             ↑ Import from .ndjson
-          </button>
+          </Button>
           <input ref={fileRef} type="file" accept=".ndjson,application/x-ndjson,.json,application/json"
             style={{ display: 'none' }}
             onChange={e => {

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { shouldShowAnnouncement, announcementDismissValue, type AnnouncementView } from '@/lib/announcement';
@@ -45,13 +46,12 @@ export function AnnouncementBanner() {
         </a>
       )}
       <span style={{ flex: 1 }} />
-      <button className="sec" aria-label="Duyuruyu kapat"
-        style={{ fontSize: 11, padding: '1px 7px' }}
+      <Button variant="secondary" size="sm" aria-label="Duyuruyu kapat"
         onClick={() => {
           const rev = announcementDismissValue(a!);
           setRaw(STORAGE_KEYS.announcementDismissed, rev);
           setDismissedRev(rev);
-        }}>✕</button>
+        }}>✕</Button>
     </div>
   );
 }

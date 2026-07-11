@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { IconLock } from '@/components/icons';
@@ -132,12 +133,11 @@ export default function AdminQueryPage() {
         <div className="controls" style={{ marginBottom: 10, gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11, color: 'var(--text3)' }}>Samples:</span>
           {SAMPLE_QUERIES.map(s => (
-            <button key={s.label} className="sec"
+            <Button key={s.label} variant="secondary" size="sm"
               onClick={() => setQuery(s.text)}
-              style={{ fontSize: 11, padding: '3px 8px' }}
               title={s.text}>
               {s.label}
-            </button>
+            </Button>
           ))}
         </div>
 

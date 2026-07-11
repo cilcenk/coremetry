@@ -1,4 +1,5 @@
 import { MetricNamePicker } from '../MetricNamePicker';
+import { Button } from '@/components/ui';
 import { STEP_OPTIONS } from '@/pages/explore/presets';
 import type {
   Panel, PanelType, PanelWidth,
@@ -396,18 +397,14 @@ function ThresholdEditor({ thresholds, onChange }: {
           <input type="number" value={t.value}
             onChange={e => setRow(i, parseFloat(e.target.value || '0'))}
             style={{ width: 100, fontSize: 12 }} />
-          <button type="button" className="sec"
-            onClick={() => removeRow(i)}
-            style={{ padding: '2px 8px', fontSize: 11 }}>×</button>
+          <Button variant="secondary" size="sm"
+            onClick={() => removeRow(i)}>×</Button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-        <button type="button" className="sec" onClick={() => addRow('green')}
-          style={{ padding: '3px 10px', fontSize: 11 }}>+ green</button>
-        <button type="button" className="sec" onClick={() => addRow('amber')}
-          style={{ padding: '3px 10px', fontSize: 11 }}>+ amber</button>
-        <button type="button" className="sec" onClick={() => addRow('red')}
-          style={{ padding: '3px 10px', fontSize: 11 }}>+ red</button>
+        <Button variant="secondary" size="sm" onClick={() => addRow('green')}>+ green</Button>
+        <Button variant="secondary" size="sm" onClick={() => addRow('amber')}>+ amber</Button>
+        <Button variant="secondary" size="sm" onClick={() => addRow('red')}>+ red</Button>
       </div>
     </div>
   );

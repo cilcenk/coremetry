@@ -105,11 +105,10 @@ function ProfileDetailInner() {
                   + a clear button. Same UX shape as the trace
                   comparison entry on /trace. */}
               {!baselineId && (
-                <button className="sec"
-                  onClick={() => setPickerOpen(o => !o)}
-                  style={{ fontSize: 12, padding: '3px 10px' }}>
+                <Button variant="secondary"
+                  onClick={() => setPickerOpen(o => !o)}>
                   {pickerOpen ? 'Cancel' : 'Compare with…'}
-                </button>
+                </Button>
               )}
               {baselineId && (
                 <span style={{
@@ -168,11 +167,10 @@ function ProfileDetailInner() {
                             <td className="num mono">{(p.durationMs / 1000).toFixed(1)}s</td>
                             <td className="num mono">{fmtNum(p.sampleCount)}</td>
                             <td>
-                              <button className="sec"
-                                onClick={() => setBaseline(p.profileId)}
-                                style={{ fontSize: 11, padding: '2px 8px' }}>
+                              <Button variant="secondary" size="sm"
+                                onClick={() => setBaseline(p.profileId)}>
                                 Use as baseline →
-                              </button>
+                              </Button>
                             </td>
                           </tr>
                         ))}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Button } from '@/components/ui';
 import type { FlameNode, ProfileFrameKind } from '@/lib/types';
 import { flameToHotspots, flameCategoryBreakdown, type MethodHotspot } from '@/lib/flameHotspots';
 import { KindBadge, BreakdownBar, kindLabel } from './KindBadge';
@@ -120,18 +121,11 @@ function KindFilterChips({ cur, onChange }: {
         const active = k === cur;
         const label = k === 'all' ? 'All' : kindLabel(k as ProfileFrameKind);
         return (
-          <button key={k}
+          <Button key={k}
             onClick={() => onChange(active && k !== 'all' ? 'all' : k)}
-            className={active ? '' : 'sec'}
-            style={{
-              fontSize: 10, padding: '2px 8px', borderRadius: 3,
-              border: '1px solid var(--border)',
-              background: active ? 'var(--accent2)' : 'transparent',
-              color: active ? 'white' : 'var(--text2)',
-              cursor: 'pointer', fontWeight: 600,
-            }}>
+            variant={active ? 'primary' : 'secondary'} size="sm">
             {label}
-          </button>
+          </Button>
         );
       })}
     </span>

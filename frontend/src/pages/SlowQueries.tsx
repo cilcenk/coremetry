@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
+import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSlowQueries } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
@@ -143,8 +144,7 @@ export default function SlowQueriesPage() {
             {systems.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           {dbSystem && (
-            <button className="sec" onClick={() => setDbSystem('')}
-              style={{ fontSize: 11, padding: '3px 10px' }}>Clear</button>
+            <Button variant="secondary" size="sm" onClick={() => setDbSystem('')}>Clear</Button>
           )}
           <Link to="/databases" className="sec"
             style={{ marginLeft: 'auto', fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}>
@@ -267,15 +267,12 @@ export default function SlowQueriesPage() {
                                   return <span style={{ color: 'var(--text3)' }}>✨ Thinking…</span>;
                                 }
                                 return (
-                                  <button className="sec"
+                                  <Button variant="secondary" size="sm"
                                     onClick={() => askCopilot(key, r)}
-                                    style={{
-                                      fontSize: 11, padding: '4px 10px',
-                                      color: 'var(--accent2)',
-                                    }}
+                                    style={{ color: 'var(--accent2)' }}
                                     title="Ask Copilot for the likely cause + one concrete remediation">
                                     ✨ {ex === 'idle' ? 'Explain' : 'Re-ask'} Copilot
-                                  </button>
+                                  </Button>
                                 );
                               })()}
                             </div>

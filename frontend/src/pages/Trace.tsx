@@ -1004,13 +1004,12 @@ function SharePopover({ traceId }: { traceId: string }) {
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button className="sec"
+      <Button variant="secondary"
         onClick={() => setOpen(o => !o)}
         title="Share this trace"
-        style={{ fontSize: 12, padding: '3px 10px',
-                 display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
         <IconLink /> <span>Share</span>
-      </button>
+      </Button>
       {open && (
         <div role="dialog" style={{
           position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60,
@@ -1114,11 +1113,11 @@ function SharePopover({ traceId }: { traceId: string }) {
                       {tsRel(s.expiresAt)}
                     </span>
                     {canRevoke && (
-                      <button onClick={() => revoke(s.token)}
-                        className="sec"
-                        style={{ fontSize: 10, padding: '2px 6px', color: 'var(--err)' }}>
+                      <Button variant="secondary" size="sm"
+                        onClick={() => revoke(s.token)}
+                        style={{ color: 'var(--err)' }}>
                         Revoke
-                      </button>
+                      </Button>
                     )}
                   </div>
                 ))}

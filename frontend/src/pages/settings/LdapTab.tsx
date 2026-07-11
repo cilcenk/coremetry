@@ -276,9 +276,9 @@ export function LDAPTab() {
                   </select>
                 </td>
                 <td style={{ padding: 4, textAlign: 'center' }}>
-                  <button type="button" className="sec"
+                  <Button variant="secondary" size="sm"
                           onClick={() => removeMapping(cfg, setCfg, i)}
-                          style={{ padding: '2px 8px', color: 'var(--err)' }}>×</button>
+                          style={{ color: 'var(--err)' }}>×</Button>
                 </td>
               </tr>
             ))}

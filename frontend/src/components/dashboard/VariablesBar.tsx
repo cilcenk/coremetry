@@ -1,4 +1,5 @@
 import { ServicePicker } from '../ServicePicker';
+import { Button } from '@/components/ui';
 import type { DashboardVariable } from '@/lib/types';
 
 // VariablesBar renders one picker per dashboard variable above the
@@ -48,13 +49,12 @@ export function VariablesBar({ variables, values, onChange }: {
             </select>
           )}
           {values[v.name] && (
-            <button
-              type="button"
-              className="sec"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => onChange(v.name, '')}
               title="Clear"
-              style={{ padding: '3px 8px', fontSize: 11 }}
-            >✕</button>
+            >✕</Button>
           )}
         </div>
       ))}

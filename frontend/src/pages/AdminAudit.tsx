@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useAuditLog } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
@@ -200,10 +201,10 @@ export default function AuditPage() {
         )}
         {data && data.length > 0 && visible.length === 0 && (
           <Empty icon="◇" title="No entries match your search">
-            <button onClick={() => setSearch('')} className="sec"
-              style={{ fontSize: 12, padding: '4px 12px', marginTop: 8 }}>
+            <Button variant="secondary" onClick={() => setSearch('')}
+              style={{ marginTop: 8 }}>
               Clear search
-            </button>
+            </Button>
           </Empty>
         )}
         {data && visible.length > 0 && (

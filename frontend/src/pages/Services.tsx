@@ -40,6 +40,16 @@ export default function ServicesPage() {
   // service MV has no env dim — same trade-off as the cluster filter).
   const [env] = useUrlEnv();
   const [data, setData] = useState<Service[] | null | undefined>(undefined);
+  // v0.8.479 (perf dalga-3 #9) — refetch'te tablo+filtre çubuğu ekranda
+  // kalır (keep-data + solgunluk); skeleton yalnız ilk yüklemede.
+  const [refreshing, setRefreshing] = useState(false);
+  const dataRef = useRef<Service[] | null | undefined>(undefined);
+  dataRef.current = data;
+  // Sayfa-sıfırlama çift fetch'i: page>0 iken range/sort/filtre değişince
+  // hem fetch effect'i (eski page ile) hem reset→ikinci fetch koşuyordu.
+  // İmza ref'i değişimi yakalar, ilk (boşa) fetch'i atlar
+  // (AnomaliesPage sortSig emsali).
+  const fetchSigRef = useRef<string | null>(null);
   const [sparklines, setSparklines] = useState<Record<string, SparklineBucket[]>>({});
   // Batch runtime fetch — one query for every service in the
   // listing, server-cached 5 min. The component renders per-row
@@ -177,7 +187,19 @@ export default function ServicesPage() {
   // pagination handles the long tail without scaling cost.
 
   useEffect(() => {
-    setData(undefined);
+    const sig = JSON.stringify([committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env]);
+    if (page !== 0 && fetchSigRef.current !== null && fetchSigRef.current !== sig) {
+      // Sayfa-dışı bir girdi değişti ama page hâlâ eski: reset effect'i
+      // birazdan page=0 yapacak; bu turdaki fetch boşa gider — atla.
+      fetchSigRef.current = sig;
+      return;
+    }
+    fetchSigRef.current = sig;
+    if (dataRef.current && dataRef.current.length) {
+      setRefreshing(true);
+    } else {
+      setData(undefined);
+    }
     setSparklines({});
     // v0.8.300 (quality bar S3) — cancelled flag: deps change on every
     // sort/filter/page click, and without cancellation an OLDER in-flight
@@ -221,6 +243,7 @@ export default function ServicesPage() {
     }).then(resp => {
       if (cancelled) return;
       setData(resp?.services ?? []);
+      setRefreshing(false);
       setHasMore(resp?.hasMore ?? false);
       setTotal(resp?.total ?? null);
       const names = (resp?.services ?? []).map(s => s.name);
@@ -233,7 +256,7 @@ export default function ServicesPage() {
       if (names.length > 0 && !env) {
         api.serviceSparklines(r, names).then(d => { if (!cancelled) setSparklines(d ?? {}); }).catch(() => {});
       }
-    }).catch(() => { if (!cancelled) { setData(null); setHasMore(false); } });
+    }).catch(() => { if (!cancelled) { setData(null); setRefreshing(false); setHasMore(false); } });
     return () => { cancelled = true; };
   }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env]);
 
@@ -393,7 +416,7 @@ export default function ServicesPage() {
     <>
       <Topbar title="Services" range={range} onRangeChange={setRange} />
       <div id="content">
-        {data && data.length > 0 && (
+        {data != null && (
           <div className="controls">
             <ServicePicker value={serviceFilter} onChange={setServiceFilter}
               onEnter={apply}
@@ -497,7 +520,9 @@ export default function ServicesPage() {
         )}
         {sorted && sorted.length > 0 && (
           <>
-            <div className="table-wrap">
+            <div className="table-wrap"
+              style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
+              aria-busy={refreshing}>
               <table style={{ tableLayout: 'fixed', width: '100%' }}>
                 <DataTableColgroup dt={dt} />
                 {/* v0.8.251 — shared primitive header (serverSort mode): same

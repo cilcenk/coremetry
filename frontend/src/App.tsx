@@ -54,7 +54,6 @@ const AIObservability   = lazy(() => import('./pages/AIObservability'));
 const Profile           = lazy(() => import('./pages/Profile'));
 const Settings          = lazy(() => import('./pages/Settings'));
 const Users             = lazy(() => import('./pages/Users'));
-const ErrorsPage        = lazy(() => import('./pages/Errors'));
 const PublicStatus      = lazy(() => import('./pages/PublicStatus'));
 const PublicTrace       = lazy(() => import('./pages/PublicTrace'));
 // v0.8.9 — the ten /admin/* pages are consolidated into one System area
@@ -145,7 +144,10 @@ export default function App() {
             <Route path="/settings"          element={<Navigate to="/settings/smtp" replace />} />
             <Route path="/settings/:section" element={<Settings />} />
             <Route path="/users"          element={<Users />} />
-            <Route path="/errors"         element={<ErrorsPage />} />
+            {/* v0.8.482 — /errors eski linkleri tek atlamada /problems'a iner
+                (önceden 13 satırlık Spinner'lı redirect sayfası + ayrı chunk'tı;
+                /status v457 emsali). */}
+            <Route path="/errors"         element={<Navigate to="/problems" replace />} />
             {/* v0.8.457 — eski /status yer imleri tek atlamada /system/stats'e
                 iner (önceden Status.tsx → /admin/stats → AdminRedirect üç duraktı). */}
             <Route path="/status"         element={<Navigate to="/system/stats" replace />} />

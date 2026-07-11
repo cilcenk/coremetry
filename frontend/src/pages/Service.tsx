@@ -479,7 +479,7 @@ function ServiceDetailInner() {
                     operations summary. */}
                 <DetailsPropsStrip service={svc} range={range} />
                 <div className="dtl-sech">Performance</div>
-                <ServiceCharts service={svc} range={range}
+                <ServiceCharts service={svc} range={range} windowNs={rangeNs}
                   opScope={opScope} onOpScopeChange={setOpScope}
                   onZoom={(fromUnixSec, toUnixSec) => {
                     setRange({

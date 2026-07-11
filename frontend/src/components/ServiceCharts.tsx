@@ -31,7 +31,7 @@ import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 // crosshair on the other two — Datadog dashboard convention,
 // turns the three panels into one synchronised view.
 
-export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeChange }: {
+export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeChange, windowNs }: {
   service: string;
   range: TimeRange;
   // onZoom — drag-to-select range on any of the three RED
@@ -46,11 +46,17 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
   // future OperationsTable row link ride the same selection.
   opScope?: string;
   onOpScopeChange?: (op: string) => void;
+  // v0.8.483 — üst sayfa pencereyi çözdüyse AYNISI kullanılır:
+  // timeRangeToNs göreli aralıkta Date.now()'a bağlı; iki ayrı hesap
+  // ms farkıyla FARKLI RQ anahtarı üretiyor ve bundle'ın deploys
+  // seed'i hiç tutmuyordu (v480'deki RED-prefetch sınıfının ikizi).
+  windowNs?: { from: number; to: number };
 }) {
   // Memoise the time bounds so a render doesn't churn the
   // query keys (same trick the Logs page uses — Date.now() in
   // timeRangeToNs makes naive use unstable).
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+  const computed = useMemo(() => timeRangeToNs(range), [range]);
+  const { from, to } = windowNs ?? computed;
 
   // D5 doorway descriptors (v0.8.69) — each RED chart carries its MetricQuery so
   // the hover ⋮ menu opens the Explorer on that exact series. The wrap uses

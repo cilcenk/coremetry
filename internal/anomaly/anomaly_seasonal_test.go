@@ -75,17 +75,24 @@ func TestDayClass(t *testing.T) {
 	}
 }
 
-// TestSeasonalBaselineSQLShape asserts the generated query keeps every scale
-// guardrail + the v0.8.250 semantics: circular midnight-wrap neighbour
+// TestSeasonalBaselineSQLShape asserts the batched seasonal query keeps every
+// scale guardrail + the v0.8.250 semantics: circular midnight-wrap neighbour
 // distance, a LIMIT + max_execution_time bound, a time-bounded WHERE for
 // partition pruning, the three-way day class, and that it reads the MV — NOT
 // raw spans (the MV-bypass invariant).
+//
+// v0.8.507 — batched: buildAllSeasonalQuery replaced the per-service
+// seasonalBaselineSQL. The service filter is GONE (one GROUP BY service_name
+// pass covers all services); the slot/class/radius binds are sweep constants
+// so the bind count drops from six to five.
 func TestSeasonalBaselineSQLShape(t *testing.T) {
-	sql := seasonalBaselineSQL("countMerge(span_count_state) / 300.0")
+	sql := buildAllSeasonalQuery("countMerge(span_count_state) / 300.0")
 
 	mustContain := map[string]string{
-		"MV read (not raw spans)":  "service_summary_5m",
-		"time-bounded WHERE":       "time_bucket >= ?",
+		"MV read (not raw spans)": "service_summary_5m",
+		"time-bounded WHERE":      "time_bucket >= ?",
+		// v0.8.507 — batched over all services in one pass.
+		"batch grouping": "GROUP BY service_name, t",
 		// v0.8.323 — hour/weekday pinned to UTC on BOTH sides: the Go
 		// slot/class comes from at.UTC(), so the SQL must resolve on the
 		// same clock regardless of the CH server's default timezone. A
@@ -93,10 +100,11 @@ func TestSeasonalBaselineSQLShape(t *testing.T) {
 		// wrong time-of-day slot — day-peak history against night "now".
 		"three-way day class (UTC)": "multiIf(toDayOfWeek(time_bucket, 0, 'UTC') = 6, 'saturday', toDayOfWeek(time_bucket, 0, 'UTC') = 7, 'sunday', 'weekday')",
 		"UTC hour grid":             "toHour(time_bucket, 'UTC')",
-		"circular distance (near)": "least(abs(",
-		"circular wrap (far side)": "86400 - abs(",
-		"row limit":                "LIMIT 700",
-		"execution-time bound":     "max_execution_time = 10",
+		"circular distance (near)":  "least(abs(",
+		"circular wrap (far side)":  "86400 - abs(",
+		"per-service row cap":       "LIMIT 700 BY service_name",
+		"overall row cap":           "LIMIT 14000000",
+		"execution-time bound":      "max_execution_time = 30",
 	}
 	for label, sub := range mustContain {
 		if !strings.Contains(sql, sub) {
@@ -107,9 +115,13 @@ func TestSeasonalBaselineSQLShape(t *testing.T) {
 	if strings.Contains(sql, "FROM spans") {
 		t.Errorf("seasonal SQL must read the MV, not raw spans:\n%s", sql)
 	}
-	// Exactly six bind placeholders (service, cutoff, class, targetSod×2, radius).
-	if n := strings.Count(sql, "?"); n != 6 {
-		t.Errorf("seasonal SQL must have 6 bind placeholders, got %d", n)
+	// v0.8.507 — the per-service filter is GONE; the batch reads all services.
+	if strings.Contains(sql, "service_name = ?") {
+		t.Errorf("batched seasonal SQL must NOT filter by a single service:\n%s", sql)
+	}
+	// Exactly five bind placeholders (cutoff, class, targetSod×2, radius).
+	if n := strings.Count(sql, "?"); n != 5 {
+		t.Errorf("batched seasonal SQL must have 5 bind placeholders, got %d", n)
 	}
 }
 

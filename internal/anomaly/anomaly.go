@@ -252,20 +252,60 @@ func (d *Detector) scan(ctx context.Context) {
 	// scan without a redeploy. They ride the existing anomaly_promotion
 	// blob — one anomaly settings surface, not two. v0.8.250.
 	days, minSamples, neighbor := seasonalParams(d.store.GetAnomalyPromotion(ctx))
+
+	// v0.8.507 — batch the per-(service,metric) MV reads into ONE
+	// GROUP BY service_name pass PER metric (×2: consecutive + seasonal),
+	// replacing the old services × trackedMetrics × 2 per-service queries.
+	// At prod scale that loop was ~1400 svc × 3 metrics × 2 reads ≈ 8400
+	// queries / 2-min tick, each re-reading ~the whole window's granules
+	// (query_log: 46-65K read_rows apiece, ~708M rows/hr re-scanning the
+	// same window). The batched form reads those rows ONCE — 6 queries /
+	// tick — then distributes the per-service series to checkOne. Same
+	// pattern the evaluator adopted in v0.8.352. One `now` for the whole
+	// tick keeps the window (and the seasonal slot) consistent across
+	// every service, instead of the old per-checkOne time.Now() drift.
+	now := time.Now()
+	bucketsByMetric := make(map[string]map[string][]float64, len(trackedMetrics))
+	seasonalByMetric := make(map[string]map[string][]float64, len(trackedMetrics))
+	for _, m := range trackedMetrics {
+		all, err := d.fetchAllBuckets(ctx, m, now)
+		if err != nil {
+			// Whole-metric batch read errored this tick → skip the metric
+			// (every service's series is absent below → checkOne skips it),
+			// matching the old per-service "fetch error → skip" behavior.
+			log.Printf("[anomaly] batch buckets %s: %v", m, err)
+			continue
+		}
+		bucketsByMetric[m] = all
+		if seasonalBaseline {
+			// Best-effort: a seasonal read error leaves the metric absent
+			// from seasonalByMetric → seriesFor returns nil → chooseBaseline
+			// falls back to the consecutive window (unchanged behavior).
+			if s, err := d.fetchAllSeasonal(ctx, m, now, days, neighbor); err == nil {
+				seasonalByMetric[m] = s
+			} else {
+				log.Printf("[anomaly] batch seasonal %s: %v", m, err)
+			}
+		}
+	}
+
 	for _, svc := range services {
 		for _, m := range trackedMetrics {
-			d.checkOne(ctx, svc, m, days, minSamples, neighbor)
+			buckets := seriesFor(bucketsByMetric[m], svc)
+			seasonal := seriesFor(seasonalByMetric[m], svc)
+			d.checkOne(ctx, svc, m, buckets, seasonal, minSamples)
 		}
 	}
 }
 
-func (d *Detector) checkOne(ctx context.Context, service, metric string, seasonalDays, seasonalMinSamples, neighborBuckets int) {
-	buckets, err := d.fetchBuckets(ctx, service, metric)
-	if err != nil {
-		log.Printf("[anomaly] %s/%s fetch: %v", service, metric, err)
-		return
-	}
-	if len(buckets) < minSamples+dwellBuckets {
+// checkOne runs the anomaly verdict for one (service, metric) from PRE-BATCHED
+// series (v0.8.507): buckets = the consecutive 5-min series, seasonal = the
+// same-slot history — both handed in by scan()'s per-metric batch reads rather
+// than fetched here per service. A nil/short `buckets` (service absent from the
+// batch, or the metric's batch read errored this tick) is skipped by the
+// enoughHistory guard — identical to the old per-service fetch returning empty.
+func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets, seasonal []float64, seasonalMinSamples int) {
+	if !enoughHistory(len(buckets)) {
 		return // not enough history + a full dwell window yet
 	}
 	// Dwell / M-of-N anti-flap: judge the LAST dwellBuckets, not just the most
@@ -280,14 +320,9 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, seasona
 	// 24h-consecutive window. Seasonal kills the diurnal false positives — the
 	// morning ramp looks normal against the same slot on prior days — and
 	// surfaces real off-peak dips. Best-effort: a seasonal read error or too
-	// few same-slot samples falls back to the consecutive window.
+	// few same-slot samples falls back to the consecutive window (chooseBaseline
+	// gets a nil seasonal when the batch read errored → consecutive).
 	consecutive := buckets[:split]
-	var seasonal []float64
-	if seasonalBaseline {
-		if s, err := d.fetchSeasonalBaseline(ctx, service, metric, time.Now(), seasonalDays, neighborBuckets); err == nil {
-			seasonal = s
-		}
-	}
 	baseline := chooseBaseline(seasonal, consecutive, seasonalMinSamples)
 
 	// Modified z-score (median + MAD) instead of mean + population stdev:
@@ -384,54 +419,90 @@ func metricValueExpr(metric string) (string, error) {
 	return "", fmt.Errorf("unknown metric %q", metric)
 }
 
-// fetchBuckets returns the requested metric in 5-minute buckets over the
-// configured history window, ascending in time. The most recent bucket is
-// the "current" sample.
+// enoughHistory reports whether a fetched bucket series has enough samples to
+// run the dwell-windowed check: minSamples baseline buckets PLUS a full dwell
+// window. A service the batch query returned no (or too few) rows for is
+// skipped here — the same guard the old per-service fetchBuckets + len check
+// applied. Pure so the "empty/sparse service is skipped" contract is testable
+// without a live ClickHouse. v0.8.507.
+func enoughHistory(n int) bool { return n >= minSamples+dwellBuckets }
+
+// seriesFor returns the batched series for a service, or nil when the metric's
+// batch query returned no rows for it (new/sparse service, OR the batch read
+// errored this tick and the whole metric map is absent). A nil series makes
+// checkOne's enoughHistory guard skip the service — identical to the old
+// per-service fetch returning an empty result set. Pure. v0.8.507.
+func seriesFor(byService map[string][]float64, service string) []float64 {
+	return byService[service]
+}
+
+// accumulateSeries folds one scanned (service, value) row into the per-service
+// series map, preserving arrival order. The batch queries ORDER BY
+// service_name, t so each service's slice comes out ascending in time — the
+// same order the old per-service `ORDER BY t` produced, which the dwell window
+// (buckets[len-dwellBuckets:]) and the current sample (buckets[len-1]) depend
+// on. Pure so the batch distribution is unit-tested without a live CH. v0.8.507.
+func accumulateSeries(byService map[string][]float64, service string, v float64) {
+	byService[service] = append(byService[service], v)
+}
+
+// buildAllBucketsQuery is the batched twin of the old per-service fetchBuckets
+// read: ONE `GROUP BY service_name, t` pass over service_summary_5m for a
+// metric, instead of one `WHERE service_name = ?` query PER service. The metric
+// SELECT expression (metricValueExpr) is byte-identical to the per-service read
+// so every baseline value is computed the same way. Extracted pure so the SQL
+// SHAPE — no service filter, GROUP BY service_name, time-bounded WHERE (for
+// partition pruning + the v0.8.316 complete-buckets-only upper bound), a
+// per-service + overall LIMIT safety cap, max_execution_time, MV (never raw
+// spans) — is table-tested without a CH connection. Two `?` binds, in order:
+// cutoff (historyHours ago), lastCompleteBucketStart(now).
 //
-// v0.5.296 — Scale-audit critical: previously these three queries scanned
-// raw `spans` with a GROUP BY over the focal service's 24h history. At
-// billion-span scale + 100s of services × 3 metrics × every detector tick,
-// that's the heaviest hot path in the system. Switched to
-// service_summary_5m which already carries the aggregate states we need
-// (count, error_count, quantile TDigest). Each query now reads ~288 rows
-// per service (24h × 12 buckets/h) and merges in-memory — sub-millisecond
-// regardless of underlying span volume. LIMIT + SETTINGS still added as
-// belt-and-braces in case the MV grows past our expectations.
-func (d *Detector) fetchBuckets(ctx context.Context, service, metric string) ([]float64, error) {
-	now := time.Now()
-	cutoff := now.Add(-time.Duration(historyHours) * time.Hour)
+// v0.5.296 — the reads that this replaces already moved OFF raw spans onto
+// service_summary_5m (scale-audit critical). v0.8.507 collapses the remaining
+// per-service N+1 fan-out into one pass: prod was ~1400 svc × 3 metrics × 2
+// reads ≈ 8400 queries / 2-min tick, each re-scanning ~the whole window's
+// granules; the batch reads those rows ONCE.
+func buildAllBucketsQuery(vexpr string) string {
+	// v0.8.316 — complete buckets only (time_bucket < lastCompleteBucketStart):
+	// the still-filling bucket made request_rate (÷ fixed 300s) read
+	// ~elapsed/300 of the true rate, so a live spike looked baseline one minute
+	// into each bucket and the fast-resolve closed the open anomaly mid-incident.
+	return fmt.Sprintf(`
+		SELECT service_name, toUnixTimestamp(time_bucket) AS t, %s AS v
+		FROM service_summary_5m
+		WHERE time_bucket >= ? AND time_bucket < ?
+		GROUP BY service_name, t
+		ORDER BY service_name, t
+		LIMIT 1000 BY service_name
+		LIMIT 20000000
+		SETTINGS max_execution_time = 30`, vexpr)
+}
+
+// fetchAllBuckets runs buildAllBucketsQuery once for a metric and returns the
+// per-service 5-minute series (ascending in time), keyed by service_name. A
+// service absent from the map had no complete buckets in the window; checkOne's
+// enoughHistory guard skips it. `now` is fixed by the caller for the whole tick
+// so every service shares one window. v0.8.507.
+func (d *Detector) fetchAllBuckets(ctx context.Context, metric string, now time.Time) (map[string][]float64, error) {
 	vexpr, err := metricValueExpr(metric)
 	if err != nil {
 		return nil, err
 	}
-	// v0.8.316 — read COMPLETE buckets only. The still-filling bucket made
-	// request_rate (÷ fixed 300s) read ~elapsed/300 of the true rate, so a
-	// live spike looked baseline one minute into each bucket and the
-	// fast-resolve closed the open anomaly mid-incident (a flap per
-	// bucket). Complete-buckets-only costs ≤5 min detection lag; every
-	// sample now truly spans the 300s it's divided by.
-	sql := fmt.Sprintf(`
-		SELECT toUnixTimestamp(time_bucket) AS t, %s AS v
-		FROM service_summary_5m
-		WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
-		GROUP BY t
-		ORDER BY t
-		LIMIT 1000
-		SETTINGS max_execution_time = 10`, vexpr)
-
-	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff, lastCompleteBucketStart(now))
+	cutoff := now.Add(-time.Duration(historyHours) * time.Hour)
+	rows, err := d.store.Conn().Query(ctx, buildAllBucketsQuery(vexpr), cutoff, lastCompleteBucketStart(now))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []float64
+	out := make(map[string][]float64)
 	for rows.Next() {
+		var svc string
 		var t uint32
 		var v float64
-		if err := rows.Scan(&t, &v); err != nil {
+		if err := rows.Scan(&svc, &t, &v); err != nil {
 			return nil, err
 		}
-		out = append(out, v)
+		accumulateSeries(out, svc, v)
 	}
 	return out, rows.Err()
 }
@@ -492,13 +563,19 @@ func seasonalParams(cfg chstore.AnomalyPromotionConfig) (days, minSamples, neigh
 	return days, minSamples, neighborBuckets
 }
 
-// seasonalBaselineSQL builds the seasonal-baseline query for a metric's
-// pre-computed SELECT expression. Extracted pure (no store, no binds) so the
-// SQL SHAPE is unit-tested — the circular midnight-wrap distance, the LIMIT +
-// max_execution_time bounds, the time-bounded WHERE, the three-way day class,
-// and that it reads the MV (never raw spans). The six `?` placeholders bind,
-// in order: service, cutoff, dayClass, targetSecondsOfDay (twice), radius.
-func seasonalBaselineSQL(vexpr string) string {
+// buildAllSeasonalQuery is the batched twin of the old per-service seasonal
+// read: ONE `GROUP BY service_name, t` pass matching the same time-of-day slot
+// (± neighbour buckets, circular midnight-wrap) and day class across ALL
+// services, instead of one `WHERE service_name = ?` query per service. The
+// slot / class / radius binds are sweep constants — identical for every service
+// in a tick — so the ONLY shape change from the per-service query is dropping
+// the service filter and grouping by service_name (v0.8.507). Extracted pure so
+// the SQL SHAPE is unit-tested — the circular midnight-wrap distance, the LIMIT
+// + max_execution_time bounds, the time-bounded WHERE, the three-way day class,
+// GROUP BY service_name, and that it reads the MV (never raw spans). The five
+// `?` placeholders bind, in order: cutoff, dayClass, targetSecondsOfDay (twice),
+// radius.
+func buildAllSeasonalQuery(vexpr string) string {
 	// sodExpr — the bucket's seconds-of-day on the same 5-min grid as targetSod
 	// (buckets are 5-min aligned, so toSecond is 0; included for correctness).
 	// v0.8.323 — pinned to UTC: the Go side derives slot/class from at.UTC(),
@@ -515,40 +592,37 @@ func seasonalBaselineSQL(vexpr string) string {
 	// distance in seconds; <= radius keeps the ±neighborBuckets slots of the
 	// matching day class. time_bucket >= cutoff prunes daily partitions first.
 	return fmt.Sprintf(`
-		SELECT toUnixTimestamp(time_bucket) AS t, %[1]s AS v
+		SELECT service_name, toUnixTimestamp(time_bucket) AS t, %[1]s AS v
 		FROM service_summary_5m
-		WHERE service_name = ?
-		  AND time_bucket >= ?
+		WHERE time_bucket >= ?
 		  AND %[3]s = ?
 		  AND least(abs(%[2]s - ?), 86400 - abs(%[2]s - ?)) <= ?
-		GROUP BY t
-		ORDER BY t
-		LIMIT 700
-		SETTINGS max_execution_time = 10`, vexpr, sodExpr, classExpr)
+		GROUP BY service_name, t
+		ORDER BY service_name, t
+		LIMIT 700 BY service_name
+		LIMIT 14000000
+		SETTINGS max_execution_time = 30`, vexpr, sodExpr, classExpr)
 }
 
-// fetchSeasonalBaseline returns the metric's values at the same time-of-day
-// slot as `at` — PLUS its ±neighborBuckets neighbours (a ±15-min window at the
-// default radius) — across the last `days` days, matched on `at`'s dayClass
-// (weekday / saturday / sunday). Widening the slot into a neighbour window +
+// fetchAllSeasonal runs buildAllSeasonalQuery once for a metric and returns the
+// per-service seasonal samples (the same time-of-day slot as `at` PLUS its
+// ±neighborBuckets neighbours, across the last `days` days, matched on `at`'s
+// dayClass), keyed by service_name. Widening the slot into a neighbour window +
 // splitting saturday/sunday + 14 days of history is what feeds the baseline
 // enough samples on thin off-peak/night slots so it clears seasonalMinSamples
 // instead of falling back to the flat 24h window (the diurnal-false-positive
-// root cause — v0.8.250).
-//
-// The neighbour match is a CIRCULAR seconds-of-day distance, least(d,86400-d),
-// so the window wraps correctly across midnight (23:50's neighbours include
-// 00:00) instead of clipping at the day boundary. Reads service_summary_5m
-// (MV, never raw spans) with a partition-pruning time-bound WHERE + LIMIT +
-// max_execution_time. Returns fewer samples for new/sparse services; the
-// caller (chooseBaseline) falls back to the consecutive window.
-func (d *Detector) fetchSeasonalBaseline(ctx context.Context, service, metric string, at time.Time, days, neighborBuckets int) ([]float64, error) {
+// root cause — v0.8.250). The neighbour match is a CIRCULAR seconds-of-day
+// distance so the window wraps correctly across midnight. Returns fewer (or no)
+// samples for new/sparse services; chooseBaseline falls back to the consecutive
+// window. `at` is fixed by the caller for the whole tick so the slot is
+// consistent across every service. v0.8.507.
+func (d *Detector) fetchAllSeasonal(ctx context.Context, metric string, at time.Time, days, neighborBuckets int) (map[string][]float64, error) {
 	vexpr, err := metricValueExpr(metric)
 	if err != nil {
 		return nil, err
 	}
 	// v0.8.323 — slot + day class derive from UTC so they match the SQL's
-	// UTC-pinned toHour/toDayOfWeek (see seasonalBaselineSQL). With no DST
+	// UTC-pinned toHour/toDayOfWeek (see buildAllSeasonalQuery). With no DST
 	// in TR, a constant offset keeps slot-matching consistent either way —
 	// but only when BOTH sides share one clock.
 	at = at.UTC()
@@ -556,21 +630,21 @@ func (d *Detector) fetchSeasonalBaseline(ctx context.Context, service, metric st
 	targetSod := slotSecondsOfDay(at)         // 5-min-aligned centre of the window
 	radius := neighborBuckets * bucketSeconds // ±window half-width in seconds
 	class := dayClass(at)
-	sql := seasonalBaselineSQL(vexpr)
 
-	rows, err := d.store.Conn().Query(ctx, sql, service, cutoff, class, targetSod, targetSod, radius)
+	rows, err := d.store.Conn().Query(ctx, buildAllSeasonalQuery(vexpr), cutoff, class, targetSod, targetSod, radius)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []float64
+	out := make(map[string][]float64)
 	for rows.Next() {
+		var svc string
 		var t uint32
 		var v float64
-		if err := rows.Scan(&t, &v); err != nil {
+		if err := rows.Scan(&svc, &t, &v); err != nil {
 			return nil, err
 		}
-		out = append(out, v)
+		accumulateSeries(out, svc, v)
 	}
 	return out, rows.Err()
 }

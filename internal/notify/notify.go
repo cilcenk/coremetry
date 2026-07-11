@@ -268,10 +268,12 @@ func (n *Notifier) problemURL(problemID string) string {
 	if base == "" {
 		return ""
 	}
-	// /anomalies is the page that surfaces Problems; the
-	// ?problem= query param scrolls + highlights the matching
-	// row.
-	return base + "/anomalies?problem=" + problemID
+	// /problems is the page that surfaces Problems; the
+	// ?problem= query param opens the matching detail. Was
+	// /anomalies pre-v0.8.492 — that route is now the anomaly
+	// STREAMS page, which ignores ?problem= entirely, so every
+	// notification deep link landed on the wrong surface.
+	return base + "/problems?problem=" + problemID
 }
 
 // SetSMTPCacheTTL lets main.go wire the configurable refresh

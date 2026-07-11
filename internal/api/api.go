@@ -1098,11 +1098,24 @@ func warmClaim(ctx context.Context, c cache.Cache, ttl time.Duration) bool {
 // CH blip shouldn't disable warming permanently.
 func (s *Server) warmDependenciesCache() {
 	const (
-		tick      = 25 * time.Second
+		// v0.8.476 (perf dalga-1 #5) — serbest 25s uyku, cacheBucket'ın
+		// 30s grid'ine göre faz kaydırıyordu: her yeni slotun ortalama
+		// yarısı soğuk kalıyor, ısıtılan yüzeylerde bile ilk istek
+		// 120-190ms ödüyordu. Tick artık grid sınırının 1s SONRASINA
+		// hizalı (sleepToGrid): yeni anahtar doğar doğmaz ısınır, soğuk
+		// pencere ~1s'e iner. Claim TTL 29s: grid tick'leri ~30s arayla
+		// gelir; ölen lider bir sonraki tick'te devredilir, aynı tick'te
+		// çifte ısıtma olmaz.
+		claimTTL  = 29 * time.Second
 		ttl       = 30 * time.Second
 		warmWin   = time.Hour
 		queryBudg = 20 * time.Second
 	)
+	sleepToGrid := func() {
+		now := time.Now()
+		next := now.Truncate(30 * time.Second).Add(30*time.Second + time.Second)
+		time.Sleep(next.Sub(now))
+	}
 	// Delay first refresh so we don't compete with boot-time DDL
 	// migrations for CH bandwidth on a cold start.
 	time.Sleep(5 * time.Second)
@@ -1159,10 +1172,10 @@ func (s *Server) warmDependenciesCache() {
 		// without a reachable Redis there is no shared L2, so each pod
 		// must keep warming its own L1.
 		claimCtx, cancelClaim := context.WithTimeout(context.Background(), 2*time.Second)
-		claimed := warmClaim(claimCtx, s.cache, tick)
+		claimed := warmClaim(claimCtx, s.cache, claimTTL)
 		cancelClaim()
 		if !claimed {
-			time.Sleep(tick)
+			sleepToGrid()
 			continue
 		}
 		to := time.Now()
@@ -1250,7 +1263,7 @@ func (s *Server) warmDependenciesCache() {
 					"offset":   0,
 				}, nil
 			})
-		time.Sleep(tick)
+		sleepToGrid()
 	}
 }
 

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
@@ -74,7 +74,11 @@ function ServiceDetailInner() {
   // dedicated endpoint.
   const [slos, setSlos] = useState<SLORow[]>([]);
   const [loading, setLoading] = useState(true);
-
+  // v0.8.480 (perf dalga-3 #10) — range/servis değişiminde gövde
+  // (TabStrip dahil) unmount edilmez: elde veri varken yalnız
+  // solgunlaştırılır, Spinner ilk yüklemeye iner.
+  const [refreshing, setRefreshing] = useState(false);
+  const hadDataRef = useRef(false);
   // Memoize the absolute window so JSX-level reads (passed as
   // fromNs/toNs props to child fetchers) don't change identity
   // on every render — without this, a relative range like
@@ -142,8 +146,12 @@ function ServiceDetailInner() {
 
   useEffect(() => {
     if (!svc) return;
-    setLoading(true);
-    const r = timeRangeToNs(range);
+    if (hadDataRef.current) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    const r = rangeNs;
     // Single bundled fetch — the backend fans out KPI lookup,
     // problems list, operations table, and deploy markers to
     // CH in parallel goroutines and ships one JSON response,
@@ -161,6 +169,26 @@ function ServiceDetailInner() {
     // own /api/services/.../deploys round trip below the
     // fold. Same window the bundle is for.
     let cancelled = false;
+    // v0.8.480 — soğuk yüklemede Overview'un RED batch'i gövde mount
+    // olana kadar (bundle bitene kadar) başlayamıyordu: toplam süre
+    // bundle+batch TOPLAMI oluyordu. Aynı RQ anahtarıyla önden ısıt —
+    // Overview mount olduğunda useQuery cache'ten anında dolar; iki
+    // istek artık paralel, chart paint max()'ı öder.
+    queryClient.prefetchQuery({
+      queryKey: ['service-overview-red', svc, r.from, r.to],
+      queryFn: () => api.spanMetricBatch({
+        from: r.from, to: r.to,
+        dsl: `service.name = "${svc.replace(/"/g, '\\"')}"`,
+        aggs: [
+          { name: 'rate', agg: 'rate' },
+          { name: 'error_rate', agg: 'error_rate' },
+          { name: 'p99', agg: 'p99', field: 'duration_ms' },
+          { name: 'p95', agg: 'p95', field: 'duration_ms' },
+          { name: 'p50', agg: 'p50', field: 'duration_ms' },
+        ],
+      }),
+      staleTime: 30_000,
+    });
     const applyBundle = (b: Awaited<ReturnType<typeof api.serviceBundle>>) => {
       if (cancelled) return;
       setInfo(b?.service ?? null);
@@ -199,9 +227,15 @@ function ServiceDetailInner() {
         if (cancelled) return;
         setInfo(null); setProblems([]); setOperations([]);
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+          setRefreshing(false);
+          hadDataRef.current = true;
+        }
+      });
     return () => { cancelled = true; };
-  }, [svc, range, queryClient]);
+  }, [svc, rangeNs, queryClient]);
 
   // v0.6.51 — SLO strip. Separate from the bundle because SLO
   // status moves slowly (window_days horizon) and is service-
@@ -402,7 +436,8 @@ function ServiceDetailInner() {
 
         {loading && <Spinner />}
         {!loading && (
-          <>
+          <div style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
+            aria-busy={refreshing}>
             {/* v0.5.293 — Operator-reported: tabs go immediately
                 under the KPI / problems header so the
                 Operations table is the FIRST body element on
@@ -418,7 +453,7 @@ function ServiceDetailInner() {
               opCount={operations.length} />
 
             {tab === 'overview' && (
-              <ServiceOverview service={svc} range={range} info={info} operations={operations} />
+              <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations} />
             )}
             {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
@@ -491,7 +526,7 @@ function ServiceDetailInner() {
                 </div>
               </>
             )}
-          </>
+          </div>
         )}
       </div>
     </>

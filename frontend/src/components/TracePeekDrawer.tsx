@@ -185,7 +185,13 @@ export function TracePeekDrawer({
               style={{ fontSize: 12, color: 'var(--accent2)' }}>
               Open full trace →
             </Link>
-            <Link to={`/logs?traceId=${traceId}`}
+            {/* v0.8.484 — pencereyi de taşı: Logs sayfası ?range='ten okur;
+                penceresiz link varsayılan 30 dk açıp eski trace'in loglarını
+                "yok" gösteriyordu (±1 dk tampon, trace-log penceresi kuralı). */}
+            <Link to={`/logs?traceId=${traceId}` +
+                      (summary
+                        ? `&range=custom:${Math.floor(summary.minStart / 1e6) - 60_000}-${Math.ceil(summary.maxEnd / 1e6) + 60_000}`
+                        : '')}
               style={{ fontSize: 12, color: 'var(--accent2)' }}>
               Filter /logs to this trace →
             </Link>

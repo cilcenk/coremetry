@@ -292,9 +292,15 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
         <Section title={
           <>
             Logs ({spanLogs.length})
+            {/* v0.8.484 — operatör-reported: link &from/&to geçiyordu ama
+                Logs sayfası pencereyi YALNIZ ?range='ten okur; parametreler
+                yutulup varsayılan 30 dk açılıyor, eski span'ın logları
+                pencere dışında "yok" görünüyordu. Pencere artık sayfanın
+                anladığı custom-range koduyla gider (ns→ms). */}
             <Link to={`/logs?traceId=${span.traceId}` +
-                      (logsFromBound ? `&from=${logsFromBound}` : '') +
-                      (logsToBound ? `&to=${logsToBound}` : '')}
+                      (logsFromBound && logsToBound
+                        ? `&range=custom:${Math.floor(logsFromBound / 1e6)}-${Math.ceil(logsToBound / 1e6)}`
+                        : '')}
               style={{ marginLeft: 8, fontSize: 10, fontWeight: 400, color: 'var(--accent2)' }}>
               open in Logs ↗
             </Link>

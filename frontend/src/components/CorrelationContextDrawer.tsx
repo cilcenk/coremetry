@@ -335,11 +335,13 @@ function LogsLens({ ctx, onReAnchor }: { ctx: CorrelationContext; onReAnchor: (a
             {logs.length >= 500 ? '+' : ''}
           </span>
           {traceId ? (
-            <Link to={`/logs?traceId=${traceId}`} style={{ color: 'var(--accent2)' }}>
+            <Link to={`/logs?traceId=${traceId}&range=custom:${Math.floor(ctx.anchor.fromNs / 1e6)}-${Math.ceil(ctx.anchor.toNs / 1e6)}`}
+              style={{ color: 'var(--accent2)' }}>
               Widen to /logs →
             </Link>
           ) : ctx.anchor.service ? (
-            <Link to={`/logs?service=${encodeURIComponent(ctx.anchor.service)}`} style={{ color: 'var(--accent2)' }}>
+            <Link to={`/logs?service=${encodeURIComponent(ctx.anchor.service)}&range=custom:${Math.floor(ctx.anchor.fromNs / 1e6)}-${Math.ceil(ctx.anchor.toNs / 1e6)}`}
+              style={{ color: 'var(--accent2)' }}>
               Widen to /logs →
             </Link>
           ) : null}

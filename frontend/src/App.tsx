@@ -1,18 +1,17 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { RouteSkeleton } from './components/ui/RouteSkeleton';
 import { PerfMeter } from './components/perf/PerfMeter';
-import { usePrefetchOnHover } from './lib/perf/routePrefetch';
+import { usePrefetchOnHover, prefetchRoute } from './lib/perf/routePrefetch';
 
 // All route components are code-split via React.lazy so the
 // initial bundle stays small. The loader fallback is the
 // existing Spinner — same UX as Next.js's automatic per-route
 // chunking. Each `import('./pages/Foo')` becomes its own chunk
 // in dist/assets/.
-const Home              = lazy(() => import('./pages/Home'));
 const Login             = lazy(() => import('./pages/Login'));
 const Services          = lazy(() => import('./pages/Services'));
 const Service           = lazy(() => import('./pages/Service'));
@@ -82,6 +81,16 @@ function TopologyRedirect() {
   return <Navigate to={`/service-map${loc.search}`} replace />;
 }
 
+// v0.8.477 (perf dalga-2) — '/' açılışı: eski lazy Home chunk'ı 203
+// bayt için 1 RTT'lik SERİ zincir ödetiyordu (entry → Home fetch →
+// Navigate → Services chunk'ları). Statik redirect zinciri koparır;
+// mount'ta Services chunk'ı idle'da ısıtılır ki yönlendirme anında
+// koda çarpsın.
+function HomeRedirect() {
+  useEffect(() => { prefetchRoute('/services'); }, []);
+  return <Navigate to="/services" replace />;
+}
+
 export default function App() {
   // Intent-prefetch: warm a route's code-split chunk when the operator hovers
   // any internal link (one delegated listener; no nav markup touched). v0.8.6.
@@ -93,7 +102,7 @@ export default function App() {
       <Suspense fallback={<RouteSkeleton />}>
         <Routes>
           <Route element={<AppShell />}>
-            <Route path="/"               element={<Home />} />
+            <Route path="/"               element={<HomeRedirect />} />
             <Route path="/login"          element={<Login />} />
             <Route path="/services"       element={<Services />} />
             <Route path="/service"        element={<Service />} />

@@ -53,6 +53,12 @@ export default defineConfig({
             if (id.includes('@tanstack')) return 'tanstack';
             if (id.includes('uplot')) return 'charts';
             if (id.includes('@opentelemetry')) return 'otel';
+            // v0.8.477 (perf dalga-2) — zone.js yalnız browserOtel'in
+            // ZoneContextManager'ı için var (main.tsx'te idle dinamik
+            // import); catch-all onu HER soğuk açılışta inen vendor'a
+            // sabitliyordu (~37KB min / ~11KB gz — vendor'ın %17.5'i).
+            // otel chunk'ına taşınınca RUM ile birlikte tembel iner.
+            if (id.includes('zone.js')) return 'otel';
             // dagre (+ its graphlib + lodash layout deps) is a heavy
             // layered-DAG engine imported ONLY by ServiceGraph.tsx,
             // which is reached solely through the route-lazy

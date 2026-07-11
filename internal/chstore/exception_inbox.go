@@ -184,17 +184,34 @@ func topFrames(stacktrace string, n int) string {
 	return ""
 }
 
-// Replacements applied in order — UUIDs and hex tokens contain digits,
-// so they MUST be substituted before the bare-digit pass.
+// Replacements applied in order — UUIDs / timestamps / hex tokens
+// contain digits, so they MUST be substituted before the bare-digit
+// pass.
+//
+// v0.8.500 (operatör-raporlu): intRe kelime sınırı (\b\d+\b)
+// istiyordu; harfe bitişik rakamlar maskelenmiyordu. ISO-8601 zaman
+// damgasında "11T12" ve "0943159Z" parçaları hayatta kalıyor, mesajına
+// RequestId/Time gömen SDK'larda (Azure.RequestFailedException gibi)
+// her occurrence ayrı parmak izi üretiyordu — stack'siz event'lerde
+// /problems inbox'ı occurrence başına bir satıra bölünüyordu. Artık
+// ISO damgaları tek placeholder'a iner ve rakam maskesi sınır şartsız.
 var (
 	uuidRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
-	hexRe  = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
-	intRe  = regexp.MustCompile(`\b\d+\b`)
+	// ISO-8601 / RFC3339: 2026-07-11T12:42:32.0943159Z, +03:00 offset'li
+	// ve "2026-07-11 12:42:32" (boşluklu) varyantlar dahil.
+	isoTsRe = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?`)
+	hexRe   = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
+	// Çıplak uzun hex (trace/span/request kimlikleri): 16+ hane.
+	// (path_template.go'daki longHexRe path-segment'e çapalı; bu genel.)
+	bareHexRe = regexp.MustCompile(`\b[0-9a-fA-F]{16,}\b`)
+	intRe     = regexp.MustCompile(`\d+`)
 )
 
 func normalizeMessage(s string) string {
 	s = uuidRe.ReplaceAllString(s, "#uuid")
+	s = isoTsRe.ReplaceAllString(s, "#ts")
 	s = hexRe.ReplaceAllString(s, "#hex")
+	s = bareHexRe.ReplaceAllString(s, "#hex")
 	s = intRe.ReplaceAllString(s, "#")
 	return s
 }

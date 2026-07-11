@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowDownToLine, Link2 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { fmtFixed, fmtNum } from '@/lib/utils';
+import { fmtFixed, tsLong } from '@/lib/utils';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
+import { Spinner } from '@/components/Spinner';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { RootCausePanel } from '@/components/RootCausePanel';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { IconSparkles } from '@/components/icons';
 import { TimeChart } from '@/components/charts/TimeChart';
 import { statusColor } from '@/lib/statusColor';
-import { fmtDurationNs, fmtHistTick, fmtStartedTs } from './problemTime';
+import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 
@@ -112,7 +113,24 @@ function DeployBox({ version, ageSeconds }: { version: string; ageSeconds: numbe
   );
 }
 
-// ── Exception-group detail ──────────────────────────────────────────────────
+// ── Exception-group detail (classic, pre-v0.8.426 layout) ───────────────────
+//
+// v0.8.510 (operator decision): the Variant-B redesign detail (triage bar
+// over a 1.5fr/1fr root-cause / blast-radius grid, v0.8.426) is reverted
+// here to the classic layout the operator preferred — detail bar (state +
+// occurrences + actions) → red exception header → meta chips → AI Analizi →
+// full-width occurrences histogram → a 1.4fr/1fr grid (Stack trace LEFT —
+// the v0.8.61 ratio fix — | Sample traces). ONLY this exception-group
+// surface reverts; AlertProblemDetail (firing alert problems) keeps the
+// Variant-B full page below, and AnomaliesPage still owns the ?exc= URL
+// open/close flow untouched.
+//
+// Data access stays on today's code: occurrences are the real server-side
+// gap-filled COUNT (v0.8.309), state actions go through
+// api.setExceptionGroupState. Two deliberate carry-overs from Variant-B:
+// occTimes/occSeries are memoized so a Copy/state re-render doesn't tear
+// down the uPlot (v0.5.184 unstable-input class), and the detail bar keeps
+// ShareButton + Esc-back as the affordances for the kept shareable link.
 
 export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   group: ExceptionGroup;
@@ -142,15 +160,11 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     staleTime: 30_000,
   });
   const occ = occQ.data ?? [];
-  // Histogram tick rule (spec): dated ticks past a 20h window. Every
-  // TimeChart input is memoized on occQ.data — the effect deps include
-  // times/series/fmtX, so per-render arrays/lambdas would tear down and
-  // rebuild the uPlot on EVERY state change, e.g. the Copy button's
-  // `copied` flip (the v0.5.184 unstable-input class).
-  const occWindowSec = occ.length >= 2 ? (occ[occ.length - 1].time - occ[0].time) / 1e9 : 0;
-  const fmtOccTick = useCallback(
-    (t: number) => fmtHistTick(t, occWindowSec),
-    [occWindowSec]);
+  // Memoize the TimeChart inputs on occQ.data: the effect deps include
+  // times/series, so per-render arrays would tear down and rebuild the
+  // uPlot on EVERY state change (e.g. the Copy button's `copied` flip) —
+  // the v0.5.184 unstable-input class. x ticks use TimeChart's default
+  // house day-boundary formatter (v0.8.402 fix), same as classic.
   const occTimes = useMemo(() => occ.map(p => p.time / 1e9), [occ]);
   const occSeries = useMemo(() => [{
     key: 'occ', label: 'occurrences', data: occ.map(p => p.count),
@@ -176,26 +190,15 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     navigator.clipboard?.writeText(stack).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
   };
 
-  // Cross-signal deep links — house patterns (spec §3). Window: 30m of
-  // lead-in before first seen, 10m tail after last seen.
-  const logsFrom = Math.round((group.firstSeen - 30 * 60 * 1e9) / 1e6);
-  const logsTo = Math.round((group.lastSeen + 10 * 60 * 1e9) / 1e6);
-  const logsHref = `/logs?q=${encodeURIComponent(`service.name:"${group.service.replace(/"/g, '\\"')}"`)}&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`;
-  const tracesHref = `/traces?service=${encodeURIComponent(group.service)}&hasError=true`;
-  const mapHref = `/service-map?focus=${encodeURIComponent(group.service)}`;
-
   return (
     <div id="content">
-      {/* Triage bar */}
+      {/* Detail bar */}
       <div className="rb-bar">
         <Button variant="secondary" onClick={onBack} leftIcon={<ArrowLeft size={14} strokeWidth={1.75} />}>
           Problems
         </Button>
         <span className={`badge ${STATE_BADGE[state]}`}>{STATE_LABEL[state]}</span>
-        <span className="badge b-gray mono">{group.fingerprint.slice(0, 12)}</span>
-        <span className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
-          Started {fmtStartedTs(group.firstSeen)} · {fmtDurationNs(group.lastSeen - group.firstSeen)}
-        </span>
+        <span className="badge b-gray">{group.occurrences.toLocaleString()} occurrences</span>
         <span className="spacer" />
         <ShareButton />
         {isAdmin && (state === 'new' || state === 'regressed' || state === 'acknowledged') && (
@@ -210,112 +213,97 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 14, alignItems: 'start' }}>
-        {/* ── Left column ── */}
-        <div style={{ minWidth: 0 }}>
-          <Sect title="Root cause" accent>
-            <div className="mono" style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--err)', wordBreak: 'break-all' }}>
-              {group.type}
-            </div>
-            <div className="mono" style={{ color: 'var(--text2)', fontSize: 12.5, margin: '4px 0 10px', wordBreak: 'break-word' }}>
-              {group.message || '—'}
-            </div>
-            {/* AI Analizi — auto-sends this group's service context (v0.8.89). */}
-            <AIAnalysisPanel service={group.service} />
-          </Sect>
+      {/* Exception header (no card) */}
+      <div className="mono" style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--err)', marginBottom: 4, wordBreak: 'break-all' }}>
+        {group.type}
+      </div>
+      <div className="mono" style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16, wordBreak: 'break-word' }}>
+        {group.message || '—'}
+      </div>
 
-          <Sect title="Occurrences over time" sub={`${fmtNum(group.occurrences)} total`}>
-            {occ.length === 0 ? (
-              <div style={{ color: 'var(--text3)', fontSize: 12 }}>
-                {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
-              </div>
-            ) : (
-              <TimeChart
-                times={occTimes}
-                series={occSeries}
-                height={110}
-                fmtX={fmtOccTick}
-              />
-            )}
-          </Sect>
+      {/* Meta chips */}
+      <div className="meta-row" style={{ marginBottom: 18 }}>
+        <span className="chip"><span className="k">service</span><b className="mono">{group.service}</b></span>
+        <span className="chip"><span className="k">first seen</span><b className="mono">{tsLong(group.firstSeen)}</b></span>
+        <span className="chip"><span className="k">last seen</span><b className="mono">{tsLong(group.lastSeen)}</b></span>
+      </div>
 
-          <Sect title="Problem timeline">
-            <ul className="pb-tl">
-              <li className="err">
-                <b>Detected</b> — first occurrence
-                <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8 }}>{fmtStartedTs(group.firstSeen)}</span>
-              </li>
-              <li className="accent">
-                <b>Last occurrence</b>
-                <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8 }}>{fmtStartedTs(group.lastSeen)}</span>
-              </li>
-              {state === 'resolved' && group.resolvedAt ? (
-                <li className="ok">
-                  <b>Resolved</b>
-                  <span className="mono" style={{ color: 'var(--text3)', marginLeft: 8 }}>{fmtStartedTs(group.resolvedAt)}</span>
-                </li>
-              ) : null}
-            </ul>
-          </Sect>
+      {/* AI Analizi — auto-sends this group's service context (v0.8.89). */}
+      <AIAnalysisPanel service={group.service} />
+
+      {/* Occurrences over time — real server-side, gap-filled COUNT over the
+          group's whole window (v0.8.309). */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="ov-card-h">
+          <h3>Occurrences over time</h3>
+          <span className="ov-sub">{group.occurrences.toLocaleString()} total</span>
         </div>
+        <div className="ov-card-b">
+          {occ.length === 0 ? (
+            <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+              {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
+            </div>
+          ) : (
+            <TimeChart times={occTimes} series={occSeries} height={110} />
+          )}
+        </div>
+      </div>
 
-        {/* ── Right column ── */}
-        <div style={{ minWidth: 0 }}>
-          <Sect title="Blast radius">
-            <Link to={`/service?name=${encodeURIComponent(group.service)}`}
-              className={`pb-pill${state === 'new' || state === 'regressed' ? ' err' : ''}`}
-              style={{ textDecoration: 'none', color: 'var(--accent2)' }}>
-              <span className="dot" /> <span className="mono">{group.service}</span>
-            </Link>
-          </Sect>
-
-          <Sect title="Correlated signals">
-            <SignalLink to={logsHref} label="≡ Logs" sub="service, spike window" />
-            <SignalLink to={tracesHref} label="⋮ Error traces"
-              sub={samples.length > 0 ? `${samples.length} sampled` : undefined} />
-            <SignalLink to={mapHref} label="◉ Service map" sub="focused" />
-            {/* Sample traces — click lands on the waterfall. */}
-            {samples.length > 0 && (
-              <div style={{ marginTop: 4 }}>
-                {samples.slice(0, 8).map((s, i) => (
-                  <div key={i}
-                    onClick={() => s.traceId && navigate(`/trace?id=${encodeURIComponent(s.traceId)}`)}
-                    style={{
-                      display: 'flex', alignItems: 'baseline', gap: 8, padding: '3px 2px',
-                      cursor: s.traceId ? 'pointer' : 'default', fontSize: 11,
-                    }}>
-                    <span className="mono" style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
-                      {s.traceId ? s.traceId.slice(0, 16) + '…' : '—'}
-                    </span>
-                    <span className="mono" style={{ marginLeft: 'auto', color: 'var(--text3)' }}>{fmtStartedTs(s.time)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Sect>
-
-          <Sect title="Stack trace" sub="representative sample">
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+      {/* Stack trace (left) · Sample traces (right). minWidth:0 on the columns
+          so the long Java stack frames don't force the left column past 1.4fr
+          (the v0.8.61 ratio fix — stack trace forced into the left column). */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16 }}>
+        {/* Stack trace */}
+        <div className="card" style={{ minWidth: 0 }}>
+          <div className="ov-card-h">
+            <h3>Stack trace</h3>
+            <span className="ov-sub">representative sample</span>
+            <span className="ov-right">
               <Button variant="secondary" size="sm" onClick={copyStack} disabled={!stack}>
                 {copied ? 'Copied' : 'Copy'}
               </Button>
-            </div>
+            </span>
+          </div>
+          <div className="ov-card-b" style={{ background: 'var(--bg2)', borderRadius: '0 0 8px 8px' }}>
             {stackLines.length === 0 ? (
               <div style={{ color: 'var(--text3)', fontSize: 12 }}>
                 {samplesQ.isLoading ? 'Loading…' : 'No stack trace on the sampled occurrences.'}
               </div>
             ) : (
-              <pre className="mono" style={{
-                margin: 0, fontSize: 11, lineHeight: 1.65, whiteSpace: 'pre-wrap',
-                overflowWrap: 'anywhere', maxHeight: 420, overflowY: 'auto',
-                background: 'var(--bg2)', borderRadius: 'var(--radius-sm)', padding: '8px 10px',
-              }}>
+              <pre className="mono" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.7, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                 {stackLines.map((l, i) => (
                   <div key={i} style={{ color: i === 0 ? 'var(--err)' : 'var(--text2)' }}>{l}</div>
                 ))}
               </pre>
             )}
-          </Sect>
+          </div>
+        </div>
+
+        {/* Sample traces */}
+        <div className="card" style={{ minWidth: 0 }}>
+          <div className="ov-card-h"><h3>Sample traces</h3>{samples.length > 0 && <span className="ov-sub">{samples.length}</span>}</div>
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {samplesQ.isLoading && <tr><td style={{ padding: 12 }}><Spinner /></td></tr>}
+                {!samplesQ.isLoading && samples.length === 0 && (
+                  <tr><td style={{ padding: 12, color: 'var(--text3)', fontSize: 12 }}>No sample traces.</td></tr>
+                )}
+                {samples.slice(0, 14).map((s, i) => (
+                  <tr key={i} style={{ cursor: s.traceId ? 'pointer' : 'default' }}
+                    onClick={() => s.traceId && navigate(`/trace?id=${encodeURIComponent(s.traceId)}`)}>
+                    <td className="mono" style={{ paddingLeft: 14 }}>
+                      <span style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 150 }}>
+                        {s.traceId ? s.traceId.slice(0, 16) + '…' : '—'}
+                      </span>
+                    </td>
+                    <td><span className="badge b-err">ERROR</span></td>
+                    <td className="mono" style={{ textAlign: 'right', paddingRight: 14, fontSize: 11, color: 'var(--text3)' }}>{tsLong(s.time)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+import { AnnouncementBanner } from './AnnouncementBanner';
 import { ShortcutsHelp } from './ShortcutsHelp';
 import { CommandPalette } from './CommandPalette';
 import { CopilotChat } from './CopilotChat';
@@ -128,6 +129,9 @@ export function AppShell() {
     <div id="app">
       <Sidebar />
       <div id="main">
+        {/* v0.8.486 — admin'in Settings'ten yönettiği duyuru şeridi
+            (kaldırılan What-changed'in yerinde, operatör-kontrollü). */}
+        <AnnouncementBanner />
         {/* v0.8.298 (quality bar S1) — route-scoped boundary INSIDE the
             shell: a page-render crash no longer unmounts the sidebar/nav
             (the App.tsx global boundary stays as last resort, but before

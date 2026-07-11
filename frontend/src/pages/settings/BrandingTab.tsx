@@ -198,6 +198,88 @@ export function BrandingTab() {
           </Button>
         </div>
       </form>
+
+      <AnnouncementSection />
+    </div>
+  );
+}
+
+// AnnouncementSection — v0.8.486 (operatör isteği): sayfa-üstü duyuru
+// şeridi. Metin + opsiyonel link + ton; kaydet revizyon damgasını
+// yeniler, kapatmış kullanıcılara şerit yeniden görünür.
+function AnnouncementSection() {
+  const [a, setA] = useState<import('@/lib/announcement').AnnouncementView | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getAnnouncement().then(setA).catch(() => setA(null));
+  }, []);
+
+  if (a === undefined) return <div style={{ marginTop: 24 }}><Spinner /></div>;
+  if (a === null) return null;
+
+  const save = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const saved = await api.putAnnouncement(a);
+      setA(saved);
+      setMsg('Kaydedildi — kapatmış kullanıcılara da yeniden görünür.');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Kaydedilemedi');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ marginTop: 28, paddingTop: 18, borderTop: '1px solid var(--border)' }}>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+        Duyuru şeridi
+        {a.enabled && a.text
+          ? <span className="badge b-ok" style={{ marginLeft: 8 }}>aktif</span>
+          : <span className="badge b-gray" style={{ marginLeft: 8 }}>kapalı</span>}
+      </h2>
+      <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 12 }}>
+        Tüm kullanıcılara sayfa üstünde gösterilen genel duyuru — ör. destek
+        e-postası, wiki adresi, planlı bakım notu. Kullanıcı kapatabilir;
+        metni güncellediğinde herkese yeniden görünür.
+      </p>
+      <Row>
+        <Field label="Duyuru metni">
+          <input value={a.text ?? ''} maxLength={500} style={{ width: '100%' }}
+            placeholder="Coremetry ile ilgili sorularınız için: apm-destek@…"
+            onChange={e => setA({ ...a, text: e.target.value })} />
+        </Field>
+      </Row>
+      <Row>
+        <Field label="Link (opsiyonel)">
+          <input value={a.linkUrl ?? ''} placeholder="http://wiki.local/coremetry"
+            style={{ width: '100%' }}
+            onChange={e => setA({ ...a, linkUrl: e.target.value })} />
+        </Field>
+        <Field label="Link etiketi">
+          <input value={a.linkLabel ?? ''} maxLength={80} placeholder="Wiki"
+            style={{ width: '100%' }}
+            onChange={e => setA({ ...a, linkLabel: e.target.value })} />
+        </Field>
+        <Field label="Ton">
+          <select value={a.tone ?? 'info'}
+            onChange={e => setA({ ...a, tone: e.target.value as 'info' | 'warn' })}>
+            <option value="info">Bilgi</option>
+            <option value="warn">Önemli (amber)</option>
+          </select>
+        </Field>
+      </Row>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10 }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <input type="checkbox" checked={a.enabled}
+            onChange={e => setA({ ...a, enabled: e.target.checked })} />
+          Şerit aktif
+        </label>
+        <Button onClick={() => { void save(); }} disabled={busy}>
+          {busy ? 'Kaydediliyor…' : 'Kaydet'}
+        </Button>
+        {msg && <span style={{ fontSize: 12, color: 'var(--text2)' }}>{msg}</span>}
+      </div>
     </div>
   );
 }

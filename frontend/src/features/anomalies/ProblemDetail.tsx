@@ -452,8 +452,11 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
 
           <Sect title="Correlated signals">
             <SignalLink to={logsHref} label="≡ Logs" sub="service, problem window" />
-            <SignalLink to={`/traces?service=${encodeURIComponent(problem.service)}&hasError=true`}
-              label="⋮ Error traces" sub="service-scoped" />
+            {/* v0.8.512 (perf raporu #12) — pivot problem penceresini
+                taşır: logs ile aynı custom range, yoksa /traces global
+                range'iyle açılıp problemle ilgisiz trace gösteriyordu. */}
+            <SignalLink to={`/traces?service=${encodeURIComponent(problem.service)}&hasError=true&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`}
+              label="⋮ Error traces" sub="service, problem window" />
             <SignalLink to={`/service-map?focus=${encodeURIComponent(problem.service)}`}
               label="◉ Service map" sub="focused" />
           </Sect>

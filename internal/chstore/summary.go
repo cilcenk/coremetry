@@ -101,6 +101,35 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 	return out, int(total), rows.Err()
 }
 
+// ListActiveServiceNames returns the distinct service names seen in
+// the last `window`, from the MV. v0.8.506 (perf raporu #3):
+// evaluator (1dk tick) + anomaly detector (2dk tick) yalnız İSİM
+// listesi için GetServices(24h)'ü — yani apdex+quantile'lı ham spans
+// GROUP BY'ını (~3.7M satır/koşu lokalde) — çağırıyordu. MV'den
+// DISTINCT, ORDER BY (service_name, ...) sayesinde read_in_order ile
+// neredeyse bedava.
+func (s *Store) ListActiveServiceNames(ctx context.Context, window time.Duration) ([]string, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT DISTINCT service_name
+		FROM service_summary_5m
+		WHERE time_bucket >= now() - INTERVAL ? SECOND
+		LIMIT 20000
+		SETTINGS max_execution_time = 30`, int64(window.Seconds()))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, offset int) ([]string, int, error) {
 	if limit <= 0 {
 		limit = 200

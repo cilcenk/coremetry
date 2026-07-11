@@ -239,7 +239,9 @@ func (d *Detector) runIfLeader(ctx context.Context) {
 }
 
 func (d *Detector) scan(ctx context.Context) {
-	services, err := d.store.GetServices(ctx, 24*time.Hour, time.Time{}, time.Time{})
+	// v0.8.506: yalnız isim listesi gerekiyor — MV'den (bkz.
+	// ListActiveServiceNames); ham spans 24h taraması kalktı.
+	services, err := d.store.ListActiveServiceNames(ctx, 24*time.Hour)
 	if err != nil {
 		log.Printf("[anomaly] list services: %v", err)
 		return
@@ -252,7 +254,7 @@ func (d *Detector) scan(ctx context.Context) {
 	days, minSamples, neighbor := seasonalParams(d.store.GetAnomalyPromotion(ctx))
 	for _, svc := range services {
 		for _, m := range trackedMetrics {
-			d.checkOne(ctx, svc.Name, m, days, minSamples, neighbor)
+			d.checkOne(ctx, svc, m, days, minSamples, neighbor)
 		}
 	}
 }

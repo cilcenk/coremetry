@@ -308,16 +308,14 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 		return
 	}
 
-	// Cache the recent service set so wildcard rules know what to evaluate.
-	services, err := e.store.GetServices(ctx, 24*time.Hour, time.Time{}, time.Time{})
+	// Cache the recent service set so wildcard rules know what to
+	// evaluate. v0.8.506: yalnız isim gerekiyor — GetServices(24h)
+	// ham spans'te tam-gün agregasyon yapıyordu (MV-first ihlali);
+	// isim listesi artık MV'den.
+	serviceNames, err := e.store.ListActiveServiceNames(ctx, 24*time.Hour)
 	if err != nil {
 		log.Printf("[evaluator] services: %v", err)
 		return
-	}
-
-	serviceNames := make([]string, 0, len(services))
-	for _, s := range services {
-		serviceNames = append(serviceNames, s.Name)
 	}
 
 	// v0.8.352 (perf P2-A) — batched prefetch: ONE GROUP BY query per

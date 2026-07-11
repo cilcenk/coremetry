@@ -71,11 +71,13 @@ func (s *Server) autoCreateSLOs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pull top-N services by recent traffic from the existing
-	// services endpoint. 7-day window gives enough signal even
-	// for low-traffic services that fire once a day. Uses the
-	// pre-aggregated service summary MV under the hood — cheap.
-	svcs, err := s.store.GetServices(r.Context(), 7*24*time.Hour, time.Time{}, time.Time{})
+	// Pull top-N services by recent traffic. 7-day window gives
+	// enough signal even for low-traffic services that fire once a
+	// day. v0.8.506: GetServices ham spans'te tam agregasyon
+	// yapıyordu ("MV under the hood" yorumu yanlıştı) — artık gerçek
+	// MV yolu (GetServicesAggFilteredIn), limit sorguya itilir.
+	svcs, err := s.store.GetServicesAggFilteredIn(r.Context(),
+		time.Now().Add(-7*24*time.Hour), time.Now(), "", nil, "spanCount", "desc", limit, 0)
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -14,7 +14,7 @@ import { toast } from '@/lib/toast';
 // Mounted once at AppShell level; listens for the hotkey and pops
 // the modal. Three result kinds in v1:
 //   • Pages — hardcoded route catalog (every internal SPA page)
-//   • Services — fetched on first open from /api/services, cached
+//   • Services — server-searched per keystroke (v0.8.518), pinned/recent
 //                in-memory for the session
 //   • Trace — when the query looks like a trace id (32 hex chars)
 //             a "Go to trace" suggestion appears
@@ -70,7 +70,6 @@ const PAGES: Result[] = [
 
 // Module-level cache so re-opening the palette in the same tab
 // doesn't re-fetch services every time.
-let SERVICES_CACHE: Result[] | null = null;
 
 const TRACE_ID_RE = /^[a-f0-9]{16,32}$/i;
 
@@ -176,9 +175,7 @@ export function CommandPalette() {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  // Focus the input + lazy-load services on first open. Services
-  // come from the cached api response — we don't need a time
-  // range here since the catalog is the same regardless of window.
+  // Focus the input + refresh the pivot rotation on open.
   useEffect(() => {
     if (!open) return;
     setTimeout(() => inputRef.current?.focus(), 10);
@@ -194,23 +191,33 @@ export function CommandPalette() {
       ...pinned.map(n => mkSvc(n, '★ Pinned')),
       ...recents.map(n => mkSvc(n, 'Recent')),
     ]);
-    if (SERVICES_CACHE) {
-      setServices(SERVICES_CACHE);
-      return;
-    }
-    api.services({ from: 0, to: 0 })
-      .then(s => {
-        const list: Result[] = (s ?? []).slice(0, 200).map(svc => ({
-          kind: 'service' as const,
-          label: svc.name,
-          hint: 'Service',
-          to: `/service?name=${encodeURIComponent(svc.name)}`,
-        }));
-        SERVICES_CACHE = list;
-        setServices(list);
-      })
-      .catch(() => { /* no services = page-only results */ });
   }, [open]);
+
+  // v0.8.518 (perf raporu #11) — servis araması SUNUCUDA. Eski eager
+  // /api/services fetch'i 200 ile kesiyordu: 1400+ servisli prod'da
+  // katalogun çoğu ⌘K'da hiç bulunamıyordu (fiilen ölü) ve her ilk
+  // açılış tam liste indiriyordu. Endpoint aramasının deseniyle
+  // (200ms debounce + stale-guard) autocomplete ucuna gider;
+  // pinned/recent boş-sorgu rotasyonu aynen.
+  useEffect(() => {
+    const q = query.trim();
+    if (!open || q.length < 2 || TRACE_ID_RE.test(q)) { setServices([]); return; }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      api.serviceNames(q, 20)
+        .then(r => {
+          if (cancelled) return;
+          setServices((r?.names ?? []).map(name => ({
+            kind: 'service' as const,
+            label: name,
+            hint: 'Service',
+            to: `/service?name=${encodeURIComponent(name)}`,
+          })));
+        })
+        .catch(() => { if (!cancelled) setServices([]); });
+    }, 200);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query, open]);
 
   // Endpoint search — server-debounced operation lookup so the palette can
   // jump to an endpoint, not just pages/services, WITHOUT eager-loading the

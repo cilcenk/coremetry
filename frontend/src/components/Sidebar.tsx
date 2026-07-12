@@ -9,7 +9,7 @@ import { TelescopeIcon } from './TelescopeIcon';
 import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
-  LayoutDashboard, Bell, Target, CalendarClock, CircleGauge, Search, Hash,
+  LayoutDashboard, Bell, Target, CircleGauge, Search, Hash,
   Sparkles, LayoutGrid, FileClock, Terminal, Code, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
@@ -99,12 +99,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/alerts',   label: 'nav.alerts',   icon: Bell },
       { href: '/slos',     label: 'nav.slos',     icon: Target },
-      // v0.6.15 — operator events (deploy / config / incident
-      // markers). Editors create them via Cmd-K + manage from
-      // this list. Lives in the alerts group because operationally
-      // events are the timeline twin of alerts — both annotate
-      // when something happened.
-      { href: '/events',   label: 'nav.events',   icon: CalendarClock },
+      // v0.8.517 — /events sidebar'dan gizlendi (operatör: "sadece
+      // gizle"). Rota + sayfa + ⌘K'dan event oluşturma YAŞIYOR;
+      // deploy event'leri collector image-tag'iyle zaten otomatik.
     ],
   },
   {

@@ -727,10 +727,14 @@ func (s *Service) InspectUser(ctx context.Context, username string) (*InspectRes
 	}
 	defer conn.Close()
 
-	filter := strings.ReplaceAll(c.UserSearchFilter, "{{username}}", goldap.EscapeFilter(username))
-	if strings.TrimSpace(c.UserSearchFilter) == "" {
-		filter = fmt.Sprintf("(%s=%s)", c.UserAttribute, goldap.EscapeFilter(username))
-	}
+	// v0.8.524 (operator-reported): Inspect kendi ham ReplaceAll'unu
+	// yapıyordu — UserSearchFilter {{username}} placeholder'ı
+	// İÇERMİYORSA (Dex-stili ön-filtre, ör. "(objectclass=person)")
+	// yazılan kullanıcı adı filtreye hiç girmiyor, geniş filtrenin İLK
+	// kaydı dönüyordu ("kendi bind user'ına bakıyor" belirtisi). Login
+	// yolunun resolveUserFilter'ı bu durumu zaten doğru sarıyor —
+	// artık Inspect de aynı yolu kullanır.
+	filter := resolveUserFilter(c.UserSearchFilter, goldap.EscapeFilter(username))
 	req := goldap.NewSearchRequest(
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases,
 		2, 30, false,
@@ -743,7 +747,13 @@ func (s *Service) InspectUser(ctx context.Context, username string) (*InspectRes
 		return nil, fmt.Errorf("inspect search: %w", err)
 	}
 	if res == nil || len(res.Entries) == 0 {
-		return nil, fmt.Errorf("no directory entry matches %q", username)
+		return nil, fmt.Errorf("no directory entry matches %q (filter: %s)", username, filter)
+	}
+	// Belirsizlik koruması: filtre birden çok kayıt eşliyorsa keyfî
+	// ilkini gösterme — login yolundaki "filter too loose" sözleşmesi.
+	if len(res.Entries) > 1 {
+		return nil, fmt.Errorf("user search returned %d entries for %q (filter too loose? filter: %s)",
+			len(res.Entries), username, filter)
 	}
 	e := res.Entries[0]
 	attrs := make(map[string][]string, len(e.Attributes))

@@ -212,8 +212,20 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		// before the row-level match runs. positionCaseInsensitive
 		// (the obvious choice) cannot use the index — at
 		// billion-log/day scale that's a full scan.
-		wc += " AND multiSearchAnyCaseInsensitive(body, [?])"
-		args = append(args, f.Search)
+		//
+		// v0.8.521 (operator-reported): id-şekilli serbest metin
+		// (çıplak 32/16-hex) trace_id/span_id KOLONUYLA da eşleşir —
+		// "Search'e trace yapıştırınca bulsun" sözleşmesi, id'si
+		// body'de olmayan kurulumlarda da tutar. Yalnız id-şekilli
+		// sorguda ek dal; pencere + LIMIT sınırları aynen.
+		if isBareHexID(f.Search) {
+			wc += " AND (multiSearchAnyCaseInsensitive(body, [?]) OR trace_id = ? OR span_id = ?)"
+			id := strings.ToLower(strings.TrimSpace(f.Search))
+			args = append(args, f.Search, id, id)
+		} else {
+			wc += " AND multiSearchAnyCaseInsensitive(body, [?])"
+			args = append(args, f.Search)
+		}
 	}
 	if f.SeverityMin > 0 {
 		wc += " AND severity_num >= ?"
@@ -484,8 +496,15 @@ func (s *CHStore) FieldStats(ctx context.Context, f Filter, field string, limit 
 		args = append(args, f.Service)
 	}
 	if f.Search != "" {
-		wc += " AND multiSearchAnyCaseInsensitive(body, [?])"
-		args = append(args, f.Search)
+		// v0.8.521 — bkz. Search'teki id-şekilli dal (yukarıdaki site).
+		if isBareHexID(f.Search) {
+			wc += " AND (multiSearchAnyCaseInsensitive(body, [?]) OR trace_id = ? OR span_id = ?)"
+			id := strings.ToLower(strings.TrimSpace(f.Search))
+			args = append(args, f.Search, id, id)
+		} else {
+			wc += " AND multiSearchAnyCaseInsensitive(body, [?])"
+			args = append(args, f.Search)
+		}
 	}
 	if f.SeverityMin > 0 {
 		wc += " AND severity_num >= ?"

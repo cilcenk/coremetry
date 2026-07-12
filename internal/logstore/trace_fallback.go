@@ -230,3 +230,22 @@ func normalizeHexID(v string, wantLen int) string {
 	}
 	return strings.ToLower(v)
 }
+
+// isBareHexID reports whether the free-text query is a bare trace/span
+// id (32 or 16 hex chars, optional surrounding whitespace). v0.8.521:
+// Logs'un Search kutusuna yapıştırılan id, id'yi body'ye YAZMAYAN
+// kurulumlarda da bulunsun diye kolon eşleşmesine yükseltilir.
+func isBareHexID(q string) bool {
+	q = strings.TrimSpace(q)
+	if len(q) != 32 && len(q) != 16 {
+		return false
+	}
+	for _, c := range q {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}

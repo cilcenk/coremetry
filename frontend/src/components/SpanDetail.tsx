@@ -18,6 +18,10 @@ const PANEL_STORAGE_KEY = 'coremetry-span-panel-w';
 // TRACE_LOG_WINDOW_BUFFER_NS in lib/otel; kept local so this component has no
 // import just for the standalone fallback path.
 const SPAN_LOG_WINDOW_BUFFER_NS = 60_000_000_000;
+// v0.8.521 — "open in Logs" linkinin ek pencere payı: panel fetch'i dar
+// kalır (span±60s), LİNK ±15 dk açılır — pipeline gecikmesiyle kayan
+// @timestamp'ler pencere dışında kalmasın.
+const LOGS_LINK_EXTRA_NS = 15 * 60_000_000_000;
 
 export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = true }: {
   span: SpanRow;
@@ -297,9 +301,16 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
                 yutulup varsayılan 30 dk açılıyor, eski span'ın logları
                 pencere dışında "yok" görünüyordu. Pencere artık sayfanın
                 anladığı custom-range koduyla gider (ns→ms). */}
-            <Link to={`/logs?traceId=${span.traceId}` +
+            {/* v0.8.521 (operator-reported): traceId FILTRESİ id'yi
+                kolonda arıyordu — id'si yalnız body/JSON'da olan
+                kurulumlarda "filtered to trace" boş dönüyordu. Operatör
+                talebi: id Search kutusuna gitsin (q=; sunucu id-şekilli
+                q'yu kolonla DA eşliyor, iki dünya da bulur). Pencere
+                ±15 dk: ingest-gecikmeli @timestamp'ler ±60s'yi
+                kaçırıyordu. */}
+            <Link to={`/logs?q=${span.traceId}` +
                       (logsFromBound && logsToBound
-                        ? `&range=custom:${Math.floor(logsFromBound / 1e6)}-${Math.ceil(logsToBound / 1e6)}`
+                        ? `&range=custom:${Math.floor((logsFromBound - LOGS_LINK_EXTRA_NS) / 1e6)}-${Math.ceil((logsToBound + LOGS_LINK_EXTRA_NS) / 1e6)}`
                         : '')}
               style={{ marginLeft: 8, fontSize: 10, fontWeight: 400, color: 'var(--accent2)' }}>
               open in Logs ↗

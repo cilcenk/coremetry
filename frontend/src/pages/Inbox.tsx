@@ -183,7 +183,7 @@ export default function InboxPage() {
 
   return (
     <>
-      <Topbar title="Inbox" />
+      <Topbar title="Inbox" showEnv />
       <div id="content">
         <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 14 }}>
           Everything needing a human — Problems (alert rules), open Exception

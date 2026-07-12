@@ -334,7 +334,7 @@ export default function ProblemsPage() {
   if (detail) {
     return (
       <>
-        <Topbar title="Problems" />
+        <Topbar title="Problems" showEnv />
         <ProblemDetail
           group={detail}
           isAdmin={isAdmin}
@@ -350,7 +350,7 @@ export default function ProblemsPage() {
   if (excParam && excNotFound) {
     return (
       <>
-        <Topbar title="Problems" />
+        <Topbar title="Problems" showEnv />
         <div id="content">
           <Empty icon="❓" title="Exception not found">
             Bu exception grubu artık mevcut değil.{' '}
@@ -363,7 +363,7 @@ export default function ProblemsPage() {
   if (excParam && !excNotFound) {
     return (
       <>
-        <Topbar title="Problems" />
+        <Topbar title="Problems" showEnv />
         <div id="content"><Spinner /></div>
       </>
     );
@@ -377,7 +377,7 @@ export default function ProblemsPage() {
 
   return (
     <>
-      {!problemParam && <Topbar title="Problems" />}
+      {!problemParam && <Topbar title="Problems" showEnv />}
       {/* Hidden (NOT unmounted) while the full-page detail is open — the
           duplicate #content id is inert here: nothing on this route calls
           getElementById('content') (useContentWidth is dashboard-only). */}
@@ -1116,7 +1116,7 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
   const p = cached ?? (q.data ?? []).find(x => x.id === id);
   return (
     <>
-      <Topbar title="Problems" />
+      <Topbar title="Problems" showEnv />
       {p ? (
         <AlertProblemDetail
           problem={p}

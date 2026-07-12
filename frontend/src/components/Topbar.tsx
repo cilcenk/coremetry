@@ -9,14 +9,21 @@ import type { TimeRange } from '@/lib/types';
 // `range` is optional — pages that aren't time-bound (e.g. /users) omit it
 // and the time picker is hidden. The global env picker (v0.8.383) rides the
 // same gate: an env filter only means something on telemetry-bound pages.
-export function Topbar({ title, range, onRangeChange }: {
+//
+// v0.8.516 (perf raporu #22) — showEnv: Inbox/Problems gibi range'siz
+// AMA env-filtreli sayfalar picker'ı ayrıca isteyebilir. Eskiden env
+// bu sayfalarda UYGULANIYOR ama DEĞİŞTİRİLEMİYORDU — başka sayfada
+// seçilen 'uat' inbox'ı sessizce daraltıp kalıyordu.
+export function Topbar({ title, range, onRangeChange, showEnv }: {
   title: string;
   range?: TimeRange;
   onRangeChange?: (r: TimeRange) => void;
+  showEnv?: boolean;
 }) {
   return (
     <div id="topbar">
       <h1>{title}</h1>
+      {showEnv && !(range && onRangeChange) && <EnvPicker />}
       {range && onRangeChange && (
         <>
           <EnvPicker />

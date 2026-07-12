@@ -88,7 +88,12 @@ type Server struct {
 	auth         *auth.Service
 	oidc         *auth.OIDCService // nil when SSO disabled
 	ldap         *ldap.Service     // always set; Enabled() reports config presence
-	cache        cache.Cache       // Noop when Redis isn't configured
+	// ldapGroupSync — LDAP/AD group-membership sync engine (v0.8.526).
+	// Set via SetLdapGroupSync from main(); nil-safe — the group-sync
+	// admin handlers return 503 until wired. Reads the in-memory snapshot
+	// pointer (no CH round-trip on the status read).
+	ldapGroupSync *ldap.SyncEngine
+	cache         cache.Cache // Noop when Redis isn't configured
 	// presence — throttled per-user "last authenticated activity"
 	// stamps for the admin Users page's online indicator (v0.8.403).
 	// See presence.go for the write/read paths + semantics.
@@ -264,6 +269,9 @@ type rateSample struct {
 
 // SetRAG bağlar (v0.8.438) — cluster.Set deseninde opsiyonel bağımlılık.
 func (s *Server) SetRAG(r *rag.Service) { s.rag = r }
+
+// SetLdapGroupSync wires the LDAP group-sync engine (v0.8.526).
+func (s *Server) SetLdapGroupSync(e *ldap.SyncEngine) { s.ldapGroupSync = e }
 
 func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logstore.Store, webFS embed.FS, authSvc *auth.Service, oidcSvc *auth.OIDCService, ldapSvc *ldap.Service, c cache.Cache, n *notify.Notifier, cop *copilot.Service, bus *sse.Broker) *Server {
 	return &Server{
@@ -610,6 +618,7 @@ func (s *Server) Start() error {
 	s.registerDBWaitLockRoutes(mux)      // v0.8.391 — cross-engine waits & locks strip on the /databases drawer (Stage-2 D3), db_waitlock.go
 	s.registerExternalRoutes(mux)        // v0.8.446 — /external third-party API inventory from topology_edges_5m (Wave 3 / A1), external.go
 	s.registerHostRoutes(mux)            // v0.8.449 — /hosts host/pod inventory from metric_points (Wave 3 / A4), hosts.go
+	s.registerLdapGroupSyncRoutes(mux)   // v0.8.526 — LDAP/AD group-membership sync (summary / sync-now / preview), ldap_groupsync.go
 	mux.HandleFunc("GET /api/spans/heatmap", s.spanHeatmap)
 	mux.HandleFunc("GET /api/spans/bubbleup", s.spanBubbleUp)
 	mux.HandleFunc("GET /api/profiles", s.listProfiles)
@@ -5416,6 +5425,10 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 		// company/o → organization, department/ou → team (below).
 		FullName: strings.TrimSpace(res.User.DisplayName),
 		Org:      strings.TrimSpace(res.User.Company),
+		// v0.8.526 — persist the directory sAMAccountName (lowercased) as
+		// the O(1) join key to the LDAP group snapshot. Email stays the
+		// canonical identity. Store omits it when the column is absent.
+		LdapUsername: strings.ToLower(strings.TrimSpace(res.User.Username)),
 	}
 	firstLogin := existing == nil
 	if existing != nil {
@@ -5437,6 +5450,11 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 		}
 		if u.Org == "" {
 			u.Org = existing.Org
+		}
+		// v0.8.526 — never WIPE a stored ldap_username on a sparse
+		// re-login (whole-row replace); a present directory value refreshes.
+		if u.LdapUsername == "" {
+			u.LdapUsername = existing.LdapUsername
 		}
 	} else {
 		idBytes := make([]byte, 8)

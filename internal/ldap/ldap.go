@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -43,14 +44,27 @@ type Config struct {
 	// Connection
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
-	UseTLS     bool   `json:"useTLS"`     // direct ldaps:// (default port 636)
-	StartTLS   bool   `json:"startTLS"`   // upgrade plain → TLS on 389
+	UseTLS     bool   `json:"useTLS"`   // direct ldaps:// (default port 636)
+	StartTLS   bool   `json:"startTLS"` // upgrade plain → TLS on 389
 	SkipVerify bool   `json:"skipVerify"`
 	CACert     string `json:"caCert"` // PEM bundle for internal CA
+	// CAFile (v0.8.526) — filesystem path to a PEM CA bundle. When set
+	// AND readable it WINS over the inline CACert blob; empty falls back
+	// to CACert (backward compat). A path, not a secret — safe to echo.
+	CAFile string `json:"caFile,omitempty"`
 
 	// Service account used to look up users / groups.
 	BindDN       string `json:"bindDN"`
 	BindPassword string `json:"bindPassword"`
+	// BindPasswordFile / BindPasswordEnv (v0.8.526) — external references
+	// for the bind secret so it need not live in the system_settings blob.
+	// Precedence: File (if set & readable) > Env (if set & present) >
+	// inline BindPassword blob (backward compat — never removed, the blob
+	// path is a deliberate deployment option). Both hold a PATH / env-var
+	// NAME, not the secret itself, so they round-trip through the API
+	// unredacted.
+	BindPasswordFile string `json:"bindPasswordFile,omitempty"`
+	BindPasswordEnv  string `json:"bindPasswordEnv,omitempty"`
 
 	// Search
 	BaseDN           string `json:"baseDN"`
@@ -100,6 +114,12 @@ type Config struct {
 	// Role assignment
 	DefaultRole  string             `json:"defaultRole"`  // role for users without group match
 	GroupRoleMap []GroupRoleMapping `json:"groupRoleMap"` // first match wins (admin > editor > viewer)
+
+	// GroupSync (v0.8.526) — periodic directory group→members snapshot.
+	// Independent of the login-time group lookup: this enumerates the
+	// in-scope groups and, per group, chain-searches their effective
+	// members, persisting the result to ClickHouse for O(1) authz.
+	GroupSync GroupSyncConfig `json:"groupSync"`
 }
 
 type GroupRoleMapping struct {
@@ -107,15 +127,51 @@ type GroupRoleMapping struct {
 	Role  string `json:"role"`  // admin | editor | viewer
 }
 
+// GroupSyncConfig is the persisted definition for the background LDAP/AD
+// group-membership sync (audit §4). All directory queries reuse the
+// parent Config's connection (dial + bind + TLS) — no second endpoint.
+type GroupSyncConfig struct {
+	Enabled bool `json:"enabled"`
+	// SyncInterval / Timeout are duration strings ("30m", "60s") so the
+	// system_settings JSON blob stays human-editable; parsed via
+	// time.ParseDuration with the defaults below.
+	SyncInterval string `json:"syncInterval"` // default 30m
+	Timeout      string `json:"timeout"`      // default 60s per full sync
+	// PageSize for SearchWithPaging — kept under AD's MaxPageSize (1000).
+	PageSize uint32 `json:"pageSize"` // default 500
+	// UsersBaseDN / UserFilter — the pre-filter narrowing the per-group
+	// chain USER search (resolveUserFilter-style: no {{username}}). The
+	// chain predicate (memberOf:…IN_CHAIN:=<groupDN>) is AND-ed on.
+	UsersBaseDN string `json:"usersBaseDN"`
+	UserFilter  string `json:"userFilter"` // default (objectClass=user)
+	// UserNameAttribute — the member identity written to ldap_groups.users.
+	UserNameAttribute string `json:"userNameAttribute"` // default sAMAccountName
+	// GroupsBaseDN / GroupFilter — where + what to enumerate for the group
+	// list. Empty GroupsBaseDN falls back to UsersBaseDN (audit §AÇIK-3:
+	// (objectClass=group) paged enumerate under the include scope).
+	GroupsBaseDN string `json:"groupsBaseDN"`
+	GroupFilter  string `json:"groupFilter"` // default (objectClass=group)
+	// IncludePrefixes / ExcludePrefixes — DN suffix-match whitelist /
+	// blacklist over enumerated groups. "prefix" is the OU-chain DN suffix
+	// (DNs read leaf→root as "CN=x,OU=y,DC=…"), so scope membership is a
+	// case-insensitive strings.HasSuffix(dn, prefix). Empty include = all.
+	IncludePrefixes []string `json:"includePrefixes"`
+	ExcludePrefixes []string `json:"excludePrefixes"`
+	// MaxGroupMembers — dev-group safety cap (audit §AÇIK-4). A group with
+	// more effective members is TRUNCATED (sorted, first N kept) + logged
+	// WARN + counted in Stats.Truncated. 0 → default 50000.
+	MaxGroupMembers int `json:"maxGroupMembers"`
+}
+
 // resolveUserFilter returns the filter actually used at search time.
 // Two cases:
-//   1. The configured filter contains {{username}} — substitute and use as-is.
-//   2. It does not — wrap it as a Dex-style additional filter, AND-ing
-//      a canonical OR clause that matches sAMAccountName / UPN / mail.
-//      This is how operators familiar with Dex's `userSearch.filter:
-//      "(objectclass=person)"` shorthand expect things to work; without
-//      this wrap, the filter matches every person and the dedup check
-//      fails with "user search returned N entries (filter too loose?)".
+//  1. The configured filter contains {{username}} — substitute and use as-is.
+//  2. It does not — wrap it as a Dex-style additional filter, AND-ing
+//     a canonical OR clause that matches sAMAccountName / UPN / mail.
+//     This is how operators familiar with Dex's `userSearch.filter:
+//     "(objectclass=person)"` shorthand expect things to work; without
+//     this wrap, the filter matches every person and the dedup check
+//     fails with "user search returned N entries (filter too loose?)".
 func resolveUserFilter(rawFilter, escapedUsername string) string {
 	if strings.Contains(rawFilter, "{{username}}") {
 		return strings.ReplaceAll(rawFilter, "{{username}}", escapedUsername)
@@ -174,6 +230,107 @@ func (c *Config) Normalize() {
 	if c.DefaultRole == "" {
 		c.DefaultRole = "viewer"
 	}
+	c.GroupSync.normalize()
+}
+
+// Group-sync defaults (v0.8.526).
+const (
+	defaultGroupSyncInterval     = 30 * time.Minute
+	defaultGroupSyncTimeout      = 60 * time.Second
+	defaultGroupSyncPageSize     = uint32(500)
+	defaultGroupSyncUserFilter   = "(objectClass=user)"
+	defaultGroupSyncGroupFilter  = "(objectClass=group)"
+	defaultGroupSyncUserNameAttr = "sAMAccountName"
+	defaultMaxGroupMembers       = 50000
+)
+
+// normalize fills group-sync defaults in place. Mirrors Config.Normalize
+// so a half-filled blob still produces a working sync definition.
+func (g *GroupSyncConfig) normalize() {
+	if g.PageSize == 0 {
+		g.PageSize = defaultGroupSyncPageSize
+	}
+	if strings.TrimSpace(g.UserFilter) == "" {
+		g.UserFilter = defaultGroupSyncUserFilter
+	}
+	if strings.TrimSpace(g.GroupFilter) == "" {
+		g.GroupFilter = defaultGroupSyncGroupFilter
+	}
+	if strings.TrimSpace(g.UserNameAttribute) == "" {
+		g.UserNameAttribute = defaultGroupSyncUserNameAttr
+	}
+	if g.MaxGroupMembers <= 0 {
+		g.MaxGroupMembers = defaultMaxGroupMembers
+	}
+}
+
+// IntervalDuration parses SyncInterval, falling back to 30m on empty /
+// invalid input.
+func (g GroupSyncConfig) IntervalDuration() time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(g.SyncInterval)); err == nil && d > 0 {
+		return d
+	}
+	return defaultGroupSyncInterval
+}
+
+// TimeoutDuration parses Timeout, falling back to 60s on empty / invalid.
+func (g GroupSyncConfig) TimeoutDuration() time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(g.Timeout)); err == nil && d > 0 {
+		return d
+	}
+	return defaultGroupSyncTimeout
+}
+
+// groupsSearchBase is the base DN for the (objectClass=group) enumerate:
+// explicit GroupsBaseDN wins, else UsersBaseDN, else the parent BaseDN.
+func (c Config) groupsSearchBase() string {
+	if b := strings.TrimSpace(c.GroupSync.GroupsBaseDN); b != "" {
+		return b
+	}
+	if b := strings.TrimSpace(c.GroupSync.UsersBaseDN); b != "" {
+		return b
+	}
+	return c.BaseDN
+}
+
+// usersSearchBase is the base DN for the per-group chain USER search.
+func (c Config) usersSearchBase() string {
+	if b := strings.TrimSpace(c.GroupSync.UsersBaseDN); b != "" {
+		return b
+	}
+	return c.BaseDN
+}
+
+// applyExternalSecrets resolves the file/env references (v0.8.526) into
+// the effective CACert / BindPassword on a COPY-friendly receiver. It
+// mutates the receiver in place; dial/bindAdmin call it on their own
+// value copy so the persisted config is never rewritten. Missing files
+// are a hard error (a misconfigured path must not silently fall through
+// to an empty/blob credential and mask the problem).
+func (c *Config) applyExternalSecrets() error {
+	if f := strings.TrimSpace(c.CAFile); f != "" {
+		pem, err := os.ReadFile(f)
+		if err != nil {
+			return fmt.Errorf("ldap caFile %q: %w", f, err)
+		}
+		c.CACert = string(pem)
+	}
+	switch {
+	case strings.TrimSpace(c.BindPasswordFile) != "":
+		f := strings.TrimSpace(c.BindPasswordFile)
+		pw, err := os.ReadFile(f)
+		if err != nil {
+			return fmt.Errorf("ldap bindPasswordFile %q: %w", f, err)
+		}
+		// Trim a single trailing newline — the common `echo secret > file`
+		// shape — but preserve any other whitespace the secret may embed.
+		c.BindPassword = strings.TrimRight(string(pw), "\r\n")
+	case strings.TrimSpace(c.BindPasswordEnv) != "":
+		if v, ok := os.LookupEnv(strings.TrimSpace(c.BindPasswordEnv)); ok {
+			c.BindPassword = v
+		}
+	}
+	return nil
 }
 
 // Sanitize returns a copy with the bind password cleared — used for
@@ -193,10 +350,10 @@ func (c *Config) Sanitize() Config {
 // LDAPUser is the lightweight projection of a directory entry that
 // the UI consumes (search results + provisioning picker).
 type LDAPUser struct {
-	DN          string   `json:"dn"`
-	Username    string   `json:"username"`
-	Email       string   `json:"email"`
-	DisplayName string   `json:"displayName"`
+	DN          string `json:"dn"`
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	DisplayName string `json:"displayName"`
 	// Department / Company — directory org info (v0.8.266, operator:
 	// "organizasyon, ad soyad, ekip bilgisi de gelsin"). AD names them
 	// department/company; inetOrgPerson uses ou/o — dirText resolves
@@ -204,7 +361,7 @@ type LDAPUser struct {
 	// Company the org column.
 	Department string   `json:"department,omitempty"`
 	Company    string   `json:"company,omitempty"`
-	Groups      []string `json:"groups,omitempty"`
+	Groups     []string `json:"groups,omitempty"`
 	// Photo — raw thumbnailPhoto (AD) / jpegPhoto (inetOrgPerson) bytes
 	// (v0.8.238). Never serialized: the directory-search UI JSON must
 	// not ship images; the login path persists it to the users row and
@@ -468,6 +625,9 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, c Conf
 // for TestConnection). Caller is responsible for Close().
 func dial(c Config) (*goldap.Conn, error) {
 	c.Normalize()
+	if err := c.applyExternalSecrets(); err != nil {
+		return nil, err
+	}
 	if c.Host == "" {
 		return nil, errors.New("ldap host not configured")
 	}
@@ -510,6 +670,13 @@ func dial(c Config) (*goldap.Conn, error) {
 // bindAdmin opens a connection and binds with the configured service
 // account. Returned conn must be closed by the caller.
 func bindAdmin(c Config) (*goldap.Conn, error) {
+	// Resolve file/env secret refs on our own copy before both the TLS
+	// (dial) and the bind read them. dial re-applies on its copy too;
+	// applyExternalSecrets is idempotent.
+	c.Normalize()
+	if err := c.applyExternalSecrets(); err != nil {
+		return nil, err
+	}
 	conn, err := dial(c)
 	if err != nil {
 		return nil, err
@@ -521,6 +688,18 @@ func bindAdmin(c Config) (*goldap.Conn, error) {
 		}
 	}
 	return conn, nil
+}
+
+// groupSyncSearcher opens + service-binds a connection for the group-sync
+// engine (v0.8.526). The returned *goldap.Conn satisfies ldapSearcher and
+// MUST be Close()d by the caller. One connection is reused for the group
+// enumerate + every per-group member search in a sync round.
+func (s *Service) groupSyncSearcher() (*goldap.Conn, error) {
+	c := s.rawConfig()
+	if !c.Enabled || c.Host == "" {
+		return nil, errors.New("ldap not enabled")
+	}
+	return bindAdmin(c)
 }
 
 // ── Operations ──────────────────────────────────────────────────────────────
@@ -693,13 +872,14 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]LDAPUs
 }
 
 // Authenticate runs the standard "search-then-bind" auth pattern:
-//   1. Service-bind (admin lookup credentials).
-//   2. Find the user by username (or email — `username` may be either,
-//      the configured UserSearchFilter handles it).
-//   3. Re-bind with the user's DN + entered password — that's the
-//      actual credential check.
-//   4. Resolve groups → role via the configured GroupRoleMap; fall
-//      back to DefaultRole.
+//  1. Service-bind (admin lookup credentials).
+//  2. Find the user by username (or email — `username` may be either,
+//     the configured UserSearchFilter handles it).
+//  3. Re-bind with the user's DN + entered password — that's the
+//     actual credential check.
+//  4. Resolve groups → role via the configured GroupRoleMap; fall
+//     back to DefaultRole.
+//
 // InspectResult is one directory entry with EVERY attribute the
 // service account can read — the discovery affordance behind
 // GET /api/settings/ldap/inspect (v0.8.430). Operator use-case:
@@ -708,8 +888,8 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]LDAPUs
 // [N bytes], never shipped raw.
 type InspectResult struct {
 	DN         string              `json:"dn"`
-	DeepestOU  string              `json:"deepestOu"`  // what teamAttribute="dn-ou" would yield
-	Team       string              `json:"team"`       // what the CURRENT config yields
+	DeepestOU  string              `json:"deepestOu"` // what teamAttribute="dn-ou" would yield
+	Team       string              `json:"team"`      // what the CURRENT config yields
 	Attributes map[string][]string `json:"attributes"`
 	// TeamCandidates (v0.8.523) — attribute başına tıkla-seç ekip
 	// çıkarım adayları (canlı önizlemeli); UI bunlardan birini seçince

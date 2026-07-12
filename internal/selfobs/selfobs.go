@@ -11,37 +11,41 @@
 //
 // Design choices:
 //
-//   • Opt-in via env. COREMETRY_SELF_OBS_OTLP_ENDPOINT empty → SDK
+//   - Opt-in via env. COREMETRY_SELF_OBS_OTLP_ENDPOINT empty → SDK
 //     not initialised; binary behaves exactly as before. Set it to
 //     `localhost:4317` (the docker-compose otel-collector) to turn
 //     on self-observability.
 //
-//   • One TracerProvider + one MeterProvider per process. They are
+//   - One TracerProvider + one MeterProvider per process. They are
 //     stored on the global otel package so otelhttp / otelgrpc /
 //     chstore.tracedConn pick them up without explicit plumbing.
 //
-//   • Resource attributes derived from runMode so each role
+//   - Resource attributes derived from runMode so each role
 //     surfaces as a distinct `service.name` on /services:
-//       - all:    coremetry-monolithic
-//       - api:    coremetry-api
-//       - ingest: coremetry-ingest
-//       - worker: coremetry-worker
+//
+//   - all:    coremetry-monolithic
+//
+//   - api:    coremetry-api
+//
+//   - ingest: coremetry-ingest
+//
+//   - worker: coremetry-worker
 //     `service.instance.id` is the hostname (so multiple replicas
 //     can be told apart on /services rows).
 //
-//   • Sampling default: ParentBased(TraceIDRatioBased(0.1)). If the
+//   - Sampling default: ParentBased(TraceIDRatioBased(0.1)). If the
 //     frontend's traceparent indicates "sampled", we follow; root
 //     spans the backend creates itself get sampled at 10%. Operator
 //     can override via COREMETRY_SELF_OBS_SAMPLE_RATE.
 //
-//   • Self-loop guard: this package is NEVER imported by code that
+//   - Self-loop guard: this package is NEVER imported by code that
 //     runs inside the OTLP receiver paths (`internal/otlp/*`). The
 //     receiver-side instrumentation is enabled only outside ingest
 //     mode — see main.go around `mode.ingest` for the gate. Without
 //     that, the ingester would emit spans about receiving spans,
 //     re-enter itself, and amplify.
 //
-//   • Metrics — runtime + process counters via go.opentelemetry.io/
+//   - Metrics — runtime + process counters via go.opentelemetry.io/
 //     contrib/instrumentation/runtime. Periodic export every 30s.
 //     Custom counters / histograms register against the package's
 //     global meter (returned by `Meter()`) so call sites don't
@@ -62,6 +66,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -77,11 +82,17 @@ const (
 )
 
 var (
-	enabled     bool
-	tracerSink  trace.Tracer
-	meterSink   metric.Meter
-	tpShutdown  func(context.Context) error
-	mpShutdown  func(context.Context) error
+	enabled bool
+	// Default to noop providers so Tracer() / Meter() are ALWAYS safe to
+	// call — before Init(), or when self-obs is disabled, or in unit tests
+	// that never boot the SDK. Init() overwrites these with the real
+	// pipelines. (Pre-v0.8.526 meterSink was a nil-embedding struct that
+	// panicked on the first instrument constructor; the first real Meter()
+	// caller — the LDAP group-sync engine — surfaced it.)
+	tracerSink trace.Tracer = noop.NewTracerProvider().Tracer("coremetry")
+	meterSink  metric.Meter = metricnoop.NewMeterProvider().Meter("coremetry")
+	tpShutdown func(context.Context) error
+	mpShutdown func(context.Context) error
 )
 
 // Init constructs both providers when COREMETRY_SELF_OBS_OTLP_ENDPOINT
@@ -95,7 +106,7 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	if endpoint == "" {
 		log.Printf("[selfobs] %s unset — self-observability disabled", envEndpoint)
 		tracerSink = noop.NewTracerProvider().Tracer("coremetry")
-		meterSink = noopMeter{}
+		meterSink = metricnoop.NewMeterProvider().Meter("coremetry")
 		return func(context.Context) error { return nil }
 	}
 	enabled = true
@@ -104,7 +115,7 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	if err != nil {
 		log.Printf("[selfobs] resource: %v — disabled", err)
 		tracerSink = noop.NewTracerProvider().Tracer("coremetry")
-		meterSink = noopMeter{}
+		meterSink = metricnoop.NewMeterProvider().Meter("coremetry")
 		return func(context.Context) error { return nil }
 	}
 
@@ -127,7 +138,7 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	if err != nil {
 		log.Printf("[selfobs] trace exporter: %v — disabled", err)
 		tracerSink = noop.NewTracerProvider().Tracer("coremetry")
-		meterSink = noopMeter{}
+		meterSink = metricnoop.NewMeterProvider().Meter("coremetry")
 		return func(context.Context) error { return nil }
 	}
 
@@ -151,7 +162,7 @@ func Init(ctx context.Context, mode, version string) func(context.Context) error
 	)
 	if err != nil {
 		log.Printf("[selfobs] metric exporter: %v — metrics off but traces on", err)
-		meterSink = noopMeter{}
+		meterSink = metricnoop.NewMeterProvider().Meter("coremetry")
 	} else {
 		mp := sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
@@ -258,9 +269,3 @@ func shutdownAll(ctx context.Context) error {
 	}
 	return fmt.Errorf("selfobs shutdown: %s", strings.Join(errs, "; "))
 }
-
-// noopMeter — minimal implementation we can return when the metric
-// exporter fails to construct. Each instrument constructor returns an
-// instrument that does nothing on Add/Record. Lets call sites use
-// `selfobs.Meter()` unconditionally without branching on enabled.
-type noopMeter struct{ metric.Meter }

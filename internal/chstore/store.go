@@ -81,6 +81,20 @@ type Store struct {
 	// and the raw-spans fallback.
 	hasDBStmtHashCol bool
 
+	// hasLdapUsernameCol records whether the `users` table carries the
+	// `ldap_username LowCardinality(String)` column (v0.8.526, LDAP group
+	// sync). Unlike op_group / series_fingerprint this is NOT a
+	// highVolumeTables ingest column — `users` is a Coremetry-owned state
+	// table (never operator-provisioned external Distributed), so the
+	// ALTER rides the normal alters slice + execDDL→adaptDDL ON CLUSTER
+	// and reaches the real table on every replica. The probe still gates
+	// the WRITE path defensively: ldap_username is written by
+	// TouchUserLogin on EVERY login (local + LDAP), so if the column were
+	// somehow absent a naked INSERT column list would break auth
+	// entirely. When false the INSERT/SELECT omit the column (LdapUsername
+	// stays "") and the identity-overlap read falls back to email-only.
+	hasLdapUsernameCol bool
+
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
 	// problem into an existing incident on a service that calls
@@ -298,11 +312,11 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	//     result sets — irrelevant on single-node setups but
 	//     harmless and improves big external CH clusters.
 	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: hosts,
-		Auth: clickhouse.Auth{Database: cfg.Database, Username: cfg.Username, Password: cfg.Password},
-		TLS:  tlsCfg,
-		Compression:     &clickhouse.Compression{Method: clickhouse.CompressionLZ4},
-		DialTimeout:     dialTimeout,
+		Addr:        hosts,
+		Auth:        clickhouse.Auth{Database: cfg.Database, Username: cfg.Username, Password: cfg.Password},
+		TLS:         tlsCfg,
+		Compression: &clickhouse.Compression{Method: clickhouse.CompressionLZ4},
+		DialTimeout: dialTimeout,
 		// v0.8.340 (HA audit H2) — the driver's default ReadTimeout is
 		// 300s: a CH that ACCEPTS the TCP connection and never answers
 		// (keeper pause, asymmetric partition) held every query — and
@@ -310,7 +324,7 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		// max_execution_time never fires when the query never executes.
 		// 30s covers the slowest legitimate reads (heatmap budget is 3s,
 		// bulk inserts single-digit seconds) with generous margin.
-		ReadTimeout: 30 * time.Second,
+		ReadTimeout:     30 * time.Second,
 		MaxOpenConns:    maxConns,
 		MaxIdleConns:    maxConns / 2,
 		ConnMaxLifetime: time.Hour,
@@ -386,7 +400,7 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.conn.Close() }
+func (s *Store) Close() error      { return s.conn.Close() }
 func (s *Store) Conn() driver.Conn { return s.conn }
 
 // ClusterName returns the configured CH cluster identifier (e.g.
@@ -490,9 +504,15 @@ func (s *Store) dropCombinedMV(ctx context.Context, mv string) error {
 
 func (s *Store) migrate(ctx context.Context) error {
 	sd, ld, md := s.ret.SpansDays, s.ret.LogsDays, s.ret.MetricsDays
-	if sd == 0 { sd = 30 }
-	if ld == 0 { ld = 30 }
-	if md == 0 { md = 7 }
+	if sd == 0 {
+		sd = 30
+	}
+	if ld == 0 {
+		ld = 30
+	}
+	if md == 0 {
+		md = 7
+	}
 
 	tables := []string{
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS spans (
@@ -566,10 +586,21 @@ func (s *Store) migrate(ctx context.Context) error {
 			-- v0.8.450 — son başarılı login anı (operatör isteği: Users
 			-- sayfasında görünür). Epoch(0) = hiç giriş yapmadı.
 			last_login_at DateTime64(9) DEFAULT toDateTime64(0, 9),
+			-- v0.8.526 — LDAP group sync: the directory sAMAccountName,
+			-- lowercased, persisted so the authz hot path can join a
+			-- group snapshot's members (sAMAccountName) to a Coremetry
+			-- user in O(1). Email stays the canonical identity; empty for
+			-- local/OIDC accounts. See hasLdapUsernameCol on the Store.
+			ldap_username LowCardinality(String) DEFAULT '',
 			version       UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY id`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
+
+		// v0.8.526 — LDAP/AD group-membership snapshot (state table, RMT +
+		// FINAL like users/saved_views). DDL + Upsert/Hydrate/tombstone +
+		// identity-overlap live in ldap_groups.go.
+		ldapGroupsDDL,
 
 		// RAG chunk deposu (v0.8.438) — doküman soru-cevap. DDL
 		// rag.go'da (ragChunksDDL) yaşar; içerik + embedding tek
@@ -1479,6 +1510,13 @@ func (s *Store) migrate(ctx context.Context) error {
 		// existing team column. Refreshed on each directory login.
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name String DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS org LowCardinality(String) DEFAULT ''`,
+		// v0.8.526 — LDAP group sync join key (see hasLdapUsernameCol). A
+		// plain state-table ALTER: `users` is Coremetry-owned, never an
+		// external Distributed wrapper, so execDDL→adaptDDL ON CLUSTER
+		// reaches every replica (the op_group external-Distributed skip
+		// branch is N/A here). The hasLdapUsernameCol probe below then
+		// keeps the auth-critical INSERT column list honest regardless.
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_username LowCardinality(String) DEFAULT ''`,
 		// v0.5.254 — Problem AI auto-explain. The background
 		// problemExplainer goroutine fills these for open critical
 		// problems within ~30s of opening; the UI surfaces the
@@ -1843,6 +1881,21 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 
+	// ldap_username probe (v0.8.526) — confirm the column reached the
+	// table the WRITE path inserts into. Mirrors the hasOpGroupCol shape:
+	// on a healthy Coremetry-managed `users` (single node, or cluster with
+	// ClusterName set) the ALTER above lands ON CLUSTER and this reads
+	// true. If it ever reads false (an unexpected shape / mid-rolling-
+	// deploy skew) the INSERT/SELECT drop the column so logins keep
+	// working. maybeCloseRows so a query error never nil-derefs Close()
+	// (v0.8.185 boot-panic discipline).
+	luRows, luErr := s.conn.Query(ctx, `SELECT ldap_username FROM users LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(luRows, luErr)
+	s.hasLdapUsernameCol = luErr == nil
+	if !s.hasLdapUsernameCol {
+		log.Printf("[chstore] `ldap_username` column not present on users (%v) — INSERT/SELECT omit it, LDAP group-sync identity overlap falls back to email-only", luErr)
+	}
+
 	// op_group — the normalized operation-shape column (group_id rel A,
 	// v0.8.172). EXPLICIT Go-written, NOT MATERIALIZED: convert.go computes
 	// it per-span via templater.NormalizeOperation and the spans INSERT
@@ -2052,8 +2105,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	// repo.go (GetServices). 200ms satisfied / 800ms tolerating is the
 	// industry-standard default; making them MV-baked means /api/services
 	// can serve 10s of thousands of services in sub-second time.
-	const apdexT = 200 * 1_000_000   // ns
-	const apdex4T = 800 * 1_000_000  // ns
+	const apdexT = 200 * 1_000_000  // ns
+	const apdex4T = 800 * 1_000_000 // ns
 	mvs := []string{
 		fmt.Sprintf(`CREATE MATERIALIZED VIEW IF NOT EXISTS service_summary_5m
 		 ENGINE = AggregatingMergeTree

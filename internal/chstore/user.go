@@ -10,7 +10,7 @@ type User struct {
 	ID           string `json:"id"`
 	Email        string `json:"email"`
 	PasswordHash string `json:"-"`
-	Role         string `json:"role"`         // admin | editor | viewer
+	Role         string `json:"role"` // admin | editor | viewer
 	Disabled     bool   `json:"disabled"`
 	AuthProvider string `json:"authProvider"` // local | oidc — drives "Change password" UI
 	// Team — free-text grouping the admin picks (e.g. "platform-sre",
@@ -18,13 +18,13 @@ type User struct {
 	// repeated values are cheap. Empty when unassigned; the
 	// users-list UI groups "Unassigned" separately so an admin
 	// can see who still needs labelling.
-	Team      string `json:"team"`
+	Team string `json:"team"`
 	// CustomRole — optional pointer into the auth.Service custom-role
 	// catalog. Only meaningful when Role == viewer; otherwise ignored
 	// (admin/editor get no further restriction). Empty = no custom
 	// role, unrestricted viewer.
 	CustomRole string `json:"customRole,omitempty"`
-	CreatedAt int64  `json:"createdAt"` // unix nanoseconds
+	CreatedAt  int64  `json:"createdAt"` // unix nanoseconds
 	// Photo — LDAP thumbnailPhoto/jpegPhoto bytes (v0.8.238), refreshed
 	// on each directory login; empty for local/OIDC accounts. Never
 	// serialized into user JSON — served by the dedicated photo
@@ -43,53 +43,81 @@ type User struct {
 	// Login yolları TouchUserLogin ile damgalar; whole-row replace
 	// gereği her Upsert taşır.
 	LastLoginAt int64 `json:"lastLoginAt"`
+	// LdapUsername — directory sAMAccountName, lowercased (v0.8.526).
+	// The join key between an LDAP group snapshot's members and this
+	// user; email stays the canonical identity. Set by loginViaLDAP,
+	// empty for local/OIDC accounts. Read-modify-write paths must carry
+	// it forward (whole-row replace). Only persisted/read when the store
+	// probed the column present (Store.hasLdapUsernameCol).
+	LdapUsername string `json:"ldapUsername,omitempty"`
+}
+
+// userSelectExpr is the shared column list for the single-row user
+// reads. ldap_username (v0.8.526) is appended only when the store probed
+// the column present, so an install that pre-dates it (or a transient
+// mid-deploy skew) still reads users cleanly.
+func (s *Store) userSelectExpr() string {
+	expr := `id, email, password_hash, role, disabled, auth_provider, team, custom_role,
+	       toUnixTimestamp64Nano(created_at), photo, full_name, org,
+	       toUnixTimestamp64Nano(last_login_at)`
+	if s.hasLdapUsernameCol {
+		expr += `, ldap_username`
+	}
+	return expr
+}
+
+// scanUserRow scans one user row produced by userSelectExpr. hasLdap must
+// match the flag used to build the projection.
+func scanUserRow(sc interface{ Scan(...any) error }, hasLdap bool) (*User, error) {
+	var u User
+	var disabled uint8
+	var photo string
+	dst := []any{&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider,
+		&u.Team, &u.CustomRole, &u.CreatedAt, &photo, &u.FullName, &u.Org, &u.LastLoginAt}
+	if hasLdap {
+		dst = append(dst, &u.LdapUsername)
+	}
+	if err := sc.Scan(dst...); err != nil {
+		return nil, err
+	}
+	u.Disabled = disabled != 0
+	u.Photo, u.HasPhoto = []byte(photo), photo != ""
+	return &u, nil
 }
 
 // GetUserByEmail returns the latest version of a user (ReplacingMergeTree FINAL).
 // Returns (nil, nil) when no row matches — callers treat that as "unknown user".
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at), photo, full_name, org,
-		       toUnixTimestamp64Nano(last_login_at)
+		SELECT `+s.userSelectExpr()+`
 		FROM users FINAL
 		WHERE email = ? AND disabled = 0
 		LIMIT 1`, email)
-	var u User
-	var disabled uint8
-	var photo string
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo, &u.FullName, &u.Org, &u.LastLoginAt); err != nil {
+	u, err := scanUserRow(row, s.hasLdapUsernameCol)
+	if err != nil {
 		// clickhouse-go returns sql.ErrNoRows analogue; surface as nil/nil.
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
 		return nil, err
 	}
-	u.Disabled = disabled != 0
-	u.Photo, u.HasPhoto = []byte(photo), photo != ""
-	return &u, nil
+	return u, nil
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id string) (*User, error) {
 	row := s.conn.QueryRow(ctx, `
-		SELECT id, email, password_hash, role, disabled, auth_provider, team, custom_role,
-		       toUnixTimestamp64Nano(created_at), photo, full_name, org,
-		       toUnixTimestamp64Nano(last_login_at)
+		SELECT `+s.userSelectExpr()+`
 		FROM users FINAL
 		WHERE id = ? AND disabled = 0
 		LIMIT 1`, id)
-	var u User
-	var disabled uint8
-	var photo string
-	if err := row.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &u.AuthProvider, &u.Team, &u.CustomRole, &u.CreatedAt, &photo, &u.FullName, &u.Org, &u.LastLoginAt); err != nil {
+	u, err := scanUserRow(row, s.hasLdapUsernameCol)
+	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
 		return nil, err
 	}
-	u.Disabled = disabled != 0
-	u.Photo, u.HasPhoto = []byte(photo), photo != ""
-	return &u, nil
+	return u, nil
 }
 
 func (s *Store) CountUsers(ctx context.Context) (int64, error) {
@@ -116,7 +144,16 @@ func (s *Store) TouchUserLogin(ctx context.Context, userID string) error {
 }
 
 func (s *Store) UpsertUser(ctx context.Context, u User) error {
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users (id, email, password_hash, role, disabled, auth_provider, team, custom_role, photo, full_name, org, last_login_at)")
+	// ldap_username joins the column list only when the store probed it
+	// present. This is the auth-critical guard: UpsertUser runs on EVERY
+	// login via TouchUserLogin, so a naked column list that named an
+	// absent column would break all logins (the v0.8.186 code-16 hazard
+	// class, applied to the write path that matters most).
+	cols := "id, email, password_hash, role, disabled, auth_provider, team, custom_role, photo, full_name, org, last_login_at"
+	if s.hasLdapUsernameCol {
+		cols += ", ldap_username"
+	}
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO users ("+cols+")")
 	if err != nil {
 		return fmt.Errorf("prepare users: %w", err)
 	}
@@ -135,7 +172,12 @@ func (s *Store) UpsertUser(ctx context.Context, u User) error {
 	if u.Role != "viewer" {
 		custom = ""
 	}
-	if err := batch.Append(u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team, custom, string(u.Photo), u.FullName, u.Org, time.Unix(0, u.LastLoginAt).UTC()); err != nil {
+	args := []any{u.ID, u.Email, u.PasswordHash, u.Role, dis, provider, u.Team, custom,
+		string(u.Photo), u.FullName, u.Org, time.Unix(0, u.LastLoginAt).UTC()}
+	if s.hasLdapUsernameCol {
+		args = append(args, u.LdapUsername)
+	}
+	if err := batch.Append(args...); err != nil {
 		return fmt.Errorf("append user: %w", err)
 	}
 	return batch.Send()

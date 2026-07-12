@@ -29,7 +29,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/copilot"
-	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/correlator"
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/evaluator"
@@ -41,6 +40,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/notify"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
+	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/selfobs"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/templater"
@@ -807,10 +807,10 @@ func main() {
 	// who disabled AI in Settings stays disabled across a restart.
 	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL, false, true)
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
-	if err := ragSvc.LoadPersisted(ctx, store); err != nil {
-		log.Printf("[rag] load persisted: %v", err)
-	}
-	go ragSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+		if err := ragSvc.LoadPersisted(ctx, store); err != nil {
+			log.Printf("[rag] load persisted: %v", err)
+		}
+		go ragSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
 	go copilotSvc.StartConfigRefresh(ctx, store, 30*time.Second)
@@ -838,6 +838,21 @@ func main() {
 		c := ldapSvc.Snapshot()
 		log.Printf("[ldap] enterprise auth enabled (host=%s:%d tls=%v startTLS=%v baseDN=%s)",
 			c.Host, c.Port, c.UseTLS, c.StartTLS, c.BaseDN)
+	}
+
+	// ── LDAP group-membership sync (v0.8.526) ────────────────────────────────
+	// One engine per process. Boot-hydrate + a 30s CH re-hydrate run on
+	// EVERY pod so api/follower pods track the group snapshot the leader
+	// writes. The actual directory sync (writes CH) runs only on the
+	// worker leader (runLdapGroupSync below). Wired into the API server via
+	// SetLdapGroupSync after NewServer.
+	ldapGroupSync := ldap.NewSyncEngine(ldapSvc, store)
+	if err := ldapGroupSync.Hydrate(ctx); err != nil {
+		log.Printf("[ldap-groupsync] boot hydrate: %v", err)
+	}
+	go ldapGroupSync.StartHydrateRefresh(ctx, 30*time.Second)
+	if mode.worker {
+		go runLdapGroupSync(ctx, ldapGroupSync, lockImpl)
 	}
 
 	// ── External Tempo backend (optional fallback for trace-by-id) ───────────
@@ -892,6 +907,7 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetRAG(ragSvc)
+	srv.SetLdapGroupSync(ldapGroupSync) // v0.8.526 — LDAP group-sync admin surface + snapshot reads
 	// v0.8.444 — cmk_ servis token'ları: cache'i bağla (GenAI Studio →
 	// MCP kimliği). Adapter chstore→auth tip köprüsü.
 	authSvc.EnableAPITokens(ctx, tokenSourceAdapter{store})
@@ -1199,6 +1215,42 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 	}
 
 	tick() // immediate backfill on boot (idempotent — non-leader skips)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			tick()
+		}
+	}
+}
+
+// runLdapGroupSync runs the periodic LDAP/AD group-membership sync on the
+// worker leader (v0.8.526). Leader-gated like runExceptionRefresher so a
+// multi-pod install syncs the directory exactly once per interval; the
+// engine's own atomic snapshot + the 30s CH re-hydrate on every pod fan
+// the result out. A failed round is fail-stale: the prior snapshot + last
+// CH state survive (the engine never swaps its pointer on error).
+func runLdapGroupSync(ctx context.Context, engine *ldap.SyncEngine, lock cache.Lock) {
+	const lockKey = "coremetry:lock:ldap-groupsync"
+	interval := engine.SyncInterval()
+	leader := cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval))
+	leader.Start(ctx)
+
+	tick := func() {
+		if !leader.IsLeader() || !engine.Enabled() {
+			return
+		}
+		cctx, cancel := context.WithTimeout(ctx, engine.SyncTimeout())
+		defer cancel()
+		if _, err := engine.Sync(cctx); err != nil {
+			log.Printf("[ldap-groupsync] sync: %v", err)
+		}
+	}
+
+	tick() // one immediate round on boot (idempotent; non-leader skips)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -1556,7 +1608,6 @@ func (r aiCallRecorder) RecordCall(ctx context.Context, c copilot.CallRecord) {
 		log.Printf("[ai-obs] insert call: %v", err)
 	}
 }
-
 
 // tokenSourceAdapter — chstore.APIToken → auth.TokenInfo köprüsü
 // (auth chstore'u import edemez; v0.8.444).

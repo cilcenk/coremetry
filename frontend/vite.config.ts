@@ -50,7 +50,12 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('react-router')) return 'router';
-            if (id.includes('@tanstack')) return 'tanstack';
+            // v0.8.514 (perf raporu #17) — kural daraltıldı: react-virtual
+            // yalnız VirtualList/VirtualTable tüketiyor; geniş '@tanstack'
+            // eşleşmesi onu da eager 'tanstack' chunk'ına itiyordu. Artık
+            // yalnız query çekirdeği eager; virtual, kullanan route
+            // chunk'larına taşınır (Rollup default'u).
+            if (id.includes('@tanstack/query-core') || id.includes('@tanstack/react-query')) return 'tanstack';
             if (id.includes('uplot')) return 'charts';
             if (id.includes('@opentelemetry')) return 'otel';
             // v0.8.477 (perf dalga-2) — zone.js yalnız browserOtel'in

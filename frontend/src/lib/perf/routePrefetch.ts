@@ -32,7 +32,16 @@ const importers: Record<string, () => Promise<unknown>> = {
   '/explore':    () => import('@/pages/Explore'),
   '/inbox':      () => import('@/pages/Inbox'),
   '/incidents':  () => import('@/pages/Incidents'),
-  '/profiling':  () => import('@/pages/Profiling'),
+  // v0.8.513 (perf raporu #16) — triage/alerting rotaları eksikti:
+  // Problems/Anomalies/Alerts/SLOs/Runbooks'a İLK tıklama chunk RTT'si
+  // ödüyordu. Specifier'lar App.tsx'in lazy()'leriyle birebir.
+  // '/profiling' kaldırıldı — sidebar'dan gizli (v0.8.489), hover
+  // kaynağı yok; gerekirse gerçek navigasyon yüklemeye devam eder.
+  '/problems':   () => import('@/features/anomalies'),
+  '/anomalies':  () => import('@/features/anomalies/AnomalyStreamsPage'),
+  '/alerts':     () => import('@/pages/Alerts'),
+  '/slos':       () => import('@/pages/Slos'),
+  '/runbooks':   () => import('@/pages/Runbooks'),
 };
 
 const warmed = new Set<string>();

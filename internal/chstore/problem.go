@@ -1096,6 +1096,59 @@ func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time
 // notifications, problem still in flight) — so the v0.5.83
 // bulk-ack flow doesn't accidentally make the evaluator open
 // a duplicate Problem row on the next tick.
+// OpenProblemKey — OpenProblemsSnapshot map anahtarı. Dışa açık:
+// evaluator aynı anahtarla lookup yapar (tablo-testli).
+func OpenProblemKey(ruleID, service string) string { return ruleID + "|" + service }
+
+// reduceLatestProblem — aynı (rule,service) anahtarına düşen satırlardan
+// started_at'i en yeni olan kazanır (FindOpenProblem'ın ORDER BY
+// started_at DESC LIMIT 1 semantiğinin map karşılığı). Saf — testli.
+func reduceLatestProblem(m map[string]*Problem, p *Problem) {
+	k := OpenProblemKey(p.RuleID, p.Service)
+	if cur, ok := m[k]; ok && cur.StartedAt >= p.StartedAt {
+		return
+	}
+	m[k] = p
+}
+
+// OpenProblemsSnapshot returns every open/acknowledged problem keyed by
+// (rule_id|service) in ONE FINAL scan. v0.8.520 (perf raporu #9): the
+// evaluator called FindOpenProblem once per (rule, service) pair —
+// ~657 nokta FINAL sorgusu/tick prod'da — hepsi aynı küçük state
+// tablosunu okuyor. Tick başında tek snapshot + map lookup.
+func (s *Store) OpenProblemsSnapshot(ctx context.Context) (map[string]*Problem, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT id, rule_id, rule_name, severity, service, metric,
+		       value, threshold, status, description, assignee,
+		       toUnixTimestamp64Nano(started_at),
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+		FROM problems FINAL
+		WHERE status IN ('open', 'acknowledged')
+		LIMIT 50000
+		SETTINGS max_execution_time = 20`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]*Problem{}
+	for rows.Next() {
+		var p Problem
+		var resolvedAt *time.Time
+		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
+			return nil, err
+		}
+		if resolvedAt != nil {
+			ns := resolvedAt.UnixNano()
+			p.ResolvedAt = &ns
+		}
+		reduceLatestProblem(out, &p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*Problem, error) {
 	var p Problem
 	var resolvedAt *time.Time

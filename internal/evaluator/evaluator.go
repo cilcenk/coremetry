@@ -325,6 +325,15 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	// consumes the maps below. See prefetch.go.
 	pre := prefetchMeasures(ctx, e.store, rules, time.Now())
 
+	// v0.8.520 (perf raporu #9) — açık problem seti tick başında TEK
+	// FINAL taramayla çekilir; evaluateOne map'ten okur. Snapshot
+	// hatasında nil geçer, evaluateOne nokta sorgusuna düşer.
+	openSnap, snapErr := e.store.OpenProblemsSnapshot(ctx)
+	if snapErr != nil {
+		log.Printf("[evaluator] open-problems snapshot: %v (nokta sorgusuna düşülüyor)", snapErr)
+		openSnap = nil
+	}
+
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
@@ -340,7 +349,7 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 			continue
 		}
 		for _, svc := range ruleEvalTargets(r, serviceNames) {
-			e.evaluateOne(ctx, r, svc, pre)
+			e.evaluateOne(ctx, r, svc, pre, openSnap)
 		}
 	}
 
@@ -468,7 +477,7 @@ func ruleEvalTargets(r chstore.AlertRule, serviceNames []string) []string {
 	return serviceNames
 }
 
-func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string, pre *tickMeasures) {
+func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string, pre *tickMeasures, openSnap map[string]*chstore.Problem) {
 	// Saved-search log alerts (v0.5.242) bypass the per-service
 	// span-metric path entirely. The KQL itself carries any
 	// service / pod / level filter the operator wants; the
@@ -590,7 +599,16 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 		e.clearBreach(ctx, key)
 	}
 
-	open, err := e.store.FindOpenProblem(ctx, r.ID, service)
+	// v0.8.520 — snapshot varsa map lookup; yoksa (snapshot hatası)
+	// eski nokta sorgusu. Anahtar semantiği FindOpenProblem'la birebir
+	// (reduceLatestProblem, chstore tablo-testli).
+	var open *chstore.Problem
+	var err error
+	if openSnap != nil {
+		open = openSnap[chstore.OpenProblemKey(r.ID, service)]
+	} else {
+		open, err = e.store.FindOpenProblem(ctx, r.ID, service)
+	}
 	hasOpen := err == nil && open != nil && open.ID != ""
 
 	switch {

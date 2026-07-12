@@ -196,7 +196,7 @@ export function LDAPTab() {
             herkes için üst division ("TEKNOLOJİ") geliyordu çünkü AD bunu
             department'ta tutuyor; alt ekibin HANGİ attribute'ta olduğunu
             görmek için bir kullanıcının tüm directory attribute'larını dök. */}
-        <InspectPanel />
+        <InspectPanel onPick={(attr, pattern) => update({ teamAttribute: attr, teamRegex: pattern })} />
 
         {/* ── Section 3: Groups ──────────────────────────────────────── */}
         <SectionTitle>Group lookup (optional)</SectionTitle>
@@ -362,10 +362,14 @@ function removeMapping(cfg: LDAPConfig, set: (c: LDAPConfig) => void, i: number)
 // attribute'larını listeler; "Team attribute" için doğru alanı seçmeden
 // önce nereye bakacağını gösterir. Salt-okunur, isteğe bağlı çağrı —
 // liste render'ında hiçbir fetch yok.
-function InspectPanel() {
+// v0.8.523 — onPick: bir ekip adayına tıklanınca Team attribute +
+// Team regex form alanlarını doldurur (operatör: "regex yazmayayım,
+// UI'dan seçeyim"). Kaydet'e basmak yine operatörde.
+function InspectPanel({ onPick }: { onPick: (attr: string, pattern: string) => void }) {
   const [u, setU] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [picked, setPicked] = useState('');
   const [res, setRes] = useState<Awaited<ReturnType<typeof api.ldapInspect>> | null>(null);
 
   const run = async () => {
@@ -408,14 +412,33 @@ function InspectPanel() {
               dn-ou verirdi: <b className="mono">{res.deepestOu || '—'}</b>
             </span>
           </div>
-          <div className="table-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+          {picked && (
+            <div style={{ fontSize: 12, color: 'var(--ok)', marginBottom: 6 }}>
+              ✓ Seçildi: <b className="mono">{picked}</b> — yukarıdaki Team attribute/regex
+              alanları dolduruldu; <b>Kaydet</b>'e basıp çıkış/giriş yapınca uygulanır.
+            </div>
+          )}
+          <div className="table-wrap" style={{ maxHeight: 360, overflowY: 'auto' }}>
             <table>
-              <thead><tr><th>Attribute</th><th>Değer(ler)</th></tr></thead>
+              <thead><tr><th>Attribute</th><th>Değer(ler)</th><th>Ekip adayları — tıkla, seç</th></tr></thead>
               <tbody>
                 {Object.entries(res.attributes).sort(([a], [b]) => a.localeCompare(b)).map(([k, vs]) => (
                   <tr key={k}>
                     <td className="mono" style={{ whiteSpace: 'nowrap', fontSize: 11 }}>{k}</td>
                     <td className="mono" style={{ fontSize: 11, overflowWrap: 'anywhere' }}>{vs.join(' · ')}</td>
+                    <td style={{ fontSize: 11 }}>
+                      {/* v0.8.523 — sunucu ürettiği canlı-önizlemeli adaylar:
+                          operatör ÇIKAN DEĞERİ görür, tıklar; regex arkada. */}
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {(res.teamCandidates?.[k] ?? []).map(c => (
+                          <Button key={c.pattern || 'raw'} variant="secondary" size="sm"
+                            title={`${c.label}${c.pattern ? ` — regex: ${c.pattern}` : ''}`}
+                            onClick={() => { onPick(k, c.pattern); setPicked(c.extracted); }}>
+                            {c.extracted.length > 40 ? c.extracted.slice(0, 40) + '…' : c.extracted}
+                          </Button>
+                        ))}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

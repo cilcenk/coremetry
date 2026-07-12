@@ -711,6 +711,10 @@ type InspectResult struct {
 	DeepestOU  string              `json:"deepestOu"`  // what teamAttribute="dn-ou" would yield
 	Team       string              `json:"team"`       // what the CURRENT config yields
 	Attributes map[string][]string `json:"attributes"`
+	// TeamCandidates (v0.8.523) — attribute başına tıkla-seç ekip
+	// çıkarım adayları (canlı önizlemeli); UI bunlardan birini seçince
+	// TeamAttribute+TeamRegex otomatik dolar.
+	TeamCandidates map[string][]TeamCandidate `json:"teamCandidates,omitempty"`
 }
 
 // InspectUser finds one user (same filter the login path uses) and
@@ -755,11 +759,23 @@ func (s *Service) InspectUser(ctx context.Context, username string) (*InspectRes
 		}
 		attrs[a.Name] = vals
 	}
+	// v0.8.523 — uygun (tek-değerli-vari, metin) attribute'lar için
+	// tıkla-seç ekip adayları üret.
+	cands := map[string][]TeamCandidate{}
+	for name, vals := range attrs {
+		if !candidateEligible(vals) {
+			continue
+		}
+		if c := TeamCandidates(vals[0]); len(c) > 0 {
+			cands[name] = c
+		}
+	}
 	return &InspectResult{
-		DN:         e.DN,
-		DeepestOU:  deepestOU(e.DN),
-		Team:       teamFor(e, c),
-		Attributes: attrs,
+		DN:             e.DN,
+		DeepestOU:      deepestOU(e.DN),
+		Team:           teamFor(e, c),
+		Attributes:     attrs,
+		TeamCandidates: cands,
 	}, nil
 }
 

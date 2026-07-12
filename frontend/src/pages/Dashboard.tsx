@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -34,6 +34,22 @@ function Inner() {
   const startInEdit = sp.get('edit') === '1';
 
   const [range, setRange] = useUrlRange('30m');
+  // Stable drag-to-zoom handler (v0.8.520). Passing a fresh arrow here rode
+  // down through every panel to MultiLineChart; the primitive now tracks onZoom
+  // by presence, but keeping this referentially stable also spares the panel
+  // subtree a needless re-render. setRange is itself stable (useUrlRange) and
+  // the closure captures no `range`, so there's no stale-window risk.
+  const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
+    // Dynatrace-style click-drag-to-zoom: dragging a horizontal range on any
+    // panel updates the dashboard's time range so every panel re-fetches for
+    // the new window. Without this the chart visually zoomed but the metric
+    // queries still covered the full original window — confusing.
+    setRange({
+      preset: 'custom',
+      fromMs: Math.round(fromUnixSec * 1000),
+      toMs: Math.round(toUnixSec * 1000),
+    });
+  }, [setRange]);
   const [doc, setDoc] = useState<Dashboard | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Dashboard | null>(null);
@@ -334,19 +350,7 @@ function Inner() {
             onEditPanel={setEditingPanel}
             onDeletePanel={deletePanel}
             onMovePanel={movePanel}
-            onZoom={(fromUnixSec, toUnixSec) => {
-              // Dynatrace-style click-drag-to-zoom: dragging a
-              // horizontal range on any panel updates the
-              // dashboard's time range so every panel re-fetches
-              // for the new window. Without this the chart
-              // visually zoomed but the metric queries still
-              // covered the full original window — confusing.
-              setRange({
-                preset: 'custom',
-                fromMs: Math.round(fromUnixSec * 1000),
-                toMs: Math.round(toUnixSec * 1000),
-              });
-            }}
+            onZoom={handleZoom}
             dashboardId={id}
             bundlePanelData={bundlePanelData} />
         )}

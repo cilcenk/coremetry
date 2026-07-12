@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { escapeHTML } from '@/lib/utils';
 import type { SpanMetricSeries } from '@/lib/types';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { placeTooltip } from '@/lib/chartTooltip';
+import { useThemeTick } from '@/lib/useThemeTick';
+import { chartBuildSignature } from '@/lib/chartBuildSig';
 
 // Re-exported so existing importers (TimeSeriesPanel) keep working after the
 // placement logic moved into the pure, unit-tested lib/chartTooltip module.
@@ -90,6 +92,62 @@ function foldTopN(series: SpanMetricSeries[], unit: string | undefined, n = 8): 
       .map(([time, sum]) => ({ time, value: mean ? sum / (cntByTime.get(time) || 1) : sum })),
   };
   return [...keep, others];
+}
+
+// computeChartData (v0.8.520) — pure data prep shared by the build effect (the
+// initial plot) AND the setData fast-path. Folds the tail, shifts the compare
+// window, unions the time axis, and aligns every series to it. No DOM / theme
+// reads live here (colors are resolved in the build effect), so it runs inside
+// a useMemo keyed on the DATA inputs only: a 30s poll recomputes this once, and
+// its output either seeds a rebuild (labels changed) or flows through setData
+// (values changed, structure identical).
+interface ChartData {
+  eff: SpanMetricSeries[];
+  allSeries: SpanMetricSeries[];
+  labels: string[];            // allSeries labels, in order (raw, pre-suffix)
+  data: uPlot.AlignedData;
+  compareEnabled: boolean;
+}
+function computeChartData(
+  series: SpanMetricSeries[],
+  unit: string | undefined,
+  compareSeries: SpanMetricSeries[] | undefined,
+  compareOffsetNs: number | undefined,
+): ChartData {
+  const compareEnabled = (compareSeries?.length ?? 0) > 0 && (compareOffsetNs ?? 0) > 0;
+  // Fold the long tail into "others" so >8-series charts stay legible.
+  const eff = foldTopN(series, unit);
+
+  // Shift compare-series timestamps forward by the offset so a point from
+  // "24h ago" lands at the same X position as the matching current-period
+  // point ("where the line was at this same time-of-day yesterday").
+  const offsetNs = compareEnabled ? (compareOffsetNs ?? 0) : 0;
+  const shiftedCompare: SpanMetricSeries[] = compareEnabled
+    ? (compareSeries ?? []).map(s => ({
+        ...s,
+        points: s.points.map(p => ({ ...p, time: p.time + offsetNs })),
+      }))
+    : [];
+
+  // Unified time axis (union of bucket timestamps across every series,
+  // including the shifted compare set). uPlot consumes this as a single x
+  // array shared by all y arrays.
+  const allTimes = new Set<number>();
+  eff.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
+  shiftedCompare.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
+  const times = [...allTimes].sort((a, b) => a - b);
+  const xs = times.map(t => t / 1e9); // ns → unix seconds
+
+  // Per-series y values aligned to the union x axis. Missing points become
+  // null → uPlot draws a gap.
+  const allSeries = [...eff, ...shiftedCompare];
+  const labels = allSeries.map(s => (s.groupKey.length ? s.groupKey.join(' / ') : 'value'));
+  const ySeries: (number | null)[][] = allSeries.map(s => {
+    const valByTime = new Map(s.points.map(p => [p.time, p.value]));
+    return times.map(t => valByTime.get(t) ?? null);
+  });
+  const data: uPlot.AlignedData = [xs, ...ySeries] as uPlot.AlignedData;
+  return { eff, allSeries, labels, data, compareEnabled };
 }
 
 export function MultiLineChart({
@@ -188,50 +246,67 @@ export function MultiLineChart({
   // around the chart.
   const visibleRef = useRef<boolean[]>([]);
 
+  // onZoom held in a ref (v0.8.520) so the once-per-build setSelect hook always
+  // calls the CURRENT drag-zoom callback. Callers pass a fresh arrow each render
+  // (Dashboard/Service/Endpoints) — tracking onZoom by identity in the build
+  // deps destroyed+recreated the plot on every parent render (canvas flicker,
+  // lost cursor). Now the build deps track PRESENCE only (!!onZoom, via the
+  // signature); the live callback flows through here. Same pattern as
+  // bucketClickRef / onLegendClickRef above.
+  const onZoomRef = useRef(onZoom);
+  onZoomRef.current = onZoom;
+
+  // Theme tick — a data-theme toggle must re-resolve the canvas CSS-var colors,
+  // which only happens on a rebuild. So the theme counter is a BUILD dep (never
+  // the setData fast-path): a toggle re-creates the plot with fresh hex.
+  const themeTick = useThemeTick();
+
+  // Memoised data bundle — the single prep pass feeding BOTH the build effect
+  // and the setData fast-path. Keyed on the data inputs only, so a poll (fresh
+  // `series` identity) recomputes it exactly once. bundleRef exposes the live
+  // bundle to the build effect's once-registered hooks without listing data in
+  // the build deps (which would defeat the fast-path).
+  const bundle = useMemo(
+    () => computeChartData(series, unit, compareSeries, compareOffsetNs),
+    [series, unit, compareSeries, compareOffsetNs],
+  );
+  const bundleRef = useRef(bundle);
+  bundleRef.current = bundle;
+  // Row-index → operation label, for the legend click handler + the controlled-
+  // selection effect. Set from the bundle each render so both stay correct even
+  // on a data-only update that doesn't rebuild.
+  labelsRef.current = bundle.labels;
+
+  // Build signature — the pure "rebuild vs setData" seam. Everything that, when
+  // changed, forces a full uPlot re-create (structure, axes, hooks, overlays).
+  // A data-only poll leaves this string identical → the build effect below
+  // doesn't run and the fast-path takes over. See lib/chartBuildSig.ts.
+  const buildSig = chartBuildSignature({
+    labels: bundle.labels,
+    unit, height, syncKey, logScale,
+    hasZoom: !!onZoom,
+    hasBucketClick: !!onBucketClick,
+    compareOffsetNs, compareLabel,
+    deploys, thresholds,
+  });
+
+  // Build / re-create effect (v0.8.520). Runs ONLY when the build signature,
+  // the colorOf override, or the theme flips — NOT on a data-only poll (that
+  // rides the setData fast-path below). Reads the current data bundle through
+  // bundleRef so a rebuild always paints fresh data without listing it as a dep.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     plotRef.current?.destroy();
     plotRef.current = null;
-    // visibleRef tracks BOTH current and compare series so the
-    // legend toggle still works on either set. Compare lines
-    // sit after current lines in the series array.
-    const compareEnabled = (compareSeries?.length ?? 0) > 0 && (compareOffsetNs ?? 0) > 0;
-    // Fold the long tail into "others" so >8-series charts stay legible.
-    const eff = foldTopN(series, unit);
-    visibleRef.current = [...eff.map(() => true), ...(compareSeries ?? []).map(() => true)];
+    const { eff, allSeries, data, compareEnabled } = bundleRef.current;
+    // visibleRef tracks BOTH current and compare series so the legend toggle
+    // still works on either set (compare lines sit after current lines). A
+    // rebuild resets isolation to all-visible; the data-only fast-path
+    // deliberately preserves it (setData keeps series `show` flags), so an
+    // isolated view now survives a 30s poll.
+    visibleRef.current = allSeries.map(() => true);
     if (eff.length === 0 && !compareEnabled) return;
-
-    // Shift compare-series timestamps forward by the offset so
-    // a point from "24h ago" lands at the same X position as
-    // the matching current-period point. The visual story is
-    // "where the line was at this same time-of-day yesterday".
-    const offsetNs = compareEnabled ? (compareOffsetNs ?? 0) : 0;
-    const shiftedCompare: SpanMetricSeries[] = compareEnabled
-      ? (compareSeries ?? []).map(s => ({
-          ...s,
-          points: s.points.map(p => ({ ...p, time: p.time + offsetNs })),
-        }))
-      : [];
-
-    // Unified time axis (union of bucket timestamps across
-    // every series, including the shifted compare set). uPlot
-    // consumes this as a single x array shared by all y arrays.
-    const allTimes = new Set<number>();
-    eff.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
-    shiftedCompare.forEach(s => s.points.forEach(p => allTimes.add(p.time)));
-    const times = [...allTimes].sort((a, b) => a - b);
-    const xs = times.map(t => t / 1e9); // ns → unix seconds
-
-    // Per-series y values aligned to the union x axis. Missing
-    // points become null → uPlot draws a gap.
-    const allSeries = [...eff, ...shiftedCompare];
-    // Row-index → operation label, for the legend click handler.
-    labelsRef.current = allSeries.map(s => (s.groupKey.length ? s.groupKey.join(' / ') : 'value'));
-    const ySeries: (number | null)[][] = allSeries.map(s => {
-      const valByTime = new Map(s.points.map(p => [p.time, p.value]));
-      return times.map(t => valByTime.get(t) ?? null);
-    });
 
     const css = getComputedStyle(document.documentElement);
     const text3 = css.getPropertyValue('--text3').trim() || '#484f58';
@@ -273,8 +348,6 @@ export function MultiLineChart({
       if (cnt === 0) return { Last: '—', Min: '—', Max: '—', Avg: '—' };
       return { Last: fmt1(last as number), Min: fmt1(mn), Max: fmt1(mx), Avg: fmt1(sum / cnt) };
     };
-
-    const data: uPlot.AlignedData = [xs, ...ySeries] as uPlot.AlignedData;
 
     const opts: uPlot.Options = {
       // clientWidth is sometimes 0 at first paint (StrictMode
@@ -422,7 +495,7 @@ export function MultiLineChart({
             const x0 = u.posToVal(sel.left, 'x');
             const x1 = u.posToVal(sel.left + sel.width, 'x');
             if (!isFinite(x0) || !isFinite(x1)) return;
-            onZoom(Math.min(x0, x1), Math.max(x0, x1));
+            onZoomRef.current?.(Math.min(x0, x1), Math.max(x0, x1));
             // Reset the visual selection after the parent
             // takes over the new range — otherwise the grey
             // band sticks around until the next click.
@@ -616,12 +689,17 @@ export function MultiLineChart({
             // in the Chart.js tooltip.
             type Row = { label: string; color: string; v: number };
             const rows: Row[] = [];
-            for (let i = 0; i < eff.length; i++) {
+            // Live eff — the fast-path may have swapped the data without a
+            // rebuild. Count + labels are guaranteed unchanged by the build
+            // signature, so this only ever reads the current window's groupKeys
+            // while u.data supplies the fresh values.
+            const effRows = bundleRef.current.eff;
+            for (let i = 0; i < effRows.length; i++) {
               const yArr = u.data[i + 1];
               if (!yArr) continue;
               const v = yArr[idx];
               if (v == null) continue;
-              const s = eff[i];
+              const s = effRows[i];
               const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';
               rows.push({ label, color: colorFor(label), v: v as number });
             }
@@ -722,13 +800,32 @@ export function MultiLineChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-    // onBucketClick is intentionally tracked by PRESENCE only
-    // (!!onBucketClick), not identity — the live callback is read
-    // through bucketClickRef so passing a fresh arrow each render
-    // doesn't churn a chart rebuild. Toggling the affordance
-    // on/off (prop added/removed) does rebuild, which is correct
-    // because the click listener + cursor style flip with it.
-  }, [series, unit, height, deploys, thresholds, syncKey, onZoom, compareSeries, compareOffsetNs, compareLabel, logScale, !!onBucketClick, colorOf]);
+    // Deps (v0.8.520): the pure build signature (series structure + unit +
+    // height + overlays + zoom/bucket PRESENCE + compare alignment), plus the
+    // colorOf override identity and the theme tick. Everything callback-shaped
+    // (onZoom / onBucketClick / onLegendClick) is tracked by presence only and
+    // read live through refs, so a fresh arrow each render never churns a
+    // rebuild. Series DATA POINTS are absent on purpose — they ride the setData
+    // fast-path below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildSig, colorOf, themeTick]);
+
+  // Data fast-path (v0.8.520 / proposal #15). A 30s poll changes only the
+  // series' point VALUES, not their count/labels/options, so buildSig is
+  // unchanged and the build effect above does NOT run. Here we push the fresh
+  // data into the LIVE plot with setData() — the same <1ms redraw path
+  // click-to-isolate uses — instead of destroy()+new uPlot() (~30ms of canvas
+  // flicker that dropped the hover cursor and reset isolation every 30s).
+  // Guard on column count: a count change means the build effect is
+  // (re)creating the plot this same commit and owns the data; setData() with a
+  // mismatched width would throw. resetScales stays uPlot's default (true) so
+  // the y-axis auto-refits exactly as the old rebuild did.
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    if (u.data.length !== bundle.data.length) return;
+    u.setData(bundle.data);
+  }, [bundle]);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling

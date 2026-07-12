@@ -969,6 +969,12 @@ export interface LDAPConfig {
   startTLS: boolean;
   skipVerify: boolean;
   caCert?: string;
+  // v0.8.527 — dosya/env referansları (grup senkron audit kararı):
+  // doluysa inline caCert / bindPassword'u EZER. Değer yolun kendisidir,
+  // sır değil — sanitize edilmez, geri döner.
+  caFile?: string;
+  bindPasswordFile?: string;
+  bindPasswordEnv?: string;
   bindDN: string;
   bindPassword: string;
   baseDN: string;
@@ -992,6 +998,50 @@ export interface LDAPConfig {
   skipMemberOfFetch?: boolean;
   defaultRole: Role;
   groupRoleMap: LDAPGroupRoleMapping[];
+  // v0.8.527 — periyodik AD grup→üye senkronu yapılandırması.
+  groupSync?: LDAPGroupSyncConfig;
+}
+// v0.8.527 — LDAP/AD grup senkron ayarları (mevcut ldap blob'unun içinde).
+export interface LDAPGroupSyncConfig {
+  enabled: boolean;
+  syncInterval: string;   // '30m'
+  timeout: string;        // '60s'
+  pageSize: number;       // 500
+  usersBaseDN: string;
+  userFilter: string;     // '(objectClass=user)'
+  userNameAttribute: string; // 'sAMAccountName'
+  groupsBaseDN: string;
+  groupFilter: string;    // '(objectClass=group)'
+  includePrefixes: string[];
+  excludePrefixes: string[];
+  maxGroupMembers: number; // 50000
+}
+// v0.8.527 — grup senkron durum özeti (GET /api/admin/ldap/groupsync).
+export interface LDAPGroupSyncStats {
+  groups: number; users: number; pages: number; truncated: number;
+  tombstoned: number; matched: number; totalAlias: number;
+  matchRatio: number; durationMs: number;
+}
+export interface LDAPGroupSyncGroupSummary { uid: string; cn: string; dn: string; memberCount: number; }
+export interface LDAPGroupSyncSummary {
+  configured: boolean;
+  enabled: boolean;
+  interval: string;
+  synced: boolean;
+  syncedAt?: string;
+  groups: LDAPGroupSyncGroupSummary[];
+  stats: LDAPGroupSyncStats;
+}
+// v0.8.527 — dry-run önizleme (GET /api/admin/ldap/groupsync/preview).
+export interface LDAPGroupSyncPreviewGroup { uid: string; cn: string; dn: string; memberCount: number; sampleMembers: string[]; }
+export interface LDAPGroupSyncPreview {
+  totalGroupsInScope: number;
+  sampledGroups: number;
+  groups: LDAPGroupSyncPreviewGroup[];
+  matched: number;
+  totalAliases: number;
+  matchRatio: number;
+  warning?: string;
 }
 export interface LDAPDirectoryUser {
   dn: string;

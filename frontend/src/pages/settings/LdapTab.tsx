@@ -3,7 +3,8 @@ import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { LDAPConfig, LDAPGroupRoleMapping, Role } from '@/lib/types';
-import { Row, Field2, SectionTitle } from './shared';
+import { tsLong } from '@/lib/utils';
+import { Row, Field2, SectionTitle, FlashBox } from './shared';
 import { LDAPUserPicker } from './LdapUserPicker';
 
 // LDAPTab — enterprise auth configuration. Three sections:
@@ -301,6 +302,8 @@ export function LDAPTab() {
           </Field2>
         </Row>
 
+        <GroupSyncSection cfg={cfg} update={update} />
+
         {msg && (
           <div style={{
             margin: '14px 0 12px', padding: '6px 10px', borderRadius: 4, fontSize: 12,
@@ -325,6 +328,218 @@ export function LDAPTab() {
       {cfg.enabled && (
         <LDAPUserPicker />
       )}
+      {cfg.enabled && <GroupSyncStatus />}
+    </div>
+  );
+}
+
+// GroupSyncSection — v0.8.527: periyodik AD grup→üye senkron ayarları.
+// Alanlar cfg.groupSync üzerine yazılır ve formun mevcut Save'iyle
+// birlikte kaydedilir (ayrı bir kaydetme yok). Durum/senkron/preview
+// ayrı admin çağrıları — form ALTINDA GroupSyncStatus'ta.
+function GroupSyncSection({ cfg, update }: {
+  cfg: LDAPConfig;
+  update: (patch: Partial<LDAPConfig>) => void;
+}) {
+  const gs = cfg.groupSync ?? emptyGroupSync();
+  const patch = (p: Partial<import('@/lib/types').LDAPGroupSyncConfig>) =>
+    update({ groupSync: { ...gs, ...p } });
+  const linesToList = (s: string) => s.split('\n').map(x => x.trim()).filter(Boolean);
+
+  return (
+    <>
+      <SectionTitle>Group sync (directory → members)</SectionTitle>
+      <p style={{ fontSize: 11.5, color: 'var(--text3)', margin: '0 0 8px' }}>
+        Periyodik olarak kapsamdaki AD gruplarını ve (nested dahil) efektif
+        üyelerini keşfeder; yetkilendirme için kullanılır. Login-anı grup
+        aramasından bağımsızdır. Kaydettikten sonra aşağıdaki karttan
+        <b> Şimdi senkronla</b> / <b>Önizle</b> ile test et.
+      </p>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <input type="checkbox" checked={gs.enabled}
+               onChange={e => patch({ enabled: e.target.checked })} />
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Enable group sync</span>
+      </label>
+      <Row>
+        <Field2 label="Sync interval" hint="ör. 30m" small>
+          <input value={gs.syncInterval} onChange={e => patch({ syncInterval: e.target.value })}
+                 placeholder="30m" style={{ width: '100%' }} />
+        </Field2>
+        <Field2 label="Timeout" hint="tam senkron başına, ör. 60s" small>
+          <input value={gs.timeout} onChange={e => patch({ timeout: e.target.value })}
+                 placeholder="60s" style={{ width: '100%' }} />
+        </Field2>
+        <Field2 label="Page size" hint="AD MaxPageSize 1000 altı" small>
+          <input type="number" value={gs.pageSize || ''}
+                 onChange={e => patch({ pageSize: parseInt(e.target.value, 10) || 0 })}
+                 placeholder="500" style={{ width: '100%' }} />
+        </Field2>
+        <Field2 label="Max members / group" hint="aşan grup kırpılır" small>
+          <input type="number" value={gs.maxGroupMembers || ''}
+                 onChange={e => patch({ maxGroupMembers: parseInt(e.target.value, 10) || 0 })}
+                 placeholder="50000" style={{ width: '100%' }} />
+        </Field2>
+      </Row>
+      <Row>
+        <Field2 label="Users base DN" hint="kullanıcı aramasının kökü">
+          <input value={gs.usersBaseDN} onChange={e => patch({ usersBaseDN: e.target.value })}
+                 placeholder="OU=Users,DC=corp,DC=example" style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        </Field2>
+        <Field2 label="User filter" small>
+          <input value={gs.userFilter} onChange={e => patch({ userFilter: e.target.value })}
+                 placeholder="(objectClass=user)" style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        </Field2>
+        <Field2 label="Username attr" hint="üye kimliği" small>
+          <input value={gs.userNameAttribute} onChange={e => patch({ userNameAttribute: e.target.value })}
+                 placeholder="sAMAccountName" style={{ width: '100%' }} />
+        </Field2>
+      </Row>
+      <Row>
+        <Field2 label="Groups base DN" hint="grup keşfinin kökü">
+          <input value={gs.groupsBaseDN} onChange={e => patch({ groupsBaseDN: e.target.value })}
+                 placeholder="OU=Groups,DC=corp,DC=example" style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        </Field2>
+        <Field2 label="Group filter" small>
+          <input value={gs.groupFilter} onChange={e => patch({ groupFilter: e.target.value })}
+                 placeholder="(objectClass=group)" style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        </Field2>
+      </Row>
+      <Row>
+        <Field2 label="Include prefixes" hint="her satır bir DN/OU soneki — boşsa tüm gruplar">
+          <textarea value={(gs.includePrefixes || []).join('\n')}
+                    onChange={e => patch({ includePrefixes: linesToList(e.target.value) })}
+                    rows={2} spellCheck={false}
+                    placeholder="OU=DistributionGroups,OU=Groups,DC=corp,DC=example"
+                    style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }} />
+        </Field2>
+        <Field2 label="Exclude prefixes" hint="kapsam dışı bırakılacaklar">
+          <textarea value={(gs.excludePrefixes || []).join('\n')}
+                    onChange={e => patch({ excludePrefixes: linesToList(e.target.value) })}
+                    rows={2} spellCheck={false}
+                    style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 11.5 }} />
+        </Field2>
+      </Row>
+      {/* Sır kaynağı referansları (dosya/env) — doluysa yukarıdaki inline
+          CA/bind şifresini EZER (audit kararı). Değer sırrın kendisi değil,
+          yol/anahtar olduğundan düz gösterilir. */}
+      <Row>
+        <Field2 label="CA file path" hint="doluysa inline CA cert'i ezer" small>
+          <input value={cfg.caFile ?? ''} onChange={e => update({ caFile: e.target.value })}
+                 placeholder="/etc/coremetry/ldap-ca.pem" style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        </Field2>
+        <Field2 label="Bind password file" hint="doluysa inline şifreyi ezer" small>
+          <input value={cfg.bindPasswordFile ?? ''} onChange={e => update({ bindPasswordFile: e.target.value })}
+                 placeholder="/etc/coremetry/ldap-bind.pass" style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        </Field2>
+        <Field2 label="Bind password env" hint="ortam değişkeni adı" small>
+          <input value={cfg.bindPasswordEnv ?? ''} onChange={e => update({ bindPasswordEnv: e.target.value })}
+                 placeholder="COREMETRY_LDAP_BIND_PASSWORD" style={{ width: '100%', fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
+        </Field2>
+      </Row>
+    </>
+  );
+}
+
+// GroupSyncStatus — v0.8.527: canlı snapshot durumu + Şimdi senkronla +
+// dry-run önizleme. Form ayrı kaydedildikten sonra kullanılır; her üç
+// çağrı da admin-gated ve CH'ye (preview hariç) yazar.
+function GroupSyncStatus() {
+  const [sum, setSum] = useState<import('@/lib/types').LDAPGroupSyncSummary | null | undefined>(undefined);
+  const [prev, setPrev] = useState<import('@/lib/types').LDAPGroupSyncPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const load = () => { api.getLdapGroupSync().then(setSum).catch(() => setSum(null)); };
+  useEffect(load, []);
+
+  const syncNow = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const s = await api.syncLdapGroupsNow();
+      setSum(s);
+      setMsg({ kind: 'ok', text: `Senkron tamam — ${s.stats.groups} grup, ${s.stats.users} üye, eşleşme %${(s.stats.matchRatio * 100).toFixed(0)}.` });
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  };
+  const preview = async () => {
+    setBusy(true); setMsg(null); setPrev(null);
+    try {
+      setPrev(await api.previewLdapGroupSync());
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  };
+
+  if (sum === undefined) return <div style={{ marginTop: 18 }}><Spinner /></div>;
+
+  return (
+    <div style={{ marginTop: 18, padding: 16, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
+      <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>
+        Group sync durumu
+        {sum && (sum.enabled
+          ? <span className="badge b-ok" style={{ marginLeft: 8 }}>aktif</span>
+          : <span className="badge b-gray" style={{ marginLeft: 8 }}>kapalı</span>)}
+      </h3>
+      {!sum || !sum.configured ? (
+        <p style={{ fontSize: 12, color: 'var(--text3)' }}>
+          LDAP yapılandırılmamış. Bağlantıyı kurup kaydettikten sonra senkron çalışır.
+        </p>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
+            <span>Snapshot: <b>{sum.synced ? 'var' : 'yok'}</b></span>
+            {sum.syncedAt && <span>Son senkron: <b className="mono">{tsLong(new Date(sum.syncedAt).getTime() * 1e6)}</b></span>}
+            <span>Gruplar: <b className="mono">{sum.stats.groups}</b></span>
+            <span>Üyeler: <b className="mono">{sum.stats.users}</b></span>
+            {sum.stats.truncated > 0 && <span style={{ color: 'var(--warn)' }}>kırpılan: <b>{sum.stats.truncated}</b></span>}
+            <span title="Alias'ların Coremetry kullanıcılarıyla kesişim oranı">
+              Kimlik eşleşmesi: <b className={sum.stats.totalAlias > 0 && sum.stats.matchRatio === 0 ? '' : 'mono'}
+                style={{ color: sum.stats.totalAlias > 0 && sum.stats.matchRatio === 0 ? 'var(--err)' : undefined }}>
+                %{(sum.stats.matchRatio * 100).toFixed(0)}</b>
+            </span>
+          </div>
+          {sum.stats.totalAlias > 0 && sum.stats.matchRatio === 0 && (
+            <FlashBox kind="err">
+              Senkron çalıştı ama HİÇBİR üye bir Coremetry kullanıcısıyla eşleşmedi —
+              userNameAttribute / alias eşlemesini users.email veya users.ldap_username
+              ile kontrol edin (Inspect ile alanı doğrulayın).
+            </FlashBox>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <Button variant="primary" size="sm" type="button" disabled={busy} onClick={() => { void syncNow(); }}>
+              {busy ? 'Çalışıyor…' : '⟳ Şimdi senkronla'}
+            </Button>
+            <Button variant="secondary" size="sm" type="button" disabled={busy} onClick={() => { void preview(); }}>
+              Önizle (dry-run)
+            </Button>
+          </div>
+          {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
+          {prev && (
+            <div style={{ marginTop: 8, fontSize: 12 }}>
+              <div style={{ marginBottom: 6 }}>
+                Kapsamda <b>{prev.totalGroupsInScope}</b> grup · örneklenen <b>{prev.sampledGroups}</b> ·
+                kimlik eşleşmesi <b>%{(prev.matchRatio * 100).toFixed(0)}</b> ({prev.matched}/{prev.totalAliases})
+              </div>
+              {prev.warning && <FlashBox kind="err">{prev.warning}</FlashBox>}
+              <div className="table-wrap" style={{ maxHeight: 260, overflowY: 'auto' }}>
+                <table>
+                  <thead><tr><th>Grup (CN)</th><th>Üye</th><th>Örnek üyeler</th></tr></thead>
+                  <tbody>
+                    {prev.groups.map(g => (
+                      <tr key={g.uid}>
+                        <td className="mono" style={{ fontSize: 11 }} title={g.dn}>{g.cn}</td>
+                        <td className="num mono">{g.memberCount}</td>
+                        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>{g.sampleMembers.join(', ') || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -339,6 +554,16 @@ function emptyLDAP(): LDAPConfig {
     displayAttribute: 'displayName',
     groupSearchBase: '', groupFilter: '(member={{userDN}})',
     defaultRole: 'viewer', groupRoleMap: [],
+    groupSync: emptyGroupSync(),
+  };
+}
+
+function emptyGroupSync(): import('@/lib/types').LDAPGroupSyncConfig {
+  return {
+    enabled: false, syncInterval: '30m', timeout: '60s', pageSize: 500,
+    usersBaseDN: '', userFilter: '(objectClass=user)', userNameAttribute: 'sAMAccountName',
+    groupsBaseDN: '', groupFilter: '(objectClass=group)',
+    includePrefixes: [], excludePrefixes: [], maxGroupMembers: 50000,
   };
 }
 

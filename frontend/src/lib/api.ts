@@ -1028,6 +1028,14 @@ export const api = {
     }),
   searchLDAPUsers: (q: string, limit = 25) =>
     get<{ users: LDAPDirectoryUser[] | null }>(`/api/settings/ldap/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  // v0.8.527 — AD grup senkron: durum özeti (in-memory snapshot; cache'siz),
+  // şimdi-senkronla (admin+audit), dry-run önizleme (CH'ye yazmaz).
+  getLdapGroupSync: () =>
+    get<import('./types').LDAPGroupSyncSummary>(`/api/admin/ldap/groupsync`),
+  syncLdapGroupsNow: () =>
+    request<import('./types').LDAPGroupSyncSummary>(`/api/admin/ldap/groupsync/sync`, { method: 'POST' }),
+  previewLdapGroupSync: () =>
+    get<import('./types').LDAPGroupSyncPreview>(`/api/admin/ldap/groupsync/preview`),
   provisionLDAPUser: (email: string, role: Role) =>
     request<AuthUser>(`/api/users/from-ldap`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

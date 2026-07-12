@@ -9,18 +9,27 @@ import { useShortcuts } from '@/lib/keyboard';
 // per-page imports. Labels surface in the '?' help modal via
 // the existing listShortcuts() registry walk.
 
+// v0.8.525 — SINGLE 'g <x>' registry. Öncesinde AppShell.tsx ayrı bir
+// useShortcuts bloğu daha kaydediyordu; ikisi 'g o' (Topology vs
+// Monitors) ve 'g m' (Metrics vs Service Map) üzerinde ÇAKIŞIYORdu ve
+// yarısı ölü/gizli rotaya (g h → silinmiş Home, g o → gizli Monitors)
+// gidiyordu. Artık tek yer; her satır CANLI + görünür bir rota, harf
+// başına tek anlam. 'g n' → Inbox eklendi (günlük iniş yüzeyi).
 const PAGES: { key: string; label: string; to: string }[] = [
-  { key: 'g h', label: 'Go to Home',       to: '/' },
-  { key: 'g s', label: 'Go to Services',   to: '/services' },
-  { key: 'g t', label: 'Go to Traces',     to: '/traces' },
-  { key: 'g l', label: 'Go to Logs',       to: '/logs' },
-  { key: 'g m', label: 'Go to Metrics',    to: '/metrics' },
-  { key: 'g p', label: 'Go to Problems',   to: '/problems' },
-  { key: 'g d', label: 'Go to Dashboards', to: '/dashboards' },
-  { key: 'g a', label: 'Go to Anomalies',  to: '/anomalies' },
-  { key: 'g e', label: 'Go to Explore',    to: '/explore' },
-  { key: 'g o', label: 'Go to Topology',   to: '/topology' },
-  { key: 'g i', label: 'Go to Incidents',  to: '/incidents' },
+  { key: 'g n', label: 'Go to Inbox',       to: '/inbox' },
+  { key: 'g i', label: 'Go to Incidents',   to: '/incidents' },
+  { key: 'g p', label: 'Go to Problems',    to: '/problems' },
+  { key: 'g a', label: 'Go to Anomalies',   to: '/anomalies' },
+  { key: 'g s', label: 'Go to Services',    to: '/services' },
+  { key: 'g o', label: 'Go to Service Map', to: '/service-map' }, // 'o' = tOpology mnemonic (retired /topology → /service-map)
+  { key: 'g t', label: 'Go to Traces',      to: '/traces' },
+  { key: 'g m', label: 'Go to Metrics',     to: '/metrics' },
+  { key: 'g l', label: 'Go to Logs',        to: '/logs' },
+  { key: 'g e', label: 'Go to Explore',     to: '/explore' },
+  { key: 'g r', label: 'Go to Runbooks',    to: '/runbooks' },
+  { key: 'g d', label: 'Go to Dashboards',  to: '/dashboards' },
+  { key: 'g x', label: 'Go to Alerts',      to: '/alerts' },
+  { key: 'g c', label: 'Go to System',      to: '/system/stats' },
 ];
 
 // focusPageSearch finds the page's search input and focuses+selects

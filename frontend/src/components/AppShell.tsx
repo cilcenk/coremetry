@@ -9,7 +9,6 @@ import { GlobalShortcuts } from './GlobalShortcuts';
 import { Toaster } from './Toaster';
 import { useAuth } from './AuthProvider';
 import { useEventStream } from '@/lib/queries';
-import { useShortcuts } from '@/lib/keyboard';
 import { isPublicPath } from '@/lib/auth-paths';
 import { useBranding } from '@/lib/branding';
 import { PageLoader } from './Spinner';
@@ -66,30 +65,12 @@ export function AppShell() {
   // changes show up in <1s. Closes on logout / unmount.
   useEventStream(!!user && !isPublic);
 
-  // Global navigation shortcuts (Vim/Datadog flavour). Press
-  // 'g' then a letter to jump to that page. The hook keeps its
-  // bindings alive across route changes because AppShell is
-  // the layout-route — never unmounts during navigation.
-  // Suppressed automatically when an input/textarea is focused
-  // (see lib/keyboard.ts).
-  useShortcuts(
-    [
-      { keys: 'g s', label: 'Go to Services',     group: 'Navigation', handler: () => navigate('/services') },
-      { keys: 'g m', label: 'Go to Service Map',  group: 'Navigation', handler: () => navigate('/service-map') },
-      { keys: 'g t', label: 'Go to Traces',       group: 'Navigation', handler: () => navigate('/traces') },
-      { keys: 'g l', label: 'Go to Logs',         group: 'Navigation', handler: () => navigate('/logs') },
-      { keys: 'g e', label: 'Go to Explore',      group: 'Navigation', handler: () => navigate('/explore') },
-      { keys: 'g r', label: 'Go to Runbooks',     group: 'Navigation', handler: () => navigate('/runbooks') },
-      { keys: 'g d', label: 'Go to Dashboards',   group: 'Navigation', handler: () => navigate('/dashboards') },
-      { keys: 'g i', label: 'Go to Incidents',    group: 'Navigation', handler: () => navigate('/incidents') },
-      { keys: 'g p', label: 'Go to Problems',     group: 'Navigation', handler: () => navigate('/problems') },
-      { keys: 'g a', label: 'Go to Anomalies',    group: 'Navigation', handler: () => navigate('/anomalies') },
-      { keys: 'g x', label: 'Go to Alerts',       group: 'Navigation', handler: () => navigate('/alerts') },
-      { keys: 'g o', label: 'Go to Monitors',     group: 'Navigation', handler: () => navigate('/monitors') },
-      { keys: 'g c', label: 'Go to System stats', group: 'Navigation', handler: () => navigate('/admin/stats') },
-    ],
-    [navigate],
-  );
+  // v0.8.525 — 'g <x>' navigation shortcuts consolidated into the
+  // single GlobalShortcuts registry (mounted below). This inline block
+  // was a SECOND registration that conflicted with GlobalShortcuts on
+  // 'g o' / 'g m' and pointed at a hidden route ('g o' → Monitors) and
+  // a retired path ('g c' → /admin/stats). One registry now — see
+  // GlobalShortcuts.tsx.
 
   // Custom-role route guard (v0.5.251). When the user has a
   // customRolePages list, redirect any URL outside that set to

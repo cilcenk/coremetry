@@ -36,36 +36,59 @@ type Result = {
   score?: number;
 };
 
+// v0.8.525 — güncel rotalara hizalandı. Önceki katalogda ölü hedefler
+// vardı (Home /, Topology /topology, Errors /errors, Status /status —
+// hepsi redirect/retired) ve tüm 'Admin · …' girişleri /admin/* idi;
+// admin sayfaları v0.8.9'da /system/:tab altına taşındı. Eksik canlı
+// sayfalar da eklendi (Inbox, Endpoints, Service Map, External, Hosts,
+// Trace compare, Events, AI). Sidebar'dan gizli sayfalar (Monitors,
+// Profiling, External, Hosts, Events) ⌘K'da BİLEREK kalır — keşif
+// yüzeyi burasıdır.
 const PAGES: Result[] = [
-  { kind: 'page', label: 'Home',        hint: 'Overview', to: '/' },
-  { kind: 'page', label: 'Services',    hint: 'Per-service RED + latency', to: '/services' },
-  { kind: 'page', label: 'Topology',    hint: 'Service / operation / flows', to: '/topology' },
-  { kind: 'page', label: 'Traces',      hint: 'Search raw traces', to: '/traces' },
-  { kind: 'page', label: 'Logs',        hint: 'Elasticsearch logs', to: '/logs' },
-  { kind: 'page', label: 'Metrics',     hint: 'Time-series explorer', to: '/metrics' },
-  { kind: 'page', label: 'Explore',     hint: 'Cross-signal ad-hoc query', to: '/explore' },
-  { kind: 'page', label: 'Runbooks',    hint: 'Operational procedures', to: '/runbooks' },
-  { kind: 'page', label: 'Databases',   hint: 'DBM-style query catalog', to: '/databases' },
-  { kind: 'page', label: 'Messaging',   hint: 'Kafka / RabbitMQ / SQS', to: '/messaging' },
-  { kind: 'page', label: 'Dashboards',  hint: 'Operator-curated', to: '/dashboards' },
+  // Triage
+  { kind: 'page', label: 'Inbox',       hint: 'Unified triage queue', to: '/inbox' },
+  { kind: 'page', label: 'Incidents',   hint: 'Manual incident log', to: '/incidents' },
   { kind: 'page', label: 'Problems',    hint: 'Open alert + exception inbox', to: '/problems' },
   { kind: 'page', label: 'Anomalies',   hint: 'Log + trace anomaly streams', to: '/anomalies' },
-  { kind: 'page', label: 'Incidents',   hint: 'Manual incident log', to: '/incidents' },
+  // Services
+  { kind: 'page', label: 'Services',    hint: 'Per-service RED + latency', to: '/services' },
+  { kind: 'page', label: 'Endpoints',   hint: 'Per-route RED', to: '/endpoints' },
+  { kind: 'page', label: 'Service Map', hint: 'Topology / flows', to: '/service-map' },
+  { kind: 'page', label: 'Databases',   hint: 'DBM-style query catalog', to: '/databases' },
+  { kind: 'page', label: 'Messaging',   hint: 'Kafka / RabbitMQ / SQS', to: '/messaging' },
+  { kind: 'page', label: 'External',    hint: 'Third-party dependencies', to: '/external' },
+  { kind: 'page', label: 'Hosts',       hint: 'Infrastructure inventory', to: '/hosts' },
+  // Signals
+  { kind: 'page', label: 'Traces',      hint: 'Search raw traces', to: '/traces' },
+  { kind: 'page', label: 'Metrics',     hint: 'Time-series explorer', to: '/metrics' },
+  { kind: 'page', label: 'Logs',        hint: 'Elasticsearch logs', to: '/logs' },
+  { kind: 'page', label: 'Profiling',   hint: 'Continuous profiling', to: '/profiling' },
+  { kind: 'page', label: 'Trace compare', hint: 'Diff two traces', to: '/trace/compare' },
+  // Workspaces
+  { kind: 'page', label: 'Explore',     hint: 'Cross-signal ad-hoc query', to: '/explore' },
+  { kind: 'page', label: 'Runbooks',    hint: 'Operational procedures', to: '/runbooks' },
+  { kind: 'page', label: 'Dashboards',  hint: 'Operator-curated', to: '/dashboards' },
+  // Alerting
   { kind: 'page', label: 'Alerts',      hint: 'Alert rules + noisy report', to: '/alerts' },
   { kind: 'page', label: 'SLOs',        hint: 'Service level objectives', to: '/slos' },
   { kind: 'page', label: 'Monitors',    hint: 'Synthetic probes', to: '/monitors' },
-  { kind: 'page', label: 'Profiling',   hint: 'Continuous profiling', to: '/profiling' },
-  { kind: 'page', label: 'Errors',      hint: 'Exception groups', to: '/errors' },
-  { kind: 'page', label: 'Status',      hint: 'Internal ingest health', to: '/status' },
-  { kind: 'page', label: 'Public status',  hint: 'Public incident page', to: '/public-status' },
+  { kind: 'page', label: 'Events',      hint: 'Deploy / config markers', to: '/events' },
+  // System (v0.8.9 — /admin/* → /system/:tab)
+  { kind: 'page', label: 'System · Overview',      hint: 'Internal CH + cache stats', to: '/system/stats' },
+  { kind: 'page', label: 'System · ClickHouse',    hint: 'CH health + mutations', to: '/system/clickhouse' },
+  { kind: 'page', label: 'System · Elasticsearch', hint: 'ES backend health', to: '/system/elastic' },
+  { kind: 'page', label: 'System · Cluster',       hint: 'Cluster topology', to: '/system/cluster' },
+  { kind: 'page', label: 'System · Cardinality',   hint: 'Attribute cardinality watch', to: '/system/cardinality' },
+  { kind: 'page', label: 'System · Catalog',       hint: 'Owner / runbook / oncall metadata', to: '/system/catalog' },
+  { kind: 'page', label: 'System · Audit log',     hint: 'Operator action history', to: '/system/audit' },
+  { kind: 'page', label: 'System · SQL',           hint: 'Raw CH query console', to: '/system/sql' },
+  { kind: 'page', label: 'System · Query',         hint: 'Query console', to: '/system/query' },
+  { kind: 'page', label: 'System · Status page',   hint: 'Components + subscribers', to: '/system/status-page' },
+  { kind: 'page', label: 'AI observability', hint: 'Copilot usage + cost', to: '/ai' },
+  // Meta
   { kind: 'page', label: 'Settings',    hint: 'AI / SMTP / retention / theme', to: '/settings' },
   { kind: 'page', label: 'Users',       hint: 'Role + team management', to: '/users' },
-  { kind: 'page', label: 'Admin · Audit log',   hint: 'Operator action history', to: '/admin/audit' },
-  { kind: 'page', label: 'Admin · Cardinality', hint: 'Attribute cardinality watch', to: '/admin/cardinality' },
-  { kind: 'page', label: 'Admin · Service catalog', hint: 'Owner / runbook / oncall metadata', to: '/admin/catalog' },
-  { kind: 'page', label: 'Admin · SQL',         hint: 'Raw CH query console', to: '/admin/sql' },
-  { kind: 'page', label: 'Admin · Stats',       hint: 'Internal CH + cache stats', to: '/admin/stats' },
-  { kind: 'page', label: 'Admin · Status page', hint: 'Components + subscribers', to: '/admin/status-page' },
+  { kind: 'page', label: 'Public status',  hint: 'Public incident page', to: '/public-status' },
 ];
 
 // Module-level cache so re-opening the palette in the same tab

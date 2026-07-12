@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from './Spinner';
@@ -20,24 +20,38 @@ import { fmtDurShort } from '@/lib/utils';
 // an anomaly id → anomalyRootCause. Both return the shared RootCause shape (the
 // anomaly variant just adds anchor fields), so the expanded body renders one way.
 export function RootCauseRibbon({
-  anchor, id, summary,
+  anchor, id, summary, defaultOpen,
 }: {
   anchor: 'problem' | 'anomaly';
   id: string;
   summary?: RootCauseSummary | null;
+  // v0.8.515 (perf raporu #21) — drawer TEK öğe için açıldığında ribbon
+  // otomatik genişler: fetch drawer-open anıyla eş (ES-cost disiplini
+  // aynen — liste hâlâ lazy, prefetch yok), triage bir tık kısalır.
+  defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   // undefined = not fetched yet, null = fetch failed/empty, object = loaded.
   const [rc, setRc] = useState<RootCause | AnomalyRootCause | null | undefined>(undefined);
 
+  const fetchOnce = () => {
+    if (rc !== undefined) return;
+    const p = anchor === 'anomaly' ? api.anomalyRootCause(id) : api.problemRootCause(id);
+    p.then(r => setRc(r ?? null)).catch(() => setRc(null));
+  };
+  useEffect(() => {
+    if (defaultOpen) {
+      setOpen(true);
+      fetchOnce();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultOpen, id]);
+
   const onToggle = () => {
     const next = !open;
     setOpen(next);
     // Lazy first fetch — only when expanding, and only once.
-    if (next && rc === undefined) {
-      const p = anchor === 'anomaly' ? api.anomalyRootCause(id) : api.problemRootCause(id);
-      p.then(r => setRc(r ?? null)).catch(() => setRc(null));
-    }
+    if (next) fetchOnce();
   };
 
   const conf = summary?.confidence ?? 0;

@@ -105,7 +105,7 @@ function DrawerBody({ item, onClose, onOpenSource }: {
           fan-out endpoint, so they show the exception detail instead. */}
       {rc && (
         <div style={{ marginBottom: 14 }}>
-          <RootCauseRibbon anchor={rc.anchor} id={rc.id} summary={undefined} />
+          <RootCauseRibbon anchor={rc.anchor} id={rc.id} summary={undefined} defaultOpen />
         </div>
       )}
       {item.kind === 'exception' && item.exception && (

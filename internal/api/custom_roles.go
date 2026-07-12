@@ -88,6 +88,7 @@ func (s *Server) deleteCustomRole(w http.ResponseWriter, r *http.Request) {
 			u := users[i]
 			u.CustomRole = ""
 			_ = s.store.UpsertUser(r.Context(), u)
+			s.meUsers.clear() // v0.8.519
 		}
 	}
 	s.audit(r, "role.delete", "custom_role", name, "")
@@ -151,6 +152,7 @@ func (s *Server) setUserCustomRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 	details, _ := json.Marshal(map[string]any{"email": target.Email, "from": prev, "to": body.CustomRole})
 	s.audit(r, "user.set_custom_role", "user", target.ID, string(details))
 	writeJSON(w, map[string]any{"id": target.ID, "email": target.Email, "customRole": target.CustomRole})

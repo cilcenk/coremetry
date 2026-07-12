@@ -26,22 +26,22 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/cache"
-	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/cluster"
+	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/copilot"
-	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/ldap"
+	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/mcp"
 	"github.com/cilcenk/coremetry/internal/notify"
-	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/otlp"
 	"github.com/cilcenk/coremetry/internal/pipeline"
-	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/profileconv"
-	"github.com/cilcenk/coremetry/internal/mcp"
+	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
 
@@ -49,7 +49,7 @@ import (
 )
 
 type Server struct {
-	addr        string
+	addr string
 	// roleIngestOff / roleAPIOff — inverted so the zero value keeps every
 	// role ON (monolithic + direct-constructed test Servers unchanged);
 	// SetRoles flips them from main's parsed COREMETRY_MODE (v0.8.346).
@@ -58,22 +58,25 @@ type Server struct {
 	// chPing* back the 5s-cached CH reachability read on /api/health
 	// (v0.8.339) — see chReachable.
 	chPingMu sync.Mutex
+	// meUsers — /api/auth/me'nin 30s kullanıcı cache'i (v0.8.519,
+	// perf raporu #7); her kullanıcı-yazma yolu clear() çağırır.
+	meUsers  *meCache
 	chPingAt time.Time
 	chPingOK bool
 	// httpSrv is the live http.Server once Start() runs — kept so main
 	// can Shutdown() it during the ordered v0.8.336 teardown (stop
 	// ACCEPTING before draining consumers; a bare ListenAndServe had no
 	// shutdown surface at all).
-	httpSrv     *http.Server
-	store       *chstore.Store
-	logs        logstore.Store    // read-side abstraction; CH or external ES
+	httpSrv *http.Server
+	store   *chstore.Store
+	logs    logstore.Store // read-side abstraction; CH or external ES
 	// logsMgr owns the UI-managed logstore config (Settings →
 	// Elasticsearch, v0.8.232). Nil-safe: handlers 503 without it.
-	logsMgr     *logstore.ESManager
+	logsMgr *logstore.ESManager
 	// tails is the shared live-tail broadcaster (v0.8.236): one poll
 	// loop per distinct /logs filter, fanned out to every SSE tab.
-	tails       *tailBroker
-	ing         *otlp.Ingester
+	tails *tailBroker
+	ing   *otlp.Ingester
 	// lockDegraded — Redis was configured but the leader lock fell back to the
 	// always-leader Noop (Redis down at boot). Surfaced on /admin/stats so a
 	// multi-pod operator sees that background jobs are duplicated. Set by
@@ -81,55 +84,55 @@ type Server struct {
 	// re-probe goroutine CLEARS it at runtime (after swapping the real lock in)
 	// while /admin/stats handlers read it concurrently.
 	lockDegraded atomic.Bool
-	webFS       embed.FS
-	auth        *auth.Service
-	oidc        *auth.OIDCService // nil when SSO disabled
-	ldap        *ldap.Service     // always set; Enabled() reports config presence
-	cache       cache.Cache       // Noop when Redis isn't configured
+	webFS        embed.FS
+	auth         *auth.Service
+	oidc         *auth.OIDCService // nil when SSO disabled
+	ldap         *ldap.Service     // always set; Enabled() reports config presence
+	cache        cache.Cache       // Noop when Redis isn't configured
 	// presence — throttled per-user "last authenticated activity"
 	// stamps for the admin Users page's online indicator (v0.8.403).
 	// See presence.go for the write/read paths + semantics.
-	presence    *presenceTracker
+	presence *presenceTracker
 	// sf dedupes concurrent upstream calls when a hot cache
 	// key misses or enters the SWR refresh window — see
 	// cache.go for the multi-tier read path.
-	sf          singleflight.Group
+	sf singleflight.Group
 	// l1 is the in-process front tier ahead of Redis. Short
 	// per-entry TTL (≤5s); catches same-node burst traffic
 	// without crossing the network. Sized at 1024 entries —
 	// enough for every distinct cache key the API exposes,
 	// generous on memory because each entry stores marshaled
 	// JSON not raw objects.
-	l1          *l1Cache
+	l1 *l1Cache
 	// stats records per-tier hit counts and hottest keys so
 	// the System page can show whether the multi-tier cache
 	// is doing useful work. Exposed via /api/admin/cache-stats.
-	stats       *cacheStats
-	notify      *notify.Notifier
-	copilot     *copilot.Service  // nil when AI key not configured
+	stats   *cacheStats
+	notify  *notify.Notifier
+	copilot *copilot.Service // nil when AI key not configured
 	// rag — doküman RAG servisi (v0.8.438). SetRAG ile bağlanır;
 	// nil / yapılandırılmamışken tüm RAG yolları sessizce kapalı.
-	rag         *rag.Service
-	bus         *sse.Broker       // in-process SSE pub/sub for live UI updates
+	rag *rag.Service
+	bus *sse.Broker // in-process SSE pub/sub for live UI updates
 	// tempo is the external Tempo backend (v0.5.208). When
 	// configured, getTrace falls back to Tempo on a CH miss so
 	// operators running Coremetry at 5% sampling + Tempo at
 	// 100% can still resolve long-tail trace IDs in the same
 	// /trace?id= URL. nil-safe — every accessor on the service
 	// short-circuits when the receiver is nil.
-	tempo       *tempo.Service
+	tempo *tempo.Service
 
 	// cluster — per-pod heartbeat / membership service (v0.5.253).
 	// Always non-nil when Set; the service degenerates to a single-
 	// pod view when Redis is absent so handlers don't need to nil-
 	// check before calling Members.
-	cluster     *cluster.Service
+	cluster *cluster.Service
 
 	// pipeline — ingest-time drop / enrich rule engine (v0.5.263).
 	// Admin-managed via Settings → Pipeline. May be nil before
 	// SetPipeline is called from main(); admin handlers nil-check
 	// and return 503.
-	pipeline    *pipeline.Engine
+	pipeline *pipeline.Engine
 
 	// autocomplete — Redis-backed picker-facet cache (v0.8.80). The
 	// service/operation/attribute-value pickers try it first and fall
@@ -144,13 +147,13 @@ type Server struct {
 	// when SetMCP is called from main(). HTTP+SSE transport on
 	// /api/mcp/sse + /api/mcp/messages; auth via the existing
 	// JWT middleware so role-based access carries into MCP.
-	mcp         *mcp.Server
+	mcp *mcp.Server
 
 	// Demo deployments only — when true, /api/auth/config returns
 	// initial admin credentials so the login page can pre-fill them.
-	demoMode      bool
-	demoEmail     string
-	demoPassword  string
+	demoMode     bool
+	demoEmail    string
+	demoPassword string
 
 	// Last sample of each ingest queue's accepted counter, used to
 	// compute per-second rate on /api/status. Mutex covers the map +
@@ -203,9 +206,9 @@ type Server struct {
 	// a warning. Hard misconfig (truly empty system.clusters)
 	// still flips to the red banner — only TRANSIENT probe
 	// failures are masked.
-	clusterNodesMu     sync.RWMutex
-	lastClusterNodes   []CHClusterNode
-	lastClusterAt      time.Time
+	clusterNodesMu   sync.RWMutex
+	lastClusterNodes []CHClusterNode
+	lastClusterAt    time.Time
 }
 
 // SetBackgroundConfig wires the cadence/timeout knobs to the
@@ -266,11 +269,12 @@ func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logst
 	return &Server{
 		addr: addr, store: store, logs: logs, tails: newTailBroker(logs), ing: ing, webFS: webFS,
 		auth: authSvc, oidc: oidcSvc, ldap: ldapSvc, cache: c, notify: n, copilot: cop,
-		bus: bus,
+		bus:         bus,
 		presence:    newPresenceTracker(c),
 		rateSamples: map[string]rateSample{},
 		l1:          newL1Cache(1024),
 		stats:       newCacheStats(),
+		meUsers:     newMeCache(30 * time.Second),
 		subRateBy:   map[string]int64{},
 		// Buffered audit channel. 1024 entries ≈ 30s of headroom
 		// at the highest sustained admin-mutation rate we've
@@ -426,10 +430,10 @@ func (s *Server) Start() error {
 	// catalogue + the hard-constraint checklist. Returns
 	// {optimized, explanation}.
 	mux.HandleFunc("POST /api/admin/clickhouse/optimize-query", auth.RequireRole(auth.RoleAdmin, s.copilotOptimizeCHQuery))
-	mux.HandleFunc("GET /api/correlations",       s.getCorrelations)
-	mux.HandleFunc("GET /api/admin/redis-stats",  s.getRedisStats)
-	mux.HandleFunc("GET /api/admin/cache-stats",  auth.RequireRole(auth.RoleAdmin, s.getCacheStats))
-	mux.HandleFunc("GET /api/admin/cardinality",  auth.RequireRole(auth.RoleAdmin, s.getCardinality))
+	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
+	mux.HandleFunc("GET /api/admin/redis-stats", s.getRedisStats)
+	mux.HandleFunc("GET /api/admin/cache-stats", auth.RequireRole(auth.RoleAdmin, s.getCacheStats))
+	mux.HandleFunc("GET /api/admin/cardinality", auth.RequireRole(auth.RoleAdmin, s.getCardinality))
 	// SSE event stream — long-lived connection, fans out
 	// problem.* / anomaly.* events from the in-process bus.
 	// EventSource sends the auth cookie automatically since
@@ -443,12 +447,12 @@ func (s *Server) Start() error {
 	// channel for the client→server JSON-RPC requests. Both gated
 	// by the same auth middleware as the rest of /api/*.
 	if s.mcp != nil {
-		mux.HandleFunc("GET /api/mcp/sse",       s.mcp.HandleSSE)
+		mux.HandleFunc("GET /api/mcp/sse", s.mcp.HandleSSE)
 		mux.HandleFunc("POST /api/mcp/messages", s.mcp.HandleMessage)
 	}
-	mux.HandleFunc("GET /api/services/{name}/bundle",    s.getServiceBundle)
+	mux.HandleFunc("GET /api/services/{name}/bundle", s.getServiceBundle)
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)
-	mux.HandleFunc("GET /api/services/{name}/clusters",  s.getServiceClusterBreakdown)
+	mux.HandleFunc("GET /api/services/{name}/clusters", s.getServiceClusterBreakdown)
 	// v0.8.383 — per-service env chips (Service header Envs group).
 	mux.HandleFunc("GET /api/services/{name}/environments", s.getServiceEnvironments)
 	mux.HandleFunc("GET /api/services/{name}/neighbors", s.getServiceNeighbors)
@@ -458,38 +462,38 @@ func (s *Server) Start() error {
 	// Surfaced as a chip on the /problems row + tooltip with
 	// top N cascading callers.
 	mux.HandleFunc("GET /api/services/{name}/blast-radius", s.getServiceBlastRadius)
-	mux.HandleFunc("GET /api/topology",                  s.getTopology)
-	mux.HandleFunc("GET /api/topology/ops",              s.getTopologyOps)
-	mux.HandleFunc("GET /api/topology/service",          s.getServiceTopology)
-	mux.HandleFunc("GET /api/topology/flows",            s.getRootFlows)
-	mux.HandleFunc("GET /api/topology/flow",             s.getFlowTopology)
-	mux.HandleFunc("GET /api/topology/hidden",           s.getTopologyHidden)
-	mux.HandleFunc("PUT /api/topology/hidden",           auth.RequireAnyRole(editorRoles, s.putTopologyHidden))
-	mux.HandleFunc("GET /api/topology/drawio",           s.exportTopologyDrawIO)
-	mux.HandleFunc("GET /api/topology/edge/instances",   s.getTopologyEdgeInstances)
-	mux.HandleFunc("POST /api/slos/autocreate",          auth.RequireRole(auth.RoleAdmin, s.autoCreateSLOs))
-	mux.HandleFunc("GET /api/topology/service/drawio",   s.exportServiceTopologyDrawIO)
-	mux.HandleFunc("GET /api/topology/flow/drawio",      s.exportFlowTopologyDrawIO)
+	mux.HandleFunc("GET /api/topology", s.getTopology)
+	mux.HandleFunc("GET /api/topology/ops", s.getTopologyOps)
+	mux.HandleFunc("GET /api/topology/service", s.getServiceTopology)
+	mux.HandleFunc("GET /api/topology/flows", s.getRootFlows)
+	mux.HandleFunc("GET /api/topology/flow", s.getFlowTopology)
+	mux.HandleFunc("GET /api/topology/hidden", s.getTopologyHidden)
+	mux.HandleFunc("PUT /api/topology/hidden", auth.RequireAnyRole(editorRoles, s.putTopologyHidden))
+	mux.HandleFunc("GET /api/topology/drawio", s.exportTopologyDrawIO)
+	mux.HandleFunc("GET /api/topology/edge/instances", s.getTopologyEdgeInstances)
+	mux.HandleFunc("POST /api/slos/autocreate", auth.RequireRole(auth.RoleAdmin, s.autoCreateSLOs))
+	mux.HandleFunc("GET /api/topology/service/drawio", s.exportServiceTopologyDrawIO)
+	mux.HandleFunc("GET /api/topology/flow/drawio", s.exportFlowTopologyDrawIO)
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
-	mux.HandleFunc("GET /api/endpoints",  s.getEndpoints)
+	mux.HandleFunc("GET /api/endpoints", s.getEndpoints)
 	mux.HandleFunc("GET /api/services/{name}/attrs", s.getServiceAttrs)
-	mux.HandleFunc("GET /api/databases",  s.getDatabases)
+	mux.HandleFunc("GET /api/databases", s.getDatabases)
 	mux.HandleFunc("GET /api/databases/trends", s.getDBTrends)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
 	// Cross-service slow-query catalog (v0.5.165). One row per
 	// (service, normalised statement) ordered by total wall-clock
 	// time — what's actually worth optimising globally.
 	mux.HandleFunc("GET /api/databases/slow-queries", s.getSlowQueriesGlobal)
-	mux.HandleFunc("GET /api/databases/oracle",     s.getOracleMetrics)
-	mux.HandleFunc("GET /api/databases/postgres",   s.getPostgresMetrics)
-	mux.HandleFunc("GET /api/databases/mysql",      s.getMySQLMetrics)
-	mux.HandleFunc("GET /api/databases/redis",      s.getRedisMetrics)
-	mux.HandleFunc("GET /api/messaging",  s.getMessaging)
+	mux.HandleFunc("GET /api/databases/oracle", s.getOracleMetrics)
+	mux.HandleFunc("GET /api/databases/postgres", s.getPostgresMetrics)
+	mux.HandleFunc("GET /api/databases/mysql", s.getMySQLMetrics)
+	mux.HandleFunc("GET /api/databases/redis", s.getRedisMetrics)
+	mux.HandleFunc("GET /api/messaging", s.getMessaging)
 	mux.HandleFunc("GET /api/messaging/detail", s.getMessagingDetail)
 	mux.HandleFunc("GET /api/services/{name}/backtrace", s.getServiceBacktrace)
-	mux.HandleFunc("GET /api/services/{name}/infra",     s.getServiceInfraMetrics)
+	mux.HandleFunc("GET /api/services/{name}/infra", s.getServiceInfraMetrics)
 	mux.HandleFunc("GET /api/services/{name}/instances", s.getServiceInstances)
-	mux.HandleFunc("GET /api/services/{name}/runtime",   s.getServiceRuntime)
+	mux.HandleFunc("GET /api/services/{name}/runtime", s.getServiceRuntime)
 	mux.HandleFunc("GET /api/services/{name}/db-queries", s.getServiceDBQueries)
 	mux.HandleFunc("GET /api/services/{name}/deploys", s.getServiceDeploys)
 	// Deploy history with impact deltas — drives the Service
@@ -501,16 +505,16 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/services/{name}/metadata", s.getServiceMetadata)
 	mux.HandleFunc("PUT /api/services/{name}/metadata", auth.RequireAnyRole(editorRoles, s.putServiceMetadata))
 	mux.HandleFunc("GET /api/services-metadata", s.listServiceMetadata)
-	mux.HandleFunc("GET /api/services-runtimes",         s.getAllServiceRuntimes)
+	mux.HandleFunc("GET /api/services-runtimes", s.getAllServiceRuntimes)
 	mux.HandleFunc("GET /api/services/graph", s.getServiceGraph)
 	// v0.8.10 — OTel-native service graph (topology rebuild Stage 1). Compact
 	// {nodes,edges} from topology_edges_5m MV; ?focus=&scope=neighborhood|global.
 	mux.HandleFunc("GET /api/servicegraph", s.getOtelServiceGraph)
 	mux.HandleFunc("GET /api/services/sparklines", s.getServiceSparklines)
-	mux.HandleFunc("GET /api/service-names",       s.getServiceNames)
-	mux.HandleFunc("GET /api/operation-names",     s.getOperationNames)
-	mux.HandleFunc("GET /api/attribute-keys",      s.getAttributeKeys)
-	mux.HandleFunc("GET /api/attribute-values",    s.getAttributeValues)
+	mux.HandleFunc("GET /api/service-names", s.getServiceNames)
+	mux.HandleFunc("GET /api/operation-names", s.getOperationNames)
+	mux.HandleFunc("GET /api/attribute-keys", s.getAttributeKeys)
+	mux.HandleFunc("GET /api/attribute-values", s.getAttributeValues)
 	mux.HandleFunc("GET /api/operations", s.getOperations)
 	mux.HandleFunc("GET /api/traces", s.getTraces)
 	// CSV export — same filter shape as /api/traces but streams
@@ -531,12 +535,12 @@ func (s *Server) Start() error {
 	// sorted-unique (service, operation) fingerprint; surfaces
 	// the dominant call-pattern cohorts. Sample-based so the
 	// query stays under the 30s ceiling at billion-span scale.
-	mux.HandleFunc("GET /api/traces/shapes",    s.getTraceShapes)
+	mux.HandleFunc("GET /api/traces/shapes", s.getTraceShapes)
 	// v0.5.265 — Unified query language (DQL-lite). Operator
 	// admin-types pipe-shape queries; backend compiles to a
 	// chstore Plan + executes via the same hot path the UI
 	// builders use.
-	mux.HandleFunc("POST /api/query/run",       auth.RequireRole(auth.RoleAdmin, s.runDQL))
+	mux.HandleFunc("POST /api/query/run", auth.RequireRole(auth.RoleAdmin, s.runDQL))
 	mux.HandleFunc("GET /api/traces/{id}", s.getTrace)
 	// Public-share endpoints — POST mints a token (any authenticated
 	// user, viewers included: v0.8.102 operator request — viewers
@@ -546,14 +550,14 @@ func (s *Server) Start() error {
 	// DELETE revokes (editor+ so a viewer can't nuke other operators'
 	// active shares — minting your own link is fine, deleting the
 	// shared pool isn't).
-	mux.HandleFunc("POST /api/traces/{id}/share",       s.createTraceSnapshot)
-	mux.HandleFunc("GET  /api/traces/{id}/shares",      s.listTraceSnapshots)
-	mux.HandleFunc("DELETE /api/traces/share/{token}",  auth.RequireAnyRole(editorRoles, s.revokeTraceSnapshot))
+	mux.HandleFunc("POST /api/traces/{id}/share", s.createTraceSnapshot)
+	mux.HandleFunc("GET  /api/traces/{id}/shares", s.listTraceSnapshots)
+	mux.HandleFunc("DELETE /api/traces/share/{token}", auth.RequireAnyRole(editorRoles, s.revokeTraceSnapshot))
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs) // v0.8.x — live-tail SSE
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
-	mux.HandleFunc("GET /api/logs/fields",     s.getLogsFields)
+	mux.HandleFunc("GET /api/logs/fields", s.getLogsFields)
 	// v0.8.255 — fields-panel accordion: top-5 values of one field
 	// in the current window. Expand-triggered + 60s cached; single
 	// bounded terms agg (ES) / capped GROUP BY (CH).
@@ -566,11 +570,11 @@ func (s *Server) Start() error {
 	// Datadog Context tab equivalent. Two parallel logstore.Search
 	// calls (before / after) so the operator sees what was emitted
 	// either side of the log they're investigating.
-	mux.HandleFunc("GET /api/logs/context",    s.getLogsContext)
+	mux.HandleFunc("GET /api/logs/context", s.getLogsContext)
 	// v0.5.244 — Drain-extracted log template ledger. Persistent
 	// templates with sticky first_seen so the operator can ask
 	// "what shape just started appearing?".
-	mux.HandleFunc("GET /api/logs/templates",  s.getLogsTemplates)
+	mux.HandleFunc("GET /api/logs/templates", s.getLogsTemplates)
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
@@ -590,7 +594,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/metrics/labels", s.getMetricLabelValues)
 	mux.HandleFunc("GET /api/spans/metric", s.spanMetric)
 	mux.HandleFunc("POST /api/spans/metric-batch", s.spanMetricBatch)
-	mux.HandleFunc("POST /api/dashboards/data",    s.dashboardsData)
+	mux.HandleFunc("POST /api/dashboards/data", s.dashboardsData)
 	mux.HandleFunc("GET /api/spans/repeats", s.spanRepeats)
 	mux.HandleFunc("GET /api/spans/exemplar", s.spanExemplar)
 	// Correlated Signals (task #6) — one cross-signal pivot bundle (trace ↔ logs
@@ -600,7 +604,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/correlate/context", s.getCorrelationContext)
 	s.registerPivotRoutes(mux)
 	s.registerRAGRoutes(mux)
-	s.registerAPITokenRoutes(mux) // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
+	s.registerAPITokenRoutes(mux)        // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
 	s.registerEndpointsDetailRoutes(mux) // v0.8.360 — /endpoints detail drill-down (histogram / status / exceptions / failing traces / split), endpoints_detail.go
 	s.registerDBStmtDetailRoutes(mux)    // v0.8.378 — /slow-queries statement drill-down (trend / callers / exemplars / compare), dbstmt_detail.go
 	s.registerDBWaitLockRoutes(mux)      // v0.8.391 — cross-engine waits & locks strip on the /databases drawer (Stage-2 D3), db_waitlock.go
@@ -614,56 +618,56 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/profiles/hotspots", s.profileHotspots)
 	mux.HandleFunc("GET /api/profiles/{id}", s.getProfile)
 	// Errors Inbox — stateful exception groups (read = any, write = admin)
-	mux.HandleFunc("GET    /api/exception-groups",                s.listExceptionGroups)
-	mux.HandleFunc("GET    /api/exception-groups/{fp}",           s.getExceptionGroup)
-	mux.HandleFunc("GET    /api/exception-groups/{fp}/samples",   s.getExceptionGroupSamples)
+	mux.HandleFunc("GET    /api/exception-groups", s.listExceptionGroups)
+	mux.HandleFunc("GET    /api/exception-groups/{fp}", s.getExceptionGroup)
+	mux.HandleFunc("GET    /api/exception-groups/{fp}/samples", s.getExceptionGroupSamples)
 	mux.HandleFunc("GET    /api/exception-groups/{fp}/occurrences", s.getExceptionGroupOccurrences)
-	mux.HandleFunc("POST   /api/exception-groups/{fp}/state",     auth.RequireAnyRole(editorRoles, s.setExceptionGroupState))
-	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign",    auth.RequireAnyRole(editorRoles, s.assignExceptionGroup))
+	mux.HandleFunc("POST   /api/exception-groups/{fp}/state", auth.RequireAnyRole(editorRoles, s.setExceptionGroupState))
+	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign", auth.RequireAnyRole(editorRoles, s.assignExceptionGroup))
 	mux.HandleFunc("GET    /api/services/{name}/operations", s.svcOperationSummary)
 	mux.HandleFunc("GET    /api/services/{name}/span-breakdown", s.svcSpanBreakdown)
-	mux.HandleFunc("GET    /api/problems",                  s.listProblems)
-	mux.HandleFunc("GET    /api/problems/count",            s.countProblems)
-	mux.HandleFunc("GET    /api/problems/buckets",          s.listProblemBuckets)
-	mux.HandleFunc("GET    /api/problems/{id}/rootcause",   s.getProblemRootCause)
+	mux.HandleFunc("GET    /api/problems", s.listProblems)
+	mux.HandleFunc("GET    /api/problems/count", s.countProblems)
+	mux.HandleFunc("GET    /api/problems/buckets", s.listProblemBuckets)
+	mux.HandleFunc("GET    /api/problems/{id}/rootcause", s.getProblemRootCause)
 	// Copilot prose narration of the persisted problem hypothesis (rc #4) —
 	// problem-anchored sibling of the anomaly explain route. Lazy/opt-in,
 	// version-keyed cache, routes through s.copilotExplain. The 5-segment
 	// {id}/rootcause/explain out-ranks the 4-segment {id}/rootcause — no collision.
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause/explain", s.getProblemRootCauseExplain)
-	mux.HandleFunc("POST   /api/problems/acknowledge",      auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
-	mux.HandleFunc("PATCH  /api/problems/{id}/assignee",    auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
+	mux.HandleFunc("POST   /api/problems/acknowledge", auth.RequireAnyRole(editorRoles, s.acknowledgeProblems))
+	mux.HandleFunc("PATCH  /api/problems/{id}/assignee", auth.RequireAnyRole(editorRoles, s.setProblemAssignee))
 	// Unified triage inbox (v0.5.211) — merges Problems +
 	// Exception groups + Anomaly events with a normalised
 	// priority blend so operators stop tab-hopping.
-	mux.HandleFunc("GET    /api/inbox",                     s.inbox)
-	mux.HandleFunc("GET    /api/inbox/count",               s.inboxCount)
-	mux.HandleFunc("GET    /api/alert-rules",               s.listAlertRules)
-	mux.HandleFunc("POST   /api/alert-rules",               auth.RequireAnyRole(editorRoles, s.createAlertRule))
-	mux.HandleFunc("PUT    /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.updateAlertRule))
-	mux.HandleFunc("DELETE /api/alert-rules/{id}",          auth.RequireAnyRole(editorRoles, s.deleteAlertRule))
-	mux.HandleFunc("POST   /api/alert-rules/{id}/enable",   auth.RequireAnyRole(editorRoles, s.enableAlertRule))
-	mux.HandleFunc("POST   /api/alert-rules/{id}/disable",  auth.RequireAnyRole(editorRoles, s.disableAlertRule))
-	mux.HandleFunc("GET    /api/alert-rules/baseline",      auth.RequireAnyRole(editorRoles, s.getAlertBaseline))
+	mux.HandleFunc("GET    /api/inbox", s.inbox)
+	mux.HandleFunc("GET    /api/inbox/count", s.inboxCount)
+	mux.HandleFunc("GET    /api/alert-rules", s.listAlertRules)
+	mux.HandleFunc("POST   /api/alert-rules", auth.RequireAnyRole(editorRoles, s.createAlertRule))
+	mux.HandleFunc("PUT    /api/alert-rules/{id}", auth.RequireAnyRole(editorRoles, s.updateAlertRule))
+	mux.HandleFunc("DELETE /api/alert-rules/{id}", auth.RequireAnyRole(editorRoles, s.deleteAlertRule))
+	mux.HandleFunc("POST   /api/alert-rules/{id}/enable", auth.RequireAnyRole(editorRoles, s.enableAlertRule))
+	mux.HandleFunc("POST   /api/alert-rules/{id}/disable", auth.RequireAnyRole(editorRoles, s.disableAlertRule))
+	mux.HandleFunc("GET    /api/alert-rules/baseline", auth.RequireAnyRole(editorRoles, s.getAlertBaseline))
 	// Runbooks (v0.7.0) — operator-authored executable procedures.
 	// GET list/detail open so viewers see them read-only (invariant #7);
 	// every write gated to editor+. Executions + agent dispatch land next.
-	mux.HandleFunc("GET    /api/runbooks",                  s.listRunbooks)
-	mux.HandleFunc("POST   /api/runbooks",                  auth.RequireAnyRole(editorRoles, s.createRunbook))
-	mux.HandleFunc("GET    /api/runbooks/{id}",             s.getRunbook)
-	mux.HandleFunc("PUT    /api/runbooks/{id}",             auth.RequireAnyRole(editorRoles, s.updateRunbook))
-	mux.HandleFunc("DELETE /api/runbooks/{id}",             auth.RequireAnyRole(editorRoles, s.deleteRunbook))
-	mux.HandleFunc("POST   /api/runbooks/{id}/enable",      auth.RequireAnyRole(editorRoles, s.enableRunbook))
-	mux.HandleFunc("POST   /api/runbooks/{id}/disable",     auth.RequireAnyRole(editorRoles, s.disableRunbook))
+	mux.HandleFunc("GET    /api/runbooks", s.listRunbooks)
+	mux.HandleFunc("POST   /api/runbooks", auth.RequireAnyRole(editorRoles, s.createRunbook))
+	mux.HandleFunc("GET    /api/runbooks/{id}", s.getRunbook)
+	mux.HandleFunc("PUT    /api/runbooks/{id}", auth.RequireAnyRole(editorRoles, s.updateRunbook))
+	mux.HandleFunc("DELETE /api/runbooks/{id}", auth.RequireAnyRole(editorRoles, s.deleteRunbook))
+	mux.HandleFunc("POST   /api/runbooks/{id}/enable", auth.RequireAnyRole(editorRoles, s.enableRunbook))
+	mux.HandleFunc("POST   /api/runbooks/{id}/disable", auth.RequireAnyRole(editorRoles, s.disableRunbook))
 	// Runbook executions (v0.7.0) — a run is the audit record. List/detail
 	// open (read-only audit for viewers); start/step/cancel gated to editor+.
 	// Literal /executions segments out-rank the {id} wildcard in the Go 1.22
 	// mux, so they match before /api/runbooks/{id}.
-	mux.HandleFunc("POST   /api/runbooks/{id}/execute",                   auth.RequireAnyRole(editorRoles, s.executeRunbook))
-	mux.HandleFunc("GET    /api/runbooks/executions",                    s.listExecutions)
-	mux.HandleFunc("GET    /api/runbooks/executions/{id}",               s.getExecution)
+	mux.HandleFunc("POST   /api/runbooks/{id}/execute", auth.RequireAnyRole(editorRoles, s.executeRunbook))
+	mux.HandleFunc("GET    /api/runbooks/executions", s.listExecutions)
+	mux.HandleFunc("GET    /api/runbooks/executions/{id}", s.getExecution)
 	mux.HandleFunc("POST   /api/runbooks/executions/{id}/steps/{stepId}", auth.RequireAnyRole(editorRoles, s.execStepAction))
-	mux.HandleFunc("POST   /api/runbooks/executions/{id}/cancel",         auth.RequireAnyRole(editorRoles, s.cancelExecution))
+	mux.HandleFunc("POST   /api/runbooks/executions/{id}/cancel", auth.RequireAnyRole(editorRoles, s.cancelExecution))
 	mux.HandleFunc("GET /api/health", s.getHealth)
 	// v0.8.339 (HA audit H3) — liveness split from readiness. /api/health
 	// 503s on overload BY DESIGN (pull the pod from the LB to drain);
@@ -687,9 +691,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/branding", s.getBranding)
 	mux.HandleFunc("PUT /api/branding", auth.RequireRole(auth.RoleAdmin, s.putBranding))
 	mux.HandleFunc("GET /api/anomalies/log-patterns", s.getLogPatternAnomalies)
-	mux.HandleFunc("GET /api/anomalies/trace-ops",    s.getTraceOpAnomalies)
-	mux.HandleFunc("GET /api/anomalies/metric",       s.getMetricAnomalies)
-	mux.HandleFunc("GET /api/anomalies/events",       s.getAnomalyEvents)
+	mux.HandleFunc("GET /api/anomalies/trace-ops", s.getTraceOpAnomalies)
+	mux.HandleFunc("GET /api/anomalies/metric", s.getMetricAnomalies)
+	mux.HandleFunc("GET /api/anomalies/events", s.getAnomalyEvents)
 	// Anomaly-anchored root cause (v0.8.x, release #1) — same parallel
 	// soft-fail fan-out as /api/problems/{id}/rootcause but anchored on an
 	// AnomalyEvent window. Read-only, open (writes no state; same posture
@@ -709,7 +713,7 @@ func (s *Server) Start() error {
 	// Cmd-K palette autocomplete for the "silence anomaly" action
 	// (v0.5.459). Editor-gated since the only useful next step is
 	// creating a silence, and that's editor-gated too.
-	mux.HandleFunc("GET /api/anomalies/active",       auth.RequireAnyRole(editorRoles, s.listActiveAnomalies))
+	mux.HandleFunc("GET /api/anomalies/active", auth.RequireAnyRole(editorRoles, s.listActiveAnomalies))
 	// Anomaly silencing — editor+ can mute/unmute (invariant #7:
 	// viewer = read-only everywhere). A silence suppresses a signal
 	// for EVERY operator, so it's a state mutation, not a personal
@@ -717,14 +721,14 @@ func (s *Server) Start() error {
 	// read-only; the frontend hides the mute/unmute buttons for
 	// viewers (features/anomalies/streams.tsx) so they never click
 	// into a 403.
-	mux.HandleFunc("GET    /api/anomalies/silences",    s.listAnomalySilences)
-	mux.HandleFunc("POST   /api/anomalies/silences",    auth.RequireAnyRole(editorRoles, s.createAnomalySilence))
+	mux.HandleFunc("GET    /api/anomalies/silences", s.listAnomalySilences)
+	mux.HandleFunc("POST   /api/anomalies/silences", auth.RequireAnyRole(editorRoles, s.createAnomalySilence))
 	mux.HandleFunc("DELETE /api/anomalies/silences/{id}", auth.RequireAnyRole(editorRoles, s.deleteAnomalySilence))
 	mux.HandleFunc("POST   /api/anomalies/silences/bulk-delete", auth.RequireAnyRole(editorRoles, s.bulkDeleteAnomalySilences))
 	// Audit log — admin-only read.
-	mux.HandleFunc("GET /api/admin/audit",            s.listAuditLog)
+	mux.HandleFunc("GET /api/admin/audit", s.listAuditLog)
 	mux.HandleFunc("GET /api/admin/alert-tuning/noisy-rules", s.alertTuningNoisyRules)
-	mux.HandleFunc("GET /api/admin/audit/export",     s.exportAuditLog)
+	mux.HandleFunc("GET /api/admin/audit/export", s.exportAuditLog)
 	// Config export/import — admin-only. GET streams the full
 	// operator-set state as a JSON file; POST replays it back.
 	// Targets fresh installs (clean-install bootstrap) and DR
@@ -737,7 +741,7 @@ func (s *Server) Start() error {
 	// returns {willAdd, willOverwrite, unchanged, onlyInDB} per
 	// table. UI surfaces it as a "Preview diff" affordance so the
 	// operator confirms before triggering the actual replay.
-	mux.HandleFunc("POST /api/admin/config/diff",   auth.RequireRole(auth.RoleAdmin, s.diffConfig))
+	mux.HandleFunc("POST /api/admin/config/diff", auth.RequireRole(auth.RoleAdmin, s.diffConfig))
 	// SQL playground — admin only; readonly=2 + 60s cap on the
 	// CH side, allow-list of SELECT/WITH/SHOW/DESCRIBE/EXPLAIN
 	// on the application side.
@@ -746,9 +750,9 @@ func (s *Server) Start() error {
 	// across the rest of the admin surface (catches the route at
 	// registration time so a future refactor can't accidentally
 	// drop the inline check).
-	mux.HandleFunc("POST /api/admin/sql/query",       auth.RequireRole(auth.RoleAdmin, s.execSQL))
-	mux.HandleFunc("GET  /api/admin/sql/schema",      auth.RequireRole(auth.RoleAdmin, s.sqlSchema))
-	mux.HandleFunc("POST /api/admin/sql/elastic",     auth.RequireRole(auth.RoleAdmin, s.execElasticSQL))
+	mux.HandleFunc("POST /api/admin/sql/query", auth.RequireRole(auth.RoleAdmin, s.execSQL))
+	mux.HandleFunc("GET  /api/admin/sql/schema", auth.RequireRole(auth.RoleAdmin, s.sqlSchema))
+	mux.HandleFunc("POST /api/admin/sql/elastic", auth.RequireRole(auth.RoleAdmin, s.execElasticSQL))
 	// v0.5.466 — ES index inventory: name, docs, size, health,
 	// ILM phase/policy. Admin-only (read of cluster metadata).
 	mux.HandleFunc("GET  /api/admin/elastic/indices", auth.RequireRole(auth.RoleAdmin, s.adminElasticIndices))
@@ -777,47 +781,47 @@ func (s *Server) Start() error {
 	// v0.5.482 — moved off /api/events (was colliding with the
 	// existing SSE stream at line 320). /api/operator-events is
 	// explicit anyway.
-	mux.HandleFunc("GET    /api/operator-events",      s.listEvents)
-	mux.HandleFunc("POST   /api/operator-events",      auth.RequireAnyRole(editorRoles, s.createEvent))
+	mux.HandleFunc("GET    /api/operator-events", s.listEvents)
+	mux.HandleFunc("POST   /api/operator-events", auth.RequireAnyRole(editorRoles, s.createEvent))
 	mux.HandleFunc("DELETE /api/operator-events/{id}", auth.RequireAnyRole(editorRoles, s.deleteEvent))
 	// v0.8.241 — notification dispatch history (email/slack/teams/
 	// zoom/webhook/whatsapp sends, success + failure). Read-only;
 	// any signed-in role (targets are masked at write time).
-	mux.HandleFunc("GET    /api/notifications/log",    s.listNotificationLog)
+	mux.HandleFunc("GET    /api/notifications/log", s.listNotificationLog)
 	// Saved views — per-user CRUD (server scopes by session).
-	mux.HandleFunc("GET    /api/views",     s.listSavedViews)
-	mux.HandleFunc("POST   /api/views",     s.createSavedView)
+	mux.HandleFunc("GET    /api/views", s.listSavedViews)
+	mux.HandleFunc("POST   /api/views", s.createSavedView)
 	mux.HandleFunc("DELETE /api/views/{id}", s.deleteSavedView)
 	// AI observability (v0.5.163) — admin-only since prompts and
 	// response samples can contain telemetry the viewer role might
 	// not otherwise have access to. Tighten further (per-team) if
 	// the operator surface ever sends third-party data into prompts.
-	mux.HandleFunc("GET /api/ai/calls",      auth.RequireRole(auth.RoleAdmin, s.listAICalls))
+	mux.HandleFunc("GET /api/ai/calls", auth.RequireRole(auth.RoleAdmin, s.listAICalls))
 	mux.HandleFunc("GET /api/ai/calls/{id}", auth.RequireRole(auth.RoleAdmin, s.getAICall))
-	mux.HandleFunc("GET /api/ai/stats",      auth.RequireRole(auth.RoleAdmin, s.aiStats))
-	mux.HandleFunc("GET /api/ai/series",     auth.RequireRole(auth.RoleAdmin, s.aiSeries))
-	mux.HandleFunc("GET /api/ai/rates",      auth.RequireRole(auth.RoleAdmin, s.getAIRates))
-	mux.HandleFunc("PUT /api/ai/rates",      auth.RequireRole(auth.RoleAdmin, s.putAIRates))
+	mux.HandleFunc("GET /api/ai/stats", auth.RequireRole(auth.RoleAdmin, s.aiStats))
+	mux.HandleFunc("GET /api/ai/series", auth.RequireRole(auth.RoleAdmin, s.aiSeries))
+	mux.HandleFunc("GET /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.getAIRates))
+	mux.HandleFunc("PUT /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.putAIRates))
 	// v0.8.399 — thumbs up/down on AI answers. Any authenticated user
 	// (NOT admin-gated like the reads above): whoever can chat can
 	// rate the answer they got — mirrors POST /api/copilot/chat.
-	mux.HandleFunc("POST /api/ai/feedback",  s.postAIFeedback)
+	mux.HandleFunc("POST /api/ai/feedback", s.postAIFeedback)
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────
 	// Read-only unauth: anyone with the URL can see status + subscribe.
-	mux.HandleFunc("GET  /api/public-status",            s.publicStatus)
-	mux.HandleFunc("POST /api/public-status/subscribe",  s.publicStatusSubscribe)
-	mux.HandleFunc("GET  /api/public-status/confirm",    s.publicStatusConfirm)
+	mux.HandleFunc("GET  /api/public-status", s.publicStatus)
+	mux.HandleFunc("POST /api/public-status/subscribe", s.publicStatusSubscribe)
+	mux.HandleFunc("GET  /api/public-status/confirm", s.publicStatusConfirm)
 	// Admin-gated config + subscriber management.
-	mux.HandleFunc("GET    /api/status-page/config",       auth.RequireRole(auth.RoleAdmin, s.statusPageGetConfig))
-	mux.HandleFunc("PUT    /api/status-page/config",       auth.RequireRole(auth.RoleAdmin, s.statusPagePutConfig))
-	mux.HandleFunc("GET    /api/status-page/components",   auth.RequireRole(auth.RoleAdmin, s.statusPageListComponents))
-	mux.HandleFunc("POST   /api/status-page/components",   auth.RequireRole(auth.RoleAdmin, s.statusPageCreateComponent))
+	mux.HandleFunc("GET    /api/status-page/config", auth.RequireRole(auth.RoleAdmin, s.statusPageGetConfig))
+	mux.HandleFunc("PUT    /api/status-page/config", auth.RequireRole(auth.RoleAdmin, s.statusPagePutConfig))
+	mux.HandleFunc("GET    /api/status-page/components", auth.RequireRole(auth.RoleAdmin, s.statusPageListComponents))
+	mux.HandleFunc("POST   /api/status-page/components", auth.RequireRole(auth.RoleAdmin, s.statusPageCreateComponent))
 	mux.HandleFunc("PUT    /api/status-page/components/{id}", auth.RequireRole(auth.RoleAdmin, s.statusPageUpdateComponent))
 	mux.HandleFunc("DELETE /api/status-page/components/{id}", auth.RequireRole(auth.RoleAdmin, s.statusPageDeleteComponent))
-	mux.HandleFunc("GET    /api/status-page/subscribers",  auth.RequireRole(auth.RoleAdmin, s.statusPageListSubscribers))
-	mux.HandleFunc("DELETE /api/status-page/subscribers",  auth.RequireRole(auth.RoleAdmin, s.statusPageDeleteSubscriber))
+	mux.HandleFunc("GET    /api/status-page/subscribers", auth.RequireRole(auth.RoleAdmin, s.statusPageListSubscribers))
+	mux.HandleFunc("DELETE /api/status-page/subscribers", auth.RequireRole(auth.RoleAdmin, s.statusPageDeleteSubscriber))
 	mux.HandleFunc("PUT    /api/status-page/incidents/{id}/publish", auth.RequireRole(auth.RoleAdmin, s.statusPagePublishIncident))
 	// v0.8.196 — "factory reset" of observability data (admin-only, audited).
 	mux.HandleFunc("POST   /api/admin/purge-telemetry", auth.RequireRole(auth.RoleAdmin, s.purgeTelemetry))
@@ -827,69 +831,69 @@ func (s *Server) Start() error {
 	mux.HandleFunc("PUT /api/settings/retention", auth.RequireRole(auth.RoleAdmin, s.putRetention))
 	mux.HandleFunc("GET /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.getAnomalyPromotion))
 	mux.HandleFunc("PUT /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.putAnomalyPromotion))
-	mux.HandleFunc("GET /api/settings/ai",        auth.RequireRole(auth.RoleAdmin, s.getAISettings))
-	mux.HandleFunc("PUT /api/settings/ai",        auth.RequireRole(auth.RoleAdmin, s.putAISettings))
+	mux.HandleFunc("GET /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.getAISettings))
+	mux.HandleFunc("PUT /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.putAISettings))
 	// External Tempo backend — admin-only because the token grants
 	// read access to every trace in the operator's Tempo cluster.
-	mux.HandleFunc("GET /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
-	mux.HandleFunc("PUT /api/settings/tempo",     auth.RequireRole(auth.RoleAdmin, s.putTempoSettings))
+	mux.HandleFunc("GET /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
+	mux.HandleFunc("PUT /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.putTempoSettings))
 	mux.HandleFunc("GET  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.getLogstoreESSettings))
 	mux.HandleFunc("PUT  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.putLogstoreESSettings))
 	mux.HandleFunc("POST /api/settings/logstore/test", auth.RequireRole(auth.RoleAdmin, s.testLogstoreESSettings))
 	// External Kibana deep-link config (v0.5.236). GET is open
 	// to any signed-in user — the Logs page renders the link
 	// for everyone; only the admin can change the base URL.
-	mux.HandleFunc("GET /api/settings/kibana",    s.getKibanaSettings)
-	mux.HandleFunc("PUT /api/settings/kibana",    auth.RequireRole(auth.RoleAdmin, s.putKibanaSettings))
-	mux.HandleFunc("GET  /api/settings/ldap",        auth.RequireRole(auth.RoleAdmin, s.getLDAPSettings))
-	mux.HandleFunc("PUT  /api/settings/ldap",        auth.RequireRole(auth.RoleAdmin, s.putLDAPSettings))
-	mux.HandleFunc("POST /api/settings/ldap/test",   auth.RequireRole(auth.RoleAdmin, s.testLDAPConnection))
+	mux.HandleFunc("GET /api/settings/kibana", s.getKibanaSettings)
+	mux.HandleFunc("PUT /api/settings/kibana", auth.RequireRole(auth.RoleAdmin, s.putKibanaSettings))
+	mux.HandleFunc("GET  /api/settings/ldap", auth.RequireRole(auth.RoleAdmin, s.getLDAPSettings))
+	mux.HandleFunc("PUT  /api/settings/ldap", auth.RequireRole(auth.RoleAdmin, s.putLDAPSettings))
+	mux.HandleFunc("POST /api/settings/ldap/test", auth.RequireRole(auth.RoleAdmin, s.testLDAPConnection))
 	mux.HandleFunc("GET  /api/settings/ldap/search", auth.RequireRole(auth.RoleAdmin, s.searchLDAPUsers))
 	mux.HandleFunc("GET  /api/settings/ldap/inspect", auth.RequireRole(auth.RoleAdmin, s.inspectLDAPUser))
-	mux.HandleFunc("POST /api/users/from-ldap",      auth.RequireRole(auth.RoleAdmin, s.provisionLDAPUser))
+	mux.HandleFunc("POST /api/users/from-ldap", auth.RequireRole(auth.RoleAdmin, s.provisionLDAPUser))
 
 	// ── AI Copilot ─────────────────────────────────────────────────
-	mux.HandleFunc("GET    /api/copilot/config",            s.copilotConfig)
+	mux.HandleFunc("GET    /api/copilot/config", s.copilotConfig)
 	// v0.6.53 — in-app agentic chatbot. SSE stream; any authenticated
 	// user (the 7 telemetry tools it calls are all read-only).
-	mux.HandleFunc("POST   /api/copilot/chat",             s.copilotChat)
+	mux.HandleFunc("POST   /api/copilot/chat", s.copilotChat)
 	// v0.8.75 — autonomous agentic root-cause analysis (same loop + tools,
 	// kicked off on a subject service/problem rather than user-driven).
-	mux.HandleFunc("POST   /api/copilot/analyze-service",  s.copilotAnalyzeService)
+	mux.HandleFunc("POST   /api/copilot/analyze-service", s.copilotAnalyzeService)
 	mux.HandleFunc("POST   /api/copilot/explain-trace/{id}", s.copilotExplainTrace)
 	// v0.5.255 — natural-language → DSL filter converter. /explore
 	// gets a "✦ Natural language" input that feeds this endpoint.
-	mux.HandleFunc("POST   /api/copilot/nl-to-query",       s.copilotNLToQuery)
+	mux.HandleFunc("POST   /api/copilot/nl-to-query", s.copilotNLToQuery)
 	mux.HandleFunc("POST   /api/copilot/explain-span/{traceId}", s.copilotExplainSpan)
 	mux.HandleFunc("POST   /api/copilot/explain-problem/{id}", s.copilotExplainProblem)
 	mux.HandleFunc("POST   /api/copilot/explain-incident/{id}", s.copilotExplainIncident)
 	mux.HandleFunc("POST   /api/copilot/explain-anomaly/{id}", s.copilotExplainAnomaly)
-	mux.HandleFunc("POST   /api/copilot/explain-service",      s.copilotExplainServiceHealth)
-	mux.HandleFunc("POST   /api/copilot/runbook/{id}",         s.copilotRunbook)
-	mux.HandleFunc("POST   /api/copilot/compare-traces",       s.copilotCompareTraces)
-	mux.HandleFunc("POST   /api/copilot/deploy-impact",        s.copilotDeployImpact)
-	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}",     s.copilotExplainSLO)
-	mux.HandleFunc("POST   /api/copilot/explain-slow-query",   s.copilotExplainSlowQuery)
+	mux.HandleFunc("POST   /api/copilot/explain-service", s.copilotExplainServiceHealth)
+	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.copilotRunbook)
+	mux.HandleFunc("POST   /api/copilot/compare-traces", s.copilotCompareTraces)
+	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.copilotDeployImpact)
+	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}", s.copilotExplainSLO)
+	mux.HandleFunc("POST   /api/copilot/explain-slow-query", s.copilotExplainSlowQuery)
 	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.copilotSuggestServiceTags))
 
 	// ── Incident management ───────────────────────────────────────
-	mux.HandleFunc("GET    /api/incidents",                 s.listIncidents)
-	mux.HandleFunc("POST   /api/incidents",                 auth.RequireAnyRole(editorRoles, s.createIncident))
-	mux.HandleFunc("GET    /api/incidents/{id}",            s.getIncident)
-	mux.HandleFunc("PUT    /api/incidents/{id}",            auth.RequireAnyRole(editorRoles, s.updateIncident))
-	mux.HandleFunc("POST   /api/incidents/{id}/ack",        auth.RequireAnyRole(editorRoles, s.ackIncident))
-	mux.HandleFunc("POST   /api/incidents/{id}/resolve",    auth.RequireAnyRole(editorRoles, s.resolveIncident))
-	mux.HandleFunc("POST   /api/incidents/{id}/note",       auth.RequireAnyRole(editorRoles, s.addIncidentNote))
-	mux.HandleFunc("GET    /api/incidents/{id}/timeline",   s.incidentTimeline)
-	mux.HandleFunc("GET    /api/incidents/{id}/problems",   s.incidentProblems)
+	mux.HandleFunc("GET    /api/incidents", s.listIncidents)
+	mux.HandleFunc("POST   /api/incidents", auth.RequireAnyRole(editorRoles, s.createIncident))
+	mux.HandleFunc("GET    /api/incidents/{id}", s.getIncident)
+	mux.HandleFunc("PUT    /api/incidents/{id}", auth.RequireAnyRole(editorRoles, s.updateIncident))
+	mux.HandleFunc("POST   /api/incidents/{id}/ack", auth.RequireAnyRole(editorRoles, s.ackIncident))
+	mux.HandleFunc("POST   /api/incidents/{id}/resolve", auth.RequireAnyRole(editorRoles, s.resolveIncident))
+	mux.HandleFunc("POST   /api/incidents/{id}/note", auth.RequireAnyRole(editorRoles, s.addIncidentNote))
+	mux.HandleFunc("GET    /api/incidents/{id}/timeline", s.incidentTimeline)
+	mux.HandleFunc("GET    /api/incidents/{id}/problems", s.incidentProblems)
 
 	// ── Synthetic monitoring ───────────────────────────────────────
-	mux.HandleFunc("GET    /api/monitors",                s.listMonitors)
-	mux.HandleFunc("POST   /api/monitors",                auth.RequireAnyRole(editorRoles, s.createMonitor))
-	mux.HandleFunc("GET    /api/monitors/{id}",           s.getMonitor)
-	mux.HandleFunc("PUT    /api/monitors/{id}",           auth.RequireAnyRole(editorRoles, s.updateMonitor))
-	mux.HandleFunc("DELETE /api/monitors/{id}",           auth.RequireAnyRole(editorRoles, s.deleteMonitor))
-	mux.HandleFunc("GET    /api/monitors/{id}/timeline",  s.monitorTimeline)
+	mux.HandleFunc("GET    /api/monitors", s.listMonitors)
+	mux.HandleFunc("POST   /api/monitors", auth.RequireAnyRole(editorRoles, s.createMonitor))
+	mux.HandleFunc("GET    /api/monitors/{id}", s.getMonitor)
+	mux.HandleFunc("PUT    /api/monitors/{id}", auth.RequireAnyRole(editorRoles, s.updateMonitor))
+	mux.HandleFunc("DELETE /api/monitors/{id}", auth.RequireAnyRole(editorRoles, s.deleteMonitor))
+	mux.HandleFunc("GET    /api/monitors/{id}/timeline", s.monitorTimeline)
 	// Heartbeat ingest — no auth so cron jobs / batch jobs can hit
 	// it directly with curl. The token in the URL is the security
 	// boundary (random 32-char hex per monitor).
@@ -897,52 +901,52 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET  /api/heartbeats/{token}", s.acceptHeartbeat) // GET for `curl` and uptime trackers that only do GET
 
 	// Auth
-	mux.HandleFunc("GET  /api/auth/config",   s.authConfig)
-	mux.HandleFunc("POST /api/auth/login",    s.login)
-	mux.HandleFunc("POST /api/auth/logout",   s.logout)
-	mux.HandleFunc("GET  /api/auth/me",       s.me)
+	mux.HandleFunc("GET  /api/auth/config", s.authConfig)
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("GET  /api/auth/me", s.me)
 	mux.HandleFunc("GET  /api/auth/me/photo", s.mePhoto)
 	mux.HandleFunc("POST /api/auth/password", s.changeOwnPassword)
-	mux.HandleFunc("GET  /api/auth/oidc/start",    s.oidcStart)
+	mux.HandleFunc("GET  /api/auth/oidc/start", s.oidcStart)
 	mux.HandleFunc("GET  /api/auth/oidc/callback", s.oidcCallback)
 
 	// SLOs (read = any user, write = admin)
-	mux.HandleFunc("GET    /api/slos",            s.listSLOs)
-	mux.HandleFunc("GET    /api/slos/{id}",       s.getSLO)
+	mux.HandleFunc("GET    /api/slos", s.listSLOs)
+	mux.HandleFunc("GET    /api/slos/{id}", s.getSLO)
 	mux.HandleFunc("GET    /api/slos/{id}/status", s.sloStatus)
 	mux.HandleFunc("GET    /api/slos/{id}/burn-series", s.sloBurnSeries)
 	// v0.6.30 — SLO burn-down forecast. Projects when the error
 	// budget will be exhausted at the current short-window burn
 	// rate. /slos list page surfaces "breaches in <24h" chip.
 	mux.HandleFunc("GET    /api/slos/{id}/forecast", s.sloForecast)
-	mux.HandleFunc("POST   /api/slos",            auth.RequireAnyRole(editorRoles, s.createSLO))
-	mux.HandleFunc("DELETE /api/slos/{id}",       auth.RequireAnyRole(editorRoles, s.deleteSLO))
+	mux.HandleFunc("POST   /api/slos", auth.RequireAnyRole(editorRoles, s.createSLO))
+	mux.HandleFunc("DELETE /api/slos/{id}", auth.RequireAnyRole(editorRoles, s.deleteSLO))
 
 	// Dashboards (read = any user, write = admin)
-	mux.HandleFunc("GET    /api/dashboards",      s.listDashboards)
+	mux.HandleFunc("GET    /api/dashboards", s.listDashboards)
 	mux.HandleFunc("GET    /api/dashboards/{id}", s.getDashboard)
-	mux.HandleFunc("POST   /api/dashboards",      auth.RequireAnyRole(editorRoles, s.createDashboard))
+	mux.HandleFunc("POST   /api/dashboards", auth.RequireAnyRole(editorRoles, s.createDashboard))
 	mux.HandleFunc("PUT    /api/dashboards/{id}", auth.RequireAnyRole(editorRoles, s.updateDashboard))
 	mux.HandleFunc("DELETE /api/dashboards/{id}", auth.RequireAnyRole(editorRoles, s.deleteDashboard))
 
 	// Settings + notification channels (admin only)
 	mux.HandleFunc("GET    /api/settings/team-contacts", auth.RequireRole(auth.RoleAdmin, s.getTeamContacts))
 	mux.HandleFunc("PUT    /api/settings/team-contacts", auth.RequireRole(auth.RoleAdmin, s.putTeamContacts))
-	mux.HandleFunc("GET    /api/settings/smtp",       auth.RequireRole(auth.RoleAdmin, s.getSMTPSettings))
-	mux.HandleFunc("PUT    /api/settings/smtp",       auth.RequireRole(auth.RoleAdmin, s.putSMTPSettings))
-	mux.HandleFunc("POST   /api/settings/smtp/test",  auth.RequireRole(auth.RoleAdmin, s.testSMTPSettings))
-	mux.HandleFunc("GET    /api/channels",            auth.RequireRole(auth.RoleAdmin, s.listChannels))
-	mux.HandleFunc("POST   /api/channels",            auth.RequireRole(auth.RoleAdmin, s.createChannel))
-	mux.HandleFunc("PUT    /api/channels/{id}",       auth.RequireRole(auth.RoleAdmin, s.updateChannel))
-	mux.HandleFunc("DELETE /api/channels/{id}",       auth.RequireRole(auth.RoleAdmin, s.deleteChannel))
-	mux.HandleFunc("POST   /api/channels/{id}/test",  auth.RequireRole(auth.RoleAdmin, s.testChannel))
+	mux.HandleFunc("GET    /api/settings/smtp", auth.RequireRole(auth.RoleAdmin, s.getSMTPSettings))
+	mux.HandleFunc("PUT    /api/settings/smtp", auth.RequireRole(auth.RoleAdmin, s.putSMTPSettings))
+	mux.HandleFunc("POST   /api/settings/smtp/test", auth.RequireRole(auth.RoleAdmin, s.testSMTPSettings))
+	mux.HandleFunc("GET    /api/channels", auth.RequireRole(auth.RoleAdmin, s.listChannels))
+	mux.HandleFunc("POST   /api/channels", auth.RequireRole(auth.RoleAdmin, s.createChannel))
+	mux.HandleFunc("PUT    /api/channels/{id}", auth.RequireRole(auth.RoleAdmin, s.updateChannel))
+	mux.HandleFunc("DELETE /api/channels/{id}", auth.RequireRole(auth.RoleAdmin, s.deleteChannel))
+	mux.HandleFunc("POST   /api/channels/{id}/test", auth.RequireRole(auth.RoleAdmin, s.testChannel))
 	// Maintenance windows — admin-only CRUD. While an active
 	// window matches a problem's (service, severity), the
 	// notifier skips the live fan-out. Problems still open +
 	// auto-resolve so the post-window timeline review is
 	// intact; only the channel spam is suppressed.
-	mux.HandleFunc("GET    /api/maintenance-windows",      auth.RequireRole(auth.RoleAdmin, s.listMaintenanceWindows))
-	mux.HandleFunc("POST   /api/maintenance-windows",      auth.RequireRole(auth.RoleAdmin, s.createMaintenanceWindow))
+	mux.HandleFunc("GET    /api/maintenance-windows", auth.RequireRole(auth.RoleAdmin, s.listMaintenanceWindows))
+	mux.HandleFunc("POST   /api/maintenance-windows", auth.RequireRole(auth.RoleAdmin, s.createMaintenanceWindow))
 	mux.HandleFunc("DELETE /api/maintenance-windows/{id}", auth.RequireRole(auth.RoleAdmin, s.deleteMaintenanceWindow))
 	// Zoom-specific helper: list channels the configured S2S
 	// OAuth app can see, so admins pick a Channel ID from a
@@ -954,42 +958,41 @@ func (s *Server) Start() error {
 		auth.RequireRole(auth.RoleAdmin, s.listZoomChannels))
 
 	// User management (admin only)
-	mux.HandleFunc("GET    /api/users",                  auth.RequireRole(auth.RoleAdmin, s.listUsers))
+	mux.HandleFunc("GET    /api/users", auth.RequireRole(auth.RoleAdmin, s.listUsers))
 	// Per-team membership lookup — readable by any
 	// authenticated user (not admin-only). Drives the
 	// owner-team / SRE-team chip popover on /service?name=…
 	// Returns email + role + team only; password hash is
 	// never serialised regardless.
-	mux.HandleFunc("GET    /api/users/by-team",          s.listUsersByTeam)
-	mux.HandleFunc("POST   /api/users",                  auth.RequireRole(auth.RoleAdmin, s.createUser))
-	mux.HandleFunc("DELETE /api/users/{id}",             auth.RequireRole(auth.RoleAdmin, s.deleteUser))
-	mux.HandleFunc("GET    /api/users/{id}/photo",       auth.RequireRole(auth.RoleAdmin, s.userPhoto))
-	mux.HandleFunc("POST   /api/users/{id}/password",    auth.RequireRole(auth.RoleAdmin, s.resetUserPassword))
-	mux.HandleFunc("PUT    /api/users/{id}/role",        auth.RequireRole(auth.RoleAdmin, s.setUserRole))
-	mux.HandleFunc("PUT    /api/users/{id}/team",        auth.RequireRole(auth.RoleAdmin, s.setUserTeam))
+	mux.HandleFunc("GET    /api/users/by-team", s.listUsersByTeam)
+	mux.HandleFunc("POST   /api/users", auth.RequireRole(auth.RoleAdmin, s.createUser))
+	mux.HandleFunc("DELETE /api/users/{id}", auth.RequireRole(auth.RoleAdmin, s.deleteUser))
+	mux.HandleFunc("GET    /api/users/{id}/photo", auth.RequireRole(auth.RoleAdmin, s.userPhoto))
+	mux.HandleFunc("POST   /api/users/{id}/password", auth.RequireRole(auth.RoleAdmin, s.resetUserPassword))
+	mux.HandleFunc("PUT    /api/users/{id}/role", auth.RequireRole(auth.RoleAdmin, s.setUserRole))
+	mux.HandleFunc("PUT    /api/users/{id}/team", auth.RequireRole(auth.RoleAdmin, s.setUserTeam))
 	mux.HandleFunc("PUT    /api/users/{id}/custom-role", auth.RequireRole(auth.RoleAdmin, s.setUserCustomRole))
 
 	// Custom roles — operator-defined viewer subsets (v0.5.251).
 	// Page list is sourced from a single backend registry so the
 	// sidebar + checkbox grid + custom-role pages share IDs.
-	mux.HandleFunc("GET    /api/admin/custom-roles",      auth.RequireRole(auth.RoleAdmin, s.listCustomRoles))
-	mux.HandleFunc("POST   /api/admin/custom-roles",      auth.RequireRole(auth.RoleAdmin, s.upsertCustomRole))
+	mux.HandleFunc("GET    /api/admin/custom-roles", auth.RequireRole(auth.RoleAdmin, s.listCustomRoles))
+	mux.HandleFunc("POST   /api/admin/custom-roles", auth.RequireRole(auth.RoleAdmin, s.upsertCustomRole))
 	mux.HandleFunc("DELETE /api/admin/custom-roles/{name}", auth.RequireRole(auth.RoleAdmin, s.deleteCustomRole))
-	mux.HandleFunc("GET    /api/admin/pages",             auth.RequireRole(auth.RoleAdmin, s.listAvailablePages))
+	mux.HandleFunc("GET    /api/admin/pages", auth.RequireRole(auth.RoleAdmin, s.listAvailablePages))
 
 	// Cluster membership — multi-pod HA visibility (v0.5.253).
 	// Single round-trip: SCAN coremetry:pod:* in Redis + MGET. Empty
 	// list (no Redis) falls back to a single-pod view.
-	mux.HandleFunc("GET    /api/admin/cluster",           auth.RequireRole(auth.RoleAdmin, s.listClusterMembers))
+	mux.HandleFunc("GET    /api/admin/cluster", auth.RequireRole(auth.RoleAdmin, s.listClusterMembers))
 	// v0.5.277 — "what changed" banner data. Open problem
 	// counts + recent service.version transitions. Cheap
 	// (15s cache); polled from the global AppShell.
 
-
 	// Ingest pipeline (v0.5.263) — admin-managed drop / enrich
 	// rules applied before the sampler. List + upsert + delete.
-	mux.HandleFunc("GET    /api/admin/pipeline-rules",      auth.RequireRole(auth.RoleAdmin, s.listPipelineRules))
-	mux.HandleFunc("POST   /api/admin/pipeline-rules",      auth.RequireRole(auth.RoleAdmin, s.upsertPipelineRule))
+	mux.HandleFunc("GET    /api/admin/pipeline-rules", auth.RequireRole(auth.RoleAdmin, s.listPipelineRules))
+	mux.HandleFunc("POST   /api/admin/pipeline-rules", auth.RequireRole(auth.RoleAdmin, s.upsertPipelineRule))
 	mux.HandleFunc("DELETE /api/admin/pipeline-rules/{id}", auth.RequireRole(auth.RoleAdmin, s.deletePipelineRule))
 
 	// Tempo-compatible API (Grafana datasource integration)
@@ -1515,12 +1518,12 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 // scoreHealth (v0.5.274) — Datadog-Watchdog-style red/yellow/
 // green verdict per service. Blend rules, in order:
 //
-//   RED:    1+ open critical problem
-//        OR errorRate > 5%
-//   YELLOW: 1+ open warning problem
-//        OR errorRate > 1%
-//        OR 1+ open info problem
-//   GREEN:  otherwise
+//	RED:    1+ open critical problem
+//	     OR errorRate > 5%
+//	YELLOW: 1+ open warning problem
+//	     OR errorRate > 1%
+//	     OR 1+ open info problem
+//	GREEN:  otherwise
 //
 // Operator sees the firing rule in HealthReason so the badge
 // is auditable. Reason text is short — meant for a tooltip.
@@ -1818,7 +1821,8 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getServiceStructure(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
-		http.Error(w, "service name required", http.StatusBadRequest); return
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
 	}
 	since := parseDuration(r.URL.Query().Get("since"), time.Hour)
 	samples := parseInt(r.URL.Query().Get("samples"), 50)
@@ -2220,7 +2224,8 @@ func (s *Server) getSlowQueriesGlobal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getServiceBacktrace(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
-		http.Error(w, "service name required", http.StatusBadRequest); return
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
 	}
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), time.Hour)
@@ -2297,7 +2302,8 @@ func (s *Server) getServiceBlastRadius(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getServiceNeighbors(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
-		http.Error(w, "service name required", http.StatusBadRequest); return
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
 	}
 	since := parseDuration(r.URL.Query().Get("since"), time.Hour)
 	samples := parseInt(r.URL.Query().Get("samples"), 50)
@@ -2573,8 +2579,9 @@ func (s *Server) getServiceMap(w http.ResponseWriter, r *http.Request) {
 // separate round-trip per service.
 //
 // Response shape:
-//   { "<service>": [ { "t": <unix ns>, "spans": N, "errs": N,
-//                      "avgMs": F, "p99Ms": F }, ... ] }
+//
+//	{ "<service>": [ { "t": <unix ns>, "spans": N, "errs": N,
+//	                   "avgMs": F, "p99Ms": F }, ... ] }
 func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
@@ -2634,11 +2641,12 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 // per-service grouped), with wildcard substring search and paging.
 //
 // Why a dedicated endpoint instead of /api/services?
-//   /api/services is top-N capped (50 by default) so the dashboard can
-//   render in sub-second on 10k-service installs. That cap leaks into
-//   any picker that scraped the names from the same response — users
-//   couldn't pick a less-busy service. This endpoint exists purely for
-//   pickers and never aggregates anything beyond DISTINCT.
+//
+//	/api/services is top-N capped (50 by default) so the dashboard can
+//	render in sub-second on 10k-service installs. That cap leaks into
+//	any picker that scraped the names from the same response — users
+//	couldn't pick a less-busy service. This endpoint exists purely for
+//	pickers and never aggregates anything beyond DISTINCT.
 //
 // Wildcard:
 //   - "pay"     → substring match (LIKE '%pay%'), case-insensitive
@@ -2646,6 +2654,7 @@ func (s *Server) getServiceSparklines(w http.ResponseWriter, r *http.Request) {
 //   - "*pay"    → suffix match (LIKE '%pay')
 //   - "*pay*"   → explicit substring (same as plain "pay")
 //   - "p?y"     → '?' becomes single-char wildcard (LIKE 'p_y')
+//
 // getOperationNames — operations-picker counterpart to
 // getServiceNames (v0.5.180). Server-side substring / wildcard
 // search over operation_summary_5m so a 10k-operation service
@@ -2857,13 +2866,13 @@ func attributeKeysSQL(extra string, sampleRows int) string {
 // attribute they get a real top-N value list, not a blank field.
 //
 // Two paths depending on the key:
-//   1. Well-known semconv key with a dedicated structured column
-//      (http.method → http_method, db.system → db_system, etc.) →
-//      query the LowCardinality column directly. O(rows) but the
-//      compressed column reads cheap.
-//   2. Anything else → array index lookup
-//      attr_values[indexOf(attr_keys, ?)] (or res_values for the
-//      resource-scoped scope).
+//  1. Well-known semconv key with a dedicated structured column
+//     (http.method → http_method, db.system → db_system, etc.) →
+//     query the LowCardinality column directly. O(rows) but the
+//     compressed column reads cheap.
+//  2. Anything else → array index lookup
+//     attr_values[indexOf(attr_keys, ?)] (or res_values for the
+//     resource-scoped scope).
 //
 // Result is cached 60s in the same Redis layer the rest of the cheap-
 // fan-out endpoints use, keyed by `key:since:limit` — so 100 SREs
@@ -2872,10 +2881,12 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rawKey := strings.TrimSpace(q.Get("key"))
 	if rawKey == "" {
-		http.Error(w, "key required", http.StatusBadRequest); return
+		http.Error(w, "key required", http.StatusBadRequest)
+		return
 	}
 	if !isSafeAttrKey(strings.TrimPrefix(strings.TrimPrefix(rawKey, "resource."), "span.")) {
-		http.Error(w, "invalid key", http.StatusBadRequest); return
+		http.Error(w, "invalid key", http.StatusBadRequest)
+		return
 	}
 	since := parseDuration(q.Get("since"), time.Hour)
 	// v0.8.x (trace-query gap-1) — range-bind the value autocomplete to the
@@ -2885,7 +2896,9 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 	from := parseTime(q.Get("from"))
 	to := parseTime(q.Get("to"))
 	limit := parseInt(q.Get("limit"), 200)
-	if limit > 1000 { limit = 1000 }
+	if limit > 1000 {
+		limit = 1000
+	}
 	// v0.5.182 — optional `q` query for server-side substring /
 	// wildcard search on the value. Without this filter, high-
 	// cardinality attribute keys (http.url, db.statement) were
@@ -3012,7 +3025,9 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 		}
 
 		rows, err := s.store.Conn().Query(ctx, sql, args...)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		defer rows.Close()
 		type valRow struct {
 			Value string `json:"value"`
@@ -3048,8 +3063,12 @@ func (s *Server) getServiceGraph(w http.ResponseWriter, r *http.Request) {
 	// requested service. Even one well-connected hub can fan out to
 	// hundreds of edges; default tops out at 300, override via ?topN=.
 	topN := parseInt(q.Get("topN"), 300)
-	if topN < 1   { topN = 300 }
-	if topN > 5000 { topN = 5000 }
+	if topN < 1 {
+		topN = 300
+	}
+	if topN > 5000 {
+		topN = 5000
+	}
 
 	// 30s cache. The per-service neighbourhood is small and changes
 	// only when new edges form; a 30-second window collapses every
@@ -3104,18 +3123,18 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 			}
 			return out
 		}(),
-		MinMs:    parseFloat(q.Get("minMs")),
-		MaxMs:    parseFloat(q.Get("maxMs")),
-		AttrKey:  q.Get("attrKey"),
-		AttrVal:  q.Get("attrVal"),
+		MinMs:   parseFloat(q.Get("minMs")),
+		MaxMs:   parseFloat(q.Get("maxMs")),
+		AttrKey: q.Get("attrKey"),
+		AttrVal: q.Get("attrVal"),
 		// v0.8.383 — global env picker (?env=). First-class filter so it
 		// survives the FilterRoot-supersedes-Filters rule; rides the
 		// RawQuery cache key below like every other param.
-		Env:      strings.TrimSpace(q.Get("env")),
-		Sort:     q.Get("sort"),
-		Order:    q.Get("order"),
-		Limit:    parseInt(q.Get("limit"), 50),
-		Offset:   parseInt(q.Get("offset"), 0),
+		Env:    strings.TrimSpace(q.Get("env")),
+		Sort:   q.Get("sort"),
+		Order:  q.Get("order"),
+		Limit:  parseInt(q.Get("limit"), 50),
+		Offset: parseInt(q.Get("offset"), 0),
 	}
 	filters, ferr := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
 	if ferr != nil {
@@ -3191,9 +3210,9 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 // exportTracesCSV serves the current /traces filter set as a
 // downloadable CSV. Two operator workflows ask for this on
 // every install:
-//   • postmortem authors who want to paste rows into the
+//   - postmortem authors who want to paste rows into the
 //     incident doc / postmortem template
-//   • auditors who need a flat artifact of "what hit service
+//   - auditors who need a flat artifact of "what hit service
 //     X over the last 24h"
 //
 // Same filter shape as /api/traces (we just rebuild the
@@ -3228,11 +3247,11 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 		AttrVal:  q.Get("attrVal"),
 		// v0.8.383 — ?env= parity with /api/traces so the CSV export
 		// matches exactly what's on screen.
-		Env:      strings.TrimSpace(q.Get("env")),
-		Sort:     q.Get("sort"),
-		Order:    q.Get("order"),
-		Limit:    limit,
-		Offset:   0,
+		Env:       strings.TrimSpace(q.Get("env")),
+		Sort:      q.Get("sort"),
+		Order:     q.Get("order"),
+		Limit:     limit,
+		Offset:    0,
 		CountMode: "skip",
 	}
 	filters, ferr := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
@@ -3323,10 +3342,10 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 		MinMs:     parseFloat(q.Get("minMs")),
 		MaxMs:     parseFloat(q.Get("maxMs")),
 		// v0.8.383 — global env picker (?env=); rides the RawQuery key.
-		Env:       strings.TrimSpace(q.Get("env")),
-		Sort:      q.Get("sort"),
-		Order:     q.Get("order"),
-		Limit:     parseInt(q.Get("limit"), 100),
+		Env:   strings.TrimSpace(q.Get("env")),
+		Sort:  q.Get("sort"),
+		Order: q.Get("order"),
+		Limit: parseInt(q.Get("limit"), 100),
 	}
 	filters, ferr := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
 	if ferr != nil {
@@ -3472,7 +3491,8 @@ func (s *Server) getTracesByRelation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "trace id required", http.StatusBadRequest); return
+		http.Error(w, "trace id required", http.StatusBadRequest)
+		return
 	}
 	// 30s cache. A trace is immutable once stored, but a
 	// just-flipped Tempo backend setting should rescue stale
@@ -3512,10 +3532,10 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 		// SOMETHING useful instead of a blank pane.
 		if stub, ok := s.store.GetTraceAggregateStub(ctx, id); ok {
 			return map[string]any{
-				"traceId":  id,
-				"spans":    []any{},
-				"source":   "mv_only",
-				"stub":     stub,
+				"traceId": id,
+				"spans":   []any{},
+				"source":  "mv_only",
+				"stub":    stub,
 			}, nil
 		}
 		return map[string]any{"traceId": id, "spans": spans, "source": "clickhouse"}, nil
@@ -3533,18 +3553,27 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "trace id required", http.StatusBadRequest); return
+		http.Error(w, "trace id required", http.StatusBadRequest)
+		return
 	}
 	// Validate the trace actually exists before issuing a token —
 	// stops users from minting share links for typos.
 	spans, err := s.store.GetTrace(r.Context(), id)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if len(spans) == 0 {
-		http.Error(w, "trace not found", http.StatusNotFound); return
+		http.Error(w, "trace not found", http.StatusNotFound)
+		return
 	}
 	ttlHours := parseInt(r.URL.Query().Get("ttlHours"), 24)
-	if ttlHours <= 0      { ttlHours = 24 }
-	if ttlHours > 24*30   { ttlHours = 24 * 30 }
+	if ttlHours <= 0 {
+		ttlHours = 24
+	}
+	if ttlHours > 24*30 {
+		ttlHours = 24 * 30
+	}
 
 	c := auth.FromContext(r.Context())
 	creator := ""
@@ -3570,7 +3599,8 @@ func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 		snap.LogsJSON = snapshotLogsJSON(logsPage.Logs, snapshotLogsMax)
 	}
 	if err := s.store.CreateTraceSnapshot(r.Context(), snap); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	// Build the absolute URL the client should hand out. Honour the
 	// X-Forwarded-Proto / X-Forwarded-Host headers so proxy / Route
@@ -3644,12 +3674,19 @@ func (s *Server) revokeTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getPublicTrace(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	snap, err := s.store.GetTraceSnapshot(r.Context(), token)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if snap == nil {
-		http.Error(w, "snapshot not found or expired", http.StatusNotFound); return
+		http.Error(w, "snapshot not found or expired", http.StatusNotFound)
+		return
 	}
 	spans, err := s.store.GetTrace(r.Context(), snap.TraceID)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	// v0.8.252 — logs come from the frozen share-time snapshot, never a
 	// live logstore query (anonymous route). Empty column (pre-v0.8.252
 	// share / capture failure) serves an empty array.
@@ -3824,20 +3861,20 @@ func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 // window, optionally augmented with histogram-derived latency
 // once we wire that. Returned by /api/spanmetrics/services.
 type SpanMetricServiceRow struct {
-	Service    string  `json:"service"`
-	Calls      uint64  `json:"calls"`
-	Errors     uint64  `json:"errors"`
-	ErrorRate  float64 `json:"errorRate"`
-	AvgMs      float64 `json:"avgMs,omitempty"`
-	MaxMs      float64 `json:"maxMs,omitempty"`
-	P50Ms      float64 `json:"p50Ms,omitempty"`
-	P99Ms      float64 `json:"p99Ms,omitempty"`
+	Service   string  `json:"service"`
+	Calls     uint64  `json:"calls"`
+	Errors    uint64  `json:"errors"`
+	ErrorRate float64 `json:"errorRate"`
+	AvgMs     float64 `json:"avgMs,omitempty"`
+	MaxMs     float64 `json:"maxMs,omitempty"`
+	P50Ms     float64 `json:"p50Ms,omitempty"`
+	P99Ms     float64 `json:"p99Ms,omitempty"`
 	// Inline call-rate sparkline — 30 buckets evenly spread
 	// across the requested window. Float so a SVG renderer can
 	// scale by max() without integer truncation; counts are
 	// integers in the source data but we already pay the
 	// float math in the aggregation step.
-	Sparkline  []float64 `json:"sparkline,omitempty"`
+	Sparkline []float64 `json:"sparkline,omitempty"`
 	// Source metric names this row aggregated — surfaced to
 	// the UI so the operator can confirm which spanmetrics
 	// processor variant their collector is emitting.
@@ -3853,10 +3890,11 @@ type SpanMetricServiceRow struct {
 // path isn't traced. Cached 30s.
 //
 // Metric naming covered (in priority order — first match wins):
-//   • traces.spanmetrics.calls.total  +  traces.spanmetrics.duration.*
-//   • traces_spanmetrics_calls_total  +  traces_spanmetrics_duration_*
-//   • spanmetrics.calls               +  spanmetrics.duration
-//   • calls                           +  duration
+//   - traces.spanmetrics.calls.total  +  traces.spanmetrics.duration.*
+//   - traces_spanmetrics_calls_total  +  traces_spanmetrics_duration_*
+//   - spanmetrics.calls               +  spanmetrics.duration
+//   - calls                           +  duration
+//
 // Status filter: status.code = 'STATUS_CODE_ERROR' (canonical
 // OTel) — matches the spanmetrics processor's emitted attr.
 func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request) {
@@ -4184,23 +4222,23 @@ func densifyBucketMap(tup []any) []uint64 {
 // preserves.
 //
 // Layout:
-//   • bounds = [b0, b1, ..., bN-1]   — N explicit upper bounds
-//   • counts = [c0, c1, ..., cN]     — N+1 buckets total
-//                                       (counts[i] = count of
-//                                        observations ≤ bounds[i];
-//                                        counts[N] = +Inf bucket)
+//   - bounds = [b0, b1, ..., bN-1]   — N explicit upper bounds
+//   - counts = [c0, c1, ..., cN]     — N+1 buckets total
+//     (counts[i] = count of
+//     observations ≤ bounds[i];
+//     counts[N] = +Inf bucket)
 //
 // Computation:
-//   1. total = Σ counts
-//   2. target = total × q
-//   3. Walk buckets accumulating counts; find first i where
-//      cumulative ≥ target.
-//   4. Linear-interpolate inside the bucket: lower bound is
-//      bounds[i-1] (or 0 for the first bucket); upper is
-//      bounds[i]; fraction = (target - prev_cumulative) / c.
-//   5. The +Inf bucket (i == N) returns bounds[N-1] as a
-//      conservative best estimate — caller's MaxMs covers the
-//      "actually higher than the last finite bound" case.
+//  1. total = Σ counts
+//  2. target = total × q
+//  3. Walk buckets accumulating counts; find first i where
+//     cumulative ≥ target.
+//  4. Linear-interpolate inside the bucket: lower bound is
+//     bounds[i-1] (or 0 for the first bucket); upper is
+//     bounds[i]; fraction = (target - prev_cumulative) / c.
+//  5. The +Inf bucket (i == N) returns bounds[N-1] as a
+//     conservative best estimate — caller's MaxMs covers the
+//     "actually higher than the last finite bound" case.
 func histQuantile(bounds []float64, counts []uint64, q float64) float64 {
 	if len(counts) == 0 || q <= 0 || q > 1 {
 		return 0
@@ -4412,15 +4450,15 @@ type spanMetricResponse struct {
 //	  "p99": […] }
 func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		From    int64    `json:"from"`
-		To      int64    `json:"to"`
-		Step    int      `json:"step"`
-		GroupBy []string `json:"groupBy"`
+		From    int64           `json:"from"`
+		To      int64           `json:"to"`
+		Step    int             `json:"step"`
+		GroupBy []string        `json:"groupBy"`
 		Filters json.RawMessage `json:"filters"`
-		DSL     string   `json:"dsl"`
+		DSL     string          `json:"dsl"`
 		Aggs    []struct {
-			Name string `json:"name"`
-			Agg  string `json:"agg"`
+			Name  string `json:"name"`
+			Agg   string `json:"agg"`
 			Field string `json:"field"`
 		} `json:"aggs"`
 	}
@@ -4505,8 +4543,8 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 		From     int64 `json:"from"`
 		To       int64 `json:"to"`
 		Requests []struct {
-			ID      string `json:"id"`
-			Type    string `json:"type"`
+			ID   string `json:"id"`
+			Type string `json:"type"`
 			// metric
 			Name    string `json:"name"`
 			Service string `json:"service"`
@@ -4630,8 +4668,9 @@ func (s *Server) spanHeatmap(w http.ResponseWriter, r *http.Request) {
 
 // spanBubbleUp — Honeycomb-style "what's special about THESE
 // spans" attribute investigator. Two predicate sets:
-//   • baseline (?filters / ?dsl) — the wider population
-//   • selection (?selFilters / ?selDsl) — narrower subset
+//   - baseline (?filters / ?dsl) — the wider population
+//   - selection (?selFilters / ?selDsl) — narrower subset
+//
 // CH counts both sides for each (attr_key, attr_value) pair
 // and the score = selection_pct - baseline_pct surfaces the
 // values over-represented in the selection.
@@ -4720,11 +4759,11 @@ func splitNonEmpty(s string, sep rune) []string {
 // Wire format (compatible with Grafana Alloy / pyroscope OSS
 // agent / pyroscope-rs / Python's pyroscope.io SDK):
 //
-//   POST /ingest?name=<app>.<profileType>{tag=val,...}
-//                &from=<unix-sec>&until=<unix-sec>
-//                &spyName=<spy>&sampleRate=<hz>&format=pprof
-//   Content-Type: binary/octet-stream
-//   Body: pprof bytes (gzipped or plain)
+//	POST /ingest?name=<app>.<profileType>{tag=val,...}
+//	             &from=<unix-sec>&until=<unix-sec>
+//	             &spyName=<spy>&sampleRate=<hz>&format=pprof
+//	Content-Type: binary/octet-stream
+//	Body: pprof bytes (gzipped or plain)
 //
 // `name` carries both service AND profile type — the trailing
 // `.cpu` / `.alloc_objects` / `.lock` etc. fragment maps onto
@@ -4969,15 +5008,15 @@ func (s *Server) profileHotspots(w http.ResponseWriter, r *http.Request) {
 		}
 		breakdown := profileconv.FlameCategoryBreakdown(merged)
 		return map[string]any{
-			"service":      service,
-			"profileType":  ptype,
-			"profilesUsed": parsed,
+			"service":        service,
+			"profileType":    ptype,
+			"profilesUsed":   parsed,
 			"profilesFailed": failed,
-			"totalSamples": merged.Value,
-			"earliest":     earliest.UnixNano(),
-			"latest":       latest.UnixNano(),
-			"hotspots":     hotspots,
-			"breakdown":    breakdown,
+			"totalSamples":   merged.Value,
+			"earliest":       earliest.UnixNano(),
+			"latest":         latest.UnixNano(),
+			"hotspots":       hotspots,
+			"breakdown":      breakdown,
 		}, nil
 	})
 }
@@ -5074,16 +5113,16 @@ func newID(n int) string {
 // rendered HTML.
 //
 // What we strip:
-//   • Edge whitespace via unicode.IsSpace — covers NBSP (U+00A0),
+//   - Edge whitespace via unicode.IsSpace — covers NBSP (U+00A0),
 //     narrow NBSP (U+202F), and the 17 other Unicode space
 //     characters Go's TrimSpace already handles.
-//   • Anywhere in string:
-//       U+00AD  soft-hyphen          (invisible, conditional break)
-//       U+200B  zero-width space     (Word / PDF copy)
-//       U+200C  zero-width non-joiner
-//       U+200D  zero-width joiner
-//       U+2060  word joiner          (invisible)
-//       U+FEFF  zero-width no-break / BOM (common in Word copy)
+//   - Anywhere in string:
+//     U+00AD  soft-hyphen          (invisible, conditional break)
+//     U+200B  zero-width space     (Word / PDF copy)
+//     U+200C  zero-width non-joiner
+//     U+200D  zero-width joiner
+//     U+2060  word joiner          (invisible)
+//     U+FEFF  zero-width no-break / BOM (common in Word copy)
 //
 // We deliberately do NOT rewrite visible homoglyphs (en/em-dash
 // for hyphen, smart quotes, etc.) — those could be intentional
@@ -5096,8 +5135,8 @@ func sanitizePassword(p string) string {
 		switch r {
 		case 0x00AD, // soft-hyphen
 			0x200B, 0x200C, 0x200D, // zero-width space / non-joiner / joiner
-			0x2060,                  // word joiner
-			0xFEFF:                  // zero-width no-break (BOM)
+			0x2060, // word joiner
+			0xFEFF: // zero-width no-break (BOM)
 			return -1
 		}
 		return r
@@ -5274,6 +5313,13 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	// Hydrate from the store so customRole + customRolePages reach
 	// the SPA on every page load. The JWT only carries the base
 	// role; custom-role assignments live in the row.
+	// v0.8.519 — 30s cache: bu okuma her cold tab'ın SERİ kapısı
+	// (SPA me() bitmeden route verisi istemiyor); FINAL'lı satır
+	// okumasını tab başına değil 30s'de bire indirir.
+	if u, ok := s.meUsers.get(c.UserID, time.Now()); ok && u != nil {
+		writeJSON(w, s.userPayload(u))
+		return
+	}
 	u, err := s.store.GetUserByID(r.Context(), c.UserID)
 	if err != nil || u == nil {
 		// Fall back to claim data — keeps /api/auth/me honest when
@@ -5284,6 +5330,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.meUsers.put(c.UserID, u, time.Now())
 	writeJSON(w, s.userPayload(u))
 }
 
@@ -5406,6 +5453,7 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 	if err := s.store.UpsertUser(ctx, u); err != nil {
 		return nil, fmt.Errorf("provision ldap user: %w", err)
 	}
+	s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 	if firstLogin {
 		log.Printf("[auth] first-time LDAP login auto-provisioned user %q as %s (id=%s)", finalEmail, role, u.ID)
 	} else if existing != nil && existing.Role != role {
@@ -5435,7 +5483,8 @@ func (s *Server) getLDAPSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putLDAPSettings(w http.ResponseWriter, r *http.Request) {
 	var c ldap.Config
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest); return
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
 	// Drop the "password is set" sentinel — the field's empty value
 	// from the UI means "keep current", which Service.SavePersisted
@@ -5445,14 +5494,17 @@ func (s *Server) putLDAPSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range c.GroupRoleMap {
 		if m.Role != "" && !auth.IsValidRole(m.Role) {
-			http.Error(w, "invalid role in mapping: "+m.Role, http.StatusBadRequest); return
+			http.Error(w, "invalid role in mapping: "+m.Role, http.StatusBadRequest)
+			return
 		}
 	}
 	if c.DefaultRole != "" && !auth.IsValidRole(c.DefaultRole) {
-		http.Error(w, "invalid defaultRole", http.StatusBadRequest); return
+		http.Error(w, "invalid defaultRole", http.StatusBadRequest)
+		return
 	}
 	if err := s.ldap.SavePersisted(r.Context(), s.store, c); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError); return
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.publishConfigReload(r.Context(), "ldap")
 	// Audit row carries non-secret config shape only — bind password
@@ -5473,7 +5525,8 @@ func (s *Server) testLDAPConnection(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 {
 		var c ldap.Config
 		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-			http.Error(w, "invalid body", http.StatusBadRequest); return
+			http.Error(w, "invalid body", http.StatusBadRequest)
+			return
 		}
 		if c.BindPassword == "__SET__" {
 			c.BindPassword = ""
@@ -5492,7 +5545,8 @@ func (s *Server) testLDAPConnection(w http.ResponseWriter, r *http.Request) {
 // the caller posts to /api/users/from-ldap to actually create a row.
 func (s *Server) searchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 	if !s.ldap.Enabled() {
-		http.Error(w, "ldap not enabled", http.StatusBadRequest); return
+		http.Error(w, "ldap not enabled", http.StatusBadRequest)
+		return
 	}
 	q := r.URL.Query().Get("q")
 	limit := 25
@@ -5501,7 +5555,8 @@ func (s *Server) searchLDAPUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.ldap.Search(r.Context(), q, limit)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError); return
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	writeJSON(w, map[string]any{"users": users})
 }
@@ -5540,14 +5595,17 @@ func (s *Server) provisionLDAPUser(w http.ResponseWriter, r *http.Request) {
 		Role  string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest); return
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
 	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
 	if body.Email == "" {
-		http.Error(w, "email required", http.StatusBadRequest); return
+		http.Error(w, "email required", http.StatusBadRequest)
+		return
 	}
 	if !auth.IsValidRole(body.Role) {
-		http.Error(w, "role must be admin, editor or viewer", http.StatusBadRequest); return
+		http.Error(w, "role must be admin, editor or viewer", http.StatusBadRequest)
+		return
 	}
 	existing, _ := s.store.GetUserByEmail(r.Context(), body.Email)
 	u := chstore.User{
@@ -5569,8 +5627,10 @@ func (s *Server) provisionLDAPUser(w http.ResponseWriter, r *http.Request) {
 		u.ID = hex.EncodeToString(idBytes)
 	}
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError); return
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 	saved, _ := s.store.GetUserByEmail(r.Context(), body.Email)
 	if saved == nil {
 		saved = &u
@@ -5706,6 +5766,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 			s.oidcFail(w, r, err.Error())
 			return
 		}
+		s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 		log.Printf("[oidc] auto-provisioned user %q (role=%s)", email, role)
 	}
 
@@ -5805,7 +5866,6 @@ func maskedSMTP(s notify.SMTPSettings) map[string]any {
 		"configured": s.Configured(),
 	}
 }
-
 
 // Team routing (v0.8.429) — the team_contacts settings blob drives the
 // automatic problem-open → owner/SRE team e-mail path in internal/notify.
@@ -6441,6 +6501,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 	details, _ := json.Marshal(map[string]any{"email": u.Email, "role": u.Role, "team": u.Team})
 	s.audit(r, "user.create", "user", u.ID, string(details))
 	writeJSON(w, map[string]interface{}{
@@ -6465,6 +6526,7 @@ func (s *Server) setUserTeam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 	details, _ := json.Marshal(map[string]any{"team": body.Team})
 	s.audit(r, "user.set_team", "user", id, string(details))
 	writeJSON(w, map[string]string{"team": body.Team})
@@ -6525,6 +6587,7 @@ func (s *Server) setUserRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 	details, _ := json.Marshal(map[string]any{"email": target.Email, "from": prevRole, "to": role})
 	s.audit(r, "user.set_role", "user", target.ID, string(details))
 	writeJSON(w, map[string]any{"id": target.ID, "email": target.Email, "role": target.Role})
@@ -6675,7 +6738,10 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 // fetch fallback for ?problem=<id> on the frontend).
 func (s *Server) getExceptionGroup(w http.ResponseWriter, r *http.Request) {
 	g, err := s.store.GetExceptionGroup(r.Context(), r.PathValue("fp"))
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if g == nil {
 		http.Error(w, `{"error":"exception group not found"}`, http.StatusNotFound)
 		return
@@ -6686,7 +6752,10 @@ func (s *Server) getExceptionGroup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request) {
 	limit := parseInt(r.URL.Query().Get("limit"), 10)
 	out, err := s.store.GetExceptionGroupSamples(r.Context(), r.PathValue("fp"), limit)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, out)
 }
 
@@ -6704,19 +6773,24 @@ func (s *Server) getExceptionGroupOccurrences(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) {
-	var body struct{ State string `json:"state"` }
+	var body struct {
+		State string `json:"state"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest); return
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
 	switch body.State {
 	case chstore.ExStateNew, chstore.ExStateAcknowledged,
 		chstore.ExStateResolved, chstore.ExStateIgnored:
 		// ok
 	default:
-		http.Error(w, `{"error":"invalid state"}`, http.StatusBadRequest); return
+		http.Error(w, `{"error":"invalid state"}`, http.StatusBadRequest)
+		return
 	}
 	if err := s.store.SetExceptionGroupState(r.Context(), r.PathValue("fp"), body.State); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	// v0.8.455 — triage listesi artık cache'li; state değişimi listede
 	// ANINDA görünmeli (resolve edilen satır 5s asılı kalmasın).
@@ -6727,12 +6801,16 @@ func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) assignExceptionGroup(w http.ResponseWriter, r *http.Request) {
-	var body struct{ Assignee string `json:"assignee"` }
+	var body struct {
+		Assignee string `json:"assignee"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest); return
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
 	if err := s.store.AssignExceptionGroup(r.Context(), r.PathValue("fp"), body.Assignee); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.cacheInvalidatePrefix(r.Context(), "exc-groups:") // v0.8.455 — bkz. setExceptionGroupState
 	s.audit(r, "exception_group.assign", "exception_group", r.PathValue("fp"), fmt.Sprintf(`{"assignee":%q}`, body.Assignee))
@@ -6822,23 +6900,23 @@ type publicComponentRow struct {
 }
 
 type publicIncidentRow struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	Body       string  `json:"body,omitempty"`
-	Status     string  `json:"status"`
-	Severity   string  `json:"severity"`
-	StartedAt  int64   `json:"startedAt"`
-	ResolvedAt *int64  `json:"resolvedAt,omitempty"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Body       string `json:"body,omitempty"`
+	Status     string `json:"status"`
+	Severity   string `json:"severity"`
+	StartedAt  int64  `json:"startedAt"`
+	ResolvedAt *int64 `json:"resolvedAt,omitempty"`
 }
 
 type publicStatusResp struct {
-	Title       string                `json:"title"`
-	Description string                `json:"description,omitempty"`
-	SupportURL  string                `json:"supportUrl,omitempty"`
-	Status      string                `json:"status"` // worst-of components
-	CheckedAt   string                `json:"checkedAt"`
-	Components  []publicComponentRow  `json:"components"`
-	Incidents   []publicIncidentRow   `json:"incidents"`
+	Title       string               `json:"title"`
+	Description string               `json:"description,omitempty"`
+	SupportURL  string               `json:"supportUrl,omitempty"`
+	Status      string               `json:"status"` // worst-of components
+	CheckedAt   string               `json:"checkedAt"`
+	Components  []publicComponentRow `json:"components"`
+	Incidents   []publicIncidentRow  `json:"incidents"`
 }
 
 func (s *Server) publicStatus(w http.ResponseWriter, r *http.Request) {
@@ -6966,17 +7044,22 @@ func (s *Server) publicStatusSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rate limited — try again in a minute", http.StatusTooManyRequests)
 		return
 	}
-	var body struct{ Email string `json:"email"` }
+	var body struct {
+		Email string `json:"email"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest); return
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
 	}
 	email := strings.TrimSpace(strings.ToLower(body.Email))
 	if email == "" || !strings.ContainsRune(email, '@') {
-		http.Error(w, "valid email required", http.StatusBadRequest); return
+		http.Error(w, "valid email required", http.StatusBadRequest)
+		return
 	}
 	token, err := s.store.AddStatusSubscriber(r.Context(), email)
 	if err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	// If token came back empty, the row was already verified —
 	// we still respond OK so the caller can't tell.
@@ -7089,16 +7172,21 @@ func statusConfirmHTML(heading, body string) string {
 
 func (s *Server) statusPageGetConfig(w http.ResponseWriter, r *http.Request) {
 	c, err := s.store.GetStatusPageConfig(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, c)
 }
 func (s *Server) statusPagePutConfig(w http.ResponseWriter, r *http.Request) {
 	var c chstore.StatusPageConfig
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest); return
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
 	}
 	if err := s.store.UpsertStatusPageConfig(r.Context(), c); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.audit(r, "status_page.config_update", "status_page", "", "")
 	s.cacheInvalidate(r.Context(), "public-status")
@@ -7106,16 +7194,23 @@ func (s *Server) statusPagePutConfig(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) statusPageListComponents(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.ListStatusComponents(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, rows)
 }
 func (s *Server) statusPageCreateComponent(w http.ResponseWriter, r *http.Request) {
 	var c chstore.StatusComponent
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest); return
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
 	}
 	c.ID = ""
-	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil { writeErr(w, err); return }
+	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil {
+		writeErr(w, err)
+		return
+	}
 	s.audit(r, "status_page.component_create", "status_page", c.ID, c.Name)
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
@@ -7124,10 +7219,14 @@ func (s *Server) statusPageUpdateComponent(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	var c chstore.StatusComponent
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest); return
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
 	}
 	c.ID = id
-	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil { writeErr(w, err); return }
+	if err := s.store.UpsertStatusComponent(r.Context(), &c); err != nil {
+		writeErr(w, err)
+		return
+	}
 	s.audit(r, "status_page.component_update", "status_page", id, c.Name)
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, c)
@@ -7135,7 +7234,8 @@ func (s *Server) statusPageUpdateComponent(w http.ResponseWriter, r *http.Reques
 func (s *Server) statusPageDeleteComponent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.store.DeleteStatusComponent(r.Context(), id); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.audit(r, "status_page.component_delete", "status_page", id, "")
 	s.cacheInvalidate(r.Context(), "public-status")
@@ -7143,13 +7243,22 @@ func (s *Server) statusPageDeleteComponent(w http.ResponseWriter, r *http.Reques
 }
 func (s *Server) statusPageListSubscribers(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.ListStatusSubscribers(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, rows)
 }
 func (s *Server) statusPageDeleteSubscriber(w http.ResponseWriter, r *http.Request) {
 	email := r.URL.Query().Get("email")
-	if email == "" { http.Error(w, "email required", http.StatusBadRequest); return }
-	if err := s.store.RemoveStatusSubscriber(r.Context(), email); err != nil { writeErr(w, err); return }
+	if email == "" {
+		http.Error(w, "email required", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.RemoveStatusSubscriber(r.Context(), email); err != nil {
+		writeErr(w, err)
+		return
+	}
 	s.audit(r, "status_page.subscriber_delete", "status_page", email, "")
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
@@ -7157,10 +7266,14 @@ func (s *Server) statusPagePublishIncident(w http.ResponseWriter, r *http.Reques
 	id := r.PathValue("id")
 	var p chstore.PublishedIncident
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest); return
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
 	}
 	p.IncidentID = id
-	if err := s.store.SetIncidentPublished(r.Context(), p); err != nil { writeErr(w, err); return }
+	if err := s.store.SetIncidentPublished(r.Context(), p); err != nil {
+		writeErr(w, err)
+		return
+	}
 	s.audit(r, "status_page.incident_publish", "status_page", id, fmt.Sprintf("published=%v", p.Published))
 	s.cacheInvalidate(r.Context(), "public-status")
 	writeJSON(w, p)
@@ -7174,7 +7287,10 @@ func (s *Server) statusPagePublishIncident(w http.ResponseWriter, r *http.Reques
 // placeholders showing the config defaults.
 func (s *Server) getRetention(w http.ResponseWriter, r *http.Request) {
 	sp, err := s.store.GetRetention(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, sp)
 }
 
@@ -7183,10 +7299,12 @@ func (s *Server) getRetention(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putRetention(w http.ResponseWriter, r *http.Request) {
 	var sp chstore.RetentionSpec
 	if err := json.NewDecoder(r.Body).Decode(&sp); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest); return
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 	if err := s.store.SetRetention(r.Context(), sp, actorOf(r)); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.audit(r, "retention.update", "retention", "", retentionDetails(sp))
 	// v0.7.28 — kick an immediate enforcer sweep so REDUCING retention reclaims
@@ -7318,20 +7436,23 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		// wf — Enabled is a POINTER so an older PUT client that doesn't
 		// send the field (nil) defaults to enabled=true and can't
 		// accidentally disable AI. The Settings UI always sends it.
-		Enabled  *bool  `json:"enabled"`
+		Enabled *bool `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest); return
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
 	if in.Provider != "" &&
 		in.Provider != copilot.ProviderAnthropic &&
 		in.Provider != copilot.ProviderGitHub &&
 		in.Provider != copilot.ProviderOpenAI {
-		http.Error(w, "provider must be 'anthropic', 'github' or 'openai'", http.StatusBadRequest); return
+		http.Error(w, "provider must be 'anthropic', 'github' or 'openai'", http.StatusBadRequest)
+		return
 	}
 	enabled := in.Enabled == nil || *in.Enabled
 	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError); return
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.publishConfigReload(r.Context(), "ai")
 	provider, model, baseURL, hasKey, skipTLS, enabledNow := s.copilot.Snapshot()
@@ -7360,13 +7481,18 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 // to Anthropic.
 func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable); return
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
+		return
 	}
 	id := r.PathValue("id")
 	spans, err := s.store.GetTrace(r.Context(), id)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if len(spans) == 0 {
-		http.Error(w, "trace not found", http.StatusNotFound); return
+		http.Error(w, "trace not found", http.StatusNotFound)
+		return
 	}
 	// Compact each span — full attribute maps blow the prompt for big
 	// traces. Keep just the fields a senior engineer would want.
@@ -7398,7 +7524,10 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(compact)
 	user := fmt.Sprintf("Trace %s with %d spans:\n```json\n%s\n```", id, len(compact), string(payload))
 	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), user)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, map[string]string{"explanation": out})
 }
 
@@ -7410,17 +7539,23 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 // OpenAI-compatible base URL (Ollama / vLLM / LM Studio).
 func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable); return
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
+		return
 	}
 	traceID := r.PathValue("traceId")
 	spanID := strings.TrimSpace(r.URL.Query().Get("span"))
 	if spanID == "" {
-		http.Error(w, "span query param required", http.StatusBadRequest); return
+		http.Error(w, "span query param required", http.StatusBadRequest)
+		return
 	}
 	spans, err := s.store.GetTrace(r.Context(), traceID)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if len(spans) == 0 {
-		http.Error(w, "trace not found", http.StatusNotFound); return
+		http.Error(w, "trace not found", http.StatusNotFound)
+		return
 	}
 	// Locate target + build the neighbourhood subset. O(n) on a
 	// trace's span list which is bounded by the existing 100-span
@@ -7433,7 +7568,8 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == nil {
-		http.Error(w, "span not found in trace", http.StatusNotFound); return
+		http.Error(w, "span not found in trace", http.StatusNotFound)
+		return
 	}
 	// Keep: target, its parent (if any), direct children, any
 	// error spans elsewhere in the trace (high signal for "why
@@ -7496,7 +7632,10 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 	user := fmt.Sprintf("Span %s (target) in trace %s — %d spans in context:\n```json\n%s\n```",
 		spanID, traceID, len(compact), string(payload))
 	out, err := s.copilotExplain(r, copilot.SystemPromptSpan(), user)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, map[string]string{"explanation": out})
 }
 
@@ -7505,19 +7644,25 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 // an incident.
 func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable); return
+		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
+		return
 	}
 	id := r.PathValue("id")
 	probs, err := s.store.ListProblems(r.Context(), chstore.ProblemFilter{Limit: 1000})
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	var p *chstore.Problem
 	for i := range probs {
 		if probs[i].ID == id {
-			p = &probs[i]; break
+			p = &probs[i]
+			break
 		}
 	}
 	if p == nil {
-		http.Error(w, "problem not found", http.StatusNotFound); return
+		http.Error(w, "problem not found", http.StatusNotFound)
+		return
 	}
 	// Attach deploy correlation for the explain prompt — the
 	// "regression right after a deploy" pattern is the single
@@ -7556,7 +7701,10 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 		user += s.problemCorrelationContext(r.Context(), p)
 	}
 	out, err := s.copilotExplain(r, copilot.SystemPromptProblem(), user)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, map[string]string{"explanation": out})
 }
 
@@ -7968,8 +8116,8 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 // biggest contributor without re-narrating the raw diff.
 //
 // Failure modes:
-//   • Either trace not found → 404 with the missing id.
-//   • Both traces identical (same ID typed twice) → still
+//   - Either trace not found → 404 with the missing id.
+//   - Both traces identical (same ID typed twice) → still
 //     valid; the model will say "essentially the same".
 func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
 	if !s.copilot.Active() {
@@ -8061,11 +8209,11 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 	afterEnd := deployT.Add(time.Duration(body.WindowSec) * time.Second)
 
 	type stats struct {
-		Count      uint64  `json:"count"`
-		RPS        float64 `json:"rps"`
-		ErrorRate  float64 `json:"errorRate"`
-		P99Ms      float64 `json:"p99Ms"`
-		AvgMs      float64 `json:"avgMs"`
+		Count     uint64  `json:"count"`
+		RPS       float64 `json:"rps"`
+		ErrorRate float64 `json:"errorRate"`
+		P99Ms     float64 `json:"p99Ms"`
+		AvgMs     float64 `json:"avgMs"`
 	}
 	// One CH pass with quantileIf gates so we get before +
 	// after side-by-side without two scans.
@@ -8381,9 +8529,9 @@ func buildCompareTracesPrompt(aID string, aSpans []chstore.SpanRow,
 	bB := bucketsOf(bSpans)
 
 	type delta struct {
-		k       key
+		k        key
 		aMs, bMs float64
-		dMs     float64
+		dMs      float64
 	}
 	var deltas []delta
 	for k, ab := range aB {
@@ -8475,10 +8623,10 @@ func abs(f float64) float64 {
 // suggestions, so they don't need to call this endpoint.
 //
 // Failure modes:
-//   • Service has no recent spans → fingerprint is sparse but
+//   - Service has no recent spans → fingerprint is sparse but
 //     the model still produces a sensible "low confidence"
 //     guess from the name alone.
-//   • Model returns prose instead of JSON → we surface a
+//   - Model returns prose instead of JSON → we surface a
 //     "no suggestions available" rather than poisoning the
 //     form with non-JSON garbage.
 func (s *Server) copilotSuggestServiceTags(w http.ResponseWriter, r *http.Request) {
@@ -8948,14 +9096,18 @@ func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listAlertRules(w http.ResponseWriter, r *http.Request) {
 	rules, err := s.store.ListAlertRules(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, rules)
 }
 
 func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	var rule chstore.AlertRule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest); return
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if rule.ID == "" {
 		rule.ID = newID(8)
@@ -8963,7 +9115,8 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	rule.BuiltIn = false
 	rule.CreatedAt = time.Now().UnixNano()
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
 	s.audit(r, "alert_rule.create", "alert_rule", rule.ID, string(details))
@@ -8979,17 +9132,20 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	existing, err := s.store.GetAlertRule(r.Context(), id)
 	if err != nil || existing == nil {
-		http.Error(w, `{"error":"rule not found"}`, http.StatusNotFound); return
+		http.Error(w, `{"error":"rule not found"}`, http.StatusNotFound)
+		return
 	}
 	var rule chstore.AlertRule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest); return
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	rule.ID = existing.ID
 	rule.BuiltIn = existing.BuiltIn
 	rule.CreatedAt = existing.CreatedAt
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	details, _ := json.Marshal(map[string]any{"name": rule.Name, "service": rule.Service, "metric": rule.Metric})
 	s.audit(r, "alert_rule.update", "alert_rule", rule.ID, string(details))
@@ -8999,7 +9155,8 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.store.DeleteAlertRule(r.Context(), id); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.audit(r, "alert_rule.delete", "alert_rule", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -9008,7 +9165,8 @@ func (s *Server) deleteAlertRule(w http.ResponseWriter, r *http.Request) {
 func (s *Server) enableAlertRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.store.SetAlertRuleEnabled(r.Context(), id, true); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.audit(r, "alert_rule.enable", "alert_rule", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -9023,7 +9181,8 @@ func (s *Server) enableAlertRule(w http.ResponseWriter, r *http.Request) {
 func (s *Server) disableAlertRule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.store.SetAlertRuleEnabled(r.Context(), id, false); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.audit(r, "alert_rule.disable", "alert_rule", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -9043,8 +9202,9 @@ func (s *Server) disableAlertRule(w http.ResponseWriter, r *http.Request) {
 // Response also carries `suggestedWarning` / `suggestedCritical`
 // — interpreted relative to the comparator the operator
 // picked:
-//   • `>`  / `>=` → high values trip (p95 → warn, p99 → crit)
-//   • `<`  / `<=` → low values trip (5×p99/100 capped, 0.01 fallback)
+//   - `>`  / `>=` → high values trip (p95 → warn, p99 → crit)
+//   - `<`  / `<=` → low values trip (5×p99/100 capped, 0.01 fallback)
+//
 // Operator can ignore them and use the raw percentiles too.
 //
 // Cached 5 min per (service, metric, comparator) tuple — the
@@ -9087,16 +9247,16 @@ func (s *Server) getAlertBaseline(w http.ResponseWriter, r *http.Request) {
 // suggestThresholds picks "safe to page on" levels from the
 // distribution, biased by the comparator the operator chose.
 //
-//   • `>` / `>=` (alert on spike): warn at p95, crit at p99 —
+//   - `>` / `>=` (alert on spike): warn at p95, crit at p99 —
 //     fires when ~5% / ~1% of samples already crossed. Pure
 //     percentile floors keep operators from setting "1 / 5"
 //     thresholds that page nightly because the actual baseline
 //     is 800ms / 8%.
-//   • `<` / `<=` (alert on drop): warn at p5, crit at p1
+//   - `<` / `<=` (alert on drop): warn at p5, crit at p1
 //     approximated as max(0.01, value/2 / value/5) — fires
 //     when traffic genuinely fell below the floor instead of
 //     just dipping at a quiet hour.
-//   • Round to a reasonable precision so the threshold input
+//   - Round to a reasonable precision so the threshold input
 //     doesn't end up at 412.7345 ms.
 func suggestThresholds(b *chstore.MetricBaseline, comparator string) (warn, crit float64) {
 	switch comparator {
@@ -9136,13 +9296,19 @@ func roundThreshold(v float64) float64 {
 
 func (s *Server) listDashboards(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.ListDashboards(r.Context())
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, rows)
 }
 
 func (s *Server) getDashboard(w http.ResponseWriter, r *http.Request) {
 	d, err := s.store.GetDashboard(r.Context(), r.PathValue("id"))
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if d == nil {
 		http.Error(w, `{"error":"dashboard not found"}`, http.StatusNotFound)
 		return
@@ -9153,14 +9319,17 @@ func (s *Server) getDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createDashboard(w http.ResponseWriter, r *http.Request) {
 	var d chstore.Dashboard
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest); return
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
 	if d.Name == "" {
-		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest); return
+		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+		return
 	}
 	d.ID = newID(8)
 	if err := s.store.UpsertDashboard(r.Context(), d); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	details, _ := json.Marshal(map[string]any{"name": d.Name})
 	s.audit(r, "dashboard.create", "dashboard", d.ID, string(details))
@@ -9170,18 +9339,24 @@ func (s *Server) createDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateDashboard(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	existing, err := s.store.GetDashboard(r.Context(), id)
-	if err != nil { writeErr(w, err); return }
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if existing == nil {
-		http.Error(w, `{"error":"dashboard not found"}`, http.StatusNotFound); return
+		http.Error(w, `{"error":"dashboard not found"}`, http.StatusNotFound)
+		return
 	}
 	var d chstore.Dashboard
 	if err := json.NewDecoder(r.Body).Decode(&d); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest); return
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
 	}
 	d.ID = id
 	d.CreatedAt = existing.CreatedAt
 	if err := s.store.UpsertDashboard(r.Context(), d); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	details, _ := json.Marshal(map[string]any{"name": d.Name})
 	s.audit(r, "dashboard.update", "dashboard", d.ID, string(details))
@@ -9191,7 +9366,8 @@ func (s *Server) updateDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteDashboard(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.store.DeleteDashboard(r.Context(), id); err != nil {
-		writeErr(w, err); return
+		writeErr(w, err)
+		return
 	}
 	s.audit(r, "dashboard.delete", "dashboard", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -9234,31 +9410,31 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	chOK := s.chReachable(r.Context())
 	load, code := healthVerdict(overloaded, degraded, chOK)
 	body := map[string]interface{}{
-		"status":           load,
-		"spans_queued":     spansLen,
-		"logs_queued":      logsLen,
-		"metrics_queued":   metricsLen,
-		"spans_capacity":   spansCap,
-		"logs_capacity":    logsCap,
-		"metrics_capacity": metricsCap,
-		"spans_dropped":    s.ing.Spans.Dropped(),
-		"logs_dropped":     s.ing.Logs.Dropped(),
-		"metrics_dropped":  s.ing.Metrics.Dropped(),
-		"spans_write_failed":   s.ing.Spans.WriteFailed(),
-		"logs_write_failed":    s.ing.Logs.WriteFailed(),
-		"metrics_write_failed": s.ing.Metrics.WriteFailed(),
-		"spans_accepted":   s.ing.Spans.Accepted(),
-		"logs_accepted":    s.ing.Logs.Accepted(),
-		"metrics_accepted": s.ing.Metrics.Accepted(),
-		"exemplars_queued":         exLen,
-		"exemplars_capacity":       exCap,
-		"exemplars_dropped":        s.ing.Exemplars.Dropped(),
-		"exemplars_write_failed":   s.ing.Exemplars.WriteFailed(),
-		"span_links_queued":        slLen,
-		"span_links_capacity":      slCap,
-		"span_links_dropped":       s.ing.SpanLinks.Dropped(),
-		"span_links_write_failed":  s.ing.SpanLinks.WriteFailed(),
-		"clickhouse":               map[bool]string{true: "ok", false: "unreachable"}[chOK],
+		"status":                  load,
+		"spans_queued":            spansLen,
+		"logs_queued":             logsLen,
+		"metrics_queued":          metricsLen,
+		"spans_capacity":          spansCap,
+		"logs_capacity":           logsCap,
+		"metrics_capacity":        metricsCap,
+		"spans_dropped":           s.ing.Spans.Dropped(),
+		"logs_dropped":            s.ing.Logs.Dropped(),
+		"metrics_dropped":         s.ing.Metrics.Dropped(),
+		"spans_write_failed":      s.ing.Spans.WriteFailed(),
+		"logs_write_failed":       s.ing.Logs.WriteFailed(),
+		"metrics_write_failed":    s.ing.Metrics.WriteFailed(),
+		"spans_accepted":          s.ing.Spans.Accepted(),
+		"logs_accepted":           s.ing.Logs.Accepted(),
+		"metrics_accepted":        s.ing.Metrics.Accepted(),
+		"exemplars_queued":        exLen,
+		"exemplars_capacity":      exCap,
+		"exemplars_dropped":       s.ing.Exemplars.Dropped(),
+		"exemplars_write_failed":  s.ing.Exemplars.WriteFailed(),
+		"span_links_queued":       slLen,
+		"span_links_capacity":     slCap,
+		"span_links_dropped":      s.ing.SpanLinks.Dropped(),
+		"span_links_write_failed": s.ing.SpanLinks.WriteFailed(),
+		"clickhouse":              map[bool]string{true: "ok", false: "unreachable"}[chOK],
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if code != http.StatusOK {
@@ -9525,10 +9701,10 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type componentStatus struct {
-	Name      string            `json:"name"`
-	Status    string            `json:"status"` // operational | degraded | outage
-	Message   string            `json:"message,omitempty"`
-	LatencyMs int64             `json:"latencyMs,omitempty"`
+	Name      string `json:"name"`
+	Status    string `json:"status"` // operational | degraded | outage
+	Message   string `json:"message,omitempty"`
+	LatencyMs int64  `json:"latencyMs,omitempty"`
 	// Free-form key/value extras shown on the row — version, address,
 	// db name, queue depth, ingest rate, etc. Kept loose so each
 	// component can surface what's relevant without bloating the type.
@@ -9538,9 +9714,9 @@ type componentStatus struct {
 }
 
 type systemStatus struct {
-	Status      string             `json:"status"` // worst of the components
-	CheckedAt   string             `json:"checkedAt"`
-	Components  []componentStatus  `json:"components"`
+	Status     string            `json:"status"` // worst of the components
+	CheckedAt  string            `json:"checkedAt"`
+	Components []componentStatus `json:"components"`
 }
 
 func (s *Server) collectStatus(ctx context.Context) systemStatus {
@@ -9598,7 +9774,9 @@ func (s *Server) collectStatus(ctx context.Context) systemStatus {
 		// The cache.Cache interface doesn't expose backend details
 		// (kept it minimal). Surface the configured mode at least.
 		switch s.cache.(type) {
-		case interface{ Info(context.Context) (map[string]string, error) }:
+		case interface {
+			Info(context.Context) (map[string]string, error)
+		}:
 			// hook for a future redis impl that exposes Info; not used today
 		}
 		c.Info["mode"] = "active"
@@ -9658,8 +9836,8 @@ func (s *Server) collectStatus(ctx context.Context) systemStatus {
 	// invocations (delta of accepted counter / wall-clock delta).
 	out = append(out,
 		componentStatus{Name: "HTTP API", Status: "operational"},
-		s.queueStatusWithRate("Spans ingest",   s.ing.Spans),
-		s.queueStatusWithRate("Logs ingest",    s.ing.Logs),
+		s.queueStatusWithRate("Spans ingest", s.ing.Spans),
+		s.queueStatusWithRate("Logs ingest", s.ing.Logs),
 		s.queueStatusWithRate("Metrics ingest", s.ing.Metrics),
 	)
 
@@ -9724,7 +9902,11 @@ func (s *Server) queueStatusWithRate(name string, q counter) componentStatus {
 // past 80% full, outage once it's past 95% (where back-pressure starts
 // dropping records). Capacity is read off the consumer so the status
 // stays accurate when the operator tunes BufferSize via config.
-func queueStatus(name string, q interface{ QueueLen() int; Capacity() int; Dropped() int64 }) componentStatus {
+func queueStatus(name string, q interface {
+	QueueLen() int
+	Capacity() int
+	Dropped() int64
+}) componentStatus {
 	cap := q.Capacity()
 	depth := q.QueueLen()
 	dropped := q.Dropped()

@@ -5352,6 +5352,36 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 // directly. Pre-existing rows keep their stored role unless a group
 // mapping bumps them up to a higher privilege (mapping is the
 // "source of truth" for org-managed users).
+// resolveLdapLoginRole decides the role a returning/new LDAP user gets,
+// given the row that already exists (nil = first login), the role the
+// directory groups resolved to (groupRole), and whether that came from
+// an EXPLICIT GroupRoleMap match (roleFromGroup) vs the DefaultRole
+// fallback. Pure so the operator-reported regression is table-tested
+// (v0.8.528). Branches:
+//   - No existing row → groupRole (first-time provision).
+//   - Existing LDAP row: if an explicit group matched, refresh to
+//     groupRole (AD promotion/demotion wins); if NOT (fallback), keep
+//     the existing role so a manual admin grant survives re-login.
+//   - Existing local row (admin-pinned, converting to LDAP) → keep it.
+// Invalid/empty result is normalised to viewer by the caller.
+func resolveLdapLoginRole(existing *chstore.User, groupRole string, roleFromGroup bool) string {
+	role := groupRole
+	switch {
+	case existing == nil:
+		// first-time login — role already holds groupRole
+	case existing.AuthProvider == "ldap" && existing.Role != "":
+		if !roleFromGroup {
+			role = existing.Role
+		}
+	case existing.AuthProvider != "ldap" && existing.Role != "":
+		role = existing.Role
+	}
+	if !auth.IsValidRole(role) {
+		role = auth.RoleViewer
+	}
+	return role
+}
+
 func (s *Server) loginViaLDAP(ctx context.Context, email, password string, existing *chstore.User) (*chstore.User, error) {
 	// Try the user-entered string both as a username and (if it looks
 	// like an email) as the local part. The configured user filter
@@ -5397,22 +5427,7 @@ func (s *Server) loginViaLDAP(ctx context.Context, email, password string, exist
 	if existing == nil {
 		existing, _ = s.store.GetUserByEmail(ctx, finalEmail)
 	}
-	role := res.Role
-	if existing == nil {
-		// First-time login. role already from group mapping; if the
-		// directory user has no group match AND the admin hasn't set
-		// a defaultRole, mapRole() returns "" and we fall through to
-		// the IsValidRole guard below.
-	} else if existing.AuthProvider == "ldap" && existing.Role != "" {
-		// Existing LDAP user — refresh role from current AD groups.
-		// (Empty branch body — `role` already holds res.Role.)
-	} else if existing.AuthProvider != "ldap" && existing.Role != "" {
-		// Local user, manually pinned by admin — preserve their role.
-		role = existing.Role
-	}
-	if !auth.IsValidRole(role) {
-		role = auth.RoleViewer
-	}
+	role := resolveLdapLoginRole(existing, res.Role, res.RoleFromGroup)
 
 	u := chstore.User{
 		Email:        finalEmail,

@@ -484,6 +484,13 @@ func teamAttrForFetch(c Config) string {
 type AuthResult struct {
 	User LDAPUser
 	Role string
+	// RoleFromGroup — v0.8.528: true when Role came from an EXPLICIT
+	// GroupRoleMap match, false when it fell back to DefaultRole (no
+	// group matched). loginViaLDAP uses this to avoid clobbering an
+	// admin's manual Users-page role grant with the default fallback on
+	// re-login (operator-reported: LDAP user promoted to admin dropped
+	// back to viewer next login).
+	RoleFromGroup bool
 }
 
 // ── Service ─────────────────────────────────────────────────────────────────
@@ -1028,22 +1035,28 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 		}
 	}
 	user.Groups = groups
-	role := mapRole(groups, c.GroupRoleMap, c.DefaultRole)
-	log.Printf("[ldap] resolved role=%q (matched %d groups against %d mappings, fallback=%q)",
-		role, len(groups), len(c.GroupRoleMap), c.DefaultRole)
+	role, fromGroup := mapRole(groups, c.GroupRoleMap, c.DefaultRole)
+	log.Printf("[ldap] resolved role=%q fromGroup=%v (matched %d groups against %d mappings, fallback=%q)",
+		role, fromGroup, len(groups), len(c.GroupRoleMap), c.DefaultRole)
 	if len(groups) > 0 && len(groups) <= 10 {
 		// Only dump full group list when it's small — large AD users
 		// can have 50+ memberships and we don't want to flood logs.
 		log.Printf("[ldap] user groups: %v", groups)
 	}
-	return &AuthResult{User: *user, Role: role}, nil
+	return &AuthResult{User: *user, Role: role, RoleFromGroup: fromGroup}, nil
 }
 
 // mapRole picks the highest-privilege role any of the user's groups
 // matches. Match is case-insensitive substring — works for both DN
 // ("CN=Coremetry-Admins,OU=Groups,DC=corp,DC=example") and bare CN
 // ("Coremetry-Admins") values in the mapping config.
-func mapRole(userGroups []string, mappings []GroupRoleMapping, fallback string) string {
+// mapRole resolves a role from the user's groups. Returns (role,
+// fromGroup): fromGroup is true when an EXPLICIT GroupRoleMap entry
+// matched, false when no group matched and the DefaultRole fallback was
+// used. Highest-privilege mapping wins on multiple matches. The
+// fromGroup signal lets loginViaLDAP preserve a manual admin grant on
+// re-login instead of clobbering it with the default (v0.8.528).
+func mapRole(userGroups []string, mappings []GroupRoleMapping, fallback string) (string, bool) {
 	rank := func(role string) int {
 		switch role {
 		case "admin":
@@ -1071,9 +1084,9 @@ func mapRole(userGroups []string, mappings []GroupRoleMapping, fallback string) 
 		}
 	}
 	if best == "" {
-		return fallback
+		return fallback, false
 	}
-	return best
+	return best, true
 }
 
 func firstNonEmpty(a, b string) string {

@@ -5,6 +5,8 @@ import { downsampleXY } from '@/lib/perf/lttb';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { escapeHTML } from '@/lib/utils';
 import { placeTooltip } from '@/components/MultiLineChart';
+import { useThemeTick } from '@/lib/useThemeTick';
+import { timeSeriesPanelBuildSignature } from '@/lib/chartBuildSig';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -163,6 +165,20 @@ export function TimeSeriesPanel({
   cursorTimeRef.current = onCursorTime;
   const exemplarClickRef = useRef(onExemplarClick);
   exemplarClickRef.current = onExemplarClick;
+  // Latest series held in a ref (v0.8.531) so the once-per-build draw hook /
+  // tooltip / exemplar-click listener read the CURRENT exemplars + raw values
+  // without the chart rebuilding on a data-only poll. Series STRUCTURE (labels/
+  // colours/axes/units) is captured by the build signature below, so a fresh
+  // arrow of same-shape data rides setData; only exemplar/point VALUES flow live
+  // through this ref.
+  const seriesRef = useRef(series);
+  seriesRef.current = series;
+  // Theme tick — a data-theme flip must re-resolve the canvas CSS-var colours,
+  // which only happens on a rebuild. So it's a BUILD dep (never the fast-path).
+  // Pre-v0.8.531 the panel had no theme tick and only re-coloured when data
+  // changed; with the fast-path a poll no longer rebuilds, so this is now
+  // required for a theme toggle to repaint the strokes.
+  const themeTick = useThemeTick();
 
   // Downsample each series to ≤2000 points BEFORE uPlot (gap-aware), then
   // re-align onto a union x grid. Memoised on series identity so we don't
@@ -207,6 +223,46 @@ export function TimeSeriesPanel({
   const rightUnit = useMemo(() => series.find(s => s.axis === 'right')?.unit ?? '', [series]);
   const anyUnit = leftUnit || rightUnit;
 
+  // Aligned uPlot data bundle (v0.8.531) — the single data-prep pass feeding BOTH
+  // the build effect and the setData fast-path. Stacked mode plots cumulative
+  // running sums; the raw ySeries is kept so the tooltip/legend read real layer
+  // values (a null in a stacked layer counts as 0 so a gap doesn't punch
+  // through). Keyed on the DATA inputs (prepared) + mode only, so a poll
+  // recomputes once and either seeds a rebuild or rides setData.
+  const bundle = useMemo(() => {
+    const { times, ySeries } = prepared;
+    let drawMatrix: (number | null)[][] = ySeries;
+    if (mode === 'stacked') {
+      const cum: (number | null)[][] = [];
+      for (let i = 0; i < ySeries.length; i++) {
+        const below = cum[i - 1];
+        cum[i] = ySeries[i].map((v, j) => (below?.[j] ?? 0) + (v ?? 0));
+      }
+      drawMatrix = cum;
+    }
+    return { times, ySeries, data: [times, ...drawMatrix] as uPlot.AlignedData };
+  }, [prepared, mode]);
+  const bundleRef = useRef(bundle);
+  bundleRef.current = bundle;
+
+  // Build signature — the pure "rebuild vs setData" seam. Everything that, when
+  // changed, forces a full re-create (series shape, axes, mode, overlays, zoom
+  // presence). Point VALUES + exemplar positions ride setData/refs; `pointsTier`
+  // buckets the point count so crossing the dot-visibility threshold rebuilds;
+  // `hasExemplars` rebuilds a none→some transition so the draw/click hooks wire.
+  const buildSig = timeSeriesPanelBuildSignature({
+    series,
+    mode, logScale, syncKey, hasZoom: !!onZoom, height,
+    deploys, events, thresholds,
+    hasExemplars: series.some(s => (s.exemplars?.length ?? 0) > 0),
+    pointsTier: prepared.times.length <= 100 ? 2 : prepared.times.length <= 300 ? 1 : 0,
+    renderable: series.length > 0 && prepared.times.length > 0,
+  });
+
+  // Build / re-create effect — runs only when the build signature or the theme
+  // flips, NOT on a data-only poll (that rides the setData fast-path below).
+  // Reads the current data bundle through bundleRef so a rebuild paints fresh
+  // data without listing it as a dep.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -215,7 +271,7 @@ export function TimeSeriesPanel({
 
     visibleRef.current = series.map(s => !(hiddenRef.current?.has(s.label)));
 
-    const { times, ySeries } = prepared;
+    const { times, data } = bundleRef.current;
     if (series.length === 0 || times.length === 0) return;
 
     const css = getComputedStyle(document.documentElement);
@@ -223,23 +279,7 @@ export function TimeSeriesPanel({
     const grid = css.getPropertyValue('--bg2').trim() || '#21262d';
     const bg1 = css.getPropertyValue('--bg1').trim() || '#0d1117';  // exemplar ◆ halo
 
-    // ── Stacked transform ────────────────────────────────────────────────
-    // Plot cumulative running sums; fill the band between adjacent cumulative
-    // lines. Tooltip + legend still read RAW values (we keep ySeries around).
-    // A null in a stacked layer counts as 0 for the sum so a gap in one layer
-    // doesn't punch through the layers above it.
     const stacked = mode === 'stacked';
-    const cum: (number | null)[][] = [];
-    if (stacked) {
-      for (let i = 0; i < ySeries.length; i++) {
-        const below = cum[i - 1];
-        cum[i] = ySeries[i].map((v, j) => (below?.[j] ?? 0) + (v ?? 0));
-      }
-    }
-
-    const xs = times;
-    const drawMatrix = stacked ? cum : ySeries;
-    const data: uPlot.AlignedData = [xs, ...drawMatrix] as uPlot.AlignedData;
 
     const colors = series.map(s => resolveColor(s.color ?? seriesColor(s.label)));
     const yScaleKey = (s: TSSeries) => (s.axis === 'right' ? 'yr' : 'y');
@@ -426,10 +466,13 @@ export function TimeSeriesPanel({
             // lines. error = --err, slow = --accent2, otlp = --purple (v0.8.332).
             const exMinX = u.scales.x.min ?? 0;
             const exMaxX = u.scales.x.max ?? 0;
-            for (let si = 0; si < series.length; si++) {
-              const exs = series[si].exemplars;
+            // Read exemplars LIVE from the ref — the setData fast-path swaps them
+            // without rebuilding this hook; series COUNT/axes are structural.
+            const drawSeries = seriesRef.current;
+            for (let si = 0; si < drawSeries.length; si++) {
+              const exs = drawSeries[si].exemplars;
               if (!exs || exs.length === 0 || !visibleRef.current[si]) continue;
-              const sk = series[si].axis === 'right' ? 'yr' : 'y';
+              const sk = drawSeries[si].axis === 'right' ? 'yr' : 'y';
               for (const ex of exs) {
                 const t = ex.time / 1e9;
                 if (t < exMinX || t > exMaxX) continue;
@@ -496,9 +539,14 @@ export function TimeSeriesPanel({
             // value, not cumulative). Skip nulls + hidden series.
             type Row = { label: string; color: string; v: number; unit: string };
             const rows: Row[] = [];
+            // Stacked draws cumulative into u.data, so read the RAW layer value
+            // from the live bundle ref (fresh on the fast-path); non-stacked is
+            // raw already, so read it straight off u.data. Labels/colours/units
+            // are structural (rebuild on change) — safe to close over.
+            const rawY = bundleRef.current.ySeries;
             for (let i = 0; i < series.length; i++) {
               if (!visibleRef.current[i]) continue;
-              const v = stacked ? ySeries[i][idx] : (u.data[i + 1] as (number | null)[])?.[idx];
+              const v = stacked ? rawY[i]?.[idx] : (u.data[i + 1] as (number | null)[])?.[idx];
               if (v == null) continue;
               rows.push({ label: series[i].label, color: colors[i], v: v as number, unit: series[i].unit ?? anyUnit });
             }
@@ -554,10 +602,11 @@ export function TimeSeriesPanel({
               const cx = u.cursor.left ?? -1, cy = u.cursor.top ?? -1;
               let near: { kind: string; traceId: string } | null = null;
               let bd = 196; // 14px squared
-              for (let i = 0; i < series.length; i++) {
-                const exs = series[i].exemplars;
+              const hitSeries = seriesRef.current;
+              for (let i = 0; i < hitSeries.length; i++) {
+                const exs = hitSeries[i].exemplars;
                 if (!exs || !visibleRef.current[i]) continue;
-                const sk = series[i].axis === 'right' ? 'yr' : 'y';
+                const sk = hitSeries[i].axis === 'right' ? 'yr' : 'y';
                 for (const ex of exs) {
                   const px = u.valToPos(ex.time / 1e9, 'x');
                   const py = u.valToPos(ex.value, sk);
@@ -632,10 +681,11 @@ export function TimeSeriesPanel({
       if (!u || !cb) return;
       let hitId: string | null = null;
       let bestD = 100; // 10px squared tolerance
-      for (let si = 0; si < series.length; si++) {
-        const exs = series[si].exemplars;
+      const clickSeries = seriesRef.current;
+      for (let si = 0; si < clickSeries.length; si++) {
+        const exs = clickSeries[si].exemplars;
         if (!exs || !visibleRef.current[si]) continue;
-        const sk = series[si].axis === 'right' ? 'yr' : 'y';
+        const sk = clickSeries[si].axis === 'right' ? 'yr' : 'y';
         for (const ex of exs) {
           const px = u.valToPos(ex.time / 1e9, 'x');
           const py = u.valToPos(ex.value, sk);
@@ -659,8 +709,36 @@ export function TimeSeriesPanel({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
+    // Deps (v0.8.531): the pure build signature (series shape + mode + axes +
+    // overlays + zoom PRESENCE + point tier) and the theme tick. Everything
+    // callback-shaped (onZoom / onExemplarClick / onCursorTime) and every
+    // controlled prop (zoomWindow / hiddenLabels / focusedLabel) is read live
+    // through refs / its own effect, so a fresh arrow or a hover never churns a
+    // rebuild. Series POINT VALUES + exemplar positions ride the setData
+    // fast-path below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, prepared, height, mode, logScale, syncKey, !!onZoom, deploys, events, thresholds, hasRight, leftUnit, rightUnit, anyUnit]);
+  }, [buildSig, themeTick]);
+
+  // Data fast-path (v0.8.531 / perf #5+#15) — a poll changes only the point
+  // VALUES / exemplar positions, not the series shape/mode/axes/overlays, so
+  // buildSig is unchanged and the build effect above does NOT run. Push the
+  // fresh (stacked-aware) data into the live plot with setData() — a <1ms
+  // redraw that keeps the hover cursor, isolation, and legend — instead of
+  // destroy()+new uPlot(). Guard on column count: a series add/remove is a
+  // rebuild (which owns the data this commit); setData with a mismatched width
+  // would throw. setData(resetScales default true) refits y and resets x to the
+  // full range, so re-apply the parent's controlled zoom window afterwards
+  // exactly as the rebuild path does via zoomRef — otherwise a 30s poll would
+  // yank the operator out of a drag-zoom.
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    if (u.data.length !== bundle.data.length) return;
+    u.setData(bundle.data);
+    if (zoomRef.current) {
+      u.setScale('x', { min: zoomRef.current.from, max: zoomRef.current.to });
+    }
+  }, [bundle]);
 
   // Double-click resets the zoom to the full data range (Grafana parity).
   useEffect(() => {

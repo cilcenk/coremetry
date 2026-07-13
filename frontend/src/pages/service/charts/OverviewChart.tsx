@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
+import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
@@ -14,6 +15,14 @@ import { useThemeTick } from '@/lib/useThemeTick';
 // Robustness: the ResizeObserver callback bails if the instance was
 // destroyed (ref nulled on cleanup), which is what the MultiLineChart reuse
 // tripped on under StrictMode's double-mount in a 0-width card.
+//
+// v0.8.531 (perf #5/#15) — rebuild-vs-setData split. The build effect keyed on
+// `times`/`series`, so every 30s RED poll destroyed + recreated the uPlot
+// (canvas flicker, dropped hover). Now it keys on a pure STRUCTURE signature
+// (series shape + mode + unit + deploy + height) and the theme tick; a
+// data-only refresh rides u.setData(). The y range + splits re-fit from the
+// LIVE scale so setData re-scales exactly as the old rebuild did; the DOM ▼
+// flag is repositioned on the fast-path so it tracks the shifted window.
 
 export interface OvChartSeries {
   label: string;
@@ -38,6 +47,14 @@ function cssVar(v: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(m[1]).trim() || v;
 }
 
+// y range derived from the LIVE data extremes (0-based, 10% headroom, floor 1)
+// — a function so u.setData() re-fits the axis on the fast-path. In stacked
+// mode uPlot's auto dataMax is the top cumulative line (largest layer), which
+// matches the old explicit "max of cum[last]".
+function yRange(_u: uPlot, _min: number, max: number): [number, number] {
+  return [0, max > 0 ? max * 1.1 : 1];
+}
+
 export function OverviewChart({
   times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy',
 }: Props) {
@@ -50,6 +67,40 @@ export function OverviewChart({
   // stale on light↔dark toggle until remount).
   const themeTick = useThemeTick();
 
+  // uPlot aligned data (stacked-aware) — memoised on the data inputs + mode so a
+  // poll recomputes once and either seeds a rebuild or rides setData. The
+  // tooltip reads RAW per-series values, so keep the raw series in a ref too.
+  const built = useMemo(() => {
+    const stacked = mode === 'stacked';
+    let matrix: number[][];
+    if (stacked) {
+      const cum: number[][] = [];
+      for (let i = 0; i < series.length; i++) {
+        const below = cum[i - 1];
+        cum[i] = series[i].data.map((v, j) => (below ? below[j] : 0) + (v ?? 0));
+      }
+      matrix = cum;
+    } else {
+      matrix = series.map(s => s.data);
+    }
+    return { data: [times, ...matrix] as uPlot.AlignedData };
+  }, [times, series, mode]);
+  const builtRef = useRef(built); builtRef.current = built;
+  // Raw series for the tooltip (stacked draws cumulative into u.data, so the
+  // tooltip must read the untransformed values); fresh on the fast-path.
+  const rawRef = useRef({ series }); rawRef.current = { series };
+  // Repositions the DOM ▼ flag; assigned in the build effect, called by the
+  // fast-path so the flag follows the window without a rebuild.
+  const placeFlagRef = useRef<() => void>(() => {});
+
+  // Build signature — series shape + mode + unit + deploy + height. Point VALUES
+  // ride setData; `renderable` (≥2 x points) flips the sig for empty→data.
+  const buildSig = overviewChartBuildSignature({
+    series,
+    height, mode, unit, deployAtSec, deployLabel,
+    renderable: times.length >= 2 && series.length > 0,
+  });
+
   useEffect(() => {
     const el = hostRef.current;
     if (!el || times.length < 2 || series.length === 0) return;
@@ -59,30 +110,10 @@ export function OverviewChart({
     const text3 = cssVar('var(--text3)');
     const purple = cssVar('var(--purple)');
 
-    // Stacked mode plots cumulative running sums (bottom-up) and fills the
-    // gap between adjacent cumulative lines as bands; the tooltip + legend
-    // still read the RAW per-series values (series prop stays raw).
     const stacked = mode === 'stacked';
-    const cum: number[][] = [];
-    if (stacked) {
-      for (let i = 0; i < series.length; i++) {
-        const below = cum[i - 1];
-        cum[i] = series[i].data.map((v, j) => (below ? below[j] : 0) + (v ?? 0));
-      }
-    }
 
-    // y-max for the 0 / 50 / 100% gridlines (a touch of headroom).
-    let max = 0;
-    if (stacked) {
-      for (const v of (cum[cum.length - 1] ?? [])) if (v > max) max = v;
-    } else {
-      for (const s of series) for (const v of s.data) if (v > max) max = v;
-    }
-    max = max > 0 ? max * 1.1 : 1;
-
-    const data: uPlot.AlignedData = [times, ...(stacked ? cum : series.map(s => s.data))] as uPlot.AlignedData;
-
-    // Dashed-purple deploy marker, drawn under the series.
+    // Dashed-purple deploy marker, drawn under the series (re-paints on every
+    // redraw incl. setData, so the canvas line tracks the live x-scale).
     const deployPlugin: uPlot.Plugin = {
       hooks: {
         draw: u => {
@@ -109,15 +140,17 @@ export function OverviewChart({
       height,
       cursor: { x: true, y: false, points: { show: true, size: 7 } },
       legend: { show: false },
-      scales: { x: { time: true }, y: { range: [0, max] } },
+      scales: { x: { time: true }, y: { range: yRange } },
       axes: [
         { stroke: text3, grid: { show: false }, ticks: { show: false }, size: 22, font: '10px ui-monospace, monospace' },
         {
           stroke: text3, size: 34, font: '10px ui-monospace, monospace',
           grid: { stroke: gridc, width: 1, dash: [3, 4] },
           ticks: { show: false },
-          splits: () => [0, max / 2, max],
-          values: (_u, sp) => sp.map(v => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(max < 10 ? 1 : 0))),
+          // splits + decimal count derive from the LIVE scale max so a setData
+          // re-fit updates the gridlines (the old build-time `max` went stale).
+          splits: u => { const mx = u.scales.y.max ?? 1; return [0, mx / 2, mx]; },
+          values: (u, sp) => { const mx = u.scales.y.max ?? 1; return sp.map(v => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(mx < 10 ? 1 : 0))); },
         },
       ],
       series: [
@@ -155,11 +188,17 @@ export function OverviewChart({
             if (!tt) return;
             const idx = u.cursor.idx;
             if (idx == null || u.cursor.left == null || u.cursor.left < 0) { tt.style.display = 'none'; return; }
-            const t = times[idx];
+            const xs = u.data[0] as number[];
+            const tSec = xs[idx] as number;
+            if (tSec == null) { tt.style.display = 'none'; return; }
+            const mx = u.scales.y.max ?? 1;
+            // Read RAW values from the ref (stacked draws cumulative into u.data)
+            // — fresh on the fast-path; labels/colours are structural (close over).
+            const raw = rawRef.current.series;
             const rows = series.map((s, i) =>
-              `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${colors[i]}"></i>${s.label}</span><b>${(s.data[idx] ?? 0).toFixed(max < 10 ? 2 : 0)}${unit}</b></div>`,
+              `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${colors[i]}"></i>${s.label}</span><b>${(raw[i]?.data[idx] ?? 0).toFixed(mx < 10 ? 2 : 0)}${unit}</b></div>`,
             ).join('');
-            const ts = new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const ts = new Date(tSec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             tt.innerHTML = `<div class="ov-tt-t">${ts}</div>${rows}`;
             tt.style.display = 'block';
             tt.style.left = `${u.cursor.left}px`;
@@ -171,7 +210,7 @@ export function OverviewChart({
     };
 
     plotRef.current?.destroy();
-    plotRef.current = new uPlot(opts, data, el);
+    plotRef.current = new uPlot(opts, builtRef.current.data, el);
 
     // Position the ▼ deploy flag (DOM, above the canvas) at the marker x.
     const placeFlag = () => {
@@ -183,6 +222,7 @@ export function OverviewChart({
       flag.style.display = 'block';
       flag.style.left = `${x}px`;
     };
+    placeFlagRef.current = placeFlag;
     placeFlag();
 
     const ro = new ResizeObserver(() => {
@@ -201,7 +241,21 @@ export function OverviewChart({
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [times, series, height, mode, unit, deployAtSec, deployLabel, themeTick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildSig, themeTick]);
+
+  // Data fast-path (v0.8.531) — a poll changes only the point VALUES, not the
+  // series shape/mode/unit/deploy, so buildSig is unchanged and the build effect
+  // does NOT run. Push the fresh (stacked-aware) data with setData() (resetScales
+  // default true → the range function re-fits y) and reposition the DOM ▼ flag.
+  // Guard on column count so a series add/remove stays a rebuild.
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    if (u.data.length !== built.data.length) return;
+    u.setData(built.data);
+    placeFlagRef.current();
+  }, [built]);
 
   return (
     <div className="ov-chart-wrap" style={{ position: 'relative' }}>

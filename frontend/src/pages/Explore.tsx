@@ -410,7 +410,8 @@ function ExploreInner() {
             </div>
             <span style={{ flex: 1 }} />
             <SavedViewsBar page="explore" />
-            <ShareButton />
+            {/* sm: this bar is SavedViewsBar's sm buttons, not bare ones. */}
+            <ShareButton size="sm" />
           </div>
 
           {source === 'spans' && (<>

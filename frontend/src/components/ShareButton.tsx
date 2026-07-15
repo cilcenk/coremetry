@@ -10,6 +10,12 @@ export interface ShareButtonProps {
   /** Hover tooltip — worth overriding where the shared slice needs
    *  explaining (Logs encodes filters in the querystring). */
   title?: string;
+  /** Match the toolbar this sits in, not a global constant (v0.8.542).
+   *  Defaults to `md`, the size of a bare <button>: on ProblemDetail the
+   *  neighbours are Resolve/Acknowledge/Ignore and on Logs they are
+   *  Search/Reset, all bare. Explore passes `sm` because its bar is
+   *  SavedViewsBar's sm buttons. */
+  size?: 'sm' | 'md';
 }
 
 /**
@@ -36,6 +42,7 @@ export function ShareButton({
   label = 'Share',
   copiedLabel = 'Link copied',
   title = 'Copy a shareable link to this view',
+  size = 'md',
 }: ShareButtonProps = {}) {
   const [copied, setCopied] = useState(false);
   const onClick = async () => {
@@ -63,7 +70,7 @@ export function ShareButton({
   return (
     <Button
       variant="accent"
-      size="sm"
+      size={size}
       className={copied ? 'copied' : undefined}
       onClick={onClick}
       title={title}

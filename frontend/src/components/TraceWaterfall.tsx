@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SpanRow } from '@/lib/types';
-import { collectSubtreeIds, groupParentOf } from './traceWaterfall.tree';
+import { collectSubtreeIds, groupParentOf, clusterBadge } from './traceWaterfall.tree';
 import { resolveResource } from '@/lib/otel/semconv';
 import { fmtNs, displaySpanName } from '@/lib/utils';
 
@@ -251,7 +251,14 @@ export function TraceWaterfall({
     // every span to recompute a window that cannot have moved.
     const minT = Math.min(...spans.map(s => s.startTime));
     const maxT = Math.max(...spans.map(s => s.endTime));
-    return { map, children, roots, minT, totalNs: maxT - minT || 1 };
+    // v0.8.549 — cluster per span, resolved ONCE. The chip needs a row's
+    // cluster and its parent's, so resolving at render time would run
+    // resolveResource twice per row; it keys on `spans` like the rest of
+    // this memo, so a collapse click never recomputes it.
+    const clusterById = new Map<string, string | undefined>(
+      spans.map(s => [s.spanId, resolveResource(s.resourceAttributes).cluster]),
+    );
+    return { map, children, roots, clusterById, minT, totalNs: maxT - minT || 1 };
   }, [spans]);
 
   const { minT, totalNs } = tree;
@@ -520,15 +527,19 @@ export function TraceWaterfall({
                     groupCount, groupTotalDur, groupAvgDur, groupMaxDur, repSpanId }) => {
         const color = colorFor(s);
         const cat = categoryOf(s);
-        // v0.8.539 — cluster tag on the ROOT span only. Root is
-        // "no parent_span_id", NOT depth===0: the tree builder files
-        // orphans (parent not in the trace) under roots too, and those
-        // must not claim to be the trace's entry point. Value comes from
-        // the shared resolveResource() so this tag can never disagree
-        // with the /services cluster filter.
-        const rootCluster = !s.parentSpanId
-          ? resolveResource(s.resourceAttributes).cluster
-          : undefined;
+        // v0.8.549 — the cluster chip marks SERVICE ENTRY, not just the
+        // root: it rides the row where the trace hands off into a new
+        // service, which is where "which cluster is this running in?" is
+        // actually asked. Internal spans of the same service stay clean.
+        // Resolved off the tree's per-span cache — recomputing
+        // resolveResource() for a row AND its parent would run it twice per
+        // row on traces that can be thousands of spans deep.
+        const rootCluster = clusterBadge(
+          tree.clusterById.get(s.spanId),
+          s.serviceName,
+          s.parentSpanId ? tree.map.get(s.parentSpanId)?.serviceName : undefined,
+          !!s.parentSpanId,
+        );
         const startPct = ((s.startTime - minT) / totalNs * 100).toFixed(4);
         const widthPct = Math.max(0.15, ((s.endTime - s.startTime) / totalNs) * 100).toFixed(4);
         const dur = s.endTime - s.startTime;

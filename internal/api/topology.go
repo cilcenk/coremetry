@@ -723,7 +723,7 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 		// leaves nodes un-enriched but doesn't blank the
 		// diagram.
 		nsMap, _ := s.store.GetServiceNamespaces(ctx, time.Hour)
-		probMap, _ := s.store.GetOpenProblemCountsByService(ctx)
+		probMap, _ := s.openProblemCountsCached(ctx)
 		for i := range nodesOut {
 			if nodesOut[i].Kind != "service" {
 				continue

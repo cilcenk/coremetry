@@ -60,9 +60,13 @@ type Server struct {
 	chPingMu sync.Mutex
 	// meUsers — /api/auth/me'nin 30s kullanıcı cache'i (v0.8.519,
 	// perf raporu #7); her kullanıcı-yazma yolu clear() çağırır.
-	meUsers  *meCache
-	chPingAt time.Time
-	chPingOK bool
+	meUsers *meCache
+	// problemCounts — page/filter/env-değişmez açık-problem sayaçlarının
+	// 30s process-geneli cache'i (v0.8.533, getServices audit fix B);
+	// getServices + /service-map paylaşır.
+	problemCounts *problemCountsCache
+	chPingAt      time.Time
+	chPingOK      bool
 	// httpSrv is the live http.Server once Start() runs — kept so main
 	// can Shutdown() it during the ordered v0.8.336 teardown (stop
 	// ACCEPTING before draining consumers; a bare ListenAndServe had no
@@ -277,13 +281,14 @@ func NewServer(addr string, ing *otlp.Ingester, store *chstore.Store, logs logst
 	return &Server{
 		addr: addr, store: store, logs: logs, tails: newTailBroker(logs), ing: ing, webFS: webFS,
 		auth: authSvc, oidc: oidcSvc, ldap: ldapSvc, cache: c, notify: n, copilot: cop,
-		bus:         bus,
-		presence:    newPresenceTracker(c),
-		rateSamples: map[string]rateSample{},
-		l1:          newL1Cache(1024),
-		stats:       newCacheStats(),
-		meUsers:     newMeCache(30 * time.Second),
-		subRateBy:   map[string]int64{},
+		bus:           bus,
+		presence:      newPresenceTracker(c),
+		rateSamples:   map[string]rateSample{},
+		l1:            newL1Cache(1024),
+		stats:         newCacheStats(),
+		meUsers:       newMeCache(30 * time.Second),
+		problemCounts: newProblemCountsCache(30 * time.Second),
+		subRateBy:     map[string]int64{},
 		// Buffered audit channel. 1024 entries ≈ 30s of headroom
 		// at the highest sustained admin-mutation rate we've
 		// observed (bulk alert-rule import ~30/s). Channel-full
@@ -1506,7 +1511,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		}
 		// v0.5.274 — auto-score health per service from errorRate +
 		// open-problem counts. Single FINAL scan bounded by status=open.
-		counts, perr := s.store.GetOpenProblemCountsByService(ctx)
+		counts, perr := s.openProblemCountsCached(ctx)
 		if perr == nil {
 			for i := range rows {
 				c := counts[rows[i].Name]
@@ -5370,6 +5375,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 //     groupRole (AD promotion/demotion wins); if NOT (fallback), keep
 //     the existing role so a manual admin grant survives re-login.
 //   - Existing local row (admin-pinned, converting to LDAP) → keep it.
+//
 // Invalid/empty result is normalised to viewer by the caller.
 func resolveLdapLoginRole(existing *chstore.User, groupRole string, roleFromGroup bool) string {
 	role := groupRole

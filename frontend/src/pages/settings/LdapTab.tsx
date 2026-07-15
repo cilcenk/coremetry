@@ -182,6 +182,14 @@ export function LDAPTab() {
             <input value={cfg.displayAttribute} onChange={e => update({ displayAttribute: e.target.value })}
                    placeholder="displayName" style={{ width: '100%' }} />
           </Field2>
+        </Row>
+        {/* v0.8.538 — the identity attributes and the team pair are two
+            Rows, not one five-field Row. Row now wraps, so one Row would
+            reflow on its own, but it would break 4+1 and split Team
+            attribute from Team regex — a pair whose hints reference each
+            other. Splitting 3+2 keeps them together and leaves every
+            field at its 180px basis instead of squeezing to ~150px. */}
+        <Row>
           <Field2 label="Team attribute" small
             hint="boş = department→ou · dn-ou = DN'deki en derin OU (alt ekip) · veya attribute adı">
             <input value={cfg.teamAttribute ?? ''} onChange={e => update({ teamAttribute: e.target.value })}

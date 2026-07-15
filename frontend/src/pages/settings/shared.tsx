@@ -18,9 +18,12 @@ export function Field({ label, children, flex }: { label: string; children: Reac
   );
 }
 
+// v0.8.538 — flexWrap so a row that cannot fit drops its overflow onto a
+// second line instead of squeezing past the panel edge. Rows that already
+// fit are untouched: flex-wrap only engages once the line overflows.
 export function Row({ children }: { children: ReactNode }) {
   return (
-    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
       {children}
     </div>
   );
@@ -55,15 +58,17 @@ export function SectionTitle({ children }: { children: ReactNode }) {
   );
 }
 
-export function LDAPRow({ children }: { children: ReactNode }) {
-  return <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>{children}</div>;
-}
-
+// v0.8.538 — minWidth follows `small`. It used to be a flat 200px, which
+// sat ABOVE small's own 180px flex-basis: min-width is the floor the flex
+// shrink algorithm honours, so a `small` field could never reach its basis
+// and the flag did nothing. 140px is the floor a small field actually
+// needs — the narrowest content is LdapTab's Team regex, whose monospace
+// placeholder "-([^-]+)$" is ~70px of glyphs plus input padding.
 export function Field2({ label, hint, small, children }: {
   label: string; hint?: string; small?: boolean; children: ReactNode;
 }) {
   return (
-    <div style={{ flex: small ? '0 1 180px' : 1, minWidth: 200 }}>
+    <div style={{ flex: small ? '0 1 180px' : 1, minWidth: small ? 140 : 200 }}>
       <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>{label}</div>
       {children}
       {hint && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.4 }}>{hint}</div>}

@@ -33,6 +33,7 @@ import {
   extractHighlightTerms,
 } from '@/lib/logFilters';
 import type { LogFilter } from '@/lib/logFilters';
+import { logsUrlSig, writeLogsParams, readLogsParams } from '@/lib/logsUrl';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
 
 // Share affordance — copies a link to the CURRENT filtered logs view.
@@ -222,22 +223,16 @@ function LogsInner() {
   // The sig hashes only the filter-bearing params, so range-only
   // changes no-op and self-writes (which pre-store their own sig)
   // don't double-apply.
-  const urlSig = (f: { service: string; cluster: string; search: string; traceId: string; spanId: string; hasTrace: boolean },
-    filtersRaw: string, colsRaw: string) =>
-    JSON.stringify([f.service, f.cluster, f.search, f.traceId, f.spanId, f.hasTrace, filtersRaw, colsRaw]);
+  // v0.8.546 — sig/write/read all come from lib/logsUrl so they cannot
+  // drift apart. `severity` used to be missing from all three: the chip
+  // changed the filter, the URL never learned, and Share handed out a link
+  // that opened on All levels.
+  const urlSig = logsUrlSig;
   const lastUrlSigRef = useRef<string | null>(null);
   useEffect(() => {
     const filtersRaw = searchParams.get('filters') ?? '';
     const colsRaw = searchParams.get('cols') ?? '';
-    const next = {
-      service:  searchParams.get('service') ?? '',
-      cluster:  searchParams.get('cluster') ?? '',
-      search:   searchParams.get('q') ?? searchParams.get('search') ?? '',
-      severity: 0,
-      traceId:  searchParams.get('traceId') ?? '',
-      spanId:   searchParams.get('spanId')  ?? '',
-      hasTrace: searchParams.get('hasTrace') === '1', // v0.8.406
-    };
+    const next = readLogsParams(searchParams);
     const sig = urlSig(next, filtersRaw, colsRaw);
     if (sig === lastUrlSigRef.current) return;
     lastUrlSigRef.current = sig;
@@ -260,20 +255,7 @@ function LogsInner() {
     const filtersRaw = encodeFiltersParam(pills);
     const colsRaw = colsParam(cols ?? logCols);
     lastUrlSigRef.current = urlSig(f, filtersRaw, colsRaw);
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev);
-      const setOrDel = (k: string, v: string) => { if (v) p.set(k, v); else p.delete(k); };
-      setOrDel('service', f.service);
-      setOrDel('cluster', f.cluster);
-      setOrDel('q', f.search);
-      p.delete('search'); // legacy alias of q — never write both
-      setOrDel('traceId', f.traceId);
-      setOrDel('spanId', f.spanId);
-      setOrDel('hasTrace', f.hasTrace ? '1' : ''); // v0.8.406
-      setOrDel('filters', filtersRaw);
-      setOrDel('cols', colsRaw);
-      return p;
-    }, { replace: true });
+    setSearchParams(prev => writeLogsParams(prev, f, filtersRaw, colsRaw), { replace: true });
   };
 
   // Column mutations: state + standing preference + URL in one step.
@@ -761,6 +743,10 @@ function LogsInner() {
             const next = min === filter.severity ? 0 : min; // toggle off → All
             setFilter(f => ({ ...f, severity: next }));
             setDraft(d => ({ ...d, severity: next }));
+            // v0.8.546 — the chip has to reach the URL like every other
+            // filter does; without this the level lives only in memory and
+            // Share copies a link that opens on All levels.
+            writeUrl({ ...filter, severity: next }, filters);
             resetPaging();
           };
           const chipBase: CSSProperties = {

@@ -17,6 +17,7 @@ import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
+import { ShareButton } from '@/components/ShareButton';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
@@ -34,41 +35,19 @@ import {
 import type { LogFilter } from '@/lib/logFilters';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
 
-// Share affordance — copies a link to the CURRENT filtered logs
-// view. Logs filters live entirely in the URL querystring (the same
-// mechanism SavedViewsBar persists), so the copied link reproduces
-// the exact slice — service, cluster, KQL, trace-id, time range —
-// for any signed-in operator who opens it. v0.8.102: open to every
-// role, viewers included — the operator's parallel to the trace
-// "Copy current URL" share, granted alongside viewer public-trace
-// minting. NOT a public/unauth link: logs aren't externalised, so
-// the recipient still authenticates to Coremetry.
-function LogShareButton() {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    if (typeof window === 'undefined') return;
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-    } catch {
-      // Non-secure-context fallback (mirrors CopyButton).
-      const ta = document.createElement('textarea');
-      ta.value = window.location.href;
-      ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); } catch { /* swallow */ }
-      ta.remove();
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <Button variant="secondary" size="sm" onClick={copy}
-      title="Copy a shareable link to this filtered logs view (filters are encoded in the URL; recipients sign in to Coremetry to open it)"
-      style={{ color: copied ? 'var(--ok)' : undefined }}>
-      {copied ? '✓ Copied' : '⧉ Copy link'}
-    </Button>
-  );
-}
+// Share affordance — copies a link to the CURRENT filtered logs view.
+// Logs filters live entirely in the URL querystring (the same mechanism
+// SavedViewsBar persists), so the copied link reproduces the exact
+// slice — service, cluster, KQL, trace-id, time range — for any
+// signed-in operator who opens it. v0.8.102: open to every role,
+// viewers included. NOT a public/unauth link: logs aren't externalised,
+// so the recipient still authenticates to Coremetry. v0.8.540: was a
+// local LogShareButton copy; folded into the shared ShareButton, which
+// copies the same window.location.href. The label/title stay here
+// because the shared slice is what needs explaining on this page.
+const LOG_SHARE_TITLE =
+  'Copy a shareable link to this filtered logs view (filters are '
+  + 'encoded in the URL; recipients sign in to Coremetry to open it)';
 
 // Level facet chips (prototype LogsView .facet/.lvl) — each chip
 // drives the EXISTING min-severity filter (filter.severity). The
@@ -660,7 +639,7 @@ function LogsInner() {
           </button>
           <button onClick={apply}>Search</button>
           <button className="sec" onClick={reset}>Reset</button>
-          <LogShareButton />
+          <ShareButton label="Copy link" copiedLabel="Copied" title={LOG_SHARE_TITLE} />
           <button className={live ? 'live-on' : 'sec'}
             onClick={() => setLive(v => !v)}
             style={{ marginLeft: 'auto' }}

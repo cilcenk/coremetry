@@ -1163,15 +1163,48 @@ canvas { max-width: 100%; }
 /* Vertical separator between the time-range picker and the pref group */
 .topbar-prefs-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; margin: 0 8px; }
 
-/* Share button (Grafana-style — copies URL with encoded state) */
-.share-btn {
-  display: inline-flex; align-items: center;
-  background: var(--bg3); color: var(--text); border: 1px solid var(--border);
-  padding: 5px 12px; font-size: 12px; cursor: pointer;
-  border-radius: 6px; transition: background .12s, border-color .12s, color .12s;
+/* accent — "emphasised but not primary" tinted chip (v0.8.540).
+   Replaces the old hand-rolled `.share-btn`, which was a byte-for-byte
+   clone of `button.sec` and therefore invisible next to every other
+   secondary button. Follows the house tint family (`.facet.on`,
+   `.wf-group`, `.row-selected`): accent2 text over an accent-tinted
+   fill with an accent hairline. No new tokens.
+
+   Fill is the SOLID `--accent-bg` token rather than a color-mix alpha
+   on purpose. An alpha tint composites against whatever sits behind
+   it, so the same button would land at a different contrast per
+   surface (measured: 5.28:1 on Explore's --bg2 vs 6.71:1 on
+   ProblemDetail's --bg0, dark theme) — and in redhat the alpha form
+   measured 4.45:1, under the 4.5:1 AA floor for 12px text. Note the
+   fix direction is counter-intuitive: raising the mix % DARKENS the
+   fill, which moves it TOWARD the dark accent2 text and LOWERS
+   contrast on the light-family themes. `--accent-bg` is measured AA
+   in all three and is surface-independent:
+     dark #58a6ff on #15243b = 6.17:1 · light #0550ae on #ddf4ff =
+     6.68:1 · redhat #0066cc on #e7f1fa = 4.87:1.
+   Border keeps the 35% mix for presence — it carries no text, so it
+   cannot affect the contrast result. */
+button.accent {
+  background: var(--accent-bg);
+  color: var(--accent2);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: background .12s, border-color .12s, color .12s;
 }
-.share-btn:hover { background: var(--bg2); border-color: var(--accent); color: var(--accent2); }
-.share-btn.copied { background: rgba(63,185,80,.12); border-color: var(--ok); color: var(--ok); }
+/* Border-only hover (precedent: `.fb-add:hover`). Darkening the fill
+   on hover would push redhat back under 4.5:1, so the hover delta
+   rides the hairline: 35% mix -> solid accent. */
+button.accent:hover:not(:disabled) { background: var(--accent-bg); border-color: var(--accent); }
+/* Copied flash — hue shift blue tint -> green tint, so it stays
+   legible against the accent base rather than "deflating" the way a
+   solid fill would. Derives from --ok per theme (the old rule
+   hardcoded dark's #3fb950 and rendered the wrong green in
+   light/redhat); the same hardcoded literal survives at ~13 other
+   sites and is tracked as a separate token-cleanup item. */
+button.accent.copied {
+  background: color-mix(in srgb, var(--ok) 15%, transparent);
+  border-color: var(--ok);
+  color: var(--ok);
+}
 
 /* Dedicated trace-id lookup (pinned right of the view-toggle row) */
 .trace-lookup {

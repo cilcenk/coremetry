@@ -13,7 +13,13 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 // runtime CSS lib would duplicate the work + add bundle weight
 // without giving anything back.
 
-type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
+// `accent` (v0.8.540) is the "emphasised but NOT primary" layer: a
+// tinted chip, not a solid fill. It exists because a solid-accent
+// Share would sit next to the solid-accent `Resolve` in the
+// ProblemDetail action bar — two equally loud blues, which is exactly
+// the "too prominent" critique Grafana#84110 took. Reach for it when a
+// control must out-rank `secondary` without claiming `primary`.
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'accent';
 type Size    = 'sm' | 'md' | 'lg';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -31,6 +37,7 @@ const variantClass: Record<Variant, string> = {
   secondary: 'sec',
   danger:    'danger',
   ghost:     'ghost',
+  accent:    'accent',
 };
 const sizeClass: Record<Size, string> = {
   sm: 'sm',

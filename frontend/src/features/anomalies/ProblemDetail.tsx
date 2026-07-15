@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ArrowDownToLine, Link2 } from 'lucide-react';
+import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtFixed, tsLong } from '@/lib/utils';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
@@ -15,6 +15,7 @@ import { statusColor } from '@/lib/statusColor';
 import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
+import { ShareButton } from '@/components/ShareButton';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -37,24 +38,11 @@ const STATE_BADGE: Record<ExceptionGroupState, string> = {
   new: 'b-err', regressed: 'b-err', acknowledged: 'b-warn', resolved: 'b-ok', ignored: 'b-gray',
 };
 
-// ShareButton — copies the current address-bar URL to the clipboard.
-// The URL is already the canonical shareable link (both detail views
-// keep ?problem=<id> / ?exc=<fingerprint> in sync via problemLink.ts),
-// so this is just a one-click affordance on top of "copy from the
-// address bar" for an operator who wants to paste it into Slack.
-function ShareButton() {
-  const [copied, setCopied] = useState(false);
-  const share = () => {
-    navigator.clipboard?.writeText(window.location.href)
-      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
-  };
-  return (
-    <Button variant="secondary" size="sm" onClick={share}
-      leftIcon={<Link2 size={13} strokeWidth={1.75} />}>
-      {copied ? 'Copied' : 'Share'}
-    </Button>
-  );
-}
+// ShareButton (shared, v0.8.540 — was a local copy here) copies the
+// current address-bar URL. The URL is already the canonical shareable
+// link: both detail views keep ?problem=<id> / ?exc=<fingerprint> in
+// sync via problemLink.ts, so this is a one-click affordance on top of
+// "copy from the address bar" for an operator pasting into Slack.
 
 // Esc = back — same muscle memory the old drawer had.
 function useEscBack(onBack: () => void) {
@@ -200,7 +188,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         <span className={`badge ${STATE_BADGE[state]}`}>{STATE_LABEL[state]}</span>
         <span className="badge b-gray">{group.occurrences.toLocaleString()} occurrences</span>
         <span className="spacer" />
-        <ShareButton />
+        <ShareButton copiedLabel="Copied" />
         {isAdmin && (state === 'new' || state === 'regressed' || state === 'acknowledged') && (
           <>
             {state !== 'acknowledged' && <button className="sec" onClick={() => act('acknowledged')}>Acknowledge</button>}
@@ -358,7 +346,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
           {problem.status !== 'resolved' ? ' · ongoing' : ''}
         </span>
         <span className="spacer" />
-        <ShareButton />
+        <ShareButton copiedLabel="Copied" />
         {isAdmin && problem.status === 'open' && (
           <Button variant="secondary" size="sm" onClick={() => { void ack(); }} disabled={acking}>
             {acking ? 'Acknowledging…' : 'Acknowledge'}

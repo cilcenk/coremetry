@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import { copyToClipboard } from '@/lib/clipboard';
 import type { APIToken } from '@/lib/types';
 import { Field2, FlashBox, Row } from './shared';
 import { tsLong } from '@/lib/utils';
@@ -16,6 +17,10 @@ export function ApiTokensTab() {
   const [name, setName] = useState('');
   const [role, setRole] = useState('viewer');
   const [fresh, setFresh] = useState<string | null>(null); // tek seferlik düz token
+  // v0.8.547 — kopyalama sonucu. null = henüz denenmedi. Bu token bir daha
+  // gösterilmediği için sessiz başarısızlık = kalıcı kayıp: sonucu
+  // göstermek burada opsiyonel bir cila değil, güvenlik ağı.
+  const [copyOk, setCopyOk] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -77,10 +82,22 @@ export function ApiTokensTab() {
               overflowWrap: 'anywhere', flex: 1,
             }}>{fresh}</code>
             <Button variant="secondary" size="sm"
-              onClick={() => { void navigator.clipboard?.writeText(fresh); }}>
-              Kopyala
+              onClick={async () => {
+                const ok = await copyToClipboard(fresh);
+                setCopyOk(ok);
+                if (ok) setTimeout(() => setCopyOk(null), 2500);
+              }}>
+              {copyOk === true ? '✓ Kopyalandı' : 'Kopyala'}
             </Button>
           </div>
+          {/* Başarısızlık SESSİZ kalamaz: token bir daha gösterilmiyor, ve
+              düz HTTP'de (secure context yok) fallback de reddedilebilir.
+              Operatör kopyaladığını sanıp sekmeyi kapatırsa token gider. */}
+          {copyOk === false && (
+            <div style={{ marginTop: 6, color: 'var(--err)' }}>
+              Kopyalanamadı — token'ı yukarıdan elle seçip kopyala.
+            </div>
+          )}
         </div>
       )}
 

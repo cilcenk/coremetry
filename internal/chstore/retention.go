@@ -154,7 +154,113 @@ func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string
 			return fmt.Errorf("persist %s: %w", p.key, err)
 		}
 	}
+	if sp.Spans != "" {
+		s.applyExemplarColTTL(ctx, sp.Spans)
+	}
 	return nil
+}
+
+// exemplarStateMVs — the MVs whose argMax/argMaxIf states copy a trace_id
+// out of spans (store.go, the spanmetrics tiers). Their ROW TTL is set at
+// create time and deliberately outlives spans (spanmetrics_1m keeps 30d of
+// aggregates against a 7d spans retention) — correct for the aggregates,
+// wrong for the exemplars: a trace_id that outlives its trace is a dead
+// click, the same reasoning that puts `exemplars` on retention.spans above.
+//
+// So the exemplar COLUMNS get a column-level TTL riding retention.spans
+// while the row TTL keeps the aggregate history. Verified on CH 24.8: a row
+// past the column TTL but inside the row TTL keeps countMerge/quantiles and
+// returns '' for the exemplar.
+//
+// The shorter tiers (10s → 2d, 1s → 6h) can't produce a dead link today —
+// they expire before spans — but they're listed anyway: the column TTL is a
+// no-op while the row TTL is shorter, and it becomes the fix the moment an
+// operator drops spans retention below 2d.
+var exemplarStateMVs = []string{"spanmetrics_1m", "spanmetrics_10s", "spanmetrics_1s"}
+
+var exemplarStateCols = []string{"slow_exemplar_state", "error_exemplar_state"}
+
+// exemplarColTTLStmt builds the column-TTL ALTER. Split out for a pure test:
+// the type is threaded through verbatim because CH REJECTS a type-less
+// `MODIFY COLUMN <c> TTL <expr>` (syntax error on 24.8), so the caller must
+// echo the column's CURRENT type back — read from system.columns, never
+// hardcoded, or a drifted AggregateFunction signature would be silently
+// rewritten.
+func exemplarColTTLStmt(inner, onCluster, col, typ, ttl string) string {
+	return fmt.Sprintf(
+		"ALTER TABLE `%s`%s MODIFY COLUMN `%s` %s TTL %s"+
+			" SETTINGS materialize_ttl_after_modify = 0, alter_sync = 0",
+		inner, onCluster, col, typ, ttl)
+}
+
+// applyExemplarColTTL expires the exemplar trace_ids in the spanmetrics MVs
+// at the spans retention, leaving their aggregates on the row TTL.
+//
+// Best-effort by design: every failure logs and moves on, exactly like the
+// isClusterUnsupportedAlter skip above. A missing column TTL costs a dead
+// link on an aged bucket; failing the operator's whole retention PUT (or
+// crash-looping boot replay) costs more.
+//
+// Why the inner table: a combined MV rejects TTL outright ("Engine
+// MaterializedView doesn't support TTL clause", CH 24.8), so the ALTER has
+// to name the storage behind it — `.inner_id.<uuid>`. That name is stable
+// across shards (Atomic DB, one uuid propagated by the ON CLUSTER create),
+// which is what makes s.onCluster() valid here. execDDL is deliberately NOT
+// used: adaptDDL rewrites by table name and would hand us back the MV.
+func (s *Store) applyExemplarColTTL(ctx context.Context, spansVal string) {
+	ttl, err := buildRetentionTTL(spansVal, "time_bucket")
+	if err != nil {
+		log.Printf("[chstore] exemplar column TTL skipped: bad retention %q: %v", spansVal, err)
+		return
+	}
+	for _, mv := range exemplarStateMVs {
+		name := mv
+		if s.clusterMode() && highVolumeTables[mv] {
+			name = mv + "_local"
+		}
+		inner, ok := s.mvInnerTable(ctx, name)
+		if !ok {
+			log.Printf("[chstore] exemplar column TTL skipped for %s: inner table unresolved (TO-table MV or absent) — exemplars there may outlive their traces", name)
+			continue
+		}
+		for _, col := range exemplarStateCols {
+			typ, ok := s.columnType(ctx, inner, col)
+			if !ok {
+				continue // column absent — nothing to expire
+			}
+			if err := s.execWithReadonlyRetry(ctx,
+				exemplarColTTLStmt(inner, s.onCluster(), col, typ, ttl)); err != nil {
+				log.Printf("[chstore] exemplar column TTL on %s.%s not applied: %v — exemplars there may outlive their traces", name, col, err)
+			}
+		}
+	}
+}
+
+// mvInnerTable resolves a combined MV's storage table (`.inner_id.<uuid>`).
+// A TO-table MV has no uuid of its own and returns false.
+func (s *Store) mvInnerTable(ctx context.Context, mv string) (string, bool) {
+	var uuid string
+	row := s.conn.QueryRow(ctx, `
+		SELECT toString(uuid) FROM system.tables
+		WHERE database = currentDatabase() AND name = ? AND engine = 'MaterializedView'`, mv)
+	if err := row.Scan(&uuid); err != nil || uuid == "" ||
+		uuid == "00000000-0000-0000-0000-000000000000" {
+		return "", false
+	}
+	return ".inner_id." + uuid, true
+}
+
+// columnType reads a column's CURRENT declared type — see exemplarColTTLStmt
+// for why the ALTER cannot omit it.
+func (s *Store) columnType(ctx context.Context, table, col string) (string, bool) {
+	var typ string
+	row := s.conn.QueryRow(ctx, `
+		SELECT type FROM system.columns
+		WHERE database = currentDatabase() AND table = ? AND name = ?`, table, col)
+	if err := row.Scan(&typ); err != nil || typ == "" {
+		return "", false
+	}
+	return typ, true
 }
 
 func (s *Store) upsertSetting(ctx context.Context, key, value, actor string) error {

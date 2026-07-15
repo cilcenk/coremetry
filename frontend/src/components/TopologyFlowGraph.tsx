@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { ROW_PITCH } from '@/lib/topoLayout';
 import type { ServiceMap, ServiceMapNode, ServiceMapEdge } from '@/lib/types';
 import { isMessagingDep, fmtNum } from '@/lib/utils';
 import { edgeWeights } from '@/lib/edgeWeight';
@@ -226,11 +227,10 @@ export function TopologyFlowGraph({
     const columns: string[][] = Array.from({ length: maxDepth + 1 }, () => []);
     for (const n of data.nodes) columns[depth.get(n.service)!].push(n.service);
 
-    // Layout alanı: en kalabalık sütun satır başına ~46px alır (pill ~34px +
-    // nefes), sütunlar en az 180px açılır — view'dan KÜÇÜLMEZ (az düğümde
-    // eski birebir yerleşim).
+    // Layout alanı: en kalabalık sütun satır başına ROW_PITCH alır, sütunlar
+    // en az 180px açılır — view'dan KÜÇÜLMEZ (az düğümde eski yerleşim).
     const maxCol = Math.max(1, ...columns.map(c => c.length));
-    const lh = Math.max(height, maxCol * 46);
+    const lh = Math.max(height, maxCol * ROW_PITCH);
     const padX = 110;
     const lw = Math.max(width, padX * 2 + Math.max(0, columns.length - 1) * 180);
 

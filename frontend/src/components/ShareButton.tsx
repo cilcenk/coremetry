@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { IconLink, IconCheck } from './icons';
 import { Button } from './ui/Button';
+import { copyToClipboard } from '@/lib/clipboard';
 
 export interface ShareButtonProps {
   /** Idle label. Logs says "Copy link"; everywhere else "Share". */
@@ -45,26 +46,13 @@ export function ShareButton({
   size = 'md',
 }: ShareButtonProps = {}) {
   const [copied, setCopied] = useState(false);
+  // v0.8.550 — the fallback this used to inline (its own comment admitted
+  // it "mirrors CopyButton") now lives in lib/clipboard, which also covers
+  // the writeText-REJECTS case this copy treated as a dead end.
   const onClick = async () => {
-    try {
-      const url = window.location.href;
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-      } else {
-        // Non-secure-context fallback (mirrors CopyButton).
-        const ta = document.createElement('textarea');
-        ta.value = url;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
+    if (await copyToClipboard(window.location.href)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* swallow */
     }
   };
   return (

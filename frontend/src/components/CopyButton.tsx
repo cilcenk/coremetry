@@ -1,8 +1,15 @@
 import { useState } from 'react';
+import { copyToClipboard } from '@/lib/clipboard';
 
 /**
  * Tiny clipboard button. Renders a small icon next to copyable text;
  * click → write to clipboard, briefly flips to a check mark.
+ *
+ * v0.8.550 — the hand-rolled fallback moved to lib/clipboard. Behaviour
+ * gains one thing: the shared helper also falls back when writeText
+ * REJECTS (permission denied, document not focused), where this copy only
+ * fell back when the API was missing and swallowed a rejection into a
+ * flash-less no-op.
  */
 export function CopyButton({ value, title }: { value: string; title?: string }) {
   const [copied, setCopied] = useState(false);
@@ -10,24 +17,9 @@ export function CopyButton({ value, title }: { value: string; title?: string }) 
   const onClick = async (e: React.MouseEvent) => {
     e.stopPropagation();   // don't trigger the row click underneath
     e.preventDefault();
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-      } else {
-        // Fallback for non-secure contexts
-        const ta = document.createElement('textarea');
-        ta.value = value;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
+    if (await copyToClipboard(value)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* swallow — UI just won't flash */
     }
   };
 

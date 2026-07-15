@@ -3,6 +3,7 @@ import type { ReactNode, KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CopyButton } from '@/components/CopyButton';
 import { Button } from '@/components/ui';
+import { copyToClipboard } from '@/lib/clipboard';
 import {
   describeMetricQuery,
   encodeMetricQuery,
@@ -113,9 +114,17 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
         break;
       case 'copy':
         // Absolute link so it survives a paste into Slack / a runbook.
-        void navigator.clipboard?.writeText(window.location.origin + href);
-        setLinkCopied(true);
-        setTimeout(() => setLinkCopied(false), 1500);
+        // v0.8.550 — the flash used to fire unconditionally next to a
+        // `void navigator.clipboard?.writeText(…)`: on a plain-HTTP install
+        // the optional chain no-op'd and the menu still said "Copied", so
+        // the operator pasted nothing into their runbook. Now it flashes
+        // only on a real copy, and the shared helper adds the textarea
+        // fallback this surface never had.
+        void copyToClipboard(window.location.origin + href).then(ok => {
+          if (!ok) return;
+          setLinkCopied(true);
+          setTimeout(() => setLinkCopied(false), 1500);
+        });
         break;
       case 'dashboard':
         // Best-effort: hand the descriptor to /dashboards; full consume (turn

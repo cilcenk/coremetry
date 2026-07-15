@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
+import { copyToClipboard } from '@/lib/clipboard';
 
 // SSOPresetsTab — provider-template reference for OIDC + the
 // trusted-header proxy mode. Today OIDC + trusted-header are
@@ -136,20 +137,19 @@ export function SSOPresetsTab() {
   const [activeKey, setActiveKey] = useState(presets[0].key);
   const active = presets.find(p => p.key === activeKey) ?? presets[0];
   const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(active.yaml)
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => {
-        // Clipboard API can reject when the page isn't in a
-        // secure context, when the tab loses focus mid-call,
-        // or when the user denied permission. Silent fail —
-        // the operator still has the visible YAML to copy
-        // manually. Without the catch this surfaces as an
-        // unhandled promise rejection in the console.
-      });
+  // v0.8.550 — was `navigator.clipboard.writeText(...)` with a .catch().
+  // The catch never fired on the case it described: with no secure context
+  // `navigator.clipboard` is undefined, so reading `.writeText` throws
+  // SYNCHRONOUSLY and no promise is ever created for .catch to attach to.
+  // The shared helper handles the missing API, a rejection, AND supplies
+  // the textarea fallback this surface never had — the operator can now
+  // actually copy the YAML on a plain-HTTP install instead of falling back
+  // to selecting it by hand.
+  const copy = async () => {
+    if (await copyToClipboard(active.yaml)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
   return (
     <div style={{ maxWidth: 920 }}>

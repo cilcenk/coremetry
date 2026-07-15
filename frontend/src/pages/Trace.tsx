@@ -23,6 +23,10 @@ import { TraceWaterfall, TraceServiceBreakdown } from '@/components/TraceWaterfa
 import { SpanDetail } from '@/components/SpanDetail';
 import { TraceHonesty } from '@/components/traces/TraceHonesty';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
+// v0.8.550 — this file used to OWN the strongest of the three hand-rolled
+// clipboard copies (it alone fell back when writeText rejected). That
+// version is now lib/clipboard, and the two local functions are gone.
+import { copyToClipboard } from '@/lib/clipboard';
 
 function TraceDetailInner() {
   const navigate = useNavigate();
@@ -884,19 +888,6 @@ export default function TraceDetailPage() {
   );
 }
 
-// copyToClipboard handles the async Clipboard API + a hidden-textarea
-// fallback for non-secure dev hosts (Clipboard API requires HTTPS or
-// localhost). Returns a Promise so the caller can flip a UI state on
-// completion.
-async function copyToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch { /* fall through to legacy */ }
-  }
-  fallbackCopy(text);
-}
 
 // SharePopover — Grafana-style two-tab share popover. Internal link
 // is the current URL (preserves span/tab/range from the page state
@@ -1139,16 +1130,6 @@ function SharePopover({ traceId }: { traceId: string }) {
   );
 }
 
-function fallbackCopy(text: string) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); } catch { /* swallow */ }
-  ta.remove();
-}
 
 // exportTraceJSON triggers a browser download of the full trace as a
 // pretty-printed JSON file. Filename includes a short trace-id prefix

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fitViewport, zoomAt, zoomRange, type Viewport } from './topoViewport';
+import { fitViewport, readableFit, zoomAt, zoomRange, READABLE_MIN_K, type Viewport } from './topoViewport';
 
 // v0.8.296 (operator-reported: "çok fazla servis olduğunda ekrana sığmıyor") —
 // TopologyFlowGraph gains zoom/pan. The transform math lives in this pure
@@ -33,6 +33,65 @@ describe('fitViewport', () => {
     expect(vp.k).toBeGreaterThan(0);
     expect(Number.isFinite(vp.x)).toBe(true);
     expect(Number.isFinite(vp.y)).toBe(true);
+  });
+});
+
+// v0.8.544 (operator-reported: "fazla service olduğunda sanki hepsi
+// kümelenmiş gibi oluyor … topology ekrana sığdırmak zorunda değilsin,
+// zaten zoom in out özelliği var") — the OPENING transform gains a floor.
+// fitViewport shrank without limit, so a busy neighbourhood opened at k≈0.4:
+// the 12px pill name went sub-8px and the 12px the layout leaves between
+// rows collapsed to ~4px. Widening the row spacing cannot fix that — a
+// taller canvas only makes the fit scale down further.
+describe('readableFit', () => {
+  it('defers to fitViewport whenever the content already fits', () => {
+    // Small graphs must keep the exact pre-v0.8.544 placement.
+    expect(readableFit(400, 300, 900, 600, 24)).toEqual(fitViewport(400, 300, 900, 600, 24));
+  });
+
+  it('defers whenever the fit scale is still at or above the floor', () => {
+    // Content needing k=0.8: above the floor, so no clamp.
+    const vp = readableFit(900, (600 - 48) / 0.8, 900, 600, 24);
+    expect(vp.k).toBeCloseTo(0.8);
+    expect(vp).toEqual(fitViewport(900, (600 - 48) / 0.8, 900, 600, 24));
+  });
+
+  it('clamps to the floor and lets the content overflow instead of shrinking', () => {
+    // The reported shape: one very tall column.
+    const tall = 2400;
+    expect(fitViewport(900, tall, 900, 600, 24).k).toBeLessThan(READABLE_MIN_K); // precondition
+    const vp = readableFit(900, tall, 900, 600, 24);
+    expect(vp.k).toBe(READABLE_MIN_K);
+    expect(tall * vp.k).toBeGreaterThan(600); // overflows — that is the point
+  });
+
+  it('anchors the overflowing axis to the pad, never negative', () => {
+    // Centring a box taller than the view would put y negative and open the
+    // graph scrolled into its own middle — roots (first column) off-screen.
+    const vp = readableFit(2000, 2400, 900, 600, 24);
+    expect(vp.y).toBe(24);
+    expect(vp.x).toBe(24);
+  });
+
+  it('keeps centring the axis that still has room at the floor', () => {
+    // Narrow but very tall: x stays centred, only y anchors.
+    const vp = readableFit(200, 2400, 900, 600, 24);
+    expect(vp.x).toBeCloseTo((900 - 200 * READABLE_MIN_K) / 2);
+    expect(vp.y).toBe(24);
+  });
+
+  it('degenerate content dimensions stay finite', () => {
+    const vp = readableFit(0, 0, 900, 600, 24);
+    expect(Number.isFinite(vp.k)).toBe(true);
+    expect(vp.k).toBeGreaterThan(0);
+    expect(Number.isFinite(vp.x)).toBe(true);
+    expect(Number.isFinite(vp.y)).toBe(true);
+  });
+
+  it('leaves zoom-out to the true fit reachable — the floor is only the OPENING scale', () => {
+    // ⛶ and wheel-out still ride fitViewport, so "show everything" survives.
+    const trueFit = fitViewport(900, 2400, 900, 600, 24);
+    expect(zoomRange(trueFit.k).kMin).toBeLessThan(READABLE_MIN_K);
   });
 });
 

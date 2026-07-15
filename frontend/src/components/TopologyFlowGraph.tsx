@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { ServiceMap, ServiceMapNode, ServiceMapEdge } from '@/lib/types';
 import { isMessagingDep, fmtNum } from '@/lib/utils';
 import { edgeWeights } from '@/lib/edgeWeight';
-import { fitViewport, zoomAt, zoomRange, type Viewport } from '@/lib/topoViewport';
+import { fitViewport, readableFit, zoomAt, zoomRange, type Viewport } from '@/lib/topoViewport';
 import { depInstanceLabel } from '@/lib/topoLabels';
 import { Button } from '@/components/ui/Button';
 import { useServicesMetadata } from '@/lib/queries';
@@ -259,7 +259,12 @@ export function TopologyFlowGraph({
   // Transform matematiği pure seam'de (lib/topoViewport.ts, vitest-pinli).
   // Fit-guard: yalnız düğüm-kümesi imzası (veya boyutlar) değişince auto-Fit —
   // 30sn'lik refetch operatörün zoom/pan'ını asla sıfırlamaz.
-  const [vp, setVp] = useState<Viewport>(() => fitViewport(layoutW, layoutH, width, height));
+  // v0.8.544 — OPEN at a readable scale, not a fitted one. fitViewport has
+  // no floor, so a busy neighbourhood used to open at k≈0.4 and read as one
+  // clump. readableFit lets the graph overflow instead; kMin below still
+  // rides the true fit, so zooming out to "everything" stays available, and
+  // ⛶ jumps straight there.
+  const [vp, setVp] = useState<Viewport>(() => readableFit(layoutW, layoutH, width, height));
   const fitK = useMemo(() => fitViewport(layoutW, layoutH, width, height).k, [layoutW, layoutH, width, height]);
   const { kMin, kMax } = zoomRange(fitK);
   const sig = useMemo(
@@ -267,7 +272,7 @@ export function TopologyFlowGraph({
     [data.nodes, layoutW, layoutH, width, height],
   );
   useEffect(() => {
-    setVp(fitViewport(layoutW, layoutH, width, height));
+    setVp(readableFit(layoutW, layoutH, width, height));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 

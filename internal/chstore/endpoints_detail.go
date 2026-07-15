@@ -304,6 +304,41 @@ func (s *Store) EndpointFailingTraces(ctx context.Context, q EndpointDetailQuery
 	return out, rows.Err()
 }
 
+// endpointExemplarArgs builds the path projection + bind args for the
+// exemplar read. Split out of EndpointExemplars so the window alignment
+// and the arg ORDER (the class that bit exemplar ingest in v0.8.435) are
+// pinnable by a pure test.
+//
+// v0.8.535 — From is aligned DOWN to the spanmetrics_1m grain. The MV
+// keys on time_bucket (the minute FLOOR), so `time_bucket >= q.From`
+// with a sub-minute From drops the entire bucket the window starts
+// inside — the slowest trace of that first partial minute becomes
+// invisible and the drawer's "slowest →" link silently resolves to the
+// runner-up. parseFromTo (api.go:2526) hands us wall-clock times, never
+// snapped: the minute bucket lives only in the CACHE KEY
+// (endpoints_detail.go:63), so every real request carries a sub-minute
+// From. Measured on the live 2-shard cluster (to=now, 30 probes/window):
+// a ~5-minute window returned the wrong trace_id 7/30 times before,
+// 1/30 after; 15m and 1h windows were already 0/30 — the loss scales
+// inversely with window width. Sibling: endpoints.go:343.
+//
+// To stays RAW on purpose. Ceiling it would admit a bucket lying wholly
+// past the window; flooring it changes nothing (the bucket at the floor
+// is still <= To). With to=now the trailing bucket cannot hold data past
+// the window anyway, so the residual over-inclusion only exists for
+// windows pinned to a historical To — and there it is bounded by the
+// 1-minute grain, the same trade endpoints.go already accepts.
+func endpointExemplarArgs(q EndpointDetailQuery) (pathProj string, args []any) {
+	pathProj = "http_route"
+	args = append(args, q.From.Truncate(time.Minute), q.To, q.Service)
+	if q.BySignature {
+		pathProj = opSigWrap("http_route")
+		args = append(args, opSigArgs()...)
+	}
+	args = append(args, q.Path)
+	return pathProj, args
+}
+
 // EndpointExemplars resolves the slow + error exemplar trace_ids for
 // one endpoint off the spanmetrics_1m argMax states — MV-first and
 // endpoint-precise: the MV carries http_route as a dimension, which
@@ -315,14 +350,7 @@ func (s *Store) EndpointFailingTraces(ctx context.Context, q EndpointDetailQuery
 // (pre-cutover / TTL'd / all-healthy for the error state) — soft,
 // the caller renders the section without links.
 func (s *Store) EndpointExemplars(ctx context.Context, q EndpointDetailQuery) (slowTraceID, errorTraceID string, err error) {
-	pathProj := "http_route"
-	var args []any
-	args = append(args, q.From, q.To, q.Service)
-	if q.BySignature {
-		pathProj = opSigWrap("http_route")
-		args = append(args, opSigArgs()...)
-	}
-	args = append(args, q.Path)
+	pathProj, args := endpointExemplarArgs(q)
 	row := s.conn.QueryRow(ctx, `
 		SELECT argMaxMerge(slow_exemplar_state)    AS slow_tid,
 		       argMaxIfMerge(error_exemplar_state) AS err_tid

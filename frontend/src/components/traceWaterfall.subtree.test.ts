@@ -9,7 +9,7 @@
 //     "group:<parent>:<i>:<key>" row id, which is how Alt+expand clears
 //     group rows inside a subtree without a second index.
 import { describe, it, expect } from 'vitest';
-import { collectSubtreeIds, groupParentOf } from './traceWaterfall.tree';
+import { collectSubtreeIds, groupParentOf, clusterBadge } from './traceWaterfall.tree';
 
 type Kid = { spanId: string; startTime: number };
 
@@ -89,5 +89,47 @@ describe('groupParentOf', () => {
     // displayName routinely carries colons (e.g. "GET /a:b"), so the cut
     // must be the FIRST separator, not the last.
     expect(groupParentOf('group:abc123:2:svc\x01GET /a:b:c')).toBe('abc123');
+  });
+});
+
+// v0.8.549 — the cluster chip marks SERVICE ENTRY. Operator's words:
+// "prod'ta trace'in en başında gözüküyor, sadece alt service çağrımlarının
+// ilk girişinde cluster badge olsun istiyorum."
+//
+// v0.8.539 shipped it on the root only. This widens it to every handoff
+// into a new service, while keeping the internal spans of a call clean —
+// a 200-span trace repeating one identical chip on every row would bury
+// the handoffs the chip exists to mark.
+describe('clusterBadge', () => {
+  it('shows on the root — it establishes the baseline', () => {
+    expect(clusterBadge('prod-eu-west', 'api-gateway', undefined, false)).toBe('prod-eu-west');
+  });
+
+  it('shows on the first span of a sub-service call — the reported ask', () => {
+    expect(clusterBadge('prod-us-east', 'payment-svc', 'api-gateway', true)).toBe('prod-us-east');
+  });
+
+  it('hides on internal spans of the same service', () => {
+    expect(clusterBadge('prod-us-east', 'payment-svc', 'payment-svc', true)).toBeUndefined();
+  });
+
+  it('shows on a service hop even when the cluster is unchanged', () => {
+    // The chip answers "which cluster is THIS service in?" — the answer is
+    // still worth stating at the boundary, same-cluster or not.
+    expect(clusterBadge('prod-eu-west', 'auth-svc', 'api-gateway', true)).toBe('prod-eu-west');
+  });
+
+  it('stays silent when the resource carries no cluster — never "unknown"', () => {
+    // v0.8.539's contract: old data / non-OpenShift installs render nothing.
+    for (const empty of [undefined, '']) {
+      expect(clusterBadge(empty, 'payment-svc', 'api-gateway', true)).toBeUndefined();
+      expect(clusterBadge(empty, 'api-gateway', undefined, false)).toBeUndefined();
+    }
+  });
+
+  it('shows on an orphan — its parent is not in the trace, so it IS an entry', () => {
+    // parentSpanId set but the parent span was never ingested (upstream not
+    // sampled). Treating it as "same service as parent" would be a guess.
+    expect(clusterBadge('prod-eu-west', 'payment-svc', undefined, true)).toBe('prod-eu-west');
   });
 });

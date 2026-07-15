@@ -906,6 +906,9 @@ function SharePopover({ traceId }: { traceId: string }) {
   const canShare = !!user;
   const canRevoke = user?.role === 'admin' || user?.role === 'editor';
   const wrapRef = useRef<HTMLDivElement>(null);
+  // v0.8.551 — Esc hands focus back here; without it the keyboard lands on
+  // <body> and the operator has to tab from the top of the page.
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [internalCopied, setInternalCopied] = useState(false);
   const [publicURL, setPublicURL] = useState<string | null>(null);
@@ -929,14 +932,27 @@ function SharePopover({ traceId }: { traceId: string }) {
     } catch { setShares([]); }
   };
 
-  // Click-outside to close.
+  // v0.8.551 — was a hand-rolled copy of useOutsideClose (same mousedown
+  // logic, same reasoning) sitting in a file that already imports the hook's
+  // sibling behaviour. Now it uses the hook.
+  const close = useCallback(() => setOpen(false), []);
+  useOutsideClose(wrapRef, open, close);
+
+  // Esc closes, and focus returns to the trigger — a popover that traps the
+  // keyboard is worse than one that never opened. This file already binds
+  // Escape for the span-detail panel, so the popover NOT honouring it was
+  // the odd one out. Capture phase + stopPropagation so Esc dismisses the
+  // popover WITHOUT also clearing the span selection underneath.
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setOpen(false);
+      triggerRef.current?.focus();
     };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [open]);
 
   // Fetch active shares when popover opens so the operator sees
@@ -946,11 +962,17 @@ function SharePopover({ traceId }: { traceId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // v0.8.551 — all three copy paths used to flash "Copied" unconditionally,
+  // ignoring whether the write landed. On a plain-HTTP install that was a
+  // false positive: the popover claimed success and the operator pasted
+  // nothing. copyToClipboard reports the truth, so the flash now follows it.
+  // Failure leaves the URL visible in the field to select by hand.
+  // Flash is 1500ms to match every other copy surface (was 2000).
   const copyInternal = async () => {
     if (typeof window === 'undefined') return;
-    await copyToClipboard(window.location.href);
+    if (!await copyToClipboard(window.location.href)) return;
     setInternalCopied(true);
-    setTimeout(() => setInternalCopied(false), 2000);
+    setTimeout(() => setInternalCopied(false), 1500);
   };
 
   const generatePublic = async () => {
@@ -959,10 +981,13 @@ function SharePopover({ traceId }: { traceId: string }) {
       const res = await api.shareTrace(traceId, ttlHours);
       setPublicURL(res.url);
       setPublicExpiresAt(res.expiresAt);
-      // Auto-copy on generate so the common case is one-click.
-      await copyToClipboard(res.url);
-      setPublicCopied(true);
-      setTimeout(() => setPublicCopied(false), 2000);
+      // Auto-copy on generate so the common case is one-click. The token is
+      // minted either way — a failed copy just means no flash; the URL is
+      // on screen to take by hand.
+      if (await copyToClipboard(res.url)) {
+        setPublicCopied(true);
+        setTimeout(() => setPublicCopied(false), 1500);
+      }
       void reloadShares();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to mint share link');
@@ -973,9 +998,9 @@ function SharePopover({ traceId }: { traceId: string }) {
 
   const copyPublic = async () => {
     if (!publicURL) return;
-    await copyToClipboard(publicURL);
+    if (!await copyToClipboard(publicURL)) return;
     setPublicCopied(true);
-    setTimeout(() => setPublicCopied(false), 2000);
+    setTimeout(() => setPublicCopied(false), 1500);
   };
 
   const revoke = async (token: string) => {
@@ -1003,13 +1028,19 @@ function SharePopover({ traceId }: { traceId: string }) {
           MANAGER (public token mint, TTL, revoke), which is why it isn't
           folded into ShareButton. */}
       <Button variant="accent"
+        ref={triggerRef}
         onClick={() => setOpen(o => !o)}
         title="Share this trace"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         leftIcon={<IconLink />}>
         Share
       </Button>
+      {/* aria-label: role="dialog" without an accessible name is announced
+          as a bare "dialog". Not aria-modal — focus is deliberately NOT
+          trapped; this is a popover, and Esc/outside-click dismiss it. */}
       {open && (
-        <div role="dialog" style={{
+        <div role="dialog" aria-label="Share this trace" style={{
           position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60,
           width: 380, padding: 12,
           background: 'var(--bg2)', border: '1px solid var(--border)',

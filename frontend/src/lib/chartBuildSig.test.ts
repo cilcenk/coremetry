@@ -197,6 +197,10 @@ describe('overviewChartBuildSignature — structure/option change forces a rebui
     ['deploy cleared', { ...ovBase, deployAtSec: null }],
     ['deployLabel changed', { ...ovBase, deployLabel: 'v2.0.0' }],
     ['renderable toggled', { ...ovBase, renderable: false }],
+    // v0.8.534 — drag-zoom presence: the setSelect hook + cursor.drag are
+    // wired at build time only when onZoom exists, so a none→some flip must
+    // rebuild to register them.
+    ['zoom presence toggled on', { ...ovBase, hasZoom: true }],
   ];
   it.each(diff)('%s → different signature', (_n, input) => {
     expect(overviewChartBuildSignature(input)).not.toBe(overviewChartBuildSignature(ovBase));

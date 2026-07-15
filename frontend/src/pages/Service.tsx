@@ -453,7 +453,14 @@ function ServiceDetailInner() {
               opCount={operations.length} />
 
             {tab === 'overview' && (
-              <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations} />
+              <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations}
+                onZoom={(fromUnixSec, toUnixSec) => {
+                  setRange({
+                    preset: 'custom',
+                    fromMs: Math.round(fromUnixSec * 1000),
+                    toMs: Math.round(toUnixSec * 1000),
+                  });
+                }} />
             )}
             {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}

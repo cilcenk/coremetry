@@ -39,6 +39,10 @@ interface Props {
   range: TimeRange;
   info: Service | null;
   operations: OperationSummary[];
+  // v0.8.534 — drag-zoom on any Overview chart → parent maps to the global
+  // ?range=. Passed down to every ChartCard/OverviewChart (mirrors the
+  // sibling Performance/ServiceCharts wiring in Service.tsx).
+  onZoom?: (fromSec: number, toSec: number) => void;
 }
 
 function vals(s?: SpanMetricSeries[] | null): number[] {
@@ -120,12 +124,14 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
 // comes from the first non-empty line — all aggs share the WHERE + step so
 // the points align index-for-index.
 interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
-function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready' }: {
+function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom }: {
   title: string; lines: ChartLine[]; unit: string;
   mode?: 'line' | 'area' | 'stacked'; deploy?: { sec: number; label: string } | null;
   // RED series fetch state — distinguishes loading/error from a genuinely
   // empty window so a failed metric fetch doesn't masquerade as "No data".
   status?: 'loading' | 'error' | 'ready';
+  // v0.8.534 — threaded to OverviewChart for drag-zoom → global range.
+  onZoom?: (fromSec: number, toSec: number) => void;
 }) {
   const times = useMemo(() => {
     const base = lines.find(l => (l.series[0]?.points ?? []).length)?.series[0]?.points ?? [];
@@ -156,7 +162,7 @@ function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready'
           </div>
         ) : (
           <OverviewChart times={times} series={ovSeries} unit={unit} mode={mode}
-            deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} />
+            deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} onZoom={onZoom} />
         )}
       </div>
     </div>
@@ -164,7 +170,7 @@ function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready'
 }
 
 
-export function ServiceOverview({ service, range, windowNs, info, operations }: Props) {
+export function ServiceOverview({ service, range, windowNs, info, operations, onZoom }: Props) {
   // v0.8.480 — üst sayfa pencereyi çözdüyse AYNISI kullanılır: RED
   // prefetch'in RQ anahtarı ancak böyle tutar (timeRangeToNs göreli
   // aralıkta Date.now()'a bağlı, iki ayrı hesap anahtar kaçırır).
@@ -268,17 +274,17 @@ export function ServiceOverview({ service, range, windowNs, info, operations }: 
           its viz:'line' descriptor through the compact MetricPanel doorway. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={redStatus} lines={[
+          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={redStatus} onZoom={onZoom} lines={[
             { series: s?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
             { series: s?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
             { series: s?.p99 ?? [], color: 'var(--err)', label: 'P99' },
           ]} />
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>
-          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} lines={throughputBands} />
+          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} onZoom={onZoom} lines={throughputBands} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} lines={[
+          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} lines={[
             { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
         </MetricPanel>

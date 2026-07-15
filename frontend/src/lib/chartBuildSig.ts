@@ -136,6 +136,10 @@ export interface OverviewChartSigInput {
   deployAtSec?: number | null;
   deployLabel?: string;
   renderable: boolean;
+  // v0.8.534 — drag-zoom PRESENCE: the setSelect hook + cursor.drag are
+  // wired at build time only when onZoom is passed, so a none→some
+  // transition must rebuild.
+  hasZoom?: boolean;
 }
 export function overviewChartBuildSignature(p: OverviewChartSigInput): string {
   return JSON.stringify([
@@ -146,6 +150,7 @@ export function overviewChartBuildSignature(p: OverviewChartSigInput): string {
     p.deployAtSec ?? null,
     p.deployLabel ?? '',
     p.renderable,
+    !!p.hasZoom,
   ]);
 }
 

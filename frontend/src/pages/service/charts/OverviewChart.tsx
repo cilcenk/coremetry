@@ -38,6 +38,12 @@ interface Props {
   unit?: string;              // " ms", "%", " req/s" …
   deployAtSec?: number | null; // deploy time (unix sec) → dashed vline + flag
   deployLabel?: string;       // e.g. "v1.0.0"
+  // v0.8.534 — drag-select zoom → parent range. Fires (fromSec, toSec)
+  // on release of a horizontal selection; the parent maps it to the
+  // global ?range= so EVERY Overview chart + the top picker sync (mirrors
+  // MultiLineChart / ServiceCharts). Absent → uPlot's default local
+  // setScale zoom (isolated), the pre-v0.8.534 behaviour.
+  onZoom?: (fromSec: number, toSec: number) => void;
 }
 
 function cssVar(v: string): string {
@@ -56,9 +62,12 @@ function yRange(_u: uPlot, _min: number, max: number): [number, number] {
 }
 
 export function OverviewChart({
-  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy',
+  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // onZoom in a ref (v0.8.520 pattern) so the once-per-build setSelect hook
+  // always calls the latest without re-registering (identity-stable deps).
+  const onZoomRef = useRef(onZoom); onZoomRef.current = onZoom;
   const ttRef = useRef<HTMLDivElement>(null);
   const flagRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -99,6 +108,7 @@ export function OverviewChart({
     series,
     height, mode, unit, deployAtSec, deployLabel,
     renderable: times.length >= 2 && series.length > 0,
+    hasZoom: !!onZoom,
   });
 
   useEffect(() => {
@@ -138,7 +148,16 @@ export function OverviewChart({
     const opts: uPlot.Options = {
       width: el.clientWidth || 320,
       height,
-      cursor: { x: true, y: false, points: { show: true, size: 7 } },
+      cursor: {
+        x: true, y: false, points: { show: true, size: 7 },
+        // v0.8.534 — x-only drag-zoom with instant local rescale (setScale
+        // preserves the pre-v0.8.534 default; the Incident impact chart, which
+        // passes no onZoom, keeps its standalone zoom). When onZoom IS wired
+        // (Overview), the setSelect hook below ALSO propagates the range to the
+        // page so the sibling charts + global picker re-sync via ?range=,
+        // mirroring MultiLineChart / ServiceCharts.
+        drag: { x: true, y: false, setScale: true },
+      },
       legend: { show: false },
       scales: { x: { time: true }, y: { range: yRange } },
       axes: [
@@ -182,6 +201,20 @@ export function OverviewChart({
         ? series.slice(1).map((_s, k) => ({ series: [k + 2, k + 1] as [number, number], fill: colors[k + 1] + '47' }))
         : undefined,
       hooks: {
+        // v0.8.534 — drag-zoom release → hand the selected [from,to] (unix
+        // sec) to the parent, which updates ?range=; reset the grey band so
+        // it doesn't stick. Only registered when onZoom is set.
+        setSelect: onZoom ? [
+          (u: uPlot) => {
+            const sel = u.select;
+            if (!sel || sel.width < 4) return; // tiny accidental drag
+            const x0 = u.posToVal(sel.left, 'x');
+            const x1 = u.posToVal(sel.left + sel.width, 'x');
+            if (!isFinite(x0) || !isFinite(x1)) return;
+            onZoomRef.current?.(Math.min(x0, x1), Math.max(x0, x1));
+            u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+          },
+        ] : undefined,
         setCursor: [
           u => {
             const tt = ttRef.current;

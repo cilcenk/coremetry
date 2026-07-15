@@ -754,6 +754,31 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   line-height: 1.4;
 }
 
+/* Cluster tag — root span only (v0.8.539). Shares the .wf-cat
+   outlined-pill geometry so the two sit as one chip group, but stays
+   mixed-case in the mono face and takes muted/border tokens instead of
+   a per-category colour, so it reads as ambient context rather than
+   another classification. Tokens only — dark/light/redhat follow. */
+.wf-cluster {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  /* .wf-name is flex:1 — without this the name column crushes the tag. */
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 3px;
+  margin-right: 8px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text2);
+  background: color-mix(in srgb, var(--text2) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text2) 30%, transparent);
+  line-height: 1.4;
+}
+
 .wf-err-dot { color: var(--err); font-size: 11px; flex-shrink: 0; margin-left: 4px; line-height: 1; }
 
 /* Tree connector lines — vertical guides for ancestor depths plus an

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SpanRow } from '@/lib/types';
 import { collectSubtreeIds, groupParentOf } from './traceWaterfall.tree';
+import { resolveResource } from '@/lib/otel/semconv';
 import { fmtNs, displaySpanName } from '@/lib/utils';
 
 // HH:MM:SS.mmm wall-clock formatter for the waterfall ruler +
@@ -519,6 +520,15 @@ export function TraceWaterfall({
                     groupCount, groupTotalDur, groupAvgDur, groupMaxDur, repSpanId }) => {
         const color = colorFor(s);
         const cat = categoryOf(s);
+        // v0.8.539 — cluster tag on the ROOT span only. Root is
+        // "no parent_span_id", NOT depth===0: the tree builder files
+        // orphans (parent not in the trace) under roots too, and those
+        // must not claim to be the trace's entry point. Value comes from
+        // the shared resolveResource() so this tag can never disagree
+        // with the /services cluster filter.
+        const rootCluster = !s.parentSpanId
+          ? resolveResource(s.resourceAttributes).cluster
+          : undefined;
         const startPct = ((s.startTime - minT) / totalNs * 100).toFixed(4);
         const widthPct = Math.max(0.15, ((s.endTime - s.startTime) / totalNs) * 100).toFixed(4);
         const dur = s.endTime - s.startTime;
@@ -637,6 +647,13 @@ export function TraceWaterfall({
                   <span className="wf-cat" title={`Category: ${cat.tag}`}
                         style={{ color: cat.color, borderColor: cat.color }}>
                     {cat.tag}
+                  </span>
+                )}
+                {/* Silent when the resource carries no cluster attribute —
+                    '' is falsy, so no placeholder chip is rendered. */}
+                {rootCluster && (
+                  <span className="wf-cluster" title={`Cluster: ${rootCluster}`}>
+                    {rootCluster}
                   </span>
                 )}
                 <span className="wf-name" title={s.name === displayName ? s.name : `raw: ${s.name}`}>

@@ -24,7 +24,6 @@ import (
 	"time"
 	"unicode"
 
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/cilcenk/coremetry/internal/acache"
@@ -1481,56 +1480,34 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		// separate count(DISTINCT) — at 10k+ services a count is
 		// the slowest part of the page.
 		probeLimit := limit + 1
-		// v0.8.530 (perf raporu #14) — three CH legs run concurrently:
-		// the services list, the per-service open-problem counts (a FINAL
-		// scan independent of which rows come back), and the optional
-		// distinct-service total. Only the LIST leg is fatal; counts +
-		// total soft-fail (health just isn't scored / total omitted) as
-		// they did serially. errgroup cancels the siblings if the list
-		// leg errors. Merge happens after Wait.
-		var (
-			rows       []chstore.ServiceSummary
-			counts     map[string]chstore.OpenProblemCounts
-			haveCounts bool
-			total      int
-			haveTotal  bool
-		)
-		g, gctx := errgroup.WithContext(ctx)
-		g.Go(func() error {
-			var err error
-			if useMV {
-				rows, err = s.store.GetServicesAggFilteredIn(gctx, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
-			} else {
-				rows, err = s.store.GetServicesFilteredIn(gctx, since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster, env)
-			}
-			return err
-		})
-		g.Go(func() error {
-			// v0.5.274 — per-service health from errorRate + open-problem
-			// counts. Single FINAL scan bounded by status=open. Soft-fail.
-			if c, perr := s.store.GetOpenProblemCountsByService(gctx); perr == nil {
-				counts, haveCounts = c, true
-			}
-			return nil
-		})
-		// v0.7.44 — opt-in distinct-service count for the First/Last pager.
-		// MV path only (cheap uniqExact over service_summary_5m). Soft-fail.
-		if withTotal && useMV {
-			g.Go(func() error {
-				if t, terr := s.store.CountServicesAgg(gctx, from, to, nameMatch, serviceIn); terr == nil {
-					total, haveTotal = t, true
-				}
-				return nil
-			})
+		// v0.8.532 — the v0.8.530 errgroup parallelization was reverted
+		// to serial: running the list + open-problem counts + total
+		// concurrently tripled the per-recompute CH connection footprint
+		// (each Query grabs a pooled conn) and, under a cold-cache burst
+		// of distinct keys, exhausted the shared pool → connection-acquire
+		// queueing → the operator-reported prod slowness. Serial holds one
+		// conn at a time per recompute, as it did pre-v530. The warm path
+		// is 30s-cached and sub-second, so the marginal cold-recompute
+		// saving never justified the pool pressure. (Audit:
+		// docs/audit/getservices-errgroup-audit.md.)
+		var rows []chstore.ServiceSummary
+		var err error
+		if useMV {
+			rows, err = s.store.GetServicesAggFilteredIn(ctx, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
+		} else {
+			rows, err = s.store.GetServicesFilteredIn(ctx, since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster, env)
 		}
-		if err := g.Wait(); err != nil {
+		if err != nil {
 			return nil, err
 		}
 		hasMore := len(rows) > limit
 		if hasMore {
 			rows = rows[:limit]
 		}
-		if haveCounts {
+		// v0.5.274 — auto-score health per service from errorRate +
+		// open-problem counts. Single FINAL scan bounded by status=open.
+		counts, perr := s.store.GetOpenProblemCountsByService(ctx)
+		if perr == nil {
 			for i := range rows {
 				c := counts[rows[i].Name]
 				rows[i].OpenProblems = c.Critical + c.Warning + c.Info
@@ -1543,8 +1520,12 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 			"offset":   offset,
 			"limit":    limit,
 		}
-		if haveTotal {
-			resp["total"] = total
+		// v0.7.44 — opt-in distinct-service count for the First/Last pager.
+		// MV path only (cheap uniqExact over service_summary_5m).
+		if withTotal && useMV {
+			if total, terr := s.store.CountServicesAgg(ctx, from, to, nameMatch, serviceIn); terr == nil {
+				resp["total"] = total
+			}
 		}
 		return resp, nil
 	})

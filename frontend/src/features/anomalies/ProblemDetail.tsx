@@ -16,6 +16,7 @@ import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
+import { copyToClipboard } from '@/lib/clipboard';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -173,9 +174,17 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
       setState(group.state);
     }
   };
-  const copyStack = () => {
+  // v0.8.548 — was `navigator.clipboard?.writeText(stack).then(…)`: the
+  // optional chain guards the CALL but not the `.then`, so on a plain-HTTP
+  // install (no secure context → clipboard undefined) this threw a
+  // TypeError instead of copying. Now it routes through the shared helper,
+  // which falls back to a textarea, and only flashes if the copy landed.
+  const copyStack = async () => {
     if (!stack) return;
-    navigator.clipboard?.writeText(stack).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+    if (await copyToClipboard(stack)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   return (

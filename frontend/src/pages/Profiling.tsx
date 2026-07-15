@@ -6,6 +6,7 @@ import { IconFlame } from '@/components/icons';
 import { ServicePicker } from '@/components/ServicePicker';
 import { BreakdownBar, KindBadge } from '@/components/KindBadge';
 import { useProfiles, useProfileHotspots } from '@/lib/queries';
+import { copyToClipboard } from '@/lib/clipboard';
 import { tsShort, timeRangeToNs, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -379,11 +380,14 @@ function SetupRecipes() {
 
 function CodeBlock({ code, lang }: { code: string; lang: string }) {
   const [copied, setCopied] = useState(false);
-  const onCopy = () => {
-    navigator.clipboard.writeText(code).then(() => {
+  // v0.8.548 — was a bare `navigator.clipboard.writeText(code).then(…)`:
+  // no optional chain at all, so on a plain-HTTP install (no secure context
+  // → clipboard undefined) this threw a TypeError on `writeText` itself.
+  const onCopy = async () => {
+    if (await copyToClipboard(code)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }
   };
   return (
     <div style={{ position: 'relative' }}>

@@ -1004,11 +1004,18 @@ function SharePopover({ traceId }: { traceId: string }) {
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <Button variant="secondary"
+      {/* v0.8.543 — same accent tint + leftIcon as ShareButton, so the
+          Share control reads the same on /trace as on /problems, /logs and
+          /explore. Operator-reported: it was the lone `secondary` grey.
+          The atom's leftIcon already does the inline-flex/gap this used to
+          hand-roll. Trigger only — the popover behind it stays a share
+          MANAGER (public token mint, TTL, revoke), which is why it isn't
+          folded into ShareButton. */}
+      <Button variant="accent"
         onClick={() => setOpen(o => !o)}
         title="Share this trace"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <IconLink /> <span>Share</span>
+        leftIcon={<IconLink />}>
+        Share
       </Button>
       {open && (
         <div role="dialog" style={{

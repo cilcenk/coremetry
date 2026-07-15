@@ -17,6 +17,11 @@ const TICKS = [0, 0.25, 0.5, 0.75, 1];
 const NAME_MIN = 160;
 const NAME_MAX = 800;
 const INDENT_PX = 16;
+// v0.8.536 — clearance an outside duration label needs to render fully.
+// fmtNs tops out around 7 monospace chars ("123.45ms") ≈ 48px at 10px,
+// plus the 4px gap, plus slack. Used to decide which SIDE of the bar the
+// label goes on, never whether it renders.
+const OUTSIDE_LABEL_MIN_PX = 60;
 
 interface Row {
   span: SpanRow;
@@ -509,6 +514,27 @@ export function TraceWaterfall({
         // roughly the width of "10.5ms" at the row's font size.
         const labelInside = parseFloat(widthPct) > 6;
 
+        // v0.8.536 — an outside label is pinned to the bar's right, so
+        // every span sitting near the end of the trace (the last, short
+        // operation — nearly every trace has one) pushed its label past
+        // #wf-outer's overflow:hidden and lost it. Flip to the left only
+        // when the right is genuinely tight AND the left is genuinely
+        // roomier, so the label can never end up worse off than before.
+        //
+        // .wf-row-bar's pixel width is exactly containerWidth - colWidth:
+        // box-sizing is border-box globally, .wf-row-name's width already
+        // contains its 1px border, and neither .wf-row nor .wf-row-bar
+        // adds padding. containerWidth is 0 until the ResizeObserver
+        // first fires, which lands both spaces on 0 and keeps the old
+        // right-hand placement for that paint.
+        const barAreaWidth = Math.max(0, containerWidth - colWidth);
+        const endFrac = (parseFloat(startPct) + parseFloat(widthPct)) / 100;
+        const spaceRightPx = barAreaWidth * Math.max(0, 1 - endFrac);
+        const spaceLeftPx = barAreaWidth * (parseFloat(startPct) / 100);
+        const labelLeft = !labelInside
+          && spaceRightPx < OUTSIDE_LABEL_MIN_PX
+          && spaceLeftPx > spaceRightPx + OUTSIDE_LABEL_MIN_PX;
+
         return (
           <div key={s.spanId} className={cls} onClick={() => onSelect(s.spanId)}
             style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
@@ -630,8 +656,10 @@ export function TraceWaterfall({
                       title={exc!.attributes?.['exception.type'] || 'exception'} />
               )}
               {!labelInside && (
-                <span className="wf-bar-label-outside"
-                      style={{ left: `calc(${startPct}% + ${widthPct}% + 4px)` }}>
+                <span className={`wf-bar-label-outside${labelLeft ? ' wf-bar-label-outside-left' : ''}`}
+                      style={{ left: labelLeft
+                        ? `calc(${startPct}% - 4px)`
+                        : `calc(${startPct}% + ${widthPct}% + 4px)` }}>
                   {fmtNs(dur)}
                 </span>
               )}

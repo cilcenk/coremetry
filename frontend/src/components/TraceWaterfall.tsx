@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SpanRow } from '@/lib/types';
+import { collectSubtreeIds, groupParentOf } from './traceWaterfall.tree';
 import { fmtNs, displaySpanName } from '@/lib/utils';
 
 // HH:MM:SS.mmm wall-clock formatter for the waterfall ruler +
@@ -42,6 +43,10 @@ interface Row {
   groupAvgDur?: number;    // ns
   groupMaxDur?: number;    // ns
   hasError?: boolean;      // any member errored — error stripe still wins
+  // v0.8.537 — the representative's REAL span id on a synthetic group
+  // row. The synthetic id encodes the group key, not the rep, so
+  // Alt+click has no other way back to a node the children map knows.
+  repSpanId?: string;
 }
 
 // Span kind is exposed via tooltips on the row name only — we
@@ -225,7 +230,12 @@ export function TraceWaterfall({
     return () => ro.disconnect();
   }, []);
 
-  const { rows, minT, totalNs, maxDepth } = useMemo(() => {
+  // v0.8.537 — the parent→children tree depends on `spans` ALONE, so it
+  // lives in its own memo: `rows` below also keys on collapsed/groupSimilar
+  // and was rebuilding this on every toggle click. Splitting it also gives
+  // Alt+click subtree collection something to walk (it used to be trapped
+  // inside the rows closure).
+  const tree = useMemo(() => {
     const map = new Map(spans.map(s => [s.spanId, s]));
     const children = new Map<string, SpanRow[]>(spans.map(s => [s.spanId, []]));
     const roots: SpanRow[] = [];
@@ -235,6 +245,18 @@ export function TraceWaterfall({
     }
     children.forEach(c => c.sort((a, b) => a.startTime - b.startTime));
     roots.sort((a, b) => a.startTime - b.startTime);
+    // The time bounds key on `spans` alone too, so they belong here
+    // rather than in `rows` — otherwise every collapse click re-scans
+    // every span to recompute a window that cannot have moved.
+    const minT = Math.min(...spans.map(s => s.startTime));
+    const maxT = Math.max(...spans.map(s => s.endTime));
+    return { map, children, roots, minT, totalNs: maxT - minT || 1 };
+  }, [spans]);
+
+  const { minT, totalNs } = tree;
+
+  const { rows, maxDepth } = useMemo(() => {
+    const { map, children, roots } = tree;
 
     const out: Row[] = [];
 
@@ -325,6 +347,7 @@ export function TraceWaterfall({
           groupAvgDur: entry.totalDur / entry.members.length,
           groupMaxDur: entry.maxDur,
           hasError: entry.anyError,
+          repSpanId: entry.rep.spanId,
         });
         if (collapsed.has(synthId)) return;
         // Recurse into the rep's children directly (one level
@@ -338,12 +361,9 @@ export function TraceWaterfall({
     };
     roots.forEach((r, i) => dfs(r.spanId, 0, i === roots.length - 1, []));
 
-    const minT = Math.min(...spans.map(s => s.startTime));
-    const maxT = Math.max(...spans.map(s => s.endTime));
-    const totalNs = maxT - minT || 1;
     const maxDepth = out.reduce((m, r) => Math.max(m, r.depth), 0);
-    return { rows: out, minT, totalNs, maxDepth };
-  }, [spans, collapsed, groupSimilar]);
+    return { rows: out, maxDepth };
+  }, [tree, collapsed, groupSimilar]);
 
   const defaultNameWidth = useMemo(() => {
     if (containerWidth <= 0) return 380;
@@ -383,10 +403,45 @@ export function TraceWaterfall({
 
   const onResizeDoubleClick = () => setNameWidth(null);
 
-  const toggle = (id: string, e: React.MouseEvent) => {
+  // v0.8.537 — plain click toggles one level (unchanged). Alt (Option on
+  // Mac; e.altKey covers both) toggles the WHOLE subtree under the row.
+  //
+  // `id` may be synthetic ("group:<parent>:<i>:<key>"); the children map
+  // only knows real spans, so realId resolves a group row to its
+  // representative — the node whose kids that row actually renders.
+  //
+  // Collapsing adds every descendant that HAS children, not just the
+  // clicked row: without that, re-expanding one level would show an open
+  // subtree again and the "collapse everything below" gesture would only
+  // look like it worked.
+  //
+  // Expanding must also drop the synthetic group ids living inside the
+  // subtree, or the rows would reappear still-collapsed. groupParentOf
+  // gives that for free off the id encoding — no second index.
+  const toggle = (id: string, e: React.MouseEvent, repSpanId?: string) => {
     e.stopPropagation();
     const next = new Set(collapsed);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    const isCol = next.has(id);
+    if (!e.altKey) {
+      if (isCol) next.delete(id); else next.add(id);
+      setCollapsed(next);
+      return;
+    }
+    const realId = repSpanId ?? id;
+    const sub = new Set(collectSubtreeIds(tree.children, realId));
+    if (isCol) {
+      next.delete(id);
+      for (const c of Array.from(next)) {
+        if (sub.has(c)) { next.delete(c); continue; }
+        const p = groupParentOf(c);
+        if (p !== null && sub.has(p)) next.delete(c);
+      }
+    } else {
+      next.add(id);
+      for (const d of sub) {
+        if ((tree.children.get(d)?.length ?? 0) > 0) next.add(d);
+      }
+    }
     setCollapsed(next);
   };
 
@@ -461,7 +516,7 @@ export function TraceWaterfall({
       </div>
 
       {rows.map(({ span: s, depth, hasChildren, ancestorContinues, isLastSibling,
-                    groupCount, groupTotalDur, groupAvgDur, groupMaxDur }) => {
+                    groupCount, groupTotalDur, groupAvgDur, groupMaxDur, repSpanId }) => {
         const color = colorFor(s);
         const cat = categoryOf(s);
         const startPct = ((s.startTime - minT) / totalNs * 100).toFixed(4);
@@ -559,9 +614,11 @@ export function TraceWaterfall({
 
               <div className="wf-row-name-inner" style={{ paddingLeft: depth * INDENT_PX + 8 }}>
                 {hasChildren
-                  ? <button className="wf-toggle" onClick={e => toggle(s.spanId, e)}
-                            aria-label={isCol ? 'Expand' : 'Collapse'}
-                            title={isCol ? 'Expand' : 'Collapse'}>
+                  ? <button className="wf-toggle" onClick={e => toggle(s.spanId, e, repSpanId)}
+                            aria-label={isCol ? 'Expand · ⌥/Alt+click for whole subtree'
+                                              : 'Collapse · ⌥/Alt+click for whole subtree'}
+                            title={isCol ? 'Expand · ⌥/Alt+click for whole subtree'
+                                         : 'Collapse · ⌥/Alt+click for whole subtree'}>
                       {isCol ? '▶' : '▼'}
                     </button>
                   : <div className="wf-leaf" />}

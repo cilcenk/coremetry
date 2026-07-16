@@ -2097,8 +2097,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	exAlters := []string{
 		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_match UInt8 MATERIALIZED ` + exMatchDefExpr,
 		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_type LowCardinality(String) MATERIALIZED ` + exTypeDefExpr,
-		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_msg String CODEC(ZSTD(3)) MATERIALIZED ` + exMsgDefExpr,
-		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_stack String CODEC(ZSTD(3)) MATERIALIZED ` + exStackDefExpr,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_msg String MATERIALIZED ` + exMsgDefExpr + ` CODEC(ZSTD(3))`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_stack String MATERIALIZED ` + exStackDefExpr + ` CODEC(ZSTD(3))`,
 	}
 	if s.spansIsExternalDistributed(ctx) {
 		log.Printf("[chstore] external Distributed `spans` with cluster_name unset — SKIPPING exception column ALTERs; exception reads stay on the JSON_VALUE expression path (set config.clickhouse.cluster_name to enable them)")

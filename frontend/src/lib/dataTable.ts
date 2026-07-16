@@ -34,6 +34,17 @@ export interface DataTableColumn<T> {
   // from <DataTableHead>/<DataTableColgroup>; still resolvable by
   // sortRows + setSort. Keeps body cells aligned to visible headers.
   headerHidden?: boolean;
+  // Pin this column to the RIGHT edge of the scroll container
+  // (v0.8.573 — Endpoints "Traces"). Wide tables overflow .table-wrap's
+  // horizontal scroll and the scrollbar sits below the rows, so a
+  // trailing action column is effectively invisible on laptop widths.
+  // DataTableHead emits the .sticky-right th; the caller must mirror
+  // the class on the matching body <td> (and give it an OPAQUE
+  // background when the row carries an inline tint — sticky cells
+  // float over scrolled content). Only meaningful on the LAST visible
+  // column: multiple pinned columns would need per-column right
+  // offsets, which nothing needs yet.
+  stickyRight?: boolean;
 }
 
 export interface SortState {

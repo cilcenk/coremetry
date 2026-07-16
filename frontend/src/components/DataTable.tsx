@@ -243,7 +243,7 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
           const sortable = !!c.sortValue;
           const active = dt.sort.id === c.id;
           const align = c.align ?? (c.numeric ? 'right' : 'left');
-          const cls = [c.numeric ? 'num' : '', sortable ? 'sortable' : '', active ? 'sorted' : '']
+          const cls = [c.numeric ? 'num' : '', sortable ? 'sortable' : '', active ? 'sorted' : '', c.stickyRight ? 'sticky-right' : '']
             .filter(Boolean).join(' ');
           return (
             <th key={c.id}
@@ -251,7 +251,10 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
                 onClick={sortable ? () => dt.toggleSort(c.id) : undefined}
                 aria-sort={active ? (dt.sort.dir === 'asc' ? 'ascending' : 'descending') : (sortable ? 'none' : undefined)}
                 style={{
-                  textAlign: align, position: 'relative',
+                  // sticky-right columns take their position from the class
+                  // (position:sticky + right:0); inline 'relative' would win
+                  // over it. Both variants anchor the absolute resize handle.
+                  textAlign: align, position: c.stickyRight ? undefined : 'relative',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   userSelect: 'none',
                 }}>

@@ -75,7 +75,11 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   { id: 'p95Ms',     label: 'P95',        sortValue: r => r.p95Ms ?? 0, numeric: true, width: 72 },
   { id: 'p99Ms',     label: 'P99',        sortValue: r => r.p99Ms,     numeric: true, width: 72 },
   { id: 'trend',     label: 'Trend',      width: 120 },
-  { id: 'traces',    label: 'Traces',     width: 64 },
+  // v0.8.573 — pinned to the right edge: the 14-column table overflows
+  // laptop widths and the horizontal scrollbar sits below 2000 rows, so
+  // the trailing drill-through was effectively invisible (operator
+  // report). 64px also clipped "view →" (content+padding ≈ 66px).
+  { id: 'traces',    label: 'Traces',     width: 76, stickyRight: true },
   { id: 'impact',    label: 'Impact',     sortValue: impactOf, headerHidden: true },
 ];
 
@@ -481,7 +485,17 @@ export default function EndpointsPage() {
                               title={`${r.calls.toLocaleString()} calls — click for detail`} />
                           </button>
                         </td>
-                        <td>
+                        <td className="sticky-right"
+                            style={{
+                              // Sticky cells float over scrolled content —
+                              // the err-row tint must be flattened over the
+                              // opaque base here (the tr's inline tint is
+                              // color-mix over TRANSPARENT and would let
+                              // scrolled columns bleed through).
+                              background: r.errorRate >= 5
+                                ? 'color-mix(in srgb, var(--err) 7%, var(--bg0))'
+                                : undefined,
+                            }}>
                           {/* /traces filter on (service, search=path).
                               The search field matches span.name OR
                               attrs; combined with rootOnly=false and

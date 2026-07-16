@@ -552,6 +552,25 @@ tbody tr:hover { background: var(--bg2); }
 tbody tr.agg-row { background: var(--bg2); border-bottom: 2px solid var(--border); cursor: default; }
 tbody tr.agg-row:hover { background: var(--bg2); }
 tbody td { padding: 9px 12px; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Pinned action column (v0.8.573 — Endpoints "Traces"). Wide tables
+   overflow .table-wrap's horizontal scroll and the scrollbar renders
+   below ALL the rows, so a trailing drill-through column was invisible
+   on laptop widths. sticky+right:0 keeps it in the viewport at every
+   scroll offset. Backgrounds MUST be opaque (cells float over scrolled
+   content): base = page bg the rows sit on; hover mirrors tbody
+   tr:hover; selected flattens .row-selected's accent tint over the
+   base. Rows with an inline tint (err rows) set their own inline
+   background on the pinned td — inline wins over all of these, same
+   precedence the tr itself has today. */
+th.sticky-right, td.sticky-right {
+  position: sticky; right: 0; z-index: 2;
+  background: var(--bg0);
+  box-shadow: -6px 0 8px -8px rgba(0, 0, 0, .5);
+}
+tbody tr:hover td.sticky-right { background: var(--bg2); }
+tr.row-selected td.sticky-right {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg0));
+}
 /* Numeric columns — right-align + tabular figures so digits line up by place value. */
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 

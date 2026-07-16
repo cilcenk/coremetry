@@ -528,7 +528,7 @@ func (s *Store) endpointStatusSidecar(ctx context.Context, q EndpointsQuery, row
 		       countIf(http_status BETWEEN 500 AND 599)  AS http_5xx
 		FROM spans
 		WHERE time >= ? AND time <= ?
-		  AND kind NOT IN ('client', 'producer')
+		  AND `+endpointKindPred+`
 		  AND service_name IN (?)
 		  AND `+pathProj+` IN (?)
 		GROUP BY service_name, path
@@ -592,6 +592,38 @@ func (s *Store) endpointStatusSidecar(ctx context.Context, q EndpointsQuery, row
 // case for a lot of manual instrumentation + older SDKs +
 // frameworks that don't auto-decorate kind. We keep any span
 // with a real path that isn't an OUTGOING call.
+// endpointKindPred — the inbound-only span filter, with the v0.8.560
+// client carve-out. ONE definition shared by getEndpointsRaw and
+// endpointStatusSidecar so the two can never drift apart (a sidecar with
+// a narrower filter silently returns no status breakdown for rows the
+// main query admitted).
+//
+// The plain `kind NOT IN ('client','producer')` killed pathExpr's
+// documented url.path/http.target fallback layers: url.path lives almost
+// exclusively on kind=client spans (OTel semconv), so the rows that
+// needed coalesce layer 3-4 were dropped before the coalesce ever ran —
+// the fallback was dead code in practice (operator-reported; measured
+// live: 0 such rows locally, the population exists only in prod).
+//
+// The carve-out admits ONLY client spans that carry no route anywhere.
+// A ROUTED client span stays excluded, which is what preserves the
+// double-counting rationale above (v0.5.386): those calls already land
+// under the callee's server-span row. Producer spans stay excluded
+// unconditionally — messaging has no route concept and that traffic
+// already has its own page (/messaging, M1 v0.8.364); admitting it here
+// would list the same traffic twice.
+//
+// Relaxing kind does not change scan cost — spans orders by
+// (service_name, time); kind was never in the primary key.
+const endpointKindPred = `(
+		      kind NOT IN ('client', 'producer')
+		      OR (
+		        kind = 'client'
+		        AND nullIf(http_route, '') IS NULL
+		        AND nullIf(attr_values[indexOf(attr_keys, 'http.route')], '') IS NULL
+		      )
+		    )`
+
 func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]EndpointRow, error) {
 	from, to := q.From, q.To
 	limit, bySignature := q.Limit, q.BySignature
@@ -669,7 +701,7 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 		         anyHeavy(http_method)                           AS bv_method
 		  FROM spans
 		  WHERE time >= ? AND time <= ?
-		    AND kind NOT IN ('client', 'producer')
+		    AND ` + endpointKindPred + `
 		    AND ` + pathExpr + ` != ''` + filterSQL + `
 		  GROUP BY service_name, path, b
 		)

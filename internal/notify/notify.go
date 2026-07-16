@@ -789,34 +789,58 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 }
 
 // buildEmailHTML renders the HTML alternative of a problem alert
-// (v0.8.493, operatör isteği). Email-safe: table layout + inline
-// styles, no external assets. Every dynamic field is HTML-escaped —
-// service names / rule names / descriptions are operator-shaped
-// free text and must never inject markup.
+// (v0.8.493; rebuilt v0.8.561, operator-reported: broken in Outlook).
+//
+// Outlook desktop renders HTML with WORD's engine, not a browser, and
+// Word's CSS support is the design constraint here:
+//   - padding/border-radius on <a> are DROPPED — the old
+//     "Open in Coremetry" button painted its dark background behind the
+//     bare glyphs only (the black-blob screenshot). Buttons must be a
+//     table cell: bgcolor + padding live on the <td>, the <a> only
+//     carries color/text-decoration.
+//   - max-width / margin:0 auto / border-radius on <div> are ignored —
+//     the card wrapper collapsed to full-width unstyled text. Layout
+//     must be nested <table>s (align="center", width attr), the one
+//     structure Word actually honours.
+//   - <p>/<div> margins get Word's own paragraph spacing stacked on
+//     top — spacing must come from <td> padding, never margins.
+// No JS (mail clients never execute it), no external assets. Every
+// dynamic field is HTML-escaped — service/rule/description are
+// operator-shaped free text and must never inject markup.
 func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
 	esc := html.EscapeString
 	sev := strings.ToUpper(p.Severity)
 	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
+	const font = `font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif`
 
 	row := func(label, value string) string {
-		return `<tr><td style="padding:4px 12px 4px 0;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top">` +
-			label + `</td><td style="padding:4px 0;font-size:13px;color:#111827">` + value + `</td></tr>`
+		return `<tr><td style="` + font + `;padding:4px 12px 4px 0;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top">` +
+			label + `</td><td style="` + font + `;padding:4px 0;font-size:13px;color:#111827">` + value + `</td></tr>`
 	}
 
 	var b strings.Builder
-	b.WriteString(`<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f3f4f6">`)
-	b.WriteString(`<div style="max-width:560px;margin:0 auto;padding:24px 16px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">`)
-	b.WriteString(`<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">`)
-	// Üst şerit: severity rengi
-	b.WriteString(`<div style="height:4px;background:` + severityColor(p.Severity) + `"></div>`)
-	b.WriteString(`<div style="padding:20px">`)
-	b.WriteString(`<div style="margin-bottom:12px"><span style="display:inline-block;padding:2px 10px;border-radius:10px;background:` +
-		severityColor(p.Severity) + `;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.5px">` + esc(sev) + `</span></div>`)
-	b.WriteString(`<div style="font-size:16px;font-weight:600;color:#111827;margin-bottom:4px">` + esc(p.Service) + ` — ` + esc(p.RuleName) + `</div>`)
+	b.WriteString(`<!DOCTYPE html><html><body style="margin:0;padding:0" bgcolor="#f3f4f6">`)
+	// Outer centering table — Word ignores margin:0 auto; align="center"
+	// on a td is the portable way to centre the card.
+	b.WriteString(`<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f4f6"><tr><td align="center" style="padding:24px 16px">`)
+	// The card: a fixed-width table with bgcolor + border. No radius —
+	// Word drops it anyway; square corners degrade honestly everywhere.
+	b.WriteString(`<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="border:1px solid #e5e7eb">`)
+	// Severity strip: a real row with bgcolor+height attrs (Word-safe),
+	// not a styled div.
+	b.WriteString(`<tr><td height="4" bgcolor="` + severityColor(p.Severity) + `" style="height:4px;line-height:4px;font-size:0">&nbsp;</td></tr>`)
+	b.WriteString(`<tr><td style="padding:20px">`)
+	// Severity badge: single-cell table so the pill's padding sits on a
+	// td. Word squares the corners; the colour is what carries meaning.
+	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="` + severityColor(p.Severity) +
+		`" style="` + font + `;padding:2px 10px;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.5px">` + esc(sev) + `</td></tr></table>`)
+	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="` + font + `;padding:12px 0 0;font-size:16px;font-weight:600;color:#111827">` +
+		esc(p.Service) + ` — ` + esc(p.RuleName) + `</td></tr>`)
 	if p.Description != "" {
-		b.WriteString(`<p style="font-size:13px;color:#374151;margin:8px 0 16px;line-height:1.5">` + esc(p.Description) + `</p>`)
+		b.WriteString(`<tr><td style="` + font + `;padding:8px 0 0;font-size:13px;color:#374151;line-height:1.5">` + esc(p.Description) + `</td></tr>`)
 	}
-	b.WriteString(`<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px">`)
+	b.WriteString(`</table>`)
+	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:16px 0 0">`)
 	b.WriteString(row("Metric", esc(p.Metric)))
 	b.WriteString(row("Value", fmt.Sprintf("%.2f <span style=\"color:#6b7280\">(threshold %.2f)</span>", p.Value, p.Threshold)))
 	b.WriteString(row("Started at", esc(t)))
@@ -825,11 +849,15 @@ func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
 	}
 	b.WriteString(`</table>`)
 	if u := n.problemURL(p.ID); u != "" {
-		b.WriteString(`<a href="` + esc(u) + `" style="display:inline-block;padding:9px 18px;background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600">Open in Coremetry</a>`)
+		// Bulletproof button: padding + bgcolor on the td (Word honours
+		// both), the anchor only colours its text.
+		b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0 0"><tr>` +
+			`<td bgcolor="#111827" style="padding:9px 18px"><a href="` + esc(u) +
+			`" style="` + font + `;color:#ffffff;text-decoration:none;font-size:13px;font-weight:600">Open in Coremetry</a></td></tr></table>`)
 	}
-	b.WriteString(`</div></div>`)
-	b.WriteString(`<p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:12px">Coremetry problem alert</p>`)
-	b.WriteString(`</div></body></html>`)
+	b.WriteString(`</td></tr></table>`)
+	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="` + font + `;padding:12px 0 0;font-size:11px;color:#9ca3af" align="center">Coremetry problem alert</td></tr></table>`)
+	b.WriteString(`</td></tr></table></body></html>`)
 	return b.String()
 }
 

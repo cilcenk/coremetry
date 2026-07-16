@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -184,4 +185,52 @@ func TestComposeAltEmailHeaderInjection(t *testing.T) {
 			t.Fatalf("header injection succeeded via %s", h)
 		}
 	}
+}
+
+// TestBuildEmailHTMLOutlookSafe — v0.8.561 regression (operator-reported:
+// alert mails rendered broken in Outlook desktop). Outlook uses WORD's
+// engine: padding/background on <a> paint as a black blob hugging the
+// glyphs, and div-based cards (max-width, margin:0 auto, radius) collapse
+// to full-width unstyled text. These pins make the two failure classes
+// structurally impossible rather than relying on eyeballing a client we
+// cannot run in CI.
+func TestBuildEmailHTMLOutlookSafe(t *testing.T) {
+	n := New(nil)
+	n.SetPublicURL("https://coremetry.example")
+	out := n.buildEmailHTML(testProblem())
+
+	t.Run("no anchor carries padding or background", func(t *testing.T) {
+		// The black-blob class: Word drops padding/radius on <a>, so any
+		// button MUST put bgcolor+padding on a <td> instead.
+		for _, a := range regexp.MustCompile(`<a [^>]*>`).FindAllString(out, -1) {
+			if strings.Contains(a, "padding") || strings.Contains(a, "background") {
+				t.Errorf("anchor styles its own box — Word paints it as a blob: %s", a)
+			}
+		}
+	})
+
+	t.Run("layout is tables, not divs", func(t *testing.T) {
+		// Word ignores max-width/margin-auto/radius on div; one div in the
+		// layout path and the card collapses again.
+		if strings.Contains(out, "<div") {
+			t.Error("layout must be nested tables — Word cannot shape a div")
+		}
+		if !strings.Contains(out, `align="center"`) {
+			t.Error("centring must use align=center (margin:0 auto is ignored)")
+		}
+	})
+
+	t.Run("button is a td with bgcolor and padding", func(t *testing.T) {
+		if !regexp.MustCompile(`<td bgcolor="#111827" style="padding:[^"]+"><a `).MatchString(out) {
+			t.Error("Open in Coremetry must be the bulletproof td-button pattern")
+		}
+	})
+
+	t.Run("no paragraph margins", func(t *testing.T) {
+		// Word stacks its own paragraph spacing on <p>/<div> margins — the
+		// giant-gaps symptom. All spacing must be td padding.
+		if strings.Contains(out, "<p ") || strings.Contains(out, "<p>") {
+			t.Error("no <p> elements — spacing comes from td padding")
+		}
+	})
 }

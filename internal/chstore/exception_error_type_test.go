@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -14,9 +15,9 @@ import (
 func TestExceptionErrorTypeFragments(t *testing.T) {
 	t.Run("match predicate covers both sources", func(t *testing.T) {
 		for _, must := range []string{
-			`events LIKE '%"exception"%'`,           // klasik event yolu
-			`status_code = 'error'`,                 // attr yolu hata şartlı
-			`has(attr_keys, 'error.type')`,          // attr varlığı
+			`events LIKE '%"exception"%'`,  // klasik event yolu
+			`status_code = 'error'`,        // attr yolu hata şartlı
+			`has(attr_keys, 'error.type')`, // attr varlığı
 		} {
 			if !strings.Contains(exMatchPred, must) {
 				t.Fatalf("exMatchPred fragment %q kaybolmuş:\n%s", must, exMatchPred)
@@ -63,10 +64,10 @@ func TestExceptionErrorTypeFragments(t *testing.T) {
 // expressions read $[0] — the FIRST array element, not the first EXCEPTION
 // event. Instrumentations that emit a retry/log event before the exception
 // (the java.net client libs among them) matched exMatchPred via the LIKE
-// but yielded empty type/msg/stack, so real exceptions landed in an ''
+// but yielded empty type/msg/stack, so real exceptions landed in an ”
 // group. All extraction now goes through exFirstEvent (arrayFirst by event
 // name); the behaviour pair was proven live before shipping:
-// second-position exception → old '' / new java.net.UnknownHostException,
+// second-position exception → old ” / new java.net.UnknownHostException,
 // first-position → identical on both.
 func TestExFragmentsFirstEvent(t *testing.T) {
 	for name, frag := range map[string]string{
@@ -84,5 +85,33 @@ func TestExFragmentsFirstEvent(t *testing.T) {
 	// silently reintroduce the bug for that surface only.
 	if !strings.Contains(exFirstEvent, "JSONExtractArrayRaw(events)") {
 		t.Error("exFirstEvent must walk the events array")
+	}
+}
+
+// TestRefreshExceptionGroupsBounded — v0.8.565. The refresher's scan ran
+// with `time >= ?` alone: no upper bound, no LIMIT, no
+// max_execution_time — a live hard-constraint violation on the worker
+// whose first tick covers 24h. This pins all three bounds plus the
+// deterministic ORDER BY that makes the LIMIT keep the HOT groups
+// instead of a random subset.
+func TestRefreshExceptionGroupsBounded(t *testing.T) {
+	src, err := os.ReadFile("exception_inbox.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := string(src)
+	i := strings.Index(fn, "func (s *Store) RefreshExceptionGroups")
+	j := strings.Index(fn[i:], "\n}")
+	body := fn[i : i+j]
+	for _, want := range []string{
+		"time >= ? AND time <= ?",  // bounded window, both ends
+		"LIMIT ?",                  // capped group count
+		"max_execution_time = 60",  // backfill-class budget
+		"ORDER BY cnt DESC",        // deterministic cut — hot groups survive
+		"exGroupsRefreshMaxGroups", // the named, logged cap
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("RefreshExceptionGroups lost its bound: %q", want)
+		}
 	}
 }

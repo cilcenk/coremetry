@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -39,8 +40,8 @@ type ExceptionGroup struct {
 	Service     string `json:"service"`
 	State       string `json:"state"`
 	Assignee    string `json:"assignee"`
-	FirstSeen   int64  `json:"firstSeen"`   // unix ns
-	LastSeen    int64  `json:"lastSeen"`    // unix ns
+	FirstSeen   int64  `json:"firstSeen"` // unix ns
+	LastSeen    int64  `json:"lastSeen"`  // unix ns
 	ResolvedAt  *int64 `json:"resolvedAt,omitempty"`
 	Occurrences uint64 `json:"occurrences"`
 	Notes       string `json:"notes"`
@@ -141,7 +142,7 @@ func topFrames(stacktrace string, n int) string {
 	// least so e.g. Python's "File ... line N, in func" doesn't
 	// get consumed by the Node "at func (...)" matcher.
 	type extractor struct {
-		re   *regexp.Regexp
+		re *regexp.Regexp
 		// keep tells the caller which capture groups to
 		// concatenate per match (different patterns capture
 		// different anchors).
@@ -331,8 +332,8 @@ type ExceptionGroupFilter struct {
 	// exceptionGroupsOrderBy). The inbox is LIMIT/OFFSET paginated, so a
 	// client-side sort of one page silently lied ("top by occurrences"
 	// was really "most-recent 50, reordered").
-	Sort string
-	Dir  string
+	Sort   string
+	Dir    string
 	Limit  int
 	Offset int
 }
@@ -615,11 +616,11 @@ func (s *Store) AutoResolveStaleExceptionGroups(ctx context.Context, staleAfter 
 type ExceptionSample struct {
 	TraceID    string `json:"traceId"`
 	SpanID     string `json:"spanId"`
-	Time       int64  `json:"time"`        // unix ns
-	Message    string `json:"message"`     // per-sample exception message — varies within a group
-	Stacktrace string `json:"stacktrace"`  // raw, may be empty
-	SpanName   string `json:"spanName"`    // operation that errored
-	StatusMsg  string `json:"statusMsg"`   // span status message
+	Time       int64  `json:"time"`       // unix ns
+	Message    string `json:"message"`    // per-sample exception message — varies within a group
+	Stacktrace string `json:"stacktrace"` // raw, may be empty
+	SpanName   string `json:"spanName"`   // operation that errored
+	StatusMsg  string `json:"statusMsg"`  // span status message
 }
 
 // GetExceptionGroupSamples returns up to `limit` recent occurrences of
@@ -693,7 +694,7 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 // a sample. Time is the bucket START in unix ns; Count is how many
 // occurrences of the group landed in [Time, Time+step).
 type OccurrencePoint struct {
-	Time  int64  `json:"time"`  // unix ns, bucket start
+	Time  int64  `json:"time"` // unix ns, bucket start
 	Count uint64 `json:"count"`
 }
 
@@ -825,7 +826,23 @@ func fillOccurrenceBuckets(fromNs, toNs, stepSec int64, counts map[int64]uint64)
 // Step 1 is a coarse SQL-side aggregation by (type, message, service) +
 // the most-recent stacktrace per bucket; step 2 is a Go-side re-merge by
 // the v2 fingerprint into a smaller set of canonical groups.
+// exGroupsRefreshMaxGroups caps one refresh pass's raw (type, msg,
+// service) groups. ORDER BY cnt DESC makes the cut deterministic and
+// keeps the HOT groups — the tail past 20k is single-digit-count noise
+// whose messages differ only in dynamic values, exactly what the Go
+// fingerprint merge collapses anyway. Hitting the cap is LOGGED
+// (silent truncation reads as "covered everything").
+const exGroupsRefreshMaxGroups = 20000
+
 func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (int, error) {
+	// v0.8.565 — this scan ran with `time >= ?` alone: no upper bound,
+	// no LIMIT, no max_execution_time — a live hard-constraint violation
+	// on the leader-gated worker whose FIRST tick covers 24h. The 60s
+	// budget is the explicit backfill class: if prod's first tick trips
+	// it, the caller logs and the NEXT tick's 5-minute window succeeds —
+	// the inbox warms incrementally instead of one unbounded query
+	// squatting on CH.
+	until := time.Now()
 	rows, err := s.conn.Query(ctx, `
 		WITH src AS (
 		  SELECT
@@ -834,7 +851,7 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		    `+exStackExpr+` AS ex_stack,
 		    service_name, time
 		  FROM spans
-		  WHERE time >= ? AND `+exMatchPred+`
+		  WHERE time >= ? AND time <= ? AND `+exMatchPred+`
 		)
 		SELECT ex_type, ex_msg, service_name,
 		       argMax(ex_stack, time) AS stacktrace,
@@ -842,7 +859,10 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		       toUnixTimestamp64Nano(min(time)) AS first_seen,
 		       toUnixTimestamp64Nano(max(time)) AS last_seen
 		FROM src
-		GROUP BY ex_type, ex_msg, service_name`, since)
+		GROUP BY ex_type, ex_msg, service_name
+		ORDER BY cnt DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 60`, since, until, exGroupsRefreshMaxGroups)
 	if err != nil {
 		return 0, err
 	}
@@ -852,7 +872,9 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 	// duplicate raw events; the Go pass merges across messages that differ
 	// only in dynamic IDs / values so they share an inbox row.
 	merged := map[string]*ExceptionGroup{}
+	rawGroups := 0
 	for rows.Next() {
+		rawGroups++
 		var exType, exMsg, svc, stack string
 		var cnt uint64
 		var firstSeen, lastSeen int64
@@ -882,6 +904,9 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 				Occurrences: cnt,
 			}
 		}
+	}
+	if rawGroups == exGroupsRefreshMaxGroups {
+		log.Printf("[errors-inbox] refresh hit the %d-group cap — coldest tail truncated this pass (first-tick warmup on a big backlog; steady 5m ticks stay far below it)", exGroupsRefreshMaxGroups)
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err

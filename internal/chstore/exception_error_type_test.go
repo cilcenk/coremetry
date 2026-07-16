@@ -50,12 +50,22 @@ func TestExceptionErrorTypeFragments(t *testing.T) {
 	// grupta da saymalı; tek başına event LIKE filtresi kalırsa grup
 	// detayı "0 occurrence" okur.
 	t.Run("occurrences query scans both sources", func(t *testing.T) {
-		q := occurrencesQuery(occurrenceBucketCap, "max_threads = 4")
+		// v0.8.566 — iki hasCols durumu: ifade yolunda v0.8.494'ün çift
+		// kaynağı korunmalı; kolon yolunda ex_match=1 aynı sözleşmenin
+		// INSERT anında hesaplanmış hâli (exMatchDefExpr = exMatchPred).
+		q := occurrencesQuery(occurrenceBucketCap, "max_threads = 4", false)
 		if !strings.Contains(q, "has(attr_keys, 'error.type')") {
 			t.Fatalf("occurrencesQuery error.type dalını kaybetmiş:\n%s", q)
 		}
 		if !strings.Contains(q, `events LIKE '%"exception"%'`) {
 			t.Fatalf("occurrencesQuery event dalını kaybetmiş:\n%s", q)
+		}
+		qc := occurrencesQuery(occurrenceBucketCap, "max_threads = 4", true)
+		if !strings.Contains(qc, "ex_match = 1") || !strings.Contains(qc, "ex_type = ?") {
+			t.Fatalf("kolon yolu ex_match/ex_type kullanmalı:\n%s", qc)
+		}
+		if strings.Contains(qc, "JSON_VALUE") {
+			t.Fatalf("kolon yolu events JSON'ına dokunmamalı:\n%s", qc)
 		}
 	})
 }

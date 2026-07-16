@@ -198,6 +198,7 @@ type EndpointException struct {
 // computes (over the argMax-latest sample), so the deep link lands on
 // the matching group whenever that sample is representative.
 func (s *Store) EndpointTopExceptions(ctx context.Context, q EndpointDetailQuery, limit int) ([]EndpointException, error) {
+	f := exFragments(s.hasExCols)
 	if limit <= 0 || limit > 20 {
 		limit = 5
 	}
@@ -209,7 +210,7 @@ func (s *Store) EndpointTopExceptions(ctx context.Context, q EndpointDetailQuery
 	wc.add("time >= ?", q.From)
 	wc.add("time <= ?", q.To)
 	wc.add("service_name = ?", q.Service)
-	wc.add(exMatchPred)
+	wc.add(f.Match)
 	wc.add("("+routeWC.conds[0]+" OR name = ?)", append(append([]any{}, routeWC.args...), q.Path)...)
 	args := append([]any{}, wc.args...)
 	args = append(args, limit)
@@ -218,9 +219,9 @@ func (s *Store) EndpointTopExceptions(ctx context.Context, q EndpointDetailQuery
 	// (the v0.8.312 trap only bites toStartOfInterval's DateTime).
 	rows, err := s.conn.Query(ctx, `
 		SELECT
-		  `+exTypeExpr+` AS ex_type,
-		  argMax(`+exMsgExpr+`, time) AS ex_msg,
-		  argMax(`+exStackExpr+`, time) AS ex_stack,
+		  `+f.Type+` AS ex_type,
+		  argMax(`+f.Msg+`, time) AS ex_msg,
+		  argMax(`+f.Stack+`, time) AS ex_stack,
 		  count() AS cnt,
 		  toUnixTimestamp64Nano(max(time)) AS last_seen
 		FROM spans

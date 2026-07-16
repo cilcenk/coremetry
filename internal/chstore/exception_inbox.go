@@ -630,6 +630,7 @@ type ExceptionSample struct {
 // (service, type), recompute the fingerprint per row in Go, and return
 // the first `limit` that match.
 func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string, limit int) ([]ExceptionSample, error) {
+	f := exFragments(s.hasExCols)
 	if limit <= 0 || limit > 100 {
 		limit = 10
 	}
@@ -654,14 +655,14 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 	winTo := time.Unix(0, g.LastSeen).Add(time.Hour)
 	rows, err := s.conn.Query(ctx, `
 		SELECT trace_id, span_id, toUnixTimestamp64Nano(time),
-		       `+exMsgExpr+` AS message,
-		       `+exStackExpr+` AS stacktrace,
+		       `+f.Msg+` AS message,
+		       `+f.Stack+` AS stacktrace,
 		       name, status_msg
 		FROM spans
 		WHERE service_name = ?
 		  AND time >= ? AND time <= ?
-		  AND `+exMatchPred+`
-		  AND `+exTypeExpr+` = ?
+		  AND `+f.Match+`
+		  AND `+f.Type+` = ?
 		ORDER BY time DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 10`, g.Service, winFrom, winTo, g.Type, maxCandidates)
@@ -713,14 +714,15 @@ const occurrenceBucketCap = 5000
 // schema, and toUnixTimestamp64Nano only accepts DateTime64 → code 43 on
 // prod. Bounds (service+time WHERE, LIMIT, max_execution_time) are the
 // raw-spans hard constraint and must survive any future edit.
-func occurrencesQuery(bucketCap int, shardSkip string) string {
+func occurrencesQuery(bucketCap int, shardSkip string, hasCols bool) string {
+	f := exFragments(hasCols)
 	return `
 		SELECT toStartOfInterval(time, INTERVAL ? SECOND) AS bucket,
 		       count() AS c
 		FROM spans
 		WHERE service_name = ? AND time >= ? AND time <= ?
-		  AND ` + exMatchPred + `
-		  AND ` + exTypeExpr + ` = ?
+		  AND ` + f.Match + `
+		  AND ` + f.Type + ` = ?
 		GROUP BY bucket
 		ORDER BY bucket
 		LIMIT ` + fmt.Sprint(bucketCap) + `
@@ -774,7 +776,7 @@ func (s *Store) GetExceptionOccurrences(ctx context.Context, fingerprint string)
 	// monolithic CH yields DateTime64 so it never reproduced). Scanning
 	// as time.Time is type-agnostic and correct on both schemas.
 	rows, err := s.conn.Query(ctx,
-		occurrencesQuery(occurrenceBucketCap, s.shardSkipSetting()),
+		occurrencesQuery(occurrenceBucketCap, s.shardSkipSetting(), s.hasExCols),
 		step, g.Service, from, to, g.Type)
 	if err != nil {
 		return nil, err
@@ -835,6 +837,7 @@ func fillOccurrenceBuckets(fromNs, toNs, stepSec int64, counts map[int64]uint64)
 const exGroupsRefreshMaxGroups = 20000
 
 func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (int, error) {
+	f := exFragments(s.hasExCols)
 	// v0.8.565 — this scan ran with `time >= ?` alone: no upper bound,
 	// no LIMIT, no max_execution_time — a live hard-constraint violation
 	// on the leader-gated worker whose FIRST tick covers 24h. The 60s
@@ -846,12 +849,12 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 	rows, err := s.conn.Query(ctx, `
 		WITH src AS (
 		  SELECT
-		    `+exTypeExpr+` AS ex_type,
-		    `+exMsgExpr+`  AS ex_msg,
-		    `+exStackExpr+` AS ex_stack,
+		    `+f.Type+` AS ex_type,
+		    `+f.Msg+`  AS ex_msg,
+		    `+f.Stack+` AS ex_stack,
 		    service_name, time
 		  FROM spans
-		  WHERE time >= ? AND time <= ? AND `+exMatchPred+`
+		  WHERE time >= ? AND time <= ? AND `+f.Match+`
 		)
 		SELECT ex_type, ex_msg, service_name,
 		       argMax(ex_stack, time) AS stacktrace,

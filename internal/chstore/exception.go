@@ -48,6 +48,50 @@ const (
 	exStackExpr = `coalesce(JSON_VALUE(` + exFirstEvent + `, '$.attributes."exception.stacktrace"'), '')`
 )
 
+// exEventsGuard — MATERIALIZED kolon ifadelerinde JSONExtractArrayRaw'un
+// argümanı: exception taşımayan satırda events yerine '[]' görür, parse
+// bedava olur. multiIf dalları eager değerlendiği için parse'ı ATLAMAK
+// mümkün değil; argümanını önemsizleştirmek mümkün. Bu korpusta etkisi
+// ölçüm gürültüsü içinde (guard ≈ naked), events-ağır span'lerde
+// (messaging/log-yoğun instrumentation) devreye girer — dünkü kontrollü
+// ölçümde %28-events korpusunda insert ek maliyetini yarılamıştı.
+// Exception TAŞIYAN satır guard'dan etkilenmez: LIKE eşleşir, events
+// olduğu gibi geçer, arrayFirst 2. konumdaki exception'ı yine bulur.
+const exEventsGuard = `if(events LIKE '%"exception"%', events, '[]')`
+
+// exFirstEventGuarded — exFirstEvent'in DDL (INSERT-anı) varyantı.
+const exFirstEventGuarded = `arrayFirst(x -> JSONExtractString(x, 'name') = 'exception', JSONExtractArrayRaw(` + exEventsGuard + `))`
+
+// ex*DefExpr — spans'a eklenen MATERIALIZED kolonların DDL ifadeleri
+// (v0.8.566, perf #19). Sorgu-anı fragmanlarıyla AYNI semantik
+// (arrayFirst + v0.8.494 error.type fallback'i), tek fark guard.
+// MATERIALIZED şekli D1/db_stmt_hash emsali (store.go): INSERT
+// projeksiyonunda yer almaz, Distributed wrapper blok iletirken siler →
+// v0.8.185/186 ingest-kırılma sınıfı yapısal olarak imkânsız; eski
+// part'lar ifadeyi OKUMA anında hesaplar → geçiş coalesce'i yok.
+const (
+	exMatchDefExpr = exMatchPred
+	exTypeDefExpr  = `multiIf(events LIKE '%"exception"%', coalesce(JSON_VALUE(` + exFirstEventGuarded + `, '$.attributes."exception.type"'), '<unknown>'), has(attr_keys, 'error.type'), attr_values[indexOf(attr_keys, 'error.type')], '<unknown>')`
+	exMsgDefExpr   = `if(events LIKE '%"exception"%', coalesce(JSON_VALUE(` + exFirstEventGuarded + `, '$.attributes."exception.message"'), ''), status_msg)`
+	exStackDefExpr = `coalesce(JSON_VALUE(` + exFirstEventGuarded + `, '$.attributes."exception.stacktrace"'), '')`
+)
+
+// exFrag — beş exception sorgu sitesinin kullandığı fragment seti
+// (v0.8.566, perf #19). hasCols true ise ifadeler INSERT anında
+// hesaplanmış MATERIALIZED kolonlara iner (ex_match/ex_type/ex_msg/
+// ex_stack) — asıl kazanç JSON parse değil, ZSTD'li dev `events`
+// blob'unu HİÇ okumamak. false ise (external Distributed + cluster_name
+// unset → ALTER atlanmış) bugünkü JSON_VALUE ifadelerine düşer —
+// /slow-queries'in raw-spans fallback'iyle aynı duruş.
+type exFrag struct{ Match, Type, Msg, Stack string }
+
+func exFragments(hasCols bool) exFrag {
+	if hasCols {
+		return exFrag{Match: `ex_match = 1`, Type: `ex_type`, Msg: `ex_msg`, Stack: `ex_stack`}
+	}
+	return exFrag{Match: exMatchPred, Type: exTypeExpr, Msg: exMsgExpr, Stack: exStackExpr}
+}
+
 type ExceptionFilter struct {
 	Service  string
 	GroupBy  string // "type" | "type-service" | "full"  (default: "type-service")
@@ -61,6 +105,7 @@ type ExceptionFilter struct {
 // We dig the events JSON column with JSON_VALUE — slower than dedicated
 // columns, but the volume of error spans is small relative to the total.
 func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]ExceptionRow, error) {
+	frag := exFragments(s.hasExCols)
 	// v0.8.454 — pencere zorunlu: sıfır from/to varsayılan 1 saate iner
 	// (boundWindow). Penceresiz çağrı tüm span tarihçesinde JSON kazıyordu.
 	f.From, f.To = boundWindow(f.From, f.To, time.Hour)
@@ -70,7 +115,7 @@ func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]Excepti
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
 	}
-	wc.add(exMatchPred)
+	wc.add(frag.Match)
 	if f.Limit == 0 {
 		f.Limit = 100
 	}
@@ -96,8 +141,8 @@ func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]Excepti
 	rows, err := s.conn.Query(ctx, `
 		WITH src AS (
 		  SELECT
-		    `+exTypeExpr+` AS ex_type,
-		    `+exMsgExpr+`  AS ex_msg,
+		    `+frag.Type+` AS ex_type,
+		    `+frag.Msg+`  AS ex_msg,
 		    service_name, time, trace_id, span_id
 		  FROM spans `+wc.sql()+`
 		)

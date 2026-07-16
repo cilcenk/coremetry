@@ -20,7 +20,7 @@ import (
 // exercise locally, so we assert the query never re-grows the type-fragile
 // wrapper and never loses its raw-spans bounds.
 func TestOccurrencesQuery_TypeSafeBucketAndBounds(t *testing.T) {
-	q := occurrencesQuery(occurrenceBucketCap, "max_threads = 4")
+	q := occurrencesQuery(occurrenceBucketCap, "max_threads = 4", false)
 
 	if strings.Contains(q, "toUnixTimestamp64Nano") {
 		t.Errorf("occurrences query wraps the bucket in toUnixTimestamp64Nano; "+

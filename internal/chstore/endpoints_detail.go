@@ -219,7 +219,7 @@ func (s *Store) EndpointTopExceptions(ctx context.Context, q EndpointDetailQuery
 		SELECT
 		  `+exTypeExpr+` AS ex_type,
 		  argMax(`+exMsgExpr+`, time) AS ex_msg,
-		  argMax(coalesce(JSON_VALUE(events, '$[0].attributes."exception.stacktrace"'), ''), time) AS ex_stack,
+		  argMax(`+exStackExpr+`, time) AS ex_stack,
 		  count() AS cnt,
 		  toUnixTimestamp64Nano(max(time)) AS last_seen
 		FROM spans

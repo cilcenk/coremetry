@@ -654,7 +654,7 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 	rows, err := s.conn.Query(ctx, `
 		SELECT trace_id, span_id, toUnixTimestamp64Nano(time),
 		       `+exMsgExpr+` AS message,
-		       coalesce(JSON_VALUE(events, '$[0].attributes."exception.stacktrace"'), '') AS stacktrace,
+		       `+exStackExpr+` AS stacktrace,
 		       name, status_msg
 		FROM spans
 		WHERE service_name = ?
@@ -831,7 +831,7 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		  SELECT
 		    `+exTypeExpr+` AS ex_type,
 		    `+exMsgExpr+`  AS ex_msg,
-		    coalesce(JSON_VALUE(events, '$[0].attributes."exception.stacktrace"'), '') AS ex_stack,
+		    `+exStackExpr+` AS ex_stack,
 		    service_name, time
 		  FROM spans
 		  WHERE time >= ? AND `+exMatchPred+`

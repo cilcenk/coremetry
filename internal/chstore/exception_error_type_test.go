@@ -58,3 +58,31 @@ func TestExceptionErrorTypeFragments(t *testing.T) {
 		}
 	})
 }
+
+// TestExFragmentsFirstEvent — v0.8.563 regression. The type/message/stack
+// expressions read $[0] — the FIRST array element, not the first EXCEPTION
+// event. Instrumentations that emit a retry/log event before the exception
+// (the java.net client libs among them) matched exMatchPred via the LIKE
+// but yielded empty type/msg/stack, so real exceptions landed in an ''
+// group. All extraction now goes through exFirstEvent (arrayFirst by event
+// name); the behaviour pair was proven live before shipping:
+// second-position exception → old '' / new java.net.UnknownHostException,
+// first-position → identical on both.
+func TestExFragmentsFirstEvent(t *testing.T) {
+	for name, frag := range map[string]string{
+		"exTypeExpr": exTypeExpr, "exMsgExpr": exMsgExpr, "exStackExpr": exStackExpr,
+	} {
+		if strings.Contains(frag, "$[0]") {
+			t.Errorf("%s still reads $[0] — first ARRAY element is not first EXCEPTION event", name)
+		}
+		if !strings.Contains(frag, "arrayFirst") || !strings.Contains(frag, "'exception'") {
+			t.Errorf("%s must select the first event NAMED exception via exFirstEvent", name)
+		}
+	}
+	// The three query files that used to carry pasted $[0] stacktrace
+	// copies must stay on the shared fragment — a fourth paste would
+	// silently reintroduce the bug for that surface only.
+	if !strings.Contains(exFirstEvent, "JSONExtractArrayRaw(events)") {
+		t.Error("exFirstEvent must walk the events array")
+	}
+}

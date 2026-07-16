@@ -24,13 +24,28 @@ import (
 const (
 	// exMatchPred — bir span'i exception hattına sokan koşul.
 	exMatchPred = `(events LIKE '%"exception"%' OR (status_code = 'error' AND has(attr_keys, 'error.type')))`
+	// exFirstEvent — span'in İLK exception event'i, dizideki KONUMDAN
+	// bağımsız (v0.8.563). Eski ifadeler $[0]'ı okuyordu: exception,
+	// span'in ikinci event'iyse (önünde retry/log event'i olan
+	// instrumentation'lar) tip/mesaj/stack BOŞ çıkıyor ve satır ''
+	// grubuna düşüyordu — LIKE onu hatta sokuyor ama $[0] yanlış
+	// event'e bakıyordu. arrayFirst eşleşme bulamazsa '' döner,
+	// JSON_VALUE('') de '' — kabul edilmiş-ama-event'siz satırların
+	// (LIKE'ın nadir yalancı pozitifi) duruşu değişmez. Beş sorgu
+	// sitesi ve 3 stacktrace okuması bu TEK fragmenti kullanır.
+	// Canlı ölçüm: arrayFirst yolu $[0]'dan yavaş DEĞİL (6h exception
+	// satırlarında 0.41s vs 0.68s).
+	exFirstEvent = `arrayFirst(x -> JSONExtractString(x, 'name') = 'exception', JSONExtractArrayRaw(events))`
 	// exTypeExpr — grup tipi: event tipi öncelikli (en zengin),
 	// yoksa error.type attribute'u. multiIf dalları eager değerlenir;
 	// arrayElement 0-index'te '' döndürdüğünden has() yalancı olsa da
 	// güvenlidir.
-	exTypeExpr = `multiIf(events LIKE '%"exception"%', coalesce(JSON_VALUE(events, '$[0].attributes."exception.type"'), '<unknown>'), has(attr_keys, 'error.type'), attr_values[indexOf(attr_keys, 'error.type')], '<unknown>')`
+	exTypeExpr = `multiIf(events LIKE '%"exception"%', coalesce(JSON_VALUE(` + exFirstEvent + `, '$.attributes."exception.type"'), '<unknown>'), has(attr_keys, 'error.type'), attr_values[indexOf(attr_keys, 'error.type')], '<unknown>')`
 	// exMsgExpr — mesaj: event mesajı, attr-doğumlu grupta status_msg.
-	exMsgExpr = `if(events LIKE '%"exception"%', coalesce(JSON_VALUE(events, '$[0].attributes."exception.message"'), ''), status_msg)`
+	exMsgExpr = `if(events LIKE '%"exception"%', coalesce(JSON_VALUE(` + exFirstEvent + `, '$.attributes."exception.message"'), ''), status_msg)`
+	// exStackExpr — stacktrace, aynı ilk-exception-event'ten. Eskiden
+	// üç sitede kopya-yapıştır $[0] ifadesiydi; tek tanım.
+	exStackExpr = `coalesce(JSON_VALUE(` + exFirstEvent + `, '$.attributes."exception.stacktrace"'), '')`
 )
 
 type ExceptionFilter struct {

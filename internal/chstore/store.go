@@ -81,6 +81,13 @@ type Store struct {
 	// and the raw-spans fallback.
 	hasDBStmtHashCol bool
 
+	// hasExCols records whether spans carries the v0.8.566 exception
+	// MATERIALIZED columns (ex_match/ex_type/ex_msg/ex_stack). False on an
+	// external Distributed spans with cluster_name unset (ALTER skipped) —
+	// the five exception query sites then fall back to the JSON_VALUE
+	// expressions via exFragments(false).
+	hasExCols bool
+
 	// hasLdapUsernameCol records whether the `users` table carries the
 	// `ldap_username LowCardinality(String)` column (v0.8.526, LDAP group
 	// sync). Unlike op_group / series_fingerprint this is NOT a
@@ -2075,6 +2082,39 @@ func (s *Store) migrate(ctx context.Context) error {
 	s.hasDBStmtHashCol = dhErr == nil
 	if !s.hasDBStmtHashCol {
 		log.Printf("[chstore] `db_stmt_hash` column not resolvable on spans (%v) — db_statement_summary_5m MV disabled, /slow-queries reads stay on the raw-spans path (expected on an external Distributed cluster with cluster_name unset)", dhErr)
+	}
+
+	// ex_* — v0.8.566, perf #19: exception tip/mesaj/stack/match INSERT
+	// anında MATERIALIZED kolonlara iner; beş sorgu sitesi düz kolon okur
+	// (exFragments). Ölçülen kazanç okuma tarafında (ifade yolu ZSTD'li
+	// `events` blob'unu her satırda açıyordu); MATERIALIZED şekli
+	// db_stmt_hash emsali — INSERT projeksiyonunda yok, Distributed
+	// forwarding'de silinir, eski part'lar okuma anında hesaplar.
+	// ex_match AYRI kolon, `ex_type != ''` sentinel'i DEĞİL: JSON_VALUE
+	// eksik anahtarda '' döner, yani '' KABUL EDİLMİŞ satırlar için
+	// geçerli bir tip değeridir (exception event'i var ama exception.type
+	// attr'ı yok) — sentinel o satırları sessizce düşürürdü.
+	exAlters := []string{
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_match UInt8 MATERIALIZED ` + exMatchDefExpr,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_type LowCardinality(String) MATERIALIZED ` + exTypeDefExpr,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_msg String CODEC(ZSTD(3)) MATERIALIZED ` + exMsgDefExpr,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS ex_stack String CODEC(ZSTD(3)) MATERIALIZED ` + exStackDefExpr,
+	}
+	if s.spansIsExternalDistributed(ctx) {
+		log.Printf("[chstore] external Distributed `spans` with cluster_name unset — SKIPPING exception column ALTERs; exception reads stay on the JSON_VALUE expression path (set config.clickhouse.cluster_name to enable them)")
+	} else {
+		for _, a := range exAlters {
+			if err := s.execDDL(ctx, a); err != nil {
+				return fmt.Errorf("alter table (exception cols): %w", err)
+			}
+		}
+	}
+	exRows, exErr := s.conn.Query(ctx,
+		`SELECT ex_match, ex_type, ex_msg, ex_stack FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(exRows, exErr)
+	s.hasExCols = exErr == nil
+	if !s.hasExCols {
+		log.Printf("[chstore] exception columns not resolvable on spans (%v) — exception reads fall back to the JSON_VALUE expression path (expected on an external Distributed cluster with cluster_name unset)", exErr)
 	}
 
 	// Defensive recovery (mirrors the op_group guard, v0.8.186): when

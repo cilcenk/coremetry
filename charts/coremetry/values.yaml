@@ -273,7 +273,13 @@ clickhouse:
   secure: false
   insecureSkipVerify: false
 
-  maxOpenConns: 20
+  # 0 = self-size: the binary derives 5 ingest signals (spans, logs,
+  # metrics, exemplars, span_links) x ingest workers + 8 read headroom
+  # (58 with the default 10 workers). Pinning a literal here has starved
+  # the flushers TWICE as the signal count grew (v0.8.205, v0.8.351) —
+  # 'acquire conn timeout' + dropped batches under load. Only set a
+  # number to CAP the pool below the derived size, knowingly.
+  maxOpenConns: 0
 
   # ── Distributed / Replicated ClickHouse (multi-shard, multi-replica) ──
   # Set these when `external.addr` points at a sharded+replicated CH cluster

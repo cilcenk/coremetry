@@ -7,7 +7,10 @@ clickhouse:
   database: "coremetry"
   username: "default"
   password: ""
-  max_open_conns: 10
+  # 0 = self-size (5 signals x workers + 8). A pinned 10 starved the
+  # flushers even locally — Coremetry's own error spans showed
+  # 'acquire conn timeout' (self-telemetry, 2026-07-15).
+  max_open_conns: 0
   dial_timeout: "5s"
   # Distributed-CH mode (optional). Set cluster_name to the
   # <remote_servers> entry on every CH node — Coremetry then

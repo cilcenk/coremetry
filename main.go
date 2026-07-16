@@ -279,6 +279,44 @@ func main() {
 		_ = selfobsShutdown(sctx)
 	}()
 
+	// v0.8.562 — bind the HTTP port and answer probes BEFORE the CH boot.
+	// The full API server only starts listening after chstore.New()
+	// finishes connecting + migrating, which on a multi-host external
+	// Distributed cluster is tens of seconds of ON CLUSTER DDL — and with
+	// several pods booting at once, the ones queued behind the DDL lock
+	// take longest. During that whole window the port was CLOSED, so any
+	// liveness probe without a generous startupProbe saw connection
+	// refused and killed the pod at its budget (operator-reported on
+	// v0.8.559: some pods ready, others CrashLoopBackOff — the lucky vs
+	// queued split). The boot listener answers /livez 200 ("process
+	// alive" — true) and everything else 503 ("not ready" — also true,
+	// keeps readiness down so no traffic routes here), then hands the
+	// port to the real server. The hand-off closes and rebinds the
+	// listener; the microsecond gap is far below any probe's
+	// failureThreshold and keeps api.Server's lifecycle untouched.
+	bootSrv := &http.Server{Addr: cfg.Listen.HTTP, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/livez" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok (booting)"))
+			return
+		}
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "coremetry is booting (schema migrations in progress)", http.StatusServiceUnavailable)
+	})}
+	go func() {
+		if err := bootSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// Port taken = misconfiguration; failing now beats failing
+			// after a full CH boot with the same error.
+			log.Fatalf("[boot] health listener on %s: %v", cfg.Listen.HTTP, err)
+		}
+	}()
+	log.Printf("[boot] health listener up on %s — /livez=200, rest=503 until boot completes", cfg.Listen.HTTP)
+	stopBootListener := func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer scancel()
+		_ = bootSrv.Shutdown(sctx)
+	}
+
 	// Reset-schema runs BEFORE chstore.New() — that constructor
 	// opens a connection to the target database and re-runs every
 	// migration, which would defeat the whole point of dropping.
@@ -996,6 +1034,10 @@ func main() {
 	// /api/health + /api/version stay on every role so Kubernetes
 	// probes have something to hit (the OTLP-route role guard is
 	// wired via srv.SetRoles above, v0.8.346).
+	// v0.8.562 — hand the port from the boot listener to the real server.
+	// Shutdown() closes the boot listener before Start() rebinds; the gap
+	// is microseconds against probe periods of seconds.
+	stopBootListener()
 	go func() {
 		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("[http] %v", err)

@@ -136,6 +136,42 @@ func pivotWindowMetricsKey(service string, at time.Time, windowS int) string {
 // uint64s. Empty input → nil (the metric fallback path); any unparsable
 // element or a set larger than pivotMaxFingerprints is a caller bug → error
 // (the handler 400s rather than silently querying a truncated set).
+// flattenSeriesFPs flattens the gk→fingerprint sets into a capped,
+// DETERMINISTIC fingerprint list plus the fp→gk attribution map
+// (v0.8.555). Group keys are visited in sorted order so (a) which groups
+// win the pivotMaxFingerprints budget and (b) which gk claims a
+// fingerprint shared by several groups are stable across calls. The old
+// inline loop ranged over the map directly — Go randomises that order on
+// purpose, so past ~100 total fingerprints the winners changed on every
+// call and the ◆ markers hopped between series each time the 30s cache
+// expired. Fingerprints past the cap still enter the attribution map;
+// harmless, since the read only returns rows for `flat`.
+func flattenSeriesFPs(fpsByGk map[string][]uint64, max int) ([]uint64, map[uint64][]string) {
+	gks := make([]string, 0, len(fpsByGk))
+	for gk := range fpsByGk {
+		gks = append(gks, gk)
+	}
+	slices.Sort(gks)
+	gkByFp := make(map[uint64][]string)
+	flat := make([]uint64, 0, min(len(fpsByGk), max))
+	for _, gk := range gks {
+		parts := []string{}
+		if gk != "" {
+			parts = strings.Split(gk, "|")
+		}
+		for _, fp := range fpsByGk[gk] {
+			if _, dup := gkByFp[fp]; dup {
+				continue
+			}
+			gkByFp[fp] = parts
+			if len(flat) < max {
+				flat = append(flat, fp)
+			}
+		}
+	}
+	return flat, gkByFp
+}
+
 func parseFingerprints(raw string) ([]uint64, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -296,25 +332,7 @@ func (s *Server) getSeriesExemplars(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
-		// Flatten with a global cap (same budget as ?fingerprints=) and
-		// remember fp → gk for the attribution below.
-		gkByFp := make(map[uint64][]string)
-		var flat []uint64
-		for gk, fps := range fpsByGk {
-			parts := []string{}
-			if gk != "" {
-				parts = strings.Split(gk, "|")
-			}
-			for _, fp := range fps {
-				if _, dup := gkByFp[fp]; dup {
-					continue
-				}
-				gkByFp[fp] = parts
-				if len(flat) < pivotMaxFingerprints {
-					flat = append(flat, fp)
-				}
-			}
-		}
+		flat, gkByFp := flattenSeriesFPs(fpsByGk, pivotMaxFingerprints)
 		if len(flat) == 0 {
 			return map[string]any{"items": []pivotSeriesExemplar{}}, nil
 		}

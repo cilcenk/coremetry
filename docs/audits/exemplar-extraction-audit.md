@@ -4,6 +4,26 @@
 (ingest / şema / API+frontend / test envanteri) + tamlık eleştirmeni; her
 bulgu dosya:satır ile doğrulandı.*
 
+> **DURUM GÜNCELLEMESİ (2026-07-16, v0.8.555) — ANA BULGU KAPANDI, RE-QUEUE
+> ETME.** Bu dokümanın "en önemli kalan boşluk" dediği gruplu-chart ◆ işi,
+> doküman yazıldıktan İKİ GÜN sonra **v0.8.432**'de ship edildi
+> (`8ce4d817 "feat(exemplar): OTLP ◆ on grouped charts (audit Faz B)"`):
+> `GET /api/exemplars/by-series` + `MetricSeriesFingerprints`
+> (`exemplar_otlp.go`, `groupUniqArray(8)`, chart'la aynı groupKeyExpr) +
+> `PanelStack.tsx` keyed eşleme. Aşağıdaki "series_fingerprint hiçbir read
+> path'inden client'a dönmüyor" cümlesi bugün de doğru ama artık boşluk
+> değil, **tasarım kararı**: fingerprint'ler uint64→JSON precision hazard'ı
+> yüzünden wire'a çıkmaz; fp→groupKey join'i sunucuda yapılır
+> (`pivot.go`'daki yorum). v0.8.555 bu zincirdeki tek kalan gerçek kusuru
+> kapattı: flatten map-order'la geziyordu, fp bütçesini hangi grupların
+> kazandığı çağrılar arası rastgeleydi ve ◆'lar 30s cache dolumunda seriler
+> arasında zıplıyordu — artık deterministik (`flattenSeriesFPs` +
+> `pivot_flatten_test.go`). Bilinçli dışarıda kalanlar: grouped-OR gate'i
+> (`!hasGroupedFilter` — chart predicate paritesi; kaldırmak önce
+> `/api/metrics/query`'ye filterGroup ister) ve AdminStats exemplar
+> kartları (§ kalan boşluklar). Bu not, bu dokümanı okuyan bir sonraki
+> oturumun aynı işi ÜÇÜNCÜ kez kuyruğa almasını önlemek için var.
+
 ## Yönetici özeti
 
 Brief'in çekirdek varsayımı — "exemplar'lar ingestion'da hiç çıkarılmıyor" —

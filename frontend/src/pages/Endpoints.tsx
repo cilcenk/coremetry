@@ -19,6 +19,8 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import { TrendDelta } from '@/components/TrendDelta';
 import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
 import { encodeEndpointParam, decodeEndpointParam } from '@/pages/endpoints/endpointParam';
+import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols';
+import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 
@@ -91,6 +93,11 @@ const SORT_KEYS = [
   'avgMs', 'p50Ms', 'p95Ms', 'p99Ms', 'reqPerMin', 'impact',
 ] as const;
 const DEFAULT_ENDPOINTS_SORT = { id: 'calls', dir: 'desc' as const };
+
+// Visible-column universe for the ?cols= codec (v0.8.574) — every
+// rendered column; headerHidden `impact` is sort-only and can't be
+// hidden (it has no header to hide).
+const ALL_COL_IDS = ENDPOINT_COLS.filter(c => !c.headerHidden).map(c => c.id);
 
 export default function EndpointsPage() {
   const navigate = useNavigate();
@@ -224,11 +231,35 @@ export default function EndpointsPage() {
   // The hook must precede the query that consumes dt.sort, so its
   // rows come through a state mirror synced from the query result.
   const [tableRows, setTableRows] = useState<EndpointRow[]>([]);
+  // Column visibility (v0.8.574, audit seçenek 3) — URL is the source
+  // of truth (?cols=, Logs contract: absent = all visible) so Copy
+  // link / SavedViewsBar reproduce the exact column set. Read directly
+  // from params each render + write with replace:true — the same
+  // no-local-mirror pattern compare/limit use, so no sig-guard needed.
+  // Widths/sort persistence (localStorage, keyed by column id) is
+  // untouched: a re-shown column comes back at its remembered width.
+  const visibleCols = useMemo(
+    () => parseColsParam(params.get('cols'), ALL_COL_IDS),
+    [params]);
+  const setVisibleCols = (s: Set<string>) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    const v = formatColsParam(s, ALL_COL_IDS);
+    if (v) next.set('cols', v); else next.delete('cols');
+    return next;
+  }, { replace: true });
+  // The hook sees only visible columns (+ the sort-only headerHidden
+  // impact) so DataTableColgroup/Head stay aligned with the body cells.
+  // Sorting by a now-hidden column keeps working: serverSort forwards
+  // the persisted sort id to the fetch regardless of visibility —
+  // same contract as the never-rendered impact column.
+  const visibleColumns = useMemo(
+    () => ENDPOINT_COLS.filter(c => c.headerHidden || visibleCols.has(c.id)),
+    [visibleCols]);
   // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
   // row, Enter/o open its service detail, "/" focuses the path filter.
   const dt = useDataTable<EndpointRow>({
     storageKey: 'endpoints',
-    columns: ENDPOINT_COLS,
+    columns: visibleColumns,
     rows: tableRows,
     serverSort: true,
     initialSort: DEFAULT_ENDPOINTS_SORT,
@@ -353,6 +384,10 @@ export default function EndpointsPage() {
             }}>
             <Zap size={12} strokeWidth={1.75} /> Worst by impact
           </button>
+          <ColumnToggle
+            columns={ENDPOINT_COLS.filter(c => !c.headerHidden).map(c => ({ id: c.id, label: c.label }))}
+            visible={visibleCols}
+            onChange={setVisibleCols} />
         </div>
 
         {rows === undefined && <TableSkeleton cols={8} wideFirst />}
@@ -434,42 +469,46 @@ export default function EndpointsPage() {
                               : <ChevronRight size={13} strokeWidth={1.75} />}
                           </button>
                         </td>
-                        <td>
+                        {/* v0.8.574 — every data cell renders only when
+                            its column is visible (?cols=); order stays in
+                            lockstep with ENDPOINT_COLS so the colgroup and
+                            body never misalign. */}
+                        {visibleCols.has('service') && <td>
                           <Link to={`/service?name=${encodeURIComponent(r.service)}`}
                                 style={{ fontFamily: 'monospace', fontSize: 12 }}>
                             {r.service}
                           </Link>
-                        </td>
-                        <td className="mono" style={{ fontSize: 12 }} title={r.path}>
+                        </td>}
+                        {visibleCols.has('path') && <td className="mono" style={{ fontSize: 12 }} title={r.path}>
                           {r.path}
-                        </td>
-                        <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>
+                        </td>}
+                        {visibleCols.has('method') && <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>
                           {r.method || '—'}
-                        </td>
-                        <td className="num mono">
+                        </td>}
+                        {visibleCols.has('calls') && <td className="num mono">
                           {fmtNum(r.calls)}
                           {compare && <TrendDelta cur={r.calls} prior={r.priorCalls} kind="neutral" />}
-                        </td>
-                        <td className="num mono">
+                        </td>}
+                        {visibleCols.has('errors') && <td className="num mono">
                           {fmtNum(r.errors)}
                           {compare && <TrendDelta cur={r.errors} prior={r.priorErrors} kind="lowerBetter" />}
-                        </td>
-                        <td className="num mono">
+                        </td>}
+                        {visibleCols.has('errorRate') && <td className="num mono">
                           <span className={`badge ${errCls}`}>{r.errorRate.toFixed(2)}%</span>
-                        </td>
-                        <td><StatusBreakdown r={r} /></td>
-                        <td className="num mono">{fmtRate(r.reqPerMin)}</td>
-                        <td className="num mono">
+                        </td>}
+                        {visibleCols.has('status') && <td><StatusBreakdown r={r} /></td>}
+                        {visibleCols.has('reqPerMin') && <td className="num mono">{fmtRate(r.reqPerMin)}</td>}
+                        {visibleCols.has('avgMs') && <td className="num mono">
                           {r.avgMs.toFixed(1)} ms
                           {compare && <TrendDelta cur={r.avgMs} prior={r.priorAvgMs} kind="lowerBetter" />}
-                        </td>
-                        <td className="num mono">{fmtMs(r.p50Ms)}</td>
-                        <td className="num mono">{fmtMs(r.p95Ms)}</td>
-                        <td className="num mono">
+                        </td>}
+                        {visibleCols.has('p50Ms') && <td className="num mono">{fmtMs(r.p50Ms)}</td>}
+                        {visibleCols.has('p95Ms') && <td className="num mono">{fmtMs(r.p95Ms)}</td>}
+                        {visibleCols.has('p99Ms') && <td className="num mono">
                           {r.p99Ms.toFixed(0)} ms
                           {compare && <TrendDelta cur={r.p99Ms} prior={r.priorP99Ms} kind="lowerBetter" />}
-                        </td>
-                        <td>
+                        </td>}
+                        {visibleCols.has('trend') && <td>
                           <button
                             type="button"
                             onClick={() => setDetail(r)}
@@ -484,8 +523,8 @@ export default function EndpointsPage() {
                               color={r.errorRate >= 5 ? 'var(--err)' : r.errorRate >= 1 ? 'var(--warn)' : undefined}
                               title={`${r.calls.toLocaleString()} calls — click for detail`} />
                           </button>
-                        </td>
-                        <td className="sticky-right"
+                        </td>}
+                        {visibleCols.has('traces') && <td className="sticky-right"
                             style={{
                               // Sticky cells float over scrolled content —
                               // the err-row tint must be flattened over the
@@ -506,13 +545,14 @@ export default function EndpointsPage() {
                                 style={{ fontSize: 11, color: 'var(--accent2)' }}>
                             view →
                           </Link>
-                        </td>
+                        </td>}
                       </tr>
                       {isExpanded && (
                         <tr>
                           <td />
-                          {/* v0.8.356 — 14 body columns (Req/min, P50, P95 added) */}
-                          <td colSpan={14} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
+                          {/* v0.8.574 — span every VISIBLE data column
+                              (?cols= can hide any of the 14). */}
+                          <td colSpan={visibleCols.size} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
                             <DependencyStrip
                               service={r.service}
                               deps={depsByService[r.service]} />

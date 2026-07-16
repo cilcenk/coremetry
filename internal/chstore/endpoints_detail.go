@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 )
@@ -361,8 +362,17 @@ func (s *Store) EndpointExemplars(ctx context.Context, q EndpointDetailQuery) (s
 		  AND `+pathProj+` = ?
 		SETTINGS max_execution_time = 10`, args...)
 	if scanErr := row.Scan(&slowTraceID, &errorTraceID); scanErr != nil {
-		// Empty rollup surfaces as a scan error — the FindExemplarRollup
-		// "clean not found" posture. Callers get ("", "", nil).
+		// v0.8.564 — the old comment here claimed "empty rollup surfaces
+		// as a scan error"; that was factually wrong: an aggregate with
+		// no GROUP BY ALWAYS returns exactly one row (argMaxMerge over
+		// nothing is ''), so a scan error on this read is never
+		// "not found" — it is a real failure (timeout, network). Still
+		// soft (the drawer's stats must ship without the links), but no
+		// longer invisible: at prod scale the 10s max_execution_time
+		// tripping here used to present ONLY as a missing exemplar.
+		if !isNoRows(scanErr) {
+			log.Printf("[chstore] endpoint exemplar read failed — drawer renders without links: %v", scanErr)
+		}
 		return "", "", nil
 	}
 	return slowTraceID, errorTraceID, nil

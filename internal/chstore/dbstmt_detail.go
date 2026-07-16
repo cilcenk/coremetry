@@ -32,6 +32,7 @@ package chstore
 
 import (
 	"context"
+	"log"
 	"time"
 )
 
@@ -336,9 +337,15 @@ func (s *Store) DBStmtExemplars(ctx context.Context, q DBStmtDetailQuery) (slowT
 		}
 		wc := dbStmtExemplarWhere(q, target.errorOnly)
 		row := s.conn.QueryRow(ctx, dbStmtExemplarSQL(wc.sql(), s.shardSkipSetting()), wc.args...)
-		// LIMIT 1 with no match surfaces as a scan error — the
-		// EndpointExemplars "clean not found" posture: leave the id empty.
-		_ = row.Scan(target.dst)
+		// v0.8.564 — no-rows is the legitimate "no exemplar in window"
+		// and stays silent; every OTHER scan error used to be swallowed
+		// by a bare `_ =`, which at prod scale meant a 10s
+		// max_execution_time timeout's ONLY symptom was a drawer with no
+		// exemplar link. Still soft (the exemplar is decoration, the
+		// drawer's stats must ship), but the failure is now visible.
+		if err := row.Scan(target.dst); err != nil && !isNoRows(err) {
+			log.Printf("[chstore] dbstmt exemplar read (errorOnly=%v) failed — drawer renders without the link: %v", target.errorOnly, err)
+		}
 	}
 	return slowTraceID, errorTraceID, nil
 }

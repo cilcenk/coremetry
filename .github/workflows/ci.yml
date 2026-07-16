@@ -119,10 +119,12 @@ jobs:
     name: Security (vuln + dep scan)
     needs: frontend
     runs-on: ubuntu-latest
-    # ADVISORY (v0.7.34): dep/vuln scanning surfaces findings but must never
-    # block the workflow while the baseline is being triaged. Drop this once
-    # the scanners are clean to make security a hard gate.
-    continue-on-error: true
+    # HARD GATE (v0.8.554) — the v0.7.34 advisory period is over: the
+    # baseline was cleaned in v0.8.552 (npm: 0 critical/high) and v0.8.553
+    # (govulncheck: 0 reachable), and all three scanners were verified
+    # exit-0 locally before this flip. A freshly-disclosed CVE now
+    # redballs the PR — that is the point; triage happens by fixing or
+    # pinning, not by merging past it.
     permissions:
       contents: read
       # upload-sarif writes code-scanning alerts (Trivy results → Security tab).
@@ -142,32 +144,29 @@ jobs:
           name: frontend-dist
           path: frontend/dist
       # govulncheck only flags vulnerabilities in code paths actually REACHED
-      # (call-graph analysis), so false positives are rare. Advisory for now
-      # (|| true + ::warning::) so a freshly-disclosed CVE in a transitive dep
-      # doesn't redball every PR before someone can triage it. Flip to blocking
-      # once the baseline is clean.
+      # (call-graph analysis), so false positives are rare — which is what
+      # makes it safe as a blocking gate.
       - name: govulncheck (Go reachable CVEs)
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          "$(go env GOPATH)/bin/govulncheck" ./... \
-            || echo "::warning title=govulncheck::reachable vulnerabilities found — triage (non-blocking)"
+          "$(go env GOPATH)/bin/govulncheck" ./...
+      # --audit-level=high: moderate advisories don't block (10 exist with
+      # no non-major fix); critical/high do.
       - name: npm audit (frontend deps)
         working-directory: frontend
-        run: |
-          npm audit --audit-level=high \
-            || echo "::warning title=npm audit::high/critical advisories found — triage (non-blocking)"
+        run: npm audit --audit-level=high
       # Trivy filesystem scan: catches vulnerable pinned versions in go.sum /
       # package-lock.json that govulncheck's reachability filter skips, plus
-      # any leaked secret / misconfig. exit-code 0 = advisory (results visible
-      # in the step log + SARIF upload below feeds the Security tab).
+      # any leaked secret / misconfig. exit-code 1 on HIGH/CRITICAL — the
+      # SARIF upload below still runs (if: always()) so the Security tab
+      # sees the findings that failed the gate.
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
-        continue-on-error: true
         with:
           scan-type: fs
           scan-ref: .
           severity: HIGH,CRITICAL
-          exit-code: '0'
+          exit-code: '1'
           format: sarif
           output: trivy-results.sarif
           skip-dirs: frontend/node_modules,frontend/dist

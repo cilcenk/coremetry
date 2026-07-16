@@ -724,16 +724,16 @@ func Load(path string) (*Config, error) {
 	}
 	// CH pool sizing — MUST run AFTER Ingestion.Workers is settled so the
 	// fan-out math uses the effective worker count (v0.8.205). An unset pool
-	// (0) derives to 3*workers + read headroom; an explicit value is honored
-	// but warned about when it's below the fan-out (the operator may be
-	// capping against CH max_connections, or may have a footgun).
-	fanout := 3 * cfg.Ingestion.Workers
+	// (0) derives to ingestSignals*workers + read headroom; an explicit value
+	// is honored but warned about when it's below the fan-out (the operator
+	// may be capping against CH max_connections, or may have a footgun).
+	fanout := ingestFanout(cfg.Ingestion.Workers)
 	cfg.ClickHouse.MaxOpenConns = resolveMaxOpenConns(cfg.ClickHouse.MaxOpenConns, cfg.Ingestion.Workers)
 	if cfg.ClickHouse.MaxOpenConns < fanout {
 		log.Printf("[config] WARNING: ch.max_open_conns=%d is below the ingest flush fan-out "+
-			"(3 signals × %d workers = %d). Flushers will contend for connections under load → "+
+			"(%d signals × %d workers = %d). Flushers will contend for connections under load → "+
 			"'acquire conn timeout' + dropped batches. Raise COREMETRY_CH_MAX_OPEN_CONNS or lower COREMETRY_INGEST_WORKERS.",
-			cfg.ClickHouse.MaxOpenConns, cfg.Ingestion.Workers, fanout)
+			cfg.ClickHouse.MaxOpenConns, ingestSignals, cfg.Ingestion.Workers, fanout)
 	}
 	applyBackgroundDefaults(&cfg.Background)
 	return &cfg, nil
@@ -763,6 +763,15 @@ func Load(path string) (*Config, error) {
 // shape, reintroduced by feature growth. The constant lives here (not a
 // magic number) so the next signal bumps it consciously.
 const ingestSignals = 5 // spans, logs, metrics, exemplars, span_links
+
+// ingestFanout — total concurrent ingest flushers: every one of the
+// ingestSignals consumers runs `workers` flusher goroutines, each holding a
+// pool connection for the duration of its INSERT. Single definition shared
+// by the derivation (resolveMaxOpenConns) and the explicit-override warning
+// so the two can't drift apart again (v0.8.572: the warning kept a stale 3×
+// literal after v0.8.351 grew the consumer count to 5 — an explicit pool of
+// 32 with 8 workers sat silently below the real 40-flusher fan-out).
+func ingestFanout(workers int) int { return ingestSignals * workers }
 
 func resolveMaxOpenConns(configured, workers int) int {
 	if configured > 0 {

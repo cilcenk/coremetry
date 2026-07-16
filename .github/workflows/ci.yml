@@ -191,6 +191,15 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           skip-dirs: frontend/node_modules,frontend/dist
+          # offline-scan (v0.8.559): resolving java-demo/jboss-demo poms
+          # pulls parent BOMs from Maven Central at scan time, and the
+          # runner IP shares Central's rate-limit pool with all of GitHub —
+          # a 429 with Retry-After: 1800 FATALs trivy and red-balls the
+          # gate on an external service's mood, not a finding. Offline
+          # keeps every lockfile-based scan (go.sum, package-lock) intact;
+          # only remote pom inheritance is skipped, and those poms belong
+          # to demo load generators, not the shipped binary.
+          offline-scan: true
       - name: Upload Trivy results to the Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()

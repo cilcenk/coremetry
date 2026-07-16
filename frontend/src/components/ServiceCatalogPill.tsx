@@ -136,8 +136,8 @@ function Link({ href, title, children }: {
   return (
     <a href={href} target="_blank" rel="noopener" title={title} style={{
       padding: '4px 12px', borderRadius: 14,
-      background: 'rgba(56,139,253,0.10)',
-      border: '1px solid rgba(56,139,253,0.35)',
+      background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+      border: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
       color: 'var(--accent2)', textDecoration: 'none',
       whiteSpace: 'nowrap',
       fontWeight: 500,

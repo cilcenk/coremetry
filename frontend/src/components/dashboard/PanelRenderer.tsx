@@ -635,7 +635,7 @@ function Sparkline({ points, tone = 'neutral' }: {
   const stroke = tone === 'good' ? 'var(--ok)' : tone === 'bad' ? 'var(--err)' : 'var(--accent)';
   const fill   = tone === 'good' ? 'rgba(63,185,80,0.15)'
               : tone === 'bad'  ? 'rgba(248,81,73,0.15)'
-              : 'rgba(56,139,253,0.12)';
+              : 'color-mix(in srgb, var(--accent) 12%, transparent)';
   return (
     <svg width={w} height={h} style={{ display: 'block' }}>
       <path d={areaPath} fill={fill} stroke="none" />

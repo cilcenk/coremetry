@@ -34,7 +34,7 @@
   --indigo: #a371f7;
   --orange: #f0883e;
   --teal:   #39c5cf;
-  --accent-soft:   rgba(56, 139, 253, .16);
+  --accent-soft:   color-mix(in srgb, var(--accent) 16%, transparent);
   --border-strong: #484f58;
   --shadow-pop:    0 8px 24px rgba(0, 0, 0, .45);
   --shadow-sm:     0 1px 2px rgba(0, 0, 0, .25);
@@ -584,7 +584,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   background: transparent; position: relative; z-index: 5;
   transition: background .12s;
 }
-.wf-resizer:hover { background: rgba(56,139,253,.35); }
+.wf-resizer:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 .wf-resizer:active { background: var(--accent); }
 .wf-resizer-row {
   width: 6px; flex-shrink: 0; pointer-events: none;
@@ -996,7 +996,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
    actionable. */
 .kv-actions { opacity: 0; transition: opacity 80ms ease-out; }
 .kv-filterable:hover .kv-actions { opacity: 1; }
-.kv-filterable:hover td { background: rgba(56,139,253,0.05); }
+.kv-filterable:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 
 /* Metrics */
 #metric-chart-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 14px; }
@@ -1213,7 +1213,7 @@ button.accent.copied {
   border: 1px solid var(--accent);
   border-radius: 6px;
   padding: 0 4px 0 8px;
-  box-shadow: 0 0 0 1px rgba(56,139,253,0.18);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .trace-lookup .tl-icon {
   color: var(--accent2); font-size: 12px; margin-right: 4px;

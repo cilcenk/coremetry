@@ -73,8 +73,8 @@ export function ThresholdField({ value, service, metric, comparator, onChange, o
       {data && (
         <div style={{
           fontSize: 11, padding: '6px 8px', borderRadius: 6,
-          background: 'rgba(56,139,253,.08)',
-          border: '1px solid rgba(56,139,253,.25)',
+          background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
           color: 'var(--text2)',
           display: 'flex', flexDirection: 'column', gap: 4,
         }}>

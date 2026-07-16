@@ -482,7 +482,7 @@ export function CommandPalette() {
             }}>
               <span style={{
                 fontSize: 10, padding: '2px 6px', borderRadius: 3,
-                background: 'rgba(56,139,253,.18)', color: 'rgb(56,139,253)',
+                background: 'color-mix(in srgb, var(--accent) 18%, transparent)', color: 'rgb(56,139,253)',
                 fontFamily: 'ui-monospace, monospace', fontWeight: 600,
               }}>action</span>
               <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>
@@ -659,7 +659,7 @@ export function CommandPalette() {
               }}>
               <span style={{
                 fontSize: 10, padding: '2px 6px', borderRadius: 3,
-                background: r.kind === 'action' ? 'rgba(56,139,253,.18)' : 'var(--bg3)',
+                background: r.kind === 'action' ? 'color-mix(in srgb, var(--accent) 18%, transparent)' : 'var(--bg3)',
                 color: r.kind === 'action' ? 'rgb(56,139,253)' : 'var(--text2)',
                 fontFamily: 'ui-monospace, monospace',
                 minWidth: 56, textAlign: 'center',

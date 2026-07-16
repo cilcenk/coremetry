@@ -62,9 +62,9 @@ function InfoChip({ k, v, highlight }: { k: string; v: string; highlight?: boole
   return (
     <span style={{
       fontSize: 11, fontFamily: 'monospace', padding: '1px 6px', borderRadius: 4,
-      background: highlight ? 'rgba(56,139,253,.14)' : 'var(--bg3)',
+      background: highlight ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'var(--bg3)',
       color: highlight ? 'var(--accent)' : 'var(--text2)',
-      border: highlight ? '1px solid rgba(56,139,253,.30)' : '1px solid var(--border)',
+      border: highlight ? '1px solid color-mix(in srgb, var(--accent) 30%, transparent)' : '1px solid var(--border)',
       whiteSpace: 'nowrap',
     }}>
       <span style={{ opacity: .65, marginRight: 4 }}>{k}:</span>{v}

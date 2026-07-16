@@ -622,8 +622,8 @@ function TeamEditor({ user, suggestions, onChanged }: {
           fontSize: 11, fontWeight: 600,
           fontFamily: 'ui-monospace, SFMono-Regular, monospace',
           color: 'var(--accent2)',
-          background: 'rgba(56,139,253,0.10)',
-          border: '1px solid rgba(56,139,253,0.30)',
+          background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
           borderRadius: 3, padding: '1px 8px',
         }}
         title="Click to edit team">

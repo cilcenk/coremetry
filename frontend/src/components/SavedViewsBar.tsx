@@ -172,12 +172,12 @@ export function SavedViewsBar({ page }: { page: string }) {
             ? 'rgba(46,160,67,.16)'  // green-ish when this view is the live one
             : isModified
               ? 'rgba(187,128,9,.14)'  // amber when drifted
-              : v.ownerId === '' ? 'rgba(56,139,253,.10)' : 'var(--bg3)',
+              : v.ownerId === '' ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'var(--bg3)',
           border: isActive
             ? '1px solid rgba(46,160,67,.55)'
             : isModified
               ? '1px solid rgba(187,128,9,.55)'
-              : v.ownerId === '' ? '1px solid rgba(56,139,253,.35)' : '1px solid var(--border)',
+              : v.ownerId === '' ? '1px solid color-mix(in srgb, var(--accent) 35%, transparent)' : '1px solid var(--border)',
         }}>
           <button type="button" onClick={() => apply(v)}
             style={{

@@ -229,7 +229,7 @@ function likelyCause(
 ): { text: ReactNode; accent: string; bg: string; border: string } {
   const deploy = { accent: 'var(--warn)', bg: 'rgba(250,204,21,0.10)', border: 'rgba(250,204,21,0.40)' };
   const dim = { accent: 'var(--err)', bg: 'rgba(220,38,38,0.08)', border: 'rgba(220,38,38,0.35)' };
-  const corr = { accent: 'var(--accent2)', bg: 'rgba(56,139,253,0.08)', border: 'rgba(56,139,253,0.35)' };
+  const corr = { accent: 'var(--accent2)', bg: 'color-mix(in srgb, var(--accent) 8%, transparent)', border: 'color-mix(in srgb, var(--accent) 35%, transparent)' };
   const local = { accent: 'var(--text3)', bg: 'var(--bg2)', border: 'var(--border)' };
 
   if (rc.recentDeploy) {

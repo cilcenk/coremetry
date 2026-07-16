@@ -611,8 +611,8 @@ function DeployImpactButton({ service, deploys }: {
       {resp && (
         <div style={{
           padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
-          background: 'rgba(56,139,253,.08)',
-          border: '1px solid rgba(56,139,253,.25)',
+          background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
           color: 'var(--text)', whiteSpace: 'pre-wrap', maxWidth: 720,
         }}>
           <div style={{ fontSize: 10, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',

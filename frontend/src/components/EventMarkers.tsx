@@ -38,7 +38,7 @@ interface EventMarkersProps {
 
 const KIND_COLOUR: Record<string, string> = {
   deploy:      'rgba(46,160,67,0.65)',
-  config:      'rgba(56,139,253,0.65)',
+  config:      'color-mix(in srgb, var(--accent) 65%, transparent)',
   incident:    'rgba(220,38,38,0.70)',
   maintenance: 'rgba(217,119,6,0.65)',
 };

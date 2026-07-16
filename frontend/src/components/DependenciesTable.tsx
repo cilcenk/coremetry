@@ -339,7 +339,7 @@ export function DependenciesTable({
                               style={{
                                 marginLeft: 6, fontSize: 9, padding: '1px 6px',
                                 borderRadius: 3, fontWeight: 600,
-                                background: 'rgba(56,139,253,0.15)',
+                                background: 'color-mix(in srgb, var(--accent) 15%, transparent)',
                                 color: 'var(--accent2)',
                                 fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                                 textTransform: 'uppercase', letterSpacing: '.5px',

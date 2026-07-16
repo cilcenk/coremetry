@@ -69,8 +69,8 @@ function KvRow({ k, v, onAdd, onExclude }: {
                     padding: '0 5px', borderRadius: 3,
                     fontSize: 11, lineHeight: '14px',
                     color: 'var(--accent2)',
-                    background: 'rgba(56,139,253,0.10)',
-                    border: '1px solid rgba(56,139,253,0.30)',
+                    background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
                   }}>⊕</button>
               )}
               {onExclude && (

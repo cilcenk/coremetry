@@ -502,7 +502,7 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
 function RoleBadge({ role }: { role: string }) {
   const r = role.toLowerCase();
   const tone =
-    r === 'producer' ? { bg: 'rgba(56,139,253,0.15)', fg: 'var(--accent2)' } :
+    r === 'producer' ? { bg: 'color-mix(in srgb, var(--accent) 15%, transparent)', fg: 'var(--accent2)' } :
     r === 'consumer' ? { bg: 'rgba(63,185,80,0.15)',  fg: 'var(--ok)' } :
     r === 'client'   ? { bg: 'var(--bg3)',            fg: 'var(--text2)' } :
                        { bg: 'var(--bg3)',            fg: 'var(--text3)' };

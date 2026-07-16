@@ -28,9 +28,9 @@ export function ClusterChips({ clusters }: { clusters?: string[] }) {
           style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 3, fontWeight: 600,
             fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-            background: 'rgba(56,139,253,0.15)',
+            background: 'color-mix(in srgb, var(--accent) 15%, transparent)',
             color: 'var(--accent2)',
-            border: '1px solid rgba(56,139,253,0.30)',
+            border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
             textDecoration: 'none',
             textTransform: 'uppercase', letterSpacing: '.3px',
           }}>{c}</a>

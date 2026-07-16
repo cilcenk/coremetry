@@ -34,18 +34,27 @@ func TestSynthesizeDeployDominates(t *testing.T) {
 			{Service: "oracle", Score: 1.0, Hops: 1, Path: []string{"payments", "oracle"}},
 		},
 		CoFiringServices: []string{"payments"},
+		// v0.8.571 — a max-strength signal (log_pattern, saturated ratio →
+		// the tier ceiling 0.60) keeps "all evidence types present" TRUE
+		// under maxEvidenceTypes=4, and pins that even the STRONGEST signal
+		// stays under a fresh deploy AND a share-1.0 1-hop neighbour.
+		Signals: []SignalEvidence{{Kind: "log_pattern", Pattern: "conn refused", Ratio: 99}},
 	}
 	h := Synthesize("anomaly", "abc123", "payments", 1000, in)
 
 	if h.TopSuspect != "payments" {
 		t.Fatalf("deploy should dominate: TopSuspect=%q, want payments", h.TopSuspect)
 	}
-	if len(h.Candidates) != 3 {
-		t.Fatalf("want 3 candidates (deploy+prop+cofiring), got %d", len(h.Candidates))
+	if len(h.Candidates) != 4 {
+		t.Fatalf("want 4 candidates (deploy+prop+signal+cofiring), got %d", len(h.Candidates))
 	}
-	// Order: deploy (≈0.94) > oracle prop (0.70*1.0=0.70) > payments cofiring (0.20).
-	if got := []string{h.Candidates[0].Service, h.Candidates[1].Service, h.Candidates[2].Service}; !reflect.DeepEqual(got, []string{"payments", "oracle", "payments"}) {
+	// Order: deploy (≈0.94) > oracle prop (0.70) > payments signal (0.60 ceiling)
+	// > payments cofiring (0.20).
+	if got := []string{h.Candidates[0].Service, h.Candidates[1].Service, h.Candidates[2].Service, h.Candidates[3].Service}; !reflect.DeepEqual(got, []string{"payments", "oracle", "payments", "payments"}) {
 		t.Fatalf("rank order wrong: %v", got)
+	}
+	if h.Candidates[2].Score >= propTierBase {
+		t.Fatalf("signal ceiling must stay under a share-1.0 propagation: %v", h.Candidates[2].Score)
 	}
 	wantTop := deployBaseScore + deployFreshnessBonusMax*0.93
 	if !hApprox(h.TopScore, wantTop) {

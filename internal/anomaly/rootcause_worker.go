@@ -3,6 +3,7 @@ package anomaly
 import (
 	"context"
 	"log"
+	"math"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/cache"
@@ -178,6 +179,17 @@ func synthInputForProblem(p chstore.Problem, b EvidenceBundle) correlator.Synthe
 	for _, cp := range b.CoFiring {
 		in.CoFiringServices = append(in.CoFiringServices, cp.Service)
 	}
+	// v0.8.571 — the bundle collected these since day one; the synthesis
+	// never saw them. buildEvidenceBundle already filtered to same-service
+	// + active, so this is a straight mapping. Ratio = the stronger of the
+	// current and peak readings (a spike that just cooled still evidences).
+	for _, sig := range b.Signals {
+		in.Signals = append(in.Signals, correlator.SignalEvidence{
+			Kind:    sig.Kind,
+			Pattern: sig.Pattern,
+			Ratio:   math.Max(sig.CurrentRatio, sig.PeakRatio),
+		})
+	}
 	return in
 }
 
@@ -222,6 +234,20 @@ func synthInputForAnomaly(ev chstore.AnomalyEvent, in evidenceInputs) correlator
 		if op.Service == ev.Service {
 			out.CoFiringServices = append(out.CoFiringServices, op.Service)
 		}
+	}
+	// Signals (v0.8.571) — other active anomalies on the same service.
+	// ID != ev.ID excludes the anchor itself (the mirror of the problem
+	// path's op.ID exclusion in buildEvidenceBundle): an anomaly must not
+	// corroborate its own hypothesis.
+	for _, sig := range in.events {
+		if sig.Service != ev.Service || sig.Status != "active" || sig.ID == ev.ID {
+			continue
+		}
+		out.Signals = append(out.Signals, correlator.SignalEvidence{
+			Kind:    sig.Kind,
+			Pattern: sig.Pattern,
+			Ratio:   math.Max(sig.CurrentRatio, sig.PeakRatio),
+		})
 	}
 	return out
 }

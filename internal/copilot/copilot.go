@@ -957,6 +957,7 @@ KÖK-NEDEN HİPOTEZİ (deterministik korelasyon motoru — BİRİNCİL kanıt):
 - Baş şüpheli: payment-db (skor 0.78, güven 0.71) — fresh deploy 4m before onset
 - Yayılım yolu: checkout → payment → payment-db (2 hop)
 - Deploy korelasyonu: v2.3.1, problem açılmadan 4dk önce
+- Servis sinyali: anomalous log pattern "connection reset by peer" on the service — 6.2x over baseline
 
 Correlated evidence (confidence 3/5 — likely ONE incident):
 - DEPLOY (prime 'what changed' suspect): payment-db v2.3.1 deployed 4m before onset
@@ -967,6 +968,7 @@ Olası neden: checkout'taki error_rate artışının kaynağı büyük olasılı
 Kanıt:
 - Deterministik hipotez payment-db'yi 0.78 skorla baş şüpheli olarak işaretliyor
 - payment-db v2.3.1 deploy'u onset'ten 4dk önce
+- Serviste eşzamanlı "connection reset by peer" log anomalisi (baseline'ın 6.2 katı) — deploy hipotezini doğruluyor
 - error_rate 0.14 — threshold 0.05'in yaklaşık 3 katı
 İlk kontroller:
 1. payment-db v2.3.1 deploy'unu incele; regresyon doğrulanırsa geri al

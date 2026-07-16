@@ -57,6 +57,34 @@ const (
 	// cofiringScore — flat weight for a co-firing same-service problem.
 	// Corroborates, rarely causes — lowest tier.
 	cofiringScore = 0.20
+
+	// Signal tier (v0.8.571) — active log_pattern / trace_op anomalies on
+	// the anchor's OWN service. Stronger than co-firing (a specific error
+	// signature, not just "something else is open"), weaker than a deploy
+	// (a SYMPTOM, not a change). Band [0.30, 0.60] deliberately OVERLAPS
+	// propagation: a same-service signature with a high ratio outranks a
+	// weak 3-hop guess, but the 0.60 ceiling keeps every strong 1-hop
+	// downstream (and every deploy) above it. NOTE the tiers were never
+	// fully disjoint anyway — raw propagation < 0.286 already lands under
+	// co-firing; the only hard floor is the deploy base.
+	signalTierBase = 0.30
+	// signalRatioSpan — how much of the band the over-baseline ratio can
+	// climb. ratio 2 (the detector's trigger floor) → +0; ratio ≥ 10 → full
+	// span. A "new template" event records ratio 0 and clamps to the base.
+	signalRatioSpan      = 0.25
+	signalRatioFloor     = 2.0
+	signalRatioSaturate  = 10.0
+	// signalLogPatternBonus — log_pattern over trace_op at equal ratio: the
+	// pattern carries the error TEXT (the most diagnostic artefact for the
+	// LLM and the operator); a trace_op only says "this operation is off",
+	// which the anchor problem usually already implies. A high-ratio
+	// trace_op still outranks a low-ratio log_pattern — the bands overlap
+	// on purpose.
+	signalLogPatternBonus = 0.05
+	// signalMaxCandidates — the prompt already cuts at 3
+	// (maxHypothesisCandidates, rootcause_prompt.go); emitting more only
+	// buries the other tiers' candidates.
+	signalMaxCandidates = 3
 )
 
 // Confidence model weights — the blend of breadth (distinct evidence types) and
@@ -71,9 +99,11 @@ const (
 	// confidenceStrengthWeight — contribution from the top candidate's score
 	// (already in [0,1] after the tiering above).
 	confidenceStrengthWeight = 0.5
-	// maxEvidenceTypes — deploy, propagation neighbours, co-firing. Three
-	// independent corroboration channels feed the breadth fraction.
-	maxEvidenceTypes = 3
+	// maxEvidenceTypes — deploy, propagation neighbours, same-service
+	// signals, co-firing. Four independent corroboration channels feed the
+	// breadth fraction; distinctTypes still counts tier PRESENCE, never
+	// element counts.
+	maxEvidenceTypes = 4
 )
 
 // SynthesisInput is the evidence the fuser ranks. The worker fills this by
@@ -96,6 +126,35 @@ type SynthesisInput struct {
 	// label per co-firing problem so the candidate carries a name. Deduped +
 	// sorted by the fuser for determinism.
 	CoFiringServices []string
+	// Signals — active log_pattern / trace_op anomalies on the anchor's own
+	// service (v0.8.571). Collected into EvidenceBundle since v0.8.3xx but
+	// never threaded here — the hypothesis was blind to the one evidence
+	// type that carries an error SIGNATURE. Minimal shape on purpose: the
+	// pure fuser takes only what it scores.
+	Signals []SignalEvidence
+}
+
+// SignalEvidence is one active anomaly signal on the anchor service.
+type SignalEvidence struct {
+	Kind    string  // "log_pattern" | "trace_op"
+	Pattern string  // pattern name (logs) or operation name (trace ops)
+	Ratio   float64 // max(current, peak) over baseline; 0 for new-template events
+}
+
+// signalScore maps one signal into the [0.30, 0.60] band. Pure.
+func signalScore(sig SignalEvidence) float64 {
+	norm := (sig.Ratio - signalRatioFloor) / (signalRatioSaturate - signalRatioFloor)
+	if norm < 0 {
+		norm = 0
+	}
+	if norm > 1 {
+		norm = 1
+	}
+	score := signalTierBase + signalRatioSpan*norm
+	if sig.Kind == "log_pattern" {
+		score += signalLogPatternBonus
+	}
+	return score
 }
 
 // Synthesize fuses the evidence into ONE ranked, confidence-weighted
@@ -162,6 +221,50 @@ func Synthesize(
 				Path:    nb.Path,
 				Reason: fmt.Sprintf("downstream dependency — %.0f%% of error share, %d-hop",
 					nb.Score*100, nb.Hops),
+			})
+		}
+	}
+
+	// Tier 2.5 (v0.8.571) — active anomaly signals on the anchor's own
+	// service. Emit order is pre-sorted (score desc, Kind asc, Pattern asc):
+	// every signal candidate carries Service == anchor, so the global
+	// Score/Service tie-break cannot separate equal-score signals — without
+	// this pre-sort, map/input order would leak into the output and break
+	// the byte-identical determinism the permutation test pins. "log_pattern"
+	// sorts before "trace_op" naturally, matching the bonus's intent.
+	if len(in.Signals) > 0 {
+		distinctTypes++
+		sigs := append([]SignalEvidence(nil), in.Signals...)
+		sort.SliceStable(sigs, func(i, j int) bool {
+			si, sj := signalScore(sigs[i]), signalScore(sigs[j])
+			if si != sj {
+				return si > sj
+			}
+			if sigs[i].Kind != sigs[j].Kind {
+				return sigs[i].Kind < sigs[j].Kind
+			}
+			return sigs[i].Pattern < sigs[j].Pattern
+		})
+		if len(sigs) > signalMaxCandidates {
+			sigs = sigs[:signalMaxCandidates]
+		}
+		for _, sig := range sigs {
+			noun := "anomalous trace operation"
+			if sig.Kind == "log_pattern" {
+				noun = "anomalous log pattern"
+			}
+			reason := fmt.Sprintf("%s %q on the service", noun, sig.Pattern)
+			if sig.Ratio > 0 {
+				reason += fmt.Sprintf(" — %.1fx over baseline", sig.Ratio)
+			} else {
+				reason += " — new, no baseline yet"
+			}
+			cands = append(cands, chstore.ScoredCause{
+				Service: service,
+				Score:   signalScore(sig),
+				Hops:    0,
+				Path:    []string{service},
+				Reason:  reason,
 			})
 		}
 	}

@@ -612,6 +612,137 @@ func (s *Service) NamespaceMetrics(ctx context.Context, c ClusterConfig) ([]Name
 	return out, nil
 }
 
+// DeploymentRow — bir namespace içindeki iş yükü (Deployment/STS/DS)
+// rollup satırı (v0.9.22). PodNames pod tablosunun ?deployment=
+// süzgecini besler (istemci üyelikle süzer — ad-önek sezgiseli
+// değil, gerçek eşleme).
+type DeploymentRow struct {
+	Cluster    string   `json:"cluster"`
+	Namespace  string   `json:"namespace"`
+	Deployment string   `json:"deployment"`
+	Pods       int      `json:"pods"`
+	CPUCores   float64  `json:"cpuCores"`
+	MemBytes   float64  `json:"memBytes"`
+	PodNames   []string `json:"podNames"`
+}
+
+// unassignedWorkload — eşlenemeyen pod'ların toplandığı satır adı.
+const unassignedWorkload = "(unassigned)"
+
+// DeploymentMetrics — namespace'in pod başına cpu/mem'ini (zorunlu 2
+// sorgu) kube-state-metrics owner eşlemesiyle (best-effort 2 sorgu)
+// iş yüküne toplar. Fallback zinciri (deployment audit uyarlaması —
+// probe yerine runtime): tam join → rs-hash soyma → pod-adı sezgiseli
+// → "(unassigned)".
+func (s *Service) DeploymentMetrics(ctx context.Context, c ClusterConfig, namespace string) ([]DeploymentRow, error) {
+	// Zorunlu: pod başına cpu/mem (mevcut multi-pod sorguları).
+	params := func(q string) url.Values { return url.Values{"query": {q}} }
+	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query", params(nsPodsCPUTrendQuery(namespace)))
+	if err != nil {
+		return nil, err
+	}
+	memSeries, err := s.doQuery(ctx, c, "/api/v1/query", params(nsPodsMemTrendQuery(namespace)))
+	if err != nil {
+		return nil, err
+	}
+
+	// Best-effort eşleme aileleri.
+	podToRS := map[string]string{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsPodOwnerQuery(namespace))); err == nil {
+		for _, ser := range series {
+			if p, rs := ser.Metric["pod"], ser.Metric["owner_name"]; p != "" && rs != "" {
+				podToRS[p] = rs
+			}
+		}
+	}
+	rsToDeploy := map[string]string{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsReplicaSetOwnerQuery(namespace))); err == nil {
+		for _, ser := range series {
+			if rs, d := ser.Metric["replicaset"], ser.Metric["owner_name"]; rs != "" && d != "" {
+				rsToDeploy[rs] = d
+			}
+		}
+	}
+
+	workloadOf := func(pod string) string {
+		if rs, ok := podToRS[pod]; ok {
+			if d, ok2 := rsToDeploy[rs]; ok2 {
+				return d // tam join
+			}
+			// rs bilinen ama deploy ailesi yok: rs-hash'i soy.
+			if i := strings.LastIndex(rs, "-"); i > 0 && isReplicaSetHash(rs[i+1:]) {
+				return rs[:i]
+			}
+			return rs
+		}
+		if w := stripPodSuffixes(pod); w != pod || !strings.Contains(pod, "-") {
+			return w
+		}
+		return unassignedWorkload
+	}
+
+	type acc struct {
+		cpu, mem float64
+		pods     []string
+	}
+	byWorkload := map[string]*acc{}
+	touch := func(pod string) *acc {
+		w := workloadOf(pod)
+		a := byWorkload[w]
+		if a == nil {
+			a = &acc{}
+			byWorkload[w] = a
+		}
+		return a
+	}
+	seenPod := map[string]bool{}
+	for _, ser := range cpuSeries {
+		pod := ser.Metric["pod"]
+		if pod == "" {
+			continue
+		}
+		if v, ok := sampleValue(ser.Value); ok {
+			a := touch(pod)
+			a.cpu += v
+			if !seenPod[pod] {
+				a.pods = append(a.pods, pod)
+				seenPod[pod] = true
+			}
+		}
+	}
+	for _, ser := range memSeries {
+		pod := ser.Metric["pod"]
+		if pod == "" {
+			continue
+		}
+		if v, ok := sampleValue(ser.Value); ok {
+			a := touch(pod)
+			a.mem += v
+			if !seenPod[pod] {
+				a.pods = append(a.pods, pod)
+				seenPod[pod] = true
+			}
+		}
+	}
+
+	out := make([]DeploymentRow, 0, len(byWorkload))
+	for w, a := range byWorkload {
+		sort.Strings(a.pods)
+		out = append(out, DeploymentRow{
+			Cluster: c.Name, Namespace: namespace, Deployment: w,
+			Pods: len(a.pods), CPUCores: a.cpu, MemBytes: a.mem,
+			PodNames: a.pods,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CPUCores != out[j].CPUCores {
+			return out[i].CPUCores > out[j].CPUCores
+		}
+		return out[i].Deployment < out[j].Deployment
+	})
+	return out, nil
+}
+
 // NodeRow — bir node'un anlık CPU/memory kullanımı (v0.8.582,
 // audit: clusters-node-metrics-audit.md §3). Node = kube_node_info
 // eşleşirse gerçek node adı, yoksa instance (ip:port). Pct'ler

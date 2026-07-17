@@ -439,6 +439,105 @@ func TestNetworkTrendMerge(t *testing.T) {
 	}
 }
 
+// v0.9.22 — deployment rollup: tam join → rs-hash soyma → ad
+// sezgiseli → "(unassigned)" fallback zinciri.
+func ownerSample(pod, owner string) string {
+	return fmt.Sprintf(`{"metric":{"pod":"%s","owner_name":"%s"},"value":[1784271068,"1"]}`, pod, owner)
+}
+
+func rsSample(rs, deploy string) string {
+	return fmt.Sprintf(`{"metric":{"replicaset":"%s","owner_name":"%s"},"value":[1784271068,"1"]}`, rs, deploy)
+}
+
+func podVec(entries ...string) string {
+	return `{"status":"success","data":{"resultType":"vector","result":[` + strings.Join(entries, ",") + `]}}`
+}
+
+func podSample(pod, v string) string {
+	return fmt.Sprintf(`{"metric":{"pod":"%s"},"value":[1784271068,"%s"]}`, pod, v)
+}
+
+func TestDeploymentMetricsFullJoin(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		"rate(container_cpu_usage_seconds_total": podVec(
+			podSample("api-7d9f8c6b5-x2k4j", "0.5"),
+			podSample("api-7d9f8c6b5-m9q2w", "0.3"),
+			podSample("worker-5b6c7d8e9-abc12", "0.2")),
+		"container_memory_working_set_bytes": podVec(
+			podSample("api-7d9f8c6b5-x2k4j", "100")),
+		"kube_pod_owner": podVec(
+			ownerSample("api-7d9f8c6b5-x2k4j", "api-7d9f8c6b5"),
+			ownerSample("api-7d9f8c6b5-m9q2w", "api-7d9f8c6b5"),
+			ownerSample("worker-5b6c7d8e9-abc12", "worker-5b6c7d8e9")),
+		"kube_replicaset_owner": podVec(
+			rsSample("api-7d9f8c6b5", "api"),
+			rsSample("worker-5b6c7d8e9", "worker")),
+	})
+	defer srv.Close()
+	s := New()
+	rows, err := s.DeploymentMetrics(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}, "payments")
+	if err != nil {
+		t.Fatalf("DeploymentMetrics: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("want 2 workloads, got %+v", rows)
+	}
+	// CPU desc: api (0.8) önce.
+	if rows[0].Deployment != "api" || rows[0].Pods != 2 || rows[0].CPUCores != 0.8 || rows[0].MemBytes != 100 {
+		t.Fatalf("api rollup yanlış: %+v", rows[0])
+	}
+	if len(rows[0].PodNames) != 2 || rows[0].PodNames[0] != "api-7d9f8c6b5-m9q2w" {
+		t.Fatalf("podNames yanlış: %+v", rows[0].PodNames)
+	}
+	if rows[1].Deployment != "worker" {
+		t.Fatalf("worker beklenirdi: %+v", rows[1])
+	}
+}
+
+func TestDeploymentMetricsFallbackChain(t *testing.T) {
+	// Owner aileleri tümden yok: ad sezgiseli devreye girer.
+	srv := fakeQuerier(t, "", map[string]string{
+		"rate(container_cpu_usage_seconds_total": podVec(
+			podSample("api-7d9f8c6b5-x2k4j", "0.5"), // deploy şekli → api
+			podSample("db-0", "0.1"),                // sts şekli → db
+			podSample("garip_ad", "0.1")),           // sezgisel tutmaz → kendisi
+		"container_memory_working_set_bytes": podVec(),
+	})
+	defer srv.Close()
+	s := New()
+	rows, err := s.DeploymentMetrics(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}, "ns")
+	if err != nil {
+		t.Fatalf("DeploymentMetrics: %v", err)
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Deployment] = true
+	}
+	for _, want := range []string{"api", "db", "garip_ad"} {
+		if !got[want] {
+			t.Fatalf("beklenen iş yükü %q yok: %+v", want, rows)
+		}
+	}
+}
+
+func TestStripPodSuffixes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"api-7d9f8c6b5-x2k4j", "api"},        // deployment (rs-hash + rand5)
+		{"my-app-59d4f7b6c8-tk9wz", "my-app"}, // tireli ad
+		{"db-0", "db"},                        // statefulset
+		{"agent-x2k4j", "agent"},              // daemonset (rand5)
+		{"plain", "plain"},                    // tek segment
+		{"web-server", "web-server"},          // suffix değil
+	}
+	for _, c := range cases {
+		if got := stripPodSuffixes(c.in); got != c.want {
+			t.Fatalf("stripPodSuffixes(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 // v0.9.2 — namespace trend: PodTrend'in pod pinsiz aynası (ortak
 // rangeTrend gövdesi); sorgu şekli + bucket sözleşmesi.
 func TestNamespaceTrendQueriesAndBuckets(t *testing.T) {

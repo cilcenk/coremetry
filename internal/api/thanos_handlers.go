@@ -165,6 +165,42 @@ func (s *Server) getClusterNamespaces(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterDeployments — GET /api/clusters/deployments?cluster=X&
+// namespace=Y (v0.9.22). Namespace içi iş yükü rollup'u; iskelet
+// getClusterNamespaces'in aynısı, PromQL yerine Go-tarafı owner
+// join'i (fallback zincirli — probe gerektirmez).
+func (s *Server) getClusterDeployments(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("cluster"))
+	namespace := strings.TrimSpace(q.Get("namespace"))
+	if name == "" || namespace == "" {
+		http.Error(w, "cluster and namespace query params required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	key := fmt.Sprintf("cluster-deployments:%s:%s:%s", name, namespace, clusterCfgDigest(cfg))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		rows, err := s.thanos.DeploymentMetrics(qctx, cfg, namespace)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"cluster": name, "namespace": namespace,
+			"deployments": rows, "count": len(rows),
+		}, nil
+	})
+}
+
 // getClusterNamespaceDetail — GET /api/clusters/namespaces/detail?
 // cluster=&namespace=&from=&to=. Tek namespace'in dakika-bucket'lı
 // toplam trendi (v0.9.2) — pods/detail'in birebir aynası.

@@ -257,6 +257,87 @@ func summaryNetQuery(direction string) string {
 		escapeLabelValue(direction))
 }
 
+// ── deployment-rollup queries (v0.9.22, deployment audit §3) ────
+//
+// Pod→Deployment eşlemesi kube-state-metrics'in İKİ ailesinden
+// Go'da join'lenir (PromQL label_replace cambazlığı yerine —
+// NamespacePodsTrend'in Go-tarafı top-N emsali): kube_pod_owner
+// pod→ReplicaSet, kube_replicaset_owner ReplicaSet→Deployment.
+// İkisi de BEST-EFFORT: aileler yoksa ad-sezgiseli fallback
+// (stripPodSuffixes), o da tutmazsa satır "(unassigned)" altında
+// toplanır — katman hiç veri bulamazsa UI kademeyi göstermez.
+
+func nsPodOwnerQuery(namespace string) string {
+	return fmt.Sprintf(
+		`kube_pod_owner{owner_kind="ReplicaSet",pod!="",namespace="%s"}`,
+		escapeLabelValue(namespace))
+}
+
+func nsReplicaSetOwnerQuery(namespace string) string {
+	return fmt.Sprintf(
+		`kube_replicaset_owner{owner_kind="Deployment",namespace="%s"}`,
+		escapeLabelValue(namespace))
+}
+
+// stripPodSuffixes — eşleme aileleri yokken pod adından iş yükü adı
+// sezgiseli: Deployment pod'u <ad>-<rs-hash 8-10 hex>-<5 rasgele>,
+// StatefulSet <ad>-<N>, DaemonSet <ad>-<5 rasgele>. Son segment
+// rasgele/sayıysa soyulur; kalan son segment rs-hash'e benziyorsa o
+// da soyulur. Tutmayan ada dokunulmaz ("" değil — bilinçli).
+func stripPodSuffixes(pod string) string {
+	segs := strings.Split(pod, "-")
+	if len(segs) < 2 {
+		return pod
+	}
+	last := segs[len(segs)-1]
+	if isPodRandomSuffix(last) || isAllDigits(last) {
+		segs = segs[:len(segs)-1]
+		if len(segs) >= 2 && isReplicaSetHash(segs[len(segs)-1]) {
+			segs = segs[:len(segs)-1]
+		}
+		return strings.Join(segs, "-")
+	}
+	return pod
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isPodRandomSuffix — k8s'in 5 karakterlik rand suffix alfabesi
+// (rakam + bcdfghjklmnpqrstvwxz; sesli harf yok).
+func isPodRandomSuffix(s string) bool {
+	if len(s) != 5 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789bcdfghjklmnpqrstvwxz", c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isReplicaSetHash(s string) bool {
+	if len(s) < 8 || len(s) > 10 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
 // ── sample decoding ─────────────────────────────────────────────
 
 // sampleValue decodes an instant-vector sample pair [ts, "v"] and

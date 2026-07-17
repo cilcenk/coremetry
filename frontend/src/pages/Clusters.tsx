@@ -8,6 +8,7 @@ import { Gauge } from '@/pages/clusters/Gauge';
 import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
 import { safePct } from '@/pages/clusters/thresholds';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
+import { MiniBar } from '@/pages/clusters/MiniBar';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -418,55 +419,104 @@ export default function ClustersPage() {
           </Empty>
         )}
 
-        {/* ── Genel görünüm: cluster kartları ─────────────────── */}
-        {!isDetail && sources.length > 0 && (
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: 12,
-          }}>
-            {sources.map((name, i) => {
-              const q = summaryQs[i];
-              const sum: ClusterSummary | undefined = q?.data;
-              const unreachable = q?.isError ?? false;
-              const seen = observed.size === 0 || observed.has(name);
-              return (
-                <Card key={name}
-                  onClick={() => openCluster(name)}
-                  style={{ cursor: 'pointer' }}
-                  header={
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontFamily: 'ui-monospace, monospace' }}>{name}</span>
-                      {unreachable
-                        ? <span className="badge b-err">unreachable</span>
-                        : !seen
-                          ? <span className="badge b-warn" title="Name not seen in the last 24h of telemetry — the service pivot will not match">not in telemetry</span>
-                          : <span className="badge b-ok">reachable</span>}
-                    </span>
-                  }>
-                  {q?.isPending && <Spinner />}
-                  {unreachable && (
-                    <div style={{ fontSize: 12, color: 'var(--text3)' }}
-                      title={q?.error instanceof Error ? q.error.message : undefined}>
-                      Thanos Querier unreachable — check the token/route in Settings.
-                    </div>
-                  )}
-                  {sum && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 12 }}>
-                      <div><span style={{ color: 'var(--text3)' }}>Nodes</span>{' '}
-                        <strong className="mono">{sum.nodes ? fmtNum(sum.nodes) : '—'}</strong></div>
-                      <div><span style={{ color: 'var(--text3)' }}>Pods</span>{' '}
-                        <strong className="mono">{sum.pods ? fmtNum(sum.pods) : '—'}</strong></div>
-                      <div><span style={{ color: 'var(--text3)' }}>CPU</span>{' '}
-                        <strong className="mono">{sum.cpuUsedCores ? fmtCores(sum.cpuUsedCores) : '—'}</strong></div>
-                      <div><span style={{ color: 'var(--text3)' }}>Memory</span>{' '}
-                        <strong className="mono">{sum.memUsedBytes ? fmtBytes(sum.memUsedBytes) : '—'}</strong></div>
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
-        )}
+        {/* ── Genel görünüm: alert banner + cluster kartları ──── */}
+        {!isDetail && sources.length > 0 && (() => {
+          // v0.9.33 (F5) — fleet toplam firing-alert (banner).
+          const fleetAlerts = summaryQs.reduce((n, q) =>
+            n + (q?.data ? (q.data.alertsCritical ?? 0) + (q.data.alertsWarning ?? 0) : 0), 0);
+          return (
+            <>
+              {fleetAlerts > 0 && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14,
+                  padding: '12px 16px', borderRadius: 6,
+                  border: '1px solid color-mix(in srgb, var(--err) 40%, transparent)',
+                  background: 'color-mix(in srgb, var(--err) 7%, transparent)',
+                }}>
+                  <span className="pulse-dot" style={{ width: 9, height: 9, background: 'var(--err)', flexShrink: 0 }} />
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>
+                    {fmtNum(fleetAlerts)} alert{fleetAlerts === 1 ? '' : 's'} firing across the fleet
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--text3)' }}>— open a cluster to triage</span>
+                </div>
+              )}
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14,
+              }}>
+                {sources.map((name, i) => {
+                  const q = summaryQs[i];
+                  const sum: ClusterSummary | undefined = q?.data;
+                  const unreachable = q?.isError ?? false;
+                  const seen = observed.size === 0 || observed.has(name);
+                  const alerts = sum ? (sum.alertsCritical ?? 0) + (sum.alertsWarning ?? 0) : 0;
+                  const cpuP = sum ? safePct(sum.cpuUsedCores, sum.cpuCapacityCores) : null;
+                  const memP = sum ? safePct(sum.memUsedBytes, sum.memCapacityBytes) : null;
+                  // Status: unreachable > degraded (crit alert) > healthy.
+                  const statusBadge = unreachable
+                    ? <span className="badge b-err">unreachable</span>
+                    : (sum?.alertsCritical ?? 0) > 0
+                      ? <span className="badge b-warn">degraded</span>
+                      : <span className="badge b-ok">healthy</span>;
+                  return (
+                    <Card key={name}
+                      onClick={() => openCluster(name)}
+                      style={{ cursor: 'pointer' }}
+                      header={
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
+                          <span style={{ fontFamily: 'ui-monospace, monospace' }}>{name}</span>
+                          <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            {!unreachable && !seen && (
+                              <span className="badge b-gray" title="Name not seen in the last 24h of telemetry — the service pivot will not match">not in telemetry</span>
+                            )}
+                            {statusBadge}
+                          </span>
+                        </span>
+                      }>
+                      {q?.isPending && <Spinner />}
+                      {unreachable && (
+                        <div style={{ fontSize: 12, color: 'var(--text3)' }}
+                          title={q?.error instanceof Error ? q.error.message : undefined}>
+                          Thanos Querier unreachable — check the token/route in Settings.
+                        </div>
+                      )}
+                      {sum && (
+                        <div style={{ display: 'grid', gap: 10 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                            {([['Nodes', sum.nodes], ['Pods', sum.pods], ['Alerts', alerts]] as const).map(([label, v]) => (
+                              <div key={label}>
+                                <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text3)' }}>{label}</div>
+                                <div className="mono" style={{ fontSize: 15, fontWeight: 700,
+                                  color: label === 'Alerts' && (v ?? 0) > 0 ? 'var(--err)' : undefined }}>
+                                  {v != null ? fmtNum(v) : '—'}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {(cpuP != null || memP != null) && (
+                            <div style={{ display: 'grid', gap: 6 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                                <span style={{ width: 34, color: 'var(--text3)' }}>CPU</span>
+                                <MiniBar pct={cpuP} />
+                                <span className="mono" style={{ width: 34, textAlign: 'right', color: 'var(--text3)' }}>
+                                  {cpuP != null ? `${Math.round(cpuP)}%` : '—'}</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                                <span style={{ width: 34, color: 'var(--text3)' }}>Mem</span>
+                                <MiniBar pct={memP} />
+                                <span className="mono" style={{ width: 34, textAlign: 'right', color: 'var(--text3)' }}>
+                                  {memP != null ? `${Math.round(memP)}%` : '—'}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            </>
+          );
+        })()}
 
         {/* ── Detay: geri → Nodes → Pods ───────────────────────── */}
         {isDetail && (

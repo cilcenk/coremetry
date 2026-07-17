@@ -188,10 +188,13 @@ func (s *Server) buildDeploymentReport(ctx context.Context, sinceNs int64, owner
 	// 3. New errors: exception groups not yet closed out (new /
 	// acknowledged / regressed — the same "open" convenience bucket
 	// the inbox uses), first seen at/after the deploy, on a
-	// qualifying service. ExceptionGroupFilter has no FirstSeen
-	// param, so we narrow in Go same as anomalies above.
+	// qualifying service. Services constrains to the qualifying set
+	// server-side (service IN (…) BEFORE the LIMIT) so a fleet with
+	// >500 open groups can't starve the qualifying services out of
+	// the page. ExceptionGroupFilter has no FirstSeen param, so we
+	// still narrow on first-seen in Go same as anomalies above.
 	allErrors, err := s.store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
-		State: "open", Limit: 500,
+		State: "open", Services: svcOrder, Limit: 500,
 	})
 	if err != nil {
 		return nil, err

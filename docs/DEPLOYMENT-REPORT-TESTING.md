@@ -81,6 +81,19 @@ and wait for the evaluator to open a real Problem from live traffic.
 The SQL insert above is faster for repeatable testing of the report
 itself.
 
+**Want more variety in one shot?**
+`scripts/seed-deployment-report-problems.sh` seeds 14 problems across
+12 services, mixed severities/metrics/priorities, plus one pre-deploy
+problem and one resolved-post-deploy problem (both of which should be
+EXCLUDED from the report) — good for eyeballing a report with real
+shape instead of a single row:
+
+```bash
+scripts/seed-deployment-report-problems.sh
+# ... prints the exact "since" timestamp to paste into the UI ...
+scripts/seed-deployment-report-problems.sh --clean   # tear down afterwards
+```
+
 ## 4. Confirm the endpoint picks it up
 
 ```bash

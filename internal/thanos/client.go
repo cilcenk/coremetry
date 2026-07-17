@@ -931,6 +931,53 @@ type NetTrendPoint struct {
 	OutBps float64 `json:"outBps"`
 }
 
+// NamedSeries — adlandırılmış çok-serili trend (v0.9.35): total
+// modda tek seri (Name=""), byNode modda instance başına.
+type NamedSeries struct {
+	Name   string       `json:"name"`
+	Points []ValuePoint `json:"points"`
+}
+
+type ValuePoint struct {
+	Bucket int64   `json:"bucket"`
+	Value  float64 `json:"value"`
+}
+
+// ResourceTrend — Overview CPU/Mem area chart verisi. metric
+// "cpu"|"mem"; byNode false→tek toplam seri, true→top-N instance.
+// Bucket adaptif step'e bağlı (stepForWindow); byNode'da instance
+// adı instanceHost ile güzelleştirilir.
+func (s *Service) ResourceTrend(ctx context.Context, c ClusterConfig, metric string, byNode bool, from, to time.Time) ([]NamedSeries, error) {
+	step := stepForWindow(from, to)
+	params := url.Values{
+		"query": {resourceTrendQuery(metric, byNode)},
+		"start": {fmt.Sprintf("%d", from.Unix())},
+		"end":   {fmt.Sprintf("%d", to.Unix())},
+		"step":  {fmt.Sprintf("%d", step)},
+	}
+	series, err := s.doQuery(ctx, c, "/api/v1/query_range", params)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NamedSeries, 0, len(series))
+	for _, ser := range series {
+		name := ""
+		if byNode {
+			name = instanceHost(ser.Metric["instance"])
+		}
+		pts := make([]ValuePoint, 0, len(ser.Values))
+		for _, pair := range ser.Values {
+			if v, ts, ok := samplePair(pair); ok {
+				pts = append(pts, ValuePoint{Bucket: ts - ts%int64(step), Value: v})
+			}
+		}
+		if len(pts) > 0 {
+			out = append(out, NamedSeries{Name: name, Points: pts})
+		}
+	}
+	return out, nil
+}
+
 // NetworkTrend — cluster toplam ağ hızının dakika-bucket trendi
 // (Overview throughput grafiği). rangeTrend'in net karşılığı; iki
 // sorgu da zorunlu (grafiğin kendisi bu — best-effort'luk üst

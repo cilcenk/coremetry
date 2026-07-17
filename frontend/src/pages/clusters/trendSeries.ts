@@ -1,4 +1,4 @@
-import type { SpanMetricSeries, ClusterPodTrendPoint, ClusterPodSeriesTrend, ClusterNetTrendPoint } from '@/lib/types';
+import type { SpanMetricSeries, ClusterPodTrendPoint, ClusterPodSeriesTrend, ClusterNetTrendPoint, ClusterNamedSeries } from '@/lib/types';
 import type { Threshold } from '@/components/MultiLineChart';
 
 // trendSeries — Thanos trend verisini MultiLineChart'ın beklediği
@@ -57,4 +57,16 @@ export function netTrendToSeries(trend: ClusterNetTrendPoint[]): SpanMetricSerie
     { groupKey: ['Net in (B/s)'], points: trend.map(t => ({ time: t.bucket * 1e9, value: t.inBps })) },
     { groupKey: ['Net out (B/s)'], points: trend.map(t => ({ time: t.bucket * 1e9, value: t.outBps })) },
   ];
+}
+
+// namedSeriesToSeries — ResourceTrend NamedSeries[] → MultiLineChart
+// (v0.9.35). Boş ad → verilen fallback etiketi (total modda "CPU"
+// gibi). Aynı saniye→ns sözleşmesi.
+export function namedSeriesToSeries(series: ClusterNamedSeries[], fallbackLabel: string): SpanMetricSeries[] {
+  return series
+    .filter(s => s.points.length > 0)
+    .map(s => ({
+      groupKey: [s.name || fallbackLabel],
+      points: s.points.map(p => ({ time: p.bucket * 1e9, value: p.value })),
+    }));
 }

@@ -1059,6 +1059,17 @@ export interface ClusterDeploymentsResponse {
   deployments: ClusterDeploymentRow[] | null;
   count: number;
 }
+// v0.9.35 — cluster/per-node kaynak trendi (Overview CPU/Mem area).
+export interface ClusterNamedSeries {
+  name: string;
+  points: { bucket: number; value: number }[];
+}
+export interface ClusterResourceTrendResponse {
+  cluster: string;
+  metric: string;
+  byNode: boolean;
+  series: ClusterNamedSeries[] | null;
+}
 // v0.9.10 — cluster toplam ağ hızı trendi (Overview throughput).
 export interface ClusterNetTrendPoint {
   bucket: number;

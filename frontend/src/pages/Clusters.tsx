@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { ChartSpline } from 'lucide-react';
 import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
-import { netTrendToSeries } from '@/pages/clusters/trendSeries';
+import { netTrendToSeries, namedSeriesToSeries } from '@/pages/clusters/trendSeries';
 import { Gauge } from '@/pages/clusters/Gauge';
 import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
 import { safePct } from '@/pages/clusters/thresholds';
@@ -242,6 +242,21 @@ export default function ClustersPage() {
     staleTime: 60_000,
     retry: 1,
     enabled: isDetail && section === 'overview',
+  });
+  // v0.9.35 (B2/F4) — CPU/Mem area chart'ları, per-kart Total/By-node
+  // toggle (local UI state; fetch toggle'a göre). Pencere sayfa
+  // range'i (server 6h clamp).
+  const [cpuByNode, setCpuByNode] = useState(false);
+  const [memByNode, setMemByNode] = useState(false);
+  const cpuTrendQ = useQuery({
+    queryKey: ['cluster-res-trend', clusterParam, 'cpu', cpuByNode, rangeFrom, rangeTo],
+    queryFn: () => api.clusterResourceTrend(clusterParam, 'cpu', cpuByNode, rangeFrom, rangeTo),
+    staleTime: 60_000, retry: 1, enabled: isDetail && section === 'overview',
+  });
+  const memTrendQ = useQuery({
+    queryKey: ['cluster-res-trend', clusterParam, 'mem', memByNode, rangeFrom, rangeTo],
+    queryFn: () => api.clusterResourceTrend(clusterParam, 'mem', memByNode, rangeFrom, rangeTo),
+    staleTime: 60_000, retry: 1, enabled: isDetail && section === 'overview',
   });
 
   // Detay: yalnız seçili cluster'ın AKTİF sekme sorguları.
@@ -889,6 +904,22 @@ export default function ClustersPage() {
                     </div>
                   );
                 })()}
+                {/* v0.9.35 (B2/F4) — CPU + Mem area, Total/By-node
+                    toggle; seri yoksa kart gizli. */}
+                {section === 'overview' && ((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+                    {(cpuTrendQ.data?.series?.length ?? 0) > 0 && (
+                      <Card header={<ResToggleHeader title="CPU usage (cores)" byNode={cpuByNode} onToggle={setCpuByNode} />}>
+                        <MultiLineChart series={namedSeriesToSeries(cpuTrendQ.data!.series!, 'CPU')} height={180} />
+                      </Card>
+                    )}
+                    {(memTrendQ.data?.series?.length ?? 0) > 0 && (
+                      <Card header={<ResToggleHeader title="Memory usage" byNode={memByNode} onToggle={setMemByNode} />}>
+                        <MultiLineChart series={namedSeriesToSeries(memTrendQ.data!.series!, 'Memory')} height={180} unit="bytes" />
+                      </Card>
+                    )}
+                  </div>
+                )}
                 {/* v0.9.10 — throughput grafiği: yalnız seri geldiyse
                     (node_network erişilemezse bölüm hiç görünmez). */}
                 {section === 'overview' && (netTrendQ.data?.trend?.length ?? 0) > 0 && (
@@ -1080,5 +1111,31 @@ function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
           row={row} fromNs={from} toNs={to} />
       </DrawerSection>
     </Drawer>
+  );
+}
+
+// ResToggleHeader — CPU/Mem area kartı başlığı + Total/By-node
+// segmented toggle (v0.9.35, design handoff). .tab-strip yerine
+// hafif inline segment (kart başlığına sığar).
+function ResToggleHeader({ title, byNode, onToggle }: {
+  title: string;
+  byNode: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <span>{title}</span>
+      <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+        {([['Total', false], ['By node', true]] as const).map(([label, v]) => (
+          <button key={label} type="button"
+            onClick={e => { e.stopPropagation(); onToggle(v); }}
+            style={{
+              all: 'unset', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
+              background: byNode === v ? 'var(--accent-soft)' : 'transparent',
+              color: byNode === v ? 'var(--accent2)' : 'var(--text3)',
+            }}>{label}</button>
+        ))}
+      </span>
+    </div>
   );
 }

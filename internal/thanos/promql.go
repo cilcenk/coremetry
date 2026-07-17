@@ -228,6 +228,25 @@ func nsPodCountQuery(nsFilter string) string {
 		podListLimit, nsMatcher(nsFilter))
 }
 
+// ── resource trend queries (v0.9.35, design handoff B2) ─────────
+// Overview CPU/Mem area chart'ları. Total = tek seri (cluster
+// toplamı); byNode = per-instance (top-N Go'da). node-exporter
+// ailesi (lo/idle hariç); metrik yoksa boş → UI grafiği gizler.
+
+func resourceTrendQuery(metric string, byNode bool) string {
+	var expr string
+	switch metric {
+	case "mem":
+		expr = `(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes)`
+	default: // cpu
+		expr = `rate(node_cpu_seconds_total{mode!="idle"}[5m])`
+	}
+	if byNode {
+		return fmt.Sprintf(`topk(%d, sum by (instance) (%s))`, maxTrendSeries, expr)
+	}
+	return "sum(" + expr + ")"
+}
+
 // ── multi-pod trend queries (v0.9.3, trend-upgrade audit §2.3) ──
 //
 // topk BİLEREK YOK: query_range'te topk her adım için ayrı

@@ -305,6 +305,33 @@ func TestSummaryAllFailSurfaces(t *testing.T) {
 	}
 }
 
+func TestSummaryEnrichment(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		`kube_node_status_capacity{resource="cpu"}`:    scalarVec("64"),
+		`kube_node_status_capacity{resource="memory"}`: scalarVec("137438953472"),
+		`phase="Running"`:     scalarVec("42"),
+		`phase="Pending"`:     scalarVec("3"),
+		`phase="Failed"`:      scalarVec("1"),
+		`severity="critical"`: scalarVec("2"),
+		`severity="warning"`:  scalarVec("5"),
+	})
+	defer srv.Close()
+	s := New()
+	sum, err := s.Summary(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if sum.CPUCapacityCores != 64 || sum.MemCapacityBytes != 137438953472 {
+		t.Fatalf("kapasite yanlış: %+v", sum)
+	}
+	if sum.PodsRunning != 42 || sum.PodsPending != 3 || sum.PodsFailed != 1 {
+		t.Fatalf("faz yanlış: %+v", sum)
+	}
+	if sum.AlertsCritical != 2 || sum.AlertsWarning != 5 {
+		t.Fatalf("alert yanlış: %+v", sum)
+	}
+}
+
 func TestSummaryFullCounts(t *testing.T) {
 	srv := fakeQuerier(t, "", map[string]string{
 		`mode="idle"`:                       scalarVec("6"),

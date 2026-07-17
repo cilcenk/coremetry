@@ -1027,6 +1027,15 @@ export interface ClusterSummary {
   memUsedBytes?: number;
   netInBps?: number;
   netOutBps?: number;
+  // v0.9.30 (design handoff B1) — kapasite (%), pod-fazı (donut),
+  // firing-alert sayısı. Best-effort: yoksa alan absent, UI gizler.
+  cpuCapacityCores?: number;
+  memCapacityBytes?: number;
+  podsRunning?: number;
+  podsPending?: number;
+  podsFailed?: number;
+  alertsCritical?: number;
+  alertsWarning?: number;
 }
 // v0.9.23 — namespace içi iş yükü rollup satırı (Deployment/STS/DS;
 // "(unassigned)" = eşlenemeyen pod'lar). podNames pod tablosunun

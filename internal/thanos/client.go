@@ -501,6 +501,16 @@ type ClusterSummary struct {
 	// Best-effort: seri yoksa 0 kalır, UI kartı hiç render etmez.
 	NetInBps  float64 `json:"netInBps,omitempty"`
 	NetOutBps float64 `json:"netOutBps,omitempty"`
+	// v0.9.30 (design handoff B1) — kapasite (%), pod-fazı (donut),
+	// firing-alert sayısı (banner/KPI). Hepsi best-effort; 0 =
+	// kube-state-metrics/ALERTS serisi yok, UI ilgili görseli gizler.
+	CPUCapacityCores float64 `json:"cpuCapacityCores,omitempty"`
+	MemCapacityBytes float64 `json:"memCapacityBytes,omitempty"`
+	PodsRunning      int     `json:"podsRunning,omitempty"`
+	PodsPending      int     `json:"podsPending,omitempty"`
+	PodsFailed       int     `json:"podsFailed,omitempty"`
+	AlertsCritical   int     `json:"alertsCritical,omitempty"`
+	AlertsWarning    int     `json:"alertsWarning,omitempty"`
 }
 
 // Summary — kart başına sabit 4 skaler sorgu (topk'li vektör yok;
@@ -539,6 +549,29 @@ func (s *Service) Summary(ctx context.Context, c ClusterConfig) (ClusterSummary,
 	}
 	if v, ok := scalar(summaryNetQuery("transmit")); ok {
 		out.NetOutBps = v
+	}
+	// v0.9.30 — kapasite + pod-fazı + alert (best-effort; skaler,
+	// serveCached 60s amortismanlı). Aynı okCount/lastErr sözleşmesi.
+	if v, ok := scalar(summaryCPUCapacityQuery); ok {
+		out.CPUCapacityCores = v
+	}
+	if v, ok := scalar(summaryMemCapacityQuery); ok {
+		out.MemCapacityBytes = v
+	}
+	if v, ok := scalar(summaryPodPhaseQuery("Running", c.NamespaceFilter)); ok {
+		out.PodsRunning = int(v)
+	}
+	if v, ok := scalar(summaryPodPhaseQuery("Pending", c.NamespaceFilter)); ok {
+		out.PodsPending = int(v)
+	}
+	if v, ok := scalar(summaryPodPhaseQuery("Failed", c.NamespaceFilter)); ok {
+		out.PodsFailed = int(v)
+	}
+	if v, ok := scalar(summaryAlertCountQuery("critical")); ok {
+		out.AlertsCritical = int(v)
+	}
+	if v, ok := scalar(summaryAlertCountQuery("warning")); ok {
+		out.AlertsWarning = int(v)
 	}
 	if okCount == 0 && lastErr != nil {
 		return ClusterSummary{}, lastErr

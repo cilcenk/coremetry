@@ -180,6 +180,27 @@ func summaryPodCountQuery(nsFilter string) string {
 const summaryCPUUsedQuery = `sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))`
 const summaryMemUsedQuery = `sum(node_memory_MemTotal_bytes) - sum(node_memory_MemAvailable_bytes)`
 
+// ── summary enrichment queries (v0.9.30, design handoff B1) ─────
+// Hepsi BEST-EFFORT skaler (kube-state-metrics / Alertmanager rule
+// serileri yoksa 0 kalır, UI ilgili kartı/bölümü render etmez).
+
+// Kapasite (CPU% / Mem% paydası): kube_node_status_capacity.
+const summaryCPUCapacityQuery = `sum(kube_node_status_capacity{resource="cpu"})`
+const summaryMemCapacityQuery = `sum(kube_node_status_capacity{resource="memory"})`
+
+// Pod fazı (donut + KPI): kube_pod_status_phase == 1. nsFilter'a
+// tabi (pod sayısı semantiğiyle tutarlı).
+func summaryPodPhaseQuery(phase, nsFilter string) string {
+	return fmt.Sprintf(`count(kube_pod_status_phase{phase="%s"%s} == 1)`,
+		escapeLabelValue(phase), nsMatcher(nsFilter))
+}
+
+// Firing alert sayısı (banner + KPI): ALERTS metriği (cluster-wide).
+func summaryAlertCountQuery(severity string) string {
+	return fmt.Sprintf(`count(ALERTS{severity="%s",alertstate="firing"})`,
+		escapeLabelValue(severity))
+}
+
 // ── namespace-rollup queries (v0.8.588, redesign audit §3.3) ────
 //
 // Rollup AYRI sorgudur, topk(500)'lük pod listesinden client-side

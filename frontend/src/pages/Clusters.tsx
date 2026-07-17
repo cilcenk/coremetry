@@ -245,17 +245,17 @@ export default function ClustersPage() {
                     <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontFamily: 'ui-monospace, monospace' }}>{name}</span>
                       {unreachable
-                        ? <span className="badge b-err">erişilemiyor</span>
+                        ? <span className="badge b-err">unreachable</span>
                         : !seen
-                          ? <span className="badge b-warn" title="Bu ad son 24 saatin telemetrisinde görülmedi — servis pivotu eşleşmeyecek">telemetride görülmüyor</span>
-                          : <span className="badge b-ok">erişilebilir</span>}
+                          ? <span className="badge b-warn" title="Name not seen in the last 24h of telemetry — the service pivot will not match">not in telemetry</span>
+                          : <span className="badge b-ok">reachable</span>}
                     </span>
                   }>
                   {q?.isPending && <Spinner />}
                   {unreachable && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}
                       title={q?.error instanceof Error ? q.error.message : undefined}>
-                      Thanos Querier'a ulaşılamadı — token/route için Settings'e bak.
+                      Thanos Querier unreachable — check the token/route in Settings.
                     </div>
                   )}
                   {sum && (
@@ -290,17 +290,17 @@ export default function ClustersPage() {
               {nsFilter && (
                 <span className="badge b-info" style={{ cursor: 'pointer' }}
                   onClick={clearNs}
-                  title="Namespace filtresi (servis sayfasından pivot) — kaldırmak için tıkla">
+                  title="Namespace filter (service-page pivot) — click to clear">
                   namespace: {nsFilter} ✕
                 </span>
               )}
             </div>
 
             {detailUnreachable ? (
-              <Empty icon="✗" title={`${clusterParam} erişilemiyor`}>
-                Thanos Querier yanıt vermedi — token süresi/route için{' '}
+              <Empty icon="✗" title={`${clusterParam} is unreachable`}>
+                Thanos Querier did not respond — check token expiry/route in{' '}
                 <Link to="/settings/clusters">Settings → Remote clusters</Link>{' '}
-                girdisini kontrol et.
+                entry.
               </Empty>
             ) : (
               <>
@@ -309,12 +309,12 @@ export default function ClustersPage() {
                   {nodeQs[0]?.isPending && <TableSkeleton cols={6} wideFirst />}
                   {nodeErr && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      Node metrikleri alınamadı (tenancy-port olabilir — runbook probe adımı).
+                      Node metrics unavailable (possibly the tenancy port — see the runbook probe step).
                     </div>
                   )}
                   {!nodeErr && !nodeQs[0]?.isPending && nodeRows.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      node-exporter serisi boş döndü — runbook'taki probe adımına bak.
+                      node-exporter series came back empty — see the runbook probe step.
                     </div>
                   )}
                   {nodeRows.length > 0 && (
@@ -371,8 +371,8 @@ export default function ClustersPage() {
                                   return next;
                                 }, { replace: true })}
                                 title={selected
-                                  ? 'Namespace süzgecini kaldır'
-                                  : 'Pod tablosunu bu namespace ile süz'}
+                                  ? 'Clear the namespace filter'
+                                  : 'Filter the pod table to this namespace'}
                                 style={{ cursor: 'pointer' }}>
                                 <td className="mono" style={{ fontSize: 12 }}>{r.namespace}</td>
                                 <td className="num mono">{r.pods ? fmtNum(r.pods) : '—'}</td>
@@ -391,14 +391,14 @@ export default function ClustersPage() {
                   {podQs[0]?.isPending && <TableSkeleton cols={7} wideFirst />}
                   {podErr && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      Pod metrikleri alınamadı — Settings girdisini kontrol et.
+                      Pod metrics unavailable — check the cluster entry in Settings.
                     </div>
                   )}
                   {!podErr && !podQs[0]?.isPending && rows.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                       {nsFilter
-                        ? `"${nsFilter}" namespace'inde pod örneği yok — çipi kaldırıp tüm cluster'a bak.`
-                        : 'Sorgu seri döndürmedi — cluster girdisindeki namespace filtresine bak.'}
+                        ? `No pod samples in namespace "${nsFilter}" — clear the chip to see the whole cluster.`
+                        : 'Queries returned no series — check the namespace filter on the cluster entry.'}
                     </div>
                   )}
                   {rows.length > 0 && (

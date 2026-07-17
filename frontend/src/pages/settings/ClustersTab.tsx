@@ -131,8 +131,8 @@ export function ClustersTab() {
                     Cluster name (join key)
                     {!nameKnown && (
                       <span className="badge b-warn" style={{ marginLeft: 8 }}
-                        title="Bu ad son 24 saatin telemetrisinde görülmedi — Thanos verisi servis sayfalarıyla eşleşmeyecek. Cluster telemetri göndermeye başlayınca uyarı kalkar.">
-                        telemetride görülmüyor
+                        title="Name not seen in the last 24h of telemetry — Thanos data will not match service pages. The warning clears once the cluster starts reporting.">
+                        not in telemetry
                       </span>
                     )}
                   </div>

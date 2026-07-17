@@ -122,7 +122,7 @@ export function ServiceClusterBreakdown({ service, range }: {
                         </Link>
                       ) : (
                         <span style={{ fontSize: 11, color: 'var(--text3)' }}
-                          title="Bu cluster Settings → Remote clusters'ta tanımlı değil">—</span>
+                          title="This cluster is not defined under Settings → Remote clusters">—</span>
                       )}
                     </td>
                   )}

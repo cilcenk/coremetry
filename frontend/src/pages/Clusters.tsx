@@ -57,6 +57,8 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'cluster',   label: 'Cluster',   sortValue: r => r.cluster,   naturalDir: 'asc', width: 130 },
   { id: 'namespace', label: 'Namespace', sortValue: r => r.namespace, naturalDir: 'asc', width: 160 },
   { id: 'pod',       label: 'Pod',       sortValue: r => r.pod,       naturalDir: 'asc', width: 260 },
+  // v0.9.12 — Coremetry servis eşleşmesi (korelasyon audit'i).
+  { id: 'service',   label: 'Service',   sortValue: r => r.service ?? '', naturalDir: 'asc', width: 150 },
   { id: 'cpuCores',  label: 'CPU',       sortValue: r => r.cpuCores,  numeric: true, width: 90 },
   { id: 'cpuPct',    label: 'CPU %',     sortValue: r => r.cpuPct ?? 0, numeric: true, width: 80 },
   { id: 'memBytes',  label: 'Memory',    sortValue: r => r.memBytes,  numeric: true, width: 100 },
@@ -174,7 +176,7 @@ export default function ClustersPage() {
   const section = (() => {
     const raw = params.get('section') ?? (params.get('tab') === 'nodes' ? 'nodes' : '');
     if (raw === 'nodes' || raw === 'namespaces' || raw === 'pods' || raw === 'overview') return raw;
-    return nsFilterEarly ? 'pods' : 'overview';
+    return (nsFilterEarly || params.get('service')) ? 'pods' : 'overview';
   })();
   const setSection = (sec: string, extra?: (p: URLSearchParams) => void) =>
     setParams(prev => {
@@ -240,6 +242,16 @@ export default function ClustersPage() {
   // v0.9.7 — ?q= metin süzgeci (operatör isteği): üç detay tablosunu
   // birden süzer (pod/namespace/node adında büyük-küçük duyarsız
   // substring). URL kaynak-of-truth, replace:true.
+  // v0.9.12 — ?service= süzgeci: servis sayfası pivotundan gelir,
+  // zenginleştirilmiş service etiketi üzerinden süzer (korelasyon
+  // audit'i §2.3 — pod listesi yerine kalıcı servis kimliği).
+  const svcFilter = params.get('service') ?? '';
+  const clearSvc = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('service');
+    return next;
+  }, { replace: true });
+
   const q = params.get('q') ?? '';
   const setQ = (v: string) => setParams(prev => {
     const next = new URLSearchParams(prev);
@@ -262,11 +274,12 @@ export default function ClustersPage() {
   const rows = useMemo(() => {
     let all = podDatas.flatMap(d => d?.pods ?? []);
     if (nsFilter) all = all.filter(r => r.namespace === nsFilter);
+    if (svcFilter) all = all.filter(r => r.service === svcFilter);
     if (qLower) all = all.filter(r =>
       r.pod.toLowerCase().includes(qLower) || r.namespace.toLowerCase().includes(qLower));
     return all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [podDataKey, nsFilter, qLower]);
+  }, [podDataKey, nsFilter, svcFilter, qLower]);
 
   const nodeDatas = nodeQs.map(q => q.data);
   const nodeDataKey = nodeDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
@@ -400,6 +413,13 @@ export default function ClustersPage() {
                   onClick={clearNs}
                   title="Namespace filter (service-page pivot) — click to clear">
                   namespace: {nsFilter} ✕
+                </span>
+              )}
+              {svcFilter && (
+                <span className="badge b-info" style={{ cursor: 'pointer' }}
+                  onClick={clearSvc}
+                  title="Service filter (service-page pivot) — click to clear">
+                  service: {svcFilter} ✕
                 </span>
               )}
               <input value={q}
@@ -570,6 +590,15 @@ export default function ClustersPage() {
                                   title={r.pod}>
                                   {r.pod}
                                 </span>
+                              </td>
+                              <td onClick={e => e.stopPropagation()}>
+                                {r.service ? (
+                                  <Link to={`/service?name=${encodeURIComponent(r.service)}`}
+                                    style={{ fontSize: 11 }}>{r.service}</Link>
+                                ) : (
+                                  <span style={{ fontSize: 11, color: 'var(--text3)' }}
+                                    title="No matching Coremetry service (uninstrumented, infra pod, or ambiguous)">—</span>
+                                )}
                               </td>
                               <td className="num mono">{fmtCores(r.cpuCores)}</td>
                               {/* v0.8.580 — % hücresi limit-bazlı; request

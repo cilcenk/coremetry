@@ -956,6 +956,9 @@ export interface ClusterPodRow {
   // v0.9.10 — pod network rate (cAdvisor; absent = not exposed).
   netInBps?: number;
   netOutBps?: number;
+  // v0.9.12 — Coremetry service match (host_name = pod bridge);
+  // absent = uninstrumented / infra pod / ambiguous.
+  service?: string;
 }
 // v0.9.3 — multi-pod trend serisi (top-10, sunucu keser).
 export interface ClusterPodSeriesTrend {

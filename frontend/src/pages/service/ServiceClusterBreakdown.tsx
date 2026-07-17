@@ -113,6 +113,7 @@ export function ServiceClusterBreakdown({ service, range }: {
                       {thanosSet.has(c.cluster) ? (
                         <Link
                           to={`/clusters?cluster=${encodeURIComponent(c.cluster)}` +
+                              `&service=${encodeURIComponent(service)}` +
                               (serviceNs ? `&namespace=${encodeURIComponent(serviceNs)}` : '')}
                           style={{ fontSize: 11, color: 'var(--accent2)' }}
                           title={serviceNs

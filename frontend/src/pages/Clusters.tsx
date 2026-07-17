@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
+import { ChartSpline } from 'lucide-react';
 import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -37,12 +38,14 @@ const NODE_COLS: DataTableColumn<ClusterNodeRow>[] = [
   { id: 'memPct',   label: 'Mem %',   sortValue: r => r.memPct ?? 0, numeric: true, width: 80 },
 ];
 
-// v0.8.588 — namespace rollup (satır tıklaması ?namespace= yazar).
+// v0.8.588 — namespace rollup (satır tıklaması ?namespace= yazar);
+// v0.9.5 — satır sonunda trend-drawer ikonu (filtreyle çakışmaz).
 const NS_COLS: DataTableColumn<ClusterNamespaceRow>[] = [
   { id: 'namespace', label: 'Namespace', sortValue: r => r.namespace, naturalDir: 'asc', width: 220 },
   { id: 'pods',      label: 'Pods',      sortValue: r => r.pods ?? 0, numeric: true, width: 80 },
   { id: 'cpuCores',  label: 'CPU',       sortValue: r => r.cpuCores,  numeric: true, width: 90 },
   { id: 'memBytes',  label: 'Memory',    sortValue: r => r.memBytes,  numeric: true, width: 100 },
+  { id: 'trend',     label: '',          width: 44 },
 ];
 
 const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
@@ -109,6 +112,21 @@ export default function ClustersPage() {
   }, []);
   const observedQ = useClusters(obsFrom, obsTo);
   const observed = useMemo(() => new Set(observedQ.data ?? []), [observedQ.data]);
+
+  // ?ns=<cluster>|<namespace> — namespace trend drawer'ı (v0.9.5).
+  // ?namespace= FİLTRESİNDEN bağımsız param: filtre ve drawer
+  // birbirini engellemez (audit kısıtı).
+  const nsDrawerParam = params.get('ns');
+  const openNsDrawer = (r: ClusterNamespaceRow) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.set('ns', `${r.cluster}|${r.namespace}`);
+    return next;
+  }, { replace: true });
+  const closeNsDrawer = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('ns');
+    return next;
+  }, { replace: true });
 
   // ?pod=<cluster>|<namespace>|<pod> — drawer kimliği.
   const podParam = params.get('pod');
@@ -379,6 +397,16 @@ export default function ClustersPage() {
                                 <td className="num mono">{r.pods ? fmtNum(r.pods) : '—'}</td>
                                 <td className="num mono">{fmtCores(r.cpuCores)}</td>
                                 <td className="num mono">{fmtBytes(r.memBytes)}</td>
+                                <td style={{ textAlign: 'center' }}>
+                                  {/* v0.9.5 — trend drawer'ı; satırın filtre
+                                      davranışına karışmaz (stopPropagation). */}
+                                  <button type="button"
+                                    onClick={e => { e.stopPropagation(); openNsDrawer(r); }}
+                                    title="Per-pod trend charts for this namespace"
+                                    style={{ all: 'unset', cursor: 'pointer', color: 'var(--accent2)', display: 'inline-flex' }}>
+                                    <ChartSpline size={14} strokeWidth={1.75} />
+                                  </button>
+                                </td>
                               </tr>
                             );
                           })}
@@ -448,6 +476,11 @@ export default function ClustersPage() {
           </>
         )}
 
+        {nsDrawerParam && (() => {
+          const [c, ns] = nsDrawerParam.split('|');
+          if (!c || !ns) return null;
+          return <NamespaceDrawer cluster={c} namespace={ns} range={range} onClose={closeNsDrawer} />;
+        })()}
         {podParam && (() => {
           const [c, ns, p] = podParam.split('|');
           if (!c || !ns || !p) return null;
@@ -459,6 +492,58 @@ export default function ClustersPage() {
         })()}
       </div>
     </>
+  );
+}
+
+// NamespaceDrawer — namespace'in pod başına trend grafikleri
+// (v0.9.5, trend-upgrade audit T3): PodDrawer'ın aynası, panel
+// multi-pod modda (top-10 seri + "Top N of M" etiketi). Yalnız
+// açılınca fetch; ?tw= pencere seçicisi pod drawer'ıyla ortak.
+function NamespaceDrawer({ cluster, namespace, range, onClose }: {
+  cluster: string;
+  namespace: string;
+  range: TimeRange;
+  onClose: () => void;
+}) {
+  const [params, setParams] = useSearchParams();
+  const tw = params.get('tw') ?? '';
+  const setTw = (v: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('tw', v); else next.delete('tw');
+    return next;
+  }, { replace: true });
+  const { from, to } = useMemo(() => {
+    const w = TREND_WINDOWS.find(x => x.key === tw);
+    if (w && 'ns' in w && w.ns) {
+      const now = Date.now() * 1e6;
+      return { from: now - w.ns, to: now };
+    }
+    return timeRangeToNs(range);
+  }, [range, tw]);
+
+  return (
+    <Drawer onClose={onClose} header={
+      <>
+        <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 14, fontWeight: 600 }}>
+          {namespace}
+        </span>
+        <span className="badge b-gray" title="cluster">{cluster}</span>
+      </>
+    }>
+      <DrawerSection title="Per-pod trend (per minute)">
+        <div style={{ marginBottom: 8 }}>
+          <select value={tw} onChange={e => setTw(e.target.value)}
+            style={{ fontSize: 11 }}
+            title="Trend window — independent of the page range">
+            {TREND_WINDOWS.map(w => (
+              <option key={w.key} value={w.key}>{w.label}</option>
+            ))}
+          </select>
+        </div>
+        <ThanosTrendPanel cluster={cluster} namespace={namespace}
+          fromNs={from} toNs={to} />
+      </DrawerSection>
+    </Drawer>
   );
 }
 

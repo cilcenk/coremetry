@@ -345,12 +345,23 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 	if windowSec <= 0 {
 		windowSec = 60
 	}
-	// 30 sparkline buckets, floored at the 1-minute MV grain (a 5m
-	// window gets 5 one-minute buckets; a 24h window gets 30 48-min
-	// buckets).
+	// 30 sparkline buckets. v0.9.27 (second-resolution audit R2):
+	// kısa pencerede 10s tier'ından oku — 5dk penceresi 60s tabanında
+	// yalnız 5 bucket alıyordu, artık 10s'te 30 bucket. 10s tier
+	// http_route TAŞIR (route-scoped sorgu uyumlu; canlı kolon
+	// paritesi doğrulandı) ve 2g TTL'li — pencere ≤2g VE 1m taban
+	// bucket'ı kabalaştırıyorsa (windowSec/30 < 60) 10s'e geç.
+	// ClickHouse span-metrik 10s tabanı (operatör kararı) burada da:
+	// grain 10'un altına inilmez.
+	sourceMV := "spanmetrics_1m"
+	minGrain := int64(60)
+	if windowSec <= 2*24*3600 && windowSec/30 < 60 {
+		sourceMV = "spanmetrics_10s"
+		minGrain = 10
+	}
 	bucketSec := windowSec / 30
-	if bucketSec < 60 {
-		bucketSec = 60
+	if bucketSec < minGrain {
+		bucketSec = minGrain
 	}
 	nBuckets := int((windowSec + bucketSec - 1) / bucketSec)
 	if nBuckets < 1 {
@@ -400,7 +411,7 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		         sumMerge(duration_sum_state)                     AS bv_sum_dur,
 		         arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 4) / 1e6 AS bv_p99,
 		         quantilesTDigestMergeState(0.5, 0.9, 0.95, 0.99)(duration_q_state) AS q_state
-		  FROM ` + s.spanmetricsSourceFor("spanmetrics_1m") + `
+		  FROM ` + s.spanmetricsSourceFor(sourceMV) + `
 		  WHERE ` + where + `
 		  GROUP BY service_name, path, b
 		)

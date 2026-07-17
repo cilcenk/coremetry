@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { useServicesMetadata } from '@/lib/queries';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
@@ -38,13 +39,34 @@ export function ServiceClusterBreakdown({ service, range }: {
   });
   const clusters = useMemo(() => q.data?.clusters ?? [], [q.data]);
 
+  // v0.8.579 — Databases-tarzı pivot (audit §7.5): cluster adı
+  // Settings'teki bir Thanos kaynağıyla eşleşiyorsa "pods →" hücresi
+  // /clusters'a, servisin k8s namespace'iyle (metadata deriver'ı,
+  // v0.8.436) daraltılmış link verir. Hiç Thanos kaynağı yoksa kolon
+  // hiç render edilmez — ölü link/boş kolon üretilmez.
+  const sourcesQ = useQuery({
+    queryKey: ['cluster-sources'],
+    queryFn: () => api.clusterSources(),
+    staleTime: 300_000,
+  });
+  const thanosSet = useMemo(
+    () => new Set(sourcesQ.data?.clusters ?? []), [sourcesQ.data]);
+  const metaQ = useServicesMetadata();
+  const serviceNs = metaQ.data?.[service]?.namespace ?? '';
+  const hasPivot = thanosSet.size > 0;
+  const cols = useMemo(
+    () => hasPivot
+      ? [...CLUSTER_COLS, { id: 'pods', label: 'Pods', width: 70 } as DataTableColumn<import('@/lib/types').ServiceClusterStat>]
+      : CLUSTER_COLS,
+    [hasPivot]);
+
   // v0.8.116 — adopt the shared sortable + resizable primitive. This panel
   // previously hand-rolled sort via ClusterTh/ClusterSortKey — the exact
   // anti-pattern CLAUDE.md's "never hand-roll sort/resize" constraint names.
   // Hook is unconditional + above the <2-cluster early return.
   const dt = useDataTable<import('@/lib/types').ServiceClusterStat>({
     storageKey: 'service-clusters',
-    columns: CLUSTER_COLS,
+    columns: cols,
     rows: clusters,
     initialSort: { id: 'calls', dir: 'desc' },
   });
@@ -86,6 +108,24 @@ export function ServiceClusterBreakdown({ service, range }: {
                   </td>
                   <td className="num mono">{c.avgDurationMs.toFixed(1)}ms</td>
                   <td className="num mono">{c.p99DurationMs.toFixed(1)}ms</td>
+                  {hasPivot && (
+                    <td>
+                      {thanosSet.has(c.cluster) ? (
+                        <Link
+                          to={`/clusters?cluster=${encodeURIComponent(c.cluster)}` +
+                              (serviceNs ? `&namespace=${encodeURIComponent(serviceNs)}` : '')}
+                          style={{ fontSize: 11, color: 'var(--accent2)' }}
+                          title={serviceNs
+                            ? `Pod CPU/memory — ${c.cluster}, namespace ${serviceNs}`
+                            : `Pod CPU/memory — ${c.cluster}`}>
+                          pods →
+                        </Link>
+                      ) : (
+                        <span style={{ fontSize: 11, color: 'var(--text3)' }}
+                          title="Bu cluster Settings → Remote clusters'ta tanımlı değil">—</span>
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}

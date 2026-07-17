@@ -452,7 +452,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
             {/* v0.8.512 (perf raporu #12) — pivot problem penceresini
                 taşır: logs ile aynı custom range, yoksa /traces global
                 range'iyle açılıp problemle ilgisiz trace gösteriyordu. */}
-            <SignalLink to={`/traces?service=${encodeURIComponent(problem.service)}&hasError=true&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`}
+            {/* v0.8.585 — Operator-reported: rootOnly default'u TRUE
+                olduğundan hata izleri (çoğu non-root span) boş
+                listeleniyordu; hasError linki root filtresini kapatır. */}
+            <SignalLink to={`/traces?service=${encodeURIComponent(problem.service)}&hasError=true&rootOnly=false&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`}
               label="⋮ Error traces" sub="service, problem window" />
             <SignalLink to={`/service-map?focus=${encodeURIComponent(problem.service)}`}
               label="◉ Service map" sub="focused" />

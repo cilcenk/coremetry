@@ -181,8 +181,11 @@ export function AnomalyDetailDrawer({ event, onClose }: {
                 ≡ Logs in spike window ↗
               </Link>
             )}
+            {/* v0.8.585 — Operator-reported: rootOnly default'u TRUE
+                olduğundan hata izleri (çoğu non-root span) boş
+                listeleniyordu; hasError linki root filtresini kapatır. */}
             {event.kind === 'trace_op' && event.service && (
-              <Link to={`/traces?service=${encodeURIComponent(event.service)}&hasError=true`}
+              <Link to={`/traces?service=${encodeURIComponent(event.service)}&hasError=true&rootOnly=false`}
                 className="sec"
                 style={{ fontSize: 12, padding: '4px 10px', textDecoration: 'none' }}
                 title="Open error traces for this service">

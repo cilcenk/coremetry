@@ -20,7 +20,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
-  ClusterPodsTrendResponse, ClusterNetworkTrendResponse,
+  ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
   RelationResponse, RelationKind, FilterExpr,
@@ -963,6 +963,9 @@ export const api = {
   clusterNamespaceDetail: (cluster: string, namespace: string, fromNs: number, toNs: number) =>
     get<ClusterPodDetail>(`/api/clusters/namespaces/detail?cluster=${encodeURIComponent(cluster)}` +
       `&namespace=${encodeURIComponent(namespace)}&from=${fromNs}&to=${toNs}`),
+  clusterDeployments: (cluster: string, namespace: string) =>
+    get<ClusterDeploymentsResponse>(`/api/clusters/deployments?cluster=${encodeURIComponent(cluster)}` +
+      `&namespace=${encodeURIComponent(namespace)}`),
   clusterNetworkTrend: (cluster: string, fromNs: number, toNs: number) =>
     get<ClusterNetworkTrendResponse>(`/api/clusters/network-trend?cluster=${encodeURIComponent(cluster)}` +
       `&from=${fromNs}&to=${toNs}`),
@@ -1111,7 +1114,7 @@ export const api = {
 
   // ── RAG (v0.8.438) — doküman soru-cevap yönetimi ────────────────────────
   getRagConfig: () => get<import('./types').RagConfigView>('/api/rag/config'),
-  putRagConfig: (c: { endpoint: string; model: string; enabled: boolean; topK?: number; apiKey?: string;
+  putRagConfig: (c: { endpoint: string; model: string; enabled: boolean; topK?: number; apiKey?: string; insecureSkipVerify?: boolean;
     sources?: { url: string; authHeader?: string }[] }) =>
     request<import('./types').RagConfigView>('/api/rag/config', {
       method: 'PUT',

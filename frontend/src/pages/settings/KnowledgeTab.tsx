@@ -71,6 +71,7 @@ export function KnowledgeTab() {
       const next = await api.putRagConfig({
         endpoint: cfg.endpoint, model: cfg.model, enabled: cfg.enabled,
         topK: cfg.topK, apiKey: apiKey || undefined, sources: outSources,
+        insecureSkipVerify: cfg.insecureSkipVerify || undefined,
       });
       setCfg(next); setApiKey('');
       setSources(prev => prev.filter(s0 => s0.url.trim()).map(s0 => ({
@@ -136,6 +137,16 @@ export function KnowledgeTab() {
           <input type="checkbox" checked={cfg.enabled}
                  onChange={e => setCfg({ ...cfg, enabled: e.target.checked })} />
           RAG aktif
+        </label>
+        {/* v0.9.23 — operatör-raporlu: self-signed embedding/wiki
+            sertifikaları upload'ı düşürüyordu. */}
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 8, marginLeft: 16 }}>
+          <input type="checkbox" checked={!!cfg.insecureSkipVerify}
+                 onChange={e => setCfg({ ...cfg, insecureSkipVerify: e.target.checked })} />
+          Skip TLS verify
+          <span style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+            (self-signed embedding/wiki endpoints)
+          </span>
         </label>
         <Button onClick={() => { void save(); }} disabled={busy} style={{ marginTop: 12 }}>
           {busy ? 'Kaydediliyor…' : 'Kaydet'}

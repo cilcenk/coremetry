@@ -66,6 +66,7 @@ func maskedRAGConfig(c rag.Config) map[string]any {
 	return map[string]any{
 		"endpoint": c.Endpoint, "model": c.Model, "enabled": c.Enabled,
 		"topK": c.TopK, "hasKey": c.APIKey != "", "sources": srcs,
+		"insecureSkipVerify": c.InsecureSkipVerify, // sır değil, aynen döner
 	}
 }
 
@@ -351,7 +352,7 @@ func (s *Server) ragSyncPass(ctx context.Context) ragSyncResult {
 			}
 		}
 	}
-	httpc := &http.Client{Timeout: 20 * time.Second}
+	httpc := rag.NewHTTPClient(20*time.Second, cfg.InsecureSkipVerify) // v0.9.23 — crawler da bayrağa uyar
 	seen := map[string]bool{}
 	for _, src := range cfg.Sources {
 		pages, err := rag.Crawl(ctx, httpc, src)

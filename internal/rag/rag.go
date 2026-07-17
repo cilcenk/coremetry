@@ -12,6 +12,7 @@ package rag
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,11 +27,17 @@ const settingsKey = "rag_embedding"
 
 // Config — rag_embedding system_settings blob'u (invariant #6).
 type Config struct {
-	Endpoint string `json:"endpoint"`          // ör. http://bge-m3.ai.svc:8000/v1
-	Model    string `json:"model"`             // ör. BAAI/bge-m3
-	APIKey   string `json:"apiKey,omitempty"`  // opsiyonel — asla geri echo edilmez
+	Endpoint string `json:"endpoint"`         // ör. http://bge-m3.ai.svc:8000/v1
+	Model    string `json:"model"`            // ör. BAAI/bge-m3
+	APIKey   string `json:"apiKey,omitempty"` // opsiyonel — asla geri echo edilmez
 	Enabled  bool   `json:"enabled"`
-	TopK     int    `json:"topK,omitempty"`    // 0 → 5
+	TopK     int    `json:"topK,omitempty"` // 0 → 5
+	// InsecureSkipVerify (v0.9.23) — operatör-raporlu prod bug'ı:
+	// air-gapped kurulumda embedding endpoint'i (vLLM/KServe) ve iç
+	// wiki'ler self-signed sertifikayla koşuyor; upload chunk+embed
+	// adımında TLS doğrulamasına takılıyordu. Tempo/Zoom deseninin
+	// aynısı; varsayılan kapalı.
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
 	// Sources (v0.8.442) — wiki/URL kaynakları; 30 dk'lık senkron
 	// tick'i her kaynağı sınırlı crawl edip hash-diff'le indeksler.
 	Sources []CrawlSource `json:"sources,omitempty"`
@@ -50,7 +57,18 @@ type Service struct {
 }
 
 func New() *Service {
-	return &Service{httpc: &http.Client{Timeout: 30 * time.Second}}
+	return &Service{httpc: NewHTTPClient(30*time.Second, false)}
+}
+
+// NewHTTPClient — RAG dış çağrılarının (embed + crawler) ortak
+// client fabrikası; skipVerify self-signed iç servisler için
+// (tempo newTempoHTTPClient emsali).
+func NewHTTPClient(timeout time.Duration, insecureSkipVerify bool) *http.Client {
+	tr := &http.Transport{}
+	if insecureSkipVerify {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return &http.Client{Timeout: timeout, Transport: tr}
 }
 
 func (s *Service) Snapshot() Config {
@@ -62,7 +80,13 @@ func (s *Service) Snapshot() Config {
 func (s *Service) Configure(c Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	prevInsecure := s.cfg.InsecureSkipVerify
 	s.cfg = c
+	// TLS bayrağı değişince client yeniden kurulur (tempo deseni) —
+	// havuzdaki eski-politika bağlantıları toggle'ı aşamaz.
+	if s.httpc == nil || prevInsecure != c.InsecureSkipVerify {
+		s.httpc = NewHTTPClient(30*time.Second, c.InsecureSkipVerify)
+	}
 }
 
 // Ready — RAG yolu ancak endpoint + model girilmiş ve etkinken açılır.

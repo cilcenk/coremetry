@@ -1028,6 +1028,24 @@ export interface ClusterSummary {
   netInBps?: number;
   netOutBps?: number;
 }
+// v0.9.23 — namespace içi iş yükü rollup satırı (Deployment/STS/DS;
+// "(unassigned)" = eşlenemeyen pod'lar). podNames pod tablosunun
+// ?deployment= süzgecinin üyelik kaynağı.
+export interface ClusterDeploymentRow {
+  cluster: string;
+  namespace: string;
+  deployment: string;
+  pods: number;
+  cpuCores: number;
+  memBytes: number;
+  podNames: string[];
+}
+export interface ClusterDeploymentsResponse {
+  cluster: string;
+  namespace: string;
+  deployments: ClusterDeploymentRow[] | null;
+  count: number;
+}
 // v0.9.10 — cluster toplam ağ hızı trendi (Overview throughput).
 export interface ClusterNetTrendPoint {
   bucket: number;
@@ -3151,6 +3169,8 @@ export interface RagConfigView {
   enabled: boolean;
   topK?: number;
   hasKey: boolean;
+  // v0.9.23 — self-signed embedding/wiki endpoint'leri için (sır değil).
+  insecureSkipVerify?: boolean;
   // v0.8.442 — wiki/URL kaynakları (authHeader asla geri dönmez).
   // v0.8.451 — Basic auth: username görünür döner, password yalnız
   // "********" varlık sentineli olarak (on-prem Azure DevOps; PAT'te

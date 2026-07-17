@@ -207,6 +207,26 @@ func nsPodCountQuery(nsFilter string) string {
 		podListLimit, nsMatcher(nsFilter))
 }
 
+// ── multi-pod trend queries (v0.9.3, trend-upgrade audit §2.3) ──
+//
+// topk BİLEREK YOK: query_range'te topk her adım için ayrı
+// değerlendirilir — adımlar arasında pod seti değişir ve seriler
+// kırılır. Bunun yerine sum by (pod) ham döner (maxSeriesParsed
+// 1000 + 8MB gövde kalkanları), top-N seçimi Go'da ortalama CPU'ya
+// göre TUTARLI tek sette yapılır (cpu ve mem aynı pod setine
+// filtrelenir).
+func nsPodsCPUTrendQuery(namespace string) string {
+	return fmt.Sprintf(
+		`sum by (pod) (rate(container_cpu_usage_seconds_total{container!="",pod!="",namespace="%s"}[5m]))`,
+		escapeLabelValue(namespace))
+}
+
+func nsPodsMemTrendQuery(namespace string) string {
+	return fmt.Sprintf(
+		`sum by (pod) (container_memory_working_set_bytes{container!="",pod!="",namespace="%s"})`,
+		escapeLabelValue(namespace))
+}
+
 // ── sample decoding ─────────────────────────────────────────────
 
 // sampleValue decodes an instant-vector sample pair [ts, "v"] and

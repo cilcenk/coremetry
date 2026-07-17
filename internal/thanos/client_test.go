@@ -321,6 +321,65 @@ func TestSummaryFullCounts(t *testing.T) {
 	}
 }
 
+// v0.9.3 — multi-pod trend: pod başına seri, top-N ortalama CPU'ya
+// göre Go'da (topk bilerek sorguda değil — adım-başına set kayması),
+// cpu+mem aynı sete filtreli; ham limit/request alanları satırda.
+func TestNamespacePodsTrendTopNAndMerge(t *testing.T) {
+	podMatrix := func(entries string) string {
+		return `{"status":"success","data":{"resultType":"matrix","result":[` + entries + `]}}`
+	}
+	series := func(pod, pairs string) string {
+		return fmt.Sprintf(`{"metric":{"pod":"%s"},"values":[%s]}`, pod, pairs)
+	}
+	srv := fakeQuerier(t, "", map[string]string{
+		"rate(container_cpu_usage_seconds_total": podMatrix(
+			series("busy", `[1784271060,"2.0"],[1784271120,"2.0"]`) + "," +
+				series("idle", `[1784271060,"0.1"]`)),
+		"container_memory_working_set_bytes": podMatrix(
+			series("busy", `[1784271060,"100"]`) + "," +
+				series("idle", `[1784271060,"50"]`)),
+	})
+	defer srv.Close()
+	s := New()
+	pods, total, err := s.NamespacePodsTrend(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true},
+		"payments", time.Unix(1784271000, 0), time.Unix(1784271200, 0))
+	if err != nil {
+		t.Fatalf("NamespacePodsTrend: %v", err)
+	}
+	if total != 2 || len(pods) != 2 {
+		t.Fatalf("want 2/2, got %d/%d", len(pods), total)
+	}
+	// Ortalama CPU sırası: busy önce.
+	if pods[0].Pod != "busy" || pods[1].Pod != "idle" {
+		t.Fatalf("sıralama yanlış: %+v", pods)
+	}
+	if pods[0].Trend[0].CPUCores != 2.0 || pods[0].Trend[0].MemBytes != 100 {
+		t.Fatalf("busy merge yanlış: %+v", pods[0].Trend)
+	}
+}
+
+func TestPodMetricsExposesRawLimitAndRequest(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		"container_cpu_usage_seconds_total":   vec(sample("ns", "p", "0.5")),
+		"container_memory_working_set_bytes":  vec(sample("ns", "p", "100")),
+		`resource_limits{resource="cpu"`:      vec(sample("ns", "p", "1")),
+		`resource_limits{resource="memory"`:   vec(sample("ns", "p", "400")),
+		`resource_requests{resource="cpu"`:    vec(sample("ns", "p", "0.25")),
+		`resource_requests{resource="memory"`: vec(sample("ns", "p", "200")),
+	})
+	defer srv.Close()
+	s := New()
+	rows, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("PodMetrics: %v %+v", err, rows)
+	}
+	r := rows[0]
+	if r.CPULimitCores != 1 || r.MemLimitBytes != 400 || r.CPURequestCores != 0.25 || r.MemRequestBytes != 200 {
+		t.Fatalf("ham lim/req satıra inmedi: %+v", r)
+	}
+}
+
 // v0.9.2 — namespace trend: PodTrend'in pod pinsiz aynası (ortak
 // rangeTrend gövdesi); sorgu şekli + bucket sözleşmesi.
 func TestNamespaceTrendQueriesAndBuckets(t *testing.T) {

@@ -27,6 +27,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -100,6 +101,21 @@ type PodRow struct {
 	// IS the signal. 0 = requests not exposed (best-effort).
 	CPUPctOfReq float64 `json:"cpuPctOfReq,omitempty"`
 	MemPctOfReq float64 `json:"memPctOfReq,omitempty"`
+	// Ham limit/request değerleri (v0.9.3, trend-upgrade audit §1
+	// düzeltmesi): threshold referans ÇİZGİLERİ mutlak değer ister
+	// (cores/bytes ekseninde) — yüzdeler yetmez. acc'ta zaten
+	// vardı, satıra indirildi; 0 = bilinmiyor.
+	CPULimitCores   float64 `json:"cpuLimitCores,omitempty"`
+	MemLimitBytes   float64 `json:"memLimitBytes,omitempty"`
+	CPURequestCores float64 `json:"cpuRequestCores,omitempty"`
+	MemRequestBytes float64 `json:"memRequestBytes,omitempty"`
+}
+
+// PodSeriesTrend — multi-pod görünümün seri birimi (v0.9.3): bir
+// pod'un dakika-bucket trendi.
+type PodSeriesTrend struct {
+	Pod   string       `json:"pod"`
+	Trend []TrendPoint `json:"trend"`
 }
 
 // TrendPoint matches HostTrendPoint's bucket contract: unix
@@ -450,6 +466,9 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 		if a.memReq > 0 {
 			row.MemPctOfReq = a.mem / a.memReq * 100
 		}
+		// v0.9.3 — ham değerler threshold çizgileri için satıra iner.
+		row.CPULimitCores, row.MemLimitBytes = a.cpuLim, a.memLim
+		row.CPURequestCores, row.MemRequestBytes = a.cpuReq, a.memReq
 		out = append(out, row)
 	}
 	return out, nil
@@ -686,6 +705,118 @@ func (s *Service) PodTrend(ctx context.Context, c ClusterConfig, namespace, pod 
 func (s *Service) NamespaceTrend(ctx context.Context, c ClusterConfig, namespace string, from, to time.Time) ([]TrendPoint, error) {
 	return s.rangeTrend(ctx, c,
 		singleNamespaceCPUQuery(namespace), singleNamespaceMemQuery(namespace), from, to)
+}
+
+// maxTrendSeries — multi-pod grafikte seri tavanı: uPlot 50 seriyi
+// çizer ama operatör 10'dan fazlasını OKUYAMAZ; legend şişer.
+const maxTrendSeries = 10
+
+// NamespacePodsTrend — namespace'in pod başına dakika-bucket
+// trendleri (v0.9.3). Sorgu topk'siz (adım-başına set kayması
+// kırar — promql.go notu); top-10 seçimi ortalama CPU'ya göre
+// Go'da, cpu+mem AYNI pod setine filtrelenir. İkinci dönüş: kesme
+// öncesi toplam pod sayısı ("top 10 of N" etiketi için).
+func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, namespace string, from, to time.Time) ([]PodSeriesTrend, int, error) {
+	params := func(q string) url.Values {
+		return url.Values{
+			"query": {q},
+			"start": {fmt.Sprintf("%d", from.Unix())},
+			"end":   {fmt.Sprintf("%d", to.Unix())},
+			"step":  {"60"},
+		}
+	}
+	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
+		params(nsPodsCPUTrendQuery(namespace)))
+	if err != nil {
+		return nil, 0, err
+	}
+	memSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
+		params(nsPodsMemTrendQuery(namespace)))
+	if err != nil {
+		return nil, 0, err
+	}
+
+	type podAcc struct {
+		byBucket map[int64]*TrendPoint
+		cpuSum   float64
+		cpuN     int
+	}
+	byPod := map[string]*podAcc{}
+	get := func(pod string) *podAcc {
+		a := byPod[pod]
+		if a == nil {
+			a = &podAcc{byBucket: map[int64]*TrendPoint{}}
+			byPod[pod] = a
+		}
+		return a
+	}
+	point := func(a *podAcc, ts int64) *TrendPoint {
+		b := ts - ts%60
+		tp := a.byBucket[b]
+		if tp == nil {
+			tp = &TrendPoint{Bucket: b}
+			a.byBucket[b] = tp
+		}
+		return tp
+	}
+	for _, ser := range cpuSeries {
+		a := get(ser.Metric["pod"])
+		for _, pair := range ser.Values {
+			if v, ts, ok := samplePair(pair); ok {
+				point(a, ts).CPUCores = v
+				a.cpuSum += v
+				a.cpuN++
+			}
+		}
+	}
+	for _, ser := range memSeries {
+		a := get(ser.Metric["pod"])
+		for _, pair := range ser.Values {
+			if v, ts, ok := samplePair(pair); ok {
+				point(a, ts).MemBytes = v
+			}
+		}
+	}
+
+	// Ortalama CPU'ya göre sırala, top-N kes (deterministik: eşitlikte
+	// pod adı asc).
+	type ranked struct {
+		pod  string
+		mean float64
+	}
+	all := make([]ranked, 0, len(byPod))
+	for pod, a := range byPod {
+		if pod == "" {
+			continue
+		}
+		mean := 0.0
+		if a.cpuN > 0 {
+			mean = a.cpuSum / float64(a.cpuN)
+		}
+		all = append(all, ranked{pod, mean})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].mean != all[j].mean {
+			return all[i].mean > all[j].mean
+		}
+		return all[i].pod < all[j].pod
+	})
+	total := len(all)
+	if len(all) > maxTrendSeries {
+		all = all[:maxTrendSeries]
+	}
+
+	out := make([]PodSeriesTrend, 0, len(all))
+	for _, r := range all {
+		a := byPod[r.pod]
+		trend := make([]TrendPoint, 0, len(a.byBucket))
+		for _, tp := range a.byBucket {
+			trend = append(trend, *tp)
+		}
+		sortTrend(trend)
+		out = append(out, PodSeriesTrend{Pod: r.pod, Trend: trend})
+	}
+	return out, total, nil
 }
 
 // rangeTrend — iki range-query'yi (cpu, mem) dakika bucket'larında

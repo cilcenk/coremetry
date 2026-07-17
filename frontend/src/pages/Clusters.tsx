@@ -4,26 +4,29 @@ import { useQuery, useQueries } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
-import { Drawer, DrawerSection, DrawerTrendRow } from '@/components/ui';
+import { Card, Drawer, DrawerSection, DrawerTrendRow } from '@/components/ui';
 import { api } from '@/lib/api';
-import { timeRangeToNs, fmtBytes } from '@/lib/utils';
+import { useClusters } from '@/lib/queries';
+import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { ClusterPodRow, ClusterNodeRow, TimeRange } from '@/lib/types';
+import type { ClusterPodRow, ClusterNodeRow, ClusterSummary, TimeRange } from '@/lib/types';
 
-// /clusters — remote OpenShift clusters' pod CPU+memory via their
-// Thanos Queriers (v0.8.578, audit: docs/audit/thanos-multicluster-
-// metrics-audit.md §6-7). Hosts.tsx'in anatomik kopyası ama ayrı
-// şekil: satır ekseni (cluster, namespace, pod), CPU çekirdek
-// cinsinden (uygulamaların OTel process oranı DEĞİL — cAdvisor).
+// /clusters — uzak OpenShift cluster'larının Thanos metrikleri.
+// v0.8.587 redesign (audit: docs/audit/clusters-overview-redesign-
+// audit.md): ?cluster YOKSA genel görünüm (cluster kartları, yalnız
+// SKALER summary uçları — N×topk pod vektörü çekilmez, sayfanın en
+// pahalı yolu kalktı); ?cluster=X VARSA X'in detayı (geri linki →
+// Nodes → Pods; namespace rollup S3'te araya girer). Eski linkler
+// (Servis→Cluster pivotu ?cluster=&namespace=) kırılmadan detaya
+// düşer; v0.8.584'ün geçici tab-strip'i kalktı (?tab yok sayılır).
 //
-// Fan-out İSTEMCİDE (audit §6): enabled cluster başına bir istek
-// (useQueries) — her cluster kendi 60s cache slotunda, bozuk/yavaş
-// cluster yalnız kendi hata çipini gösterir, diğer paneller dolu
-// kalır. Kısmi sonuç böylece React Query'den bedava.
+// Fan-out İSTEMCİDE kalır: genel görünümde kart başına bir summary
+// isteği (kendi 60s cache slotu, bozuk cluster kendi kartında
+// "erişilemiyor"); detayda YALNIZ o cluster'ın nodes+pods sorguları
+// koşar (fetch-on-open).
 
-// v0.8.584 — Nodes sekmesi (dar kapsam: CPU/memory/sayı).
 const NODE_COLS: DataTableColumn<ClusterNodeRow>[] = [
   { id: 'cluster',  label: 'Cluster', sortValue: r => r.cluster,  naturalDir: 'asc', width: 130 },
   { id: 'node',     label: 'Node',    sortValue: r => r.node,     naturalDir: 'asc', width: 260 },
@@ -70,14 +73,35 @@ export default function ClustersPage() {
   });
   const sources = sourcesQ.data?.clusters ?? [];
 
-  // URL kaynak-of-truth (§4): cluster filtresi + drawer kimliği.
-  const clusterFilter = params.get('cluster') ?? '';
-  const setClusterFilter = (v: string) => setParams(prev => {
+  // URL kaynak-of-truth (§4): ?cluster yoksa genel görünüm, varsa
+  // o cluster'ın detayı. ?namespace= composable kalır (detayda pod
+  // süzgeci). Eski ?tab= parametresi yok sayılır (v0.8.584 geçiciydi).
+  const clusterParam = params.get('cluster') ?? '';
+  const isDetail = clusterParam !== '';
+  const openCluster = (name: string) => setParams(prev => {
     const next = new URLSearchParams(prev);
-    if (v) next.set('cluster', v); else next.delete('cluster');
+    next.set('cluster', name);
+    next.delete('tab');
     return next;
   }, { replace: true });
-  // ?pod=<cluster>|<namespace>|<pod> — üçlü kimlik tek param.
+  const backToOverview = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('cluster');
+    next.delete('namespace');
+    next.delete('pod');
+    return next;
+  }, { replace: true });
+
+  // "telemetride görülmüyor" rozeti — Settings sekmesiyle aynı dil,
+  // aynı kaynak (son 24h gözlenen cluster adları).
+  const [obsFrom, obsTo] = useMemo(() => {
+    const now = Date.now() * 1e6;
+    return [now - 24 * 3600 * 1e9, now];
+  }, []);
+  const observedQ = useClusters(obsFrom, obsTo);
+  const observed = useMemo(() => new Set(observedQ.data ?? []), [observedQ.data]);
+
+  // ?pod=<cluster>|<namespace>|<pod> — drawer kimliği.
   const podParam = params.get('pod');
   const openPod = (r: ClusterPodRow) => setParams(prev => {
     const next = new URLSearchParams(prev);
@@ -90,38 +114,35 @@ export default function ClustersPage() {
     return next;
   }, { replace: true });
 
-  // v0.8.584 — Pods | Nodes sekmeleri (?tab=, URL kaynak-of-truth).
-  // Fetch-on-open: her sekmenin sorguları yalnız o sekme açıkken
-  // koşar (enabled) — geçişte 60s staleTime cache'i devralır.
-  const tab = params.get('tab') === 'nodes' ? 'nodes' : 'pods';
-  const setTab = (t: 'pods' | 'nodes') => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    if (t === 'nodes') next.set('tab', 'nodes'); else next.delete('tab');
-    return next;
-  }, { replace: true });
+  // Genel görünüm: yalnız summary fan-out'u (skaler, kart başına).
+  const summaryQs = useQueries({
+    queries: (isDetail ? [] : sources).map(name => ({
+      queryKey: ['cluster-summary', name],
+      queryFn: () => api.clusterSummary(name),
+      staleTime: 60_000,
+      retry: 1,
+    })),
+  });
 
-  const active = clusterFilter ? sources.filter(s => s === clusterFilter) : sources;
+  // Detay: yalnız seçili cluster'ın nodes+pods sorguları.
+  const detailList = isDetail ? [clusterParam] : [];
   const podQs = useQueries({
-    queries: active.map(name => ({
+    queries: detailList.map(name => ({
       queryKey: ['cluster-pods', name],
       queryFn: () => api.clusterPods(name),
-      staleTime: 60_000, // = sunucu TTL'i (ES-cost disiplini)
+      staleTime: 60_000,
       retry: 1,
-      enabled: tab === 'pods',
     })),
   });
   const nodeQs = useQueries({
-    queries: active.map(name => ({
+    queries: detailList.map(name => ({
       queryKey: ['cluster-nodes', name],
       queryFn: () => api.clusterNodes(name),
       staleTime: 60_000,
       retry: 1,
-      enabled: tab === 'nodes',
     })),
   });
 
-  // v0.8.579 — servis sayfasından gelen pivot linki namespace taşır
-  // (?namespace=, audit §7.5). URL kaynak-of-truth; çip ile temizlenir.
   const nsFilter = params.get('namespace') ?? '';
   const clearNs = () => setParams(prev => {
     const next = new URLSearchParams(prev);
@@ -129,16 +150,15 @@ export default function ClustersPage() {
     return next;
   }, { replace: true });
 
-  // useQueries her render'da yeni dizi kimliği döndürür — memo'yu
-  // içeriğe vekil sabit-boyutlu bir string anahtara bağlarız ki
-  // useDataTable'ın sort memo'su her render'da yeniden koşmasın.
-  const datas = podQs.map(q => q.data);
-  const dataKey = datas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
+  // useQueries dizi kimliği her render değişir — memo'lar sabit-
+  // boyutlu içerik anahtarına bağlı (v0.8.578 deseni).
+  const podDatas = podQs.map(q => q.data);
+  const podDataKey = podDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
   const rows = useMemo(() => {
-    const all = datas.flatMap(d => d?.pods ?? []);
+    const all = podDatas.flatMap(d => d?.pods ?? []);
     return nsFilter ? all.filter(r => r.namespace === nsFilter) : all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataKey, nsFilter]);
+  }, [podDataKey, nsFilter]);
 
   const nodeDatas = nodeQs.map(q => q.data);
   const nodeDataKey = nodeDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
@@ -146,12 +166,6 @@ export default function ClustersPage() {
     () => nodeDatas.flatMap(d => d?.nodes ?? []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodeDataKey]);
-
-  const activeQs = tab === 'pods' ? podQs : nodeQs;
-  const failing = active
-    .map((name, i) => ({ name, q: activeQs[i] }))
-    .filter(x => x.q?.isError);
-  const anyLoading = activeQs.some(q => q.isPending && q.fetchStatus !== 'idle');
 
   const dt = useDataTable<ClusterPodRow>({
     storageKey: 'clusterpods',
@@ -166,56 +180,14 @@ export default function ClustersPage() {
     initialSort: { id: 'cpuPct', dir: 'desc' },
   });
 
+  const podErr = podQs[0]?.isError ?? false;
+  const nodeErr = nodeQs[0]?.isError ?? false;
+  const detailUnreachable = isDetail && podErr && nodeErr;
+
   return (
     <>
       <Topbar title="Clusters" range={range} onRangeChange={setRange} />
       <div id="content">
-        <div className="tab-strip" style={{ marginBottom: 10 }}>
-          <button className={tab === 'pods' ? 'active' : ''}
-            onClick={() => setTab('pods')}>
-            Pods{tab === 'pods' && rows.length > 0 ? ` (${rows.length})` : ''}
-          </button>
-          <button className={tab === 'nodes' ? 'active' : ''}
-            onClick={() => setTab('nodes')}>
-            {/* Sayı satır adedinden — ek sorgu yok (audit §4 notu). */}
-            Nodes{tab === 'nodes' && nodeRows.length > 0 ? ` (${nodeRows.length})` : ''}
-          </button>
-        </div>
-        <div className="controls" style={{ marginBottom: 12 }}>
-          {sources.length > 1 && (
-            <select value={clusterFilter}
-              onChange={e => setClusterFilter(e.target.value)}
-              style={{ minWidth: 160 }}>
-              <option value="">All clusters ({sources.length})</option>
-              {sources.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          )}
-          {tab === 'pods' && nsFilter && (
-            <span className="badge b-info" style={{ cursor: 'pointer' }}
-              onClick={clearNs}
-              title="Namespace filtresi (servis sayfasından pivot) — kaldırmak için tıkla">
-              namespace: {nsFilter} ✕
-            </span>
-          )}
-          <span style={{ color: 'var(--text2)', fontSize: 12 }}>
-            {tab === 'pods'
-              ? 'Per-pod CPU + memory from each cluster’s Thanos Querier — current values, refreshed on the server every 60s. Row click opens the per-minute trend.'
-              : 'Per-node CPU + memory (node-exporter) — current values, refreshed on the server every 60s.'}
-          </span>
-        </div>
-
-        {/* Kısmi-sonuç sözleşmesi: bozuk cluster çip olur, tablo yaşar. */}
-        {failing.length > 0 && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-            {failing.map(f => (
-              <span key={f.name} className="badge b-err"
-                title={f.q.error instanceof Error ? f.q.error.message : 'fetch failed'}>
-                {f.name}: unreachable
-              </span>
-            ))}
-          </div>
-        )}
-
         {sourcesQ.isPending && <Spinner />}
         {!sourcesQ.isPending && sources.length === 0 && (
           <Empty icon="◇" title="No remote clusters configured">
@@ -224,91 +196,188 @@ export default function ClustersPage() {
             Read-only; a viewer-role ServiceAccount token per cluster is enough.
           </Empty>
         )}
-        {sources.length > 0 && anyLoading && (tab === 'pods' ? rows : nodeRows).length === 0 && <TableSkeleton cols={7} wideFirst />}
-        {sources.length > 0 && !anyLoading && failing.length === 0 && tab === 'pods' && rows.length === 0 && (
-          <Empty icon="∅" title="No pod samples">
-            Queries returned no series — check the namespace filter on the
-            cluster entry, or verify the metric names exist on this Thanos
-            tenancy (audit §4).
-          </Empty>
-        )}
-        {sources.length > 0 && !anyLoading && failing.length === 0 && tab === 'nodes' && nodeRows.length === 0 && (
-          <Empty icon="∅" title="No node samples">
-            node-exporter series returned empty — the token may be bound to
-            the tenancy port (namespace-enforced); node metrics need the main
-            thanos-querier route (runbook: probe step).
-          </Empty>
-        )}
-        {tab === 'nodes' && nodeRows.length > 0 && (
-          <div className="table-wrap">
-            <table style={{ tableLayout: 'fixed', width: '100%' }}>
-              <DataTableColgroup dt={ndt} />
-              <DataTableHead dt={ndt} />
-              <tbody>
-                {ndt.sortedRows.map(r => (
-                  <tr key={`${r.cluster}|${r.node}`}
-                    style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
-                    <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.cluster}</td>
-                    <td>
-                      <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500 }}
-                        title={r.node}>
-                        {r.node}
-                      </span>
-                    </td>
-                    <td className="num mono">{fmtCores(r.cpuCores)}</td>
-                    <td className="num mono" style={{
-                      color: (r.cpuPct ?? 0) > 85 ? 'var(--err)' : (r.cpuPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
-                    }}>{r.cpuPct ? r.cpuPct.toFixed(0) : '—'}</td>
-                    <td className="num mono">{fmtBytes(r.memBytes)}</td>
-                    <td className="num mono" style={{
-                      color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
-                    }}>{r.memPct ? r.memPct.toFixed(0) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+        {/* ── Genel görünüm: cluster kartları ─────────────────── */}
+        {!isDetail && sources.length > 0 && (
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gap: 12,
+          }}>
+            {sources.map((name, i) => {
+              const q = summaryQs[i];
+              const sum: ClusterSummary | undefined = q?.data;
+              const unreachable = q?.isError ?? false;
+              const seen = observed.size === 0 || observed.has(name);
+              return (
+                <Card key={name}
+                  onClick={() => openCluster(name)}
+                  style={{ cursor: 'pointer' }}
+                  header={
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontFamily: 'ui-monospace, monospace' }}>{name}</span>
+                      {unreachable
+                        ? <span className="badge b-err">erişilemiyor</span>
+                        : !seen
+                          ? <span className="badge b-warn" title="Bu ad son 24 saatin telemetrisinde görülmedi — servis pivotu eşleşmeyecek">telemetride görülmüyor</span>
+                          : <span className="badge b-ok">erişilebilir</span>}
+                    </span>
+                  }>
+                  {q?.isPending && <Spinner />}
+                  {unreachable && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}
+                      title={q?.error instanceof Error ? q.error.message : undefined}>
+                      Thanos Querier'a ulaşılamadı — token/route için Settings'e bak.
+                    </div>
+                  )}
+                  {sum && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 12 }}>
+                      <div><span style={{ color: 'var(--text3)' }}>Nodes</span>{' '}
+                        <strong className="mono">{sum.nodes ? fmtNum(sum.nodes) : '—'}</strong></div>
+                      <div><span style={{ color: 'var(--text3)' }}>Pods</span>{' '}
+                        <strong className="mono">{sum.pods ? fmtNum(sum.pods) : '—'}</strong></div>
+                      <div><span style={{ color: 'var(--text3)' }}>CPU</span>{' '}
+                        <strong className="mono">{sum.cpuUsedCores ? fmtCores(sum.cpuUsedCores) : '—'}</strong></div>
+                      <div><span style={{ color: 'var(--text3)' }}>Memory</span>{' '}
+                        <strong className="mono">{sum.memUsedBytes ? fmtBytes(sum.memUsedBytes) : '—'}</strong></div>
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
           </div>
         )}
-        {tab === 'pods' && rows.length > 0 && (
-          <div className="table-wrap">
-            <table style={{ tableLayout: 'fixed', width: '100%' }}>
-              <DataTableColgroup dt={dt} />
-              <DataTableHead dt={dt} />
-              <tbody>
-                {dt.sortedRows.map(r => (
-                  <tr key={`${r.cluster}|${r.namespace}|${r.pod}`}
-                    onClick={() => openPod(r)}
-                    style={{
-                      cursor: 'pointer',
-                      contentVisibility: 'auto',
-                      containIntrinsicSize: 'auto 36px',
-                    }}>
-                    <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.cluster}</td>
-                    <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.namespace}</td>
-                    <td>
-                      <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500 }}
-                        title={r.pod}>
-                        {r.pod}
-                      </span>
-                    </td>
-                    <td className="num mono">{fmtCores(r.cpuCores)}</td>
-                    {/* v0.8.580 — % hücresi limit-bazlı kalır (throttle/
-                        OOM ekseni); request ekseni title'da (provisioning
-                        isabeti — >%100 aşım sinyaldir, clamp'siz). */}
-                    <td className="num mono" style={{
-                      color: (r.cpuPct ?? 0) > 85 ? 'var(--err)' : (r.cpuPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
-                    }} title={pctTitle('CPU', r.cpuPct, r.cpuPctOfReq)}>
-                      {r.cpuPct ? r.cpuPct.toFixed(0) : '—'}</td>
-                    <td className="num mono">{fmtBytes(r.memBytes)}</td>
-                    <td className="num mono" style={{
-                      color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
-                    }} title={pctTitle('Memory', r.memPct, r.memPctOfReq)}>
-                      {r.memPct ? r.memPct.toFixed(0) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+
+        {/* ── Detay: geri → Nodes → Pods ───────────────────────── */}
+        {isDetail && (
+          <>
+            <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button type="button" onClick={backToOverview}
+                style={{ all: 'unset', cursor: 'pointer', color: 'var(--accent2)', fontSize: 12 }}>
+                ← All clusters
+              </button>
+              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 14, fontWeight: 600 }}>
+                {clusterParam}
+              </span>
+              {nsFilter && (
+                <span className="badge b-info" style={{ cursor: 'pointer' }}
+                  onClick={clearNs}
+                  title="Namespace filtresi (servis sayfasından pivot) — kaldırmak için tıkla">
+                  namespace: {nsFilter} ✕
+                </span>
+              )}
+            </div>
+
+            {detailUnreachable ? (
+              <Empty icon="✗" title={`${clusterParam} erişilemiyor`}>
+                Thanos Querier yanıt vermedi — token süresi/route için{' '}
+                <Link to="/settings/clusters">Settings → Remote clusters</Link>{' '}
+                girdisini kontrol et.
+              </Empty>
+            ) : (
+              <>
+                <Card header={`Nodes${nodeRows.length > 0 ? ` (${nodeRows.length})` : ''}`}
+                  style={{ marginBottom: 14 }}>
+                  {nodeQs[0]?.isPending && <TableSkeleton cols={6} wideFirst />}
+                  {nodeErr && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      Node metrikleri alınamadı (tenancy-port olabilir — runbook probe adımı).
+                    </div>
+                  )}
+                  {!nodeErr && !nodeQs[0]?.isPending && nodeRows.length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      node-exporter serisi boş döndü — runbook'taki probe adımına bak.
+                    </div>
+                  )}
+                  {nodeRows.length > 0 && (
+                    <div className="table-wrap">
+                      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                        <DataTableColgroup dt={ndt} />
+                        <DataTableHead dt={ndt} />
+                        <tbody>
+                          {ndt.sortedRows.map(r => (
+                            <tr key={`${r.cluster}|${r.node}`}
+                              style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
+                              <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.cluster}</td>
+                              <td>
+                                <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500 }}
+                                  title={r.node}>
+                                  {r.node}
+                                </span>
+                              </td>
+                              <td className="num mono">{fmtCores(r.cpuCores)}</td>
+                              <td className="num mono" style={{
+                                color: (r.cpuPct ?? 0) > 85 ? 'var(--err)' : (r.cpuPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
+                              }}>{r.cpuPct ? r.cpuPct.toFixed(0) : '—'}</td>
+                              <td className="num mono">{fmtBytes(r.memBytes)}</td>
+                              <td className="num mono" style={{
+                                color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
+                              }}>{r.memPct ? r.memPct.toFixed(0) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+
+                <Card header={`Pods${rows.length > 0 ? ` (${rows.length})` : ''}`}>
+                  {podQs[0]?.isPending && <TableSkeleton cols={7} wideFirst />}
+                  {podErr && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      Pod metrikleri alınamadı — Settings girdisini kontrol et.
+                    </div>
+                  )}
+                  {!podErr && !podQs[0]?.isPending && rows.length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      {nsFilter
+                        ? `"${nsFilter}" namespace'inde pod örneği yok — çipi kaldırıp tüm cluster'a bak.`
+                        : 'Sorgu seri döndürmedi — cluster girdisindeki namespace filtresine bak.'}
+                    </div>
+                  )}
+                  {rows.length > 0 && (
+                    <div className="table-wrap">
+                      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                        <DataTableColgroup dt={dt} />
+                        <DataTableHead dt={dt} />
+                        <tbody>
+                          {dt.sortedRows.map(r => (
+                            <tr key={`${r.cluster}|${r.namespace}|${r.pod}`}
+                              onClick={() => openPod(r)}
+                              style={{
+                                cursor: 'pointer',
+                                contentVisibility: 'auto',
+                                containIntrinsicSize: 'auto 36px',
+                              }}>
+                              <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.cluster}</td>
+                              <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.namespace}</td>
+                              <td>
+                                <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500 }}
+                                  title={r.pod}>
+                                  {r.pod}
+                                </span>
+                              </td>
+                              <td className="num mono">{fmtCores(r.cpuCores)}</td>
+                              {/* v0.8.580 — % hücresi limit-bazlı; request
+                                  ekseni title'da (clamp'siz, aşım sinyal). */}
+                              <td className="num mono" style={{
+                                color: (r.cpuPct ?? 0) > 85 ? 'var(--err)' : (r.cpuPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
+                              }} title={pctTitle('CPU', r.cpuPct, r.cpuPctOfReq)}>
+                                {r.cpuPct ? r.cpuPct.toFixed(0) : '—'}</td>
+                              <td className="num mono">{fmtBytes(r.memBytes)}</td>
+                              <td className="num mono" style={{
+                                color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
+                              }} title={pctTitle('Memory', r.memPct, r.memPctOfReq)}>
+                                {r.memPct ? r.memPct.toFixed(0) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </>
+            )}
+          </>
         )}
 
         {podParam && (() => {

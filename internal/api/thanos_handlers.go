@@ -280,6 +280,47 @@ func (s *Server) getClusterNamespacePodsTrend(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// getClusterResourceTrend — GET /api/clusters/resource-trend?
+// cluster=X&metric=cpu|mem&byNode=0|1&from=&to= (v0.9.35). Overview
+// CPU/Mem area chart'ları; network-trend'in metrik-parametreli hali.
+func (s *Server) getClusterResourceTrend(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("cluster"))
+	if name == "" {
+		http.Error(w, "cluster query param required", http.StatusBadRequest)
+		return
+	}
+	metric := "cpu"
+	if q.Get("metric") == "mem" {
+		metric = "mem"
+	}
+	byNode := q.Get("byNode") == "1"
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	if to.Sub(from) > 6*time.Hour {
+		from = to.Add(-6 * time.Hour)
+	}
+	key := fmt.Sprintf("cluster-res-trend:%s:%s:%t:%s:%s",
+		name, metric, byNode, clusterCfgDigest(cfg), cacheBucket(from, to))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		series, err := s.thanos.ResourceTrend(qctx, cfg, metric, byNode, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "metric": metric, "byNode": byNode, "series": series}, nil
+	})
+}
+
 // getClusterNetworkTrend — GET /api/clusters/network-trend?cluster=
 // &from=&to= (v0.9.9). Overview throughput grafiği: cluster toplam
 // in/out, dakika bucket'lı; pods/detail sözleşmesinin aynası.

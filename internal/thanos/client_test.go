@@ -305,6 +305,44 @@ func TestSummaryAllFailSurfaces(t *testing.T) {
 	}
 }
 
+func TestResourceTrend(t *testing.T) {
+	matrix := func(entries string) string {
+		return `{"status":"success","data":{"resultType":"matrix","result":[` + entries + `]}}`
+	}
+	// total: tek seri (metric{} boş)
+	srvTotal := fakeQuerier(t, "", map[string]string{
+		"node_cpu_seconds_total": matrix(`{"metric":{},"values":[[1784271000,"2.5"],[1784271015,"3.0"]]}`),
+	})
+	defer srvTotal.Close()
+	s := New()
+	tot, err := s.ResourceTrend(context.Background(),
+		ClusterConfig{Name: "c", URL: srvTotal.URL, Enabled: true},
+		"cpu", false, time.Unix(1784271000, 0), time.Unix(1784271900, 0))
+	if err != nil || len(tot) != 1 || tot[0].Name != "" || len(tot[0].Points) != 2 {
+		t.Fatalf("total trend yanlış: %v %+v", err, tot)
+	}
+	if tot[0].Points[0].Value != 2.5 || tot[0].Points[0].Bucket != 1784271000 {
+		t.Fatalf("total nokta yanlış: %+v", tot[0].Points)
+	}
+	// byNode: instance başına, ad güzelleştirmeli
+	srvNode := fakeQuerier(t, "", map[string]string{
+		"sum by (instance)": matrix(
+			`{"metric":{"instance":"10.0.1.5:9100"},"values":[[1784271000,"1.0"]]},` +
+				`{"metric":{"instance":"10.0.1.6:9100"},"values":[[1784271000,"2.0"]]}`),
+	})
+	defer srvNode.Close()
+	nd, err := s.ResourceTrend(context.Background(),
+		ClusterConfig{Name: "c", URL: srvNode.URL, Enabled: true},
+		"mem", true, time.Unix(1784271000, 0), time.Unix(1784271900, 0))
+	if err != nil || len(nd) != 2 {
+		t.Fatalf("byNode trend yanlış: %v %+v", err, nd)
+	}
+	names := map[string]bool{nd[0].Name: true, nd[1].Name: true}
+	if !names["10.0.1.5"] || !names["10.0.1.6"] {
+		t.Fatalf("instance adı güzelleşmedi: %+v", nd)
+	}
+}
+
 func TestSummaryEnrichment(t *testing.T) {
 	srv := fakeQuerier(t, "", map[string]string{
 		`kube_node_status_capacity{resource="cpu"}`:    scalarVec("64"),

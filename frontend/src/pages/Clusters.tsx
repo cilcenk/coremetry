@@ -81,15 +81,25 @@ export default function ClustersPage() {
     })),
   });
 
+  // v0.8.579 — servis sayfasından gelen pivot linki namespace taşır
+  // (?namespace=, audit §7.5). URL kaynak-of-truth; çip ile temizlenir.
+  const nsFilter = params.get('namespace') ?? '';
+  const clearNs = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('namespace');
+    return next;
+  }, { replace: true });
+
   // useQueries her render'da yeni dizi kimliği döndürür — memo'yu
   // içeriğe vekil sabit-boyutlu bir string anahtara bağlarız ki
   // useDataTable'ın sort memo'su her render'da yeniden koşmasın.
   const datas = podQs.map(q => q.data);
   const dataKey = datas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
-  const rows = useMemo(
-    () => datas.flatMap(d => d?.pods ?? []),
+  const rows = useMemo(() => {
+    const all = datas.flatMap(d => d?.pods ?? []);
+    return nsFilter ? all.filter(r => r.namespace === nsFilter) : all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataKey]);
+  }, [dataKey, nsFilter]);
 
   const failing = active
     .map((name, i) => ({ name, q: podQs[i] }))
@@ -115,6 +125,13 @@ export default function ClustersPage() {
               <option value="">All clusters ({sources.length})</option>
               {sources.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
+          )}
+          {nsFilter && (
+            <span className="badge b-info" style={{ cursor: 'pointer' }}
+              onClick={clearNs}
+              title="Namespace filtresi (servis sayfasından pivot) — kaldırmak için tıkla">
+              namespace: {nsFilter} ✕
+            </span>
           )}
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
             Per-pod CPU + memory from each cluster's Thanos Querier —

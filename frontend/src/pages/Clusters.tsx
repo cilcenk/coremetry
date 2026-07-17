@@ -283,7 +283,13 @@ export default function ClustersPage() {
   // useQueries dizi kimliği her render değişir — memo'lar sabit-
   // boyutlu içerik anahtarına bağlı (v0.8.578 deseni).
   const podDatas = podQs.map(q => q.data);
-  const podDataKey = podDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
+  // v0.9.18 (self-review fix) — anahtar yalnız cluster:count idi:
+  // aynı satır SAYISIYLA dönen refetch (olağan durum) yeni CPU/mem/
+  // net/service değerlerini HİÇ render etmiyordu — tablo mount-anı
+  // değerlerinde donuyordu. dataUpdatedAt her başarılı fetch'te
+  // değişir → gerçek yenilemede memo koşar, render'lar arası sabit.
+  const podDataKey = podQs.map(q =>
+    (q.data ? `${q.data.cluster}:${q.data.count}:${q.dataUpdatedAt}` : '-')).join('|');
   const rows = useMemo(() => {
     let all = podDatas.flatMap(d => d?.pods ?? []);
     if (nsFilter) all = all.filter(r => r.namespace === nsFilter);
@@ -295,7 +301,8 @@ export default function ClustersPage() {
   }, [podDataKey, nsFilter, svcFilter, qLower]);
 
   const nodeDatas = nodeQs.map(q => q.data);
-  const nodeDataKey = nodeDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
+  const nodeDataKey = nodeQs.map(q =>
+    (q.data ? `${q.data.cluster}:${q.data.count}:${q.dataUpdatedAt}` : '-')).join('|');
   const nodeRows = useMemo(() => {
     const all = nodeDatas.flatMap(d => d?.nodes ?? []);
     return qLower ? all.filter(r => r.node.toLowerCase().includes(qLower)) : all;
@@ -303,7 +310,8 @@ export default function ClustersPage() {
   }, [nodeDataKey, qLower]);
 
   const nsDatas = nsQs.map(q => q.data);
-  const nsDataKey = nsDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
+  const nsDataKey = nsQs.map(q =>
+    (q.data ? `${q.data.cluster}:${q.data.count}:${q.dataUpdatedAt}` : '-')).join('|');
   const nsRows = useMemo(() => {
     const all = nsDatas.flatMap(d => d?.namespaces ?? []);
     return qLower ? all.filter(r => r.namespace.toLowerCase().includes(qLower)) : all;

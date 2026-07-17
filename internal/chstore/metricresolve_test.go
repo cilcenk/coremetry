@@ -20,9 +20,9 @@ func TestMetricAutoStep(t *testing.T) {
 		span time.Duration
 		want int
 	}{
-		{2 * time.Minute, 1},          // ≤2m
+		{2 * time.Minute, 1},             // ≤2m
 		{2*time.Minute + time.Second, 5}, // >2m
-		{10 * time.Minute, 5},         // ≤10m
+		{10 * time.Minute, 5},            // ≤10m
 		{10*time.Minute + time.Second, 10},
 		{30 * time.Minute, 10},
 		{30*time.Minute + time.Second, 30},
@@ -53,15 +53,15 @@ func TestSelectMetricTier(t *testing.T) {
 	offDim := map[string]string{"db.system": "postgresql"}
 
 	cases := []struct {
-		name      string
-		from      time.Duration // relative to now (negative = into the past)
-		step      int
-		coverage  time.Time
-		filters   map[string]string
-		groupBy   []string
-		wantTier  string // "" → expect fallback (ok=false)
+		name     string
+		from     time.Duration // relative to now (negative = into the past)
+		step     int
+		coverage time.Time
+		filters  map[string]string
+		groupBy  []string
+		wantTier string // "" → expect fallback (ok=false)
 	}{
-		{name: "2m window auto→1s", from: -2 * time.Minute, step: 1, coverage: oldCoverage, wantTier: "1s"},
+		{name: "2m window step1 → floored to 10s tier (v0.9.27)", from: -2 * time.Minute, step: 1, coverage: oldCoverage, wantTier: "10s"},
 		{name: "30m window step10→10s", from: -30 * time.Minute, step: 10, coverage: oldCoverage, wantTier: "10s"},
 		{name: "6h window step60→1m", from: -6 * time.Hour, step: 60, coverage: oldCoverage, wantTier: "1m"},
 		{name: "1d window step300→1m", from: -24 * time.Hour, step: 300, coverage: oldCoverage, wantTier: "1m"},
@@ -69,7 +69,7 @@ func TestSelectMetricTier(t *testing.T) {
 
 		// route predicate: 10s carries http_route, 1s does not.
 		{name: "route + step10 → 10s", from: -30 * time.Minute, step: 10, coverage: oldCoverage, filters: route, wantTier: "10s"},
-		{name: "route + step1 → fallback (1s lacks route, coarser too coarse)", from: -2 * time.Minute, step: 1, coverage: oldCoverage, filters: route, wantTier: ""},
+		{name: "route + step1 → 10s (floor lifts to route-carrying tier)", from: -2 * time.Minute, step: 1, coverage: oldCoverage, filters: route, wantTier: "10s"},
 		{name: "route in groupBy + step60 → 1m", from: -6 * time.Hour, step: 60, coverage: oldCoverage, groupBy: []string{"http.route"}, wantTier: "1m"},
 
 		// off-dimension predicate → only raw spans can answer.
@@ -78,12 +78,12 @@ func TestSelectMetricTier(t *testing.T) {
 
 		// retention horizons.
 		{name: "40d window beyond 1m ttl → fallback", from: -40 * 24 * time.Hour, step: 3600, coverage: oldCoverage, wantTier: ""},
-		{name: "7h window step1 beyond 1s ttl(6h) → fallback", from: -7 * time.Hour, step: 1, coverage: oldCoverage, wantTier: ""},
+		{name: "7h window step1 → 10s (floor escapes 1s 6h ttl)", from: -7 * time.Hour, step: 1, coverage: oldCoverage, wantTier: "10s"},
 		{name: "exactly at 30d ttl edge → 1m", from: -30 * 24 * time.Hour, step: 3600, coverage: oldCoverage, wantTier: "1m"},
 
 		// forward-only cutover: window predates available fine-grain data.
 		{name: "window predates cutover → fallback", from: -2 * time.Minute, step: 1, coverage: now.Add(-1 * time.Minute), wantTier: ""},
-		{name: "window starts exactly at cutover → 1s", from: -1 * time.Minute, step: 1, coverage: now.Add(-1 * time.Minute), wantTier: "1s"},
+		{name: "window starts at cutover, step1 → 10s (v0.9.27 floor)", from: -1 * time.Minute, step: 1, coverage: now.Add(-1 * time.Minute), wantTier: "10s"},
 	}
 
 	for _, c := range cases {
@@ -186,5 +186,45 @@ func TestTierDimColumn(t *testing.T) {
 		if _, isOK := tierDimColumn(key); isOK {
 			t.Errorf("tierDimColumn(%q) should be off-dimension (ok=false)", key)
 		}
+	}
+}
+
+// v0.9.27 (second-resolution audit R1 + "10 saniye" kararı) — step
+// kelepçesi iki yönden: 10s tabanı (ClickHouse span-metrik; Thanos
+// 15s dünyasından ayrı) VE ≤maxMetricPoints bütçesi (explicit ?step
+// ve >20.8g pencere delikleri).
+func TestClampMetricStep(t *testing.T) {
+	base := time.Unix(1784271000, 0)
+	win := func(sec int) (time.Time, time.Time) { return base, base.Add(time.Duration(sec) * time.Second) }
+	cases := []struct {
+		name    string
+		step    int
+		spanSec int
+		want    int
+	}{
+		{"1s explicit floored to 10", 1, 120, 10},
+		{"5s floored to 10", 5, 600, 10},
+		{"10s kept", 10, 600, 10},
+		{"60s kept in 30m", 60, 1800, 60},
+		// Budget: 6h + step=1 = 21600 pts (ölçülen 43x aşım) → floor'a çekilir.
+		{"6h step=1 budget clamp", 1, 6 * 3600, 30}, // 21600/720 = 30
+		// >20.8g default deliği: 30g + step=1 → budget floor.
+		{"30d step=1 budget clamp", 1, 30 * 86400, 3600}, // 2592000/720 = 3600
+		{"auto-safe step untouched", 300, 24 * 3600, 300},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			from, to := win(c.spanSec)
+			got := clampMetricStep(c.step, from, to)
+			if got != c.want {
+				t.Fatalf("clampMetricStep(%d, %ds) = %d, want %d", c.step, c.spanSec, got, c.want)
+			}
+			if pts := c.spanSec / got; pts > maxMetricPoints {
+				t.Fatalf("bütçe aşımı: %d nokta > %d", pts, maxMetricPoints)
+			}
+			if got < minMetricStepSec {
+				t.Fatalf("10s tabanı ihlali: %d", got)
+			}
+		})
 	}
 }

@@ -104,6 +104,35 @@ func tierDimColumn(key string) (col string, ok bool) {
 	}
 }
 
+// Span-metrik okuma çözünürlük sınırları (v0.9.27, second-resolution
+// audit R1 + operatör kararı "10 saniye demiştik"):
+//   minMetricStepSec — ClickHouse span-metrik TABANI 10s. Bu, Thanos
+//     range-query'lerinin 15s tabanından AYRI bir dünya (o
+//     internal/thanos/stepForWindow); karıştırılmaz.
+//   maxMetricPoints — seri başına nokta tavanı (grafik + CH bütçesi).
+const (
+	minMetricStepSec = 10
+	maxMetricPoints  = 720
+)
+
+// clampMetricStep — çözülen step'i iki yönden de sınırlar: 10s tabanı
+// (operatör kararı; 1s/5s tier'ları resolver üzerinden okunmaz — yazım
+// dokunulmaz) VE ≤maxMetricPoints bütçesi (explicit ?step ve >20.8g
+// pencere delikleri). Normal UI davranışı değişmez: stepForWidth ≤720
+// üretir ve dar-pencere step'i zaten ≥10'a yuvarlanır.
+func clampMetricStep(step int, from, to time.Time) int {
+	if step < minMetricStepSec {
+		step = minMetricStepSec
+	}
+	spanSec := int(to.Sub(from).Seconds())
+	if spanSec > 0 {
+		if minStep := (spanSec + maxMetricPoints - 1) / maxMetricPoints; step < minStep {
+			step = minStep
+		}
+	}
+	return step
+}
+
 // metricAutoStep mirrors QuerySpanMetric's sub-10s ramp so the resolver's
 // auto-step matches the rest of the metric surface (consistent bucket counts).
 func metricAutoStep(from, to time.Time) int {
@@ -181,6 +210,9 @@ func selectMetricTier(from, to time.Time, stepSec int, coverageStart, now time.T
 	if step <= 0 {
 		step = metricAutoStep(from, to)
 	}
+	// v0.9.27 — 10s tabanı burada da: doğrudan (step=0) çağıran bir
+	// yol 1s tier'ı seçemesin (yazım dokunulmaz, okuma 10s'te taban).
+	step = clampMetricStep(step, from, to)
 	needRoute := referencesRoute(filters, groupBy)
 	// Iterate coarse→fine and take the FIRST tier that fits, so we read the
 	// fewest rows for the requested resolution.
@@ -252,6 +284,15 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 	if step <= 0 {
 		step = metricAutoStep(q.From, q.To)
 	}
+	// v0.9.27 (second-resolution audit R1) — nokta-bütçesi kelepçesi:
+	// ne olursa olsun seri başına ≤maxMetricPoints. metricAutoStep bu
+	// bütçeyi kendi tutar ama (a) explicit q.StepSeconds tüm giriş
+	// noktalarında (api ?step=/body.Step, dql plan.StepSeconds)
+	// clamp'siz gelir — ölçümde 6h+step=1 = 21.600 nokta (43× bütçe)
+	// üretildi; (b) metricAutoStep default dalı >20.8g pencerede
+	// sınırsız. Kelepçe her iki deliği de kapatır; normal UI davranışı
+	// DEĞİŞMEZ (stepForWidth zaten ≤720 üretiyor, floor'un altında).
+	step = clampMetricStep(step, q.From, q.To)
 
 	if q.Source == "tracemetrics" {
 		return s.resolveTraceMetric(ctx, q, step)

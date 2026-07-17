@@ -187,6 +187,11 @@ type Server struct {
 	subRateMu sync.Mutex
 	subRateBy map[string]int64
 
+	// MCP tools/call rate limiti (v0.9.14) — kimlik-anahtarlı sabit
+	// pencere; desen subRateBy'ın aynısı (mcp_gate.go).
+	mcpRateMu sync.Mutex
+	mcpRateBy map[string]*mcpRateBucket
+
 	// version is the build-time release tag stamped via -ldflags.
 	// Surfaced unauthenticated on /api/version so the login page
 	// can show it before the operator has a session.
@@ -278,6 +283,12 @@ func (s *Server) SetAutocomplete(a *acache.Store) {
 // valid — leaves the /api/mcp/* routes unregistered.
 func (s *Server) SetMCP(m *mcp.Server) {
 	s.mcp = m
+	if m != nil {
+		// v0.9.14 — tools/call kapısı: kimlik başına 60/dk
+		// (mcp_gate.go). Paket auth-agnostik kalır; kimliği api
+		// katmanı context'ten okur.
+		m.SetToolCallGate(s.mcpToolGate)
+	}
 }
 
 type rateSample struct {
@@ -488,6 +499,11 @@ func (s *Server) Start() error {
 	if s.mcp != nil {
 		mux.HandleFunc("GET /api/mcp/sse", s.mcp.HandleSSE)
 		mux.HandleFunc("POST /api/mcp/messages", s.mcp.HandleMessage)
+		// v0.9.14 — Streamable-HTTP (2025-03-26), stateless: Claude
+		// Code'un birincil `--transport http` yolu; session'sız olduğu
+		// için çok-pod LB'de afinite gerektirmez (audit EK BULGU'nun
+		// kökten çözümü). SSE yolu eski istemciler için aynen kalır.
+		mux.HandleFunc("POST /api/mcp", s.mcp.HandleStreamable)
 	}
 	mux.HandleFunc("GET /api/services/{name}/bundle", s.getServiceBundle)
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)

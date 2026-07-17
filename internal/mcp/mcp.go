@@ -7,20 +7,22 @@
 //
 // What Coremetry exposes (built up across v0.6.4–v0.6.7):
 //
-//   v0.6.4 — core protocol scaffolding: JSON-RPC framing,
-//            HTTP+SSE transport, session lifecycle, initialize +
-//            ping methods. tools/resources/prompts capabilities
-//            advertised but their registries are empty.
-//   v0.6.5 — tools/list + tools/call wired to a Coremetry tools
-//            registry (list_services, search_logs, get_trace,
-//            query_metric, list_problems, ack_problem, …).
-//   v0.6.6 — resources/list + resources/read exposing
-//            traces/logs/metrics as MCP resources.
-//   v0.6.7 — prompts/list + prompts/get exposing Coremetry's
-//            curated system prompts (Explain trace, Suggest
-//            runbook, Compare deploys, …) as MCP prompts so an
-//            external LLM can take the same systematic approach
-//            an operator sees in /problems.
+//	v0.6.4 — core protocol scaffolding: JSON-RPC framing,
+//	         HTTP+SSE transport, session lifecycle, initialize +
+//	         ping methods. tools/resources/prompts capabilities
+//	         advertised but their registries are empty.
+//	v0.6.5 — tools/list + tools/call wired to a Coremetry tools
+//	         registry (list_services, search_logs, get_trace,
+//	         query_metric, list_problems, …). Salt-okunur —
+//	         mutation tool'u bugüne dek hiç eklenmedi (v0.9.14
+//	         audit'i: yazma gelirse audit_log source alanı şart).
+//	v0.6.6 — resources/list + resources/read exposing
+//	         traces/logs/metrics as MCP resources.
+//	v0.6.7 — prompts/list + prompts/get exposing Coremetry's
+//	         curated system prompts (Explain trace, Suggest
+//	         runbook, Compare deploys, …) as MCP prompts so an
+//	         external LLM can take the same systematic approach
+//	         an operator sees in /problems.
 //
 // Auth: the HTTP handlers in this package are wrapped by the same
 // auth middleware as /api/*. Browser sessions work via the JWT
@@ -36,8 +38,8 @@
 // header; can layer it on later without breaking existing clients.
 //
 // References:
-//   • https://modelcontextprotocol.io
-//   • https://spec.modelcontextprotocol.io/specification
+//   - https://modelcontextprotocol.io
+//   - https://spec.modelcontextprotocol.io/specification
 package mcp
 
 import (
@@ -46,6 +48,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -58,6 +61,12 @@ import (
 // per the MCP spec: "the server SHOULD respond with its own
 // version" and let the client decide whether to proceed.
 const ProtocolVersion = "2024-11-05"
+
+// ProtocolVersionStreamable — Streamable-HTTP transport'unun (v0.9.14)
+// initialize yanıtında bildirdiği sürüm. SSE yolu 2024-11-05'te kalır;
+// iki transport aynı dispatch gövdesini paylaşır, yalnız el-sıkışma
+// sürümü ayrışır.
+const ProtocolVersionStreamable = "2025-03-26"
 
 // JSON-RPC 2.0 envelope types. We don't use a third-party
 // JSON-RPC library because (a) the surface is small, (b) MCP's
@@ -108,6 +117,11 @@ const (
 	ErrMethodNotFound = -32601
 	ErrInvalidParams  = -32602
 	ErrInternal       = -32603
+	// ErrRateLimited (v0.9.14) — tools/call kapısının reddi; server-
+	// error bandının tepesi. HTTP 429 yerine JSON-RPC hatası: LLM
+	// tool-use döngüleri bunu sonuç olarak görür, bekleyip yeniden
+	// dener.
+	ErrRateLimited = -32000
 	// MCP-defined application errors live in the
 	// -32099..-32000 server-error band. ErrToolNotFound is
 	// the only one we need at v0.6.4; tools/resources/prompts
@@ -186,14 +200,14 @@ type CapPromptsBag struct {
 // Schema example (mirrors JSON Schema draft-2020-12 enough for
 // every MCP client):
 //
-//   InputSchema: map[string]any{
-//       "type": "object",
-//       "properties": map[string]any{
-//           "service": map[string]any{"type": "string"},
-//           "range_ns": map[string]any{"type": "integer", "minimum": 0},
-//       },
-//       "required": []string{"service"},
-//   }
+//	InputSchema: map[string]any{
+//	    "type": "object",
+//	    "properties": map[string]any{
+//	        "service": map[string]any{"type": "string"},
+//	        "range_ns": map[string]any{"type": "integer", "minimum": 0},
+//	    },
+//	    "required": []string{"service"},
+//	}
 type Tool struct {
 	Name        string
 	Description string
@@ -282,8 +296,8 @@ type PromptArgument struct {
 // MCP prompts can return system + user + assistant messages;
 // the client typically replays them as the conversation seed.
 type PromptMessage struct {
-	Role    string          `json:"role"`
-	Content PromptContent   `json:"content"`
+	Role    string        `json:"role"`
+	Content PromptContent `json:"content"`
 }
 
 // PromptContent is the body of a message. Type is currently
@@ -329,13 +343,31 @@ type Server struct {
 	// immutable thereafter. Static resources have fixed URIs;
 	// templated resources expose URI patterns the LLM can
 	// instantiate with concrete values (e.g. a trace_id).
-	resources         map[string]Resource         // key = URI
+	resources         map[string]Resource // key = URI
 	resourceTemplates []ResourceTemplate
 
 	// prompts is the curated prompt registry served by
 	// prompts/list and prompts/get. Same lifecycle as tools /
 	// resources — boot-time populated, immutable.
 	prompts map[string]Prompt
+
+	// gate (v0.9.14) — opsiyonel tools/call kapısı. Paket
+	// auth-agnostik kalır: kimlik/limit bilgisi api katmanında,
+	// buraya yalnız "geçir/RED" fonksiyonu iner. nil = kapısız.
+	gate ToolCallGate
+}
+
+// ToolCallGate — tools/call öncesi çağrılır; hata dönerse çağrı
+// JSON-RPC -32000 ile reddedilir (HTTP 429 DEĞİL: istemci
+// kütüphaneleri JSON-RPC hatasını LLM'e tool sonucu olarak gösterir,
+// model bekleyip devam edebilir). initialize/tools/list/prompts
+// kapı dışıdır (ucuz keşif).
+type ToolCallGate func(ctx context.Context, tool string) error
+
+// SetToolCallGate wires the optional rate-limit gate. Boot'ta bir
+// kez çağrılır (api.SetMCP), sonrasında değişmez.
+func (s *Server) SetToolCallGate(g ToolCallGate) {
+	s.gate = g
 }
 
 // session is the per-client connection state. The outbound
@@ -607,13 +639,78 @@ func (s *Server) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	case <-sess.closed:
 		// SSE stream gone — drop the response. Client must
 		// have hung up; nothing we can do.
-	case <-time.After(2 * time.Second):
+	case <-time.After(sendTimeout):
 		// SSE consumer wedged (browser tab hidden, no flush).
 		// Drop with a log so the operator can see the cluster's
 		// MCP backpressure if it becomes a pattern.
 		log.Printf("[mcp] session=%s response queue full — dropped %s", sessID, req.Method)
 	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// sendTimeout — HandleMessage'ın SSE tüketicisi tıkalıyken yanıtı
+// düşürmeden önce beklediği süre. Var (const değil) ki mcp_test
+// wedged-consumer senaryosunu saniyeler beklemeden pinleyebilsin.
+var sendTimeout = 2 * time.Second
+
+// HandleStreamable — Streamable-HTTP transport'u (v0.9.14, MCP spec
+// 2025-03-26), STATELESS kipte: tek POST = tek JSON-RPC isteği,
+// yanıt DOĞRUDAN gövdede (SSE kanalı yok). Session hiç üretilmez
+// (Mcp-Session-Id başlığı dönülmez) — istemci sessionless çalışır.
+// Bu, çok-pod'lu kurulumdaki pod-lokal session kırılganlığını
+// (audit EK BULGU) kökten çözer: her POST bağımsızdır, LB'de hangi
+// pod'a düşerse düşsün. Claude Code'un birincil `--transport http`
+// yolu budur; SSE yolu eski istemciler için aynen kalır.
+func (s *Server) HandleStreamable(w http.ResponseWriter, r *http.Request) {
+	var req Request
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResp(nil, ErrParse, "parse error: "+err.Error()))
+		return
+	}
+	if req.IsNotification() {
+		// Spec: bildirime 202, gövde yok.
+		s.dispatchNotification(r.Context(), nil, &req)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	var resp *Response
+	if req.Method == "initialize" {
+		// Stateless initialize: oturum durumu yazılmaz, sürüm bu
+		// transport'un kendi sabitidir.
+		resp = s.handleInitializeStreamable(&req)
+	} else {
+		resp = s.dispatch(r.Context(), nil, &req)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("[mcp] streamable encode: %v", err)
+	}
+}
+
+// handleInitializeStreamable — handleInitialize'ın sessionless hali:
+// aynı capabilities/serverInfo, sürüm 2025-03-26, hiçbir durum yazımı.
+func (s *Server) handleInitializeStreamable(req *Request) *Response {
+	var p initializeParams
+	if len(req.Params) > 0 {
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return errorResp(req.ID, ErrInvalidParams, "initialize params: "+err.Error())
+		}
+	}
+	if p.ClientInfo.Name != "" {
+		log.Printf("[mcp] streamable initialize from %s/%s (their protocol=%s)",
+			p.ClientInfo.Name, p.ClientInfo.Version, p.ProtocolVersion)
+	}
+	return successResp(req.ID, initializeResult{
+		ProtocolVersion: ProtocolVersionStreamable,
+		Capabilities: ServerCapabilities{
+			Tools:     &CapToolsBag{},
+			Resources: &CapResourcesBag{},
+			Prompts:   &CapPromptsBag{},
+		},
+		ServerInfo: s.info,
+	})
 }
 
 // dispatch routes a request to the appropriate method handler
@@ -650,6 +747,11 @@ func (s *Server) dispatch(ctx context.Context, sess *session, req *Request) *Res
 // notifications/initialized matters at v0.6.4 — it transitions
 // the session into the "ready for arbitrary methods" state.
 func (s *Server) dispatchNotification(_ context.Context, sess *session, req *Request) {
+	// sess == nil = Streamable-HTTP (stateless, v0.9.14): oturum
+	// durumu yok, bildirimler sessizce kabul edilir (spec: 202).
+	if sess == nil {
+		return
+	}
 	switch req.Method {
 	case "notifications/initialized":
 		sess.mu.Lock()
@@ -781,6 +883,14 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	s.mu.RUnlock()
 	if !ok {
 		return errorResp(req.ID, ErrMethodNotFound, fmt.Sprintf("tool not found: %s", p.Name))
+	}
+	// v0.9.14 — rate-limit kapısı (varsa) tool çözümünden SONRA,
+	// handler'dan ÖNCE: bilinmeyen tool -32601 kalır, gate yalnız
+	// gerçek çağrıları sayar.
+	if s.gate != nil {
+		if err := s.gate(ctx, p.Name); err != nil {
+			return errorResp(req.ID, ErrRateLimited, err.Error())
+		}
 	}
 
 	out, err := tool.Handler(ctx, p.Arguments)
@@ -1000,9 +1110,9 @@ func endsWith(s, suffix string) bool {
 // ── prompts/list, prompts/get ──────────────────────────────────
 
 type promptListEntry struct {
-	Name        string                  `json:"name"`
-	Description string                  `json:"description,omitempty"`
-	Arguments   []promptArgumentEntry   `json:"arguments,omitempty"`
+	Name        string                `json:"name"`
+	Description string                `json:"description,omitempty"`
+	Arguments   []promptArgumentEntry `json:"arguments,omitempty"`
 }
 
 type promptArgumentEntry struct {

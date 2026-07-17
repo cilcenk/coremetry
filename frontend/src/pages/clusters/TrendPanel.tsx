@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { MultiLineChart } from '@/components/MultiLineChart';
+import { MultiLineChart, type DeployMarker } from '@/components/MultiLineChart';
 import { Spinner, Empty } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { limitThresholds, thanosPodSeriesToSeries, thanosTrendToSeries } from './trendSeries';
@@ -47,6 +47,28 @@ export function ThanosTrendPanel({ cluster, namespace, pod, row, fromNs, toNs }:
   });
   const q = single ? podQ : multiQ;
 
+  // v0.9.13 (T4) — deploy marker'lar: pod'un Coremetry servis
+  // eşleşmesi (v0.9.11-12) varsa o servisin deploy zaman damgaları
+  // grafiğe dikey çizgi olarak biner. Eşleşme yoksa sorgu HİÇ
+  // atılmaz (korelasyon kapısı); mevcut /deploys ucu + ServiceCharts
+  // marker dili.
+  const svc = single ? row?.service ?? '' : '';
+  const deploysQ = useQuery({
+    queryKey: ['service-deploys', svc, fromNs, toNs],
+    queryFn: () => api.serviceDeploys(svc, { from: fromNs, to: toNs }),
+    staleTime: 60_000,
+    enabled: !!svc,
+  });
+  const deployMarkers: DeployMarker[] | undefined = useMemo(() => {
+    const ds = deploysQ.data;
+    if (!ds || ds.length === 0) return undefined;
+    return ds.map(d => ({
+      timeUnixNs: d.timeUnixNs,
+      label: d.version,
+      description: `${d.service} deploy · ${d.version}`,
+    }));
+  }, [deploysQ.data]);
+
   const { cpuSeries, memSeries, totalPods } = useMemo(() => {
     if (single) {
       const trend = podQ.data?.trend ?? [];
@@ -82,11 +104,13 @@ export function ThanosTrendPanel({ cluster, namespace, pod, row, fromNs, toNs }:
       <div>
         <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>CPU (cores)</div>
         <MultiLineChart series={cpuSeries} height={180} syncKey={syncKey}
+          deploys={deployMarkers}
           thresholds={single ? limitThresholds(row?.cpuLimitCores, row?.cpuRequestCores, 'cores') : undefined} />
       </div>
       <div>
         <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>Memory (bytes)</div>
         <MultiLineChart series={memSeries} height={180} syncKey={syncKey}
+          deploys={deployMarkers}
           thresholds={single ? limitThresholds(row?.memLimitBytes, row?.memRequestBytes, 'bytes') : undefined} />
       </div>
     </div>

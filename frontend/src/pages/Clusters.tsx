@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
+import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -464,6 +465,16 @@ export default function ClustersPage() {
 // PodDrawer — tek pod'un dakika-bucket'lı CPU/memory trendi.
 // Yalnız açılınca fetch (ES-cost disiplininin Thanos karşılığı);
 // staleTime = sunucu TTL'i.
+// TREND_WINDOWS — drawer-yerel adaptif pencere rung'ları (v0.9.1,
+// namespace-trend audit Dilim A). Sınırlı set → cache-key
+// kardinalitesi bounded (v0.8.270 disiplini); '' = sayfa range'i.
+const TREND_WINDOWS = [
+  { key: '', label: 'Page range' },
+  { key: '15m', label: '15m', ns: 15 * 60 * 1e9 },
+  { key: '1h', label: '1h', ns: 3600 * 1e9 },
+  { key: '6h', label: '6h', ns: 6 * 3600 * 1e9 },
+] as const;
+
 function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
   cluster: string;
   namespace: string;
@@ -472,7 +483,27 @@ function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
   range: TimeRange;
   onClose: () => void;
 }) {
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+  // Adaptif pencere: ?tw= URL'de (kaynak-of-truth), sayfa range'inden
+  // bağımsız — AnomalyDetailDrawer'ın chartRange yaklaşımının
+  // kullanıcı-seçimli hali. Date.now() memo'su yalnız tw değişince
+  // koşar (timeRangeToNs'in kurulu semantiğiyle aynı).
+  const [params, setParams] = useSearchParams();
+  const tw = params.get('tw') ?? '';
+  const setTw = (v: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('tw', v); else next.delete('tw');
+    return next;
+  }, { replace: true });
+  const { from, to } = useMemo(() => {
+    const w = TREND_WINDOWS.find(x => x.key === tw);
+    if (w && 'ns' in w && w.ns) {
+      const now = Date.now() * 1e6;
+      return { from: now - w.ns, to: now };
+    }
+    return timeRangeToNs(range);
+  }, [range, tw]);
+  // Tıkla-büyüt (v0.9.1): hangi metrik büyük uPlot'ta açık.
+  const [expanded, setExpanded] = useState<'cpu' | 'mem' | null>(null);
   const q = useQuery({
     queryKey: ['cluster-pod-detail', cluster, namespace, pod, from, to],
     queryFn: () => api.clusterPodDetail(cluster, namespace, pod, from, to),
@@ -480,6 +511,16 @@ function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
   });
   const detail = q.isPending ? undefined : q.isError ? null : q.data;
   const trend = detail?.trend ?? [];
+  const expandedSeries = useMemo(() => {
+    if (!expanded) return [];
+    return [{
+      groupKey: [expanded === 'cpu' ? 'CPU (cores)' : 'Memory (bytes)'],
+      points: trend.map(t => ({
+        time: t.bucket * 1e9,
+        value: expanded === 'cpu' ? t.cpuCores : t.memBytes,
+      })),
+    }];
+  }, [expanded, trend]);
 
   return (
     <Drawer onClose={onClose} header={
@@ -526,12 +567,30 @@ function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
       {detail === null && <Empty icon="✗" title="Failed to load pod detail" />}
       {detail && (
         <DrawerSection title="Trend (per minute)">
+          <div style={{ marginBottom: 8 }}>
+            <select value={tw} onChange={e => setTw(e.target.value)}
+              style={{ fontSize: 11 }}
+              title="Trend window — independent of the page range">
+              {TREND_WINDOWS.map(w => (
+                <option key={w.key} value={w.key}>{w.label}</option>
+              ))}
+            </select>
+          </div>
           {trend.length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text3)' }}>No samples in this window.</div>
           ) : (
             <div style={{ display: 'grid', gap: 6 }}>
-              <DrawerTrendRow label="CPU (cores)" values={trend.map(t => t.cpuCores)} color="var(--warn)" />
-              <DrawerTrendRow label="Memory" values={trend.map(t => t.memBytes)} color="var(--accent2)" />
+              <DrawerTrendRow label="CPU (cores)" values={trend.map(t => t.cpuCores)} color="var(--warn)"
+                onClick={() => setExpanded(e => (e === 'cpu' ? null : 'cpu'))} />
+              <DrawerTrendRow label="Memory" values={trend.map(t => t.memBytes)} color="var(--accent2)"
+                onClick={() => setExpanded(e => (e === 'mem' ? null : 'mem'))} />
+              {/* v0.9.1 — tıkla-büyüt: eksenli + hover'lı uPlot
+                  (Grafana hissi). Aynı trend verisi — ek istek yok. */}
+              {expanded && expandedSeries.length > 0 && (
+                <div style={{ marginTop: 6 }}>
+                  <MultiLineChart series={expandedSeries} height={200} />
+                </div>
+              )}
             </div>
           )}
         </DrawerSection>

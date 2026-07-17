@@ -44,6 +44,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/rag"
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
+	"github.com/cilcenk/coremetry/internal/thanos"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -130,6 +131,11 @@ type Server struct {
 	// /trace?id= URL. nil-safe — every accessor on the service
 	// short-circuits when the receiver is nil.
 	tempo *tempo.Service
+
+	// thanos — çoklu-cluster Thanos Querier istemcisi (v0.8.576).
+	// /clusters yüzeyi + Settings → Clusters. nil ya da boş liste →
+	// rotalar 404/boş snapshot döner.
+	thanos *thanos.Service
 
 	// cluster — per-pod heartbeat / membership service (v0.5.253).
 	// Always non-nil when Set; the service degenerates to a single-
@@ -242,6 +248,14 @@ func (s *Server) SetVersion(v string) {
 // operator has actually filled in the settings.
 func (s *Server) SetTempo(t *tempo.Service) {
 	s.tempo = t
+}
+
+// SetThanos wires the multi-cluster Thanos Querier client
+// (v0.8.576). Always called from main() with a non-nil service —
+// HasEnabledClusters() reports whether the operator configured
+// any cluster.
+func (s *Server) SetThanos(t *thanos.Service) {
+	s.thanos = t
 }
 
 // SetCluster wires the per-pod heartbeat / membership service
@@ -429,6 +443,11 @@ func (s *Server) Start() error {
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
 	mux.HandleFunc("GET /api/clusters", s.getClusters)
+	// v0.8.576 — Thanos-backed remote-cluster pod metrikleri
+	// (/clusters yüzeyi). Fan-out istemcide: sayfa cluster başına
+	// ayrı istek atar, her cluster kendi cache slotunda (audit §6).
+	mux.HandleFunc("GET /api/clusters/pods", s.getClusterPods)
+	mux.HandleFunc("GET /api/clusters/pods/detail", s.getClusterPodDetail)
 	// v0.8.383 — distinct deploy_env values in the window; feeds the
 	// global Topbar environment picker (env-separation Phase 1).
 	mux.HandleFunc("GET /api/environments", s.getEnvironments)
@@ -851,6 +870,8 @@ func (s *Server) Start() error {
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
 	mux.HandleFunc("PUT /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.putTempoSettings))
+	mux.HandleFunc("GET /api/settings/thanos", auth.RequireRole(auth.RoleAdmin, s.getThanosSettings))
+	mux.HandleFunc("PUT /api/settings/thanos", auth.RequireRole(auth.RoleAdmin, s.putThanosSettings))
 	mux.HandleFunc("GET  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.getLogstoreESSettings))
 	mux.HandleFunc("PUT  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.putLogstoreESSettings))
 	mux.HandleFunc("POST /api/settings/logstore/test", auth.RequireRole(auth.RoleAdmin, s.testLogstoreESSettings))

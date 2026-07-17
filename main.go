@@ -45,6 +45,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/templater"
 	"github.com/cilcenk/coremetry/internal/tempo"
+	"github.com/cilcenk/coremetry/internal/thanos"
 	"github.com/cilcenk/coremetry/internal/topology"
 )
 
@@ -904,6 +905,14 @@ func main() {
 		log.Printf("[tempo] load persisted config: %v", err)
 	}
 	go tempoSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.8.576 — çoklu-cluster Thanos Querier istemcisi (tempo
+	// simetriği): settings blob'unu boot'ta yükle + 30s multi-pod
+	// senkron poll'u. Cluster listesi boşsa /clusters rotaları 404.
+	thanosSvc := thanos.New()
+	if err := thanosSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[thanos] load persisted config: %v", err)
+	}
+	go thanosSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if tempoSvc.Configured() {
 		t := tempoSvc.Snapshot()
 		log.Printf("[tempo] external backend enabled (baseUrl=%s authType=%s orgId=%s)",
@@ -1007,6 +1016,7 @@ func main() {
 	srv.SetVersion(Version)
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)
+	srv.SetThanos(thanosSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes
 	// to the Redis pub/sub channel so a putBranding /
 	// putTempoSettings / etc. on one pod evicts the cached

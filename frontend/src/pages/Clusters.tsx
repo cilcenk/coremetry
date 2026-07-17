@@ -10,7 +10,7 @@ import { timeRangeToNs, fmtBytes } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { ClusterPodRow, TimeRange } from '@/lib/types';
+import type { ClusterPodRow, ClusterNodeRow, TimeRange } from '@/lib/types';
 
 // /clusters — remote OpenShift clusters' pod CPU+memory via their
 // Thanos Queriers (v0.8.578, audit: docs/audit/thanos-multicluster-
@@ -22,6 +22,16 @@ import type { ClusterPodRow, TimeRange } from '@/lib/types';
 // (useQueries) — her cluster kendi 60s cache slotunda, bozuk/yavaş
 // cluster yalnız kendi hata çipini gösterir, diğer paneller dolu
 // kalır. Kısmi sonuç böylece React Query'den bedava.
+
+// v0.8.584 — Nodes sekmesi (dar kapsam: CPU/memory/sayı).
+const NODE_COLS: DataTableColumn<ClusterNodeRow>[] = [
+  { id: 'cluster',  label: 'Cluster', sortValue: r => r.cluster,  naturalDir: 'asc', width: 130 },
+  { id: 'node',     label: 'Node',    sortValue: r => r.node,     naturalDir: 'asc', width: 260 },
+  { id: 'cpuCores', label: 'CPU',     sortValue: r => r.cpuCores, numeric: true, width: 90 },
+  { id: 'cpuPct',   label: 'CPU %',   sortValue: r => r.cpuPct ?? 0, numeric: true, width: 80 },
+  { id: 'memBytes', label: 'Memory',  sortValue: r => r.memBytes, numeric: true, width: 100 },
+  { id: 'memPct',   label: 'Mem %',   sortValue: r => r.memPct ?? 0, numeric: true, width: 80 },
+];
 
 const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'cluster',   label: 'Cluster',   sortValue: r => r.cluster,   naturalDir: 'asc', width: 130 },
@@ -80,6 +90,16 @@ export default function ClustersPage() {
     return next;
   }, { replace: true });
 
+  // v0.8.584 — Pods | Nodes sekmeleri (?tab=, URL kaynak-of-truth).
+  // Fetch-on-open: her sekmenin sorguları yalnız o sekme açıkken
+  // koşar (enabled) — geçişte 60s staleTime cache'i devralır.
+  const tab = params.get('tab') === 'nodes' ? 'nodes' : 'pods';
+  const setTab = (t: 'pods' | 'nodes') => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (t === 'nodes') next.set('tab', 'nodes'); else next.delete('tab');
+    return next;
+  }, { replace: true });
+
   const active = clusterFilter ? sources.filter(s => s === clusterFilter) : sources;
   const podQs = useQueries({
     queries: active.map(name => ({
@@ -87,6 +107,16 @@ export default function ClustersPage() {
       queryFn: () => api.clusterPods(name),
       staleTime: 60_000, // = sunucu TTL'i (ES-cost disiplini)
       retry: 1,
+      enabled: tab === 'pods',
+    })),
+  });
+  const nodeQs = useQueries({
+    queries: active.map(name => ({
+      queryKey: ['cluster-nodes', name],
+      queryFn: () => api.clusterNodes(name),
+      staleTime: 60_000,
+      retry: 1,
+      enabled: tab === 'nodes',
     })),
   });
 
@@ -110,10 +140,18 @@ export default function ClustersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey, nsFilter]);
 
+  const nodeDatas = nodeQs.map(q => q.data);
+  const nodeDataKey = nodeDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
+  const nodeRows = useMemo(
+    () => nodeDatas.flatMap(d => d?.nodes ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodeDataKey]);
+
+  const activeQs = tab === 'pods' ? podQs : nodeQs;
   const failing = active
-    .map((name, i) => ({ name, q: podQs[i] }))
+    .map((name, i) => ({ name, q: activeQs[i] }))
     .filter(x => x.q?.isError);
-  const anyLoading = podQs.some(q => q.isPending);
+  const anyLoading = activeQs.some(q => q.isPending && q.fetchStatus !== 'idle');
 
   const dt = useDataTable<ClusterPodRow>({
     storageKey: 'clusterpods',
@@ -121,11 +159,28 @@ export default function ClustersPage() {
     rows,
     initialSort: { id: 'cpuCores', dir: 'desc' },
   });
+  const ndt = useDataTable<ClusterNodeRow>({
+    storageKey: 'clusternodes',
+    columns: NODE_COLS,
+    rows: nodeRows,
+    initialSort: { id: 'cpuPct', dir: 'desc' },
+  });
 
   return (
     <>
       <Topbar title="Clusters" range={range} onRangeChange={setRange} />
       <div id="content">
+        <div className="tab-strip" style={{ marginBottom: 10 }}>
+          <button className={tab === 'pods' ? 'active' : ''}
+            onClick={() => setTab('pods')}>
+            Pods{tab === 'pods' && rows.length > 0 ? ` (${rows.length})` : ''}
+          </button>
+          <button className={tab === 'nodes' ? 'active' : ''}
+            onClick={() => setTab('nodes')}>
+            {/* Sayı satır adedinden — ek sorgu yok (audit §4 notu). */}
+            Nodes{tab === 'nodes' && nodeRows.length > 0 ? ` (${nodeRows.length})` : ''}
+          </button>
+        </div>
         <div className="controls" style={{ marginBottom: 12 }}>
           {sources.length > 1 && (
             <select value={clusterFilter}
@@ -135,7 +190,7 @@ export default function ClustersPage() {
               {sources.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           )}
-          {nsFilter && (
+          {tab === 'pods' && nsFilter && (
             <span className="badge b-info" style={{ cursor: 'pointer' }}
               onClick={clearNs}
               title="Namespace filtresi (servis sayfasından pivot) — kaldırmak için tıkla">
@@ -143,9 +198,9 @@ export default function ClustersPage() {
             </span>
           )}
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
-            Per-pod CPU + memory from each cluster's Thanos Querier —
-            current values, refreshed on the server every 60s. Row click
-            opens the per-minute trend.
+            {tab === 'pods'
+              ? 'Per-pod CPU + memory from each cluster’s Thanos Querier — current values, refreshed on the server every 60s. Row click opens the per-minute trend.'
+              : 'Per-node CPU + memory (node-exporter) — current values, refreshed on the server every 60s.'}
           </span>
         </div>
 
@@ -169,15 +224,52 @@ export default function ClustersPage() {
             Read-only; a viewer-role ServiceAccount token per cluster is enough.
           </Empty>
         )}
-        {sources.length > 0 && anyLoading && rows.length === 0 && <TableSkeleton cols={7} wideFirst />}
-        {sources.length > 0 && !anyLoading && rows.length === 0 && failing.length === 0 && (
+        {sources.length > 0 && anyLoading && (tab === 'pods' ? rows : nodeRows).length === 0 && <TableSkeleton cols={7} wideFirst />}
+        {sources.length > 0 && !anyLoading && failing.length === 0 && tab === 'pods' && rows.length === 0 && (
           <Empty icon="∅" title="No pod samples">
             Queries returned no series — check the namespace filter on the
             cluster entry, or verify the metric names exist on this Thanos
             tenancy (audit §4).
           </Empty>
         )}
-        {rows.length > 0 && (
+        {sources.length > 0 && !anyLoading && failing.length === 0 && tab === 'nodes' && nodeRows.length === 0 && (
+          <Empty icon="∅" title="No node samples">
+            node-exporter series returned empty — the token may be bound to
+            the tenancy port (namespace-enforced); node metrics need the main
+            thanos-querier route (runbook: probe step).
+          </Empty>
+        )}
+        {tab === 'nodes' && nodeRows.length > 0 && (
+          <div className="table-wrap">
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={ndt} />
+              <DataTableHead dt={ndt} />
+              <tbody>
+                {ndt.sortedRows.map(r => (
+                  <tr key={`${r.cluster}|${r.node}`}
+                    style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
+                    <td style={{ fontSize: 11, color: 'var(--text2)' }}>{r.cluster}</td>
+                    <td>
+                      <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 500 }}
+                        title={r.node}>
+                        {r.node}
+                      </span>
+                    </td>
+                    <td className="num mono">{fmtCores(r.cpuCores)}</td>
+                    <td className="num mono" style={{
+                      color: (r.cpuPct ?? 0) > 85 ? 'var(--err)' : (r.cpuPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
+                    }}>{r.cpuPct ? r.cpuPct.toFixed(0) : '—'}</td>
+                    <td className="num mono">{fmtBytes(r.memBytes)}</td>
+                    <td className="num mono" style={{
+                      color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
+                    }}>{r.memPct ? r.memPct.toFixed(0) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {tab === 'pods' && rows.length > 0 && (
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />

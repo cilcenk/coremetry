@@ -837,3 +837,50 @@ func TestDeployStatus(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.42 (adversarial review) — KSM zenginleştirme saf çekirdeği:
+// (1) mevcut satırlar replicas/status alır, (2) cAdvisor serisi
+// olmayan deployment'lar sıfır-kaynaklı satır olarak EKLENİR (tam
+// kesinti görünmez olamaz), (3) desired boşsa dokunulmaz.
+func TestApplyDeployKSM(t *testing.T) {
+	rows := []DeploymentRow{
+		{Cluster: "c1", Namespace: "ns", Deployment: "api", Pods: 3, CPUCores: 1.5},
+		{Cluster: "c1", Namespace: "ns", Deployment: "worker", Pods: 1, CPUCores: 0.2},
+		{Cluster: "c1", Namespace: "ns", Deployment: "(unassigned)", Pods: 2, CPUCores: 0.1},
+	}
+	out := applyDeployKSM(rows, "c1", "ns",
+		map[string]int{"api": 3, "worker": 2, "down-svc": 3, "zero-svc": 0},
+		map[string]int{"api": 3, "worker": 1},
+		map[string]bool{"down-svc": true})
+
+	byName := map[string]DeploymentRow{}
+	for _, r := range out {
+		byName[r.Deployment] = r
+	}
+	if len(out) != 5 {
+		t.Fatalf("want 5 rows (3 mevcut + down-svc + zero-svc), got %d", len(out))
+	}
+	if r := byName["api"]; r.Status != "Available" || r.ReadyReplicas != 3 || r.DesiredReplicas != 3 {
+		t.Errorf("api: %+v", r)
+	}
+	if r := byName["worker"]; r.Status != "Progressing" || r.ReadyReplicas != 1 || r.DesiredReplicas != 2 {
+		t.Errorf("worker: %+v", r)
+	}
+	if r := byName["(unassigned)"]; r.Status != "" {
+		t.Errorf("(unassigned) KSM'de yok, status boş kalmalı: %+v", r)
+	}
+	// Tam kesinti: cAdvisor satırı yok ama KSM biliyor → görünür satır.
+	if r := byName["down-svc"]; r.Status != "Degraded" || r.Pods != 0 || r.CPUCores != 0 || r.DesiredReplicas != 3 {
+		t.Errorf("down-svc: %+v", r)
+	}
+	if r := byName["zero-svc"]; r.Status != "Available" || r.DesiredReplicas != 0 {
+		t.Errorf("zero-svc (scale-to-zero): %+v", r)
+	}
+	// desired boş → hiç dokunma (taze slice: fonksiyon yerinde işaretler,
+	// ilk çağrının satırları yeniden kullanılamaz).
+	fresh := []DeploymentRow{{Cluster: "c1", Namespace: "ns", Deployment: "api", Pods: 3}}
+	same := applyDeployKSM(fresh, "c1", "ns", nil, nil, nil)
+	if len(same) != 1 || same[0].Status != "" {
+		t.Errorf("empty desired must be a no-op: %+v", same)
+	}
+}

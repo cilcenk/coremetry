@@ -66,7 +66,9 @@ const NS_COLS: DataTableColumn<ClusterNamespaceRow>[] = [
 const DEP_COLS: DataTableColumn<ClusterDeploymentRow>[] = [
   { id: 'deployment', label: 'Workload', sortValue: r => r.deployment, naturalDir: 'asc', width: 240 },
   // v0.9.39 — KSM replicas/status (handoff §5). status boş = '—'.
-  { id: 'replicas',   label: 'Replicas', sortValue: r => r.status ? r.readyReplicas / Math.max(1, r.desiredReplicas) : -1, numeric: true, width: 90 },
+  // v0.9.42 — scale-to-zero (0/0) sağlıklıdır: tam kesintinin (0/3=0)
+  // yanına sıralanmasın diye ratio 1 sayılır.
+  { id: 'replicas',   label: 'Replicas', sortValue: r => r.status ? (r.desiredReplicas > 0 ? r.readyReplicas / r.desiredReplicas : 1) : -1, numeric: true, width: 90 },
   { id: 'status',     label: 'Status',   sortValue: r => r.status ?? '', naturalDir: 'asc', width: 110 },
   { id: 'pods',       label: 'Pods',     sortValue: r => r.pods,       numeric: true, width: 80 },
   { id: 'cpuCores',   label: 'CPU',      sortValue: r => r.cpuCores,   numeric: true, width: 90 },
@@ -740,10 +742,13 @@ export default function ClustersPage() {
                               title="Open the pod list filtered to this workload"
                               style={{ cursor: 'pointer' }}>
                               <td className="mono" style={{ fontSize: 12 }}>{r.deployment}</td>
-                              {/* v0.9.39 — ready/desired rozeti (eşitse ok,
-                                  değilse warn) + statü; KSM yoksa '—'. */}
+                              {/* v0.9.39 — ready/desired rozeti + statü; KSM
+                                  yoksa '—'. v0.9.42: surge'de (ready>desired,
+                                  backend Available der) rozet de yeşil —
+                                  strict eşitlik aynı satırda sarı 4/3 + yeşil
+                                  Available çelişkisi üretiyordu. */}
                               <td>{r.status
-                                ? <span className={`badge ${r.readyReplicas === r.desiredReplicas ? 'b-ok' : 'b-warn'}`}>
+                                ? <span className={`badge ${r.readyReplicas >= r.desiredReplicas ? 'b-ok' : 'b-warn'}`}>
                                     {r.readyReplicas}/{r.desiredReplicas}
                                   </span>
                                 : <span style={{ color: 'var(--text3)' }}>—</span>}</td>

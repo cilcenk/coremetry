@@ -840,11 +840,16 @@ func (s *Service) DeploymentMetrics(ctx context.Context, c ClusterConfig, namesp
 	})
 
 	// v0.9.39 (design handoff §5) — best-effort KSM replicas/status.
-	// desired boş dönerse (KSM yok) hiç dokunma: Status boş kalır,
-	// UI kolon hücrelerine '—' basar. Statü türetimi:
-	// Available=false koşulu → Degraded; ready<desired → Progressing;
-	// aksi → Available (scale-to-zero 0/0 dahil).
+	// v0.9.42 (adversarial review) — zenginleştirme HEP-YA-DA-HİÇ:
+	// üç sorgudan herhangi biri HATA verirse (örn. paylaşılan ctx
+	// bütçesinin son sorguya yetmemesi) hiç dokunulmaz — Status boş
+	// kalır, UI '—' basar. Eski hali ready hatasında tüm namespace'e
+	// "0/N Progressing", availFalse hatasında Degraded→Available
+	// okutuyordu (fake-zero sınıfı, görünmez-düşer ihlali).
 	desired := map[string]int{}
+	ready := map[string]int{}
+	availFalse := map[string]bool{}
+	ksmOK := true
 	if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsDeployDesiredQuery(namespace))); err == nil {
 		for _, ser := range series {
 			if d := ser.Metric["deployment"]; d != "" {
@@ -853,9 +858,10 @@ func (s *Service) DeploymentMetrics(ctx context.Context, c ClusterConfig, namesp
 				}
 			}
 		}
+	} else {
+		ksmOK = false
 	}
-	if len(desired) > 0 {
-		ready := map[string]int{}
+	if ksmOK && len(desired) > 0 {
 		if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsDeployReadyQuery(namespace))); err == nil {
 			for _, ser := range series {
 				if d := ser.Metric["deployment"]; d != "" {
@@ -864,26 +870,67 @@ func (s *Service) DeploymentMetrics(ctx context.Context, c ClusterConfig, namesp
 					}
 				}
 			}
+		} else {
+			ksmOK = false
 		}
-		availFalse := map[string]bool{}
+	}
+	if ksmOK && len(desired) > 0 {
 		if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsDeployAvailFalseQuery(namespace))); err == nil {
 			for _, ser := range series {
 				if d := ser.Metric["deployment"]; d != "" {
 					availFalse[d] = true
 				}
 			}
-		}
-		for i := range out {
-			d, ok := desired[out[i].Deployment]
-			if !ok {
-				continue
-			}
-			out[i].DesiredReplicas = d
-			out[i].ReadyReplicas = ready[out[i].Deployment]
-			out[i].Status = deployStatus(out[i].ReadyReplicas, d, availFalse[out[i].Deployment])
+		} else {
+			ksmOK = false
 		}
 	}
+	if ksmOK {
+		out = applyDeployKSM(out, c.Name, namespace, desired, ready, availFalse)
+	}
 	return out, nil
+}
+
+// applyDeployKSM — KSM replica/status haritalarını satırlara işler ve
+// cAdvisor serisi OLMAYAN deployment'ları sıfır-kaynaklı satır olarak
+// ekler (v0.9.42): tamamen düşmüş bir deployment'ın (0 koşan pod →
+// 0 cpu/mem serisi → 0 satır) tabloda görünmez olması, tablonun en
+// gerekli olduğu anda kör kalması demekti. Scale-to-zero (0/0) da
+// artık Available satırı olarak görünür — iş yükü envanteri gerçeğe
+// döner. Çağıran üç KSM sorgusunun ÜÇÜNÜN DE başarısını garanti eder
+// (hep-ya-da-hiç); kısmi veri fake-zero üretir.
+func applyDeployKSM(rows []DeploymentRow, cluster, namespace string, desired, ready map[string]int, availFalse map[string]bool) []DeploymentRow {
+	if len(desired) == 0 {
+		return rows
+	}
+	seen := map[string]bool{}
+	for i := range rows {
+		seen[rows[i].Deployment] = true
+		d, ok := desired[rows[i].Deployment]
+		if !ok {
+			continue
+		}
+		rows[i].DesiredReplicas = d
+		rows[i].ReadyReplicas = ready[rows[i].Deployment]
+		rows[i].Status = deployStatus(rows[i].ReadyReplicas, d, availFalse[rows[i].Deployment])
+	}
+	missing := make([]string, 0)
+	for name := range desired {
+		if !seen[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing) // deterministik ek sırası (cpu=0 → listede sona düşerler)
+	for _, name := range missing {
+		d := desired[name]
+		rows = append(rows, DeploymentRow{
+			Cluster: cluster, Namespace: namespace, Deployment: name,
+			PodNames:        []string{},
+			DesiredReplicas: d, ReadyReplicas: ready[name],
+			Status: deployStatus(ready[name], d, availFalse[name]),
+		})
+	}
+	return rows
 }
 
 // NodeRow — bir node'un anlık CPU/memory kullanımı (v0.8.582,

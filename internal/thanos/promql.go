@@ -97,6 +97,50 @@ func singlePodMemQuery(namespace, pod string) string {
 		escapeLabelValue(namespace), escapeLabelValue(pod))
 }
 
+// ── node-scope queries (v0.8.582, audit: clusters-node-metrics-
+// audit.md §2) ──────────────────────────────────────────────────
+//
+// Dar kapsam: CPU / memory / sayı — hepsi node-exporter ailesinden,
+// kube-state-metrics'e ZORUNLU bağımlılık yok (MemPct paydası
+// MemTotal, aynı aile). Satır anahtarı `instance`; kube_node_info
+// yalnız görünen adı güzelleştiren best-effort join. nsMatcher
+// UYGULANMAZ (node namespace'siz); topk kalkanı kalır — node
+// ölçeğinde neredeyse hiç tetiklenmez ama bedava ve deseni tekdüze
+// tutar. Cluster başına sabit 5 sorgu, node sayısından bağımsız.
+
+// nodeCPUQuery — kullanılan çekirdek (idle-dışı cpu-saniye oranı).
+func nodeCPUQuery() string {
+	return fmt.Sprintf(
+		`topk(%d, sum by (instance) (rate(node_cpu_seconds_total{mode!="idle"}[5m])))`,
+		podListLimit)
+}
+
+// nodeMemTotalQuery / nodeMemAvailQuery — used = Total − Avail;
+// MemPct = used/Total. Payda zorunlu aileden geldiği için memory
+// yüzdesi best-effort'a MUHTAÇ DEĞİL.
+func nodeMemTotalQuery() string {
+	return fmt.Sprintf(
+		`topk(%d, sum by (instance) (node_memory_MemTotal_bytes))`, podListLimit)
+}
+
+func nodeMemAvailQuery() string {
+	return fmt.Sprintf(
+		`topk(%d, sum by (instance) (node_memory_MemAvailable_bytes))`, podListLimit)
+}
+
+// nodeCPUCountQuery — çekirdek sayısı (CPU% paydası): her çekirdek
+// tam olarak bir idle serisi taşır. BEST-EFFORT: dönmezse CPUPct 0
+// kalır (HostRow.MemPct "0 = bilinmiyor" sözleşmesi).
+func nodeCPUCountQuery() string {
+	return fmt.Sprintf(
+		`topk(%d, count by (instance) (node_cpu_seconds_total{mode="idle"}))`, podListLimit)
+}
+
+// nodeInfoQuery — instance→node adı güzelleştirmesi (BEST-EFFORT):
+// kube_node_info'nun internal_ip label'ı, instance'ın port'suz
+// haliyle eşleşir. kube-state-metrics yoksa satır adı instance kalır.
+const nodeInfoQuery = `kube_node_info`
+
 // ── sample decoding ─────────────────────────────────────────────
 
 // sampleValue decodes an instant-vector sample pair [ts, "v"] and

@@ -455,6 +455,108 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 	return out, nil
 }
 
+// NodeRow — bir node'un anlık CPU/memory kullanımı (v0.8.582,
+// audit: clusters-node-metrics-audit.md §3). Node = kube_node_info
+// eşleşirse gerçek node adı, yoksa instance (ip:port). Pct'ler
+// kendi paydalarına oran: CPUPct çekirdek sayısına (best-effort —
+// 0 = bilinmiyor), MemPct MemTotal'a (zorunlu aileden, hep dolu).
+type NodeRow struct {
+	Cluster  string  `json:"cluster"`
+	Node     string  `json:"node"`
+	CPUCores float64 `json:"cpuCores"`
+	MemBytes float64 `json:"memBytes"`
+	CPUPct   float64 `json:"cpuPct,omitempty"`
+	MemPct   float64 `json:"memPct,omitempty"`
+}
+
+// instanceHost — "10.0.1.5:9100" → "10.0.1.5" (kube_node_info
+// internal_ip join anahtarı). IPv6 "[::1]:9100" köşeli ayracını da
+// soyar; port'suz değer olduğu gibi döner.
+func instanceHost(inst string) string {
+	if i := strings.LastIndex(inst, ":"); i > 0 && !strings.Contains(inst[i+1:], "]") {
+		inst = inst[:i]
+	}
+	return strings.Trim(inst, "[]")
+}
+
+// NodeMetrics — PodMetrics'in node-scope aynası: 3 zorunlu sorgu
+// (cpu used, mem total, mem avail) + 2 best-effort (çekirdek
+// sayısı, kube_node_info ad güzelleştirmesi). Sabit 5 sorgu/cluster.
+func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, error) {
+	type acc struct{ cpuUsed, memTotal, memAvail, cores float64 }
+	byInst := map[string]*acc{}
+	get := func(m map[string]string) *acc {
+		k := m["instance"]
+		a := byInst[k]
+		if a == nil {
+			a = &acc{}
+			byInst[k] = a
+		}
+		return a
+	}
+
+	for _, q := range []struct {
+		query string
+		set   func(*acc, float64)
+	}{
+		{nodeCPUQuery(), func(a *acc, v float64) { a.cpuUsed = v }},
+		{nodeMemTotalQuery(), func(a *acc, v float64) { a.memTotal = v }},
+		{nodeMemAvailQuery(), func(a *acc, v float64) { a.memAvail = v }},
+	} {
+		series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {q.query}})
+		if err != nil {
+			return nil, err
+		}
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				q.set(get(ser.Metric), v)
+			}
+		}
+	}
+	// Best-effort: çekirdek sayısı (CPU% paydası).
+	if series, err := s.doQuery(ctx, c, "/api/v1/query",
+		url.Values{"query": {nodeCPUCountQuery()}}); err == nil {
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				get(ser.Metric).cores = v
+			}
+		}
+	}
+	// Best-effort: internal_ip → node adı.
+	names := map[string]string{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query",
+		url.Values{"query": {nodeInfoQuery}}); err == nil {
+		for _, ser := range series {
+			if ip, node := ser.Metric["internal_ip"], ser.Metric["node"]; ip != "" && node != "" {
+				names[ip] = node
+			}
+		}
+	}
+
+	out := make([]NodeRow, 0, len(byInst))
+	for inst, a := range byInst {
+		// Yalnız best-effort serisi taşıyan anahtarlar gürültü
+		// (PodMetrics'in limit-only eleme sözleşmesi).
+		if a.cpuUsed == 0 && a.memTotal == 0 {
+			continue
+		}
+		name := inst
+		if pretty := names[instanceHost(inst)]; pretty != "" {
+			name = pretty
+		}
+		row := NodeRow{Cluster: c.Name, Node: name, CPUCores: a.cpuUsed}
+		if a.memTotal > 0 {
+			row.MemBytes = a.memTotal - a.memAvail
+			row.MemPct = clampPct(row.MemBytes / a.memTotal * 100)
+		}
+		if a.cores > 0 {
+			row.CPUPct = clampPct(a.cpuUsed / a.cores * 100)
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
 // PodTrend returns per-minute CPU + memory for ONE pod (drawer
 // path — bounded by construction). step=60 mirrors the
 // HostTrendPoint minute-bucket contract.

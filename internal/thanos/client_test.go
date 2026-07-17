@@ -180,6 +180,94 @@ func TestPodTrendMinuteBuckets(t *testing.T) {
 	}
 }
 
+// v0.8.582 — node metrikleri (dar kapsam): 3 zorunlu + 2 best-effort
+// sorgu merge'i, kube_node_info ad güzelleştirmesi, çekirdeksiz
+// pct=0 sözleşmesi.
+
+func nodeSample(inst, v string) string {
+	return fmt.Sprintf(`{"metric":{"instance":"%s"},"value":[1784271068,"%s"]}`, inst, v)
+}
+
+func TestNodeMetricsMergeAndNamePrettify(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		`mode!="idle"`:                   vec(nodeSample("10.0.1.5:9100", "2.5")),
+		"node_memory_MemTotal_bytes":     vec(nodeSample("10.0.1.5:9100", "1000")),
+		"node_memory_MemAvailable_bytes": vec(nodeSample("10.0.1.5:9100", "400")),
+		`mode="idle"`:                    vec(nodeSample("10.0.1.5:9100", "8")),
+		"kube_node_info": `{"status":"success","data":{"resultType":"vector","result":[
+			{"metric":{"node":"worker-1","internal_ip":"10.0.1.5"},"value":[1784271068,"1"]}]}}`,
+	})
+	defer srv.Close()
+
+	s := New()
+	rows, err := s.NodeMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("NodeMetrics: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 node, got %+v", rows)
+	}
+	r := rows[0]
+	if r.Node != "worker-1" {
+		t.Fatalf("node adı güzelleşmedi: %q", r.Node)
+	}
+	if r.CPUCores != 2.5 || r.MemBytes != 600 {
+		t.Fatalf("usage yanlış: %+v", r)
+	}
+	// 2.5/8 çekirdek = %31.25; (1000-400)/1000 = %60.
+	if r.CPUPct != 31.25 || r.MemPct != 60 {
+		t.Fatalf("pct yanlış (want 31.25/60): %+v", r)
+	}
+}
+
+func TestNodeMetricsBestEffortDegradation(t *testing.T) {
+	// Çekirdek sayısı + kube_node_info YOK: CPUPct 0 kalır, ad
+	// instance kalır; MemPct zorunlu aileden yine dolu.
+	srv := fakeQuerier(t, "", map[string]string{
+		`mode!="idle"`:                   vec(nodeSample("10.0.1.7:9100", "1")),
+		"node_memory_MemTotal_bytes":     vec(nodeSample("10.0.1.7:9100", "2000")),
+		"node_memory_MemAvailable_bytes": vec(nodeSample("10.0.1.7:9100", "1500")),
+		`mode="idle"`:                    `{"status":"error","errorType":"execution","error":"nope"}`,
+		"kube_node_info":                 `{"status":"error","errorType":"execution","error":"nope"}`,
+	})
+	defer srv.Close()
+
+	s := New()
+	rows, err := s.NodeMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("best-effort hataları okumayı düşürmemeli: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Node != "10.0.1.7:9100" || rows[0].CPUPct != 0 || rows[0].MemPct != 25 {
+		t.Fatalf("degradation sözleşmesi: %+v", rows)
+	}
+}
+
+func TestNodeMetricsMandatoryFailureSurfaces(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		`mode!="idle"`: `{"status":"error","errorType":"unavailable","error":"tenancy port"}`,
+	})
+	defer srv.Close()
+	s := New()
+	if _, err := s.NodeMetrics(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}); err == nil {
+		t.Fatal("zorunlu sorgu hatası yüzeye çıkmalı")
+	}
+}
+
+func TestInstanceHost(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"10.0.1.5:9100", "10.0.1.5"},
+		{"10.0.1.5", "10.0.1.5"},
+		{"worker-1.example:9100", "worker-1.example"},
+		{"[::1]:9100", "::1"},
+	}
+	for _, c := range cases {
+		if got := instanceHost(c.in); got != c.want {
+			t.Fatalf("instanceHost(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestSnapshotMasksTokens(t *testing.T) {
 	s := New()
 	s.Configure(Settings{Clusters: []ClusterConfig{

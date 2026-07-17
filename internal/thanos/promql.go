@@ -71,6 +71,17 @@ func podLimitQuery(resource, nsFilter string) string {
 		escapeLabelValue(resource), nsMatcher(nsFilter))
 }
 
+// podRequestQuery — podLimitQuery's sibling for resource REQUESTS
+// (v0.8.580, audit: clusters-requests-nodes-audit.md §3). Same
+// best-effort contract; the two percentages answer different
+// questions — limit = throttle/OOM proximity, request =
+// provisioning accuracy — so both ride the row.
+func podRequestQuery(resource, nsFilter string) string {
+	return fmt.Sprintf(
+		`sum by (namespace, pod) (kube_pod_container_resource_requests{resource="%s",pod!=""%s})`,
+		escapeLabelValue(resource), nsMatcher(nsFilter))
+}
+
 // singlePodCPUQuery / singlePodMemQuery — the drawer's range-query
 // variants, pinned to one (namespace, pod). No topk: one pod by
 // construction.

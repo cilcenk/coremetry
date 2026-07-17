@@ -87,6 +87,40 @@ func TestPodMetricsMergesFourQueries(t *testing.T) {
 	}
 }
 
+// v0.8.580 — request ekseni: PctOfReq değerleri bilerek CLAMP'SİZ
+// (aşım = sinyal); limit yüzdeleri clamp'li kalır; requests serisi
+// yoksa alanlar 0 (best-effort sözleşmesi, mevcut test zaten
+// limit'siz durumu pin'liyor).
+func TestPodMetricsRequestAxisUnclamped(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		"container_cpu_usage_seconds_total":   vec(sample("ns", "p", "0.5")),
+		"container_memory_working_set_bytes":  vec(sample("ns", "p", "100")),
+		`resource_requests{resource="cpu"`:    vec(sample("ns", "p", "0.25")),
+		`resource_requests{resource="memory"`: vec(sample("ns", "p", "200")),
+	})
+	defer srv.Close()
+
+	s := New()
+	rows, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("PodMetrics: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got %+v", rows)
+	}
+	// 0.5 core kullanım / 0.25 request = %200 — clamp'lenmemeli.
+	if rows[0].CPUPctOfReq != 200 {
+		t.Fatalf("CPUPctOfReq = %v, want 200 (unclamped)", rows[0].CPUPctOfReq)
+	}
+	if rows[0].MemPctOfReq != 50 {
+		t.Fatalf("MemPctOfReq = %v, want 50", rows[0].MemPctOfReq)
+	}
+	// Limits fikstürü yok → limit yüzdeleri 0 kalır.
+	if rows[0].CPUPct != 0 || rows[0].MemPct != 0 {
+		t.Fatalf("limit pcts must stay 0 without limits: %+v", rows[0])
+	}
+}
+
 func TestPodMetricsLimitsAreBestEffort(t *testing.T) {
 	srv := fakeQuerier(t, "", map[string]string{
 		"container_cpu_usage_seconds_total":  vec(sample("ns", "p", "0.2")),

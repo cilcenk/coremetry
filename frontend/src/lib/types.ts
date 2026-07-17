@@ -942,6 +942,11 @@ export interface ClusterPodRow {
   memBytes: number;
   cpuPct?: number;
   memPct?: number;
+  // v0.8.580 — request-based axis (provisioning accuracy); can
+  // exceed 100 by design (overshoot IS the signal). Absent =
+  // requests not exposed on the cluster.
+  cpuPctOfReq?: number;
+  memPctOfReq?: number;
 }
 // Minute-bucket trend point (HostTrendPoint bucket contract:
 // unix SECONDS on minute boundaries).

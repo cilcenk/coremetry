@@ -40,6 +40,15 @@ function fmtCores(v: number): string {
   return v.toFixed(2);
 }
 
+// pctTitle — % hücresinin iki eksenli tooltip'i (v0.8.580): limit
+// ekseni (throttle/OOM) hücrede, request ekseni (provisioning
+// isabeti) title'da. Eksik eksen "bilinmiyor" okunur.
+function pctTitle(what: string, ofLimit?: number, ofReq?: number): string {
+  const lim = ofLimit ? `${ofLimit.toFixed(0)}% of limit` : 'limit unknown';
+  const req = ofReq ? `${ofReq.toFixed(0)}% of request` : 'request unknown';
+  return `${what}: ${lim} · ${req}`;
+}
+
 export default function ClustersPage() {
   const [range, setRange] = useUrlRange('15m'); // yalnız drawer trendi
   const [params, setParams] = useSearchParams();
@@ -191,13 +200,18 @@ export default function ClustersPage() {
                       </span>
                     </td>
                     <td className="num mono">{fmtCores(r.cpuCores)}</td>
+                    {/* v0.8.580 — % hücresi limit-bazlı kalır (throttle/
+                        OOM ekseni); request ekseni title'da (provisioning
+                        isabeti — >%100 aşım sinyaldir, clamp'siz). */}
                     <td className="num mono" style={{
                       color: (r.cpuPct ?? 0) > 85 ? 'var(--err)' : (r.cpuPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
-                    }}>{r.cpuPct ? r.cpuPct.toFixed(0) : '—'}</td>
+                    }} title={pctTitle('CPU', r.cpuPct, r.cpuPctOfReq)}>
+                      {r.cpuPct ? r.cpuPct.toFixed(0) : '—'}</td>
                     <td className="num mono">{fmtBytes(r.memBytes)}</td>
                     <td className="num mono" style={{
                       color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
-                    }}>{r.memPct ? r.memPct.toFixed(0) : '—'}</td>
+                    }} title={pctTitle('Memory', r.memPct, r.memPctOfReq)}>
+                      {r.memPct ? r.memPct.toFixed(0) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -208,7 +222,11 @@ export default function ClustersPage() {
         {podParam && (() => {
           const [c, ns, p] = podParam.split('|');
           if (!c || !ns || !p) return null;
-          return <PodDrawer cluster={c} namespace={ns} pod={p} range={range} onClose={closePod} />;
+          // Satır listede zaten yüklüyse drawer'a "current" kırılımı
+          // için veriyoruz — deep-link'te satır henüz gelmemişse
+          // drawer trend'le yetinir (ek istek YOK).
+          const row = rows.find(r => r.cluster === c && r.namespace === ns && r.pod === p);
+          return <PodDrawer cluster={c} namespace={ns} pod={p} row={row} range={range} onClose={closePod} />;
         })()}
       </div>
     </>
@@ -218,10 +236,11 @@ export default function ClustersPage() {
 // PodDrawer — tek pod'un dakika-bucket'lı CPU/memory trendi.
 // Yalnız açılınca fetch (ES-cost disiplininin Thanos karşılığı);
 // staleTime = sunucu TTL'i.
-function PodDrawer({ cluster, namespace, pod, range, onClose }: {
+function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
   cluster: string;
   namespace: string;
   pod: string;
+  row?: ClusterPodRow;
   range: TimeRange;
   onClose: () => void;
 }) {
@@ -244,6 +263,37 @@ function PodDrawer({ cluster, namespace, pod, range, onClose }: {
         <span className="badge b-gray" title="cluster">{cluster}</span>
       </>
     }>
+      {/* v0.8.580 — iki eksenli anlık kırılım (limit + request). */}
+      {row && (
+        <DrawerSection title="Current">
+          <table style={{ width: '100%', fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: 'var(--text3)', fontSize: 11, textAlign: 'left' }}>
+                <th></th><th className="num">Usage</th>
+                <th className="num">of limit</th><th className="num">of request</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>CPU</td>
+                <td className="num mono">{fmtCores(row.cpuCores)}</td>
+                <td className="num mono">{row.cpuPct ? `${row.cpuPct.toFixed(0)}%` : '—'}</td>
+                <td className="num mono" style={{
+                  color: (row.cpuPctOfReq ?? 0) > 100 ? 'var(--warn)' : undefined,
+                }}>{row.cpuPctOfReq ? `${row.cpuPctOfReq.toFixed(0)}%` : '—'}</td>
+              </tr>
+              <tr>
+                <td>Memory</td>
+                <td className="num mono">{fmtBytes(row.memBytes)}</td>
+                <td className="num mono">{row.memPct ? `${row.memPct.toFixed(0)}%` : '—'}</td>
+                <td className="num mono" style={{
+                  color: (row.memPctOfReq ?? 0) > 100 ? 'var(--warn)' : undefined,
+                }}>{row.memPctOfReq ? `${row.memPctOfReq.toFixed(0)}%` : '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </DrawerSection>
+      )}
       {detail === undefined && <Spinner />}
       {detail === null && <Empty icon="✗" title="Failed to load pod detail" />}
       {detail && (

@@ -93,6 +93,13 @@ type PodRow struct {
 	MemBytes  float64 `json:"memBytes"`
 	CPUPct    float64 `json:"cpuPct,omitempty"`
 	MemPct    float64 `json:"memPct,omitempty"`
+	// Request-based percentages (v0.8.580) — provisioning accuracy
+	// axis, alongside the limit-based throttle/OOM axis above. Can
+	// legitimately exceed 100 (pod using more than it requested) —
+	// deliberately NOT clamped like the limit pcts; the overshoot
+	// IS the signal. 0 = requests not exposed (best-effort).
+	CPUPctOfReq float64 `json:"cpuPctOfReq,omitempty"`
+	MemPctOfReq float64 `json:"memPctOfReq,omitempty"`
 }
 
 // TrendPoint matches HostTrendPoint's bucket contract: unix
@@ -363,7 +370,7 @@ func firstN(s string, n int) string {
 // (namespace, pod). Exactly four queries per cluster regardless
 // of pod count — never a query per pod (audit §4).
 func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, error) {
-	type acc struct{ cpu, mem, cpuLim, memLim float64 }
+	type acc struct{ cpu, mem, cpuLim, memLim, cpuReq, memReq float64 }
 	byKey := map[string]*acc{}
 	get := func(m map[string]string) *acc {
 		k := m["namespace"] + "\x00" + m["pod"]
@@ -404,6 +411,10 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 	}{
 		{podLimitQuery("cpu", c.NamespaceFilter), func(a *acc, v float64) { a.cpuLim = v }},
 		{podLimitQuery("memory", c.NamespaceFilter), func(a *acc, v float64) { a.memLim = v }},
+		// v0.8.580 — request axis, same best-effort contract:
+		// cluster başına sabit 6 sorgu, hâlâ pod sayısından bağımsız.
+		{podRequestQuery("cpu", c.NamespaceFilter), func(a *acc, v float64) { a.cpuReq = v }},
+		{podRequestQuery("memory", c.NamespaceFilter), func(a *acc, v float64) { a.memReq = v }},
 	} {
 		series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {lim.query}})
 		if err != nil {
@@ -431,6 +442,13 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 		}
 		if a.memLim > 0 {
 			row.MemPct = clampPct(a.mem / a.memLim * 100)
+		}
+		// Request oranı bilerek clamp'siz: >100 aşımın kendisi sinyal.
+		if a.cpuReq > 0 {
+			row.CPUPctOfReq = a.cpu / a.cpuReq * 100
+		}
+		if a.memReq > 0 {
+			row.MemPctOfReq = a.mem / a.memReq * 100
 		}
 		out = append(out, row)
 	}

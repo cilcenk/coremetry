@@ -43,6 +43,24 @@ func TestPodQueriesCarryCardinalityShields(t *testing.T) {
 	}
 }
 
+// v0.8.580 — request ekseni: podRequestQuery podLimitQuery'nin
+// birebir kardeşi kalmalı (aynı gruplandırma + kalkanlar), yalnız
+// metrik adı değişir.
+func TestPodRequestQuery(t *testing.T) {
+	q := podRequestQuery("cpu", "^app-")
+	for _, sub := range []string{
+		`kube_pod_container_resource_requests{resource="cpu",pod!="",namespace=~"^app-"}`,
+		`sum by (namespace, pod)`,
+	} {
+		if !strings.Contains(q, sub) {
+			t.Fatalf("query %q missing %q", q, sub)
+		}
+	}
+	if strings.Contains(q, "resource_limits") {
+		t.Fatal("request query must not touch the limits metric")
+	}
+}
+
 // Quote/backslash injection in a namespace filter or pod name must
 // not be able to break out of the label-matcher string literal.
 func TestEscapeLabelValue(t *testing.T) {

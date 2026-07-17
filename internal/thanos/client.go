@@ -633,8 +633,17 @@ type NodeRow struct {
 // internal_ip join anahtarı). IPv6 "[::1]:9100" köşeli ayracını da
 // soyar; port'suz değer olduğu gibi döner.
 func instanceHost(inst string) string {
-	if i := strings.LastIndex(inst, ":"); i > 0 && !strings.Contains(inst[i+1:], "]") {
-		inst = inst[:i]
+	// v0.9.19 (self-review fix) — port ayrımı kolon SAYISIYLA:
+	// tek ':' = host:port (soy), '[...]:port' = köşeli IPv6 (soy),
+	// çoklu ':' ayraçsız = ÇIPLAK IPv6 ('fe80::1') — dokunma. Eski
+	// kod son grubu kırpıp ('fe80:') kube_node_info join'ini sessizce
+	// bozuyordu; "son grup rakam mı" sezgiseli de IPv6'da yanılır.
+	if strings.HasPrefix(inst, "[") {
+		if i := strings.LastIndex(inst, "]:"); i > 0 {
+			inst = inst[:i+1]
+		}
+	} else if strings.Count(inst, ":") == 1 {
+		inst = inst[:strings.Index(inst, ":")]
 	}
 	return strings.Trim(inst, "[]")
 }

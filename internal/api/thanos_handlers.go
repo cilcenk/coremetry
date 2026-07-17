@@ -69,12 +69,15 @@ func (s *Server) getClusterPods(w http.ResponseWriter, r *http.Request) {
 		// bounded sorgu (≤15dk pencere, GetHosts emsali). Best-effort:
 		// CH hatası satırları etiketsiz bırakır, okuma düşmez. Cache
 		// key/TTL aynı — eşleşme aynı 60s yaşamı paylaşır.
+		// v0.9.19 (self-review fix) — ctx değil qctx: CH zenginleştirmesi
+		// handler'ın 10s deadline'ının DIŞINA kaçıyordu; asılı CH,
+		// singleflight slotunu süresiz tutabilirdi.
 		now := time.Now()
-		if psm, perr := s.store.PodServiceMap(ctx, name, now.Add(-15*time.Minute), now); perr == nil {
+		if psm, perr := s.store.PodServiceMap(qctx, name, now.Add(-15*time.Minute), now); perr == nil {
 			var svcNS map[string]string
 			for _, cands := range psm {
 				if len(cands) > 1 { // metadata yalnız belirsizlik varsa okunur
-					if meta, merr := s.store.ListServiceMetadata(ctx); merr == nil {
+					if meta, merr := s.store.ListServiceMetadata(qctx); merr == nil {
 						svcNS = make(map[string]string, len(meta))
 						for k, m := range meta {
 							svcNS[k] = m.Namespace

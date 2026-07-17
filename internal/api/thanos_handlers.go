@@ -109,6 +109,32 @@ func (s *Server) getClusterPodDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterSummary — GET /api/clusters/summary?cluster=<name>.
+// Genel görünüm kartı (v0.8.586): skaler sayımlar, topk'li vektör
+// yok. Digest'e nsFilter DAHİL (pod sayısı ondan etkilenir).
+func (s *Server) getClusterSummary(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	if name == "" {
+		http.Error(w, "cluster query param required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	key := fmt.Sprintf("cluster-summary:%s:%s", name, clusterCfgDigest(cfg))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		return s.thanos.Summary(qctx, cfg)
+	})
+}
+
 // getClusterNodes — GET /api/clusters/nodes?cluster=<name>. Anlık
 // node CPU/memory (v0.8.583, dar kapsam — kapasite/health yok).
 // getClusterPods'un birebir paraleli; digest'e namespaceFilter

@@ -455,6 +455,56 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 	return out, nil
 }
 
+// ClusterSummary — genel görünüm kartının verisi (v0.8.586,
+// redesign audit §3.1). Her alan kendi sorgusundan BEST-EFFORT
+// dolar: token tenancy-port'a bağlıysa node ailesi boş kalır ama
+// pod sayısı yine gelir (kısmi kart > hata kartı). Dört sorgunun
+// DÖRDÜ de başarısızsa cluster erişilemez sayılır ve hata döner.
+type ClusterSummary struct {
+	Cluster      string  `json:"cluster"`
+	Nodes        int     `json:"nodes,omitempty"`
+	Pods         int     `json:"pods,omitempty"`
+	CPUUsedCores float64 `json:"cpuUsedCores,omitempty"`
+	MemUsedBytes float64 `json:"memUsedBytes,omitempty"`
+}
+
+// Summary — kart başına sabit 4 skaler sorgu (topk'li vektör yok;
+// pod sayısı topk kesmesiz TAM).
+func (s *Service) Summary(ctx context.Context, c ClusterConfig) (ClusterSummary, error) {
+	out := ClusterSummary{Cluster: c.Name}
+	okCount := 0
+	var lastErr error
+	scalar := func(q string) (float64, bool) {
+		series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {q}})
+		if err != nil {
+			lastErr = err
+			return 0, false
+		}
+		okCount++
+		if len(series) == 0 {
+			return 0, true // sorgu çalıştı, seri yok (0 kabul)
+		}
+		v, ok := sampleValue(series[0].Value)
+		return v, ok
+	}
+	if v, ok := scalar(summaryNodeCountQuery); ok {
+		out.Nodes = int(v)
+	}
+	if v, ok := scalar(summaryPodCountQuery(c.NamespaceFilter)); ok {
+		out.Pods = int(v)
+	}
+	if v, ok := scalar(summaryCPUUsedQuery); ok {
+		out.CPUUsedCores = v
+	}
+	if v, ok := scalar(summaryMemUsedQuery); ok {
+		out.MemUsedBytes = v
+	}
+	if okCount == 0 && lastErr != nil {
+		return ClusterSummary{}, lastErr
+	}
+	return out, nil
+}
+
 // NodeRow — bir node'un anlık CPU/memory kullanımı (v0.8.582,
 // audit: clusters-node-metrics-audit.md §3). Node = kube_node_info
 // eşleşirse gerçek node adı, yoksa instance (ip:port). Pct'ler

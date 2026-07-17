@@ -141,6 +141,29 @@ func nodeCPUCountQuery() string {
 // haliyle eşleşir. kube-state-metrics yoksa satır adı instance kalır.
 const nodeInfoQuery = `kube_node_info`
 
+// ── cluster-summary queries (v0.8.586, redesign audit §3.1) ─────
+//
+// Genel görünüm kartları için SKALER cevaplı sorgular — topk'li tam
+// vektörler değil (kart için yüzlerce KB pod listesi çekilmez; pod
+// SAYISI da topk kesmesine uğramadan TAM sayılır). Tek örneklemli
+// vektör döner (metric{} boş); parser ilk örneği okur.
+
+// summaryNodeCountQuery — çekirdek-idle serisi taşıyan instance sayısı.
+const summaryNodeCountQuery = `count(count by (instance) (node_cpu_seconds_total{mode="idle"}))`
+
+// summaryPodCountQuery — nsFilter'a tabi TAM pod sayısı.
+func summaryPodCountQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`count(count by (namespace, pod) (container_cpu_usage_seconds_total{container!="",pod!=""%s}))`,
+		nsMatcher(nsFilter))
+}
+
+// summaryCPUUsedQuery / summaryMemUsedQuery — cluster toplamı,
+// node-exporter ailesinden (sistem yükü dahil — Nodes bölümüyle
+// tutarlı; nsFilter pod sayısını daraltır, node toplamını değil).
+const summaryCPUUsedQuery = `sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))`
+const summaryMemUsedQuery = `sum(node_memory_MemTotal_bytes) - sum(node_memory_MemAvailable_bytes)`
+
 // ── sample decoding ─────────────────────────────────────────────
 
 // sampleValue decodes an instant-vector sample pair [ts, "v"] and

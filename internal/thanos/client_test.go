@@ -268,6 +268,59 @@ func TestInstanceHost(t *testing.T) {
 	}
 }
 
+// v0.8.586 — kart özeti: skaler sorgular, kısmi başarı (tenancy
+// senaryosu: node ailesi boş, pod sayısı dolu), tam başarısızlıkta
+// hata.
+func scalarVec(v string) string {
+	return `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1784271068,"` + v + `"]}]}}`
+}
+
+func TestSummaryPartialBestEffort(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		// node ailesi hata (tenancy port) — pod sayısı çalışıyor.
+		"node_cpu_seconds_total":            `{"status":"error","errorType":"unavailable","error":"tenancy"}`,
+		"node_memory_MemTotal":              `{"status":"error","errorType":"unavailable","error":"tenancy"}`,
+		"container_cpu_usage_seconds_total": scalarVec("42"),
+	})
+	defer srv.Close()
+	s := New()
+	sum, err := s.Summary(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("kısmi başarı hataya dönüşmemeli: %v", err)
+	}
+	if sum.Pods != 42 || sum.Nodes != 0 || sum.CPUUsedCores != 0 {
+		t.Fatalf("partial summary yanlış: %+v", sum)
+	}
+}
+
+func TestSummaryAllFailSurfaces(t *testing.T) {
+	srv := fakeQuerier(t, "must-fail", nil) // her sorgu 401
+	defer srv.Close()
+	s := New()
+	if _, err := s.Summary(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, AuthType: "bearer", Token: "wrong", Enabled: true}); err == nil {
+		t.Fatal("dört sorgu da düşünce hata yüzeye çıkmalı")
+	}
+}
+
+func TestSummaryFullCounts(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		`mode="idle"`:                       scalarVec("6"),
+		"container_cpu_usage_seconds_total": scalarVec("237"),
+		`mode!="idle"`:                      scalarVec("14.5"),
+		"node_memory_MemTotal":              scalarVec("123456789"),
+	})
+	defer srv.Close()
+	s := New()
+	sum, err := s.Summary(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if sum.Nodes != 6 || sum.Pods != 237 || sum.CPUUsedCores != 14.5 || sum.MemUsedBytes != 123456789 {
+		t.Fatalf("summary yanlış: %+v", sum)
+	}
+}
+
 func TestSnapshotMasksTokens(t *testing.T) {
 	s := New()
 	s.Configure(Settings{Clusters: []ClusterConfig{

@@ -1058,6 +1058,11 @@ export interface ClusterDeploymentRow {
   cpuCores: number;
   memBytes: number;
   podNames: string[];
+  // v0.9.39 — KSM replicas/status (best-effort; status boş = aile yok,
+  // ready/desired yalnız status doluyken anlamlı).
+  desiredReplicas: number;
+  readyReplicas: number;
+  status?: string;
 }
 export interface ClusterDeploymentsResponse {
   cluster: string;

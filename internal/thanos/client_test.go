@@ -812,3 +812,28 @@ func TestClusterByNameOnlyEnabled(t *testing.T) {
 		t.Fatal("HasEnabledClusters false with one enabled")
 	}
 }
+
+// v0.9.39 (design handoff §5) — Deployment statü türetimi: Available
+// koşulu false her şeyi ezer; ready<desired rollout; scale-to-zero
+// (0/0) Available sayılır.
+func TestDeployStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		ready, des int
+		availFalse bool
+		want       string
+	}{
+		{"all ready", 3, 3, false, "Available"},
+		{"rollout in flight", 1, 3, false, "Progressing"},
+		{"degraded wins over rollout", 1, 3, true, "Degraded"},
+		{"degraded even when counts match", 3, 3, true, "Degraded"},
+		{"scale to zero", 0, 0, false, "Available"},
+		{"overshoot (surge) counts as available", 4, 3, false, "Available"},
+	}
+	for _, c := range cases {
+		if got := deployStatus(c.ready, c.des, c.availFalse); got != c.want {
+			t.Errorf("%s: deployStatus(%d,%d,%v) = %q, want %q",
+				c.name, c.ready, c.des, c.availFalse, got, c.want)
+		}
+	}
+}

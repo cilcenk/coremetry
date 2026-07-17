@@ -141,8 +141,8 @@ function LockChip({ label, value, tone }: {
   label: string; value: string; tone?: 'ok' | 'warn' | 'err';
 }) {
   const fg = tone === 'err' ? 'var(--err)' : tone === 'warn' ? 'var(--warn)' : 'var(--text2)';
-  const bg = tone === 'err' ? 'rgba(248,81,73,0.12)'
-           : tone === 'warn' ? 'rgba(245,179,67,0.12)'
+  const bg = tone === 'err' ? 'color-mix(in srgb, var(--err) 12%, transparent)'
+           : tone === 'warn' ? 'color-mix(in srgb, var(--warn) 12%, transparent)'
            : 'var(--bg3)';
   return (
     <span style={{

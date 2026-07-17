@@ -503,7 +503,7 @@ function RoleBadge({ role }: { role: string }) {
   const r = role.toLowerCase();
   const tone =
     r === 'producer' ? { bg: 'color-mix(in srgb, var(--accent) 15%, transparent)', fg: 'var(--accent2)' } :
-    r === 'consumer' ? { bg: 'rgba(63,185,80,0.15)',  fg: 'var(--ok)' } :
+    r === 'consumer' ? { bg: 'color-mix(in srgb, var(--ok) 15%, transparent)', fg: 'var(--ok)' } :
     r === 'client'   ? { bg: 'var(--bg3)',            fg: 'var(--text2)' } :
                        { bg: 'var(--bg3)',            fg: 'var(--text3)' };
   return (

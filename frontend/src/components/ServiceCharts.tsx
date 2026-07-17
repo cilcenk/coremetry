@@ -604,8 +604,8 @@ function DeployImpactButton({ service, deploys }: {
       {error && (
         <div style={{
           padding: 10, borderRadius: 6, fontSize: 12,
-          background: 'rgba(255,82,82,.10)', color: 'var(--err)',
-          border: '1px solid rgba(255,82,82,.25)', maxWidth: 720,
+          background: 'color-mix(in srgb, var(--err) 10%, transparent)', color: 'var(--err)',
+          border: '1px solid color-mix(in srgb, var(--err) 25%, transparent)', maxWidth: 720,
         }}>{error}</div>
       )}
       {resp && (

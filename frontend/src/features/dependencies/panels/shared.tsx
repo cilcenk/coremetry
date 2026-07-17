@@ -414,7 +414,9 @@ export function PanelHeader({ engineLabel, instance, status, color, extraBadge }
           : 'No receiver metric_points seen — receiver may be down or not yet wired'}
           style={{
             fontSize: 9, padding: '1px 6px', borderRadius: 3,
-            background: status === 'up' ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)',
+            background: status === 'up'
+              ? 'color-mix(in srgb, var(--ok) 15%, transparent)'
+              : 'color-mix(in srgb, var(--err) 15%, transparent)',
             color: status === 'up' ? 'var(--ok)' : 'var(--err)',
             fontFamily: 'ui-monospace, SFMono-Regular, monospace',
             textTransform: 'uppercase', letterSpacing: '.5px',

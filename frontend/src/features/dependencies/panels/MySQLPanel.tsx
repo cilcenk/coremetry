@@ -116,7 +116,7 @@ function HandlerChip({ label, v, warn }: { label: string; v: number; warn?: bool
   return (
     <span style={{
       fontSize: 11, padding: '3px 8px', borderRadius: 3,
-      background: warn ? 'rgba(245,179,67,0.15)' : 'var(--bg3)',
+      background: warn ? 'color-mix(in srgb, var(--warn) 15%, transparent)' : 'var(--bg3)',
       color: warn ? 'var(--warn)' : 'var(--text2)',
       fontFamily: 'ui-monospace, SFMono-Regular, monospace',
     }}>

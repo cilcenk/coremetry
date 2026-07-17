@@ -51,7 +51,9 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
             : 'No oracledb.* metric_points seen — receiver may be down or not yet wired'}
                 style={{
                   fontSize: 9, padding: '1px 6px', borderRadius: 3,
-                  background: data.status === 'up' ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)',
+                  background: data.status === 'up'
+                    ? 'color-mix(in srgb, var(--ok) 15%, transparent)'
+                    : 'color-mix(in srgb, var(--err) 15%, transparent)',
                   color: data.status === 'up' ? 'var(--ok)' : 'var(--err)',
                   fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                   textTransform: 'uppercase', letterSpacing: '.5px',

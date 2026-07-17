@@ -602,7 +602,14 @@ func (s *Store) spanmetricsCoverageStart(ctx context.Context) time.Time {
 
 	earliest := time.Now()
 	var probed time.Time
-	row := s.conn.QueryRow(ctx, "SELECT min(time_bucket) FROM "+s.spanmetricsSourceFor("spanmetrics_1m")+" SETTINGS max_execution_time = 5")
+	// v0.9.28 (second-resolution audit R3) — zaman-sınırlı WHERE:
+	// bağsız min(time_bucket) TTL-budanmış ama henüz merge edilmemiş
+	// part'ların BAYAT metadata'sından sahte-eski değer döndürüyordu
+	// (canlıda 00:16 vs gerçek 08:17 ölçüldü). 1m tier TTL 30g; 31g
+	// pencere yalnız CANLI en-erken bucket'ı görür (+ CH hard-
+	// constraint: spanmetrics sorgusu time-bounded WHERE ister).
+	row := s.conn.QueryRow(ctx, "SELECT min(time_bucket) FROM "+s.spanmetricsSourceFor("spanmetrics_1m")+
+		" WHERE time_bucket >= now() - INTERVAL 31 DAY SETTINGS max_execution_time = 5")
 	if err := row.Scan(&probed); err == nil && probed.Year() >= 2000 {
 		earliest = probed
 	}

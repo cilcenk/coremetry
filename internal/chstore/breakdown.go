@@ -63,6 +63,7 @@ func (s *Store) GetSpanBreakdown(
 		WHERE service_name = ? AND time >= ? AND time <= ?
 		GROUP BY bucket, category
 		ORDER BY bucket
+		LIMIT 10000
 		SETTINGS max_execution_time = 15,
 		         ` + s.shardSkipSetting()
 	rows, err := s.conn.Query(ctx, q, step, service, from, to)

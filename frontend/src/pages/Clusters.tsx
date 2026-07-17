@@ -7,6 +7,7 @@ import { netTrendToSeries } from '@/pages/clusters/trendSeries';
 import { Gauge } from '@/pages/clusters/Gauge';
 import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
 import { safePct } from '@/pages/clusters/thresholds';
+import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -258,7 +259,9 @@ export default function ClustersPage() {
       queryFn: () => api.clusterNodes(name),
       staleTime: 60_000,
       retry: 1,
-      enabled: section === 'nodes',
+      // v0.9.32 — Overview heatmap de node verisini kullanır (aynı
+      // cache slotu; sekme geçişinde tekrar fetch yok).
+      enabled: section === 'nodes' || section === 'overview',
     })),
   });
   const nsQs = useQueries({
@@ -830,6 +833,13 @@ export default function ClustersPage() {
                     <MultiLineChart
                       series={netTrendToSeries(netTrendQ.data!.trend!)}
                       height={200} />
+                  </Card>
+                )}
+                {/* v0.9.32 (F2) — node utilization heatmap (Overview);
+                    aynı clusterNodes verisi, seri yoksa gizli. */}
+                {section === 'overview' && nodeRows.length > 0 && (
+                  <Card header={`Node utilization (${nodeRows.length})`} style={{ marginTop: 14 }}>
+                    <NodeHeatmap nodes={nodeRows} />
                   </Card>
                 )}
               </>

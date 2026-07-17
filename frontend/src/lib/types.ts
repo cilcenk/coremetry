@@ -994,6 +994,10 @@ export interface ClusterNodeRow {
   memBytes: number;
   cpuPct?: number;
   memPct?: number;
+  // v0.9.32 — node rolü (master/control-plane/worker); heatmap dot
+  // rengi. B4'te kube_node_role/labels'tan doldurulur, o gelene dek
+  // absent (nötr dot).
+  role?: string;
   // v0.9.10 — node network rate (node-exporter; absent = not exposed).
   netInBps?: number;
   netOutBps?: number;

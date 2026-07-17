@@ -380,6 +380,63 @@ func TestPodMetricsExposesRawLimitAndRequest(t *testing.T) {
 	}
 }
 
+// v0.9.9 — network katmanı: pod/node satır alanları + summary
+// alanları + NetworkTrend merge'i; hepsi best-effort sözleşmesinde.
+func TestPodAndNodeNetworkBestEffort(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		"container_cpu_usage_seconds_total":      vec(sample("ns", "p", "0.5")),
+		"container_memory_working_set_bytes":     vec(sample("ns", "p", "100")),
+		"container_network_receive_bytes_total":  vec(sample("ns", "p", "1000")),
+		"container_network_transmit_bytes_total": vec(sample("ns", "p", "2000")),
+	})
+	defer srv.Close()
+	s := New()
+	rows, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("PodMetrics: %v %+v", err, rows)
+	}
+	if rows[0].NetInBps != 1000 || rows[0].NetOutBps != 2000 {
+		t.Fatalf("pod net alanları yanlış: %+v", rows[0])
+	}
+
+	nsrv := fakeQuerier(t, "", map[string]string{
+		`mode!="idle"`:                      vec(nodeSample("10.0.1.5:9100", "1")),
+		"node_memory_MemTotal_bytes":        vec(nodeSample("10.0.1.5:9100", "1000")),
+		"node_memory_MemAvailable_bytes":    vec(nodeSample("10.0.1.5:9100", "400")),
+		"node_network_receive_bytes_total":  vec(nodeSample("10.0.1.5:9100", "300")),
+		"node_network_transmit_bytes_total": vec(nodeSample("10.0.1.5:9100", "700")),
+	})
+	defer nsrv.Close()
+	nrows, err := s.NodeMetrics(context.Background(), ClusterConfig{Name: "c", URL: nsrv.URL, Enabled: true})
+	if err != nil || len(nrows) != 1 {
+		t.Fatalf("NodeMetrics: %v %+v", err, nrows)
+	}
+	if nrows[0].NetInBps != 300 || nrows[0].NetOutBps != 700 {
+		t.Fatalf("node net alanları yanlış: %+v", nrows[0])
+	}
+}
+
+func TestNetworkTrendMerge(t *testing.T) {
+	matrix := func(pairs string) string {
+		return `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[` + pairs + `]}]}}`
+	}
+	srv := fakeQuerier(t, "", map[string]string{
+		"node_network_receive_bytes_total":  matrix(`[1784271060,"100"],[1784271120,"150"]`),
+		"node_network_transmit_bytes_total": matrix(`[1784271060,"50"]`),
+	})
+	defer srv.Close()
+	s := New()
+	pts, err := s.NetworkTrend(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true},
+		time.Unix(1784271000, 0), time.Unix(1784271200, 0))
+	if err != nil {
+		t.Fatalf("NetworkTrend: %v", err)
+	}
+	if len(pts) != 2 || pts[0].InBps != 100 || pts[0].OutBps != 50 || pts[1].InBps != 150 || pts[1].OutBps != 0 {
+		t.Fatalf("net trend merge yanlış: %+v", pts)
+	}
+}
+
 // v0.9.2 — namespace trend: PodTrend'in pod pinsiz aynası (ortak
 // rangeTrend gövdesi); sorgu şekli + bucket sözleşmesi.
 func TestNamespaceTrendQueriesAndBuckets(t *testing.T) {

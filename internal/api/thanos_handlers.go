@@ -218,6 +218,41 @@ func (s *Server) getClusterNamespacePodsTrend(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// getClusterNetworkTrend — GET /api/clusters/network-trend?cluster=
+// &from=&to= (v0.9.9). Overview throughput grafiği: cluster toplam
+// in/out, dakika bucket'lı; pods/detail sözleşmesinin aynası.
+func (s *Server) getClusterNetworkTrend(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	if name == "" {
+		http.Error(w, "cluster query param required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	if to.Sub(from) > 6*time.Hour {
+		from = to.Add(-6 * time.Hour)
+	}
+	key := fmt.Sprintf("cluster-net-trend:%s:%s:%s",
+		name, clusterCfgDigest(cfg), cacheBucket(from, to))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		trend, err := s.thanos.NetworkTrend(qctx, cfg, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "trend": trend}, nil
+	})
+}
+
 // getClusterSummary — GET /api/clusters/summary?cluster=<name>.
 // Genel görünüm kartı (v0.8.586): skaler sayımlar, topk'li vektör
 // yok. Digest'e nsFilter DAHİL (pod sayısı ondan etkilenir).

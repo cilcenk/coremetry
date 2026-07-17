@@ -227,6 +227,36 @@ func nsPodsMemTrendQuery(namespace string) string {
 		escapeLabelValue(namespace))
 }
 
+// ── network queries (v0.9.9, tabbed-detail audit L2) ────────────
+//
+// İki aile, hepsi BEST-EFFORT (probe operatörde — kod hiçbirinin
+// varlığını varsaymaz; seri yoksa alan 0 kalır ve UI hiç göstermez):
+//   pod'lar:  container_network_{receive,transmit}_bytes_total
+//             (cAdvisor; pod+namespace label'lı, container label'ı
+//             taşımaz — pod!="" yeter)
+//   node/cluster: node_network_*_bytes_total{device!="lo"}
+//             (node-exporter; loopback dışlanır)
+
+func podNetQuery(direction, nsFilter string) string {
+	return fmt.Sprintf(
+		`topk(%d, sum by (namespace, pod) (rate(container_network_%s_bytes_total{pod!=""%s}[5m])))`,
+		podListLimit, escapeLabelValue(direction), nsMatcher(nsFilter))
+}
+
+func nodeNetQuery(direction string) string {
+	return fmt.Sprintf(
+		`topk(%d, sum by (instance) (rate(node_network_%s_bytes_total{device!="lo"}[5m])))`,
+		podListLimit, escapeLabelValue(direction))
+}
+
+// summaryNetQuery — cluster toplamı (kart + throughput grafiği aynı
+// node-exporter ailesinden: hostNetwork pod'ları da kapsar).
+func summaryNetQuery(direction string) string {
+	return fmt.Sprintf(
+		`sum(rate(node_network_%s_bytes_total{device!="lo"}[5m]))`,
+		escapeLabelValue(direction))
+}
+
 // ── sample decoding ─────────────────────────────────────────────
 
 // sampleValue decodes an instant-vector sample pair [ts, "v"] and

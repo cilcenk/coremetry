@@ -109,6 +109,9 @@ type PodRow struct {
 	MemLimitBytes   float64 `json:"memLimitBytes,omitempty"`
 	CPURequestCores float64 `json:"cpuRequestCores,omitempty"`
 	MemRequestBytes float64 `json:"memRequestBytes,omitempty"`
+	// v0.9.9 — pod network hızı (cAdvisor, best-effort).
+	NetInBps  float64 `json:"netInBps,omitempty"`
+	NetOutBps float64 `json:"netOutBps,omitempty"`
 }
 
 // PodSeriesTrend — multi-pod görünümün seri birimi (v0.9.3): bir
@@ -386,7 +389,7 @@ func firstN(s string, n int) string {
 // (namespace, pod). Exactly four queries per cluster regardless
 // of pod count — never a query per pod (audit §4).
 func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, error) {
-	type acc struct{ cpu, mem, cpuLim, memLim, cpuReq, memReq float64 }
+	type acc struct{ cpu, mem, cpuLim, memLim, cpuReq, memReq, netIn, netOut float64 }
 	byKey := map[string]*acc{}
 	get := func(m map[string]string) *acc {
 		k := m["namespace"] + "\x00" + m["pod"]
@@ -431,6 +434,9 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 		// cluster başına sabit 6 sorgu, hâlâ pod sayısından bağımsız.
 		{podRequestQuery("cpu", c.NamespaceFilter), func(a *acc, v float64) { a.cpuReq = v }},
 		{podRequestQuery("memory", c.NamespaceFilter), func(a *acc, v float64) { a.memReq = v }},
+		// v0.9.9 — network (best-effort; cluster başına sabit 8 sorgu oldu).
+		{podNetQuery("receive", c.NamespaceFilter), func(a *acc, v float64) { a.netIn = v }},
+		{podNetQuery("transmit", c.NamespaceFilter), func(a *acc, v float64) { a.netOut = v }},
 	} {
 		series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {lim.query}})
 		if err != nil {
@@ -469,6 +475,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 		// v0.9.3 — ham değerler threshold çizgileri için satıra iner.
 		row.CPULimitCores, row.MemLimitBytes = a.cpuLim, a.memLim
 		row.CPURequestCores, row.MemRequestBytes = a.cpuReq, a.memReq
+		row.NetInBps, row.NetOutBps = a.netIn, a.netOut
 		out = append(out, row)
 	}
 	return out, nil
@@ -485,6 +492,10 @@ type ClusterSummary struct {
 	Pods         int     `json:"pods,omitempty"`
 	CPUUsedCores float64 `json:"cpuUsedCores,omitempty"`
 	MemUsedBytes float64 `json:"memUsedBytes,omitempty"`
+	// v0.9.9 — cluster toplam network hızı (node-exporter, lo hariç).
+	// Best-effort: seri yoksa 0 kalır, UI kartı hiç render etmez.
+	NetInBps  float64 `json:"netInBps,omitempty"`
+	NetOutBps float64 `json:"netOutBps,omitempty"`
 }
 
 // Summary — kart başına sabit 4 skaler sorgu (topk'li vektör yok;
@@ -517,6 +528,12 @@ func (s *Service) Summary(ctx context.Context, c ClusterConfig) (ClusterSummary,
 	}
 	if v, ok := scalar(summaryMemUsedQuery); ok {
 		out.MemUsedBytes = v
+	}
+	if v, ok := scalar(summaryNetQuery("receive")); ok {
+		out.NetInBps = v
+	}
+	if v, ok := scalar(summaryNetQuery("transmit")); ok {
+		out.NetOutBps = v
 	}
 	if okCount == 0 && lastErr != nil {
 		return ClusterSummary{}, lastErr
@@ -602,6 +619,9 @@ type NodeRow struct {
 	MemBytes float64 `json:"memBytes"`
 	CPUPct   float64 `json:"cpuPct,omitempty"`
 	MemPct   float64 `json:"memPct,omitempty"`
+	// v0.9.9 — node network hızı (node-exporter, lo hariç; best-effort).
+	NetInBps  float64 `json:"netInBps,omitempty"`
+	NetOutBps float64 `json:"netOutBps,omitempty"`
 }
 
 // instanceHost — "10.0.1.5:9100" → "10.0.1.5" (kube_node_info
@@ -618,7 +638,7 @@ func instanceHost(inst string) string {
 // (cpu used, mem total, mem avail) + 2 best-effort (çekirdek
 // sayısı, kube_node_info ad güzelleştirmesi). Sabit 5 sorgu/cluster.
 func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, error) {
-	type acc struct{ cpuUsed, memTotal, memAvail, cores float64 }
+	type acc struct{ cpuUsed, memTotal, memAvail, cores, netIn, netOut float64 }
 	byInst := map[string]*acc{}
 	get := func(m map[string]string) *acc {
 		k := m["instance"]
@@ -657,6 +677,23 @@ func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, 
 			}
 		}
 	}
+	// v0.9.9 — best-effort: network hızları.
+	for _, nq := range []struct {
+		dir string
+		set func(*acc, float64)
+	}{
+		{"receive", func(a *acc, v float64) { a.netIn = v }},
+		{"transmit", func(a *acc, v float64) { a.netOut = v }},
+	} {
+		if series, err := s.doQuery(ctx, c, "/api/v1/query",
+			url.Values{"query": {nodeNetQuery(nq.dir)}}); err == nil {
+			for _, ser := range series {
+				if v, ok := sampleValue(ser.Value); ok {
+					nq.set(get(ser.Metric), v)
+				}
+			}
+		}
+	}
 	// Best-effort: internal_ip → node adı.
 	names := map[string]string{}
 	if series, err := s.doQuery(ctx, c, "/api/v1/query",
@@ -679,7 +716,8 @@ func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, 
 		if pretty := names[instanceHost(inst)]; pretty != "" {
 			name = pretty
 		}
-		row := NodeRow{Cluster: c.Name, Node: name, CPUCores: a.cpuUsed}
+		row := NodeRow{Cluster: c.Name, Node: name, CPUCores: a.cpuUsed,
+			NetInBps: a.netIn, NetOutBps: a.netOut}
 		if a.memTotal > 0 {
 			row.MemBytes = a.memTotal - a.memAvail
 			row.MemPct = clampPct(row.MemBytes / a.memTotal * 100)
@@ -705,6 +743,65 @@ func (s *Service) PodTrend(ctx context.Context, c ClusterConfig, namespace, pod 
 func (s *Service) NamespaceTrend(ctx context.Context, c ClusterConfig, namespace string, from, to time.Time) ([]TrendPoint, error) {
 	return s.rangeTrend(ctx, c,
 		singleNamespaceCPUQuery(namespace), singleNamespaceMemQuery(namespace), from, to)
+}
+
+// NetTrendPoint — cluster network throughput trendi (v0.9.9):
+// dakika bucket'ında in/out byte/s.
+type NetTrendPoint struct {
+	Bucket int64   `json:"bucket"`
+	InBps  float64 `json:"inBps"`
+	OutBps float64 `json:"outBps"`
+}
+
+// NetworkTrend — cluster toplam ağ hızının dakika-bucket trendi
+// (Overview throughput grafiği). rangeTrend'in net karşılığı; iki
+// sorgu da zorunlu (grafiğin kendisi bu — best-effort'luk üst
+// katmanda: seri boşsa UI grafiği hiç göstermez).
+func (s *Service) NetworkTrend(ctx context.Context, c ClusterConfig, from, to time.Time) ([]NetTrendPoint, error) {
+	params := func(q string) url.Values {
+		return url.Values{
+			"query": {q},
+			"start": {fmt.Sprintf("%d", from.Unix())},
+			"end":   {fmt.Sprintf("%d", to.Unix())},
+			"step":  {"60"},
+		}
+	}
+	inSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
+		params(summaryNetQuery("receive")))
+	if err != nil {
+		return nil, err
+	}
+	outSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
+		params(summaryNetQuery("transmit")))
+	if err != nil {
+		return nil, err
+	}
+	byBucket := map[int64]*NetTrendPoint{}
+	collect := func(series []promSeries, set func(*NetTrendPoint, float64)) {
+		for _, ser := range series {
+			for _, pair := range ser.Values {
+				v, ts, ok := samplePair(pair)
+				if !ok {
+					continue
+				}
+				b := ts - ts%60
+				tp := byBucket[b]
+				if tp == nil {
+					tp = &NetTrendPoint{Bucket: b}
+					byBucket[b] = tp
+				}
+				set(tp, v)
+			}
+		}
+	}
+	collect(inSeries, func(tp *NetTrendPoint, v float64) { tp.InBps = v })
+	collect(outSeries, func(tp *NetTrendPoint, v float64) { tp.OutBps = v })
+	out := make([]NetTrendPoint, 0, len(byBucket))
+	for _, tp := range byBucket {
+		out = append(out, *tp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Bucket < out[j].Bucket })
+	return out, nil
 }
 
 // maxTrendSeries — multi-pod grafikte seri tavanı: uPlot 50 seriyi

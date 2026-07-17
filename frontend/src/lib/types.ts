@@ -1059,6 +1059,19 @@ export interface ClusterDeploymentsResponse {
   deployments: ClusterDeploymentRow[] | null;
   count: number;
 }
+// v0.9.36 — firing alert (panel). ageSec best-effort (0 = bilinmiyor).
+export interface ClusterAlertRow {
+  alertName: string;
+  severity: string;
+  namespace?: string;
+  pod?: string;
+  ageSec?: number;
+}
+export interface ClusterAlertsResponse {
+  cluster: string;
+  alerts: ClusterAlertRow[] | null;
+  count: number;
+}
 // v0.9.35 — cluster/per-node kaynak trendi (Overview CPU/Mem area).
 export interface ClusterNamedSeries {
   name: string;

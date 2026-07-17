@@ -19,11 +19,13 @@ Not: `create token` süreli token üretir — süre dolduğunda Settings'ten
 yenilenmeli. Süresiz istenirse platform ekibinden SA token Secret'ı
 (legacy) talep edilir.
 
-## 2. Metrik mevcudiyeti probe'ları (varsaymadan doğrula — TEK LİSTE)
+## 2. Probe'lar — OPSİYONEL, yalnız teşhis için (operatör kararı 2026-07-17)
 
-UI, veri gelmeyen HER ekseni kendiliğinden gizler ("—" ya da bölüm
-hiç görünmez) — probe'lar yalnız "hangi eksenler görünür olacak"
-sorusunu cevaplar. Hepsi bir arada:
+ÖN ŞART DEĞİL: UI veri gelmeyen HER ekseni kendiliğinden gizler
+("—" ya da bölüm hiç görünmez) — cluster'ı ekleyip /clusters'a
+bakmak yeterli, SAYFANIN KENDİSİ probe'dur. Aşağıdaki set yalnız
+"beklediğim eksen görünmüyor" durumunda NEDENİ ayırt etmek içindir
+(tenancy-port mu, metrik ailesi mi yok):
 
 ```bash
 TOK=<token>; HOST=https://<thanos-host>

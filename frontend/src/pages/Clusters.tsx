@@ -4,6 +4,9 @@ import { useQuery, useQueries } from '@tanstack/react-query';
 import { ChartSpline } from 'lucide-react';
 import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
 import { netTrendToSeries } from '@/pages/clusters/trendSeries';
+import { Gauge } from '@/pages/clusters/Gauge';
+import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
+import { safePct } from '@/pages/clusters/thresholds';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -785,6 +788,41 @@ export default function ClustersPage() {
                     )}
                   </div>
                 )}
+                {/* v0.9.31 (design handoff F1) — Utilization gauges (2fr)
+                    + Pod phase donut (1fr). Gauge'lar kapasite VARSA
+                    (safePct null→gizli); donut herhangi bir faz sayısı
+                    varsa. Kısmi veri kısmi görsel — best-effort. */}
+                {section === 'overview' && detailSummaryQ.data && (() => {
+                  const d = detailSummaryQ.data;
+                  const cpuP = safePct(d.cpuUsedCores, d.cpuCapacityCores);
+                  const memP = safePct(d.memUsedBytes, d.memCapacityBytes);
+                  const phaseTotal = (d.podsRunning ?? 0) + (d.podsPending ?? 0) + (d.podsFailed ?? 0);
+                  const healthP = phaseTotal > 0 ? ((d.podsRunning ?? 0) / phaseTotal) * 100 : null;
+                  const hasGauges = cpuP != null || memP != null || healthP != null;
+                  const hasDonut = phaseTotal > 0;
+                  if (!hasGauges && !hasDonut) return null;
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: hasGauges && hasDonut ? '2fr 1fr' : '1fr', gap: 14, marginTop: 14 }}>
+                      {hasGauges && (
+                        <Card header="Utilization">
+                          <div style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', gap: 16, paddingTop: 6 }}>
+                            <Gauge pct={cpuP} label="CPU" sub="utilized" />
+                            <Gauge pct={memP} label="Memory" sub="utilized" />
+                            <Gauge pct={healthP} label="Pod health" sub="running"
+                              color={healthP != null && healthP > 95 ? 'var(--ok)' : 'var(--warn)'} />
+                          </div>
+                        </Card>
+                      )}
+                      {hasDonut && (
+                        <Card header="Pod phase">
+                          <div style={{ paddingTop: 6 }}>
+                            <PhaseDonut running={d.podsRunning ?? 0} pending={d.podsPending ?? 0} failed={d.podsFailed ?? 0} />
+                          </div>
+                        </Card>
+                      )}
+                    </div>
+                  );
+                })()}
                 {/* v0.9.10 — throughput grafiği: yalnız seri geldiyse
                     (node_network erişilemezse bölüm hiç görünmez). */}
                 {section === 'overview' && (netTrendQ.data?.trend?.length ?? 0) > 0 && (

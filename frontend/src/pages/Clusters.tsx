@@ -194,6 +194,17 @@ export default function ClustersPage() {
     })),
   });
 
+  // v0.9.7 — ?q= metin süzgeci (operatör isteği): üç detay tablosunu
+  // birden süzer (pod/namespace/node adında büyük-küçük duyarsız
+  // substring). URL kaynak-of-truth, replace:true.
+  const q = params.get('q') ?? '';
+  const setQ = (v: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('q', v); else next.delete('q');
+    return next;
+  }, { replace: true });
+  const qLower = q.trim().toLowerCase();
+
   const nsFilter = params.get('namespace') ?? '';
   const clearNs = () => setParams(prev => {
     const next = new URLSearchParams(prev);
@@ -206,24 +217,29 @@ export default function ClustersPage() {
   const podDatas = podQs.map(q => q.data);
   const podDataKey = podDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
   const rows = useMemo(() => {
-    const all = podDatas.flatMap(d => d?.pods ?? []);
-    return nsFilter ? all.filter(r => r.namespace === nsFilter) : all;
+    let all = podDatas.flatMap(d => d?.pods ?? []);
+    if (nsFilter) all = all.filter(r => r.namespace === nsFilter);
+    if (qLower) all = all.filter(r =>
+      r.pod.toLowerCase().includes(qLower) || r.namespace.toLowerCase().includes(qLower));
+    return all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [podDataKey, nsFilter]);
+  }, [podDataKey, nsFilter, qLower]);
 
   const nodeDatas = nodeQs.map(q => q.data);
   const nodeDataKey = nodeDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
-  const nodeRows = useMemo(
-    () => nodeDatas.flatMap(d => d?.nodes ?? []),
+  const nodeRows = useMemo(() => {
+    const all = nodeDatas.flatMap(d => d?.nodes ?? []);
+    return qLower ? all.filter(r => r.node.toLowerCase().includes(qLower)) : all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nodeDataKey]);
+  }, [nodeDataKey, qLower]);
 
   const nsDatas = nsQs.map(q => q.data);
   const nsDataKey = nsDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
-  const nsRows = useMemo(
-    () => nsDatas.flatMap(d => d?.namespaces ?? []),
+  const nsRows = useMemo(() => {
+    const all = nsDatas.flatMap(d => d?.namespaces ?? []);
+    return qLower ? all.filter(r => r.namespace.toLowerCase().includes(qLower)) : all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nsDataKey]);
+  }, [nsDataKey, qLower]);
 
   const dt = useDataTable<ClusterPodRow>({
     storageKey: 'clusterpods',
@@ -341,6 +357,13 @@ export default function ClustersPage() {
                   namespace: {nsFilter} ✕
                 </span>
               )}
+              <input value={q}
+                onChange={e => setQ(e.target.value)}
+                placeholder="Filter by name…"
+                title="Filters nodes, namespaces and pods by name substring"
+                style={{ marginLeft: 'auto', width: 220, padding: '4px 10px', fontSize: 12,
+                         background: 'var(--bg)', color: 'var(--text)',
+                         border: '1px solid var(--border)', borderRadius: 4 }} />
             </div>
 
             {detailUnreachable ? (

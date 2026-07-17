@@ -236,6 +236,21 @@ export default function ClustersPage() {
     return next;
   }, { replace: true });
   const liveMs = live ? 10_000 : undefined;
+  // v0.9.43 (review MAJÖR) — trend pencere ilerletici: [from,to]
+  // memo'su Date.now()'u mount'ta bir kez yakalıyordu; live modda
+  // 10s'lik her refetch AYNI geçmiş pencereyi sorguluyor (Prometheus
+  // geçmişi immutable → grafikler donuk, istekler garantili no-op).
+  // 60s'lik tick memo'yu tazeler — dakika bucket'ları + 60s sunucu
+  // cache TTL'iyle hizalı, cache-key kardinalitesi sınırlı kalır.
+  const [liveTick, setLiveTick] = useState(0);
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => {
+      if (document.hidden) return; // gizli sekmede pencere ilerletme yok
+      setLiveTick(t => t + 1);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [live]);
 
   // Detay başlık rozeti + Overview kartları: aynı skaler summary
   // (genel görünümle queryKey paylaşır — cache ortak).
@@ -252,6 +267,7 @@ export default function ClustersPage() {
   // (audit §4 kararı — ?tw= drawer-yerel kalır), fetch yalnız
   // Overview sekmesi aktifken.
   const { from: rangeFrom, to: rangeTo, netClamped } = useMemo(() => {
+    void liveTick; // v0.9.43 — live pencere ilerletici, yalnız tetikleyici
     const { from, to } = timeRangeToNs(range);
     // v0.9.21 — sunucu 6h'e SESSİZCE clamp'liyordu; geniş sayfa
     // range'inde grafik başlıksız yanıltıyordu. İstemci de clamp'ler
@@ -259,7 +275,8 @@ export default function ClustersPage() {
     const sixH = 6 * 3600 * 1e9;
     if (to - from > sixH) return { from: to - sixH, to, netClamped: true };
     return { from, to, netClamped: false };
-  }, [range]);
+    // liveTick: v0.9.43 — live modda pencereyi 60s'de bir ilerletir.
+  }, [range, liveTick]);
   const netTrendQ = useQuery({
     queryKey: ['cluster-net-trend', clusterParam, rangeFrom, rangeTo],
     queryFn: () => api.clusterNetworkTrend(clusterParam, rangeFrom, rangeTo),
@@ -1293,11 +1310,15 @@ function LiveToggle({ live, onToggle, updatedAt }: {
   }, [live, updatedAt]);
   const agoSec = updatedAt ? Math.max(0, Math.round((Date.now() - updatedAt) / 1000)) : 0;
   const ago = agoSec < 90 ? `${agoSec}s` : fmtAgeShort(agoSec);
-  const label = live ? 'Live · 10s'
+  // v0.9.43 — "Live · 10s" vaadi abartıyordu: sunucu cache TTL'i 60s,
+  // efektif veri tazeliği ~60s. Etiket "Live", ayrıntı title'da.
+  const label = live ? 'Live'
     : updatedAt ? `Paused · ${ago} ago` : 'Paused';
   return (
     <Button variant="secondary" size="sm" onClick={onToggle}
-      title={live ? 'Auto-refresh on (10s) — click to pause' : 'Auto-refresh off — click to go live'}
+      title={live
+        ? 'Auto-refresh on — polls every 10s; data freshness follows the 60s server cache. Click to pause.'
+        : 'Auto-refresh off — click to go live'}
       style={{ whiteSpace: 'nowrap' }}
       leftIcon={<span className={live ? 'pulse-dot' : ''} style={{
         display: 'inline-block', width: 8, height: 8, borderRadius: '50%',

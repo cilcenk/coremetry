@@ -2990,6 +2990,9 @@ export interface ServiceMetadata {
   // v0.8.436 — deriver-filled logical namespace (service.namespace /
   // k8s.namespace.name); flow-graph gruplandırmanın veri kaynağı.
   namespace?: string;
+  // v0.9.25 — deriver-filled workload adı (k8s.deployment.name);
+  // Servis→Cluster pivotunun &deployment= hassasiyeti.
+  deployment?: string;
   service: string;
   ownerTeam?: string;
   // SRE team — platform / reliability owners (often distinct

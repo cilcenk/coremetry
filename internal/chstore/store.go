@@ -1728,6 +1728,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		// exactly like owner/sre teams (value != auto).
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS namespace String DEFAULT ''`,
 		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS namespace_auto String DEFAULT ''`,
+		// deployment (+ deriver provenance) — v0.9.25, deployment audit
+		// S3: Servis→Cluster pivotunun iş-yükü hassasiyeti. Span
+		// resource attr k8s.deployment.name'den namespace deriver'ının
+		// tick'iyle türetilir; human edit aynı auto-sözleşmeyle pinler.
+		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS deployment String DEFAULT ''`,
+		`ALTER TABLE service_metadata ADD COLUMN IF NOT EXISTS deployment_auto String DEFAULT ''`,
 		// Notification routing — one column carrying a JSON
 		// blob with predicates: { "services": [...],
 		// "sreTeams": [...], "ownerTeams": [...] }. Empty /

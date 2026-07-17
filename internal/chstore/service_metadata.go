@@ -31,30 +31,30 @@ type CustomLink struct {
 // surfaces as "no metadata yet" on the frontend with an edit
 // CTA so the catalog grows organically.
 type ServiceMetadata struct {
-	Service      string `json:"service"`
-	OwnerTeam    string `json:"ownerTeam,omitempty"`
+	Service   string `json:"service"`
+	OwnerTeam string `json:"ownerTeam,omitempty"`
 	// SRETeam is the platform / reliability team that owns
 	// the operational health of the service — typically
 	// distinct from the product owner team. Surfaces as a
 	// second chip on the catalog pill so the oncall who
 	// inherits the service knows who to escalate to for
 	// infra issues vs feature regressions.
-	SRETeam      string `json:"sreTeam,omitempty"`
-	Description  string `json:"description,omitempty"`
-	Repository   string `json:"repository,omitempty"`
-	RunbookURL   string `json:"runbookUrl,omitempty"`
-	OncallURL    string `json:"oncallUrl,omitempty"`
+	SRETeam     string `json:"sreTeam,omitempty"`
+	Description string `json:"description,omitempty"`
+	Repository  string `json:"repository,omitempty"`
+	RunbookURL  string `json:"runbookUrl,omitempty"`
+	OncallURL   string `json:"oncallUrl,omitempty"`
 	// ChatChannel — Zoom Chat / Mattermost / Slack channel
 	// for the team. Renamed from slack_channel because the
 	// catalog target cluster runs on Zoom Chat; the legacy
 	// slack_channel column still backfills here on read so
 	// pre-rename rows keep showing.
-	ChatChannel  string       `json:"chatChannel,omitempty"`
+	ChatChannel string `json:"chatChannel,omitempty"`
 	// CustomLinks — operator-bolted-on links per service
 	// (Grafana / Kibana / Sensei / status page / etc.).
 	// Stored as a JSON-encoded array in custom_links column.
-	CustomLinks  []CustomLink `json:"customLinks,omitempty"`
-	UpdatedAt    int64        `json:"updatedAt"` // unix nanoseconds
+	CustomLinks []CustomLink `json:"customLinks,omitempty"`
+	UpdatedAt   int64        `json:"updatedAt"` // unix nanoseconds
 	// OwnerTeamAuto / SRETeamAuto (v0.8.100) — the last value the span-attr
 	// team-deriver auto-wrote for each field. Deriver-managed, NOT human-edited
 	// (excluded from JSON). The deriver owns owner_team/sre_team while they
@@ -68,6 +68,10 @@ type ServiceMetadata struct {
 	// Powers the flow-graph namespace grouping.
 	Namespace     string `json:"namespace,omitempty"`
 	NamespaceAuto string `json:"-"`
+	// Deployment (v0.9.25) — k8s.deployment.name'den türetilen iş
+	// yükü adı; Servis→Cluster pivotunun &deployment= hassasiyeti.
+	Deployment     string `json:"deployment,omitempty"`
+	DeploymentAuto string `json:"-"`
 }
 
 // GetServiceMetadata returns the catalog row for one service.
@@ -86,6 +90,7 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 		       runbook_url, oncall_url, chat_channel, slack_channel,
 		       custom_links, owner_team_auto, sre_team_auto,
 		       namespace, namespace_auto,
+		       deployment, deployment_auto,
 		       toUnixTimestamp64Nano(updated_at)
 		FROM service_metadata FINAL
 		WHERE service = ?
@@ -95,7 +100,8 @@ func (s *Store) GetServiceMetadata(ctx context.Context, service string) (*Servic
 	if err := row.Scan(&m.Service, &m.OwnerTeam, &m.SRETeam, &m.Description, &m.Repository,
 		&m.RunbookURL, &m.OncallURL, &m.ChatChannel, &legacySlack,
 		&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto,
-		&m.Namespace, &m.NamespaceAuto, &m.UpdatedAt); err != nil {
+		&m.Namespace, &m.NamespaceAuto,
+		&m.Deployment, &m.DeploymentAuto, &m.UpdatedAt); err != nil {
 		// "no rows" → not yet curated; same handling pattern
 		// the rest of chstore uses.
 		return nil, nil
@@ -142,6 +148,7 @@ func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMeta
 		       runbook_url, oncall_url, chat_channel, slack_channel,
 		       custom_links, owner_team_auto, sre_team_auto,
 		       namespace, namespace_auto,
+		       deployment, deployment_auto,
 		       toUnixTimestamp64Nano(updated_at)
 		FROM service_metadata FINAL`)
 	if err != nil {
@@ -155,7 +162,8 @@ func (s *Store) ListServiceMetadata(ctx context.Context) (map[string]ServiceMeta
 		if err := rows.Scan(&m.Service, &m.OwnerTeam, &m.SRETeam, &m.Description, &m.Repository,
 			&m.RunbookURL, &m.OncallURL, &m.ChatChannel, &legacySlack,
 			&customLinks, &m.OwnerTeamAuto, &m.SRETeamAuto,
-			&m.Namespace, &m.NamespaceAuto, &m.UpdatedAt); err != nil {
+			&m.Namespace, &m.NamespaceAuto,
+			&m.Deployment, &m.DeploymentAuto, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if m.ChatChannel == "" && legacySlack != "" {
@@ -229,6 +237,7 @@ func (s *Store) UpsertServiceMetadata(ctx context.Context, m ServiceMetadata) er
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO service_metadata
 		(service, owner_team, sre_team, owner_team_auto, sre_team_auto,
 		 namespace, namespace_auto,
+		 deployment, deployment_auto,
 		 description, repository,
 		 runbook_url, oncall_url, chat_channel, custom_links,
 		 updated_at, version)`)
@@ -238,6 +247,7 @@ func (s *Store) UpsertServiceMetadata(ctx context.Context, m ServiceMetadata) er
 	now := time.Now()
 	if err := batch.Append(m.Service, m.OwnerTeam, m.SRETeam, m.OwnerTeamAuto, m.SRETeamAuto,
 		m.Namespace, m.NamespaceAuto,
+		m.Deployment, m.DeploymentAuto,
 		m.Description, m.Repository,
 		m.RunbookURL, m.OncallURL, m.ChatChannel, string(clBytes),
 		now.UTC(), uint64(now.UnixNano())); err != nil {
@@ -454,6 +464,105 @@ func (s *Store) DeriveServiceNamespaces(ctx context.Context, since time.Duration
 		}
 	}
 	return out, rows.Err()
+}
+
+// deriveDeploymentSQL — deriveNamespaceSQL'in tek-attribute eşleniği:
+// k8s.deployment.name (resource önce, sonra span attr). v0.9.25.
+const deriveDeploymentSQL = `
+SELECT service_name, argMax(dep_val, c) AS dep
+FROM (
+  SELECT service_name, dep_val, count() AS c
+  FROM (
+    SELECT service_name,
+      multiIf(
+        has(res_keys, 'k8s.deployment.name'),  res_values[indexOf(res_keys, 'k8s.deployment.name')],
+        has(attr_keys, 'k8s.deployment.name'), attr_values[indexOf(attr_keys, 'k8s.deployment.name')],
+        '') AS dep_val
+    FROM spans
+    WHERE time >= ? AND time <= ?
+      AND ( has(res_keys, 'k8s.deployment.name') OR has(attr_keys, 'k8s.deployment.name') )
+    LIMIT 2000000
+  )
+  WHERE dep_val != ''
+  GROUP BY service_name, dep_val
+)
+GROUP BY service_name
+ORDER BY service_name
+LIMIT 10000
+SETTINGS max_execution_time = 30`
+
+// DeriveServiceDeployments — servis → baskın deployment adı.
+func (s *Store) DeriveServiceDeployments(ctx context.Context, since time.Duration) (map[string]string, error) {
+	to := time.Now()
+	from := to.Add(-since)
+	rows, err := s.conn.Query(ctx, deriveDeploymentSQL, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]string, 64)
+	for rows.Next() {
+		var svc, dep string
+		if err := rows.Scan(&svc, &dep); err != nil {
+			return nil, err
+		}
+		if dep = strings.TrimSpace(dep); dep != "" {
+			out[svc] = dep
+		}
+	}
+	return out, rows.Err()
+}
+
+// mergeDeployment — mergeNamespace'in birebir sahiplik sözleşmesi.
+func mergeDeployment(md ServiceMetadata, dep string) (ServiceMetadata, bool) {
+	if dep == "" || (md.Deployment != "" && md.Deployment != md.DeploymentAuto) {
+		return md, false
+	}
+	if md.Deployment == dep && md.DeploymentAuto == dep {
+		return md, false
+	}
+	md.Deployment, md.DeploymentAuto = dep, dep
+	return md, true
+}
+
+// PopulateServiceDeploymentsFromSpans — namespace populate'inin aynası.
+func (s *Store) PopulateServiceDeploymentsFromSpans(ctx context.Context, since time.Duration) (int, error) {
+	derived, err := s.DeriveServiceDeployments(ctx, since)
+	if err != nil {
+		return 0, err
+	}
+	if len(derived) == 0 {
+		return 0, nil
+	}
+	existing, err := s.ListServiceMetadata(ctx)
+	if err != nil {
+		return 0, err
+	}
+	updated := 0
+	for svc, dep := range derived {
+		md, ok := existing[svc]
+		if !ok {
+			md = ServiceMetadata{Service: svc}
+		}
+		merged, changed := mergeDeployment(md, dep)
+		if !changed {
+			continue
+		}
+		if fresh, err := s.GetServiceMetadata(ctx, svc); err != nil {
+			continue
+		} else if fresh != nil {
+			refreshed, stillChanged := mergeDeployment(*fresh, dep)
+			if !stillChanged {
+				continue
+			}
+			merged = refreshed
+		}
+		if err := s.UpsertServiceMetadata(ctx, merged); err != nil {
+			continue
+		}
+		updated++
+	}
+	return updated, nil
 }
 
 // mergeNamespace — the pure ownership half, byte-identical semantics to

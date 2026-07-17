@@ -53,6 +53,7 @@ export function ServiceClusterBreakdown({ service, range }: {
     () => new Set(sourcesQ.data?.clusters ?? []), [sourcesQ.data]);
   const metaQ = useServicesMetadata();
   const serviceNs = metaQ.data?.[service]?.namespace ?? '';
+  const serviceDep = metaQ.data?.[service]?.deployment ?? '';
   const hasPivot = thanosSet.size > 0;
   const cols = useMemo(
     () => hasPivot
@@ -114,7 +115,10 @@ export function ServiceClusterBreakdown({ service, range }: {
                         <Link
                           to={`/clusters?cluster=${encodeURIComponent(c.cluster)}` +
                               `&service=${encodeURIComponent(service)}` +
-                              (serviceNs ? `&namespace=${encodeURIComponent(serviceNs)}` : '')}
+                              (serviceNs ? `&namespace=${encodeURIComponent(serviceNs)}` : '') +
+                              // v0.9.25 — deployment türetildiyse pivot iş-yükü
+                              // hassasiyetinde iner; boşsa mevcut davranış (kırılma yok).
+                              (serviceDep ? `&deployment=${encodeURIComponent(serviceDep)}` : '')}
                           style={{ fontSize: 11, color: 'var(--accent2)' }}
                           title={serviceNs
                             ? `Pod CPU/memory — ${c.cluster}, namespace ${serviceNs}`

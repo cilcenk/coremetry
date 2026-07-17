@@ -67,11 +67,12 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/services',    label: 'nav.services',   icon: Boxes },
       { href: '/endpoints',   label: 'nav.endpoints',  icon: Webhook },
-      { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
+      // v0.8.581 — operatör isteği: Clusters ile Topology yer
+      // değiştirdi (Clusters öne, Topology gruba sona).
+      { href: '/clusters',    label: 'nav.clusters',   icon: Server }, // v0.8.578 — Thanos pod metrikleri
       { href: '/databases',   label: 'nav.databases',  icon: Database },
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
-      // v0.8.578 — uzak cluster'ların Thanos pod metrikleri.
-      { href: '/clusters',    label: 'nav.clusters',   icon: Server },
+      { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
       // v0.8.490 — External + Hosts sidebar'dan gizlendi (operatör:
       // "gerek yok, daha sonra attribute'lardan daha iyi planlarız").
       // Rotalar + sayfalar yaşıyor; geri gelirse tek satır.

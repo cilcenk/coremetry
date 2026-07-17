@@ -64,6 +64,29 @@ func (s *Server) getClusterPods(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
+		// v0.9.11 — pod↔servis etiketi (korelasyon audit'i §2.2):
+		// host_name = pod adı köprüsüyle metric_points'ten tek
+		// bounded sorgu (≤15dk pencere, GetHosts emsali). Best-effort:
+		// CH hatası satırları etiketsiz bırakır, okuma düşmez. Cache
+		// key/TTL aynı — eşleşme aynı 60s yaşamı paylaşır.
+		now := time.Now()
+		if psm, perr := s.store.PodServiceMap(ctx, name, now.Add(-15*time.Minute), now); perr == nil {
+			var svcNS map[string]string
+			for _, cands := range psm {
+				if len(cands) > 1 { // metadata yalnız belirsizlik varsa okunur
+					if meta, merr := s.store.ListServiceMetadata(ctx); merr == nil {
+						svcNS = make(map[string]string, len(meta))
+						for k, m := range meta {
+							svcNS[k] = m.Namespace
+						}
+					}
+					break
+				}
+			}
+			for i := range rows {
+				rows[i].Service = pickPodService(psm[rows[i].Pod], rows[i].Namespace, svcNS)
+			}
+		}
 		return map[string]any{"cluster": name, "pods": rows, "count": len(rows)}, nil
 	})
 }

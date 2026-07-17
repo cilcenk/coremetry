@@ -19,6 +19,7 @@ import type {
   AISettings, AISettingsInput,
   TempoSnapshot, TempoSettingsInput,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
+  ClusterNodesResponse,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
   RelationResponse, RelationKind, FilterExpr,
@@ -952,6 +953,8 @@ export const api = {
   // CALLER's: one request per cluster so each rides its own cache
   // slot and fails independently (audit §6).
   clusterSources: () => get<{ clusters: string[] }>(`/api/clusters/sources`),
+  clusterNodes: (cluster: string) =>
+    get<ClusterNodesResponse>(`/api/clusters/nodes?cluster=${encodeURIComponent(cluster)}`),
   clusterPods: (cluster: string) =>
     get<ClusterPodsResponse>(`/api/clusters/pods?cluster=${encodeURIComponent(cluster)}`),
   clusterPodDetail: (cluster: string, namespace: string, pod: string, fromNs: number, toNs: number) =>

@@ -109,6 +109,40 @@ func (s *Server) getClusterPodDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterNodes — GET /api/clusters/nodes?cluster=<name>. Anlık
+// node CPU/memory (v0.8.583, dar kapsam — kapasite/health yok).
+// getClusterPods'un birebir paraleli; digest'e namespaceFilter
+// GİRMEZ (node sorgularını etkilemiyor) → sade URL digest'i, yani
+// clusterCfgDigest yerine yalnız URL hash'lenir.
+func (s *Server) getClusterNodes(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	if name == "" {
+		http.Error(w, "cluster query param required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	h := fnv.New64a()
+	h.Write([]byte(cfg.URL))
+	key := fmt.Sprintf("cluster-nodes:%s:%x", name, h.Sum64())
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		rows, err := s.thanos.NodeMetrics(qctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "nodes": rows, "count": len(rows)}, nil
+	})
+}
+
 // getClusterSources — GET /api/clusters/sources. ENABLED cluster
 // adları (viewer+): /clusters sayfasının fan-out listesi. Settings
 // GET'i admin-only olduğundan bu dar, secret'sız uç ayrı; bellek-içi

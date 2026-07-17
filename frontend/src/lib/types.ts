@@ -960,6 +960,23 @@ export interface ClusterPodsResponse {
   pods: ClusterPodRow[] | null;
   count: number;
 }
+// v0.8.583 — node CPU/memory (dar kapsam). node = kube_node_info
+// eşleşirse gerçek ad, yoksa instance (ip:port). Pct'ler kendi
+// paydalarına oran; cpuPct çekirdek sayısı best-effort'una bağlı
+// (0/absent = bilinmiyor).
+export interface ClusterNodeRow {
+  cluster: string;
+  node: string;
+  cpuCores: number;
+  memBytes: number;
+  cpuPct?: number;
+  memPct?: number;
+}
+export interface ClusterNodesResponse {
+  cluster: string;
+  nodes: ClusterNodeRow[] | null;
+  count: number;
+}
 export interface ClusterPodDetail {
   cluster: string;
   namespace: string;

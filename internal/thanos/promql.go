@@ -180,6 +180,38 @@ func summaryPodCountQuery(nsFilter string) string {
 const summaryCPUUsedQuery = `sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))`
 const summaryMemUsedQuery = `sum(node_memory_MemTotal_bytes) - sum(node_memory_MemAvailable_bytes)`
 
+// ── table enrichment queries (v0.9.37, design handoff B4) ───────
+// Hepsi best-effort (kube-state-metrics yoksa alan boş, UI hücresi
+// "—" / rozet gizli).
+
+// Pod fazı (Pods tab Status): kube_pod_status_phase==1 → (ns,pod,phase).
+func podPhaseQuery(nsFilter string) string {
+	return fmt.Sprintf(`kube_pod_status_phase{pod!=""%s} == 1`, nsMatcher(nsFilter))
+}
+
+// Pod restart sayısı (Pods tab Restarts): container restart toplamı.
+func podRestartsQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`sum by (namespace, pod) (kube_pod_container_status_restarts_total{pod!=""%s})`,
+		nsMatcher(nsFilter))
+}
+
+// Node rolü (heatmap dot + Nodes tab): kube_node_role → (node,role).
+const nodeRoleQuery = `kube_node_role`
+
+// Namespace restart toplamı + failing pod sayısı (Namespaces tab).
+func nsRestartsQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`sum by (namespace) (kube_pod_container_status_restarts_total{pod!=""%s})`,
+		nsMatcher(nsFilter))
+}
+
+func nsFailingQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`count by (namespace) (kube_pod_status_phase{phase=~"Failed|Unknown"%s} == 1)`,
+		nsMatcher(nsFilter))
+}
+
 // ── summary enrichment queries (v0.9.30, design handoff B1) ─────
 // Hepsi BEST-EFFORT skaler (kube-state-metrics / Alertmanager rule
 // serileri yoksa 0 kalır, UI ilgili kartı/bölümü render etmez).

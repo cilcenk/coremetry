@@ -117,6 +117,10 @@ type PodRow struct {
 	// + pickPodService); thanos paketi bu alana yazmaz. Boş =
 	// eşleşme yok (instrument edilmemiş / infra pod'u / belirsiz).
 	Service string `json:"service,omitempty"`
+	// v0.9.37 (B4) — faz + restart (Pods tab Status/Restarts).
+	// Best-effort: kube-state-metrics yoksa Phase="" / Restarts=0.
+	Phase    string `json:"phase,omitempty"`
+	Restarts int    `json:"restarts,omitempty"`
 }
 
 // PodSeriesTrend — multi-pod görünümün seri birimi (v0.9.3): bir
@@ -454,6 +458,24 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 		}
 	}
 
+	// v0.9.37 — best-effort faz + restart eşlemeleri.
+	phaseBy := map[string]string{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podPhaseQuery(c.NamespaceFilter)}}); err == nil {
+		for _, ser := range series {
+			if ser.Metric["phase"] != "" {
+				phaseBy[ser.Metric["namespace"]+"\x00"+ser.Metric["pod"]] = ser.Metric["phase"]
+			}
+		}
+	}
+	restartBy := map[string]int{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {podRestartsQuery(c.NamespaceFilter)}}); err == nil {
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				restartBy[ser.Metric["namespace"]+"\x00"+ser.Metric["pod"]] = int(v)
+			}
+		}
+	}
+
 	out := make([]PodRow, 0, len(byKey))
 	for k, a := range byKey {
 		ns, pod, _ := strings.Cut(k, "\x00")
@@ -463,7 +485,8 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 			continue
 		}
 		row := PodRow{Cluster: c.Name, Namespace: ns, Pod: pod,
-			CPUCores: a.cpu, MemBytes: a.mem}
+			CPUCores: a.cpu, MemBytes: a.mem,
+			Phase: phaseBy[k], Restarts: restartBy[k]}
 		if a.cpuLim > 0 {
 			row.CPUPct = clampPct(a.cpu / a.cpuLim * 100)
 		}
@@ -588,6 +611,9 @@ type NamespaceRow struct {
 	Pods      int     `json:"pods,omitempty"`
 	CPUCores  float64 `json:"cpuCores"`
 	MemBytes  float64 `json:"memBytes"`
+	// v0.9.37 (B4) — restart toplamı + failing pod sayısı (best-effort).
+	Restarts int `json:"restarts,omitempty"`
+	Failing  int `json:"failing,omitempty"`
 }
 
 // NamespaceMetrics — cpu+mem zorunlu (2 sorgu), pod sayısı
@@ -632,6 +658,23 @@ func (s *Service) NamespaceMetrics(ctx context.Context, c ClusterConfig) ([]Name
 			}
 		}
 	}
+	// v0.9.37 (B4) — best-effort restart toplamı + failing pod sayısı.
+	restartBy := map[string]int{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {nsRestartsQuery(c.NamespaceFilter)}}); err == nil {
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				restartBy[ser.Metric["namespace"]] = int(v)
+			}
+		}
+	}
+	failingBy := map[string]int{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {nsFailingQuery(c.NamespaceFilter)}}); err == nil {
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				failingBy[ser.Metric["namespace"]] = int(v)
+			}
+		}
+	}
 	out := make([]NamespaceRow, 0, len(byNS))
 	for ns, a := range byNS {
 		if ns == "" || (a.cpu == 0 && a.mem == 0) {
@@ -640,6 +683,7 @@ func (s *Service) NamespaceMetrics(ctx context.Context, c ClusterConfig) ([]Name
 		out = append(out, NamespaceRow{
 			Cluster: c.Name, Namespace: ns,
 			Pods: int(a.pods), CPUCores: a.cpu, MemBytes: a.mem,
+			Restarts: restartBy[ns], Failing: failingBy[ns],
 		})
 	}
 	return out, nil
@@ -791,6 +835,8 @@ type NodeRow struct {
 	// v0.9.9 — node network hızı (node-exporter, lo hariç; best-effort).
 	NetInBps  float64 `json:"netInBps,omitempty"`
 	NetOutBps float64 `json:"netOutBps,omitempty"`
+	// v0.9.37 (B4) — rol (heatmap dot + Nodes tab); kube_node_role.
+	Role string `json:"role,omitempty"`
 }
 
 // instanceHost — "10.0.1.5:9100" → "10.0.1.5" (kube_node_info
@@ -882,6 +928,18 @@ func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, 
 			}
 		}
 	}
+	// v0.9.37 (B4) — best-effort node rolü (node adı anahtarlı).
+	roleByNode := map[string]string{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {nodeRoleQuery}}); err == nil {
+		for _, ser := range series {
+			if node, role := ser.Metric["node"], ser.Metric["role"]; node != "" && role != "" {
+				// master/control-plane rolü worker'ı ezer (çok-rollü node).
+				if cur := roleByNode[node]; cur == "" || role == "master" || role == "control-plane" {
+					roleByNode[node] = role
+				}
+			}
+		}
+	}
 
 	out := make([]NodeRow, 0, len(byInst))
 	for inst, a := range byInst {
@@ -903,6 +961,7 @@ func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, 
 		if a.cores > 0 {
 			row.CPUPct = clampPct(a.cpuUsed / a.cores * 100)
 		}
+		row.Role = roleByNode[name] // ad kube_node_info ile eşleştiyse
 		out = append(out, row)
 	}
 	return out, nil

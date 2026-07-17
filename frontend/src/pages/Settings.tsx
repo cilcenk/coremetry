@@ -22,6 +22,7 @@ import { MaintenanceTab } from './settings/MaintenanceTab';
 import { AITab } from './settings/AiTab';
 import { KnowledgeTab } from './settings/KnowledgeTab';
 import { TempoTab } from './settings/TempoTab';
+import { ClustersTab } from './settings/ClustersTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
 import { LDAPTab } from './settings/LdapTab';
@@ -53,6 +54,7 @@ const TABS: SettingsTab[] = [
   // ayrıldı (operatör onaylı sadeleştirme #5); davranış birebir aynı.
   { slug: 'knowledge',   label: 'Knowledge (RAG)',       Comp: KnowledgeTab },
   { slug: 'tempo',       label: 'Tempo backend',         Comp: TempoTab },
+  { slug: 'clusters',    label: 'Remote clusters',       Comp: ClustersTab },
   { slug: 'elastic',     label: 'Elasticsearch logs',    Comp: ElasticTab },
   { slug: 'kibana',      label: 'Kibana link',           Comp: KibanaTab },
   { slug: 'ldap',        label: 'LDAP / AD',             Comp: LDAPTab },

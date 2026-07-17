@@ -897,6 +897,71 @@ export interface TempoSettingsInput {
   insecureSkipVerify?: boolean;
 }
 
+// Thanos multi-cluster config (v0.8.577, audit: docs/audit/
+// thanos-multicluster-metrics-audit.md). Snapshot masks tokens
+// per cluster (hasToken); input's empty token preserves the
+// stored one server-side, matched by cluster NAME. name is the
+// APM join key — must equal the k8s.cluster.name /
+// openshift.cluster.name value spans report.
+export type ThanosAuthType = 'none' | 'bearer';
+export interface ThanosClusterSnapshot {
+  name: string;
+  url: string;
+  authType?: ThanosAuthType;
+  hasToken: boolean;
+  namespaceFilter?: string;
+  insecureSkipVerify?: boolean;
+  enabled: boolean;
+}
+export interface ThanosSnapshot {
+  clusters: ThanosClusterSnapshot[];
+}
+export interface ThanosClusterInput {
+  name: string;
+  url: string;
+  authType?: ThanosAuthType;
+  token?: string;
+  namespaceFilter?: string;
+  insecureSkipVerify?: boolean;
+  enabled: boolean;
+}
+export interface ThanosSettingsInput {
+  clusters: ThanosClusterInput[];
+}
+
+// One (cluster, namespace, pod) sample from a remote cluster's
+// Thanos Querier. CPU is CORES (not the 0-1 ratio HostRow uses);
+// pct fields are 0/absent when the cluster doesn't expose
+// kube-state-metrics limits (HostRow.MemPct "0 = unknown"
+// contract).
+export interface ClusterPodRow {
+  cluster: string;
+  namespace: string;
+  pod: string;
+  cpuCores: number;
+  memBytes: number;
+  cpuPct?: number;
+  memPct?: number;
+}
+// Minute-bucket trend point (HostTrendPoint bucket contract:
+// unix SECONDS on minute boundaries).
+export interface ClusterPodTrendPoint {
+  bucket: number;
+  cpuCores: number;
+  memBytes: number;
+}
+export interface ClusterPodsResponse {
+  cluster: string;
+  pods: ClusterPodRow[] | null;
+  count: number;
+}
+export interface ClusterPodDetail {
+  cluster: string;
+  namespace: string;
+  pod: string;
+  trend: ClusterPodTrendPoint[] | null;
+}
+
 // External Kibana deep-link config (v0.5.236). Operator-curated
 // link target so Logs page rows can offer an "Open in Kibana
 // Discover" jump. Empty / disabled = no link rendered.

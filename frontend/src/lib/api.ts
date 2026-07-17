@@ -18,6 +18,7 @@ import type {
   RetentionSpec,
   AISettings, AISettingsInput,
   TempoSnapshot, TempoSettingsInput,
+  ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
   RelationResponse, RelationKind, FilterExpr,
@@ -938,6 +939,23 @@ export const api = {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),
+  // Thanos multi-cluster config (v0.8.577, admin). Tempo contract:
+  // GET is masked (per-cluster hasToken), PUT's empty token
+  // preserves the stored one (matched by cluster name).
+  getThanosSettings: () => get<ThanosSnapshot>(`/api/settings/thanos`),
+  putThanosSettings: (s: ThanosSettingsInput) =>
+    request<ThanosSnapshot>(`/api/settings/thanos`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  // Remote-cluster pod metrics (/clusters yüzeyi). Fan-out is the
+  // CALLER's: one request per cluster so each rides its own cache
+  // slot and fails independently (audit §6).
+  clusterPods: (cluster: string) =>
+    get<ClusterPodsResponse>(`/api/clusters/pods?cluster=${encodeURIComponent(cluster)}`),
+  clusterPodDetail: (cluster: string, namespace: string, pod: string, fromNs: number, toNs: number) =>
+    get<ClusterPodDetail>(`/api/clusters/pods/detail?cluster=${encodeURIComponent(cluster)}` +
+      `&namespace=${encodeURIComponent(namespace)}&pod=${encodeURIComponent(pod)}&from=${fromNs}&to=${toNs}`),
   // UI-managed logstore backend (v0.8.232, admin). Test builds +
   // pings a candidate config WITHOUT touching the live backend —
   // the response carries the real ES error for the operator.

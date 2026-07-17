@@ -439,6 +439,59 @@ func TestNetworkTrendMerge(t *testing.T) {
 	}
 }
 
+// v0.9.26 — adaptif step merdiveni + saniye-altı bucket korunumu.
+func TestStepForWindow(t *testing.T) {
+	cases := []struct {
+		spanSec int
+		want    int
+	}{
+		{900, 15},        // 15dk → 15s taban (240 nokta)
+		{3600, 15},       // 1h → 15s (240)
+		{2 * 3600, 30},   // 2h → 30s
+		{6 * 3600, 60},   // 6h → 60s (360)
+		{12 * 3600, 300}, // 12h → 300s
+		{5 * 86400, 1800},
+		{30 * 86400, 7200}, // dinamik: 360 nokta
+	}
+	base := time.Unix(1784271000, 0)
+	for _, c := range cases {
+		got := stepForWindow(base, base.Add(time.Duration(c.spanSec)*time.Second))
+		if got != c.want {
+			t.Fatalf("stepForWindow(%ds) = %d, want %d", c.spanSec, got, c.want)
+		}
+		// Nokta bütçesi ≤500 (tüm rung'lar).
+		if pts := c.spanSec / got; pts > 500 {
+			t.Fatalf("span %ds step %ds = %d nokta > 500 bütçe", c.spanSec, got, pts)
+		}
+	}
+}
+
+func TestNamespaceTrendSubMinuteBuckets(t *testing.T) {
+	// 15dk pencere → step 15s; aynı dakikadaki iki 15s-hizalı örnek
+	// AYRI bucket'ta kalmalı (eski %60 yuvarlaması birini yutardı).
+	matrix := func(pairs string) string {
+		return `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[` + pairs + `]}]}}`
+	}
+	srv := fakeQuerier(t, "", map[string]string{
+		"container_cpu_usage_seconds_total":  matrix(`[1784271000,"0.1"],[1784271015,"0.2"],[1784271030,"0.3"]`),
+		"container_memory_working_set_bytes": matrix(`[1784271000,"10"]`),
+	})
+	defer srv.Close()
+	s := New()
+	pts, err := s.NamespaceTrend(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true},
+		"ns", time.Unix(1784271000, 0), time.Unix(1784271900, 0)) // 15dk
+	if err != nil {
+		t.Fatalf("NamespaceTrend: %v", err)
+	}
+	if len(pts) != 3 {
+		t.Fatalf("15s örnekler ayrı bucket'ta kalmalı, got %d: %+v", len(pts), pts)
+	}
+	if pts[0].Bucket != 1784271000 || pts[1].Bucket != 1784271015 || pts[2].Bucket != 1784271030 {
+		t.Fatalf("bucket'lar 15s hizasında değil: %+v", pts)
+	}
+}
+
 // v0.9.22 — deployment rollup: tam join → rs-hash soyma → ad
 // sezgiseli → "(unassigned)" fallback zinciri.
 func ownerSample(pod, owner string) string {

@@ -875,9 +875,9 @@ func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, 
 	return out, nil
 }
 
-// PodTrend returns per-minute CPU + memory for ONE pod (drawer
-// path — bounded by construction). step=60 mirrors the
-// HostTrendPoint minute-bucket contract.
+// PodTrend returns per-bucket CPU + memory for ONE pod (drawer
+// path — bounded by construction). Bucket = adaptif step
+// (stepForWindow, v0.9.26): dar pencerede 15s'e kadar iner.
 func (s *Service) PodTrend(ctx context.Context, c ClusterConfig, namespace, pod string, from, to time.Time) ([]TrendPoint, error) {
 	return s.rangeTrend(ctx, c,
 		singlePodCPUQuery(namespace, pod), singlePodMemQuery(namespace, pod), from, to)
@@ -903,12 +903,16 @@ type NetTrendPoint struct {
 // sorgu da zorunlu (grafiğin kendisi bu — best-effort'luk üst
 // katmanda: seri boşsa UI grafiği hiç göstermez).
 func (s *Service) NetworkTrend(ctx context.Context, c ClusterConfig, from, to time.Time) ([]NetTrendPoint, error) {
+	// v0.9.26 — adaptif step, TABAN 15s; bucket rounding da bu
+	// step'e bağlanır (aksi halde 60s yuvarlaması saniye-altı
+	// çözünürlüğü çöpe atardı).
+	step := stepForWindow(from, to)
 	params := func(q string) url.Values {
 		return url.Values{
 			"query": {q},
 			"start": {fmt.Sprintf("%d", from.Unix())},
 			"end":   {fmt.Sprintf("%d", to.Unix())},
-			"step":  {"60"},
+			"step":  {fmt.Sprintf("%d", step)},
 		}
 	}
 	inSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
@@ -929,7 +933,7 @@ func (s *Service) NetworkTrend(ctx context.Context, c ClusterConfig, from, to ti
 				if !ok {
 					continue
 				}
-				b := ts - ts%60
+				b := ts - ts%int64(step)
 				tp := byBucket[b]
 				if tp == nil {
 					tp = &NetTrendPoint{Bucket: b}
@@ -961,12 +965,16 @@ const maxTrendSeries = 8
 // Go'da, cpu+mem AYNI pod setine filtrelenir. İkinci dönüş: kesme
 // öncesi toplam pod sayısı ("top 10 of N" etiketi için).
 func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, namespace string, from, to time.Time) ([]PodSeriesTrend, int, error) {
+	// v0.9.26 — adaptif step, TABAN 15s; bucket rounding da bu
+	// step'e bağlanır (aksi halde 60s yuvarlaması saniye-altı
+	// çözünürlüğü çöpe atardı).
+	step := stepForWindow(from, to)
 	params := func(q string) url.Values {
 		return url.Values{
 			"query": {q},
 			"start": {fmt.Sprintf("%d", from.Unix())},
 			"end":   {fmt.Sprintf("%d", to.Unix())},
-			"step":  {"60"},
+			"step":  {fmt.Sprintf("%d", step)},
 		}
 	}
 	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
@@ -995,7 +1003,7 @@ func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, names
 		return a
 	}
 	point := func(a *podAcc, ts int64) *TrendPoint {
-		b := ts - ts%60
+		b := ts - ts%int64(step)
 		tp := a.byBucket[b]
 		if tp == nil {
 			tp = &TrendPoint{Bucket: b}
@@ -1063,15 +1071,55 @@ func (s *Service) NamespacePodsTrend(ctx context.Context, c ClusterConfig, names
 	return out, total, nil
 }
 
+// stepForWindow — Thanos range-query step'i (v0.9.26): pencere
+// genişledikçe kabalaşan adaptif merdiven, TABAN 15s. 15s, OpenShift
+// user-workload-monitoring'in TİPİK scrape interval'i — altına inmek
+// Prometheus'un örneklemediği noktalar için interpolasyon/tekrar
+// üretir, o yüzden taban. Bu bir VARSAYIM: 30s-scrape'li bir cluster'da
+// 15s step gereksiz interpolasyona yol açar (Thanos scrape interval'ini
+// sorgu-anında güvenilir vermediğinden per-cluster doğrulama yok;
+// gerekirse ClusterConfig'e opsiyonel scrapeIntervalSec alanı eklenir).
+// ClickHouse span-metrik 10s tier'ıyla KARIŞTIRILMAZ — ayrı dünya.
+// Nokta bütçesi ≤~360/seri (tüm trend uçları ≤6h clamp'li):
+//
+//	≤1h→15s(240) · ≤3h→30s(360) · ≤6h→60s(360) · ≤24h→300s(288)
+//	· ≤7d→1800s(336) · else→3600s.
+func stepForWindow(from, to time.Time) int {
+	span := to.Sub(from).Seconds()
+	switch {
+	case span <= 3600:
+		return 15
+	case span <= 3*3600:
+		return 30
+	case span <= 6*3600:
+		return 60
+	case span <= 24*3600:
+		return 300
+	case span <= 7*24*3600:
+		return 1800
+	default:
+		// >7g: bütçeyi (≤480 nokta) GARANTİLE — sabit 3600s 30g'de
+		// 720 nokta patlatırdı (ClickHouse audit "Delik 2"). Saat
+		// katına yuvarlanmış dinamik step; tam sayı aritmetiği.
+		const budget = 480
+		mult := (int(span) + budget*3600 - 1) / (budget * 3600)
+		return mult * 3600
+	}
+}
+
 // rangeTrend — iki range-query'yi (cpu, mem) dakika bucket'larında
 // birleştiren ortak yol; Pod/NamespaceTrend'in tek gövdesi.
 func (s *Service) rangeTrend(ctx context.Context, c ClusterConfig, cpuQ, memQ string, from, to time.Time) ([]TrendPoint, error) {
+	// v0.9.26 — adaptif step, TABAN 15s; bucket rounding da bu
+	// step'e bağlanır (aksi halde 60s yuvarlaması saniye-altı
+	// çözünürlüğü çöpe atardı).
+	step := stepForWindow(from, to)
 	params := func(q string) url.Values {
 		return url.Values{
 			"query": {q},
 			"start": {fmt.Sprintf("%d", from.Unix())},
 			"end":   {fmt.Sprintf("%d", to.Unix())},
-			"step":  {"60"},
+			"step":  {fmt.Sprintf("%d", step)},
 		}
 	}
 	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query_range", params(cpuQ))
@@ -1090,7 +1138,7 @@ func (s *Service) rangeTrend(ctx context.Context, c ClusterConfig, cpuQ, memQ st
 				if !ok {
 					continue
 				}
-				b := ts - ts%60
+				b := ts - ts%int64(step)
 				tp := byBucket[b]
 				if tp == nil {
 					tp = &TrendPoint{Bucket: b}

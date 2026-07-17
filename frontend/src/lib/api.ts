@@ -5,7 +5,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, ServiceAttrsResponse,
-  AlertRule, Problem,
+  AlertRule, Problem, DeploymentReport,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -1621,6 +1621,12 @@ export const api = {
   // capped at 200 silently on installs with >200 open problems.
   problemsCount: (params: { status?: string; service?: string; severity?: string; env?: string } = {}) =>
     get<{ count: number }>(`/api/problems/count?${qs(params)}`),
+
+  // Deployment analysis report — fleet-wide, generated on demand.
+  // `sinceNs` is unix nanoseconds (same convention as from/to
+  // elsewhere in this client), not milliseconds.
+  deploymentReport: (sinceNs: number) =>
+    get<DeploymentReport>(`/api/deployment-report?since=${sinceNs}`),
 
   // ── SLOs ─────────────────────────────────────────────────────────────────
   listSLOs: () => get<SLORow[] | null>('/api/slos'),

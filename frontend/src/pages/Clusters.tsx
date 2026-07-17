@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { ChartSpline } from 'lucide-react';
@@ -14,7 +14,7 @@ import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
-import { Card, Drawer, DrawerSection } from '@/components/ui';
+import { Button, Card, Drawer, DrawerSection } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
@@ -219,6 +219,19 @@ export default function ClustersPage() {
       return next;
     }, { replace: true });
 
+  // v0.9.38 (design handoff, Interactions §auto-refresh) — ?live=1
+  // canlı yenileme: aktif detay sorgularına refetchInterval. Aralık
+  // 10s (README 5s der; CLAUDE.md poll tabanı ≥10s kazanır). TanStack
+  // refetchInterval gizli sekmede varsayılan olarak durur
+  // (refetchIntervalInBackground=false) — document.hidden kuralı bedava.
+  const live = params.get('live') === '1';
+  const toggleLive = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (live) next.delete('live'); else next.set('live', '1');
+    return next;
+  }, { replace: true });
+  const liveMs = live ? 10_000 : undefined;
+
   // Detay başlık rozeti + Overview kartları: aynı skaler summary
   // (genel görünümle queryKey paylaşır — cache ortak).
   const detailSummaryQ = useQuery({
@@ -227,6 +240,7 @@ export default function ClustersPage() {
     staleTime: 60_000,
     retry: 1,
     enabled: isDetail,
+    refetchInterval: liveMs,
   });
 
   // v0.9.10 — Overview throughput grafiği: sayfa range'i penceresi
@@ -247,6 +261,7 @@ export default function ClustersPage() {
     staleTime: 60_000,
     retry: 1,
     enabled: isDetail && section === 'overview',
+    refetchInterval: liveMs,
   });
   // v0.9.35 (B2/F4) — CPU/Mem area chart'ları, per-kart Total/By-node
   // toggle (local UI state; fetch toggle'a göre). Pencere sayfa
@@ -257,17 +272,20 @@ export default function ClustersPage() {
     queryKey: ['cluster-res-trend', clusterParam, 'cpu', cpuByNode, rangeFrom, rangeTo],
     queryFn: () => api.clusterResourceTrend(clusterParam, 'cpu', cpuByNode, rangeFrom, rangeTo),
     staleTime: 60_000, retry: 1, enabled: isDetail && section === 'overview',
+    refetchInterval: liveMs,
   });
   const memTrendQ = useQuery({
     queryKey: ['cluster-res-trend', clusterParam, 'mem', memByNode, rangeFrom, rangeTo],
     queryFn: () => api.clusterResourceTrend(clusterParam, 'mem', memByNode, rangeFrom, rangeTo),
     staleTime: 60_000, retry: 1, enabled: isDetail && section === 'overview',
+    refetchInterval: liveMs,
   });
   // v0.9.36 (B3) — firing alerts (Overview panel).
   const alertsQ = useQuery({
     queryKey: ['cluster-alerts', clusterParam],
     queryFn: () => api.clusterAlerts(clusterParam),
     staleTime: 60_000, retry: 1, enabled: isDetail && section === 'overview',
+    refetchInterval: liveMs,
   });
   const [alertsCriticalOnly, setAlertsCriticalOnly] = useState(false);
 
@@ -280,6 +298,7 @@ export default function ClustersPage() {
       staleTime: 60_000,
       retry: 1,
       enabled: section === 'pods',
+      refetchInterval: liveMs,
     })),
   });
   const nodeQs = useQueries({
@@ -291,6 +310,7 @@ export default function ClustersPage() {
       // v0.9.32 — Overview heatmap de node verisini kullanır (aynı
       // cache slotu; sekme geçişinde tekrar fetch yok).
       enabled: section === 'nodes' || section === 'overview',
+      refetchInterval: liveMs,
     })),
   });
   const nsQs = useQueries({
@@ -302,6 +322,7 @@ export default function ClustersPage() {
       // v0.9.34 — combobox tüm sekmelerde namespace listesine ihtiyaç
       // duyar; Namespaces sekmesiyle aynı cache slotu (tekrar fetch yok).
       enabled: isDetail,
+      refetchInterval: liveMs,
     })),
   });
 
@@ -348,6 +369,7 @@ export default function ClustersPage() {
     staleTime: 60_000,
     retry: 1,
     enabled: isDetail && nsFilter !== '',
+    refetchInterval: liveMs,
   });
   const depRows = useMemo(() => {
     const all = depQ.data?.deployments ?? [];
@@ -614,7 +636,12 @@ export default function ClustersPage() {
               {/* v0.9.34 (F3) — namespace typeahead, sağ hizalı. Seçim
                   ?namespace= yazıp Namespaces (deployments) görünümüne
                   geçer; native select DEĞİL. */}
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                {/* v0.9.38 — auto-refresh toggle (design handoff §2):
+                    açıkken yeşil pulse + "Live · 10s", kapalıyken gri
+                    nokta + "Paused · Ns ago". Durum ?live=1 URL'de. */}
+                <LiveToggle live={live} onToggle={toggleLive}
+                  updatedAt={detailSummaryQ.dataUpdatedAt} />
                 <NamespaceCombobox
                   namespaces={(nsQs[0]?.data?.namespaces ?? []).map(r => r.namespace)}
                   value={nsFilter}
@@ -1180,6 +1207,40 @@ function ResToggleHeader({ title, byNode, onToggle }: {
 }
 
 // fmtAgeShort — saniye → "Nm"/"Nh"/"Nd" (design handoff alert "Nm ago").
+// LiveToggle — auto-refresh anahtarı (v0.9.38, design handoff §2).
+// Açıkken aktif sorgular 10s refetchInterval alır (TanStack gizli
+// sekmede kendiliğinden durdurur); kapalıyken temsilci sorgunun
+// (summary) yaşı gösterilir. "ago" tazelemesi 10s'lik YEREL bir
+// re-render tick'idir, sunucuya istek atmaz.
+function LiveToggle({ live, onToggle, updatedAt }: {
+  live: boolean; onToggle: () => void; updatedAt: number;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (live || !updatedAt) return;
+    const id = setInterval(() => {
+      if (document.hidden) return; // gizli sekmede boşuna render yok
+      setTick(t => t + 1);
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [live, updatedAt]);
+  const agoSec = updatedAt ? Math.max(0, Math.round((Date.now() - updatedAt) / 1000)) : 0;
+  const ago = agoSec < 90 ? `${agoSec}s` : fmtAgeShort(agoSec);
+  const label = live ? 'Live · 10s'
+    : updatedAt ? `Paused · ${ago} ago` : 'Paused';
+  return (
+    <Button variant="secondary" size="sm" onClick={onToggle}
+      title={live ? 'Auto-refresh on (10s) — click to pause' : 'Auto-refresh off — click to go live'}
+      style={{ whiteSpace: 'nowrap' }}
+      leftIcon={<span className={live ? 'pulse-dot' : ''} style={{
+        display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+        background: live ? 'var(--ok)' : 'var(--text3)',
+      }} />}>
+      {label}
+    </Button>
+  );
+}
+
 function fmtAgeShort(sec?: number): string {
   if (!sec || sec <= 0) return '';
   if (sec < 3600) return `${Math.round(sec / 60)}m`;

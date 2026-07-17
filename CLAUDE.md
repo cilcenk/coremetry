@@ -34,7 +34,7 @@ Datadog / Dynatrace / Honeycomb engineer this?"**
 **Frontend:** React + Vite, no Tailwind (CSS vars in `globals.css`),
 React Query, react-router v6. No state library — URL is source of
 truth for shareable views.
-**Versioning:** git tags `v0.8.X`. Runtime resolution:
+**Versioning:** git tags `v0.9.X` (v0.8 zinciri v0.8.588'de kapandı, operatör kararı 2026-07-17). Runtime resolution:
 `COREMETRY_VERSION` env > ldflag > `/app/VERSION` > `"dev"`.
 
 ## Architectural invariants
@@ -74,18 +74,18 @@ never `s.copilot.Explain` direct (/ai attribution).
 ## Workflow
 
 - `kuyruk` = show prioritised queue, end with "Hangisi?". `devam` = continue current item.
-- Operator-reported bugs = NEW priority, ship as `v0.8.X+1` immediately, never batch.
+- Operator-reported bugs = NEW priority, ship as `v0.9.X+1` immediately, never batch.
 
 **Release — every functional change:**
 ```
 edit → npx tsc --noEmit (fe) → go build ./... → go test ./...
-→ make audit → git add <files> → commit (heredoc) → tag v0.8.X
+→ make audit → git add <files> → commit (heredoc) → tag v0.9.X
 → git push && git push --tags → deploy (background, ONE at a time)
 ```
 `make audit`: 🔴 critical blocks the tag; 🟡 warnings reviewed, ship
 if known false positive.
 
-**Commit format:** `v0.8.X — title (≤70)` + body (what/why/root
+**Commit format:** `v0.9.X — title (≤70)` + body (what/why/root
 cause, 72 cols, operator bugs start "Operator-reported: …") +
 `Co-Authored-By: Claude <noreply@anthropic.com>`.
 

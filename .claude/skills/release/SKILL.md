@@ -1,13 +1,13 @@
 ---
 name: release
-description: Cut a Coremetry release — compute next v0.5.X tag, commit, push, kick off docker-up in background. Use when the user says "release", "ship", or finishes a coherent change and wants it shipped. Gates on `go build ./...` (backend) and `cd frontend && npx tsc --noEmit` (frontend) per CLAUDE.md.
+description: Cut a Coremetry release — compute next v0.9.X tag, commit, push, kick off docker-up in background. Use when the user says "release", "ship", or finishes a coherent change and wants it shipped. Gates on `go build ./...` (backend) and `cd frontend && npx tsc --noEmit` (frontend) per CLAUDE.md.
 ---
 
 # /release — ship a Coremetry change
 
 Use this skill to turn the current working-tree state into a shipped
 Coremetry release. Follows the conventions in `CLAUDE.md` —
-small frequent commits, monotonic v0.5.X tags, push, background
+small frequent commits, monotonic v0.9.X tags, push, background
 rebuild.
 
 ## Args
@@ -59,7 +59,7 @@ silently. The operator decides whether to fix-forward or abort.
 
 Run after the build gate. The regression-test discipline
 (CLAUDE.md "When you ship" item 11) ships a test per
-`v0.5.X — bug-fix` release, so the suite grows over time and
+`v0.9.X — bug-fix` release, so the suite grows over time and
 catches recurrence of historical bug classes.
 
 - Exit non-zero: STOP. Surface the failing test name to the
@@ -96,13 +96,13 @@ user via `git diff --cached --stat`.
 Format per CLAUDE.md exactly, using a HEREDOC so newlines preserve:
 
 ```
-v0.5.X — <short title, max 70 chars>
+v0.9.X — <short title, max 70 chars>
 
 <body — what changed and why; wrap at 72 chars. If this is a
 bug fix, start the body with "Operator-reported: <one-line
 description of the original report>". Include the root cause
 when it's non-obvious. Keep the body tight — 3-12 lines is
-typical for v0.5.X commits.>
+typical for v0.9.X commits.>
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 ```
@@ -119,9 +119,9 @@ git commit -m "$(cat <<'EOF'
 ... message from step 5 ...
 EOF
 )"
-git tag -a v0.5.X -m "v0.5.X — <short title>"
+git tag -a v0.9.X -m "v0.9.X — <short title>"
 git push origin main
-git push origin v0.5.X
+git push origin v0.9.X
 ```
 
 Tag annotation message can be just the title — the full body lives
@@ -162,13 +162,13 @@ Example confirmation:
 - **Don't push --force.** Ever. Even on a tag.
 - **Don't skip the type-check / build.** A red build that ships
   breaks the rebuild cycle and the operator has to revert.
-- **Don't re-use a tag.** If `v0.5.X` exists, the next is X+1, even
+- **Don't re-use a tag.** If `v0.9.X` exists, the next is X+1, even
   if X was a no-op or got reverted.
 - **Don't combine unrelated changes.** If the working tree has two
   logical units of work, do two separate releases — the small
   commit cadence is the workflow.
 - **Bug fix commits go IMMEDIATELY.** Don't batch a bug fix into a
-  feature commit — ship the bug fix as its own v0.5.X+1 right after
+  feature commit — ship the bug fix as its own v0.9.X+1 right after
   the prior release.
 - **Don't `make docker-up` while another rebuild is in flight.**
   BuildKit serialises layer cache; concurrent rebuilds fight and

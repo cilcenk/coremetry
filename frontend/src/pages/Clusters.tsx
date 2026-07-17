@@ -15,7 +15,7 @@ import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterSummary, TimeRange } from '@/lib/types';
+import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploymentRow, ClusterSummary, TimeRange } from '@/lib/types';
 
 // /clusters — uzak OpenShift cluster'larının Thanos metrikleri.
 // v0.8.587 redesign (audit: docs/audit/clusters-overview-redesign-
@@ -51,6 +51,14 @@ const NS_COLS: DataTableColumn<ClusterNamespaceRow>[] = [
   { id: 'cpuCores',  label: 'CPU',       sortValue: r => r.cpuCores,  numeric: true, width: 90 },
   { id: 'memBytes',  label: 'Memory',    sortValue: r => r.memBytes,  numeric: true, width: 100 },
   { id: 'trend',     label: '',          width: 44 },
+];
+
+// v0.9.23 — namespace içi iş yükü kademesi (Namespace → Deployment → Pod).
+const DEP_COLS: DataTableColumn<ClusterDeploymentRow>[] = [
+  { id: 'deployment', label: 'Workload', sortValue: r => r.deployment, naturalDir: 'asc', width: 240 },
+  { id: 'pods',       label: 'Pods',     sortValue: r => r.pods,       numeric: true, width: 80 },
+  { id: 'cpuCores',   label: 'CPU',      sortValue: r => r.cpuCores,   numeric: true, width: 90 },
+  { id: 'memBytes',   label: 'Memory',   sortValue: r => r.memBytes,   numeric: true, width: 100 },
 ];
 
 const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
@@ -121,7 +129,7 @@ export default function ClustersPage() {
   // bilinçli kalır — drawer pencere tercihi, görünümü değiştirmez).
   const backToOverview = () => setParams(prev => {
     const next = new URLSearchParams(prev);
-    for (const k of ['cluster', 'namespace', 'pod', 'service', 'q', 'section', 'ns']) {
+    for (const k of ['cluster', 'namespace', 'pod', 'service', 'q', 'section', 'ns', 'deployment']) {
       next.delete(k);
     }
     return next;
@@ -184,7 +192,7 @@ export default function ClustersPage() {
   const section = (() => {
     const raw = params.get('section') ?? (params.get('tab') === 'nodes' ? 'nodes' : '');
     if (raw === 'nodes' || raw === 'namespaces' || raw === 'pods' || raw === 'overview') return raw;
-    return (nsFilterEarly || params.get('service')) ? 'pods' : 'overview';
+    return (nsFilterEarly || params.get('service') || params.get('deployment')) ? 'pods' : 'overview';
   })();
   // v0.9.17 (self-review fix) — 'overview' PARAM YOKLUĞU olarak
   // kodlanmıştı; ?namespace=/?service= varken türetme 'pods'a
@@ -285,8 +293,34 @@ export default function ClustersPage() {
   const clearNs = () => setParams(prev => {
     const next = new URLSearchParams(prev);
     next.delete('namespace');
+    next.delete('deployment'); // kademe: ns gidince deployment da gider
     return next;
   }, { replace: true });
+
+  // v0.9.23 — ?deployment= süzgeci (kademe: Namespace → Deployment →
+  // Pod). Pod üyeliği DeploymentRow.podNames'ten (gerçek eşleme).
+  const depFilter = params.get('deployment') ?? '';
+  const clearDep = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('deployment');
+    return next;
+  }, { replace: true });
+  const depQ = useQuery({
+    queryKey: ['cluster-deployments', clusterParam, nsFilter],
+    queryFn: () => api.clusterDeployments(clusterParam, nsFilter),
+    staleTime: 60_000,
+    retry: 1,
+    enabled: isDetail && nsFilter !== '',
+  });
+  const depRows = useMemo(() => {
+    const all = depQ.data?.deployments ?? [];
+    return qLower ? all.filter(r => r.deployment.toLowerCase().includes(qLower)) : all;
+  }, [depQ.data, qLower]);
+  const depPodSet = useMemo(() => {
+    if (!depFilter) return null;
+    const row = (depQ.data?.deployments ?? []).find(r => r.deployment === depFilter);
+    return row ? new Set(row.podNames) : null;
+  }, [depQ.data, depFilter]);
 
   // useQueries dizi kimliği her render değişir — memo'lar sabit-
   // boyutlu içerik anahtarına bağlı (v0.8.578 deseni).
@@ -301,12 +335,13 @@ export default function ClustersPage() {
   const rows = useMemo(() => {
     let all = podDatas.flatMap(d => d?.pods ?? []);
     if (nsFilter) all = all.filter(r => r.namespace === nsFilter);
+    if (depFilter && depPodSet) all = all.filter(r => depPodSet.has(r.pod));
     if (svcFilter) all = all.filter(r => r.service === svcFilter);
     if (qLower) all = all.filter(r =>
       r.pod.toLowerCase().includes(qLower) || r.namespace.toLowerCase().includes(qLower));
     return all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [podDataKey, nsFilter, svcFilter, qLower]);
+  }, [podDataKey, nsFilter, svcFilter, qLower, depFilter, depPodSet]);
 
   const nodeDatas = nodeQs.map(q => q.data);
   const nodeDataKey = nodeQs.map(q =>
@@ -336,6 +371,12 @@ export default function ClustersPage() {
     storageKey: 'clusternamespaces',
     columns: NS_COLS,
     rows: nsRows,
+    initialSort: { id: 'cpuCores', dir: 'desc' },
+  });
+  const depdt = useDataTable<ClusterDeploymentRow>({
+    storageKey: 'clusterdeployments',
+    columns: DEP_COLS,
+    rows: depRows,
     initialSort: { id: 'cpuCores', dir: 'desc' },
   });
   const ndt = useDataTable<ClusterNodeRow>({
@@ -444,6 +485,13 @@ export default function ClustersPage() {
                   namespace: {nsFilter} ✕
                 </span>
               )}
+              {depFilter && (
+                <span className="badge b-info" style={{ cursor: 'pointer' }}
+                  onClick={clearDep}
+                  title="Workload filter — click to clear">
+                  workload: {depFilter} ✕
+                </span>
+              )}
               {svcFilter && (
                 <span className="badge b-info" style={{ cursor: 'pointer' }}
                   onClick={clearSvc}
@@ -536,7 +584,44 @@ export default function ClustersPage() {
                 {/* v0.8.588 — namespace rollup: TAM toplamlar (pod
                     topk kesmesinden bağımsız); satır tıklaması filtre +
                     Pods sekmesine geçiş (v0.9.8, audit §2). */}
-                {section === 'namespaces' && <>
+                {section === 'namespaces' && nsFilter && <>
+                  {/* v0.9.23 — Namespace → Deployment ara kademesi:
+                      çip nsFilter'ı temizleyip ns listesine döndürür. */}
+                  {depQ.isPending && <TableSkeleton cols={DEP_COLS.length} wideFirst />}
+                  {depQ.isError && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      Workload rollup unavailable — check the cluster entry in Settings.
+                    </div>
+                  )}
+                  {!depQ.isPending && !depQ.isError && depRows.length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                      No workload samples in this namespace.
+                    </div>
+                  )}
+                  {depRows.length > 0 && (
+                    <div className="table-wrap">
+                      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                        <DataTableColgroup dt={depdt} />
+                        <DataTableHead dt={depdt} />
+                        <tbody>
+                          {depdt.sortedRows.map(r => (
+                            <tr key={r.deployment}
+                              className={r.deployment === depFilter ? 'row-selected' : undefined}
+                              onClick={() => setSection('pods', p => p.set('deployment', r.deployment))}
+                              title="Open the pod list filtered to this workload"
+                              style={{ cursor: 'pointer' }}>
+                              <td className="mono" style={{ fontSize: 12 }}>{r.deployment}</td>
+                              <td className="num mono">{fmtNum(r.pods)}</td>
+                              <td className="num mono">{fmtCores(r.cpuCores)}</td>
+                              <td className="num mono">{fmtBytes(r.memBytes)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>}
+                {section === 'namespaces' && !nsFilter && <>
                   {nsRows.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                       {nsQs[0]?.isPending ? 'Loading…' : nsErr ? 'Namespace rollup unavailable — check the cluster entry in Settings.' : 'No namespace samples.'}
@@ -553,13 +638,16 @@ export default function ClustersPage() {
                             return (
                               <tr key={r.namespace}
                                 className={selected ? 'row-selected' : undefined}
-                                onClick={() => setSection(selected ? 'namespaces' : 'pods', p => {
-                                  if (selected) p.delete('namespace');
-                                  else p.set('namespace', r.namespace);
+                                onClick={() => setSection('namespaces', p => {
+                                  // v0.9.23 — ara kademe: seçim iş yükü
+                                  // rollup'unu açar (pods'a atlamaz);
+                                  // deployment seçimi pods'a götürür.
+                                  if (selected) { p.delete('namespace'); p.delete('deployment'); }
+                                  else { p.set('namespace', r.namespace); p.delete('deployment'); }
                                 })}
                                 title={selected
-                                  ? 'Clear the namespace filter'
-                                  : 'Open the pod list filtered to this namespace'}
+                                  ? 'Clear the namespace selection'
+                                  : 'Show workloads in this namespace'}
                                 style={{ cursor: 'pointer' }}>
                                 <td className="mono" style={{ fontSize: 12 }}>{r.namespace}</td>
                                 <td className="num mono">{r.pods ? fmtNum(r.pods) : '—'}</td>
@@ -593,7 +681,9 @@ export default function ClustersPage() {
                   )}
                   {!podErr && !podQs[0]?.isPending && rows.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      {svcFilter
+                      {depFilter
+                        ? `No pods in workload "${depFilter}" — clear the chip to see the namespace.`
+                        : svcFilter
                         ? `No pods matched service "${svcFilter}" — the label comes from Coremetry telemetry matching (best-effort); clear the chip to see all pods.`
                         : nsFilter
                           ? `No pod samples in namespace "${nsFilter}" — clear the chip to see the whole cluster.`

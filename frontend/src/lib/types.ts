@@ -959,6 +959,9 @@ export interface ClusterPodRow {
   // v0.9.12 — Coremetry service match (host_name = pod bridge);
   // absent = uninstrumented / infra pod / ambiguous.
   service?: string;
+  // v0.9.37 (B4) — faz + restart (best-effort; absent = kube-state yok).
+  phase?: string;
+  restarts?: number;
 }
 // v0.9.3 — multi-pod trend serisi (top-10, sunucu keser).
 export interface ClusterPodSeriesTrend {
@@ -1015,6 +1018,9 @@ export interface ClusterNamespaceRow {
   pods?: number;
   cpuCores: number;
   memBytes: number;
+  // v0.9.37 (B4) — restart toplamı + failing pod (best-effort).
+  restarts?: number;
+  failing?: number;
 }
 export interface ClusterNamespacesResponse {
   cluster: string;

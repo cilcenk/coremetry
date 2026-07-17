@@ -6,7 +6,7 @@ import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
 import { netTrendToSeries, namedSeriesToSeries } from '@/pages/clusters/trendSeries';
 import { Gauge } from '@/pages/clusters/Gauge';
 import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
-import { safePct } from '@/pages/clusters/thresholds';
+import { safePct, restartColor } from '@/pages/clusters/thresholds';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
 import { NamespaceCombobox } from '@/pages/clusters/NamespaceCombobox';
@@ -40,6 +40,7 @@ import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploym
 const NODE_COLS: DataTableColumn<ClusterNodeRow>[] = [
   { id: 'cluster',  label: 'Cluster', sortValue: r => r.cluster,  naturalDir: 'asc', width: 130 },
   { id: 'node',     label: 'Node',    sortValue: r => r.node,     naturalDir: 'asc', width: 260 },
+  { id: 'role',     label: 'Role',    sortValue: r => r.role ?? '', naturalDir: 'asc', width: 90 },
   { id: 'cpuCores', label: 'CPU',     sortValue: r => r.cpuCores, numeric: true, width: 90 },
   { id: 'cpuPct',   label: 'CPU %',   sortValue: r => r.cpuPct ?? 0, numeric: true, width: 80 },
   { id: 'memBytes', label: 'Memory',  sortValue: r => r.memBytes, numeric: true, width: 100 },
@@ -56,6 +57,8 @@ const NS_COLS: DataTableColumn<ClusterNamespaceRow>[] = [
   { id: 'pods',      label: 'Pods',      sortValue: r => r.pods ?? 0, numeric: true, width: 80 },
   { id: 'cpuCores',  label: 'CPU',       sortValue: r => r.cpuCores,  numeric: true, width: 90 },
   { id: 'memBytes',  label: 'Memory',    sortValue: r => r.memBytes,  numeric: true, width: 100 },
+  { id: 'restarts',  label: 'Restarts',  sortValue: r => r.restarts ?? 0, numeric: true, width: 84 },
+  { id: 'health',    label: 'Health',    sortValue: r => r.failing ?? 0, numeric: true, width: 90 },
   { id: 'trend',     label: '',          width: 44 },
 ];
 
@@ -73,6 +76,7 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'pod',       label: 'Pod',       sortValue: r => r.pod,       naturalDir: 'asc', width: 260 },
   // v0.9.12 — Coremetry servis eşleşmesi (korelasyon audit'i).
   { id: 'service',   label: 'Service',   sortValue: r => r.service ?? '', naturalDir: 'asc', width: 150 },
+  { id: 'phase',     label: 'Status',    sortValue: r => r.phase ?? '', naturalDir: 'asc', width: 100 },
   { id: 'cpuCores',  label: 'CPU',       sortValue: r => r.cpuCores,  numeric: true, width: 90 },
   { id: 'cpuPct',    label: 'CPU %',     sortValue: r => r.cpuPct ?? 0, numeric: true, width: 80 },
   { id: 'memBytes',  label: 'Memory',    sortValue: r => r.memBytes,  numeric: true, width: 100 },
@@ -80,6 +84,7 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   // v0.9.10 — network (best-effort).
   { id: 'netIn',     label: 'Net in',    sortValue: r => r.netInBps ?? 0, numeric: true, width: 90 },
   { id: 'netOut',    label: 'Net out',   sortValue: r => r.netOutBps ?? 0, numeric: true, width: 90 },
+  { id: 'restarts',  label: 'Restarts',  sortValue: r => r.restarts ?? 0, numeric: true, width: 84 },
 ];
 
 // fmtCores — 0.003 → "3m" (millicore okunuşu), 1.25 → "1.25".
@@ -654,6 +659,9 @@ export default function ClustersPage() {
                                   {r.node}
                                 </span>
                               </td>
+                              <td>{r.role
+                                ? <span className={`badge ${r.role === 'master' || r.role === 'control-plane' ? 'b-info' : 'b-gray'}`}>{r.role}</span>
+                                : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
                               <td className="num mono">{fmtCores(r.cpuCores)}</td>
                               <td className="num mono" style={{
                                 color: (r.cpuPct ?? 0) > 85 ? 'var(--err)' : (r.cpuPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
@@ -744,6 +752,14 @@ export default function ClustersPage() {
                                 <td className="num mono">{r.pods ? fmtNum(r.pods) : '—'}</td>
                                 <td className="num mono">{fmtCores(r.cpuCores)}</td>
                                 <td className="num mono">{fmtBytes(r.memBytes)}</td>
+                                {/* v0.9.37 (B4/F6) — restart toplamı + health. */}
+                                <td className="num mono" style={{ color: restartColor(r.restarts ?? 0) }}>
+                                  {r.restarts != null ? fmtNum(r.restarts) : '—'}</td>
+                                <td className="num" onClick={e => e.stopPropagation()}>
+                                  {(r.failing ?? 0) > 0
+                                    ? <span className="badge b-err">{r.failing} failing</span>
+                                    : <span className="badge b-ok">healthy</span>}
+                                </td>
                                 <td style={{ textAlign: 'center' }}>
                                   {/* v0.9.5 — trend drawer'ı; satırın filtre
                                       davranışına karışmaz (stopPropagation). */}
@@ -812,6 +828,10 @@ export default function ClustersPage() {
                                     title="No matching Coremetry service (uninstrumented, infra pod, or ambiguous)">—</span>
                                 )}
                               </td>
+                              {/* v0.9.37 (B4/F6) — Status: kube_pod_status_phase. */}
+                              <td>{r.phase
+                                ? <span className={`badge ${podPhaseBadge(r.phase)}`}>{r.phase}</span>
+                                : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
                               <td className="num mono">{fmtCores(r.cpuCores)}</td>
                               {/* v0.8.580 — % hücresi limit-bazlı; request
                                   ekseni title'da (clamp'siz, aşım sinyal). */}
@@ -826,6 +846,8 @@ export default function ClustersPage() {
                                 {r.memPct ? r.memPct.toFixed(0) : '—'}</td>
                               <td className="num mono">{r.netInBps ? fmtBps(r.netInBps) : '—'}</td>
                               <td className="num mono">{r.netOutBps ? fmtBps(r.netOutBps) : '—'}</td>
+                              <td className="num mono" style={{ color: restartColor(r.restarts ?? 0) }}>
+                                {r.restarts != null ? fmtNum(r.restarts) : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1239,4 +1261,15 @@ function ClusterPromQLCard({ cluster }: { cluster: string }) {
       </div>
     </Card>
   );
+}
+
+// podPhaseBadge — kube_pod_status_phase → badge sınıfı (v0.9.37).
+function podPhaseBadge(phase: string): string {
+  switch (phase) {
+    case 'Running': return 'b-ok';
+    case 'Succeeded': return 'b-info';
+    case 'Pending': return 'b-warn';
+    case 'Failed': case 'Unknown': return 'b-err';
+    default: return 'b-gray';
+  }
 }

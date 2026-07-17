@@ -818,9 +818,11 @@ func (s *Service) NetworkTrend(ctx context.Context, c ClusterConfig, from, to ti
 	return out, nil
 }
 
-// maxTrendSeries — multi-pod grafikte seri tavanı: uPlot 50 seriyi
-// çizer ama operatör 10'dan fazlasını OKUYAMAZ; legend şişer.
-const maxTrendSeries = 10
+// maxTrendSeries — multi-pod grafikte seri tavanı. v0.9.21: 10→8 —
+// MultiLineChart foldTopN(n=8) 9-10. serileri "other"a katlıyordu,
+// "Top 10 of N" başlığı grafikle çelişiyordu (self-review); tavan
+// grafiğin gerçekte gösterdiği sayıya sabitlendi.
+const maxTrendSeries = 8
 
 // NamespacePodsTrend — namespace'in pod başına dakika-bucket
 // trendleri (v0.9.3). Sorgu topk'siz (adım-başına set kayması

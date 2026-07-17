@@ -213,7 +213,15 @@ export default function ClustersPage() {
   // v0.9.10 — Overview throughput grafiği: sayfa range'i penceresi
   // (audit §4 kararı — ?tw= drawer-yerel kalır), fetch yalnız
   // Overview sekmesi aktifken.
-  const { from: rangeFrom, to: rangeTo } = useMemo(() => timeRangeToNs(range), [range]);
+  const { from: rangeFrom, to: rangeTo, netClamped } = useMemo(() => {
+    const { from, to } = timeRangeToNs(range);
+    // v0.9.21 — sunucu 6h'e SESSİZCE clamp'liyordu; geniş sayfa
+    // range'inde grafik başlıksız yanıltıyordu. İstemci de clamp'ler
+    // ve başlığa "(last 6h)" düşer — eksen artık yalan söylemez.
+    const sixH = 6 * 3600 * 1e9;
+    if (to - from > sixH) return { from: to - sixH, to, netClamped: true };
+    return { from, to, netClamped: false };
+  }, [range]);
   const netTrendQ = useQuery({
     queryKey: ['cluster-net-trend', clusterParam, rangeFrom, rangeTo],
     queryFn: () => api.clusterNetworkTrend(clusterParam, rangeFrom, rangeTo),
@@ -480,7 +488,7 @@ export default function ClustersPage() {
             ) : (
               <>
                 {section === 'nodes' && <>
-                  {nodeQs[0]?.isPending && <TableSkeleton cols={6} wideFirst />}
+                  {nodeQs[0]?.isPending && <TableSkeleton cols={NODE_COLS.length} wideFirst />}
                   {nodeErr && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                       Node metrics unavailable (possibly the tenancy port — see the runbook probe step).
@@ -577,7 +585,7 @@ export default function ClustersPage() {
                 </>}
 
                 {section === 'pods' && <>
-                  {podQs[0]?.isPending && <TableSkeleton cols={7} wideFirst />}
+                  {podQs[0]?.isPending && <TableSkeleton cols={POD_COLS.length} wideFirst />}
                   {podErr && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                       Pod metrics unavailable — check the cluster entry in Settings.
@@ -585,9 +593,11 @@ export default function ClustersPage() {
                   )}
                   {!podErr && !podQs[0]?.isPending && rows.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      {nsFilter
-                        ? `No pod samples in namespace "${nsFilter}" — clear the chip to see the whole cluster.`
-                        : 'Queries returned no series — check the namespace filter on the cluster entry.'}
+                      {svcFilter
+                        ? `No pods matched service "${svcFilter}" — the label comes from Coremetry telemetry matching (best-effort); clear the chip to see all pods.`
+                        : nsFilter
+                          ? `No pod samples in namespace "${nsFilter}" — clear the chip to see the whole cluster.`
+                          : 'Queries returned no series — check the namespace filter on the cluster entry.'}
                     </div>
                   )}
                   {rows.length > 0 && (
@@ -688,7 +698,7 @@ export default function ClustersPage() {
                 {/* v0.9.10 — throughput grafiği: yalnız seri geldiyse
                     (node_network erişilemezse bölüm hiç görünmez). */}
                 {section === 'overview' && (netTrendQ.data?.trend?.length ?? 0) > 0 && (
-                  <Card header="Network throughput" style={{ marginTop: 14 }}>
+                  <Card header={`Network throughput${netClamped ? ' (last 6h)' : ''}`} style={{ marginTop: 14 }}>
                     <MultiLineChart
                       series={netTrendToSeries(netTrendQ.data!.trend!)}
                       height={200} />

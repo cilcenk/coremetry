@@ -2741,6 +2741,35 @@ export interface AnomalyEvent {
   rootCause?: RootCauseSummary;
 }
 
+// ── Deployment analysis report ──────────────────────────────────────────────
+// Fleet-wide, read-only, generated on demand from an operator-supplied
+// deploy timestamp — see GET /api/deployment-report. A service appears
+// here only if it has a still-open Problem that started at/after the
+// deploy; anomalies/newErrors are supporting evidence for that SAME
+// service, also gated to "started after deploy AND still active/open".
+
+export interface REDStats {
+  errorRate: number;
+  p99Ms: number;
+  throughput: number; // spans/sec over the comparison window
+}
+
+export interface ServiceReportSection {
+  service: string;
+  health: 'red' | 'yellow' | 'green' | '';
+  before: REDStats;
+  after: REDStats;
+  problems: Problem[];
+  anomalies: AnomalyEvent[];
+  newErrors: ExceptionGroup[];
+}
+
+export interface DeploymentReport {
+  since: number;       // unix ns — the deploy timestamp the report was run against
+  generatedAt: number; // unix ns — when this report was computed
+  services: ServiceReportSection[];
+}
+
 // Per-operation error anomaly — a (service, operation) tuple
 // that is either failing for the first time in the window or
 // whose error count just doubled.

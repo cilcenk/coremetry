@@ -688,6 +688,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/problems", s.listProblems)
 	mux.HandleFunc("GET    /api/problems/count", s.countProblems)
 	mux.HandleFunc("GET    /api/problems/buckets", s.listProblemBuckets)
+	// Deployment analysis report — fleet-wide, read-only. Services
+	// qualify via a still-open Problem that started at/after ?since;
+	// anomalies/new-errors are supporting evidence for those same
+	// services only. See buildDeploymentReport for the composition.
+	mux.HandleFunc("GET    /api/deployment-report", s.getDeploymentReport)
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause", s.getProblemRootCause)
 	// Copilot prose narration of the persisted problem hypothesis (rc #4) —
 	// problem-anchored sibling of the anomaly explain route. Lazy/opt-in,

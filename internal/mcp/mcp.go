@@ -43,6 +43,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -608,7 +609,10 @@ func (s *Server) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// v0.9.20 (self-review fix) — 4MB gövde limiti HandleStreamable'a
+	// eklenmiş ama bu eski POST yolunda unutulmuştu (majör): sınırsız
+	// gövde decode'u tek istekle belleği şişirebilirdi.
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
 		http.Error(w, "parse error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -662,11 +666,42 @@ var sendTimeout = 2 * time.Second
 // pod'a düşerse düşsün. Claude Code'un birincil `--transport http`
 // yolu budur; SSE yolu eski istemciler için aynen kalır.
 func (s *Server) HandleStreamable(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	// v0.9.20 (self-review fix) — 2025-03-26 spec'i batch KABULÜNÜ
+	// zorunlu kılar; tekil-decode batch'i -32700'le reddediyordu.
+	// Parse hatasında id spec gereği null olarak GÖNDERİLİR
+	// (omitempty onu düşürüyordu → RawMessage("null")).
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var reqs []Request
+		if err := json.Unmarshal(trimmed, &reqs); err != nil || len(reqs) == 0 {
+			writeStreamableJSON(w, http.StatusBadRequest,
+				errorResp(json.RawMessage("null"), ErrParse, "parse error: invalid batch"))
+			return
+		}
+		resps := make([]*Response, 0, len(reqs))
+		for i := range reqs {
+			if reqs[i].IsNotification() {
+				s.dispatchNotification(r.Context(), nil, &reqs[i])
+				continue // JSON-RPC: bildirime yanıt girdisi yazılmaz
+			}
+			resps = append(resps, s.handleStreamableOne(r.Context(), &reqs[i]))
+		}
+		if len(resps) == 0 {
+			w.WriteHeader(http.StatusAccepted) // tamamı bildirimdi
+			return
+		}
+		writeStreamableJSON(w, http.StatusOK, resps)
+		return
+	}
 	var req Request
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(errorResp(nil, ErrParse, "parse error: "+err.Error()))
+	if err := json.Unmarshal(trimmed, &req); err != nil {
+		writeStreamableJSON(w, http.StatusBadRequest,
+			errorResp(json.RawMessage("null"), ErrParse, "parse error: "+err.Error()))
 		return
 	}
 	if req.IsNotification() {
@@ -675,16 +710,22 @@ func (s *Server) HandleStreamable(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	var resp *Response
+	writeStreamableJSON(w, http.StatusOK, s.handleStreamableOne(r.Context(), &req))
+}
+
+// handleStreamableOne — tek isteğin sessionless dispatch'i
+// (initialize bu transport'un sürüm sabitiyle özel-durumlanır).
+func (s *Server) handleStreamableOne(ctx context.Context, req *Request) *Response {
 	if req.Method == "initialize" {
-		// Stateless initialize: oturum durumu yazılmaz, sürüm bu
-		// transport'un kendi sabitidir.
-		resp = s.handleInitializeStreamable(&req)
-	} else {
-		resp = s.dispatch(r.Context(), nil, &req)
+		return s.handleInitializeStreamable(req)
 	}
+	return s.dispatch(ctx, nil, req)
+}
+
+func writeStreamableJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("[mcp] streamable encode: %v", err)
 	}
 }

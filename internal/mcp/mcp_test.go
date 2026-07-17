@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,6 +129,60 @@ func TestStreamableToolCallAndGate(t *testing.T) {
 	errObj, _ = out["error"].(map[string]any)
 	if errObj == nil || errObj["code"] != float64(ErrMethodNotFound) {
 		t.Fatalf("bilinmeyen tool -32601 olmalı, got %v", out)
+	}
+}
+
+// v0.9.20 — batch kabulü (2025-03-26 spec zorunluluğu) + parse
+// hatasında id:null.
+func TestStreamableBatch(t *testing.T) {
+	_, ts := testServer(t)
+	body := []byte(`[
+		{"jsonrpc":"2.0","id":1,"method":"ping"},
+		{"jsonrpc":"2.0","method":"notifications/initialized"},
+		{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo_tool","arguments":{}}}
+	]`)
+	resp, err := http.Post(ts.URL+"/api/mcp", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("batch yanıtı dizi olmalı: %v", err)
+	}
+	// Bildirim yanıt girdisi ÜRETMEZ → 3 istekten 2 yanıt.
+	if len(out) != 2 {
+		t.Fatalf("want 2 responses, got %d: %v", len(out), out)
+	}
+	if out[0]["id"] != float64(1) || out[1]["id"] != float64(2) {
+		t.Fatalf("id eşleşmesi bozuk: %v", out)
+	}
+}
+
+func TestStreamableAllNotificationBatch202(t *testing.T) {
+	_, ts := testServer(t)
+	resp, err := http.Post(ts.URL+"/api/mcp", "application/json",
+		bytes.NewReader([]byte(`[{"jsonrpc":"2.0","method":"notifications/initialized"}]`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("tamamı-bildirim batch 202 olmalı, got %d", resp.StatusCode)
+	}
+}
+
+func TestStreamableParseErrorHasNullID(t *testing.T) {
+	_, ts := testServer(t)
+	resp, err := http.Post(ts.URL+"/api/mcp", "application/json",
+		bytes.NewReader([]byte(`{bozuk`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(raw, []byte(`"id":null`)) {
+		t.Fatalf("parse hatasında id:null spec gereği gövdede olmalı: %s", raw)
 	}
 }
 

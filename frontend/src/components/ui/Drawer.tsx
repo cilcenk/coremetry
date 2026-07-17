@@ -66,15 +66,26 @@ export function DrawerSection({ title, children }: {
 }
 
 // DrawerTrendRow — etiket + Sparkline satırı (çekmece trend blokları).
-export function DrawerTrendRow({ label, values, color }: {
+// v0.9.0 — opsiyonel onClick: çağıran tıkla-büyüt (expanded uPlot)
+// davranışı ekleyebilir; zaman ekseni verisi (bucket'lar) çağıranda
+// olduğundan büyük grafiğin KENDİSİ de çağıranda render edilir — bu
+// satır yalnız affordance'ı taşır. onClick'siz çağıranlar (Hosts
+// drawer'ı) birebir eski davranışta.
+export function DrawerTrendRow({ label, values, color, onClick }: {
   label: string;
   values: number[];
   color: string;
+  onClick?: () => void;
 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <span style={{ fontSize: 11, color: 'var(--text2)', width: 60 }}>{label}</span>
-      <Sparkline values={values} width={420} height={34} color={color} title={label} />
+      <span
+        onClick={onClick}
+        style={onClick ? { cursor: 'pointer' } : undefined}
+        title={onClick ? `${label} — click to expand` : undefined}>
+        <Sparkline values={values} width={420} height={34} color={color} title={label} />
+      </span>
     </div>
   );
 }

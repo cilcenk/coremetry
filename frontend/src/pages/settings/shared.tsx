@@ -5,7 +5,7 @@
 // tabs. Pulling them here keeps the per-section files importing a single
 // stable module instead of re-declaring the same markup. Behaviour is
 // unchanged — these are the exact functions the tabs used before.
-import type { ReactNode } from 'react';
+import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from 'react';
 
 // ── Tiny shared form atoms ──────────────────────────────────────────────────
 
@@ -64,13 +64,33 @@ export function SectionTitle({ children }: { children: ReactNode }) {
 // and the flag did nothing. 140px is the floor a small field actually
 // needs — the narrowest content is LdapTab's Team regex, whose monospace
 // placeholder "-([^-]+)$" is ~70px of glyphs plus input padding.
+// v0.9.15 (a11y) — etiket artık gerçek <label htmlFor>: tek çocuk
+// bir element ise useId'li id enjekte edilir (kendi id'si varsa o
+// korunur) — etikete tıklamak inputu odaklar, ekran okuyucu
+// eşleşmesi kurulur. Field.tsx'in useId sözleşmesinin, çocuğu
+// çağıranın sahiplendiği varyantı. Çocuk element değilse (çoklu
+// node) label htmlFor'suz kalır — davranış eskisi gibi, semantik
+// yine kazanır.
 export function Field2({ label, hint, small, children }: {
   label: string; hint?: string; small?: boolean; children: ReactNode;
 }) {
+  const autoId = useId();
+  let control: ReactNode = children;
+  let labelFor: string | undefined;
+  if (isValidElement<{ id?: string }>(children)) {
+    const childId = children.props.id ?? autoId;
+    labelFor = childId;
+    control = children.props.id
+      ? children
+      : cloneElement(children as ReactElement<{ id?: string }>, { id: childId });
+  }
   return (
     <div style={{ flex: small ? '0 1 180px' : 1, minWidth: small ? 140 : 200 }}>
-      <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>{label}</div>
-      {children}
+      <label htmlFor={labelFor}
+        style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+        {label}
+      </label>
+      {control}
       {hint && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.4 }}>{hint}</div>}
     </div>
   );

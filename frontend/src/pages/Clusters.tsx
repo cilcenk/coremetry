@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
-import { ChartSpline, ChevronDown, ChevronRight } from 'lucide-react';
+import { ChartSpline } from 'lucide-react';
 import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -12,7 +12,6 @@ import { useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
-import { getItem, setItem } from '@/lib/storage';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterSummary, TimeRange } from '@/lib/types';
 
@@ -152,19 +151,38 @@ export default function ClustersPage() {
     })),
   });
 
-  // v0.9.6 — katlanabilir paneller (operatör isteği): durum
-  // localStorage'da (genişlik/sort gibi kişisel ergonomi — URL
-  // değil); katlı bölümün sorgusu HİÇ atılmaz (fetch-on-expand).
-  const [secOpen, setSecOpen] = useState<Record<string, boolean>>(
-    () => getItem('clusters-sections', { nodes: true, namespaces: true, pods: true }));
-  const toggleSec = (k: 'nodes' | 'namespaces' | 'pods') =>
-    setSecOpen(s => {
-      const next = { ...s, [k]: !s[k] };
-      setItem('clusters-sections', next);
+  // v0.9.8 (L1, tabbed-detail audit §2) — sekme yönlendirmesi:
+  // ?section=overview|nodes|namespaces|pods (yokluğu = overview).
+  // Legacy ?tab=nodes → nodes; ?namespace taşıyan section'sız
+  // deep-link (Servis→Cluster pivotu) → pods. v0.9.6'nın katlanabilir
+  // panelleri sekmelerle GEÇERSİZ (bilinçli geri alma) — fetch-gating
+  // deseni sekme-aktifliğine taşındı.
+  const nsFilterEarly = params.get('namespace') ?? '';
+  const section = (() => {
+    const raw = params.get('section') ?? (params.get('tab') === 'nodes' ? 'nodes' : '');
+    if (raw === 'nodes' || raw === 'namespaces' || raw === 'pods' || raw === 'overview') return raw;
+    return nsFilterEarly ? 'pods' : 'overview';
+  })();
+  const setSection = (sec: string, extra?: (p: URLSearchParams) => void) =>
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (sec === 'overview') next.delete('section'); else next.set('section', sec);
+      next.delete('tab');
+      extra?.(next);
       return next;
-    });
+    }, { replace: true });
 
-  // Detay: yalnız seçili cluster'ın nodes+pods sorguları.
+  // Detay başlık rozeti + Overview kartları: aynı skaler summary
+  // (genel görünümle queryKey paylaşır — cache ortak).
+  const detailSummaryQ = useQuery({
+    queryKey: ['cluster-summary', clusterParam],
+    queryFn: () => api.clusterSummary(clusterParam),
+    staleTime: 60_000,
+    retry: 1,
+    enabled: isDetail,
+  });
+
+  // Detay: yalnız seçili cluster'ın AKTİF sekme sorguları.
   const detailList = isDetail ? [clusterParam] : [];
   const podQs = useQueries({
     queries: detailList.map(name => ({
@@ -172,7 +190,7 @@ export default function ClustersPage() {
       queryFn: () => api.clusterPods(name),
       staleTime: 60_000,
       retry: 1,
-      enabled: secOpen.pods,
+      enabled: section === 'pods',
     })),
   });
   const nodeQs = useQueries({
@@ -181,7 +199,7 @@ export default function ClustersPage() {
       queryFn: () => api.clusterNodes(name),
       staleTime: 60_000,
       retry: 1,
-      enabled: secOpen.nodes,
+      enabled: section === 'nodes',
     })),
   });
   const nsQs = useQueries({
@@ -190,7 +208,7 @@ export default function ClustersPage() {
       queryFn: () => api.clusterNamespaces(name),
       staleTime: 60_000,
       retry: 1,
-      enabled: secOpen.namespaces,
+      enabled: section === 'namespaces',
     })),
   });
 
@@ -260,21 +278,18 @@ export default function ClustersPage() {
     initialSort: { id: 'cpuPct', dir: 'desc' },
   });
 
-  // v0.9.6 — katlanabilir bölüm başlığı (chevron + başlık, tüm satır tıklanır).
-  const secHeader = (k: 'nodes' | 'namespaces' | 'pods', title: string) => (
-    <button type="button" onClick={() => toggleSec(k)}
-      title={secOpen[k] ? 'Collapse section' : 'Expand section'}
-      style={{ all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-      {secOpen[k]
-        ? <ChevronDown size={13} strokeWidth={1.75} />
-        : <ChevronRight size={13} strokeWidth={1.75} />}
-      {title}
-    </button>
-  );
-
   const podErr = podQs[0]?.isError ?? false;
   const nodeErr = nodeQs[0]?.isError ?? false;
-  const detailUnreachable = isDetail && podErr && nodeErr;
+  const nsErr = nsQs[0]?.isError ?? false;
+  // Erişilemezlik (audit §5): summary VE aktif sekmenin sorgusu
+  // birlikte düşerse gövde tek net Empty gösterir; tek taraf düşerse
+  // sekme-içi mesajlar korunur.
+  const activeErr = section === 'pods' ? podErr
+    : section === 'nodes' ? nodeErr
+    : section === 'namespaces' ? nsErr
+    : false;
+  const detailUnreachable = isDetail && detailSummaryQ.isError &&
+    (section === 'overview' || activeErr);
 
   return (
     <>
@@ -350,6 +365,11 @@ export default function ClustersPage() {
               <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 14, fontWeight: 600 }}>
                 {clusterParam}
               </span>
+              {detailSummaryQ.isError
+                ? <span className="badge b-err">unreachable</span>
+                : (observed.size > 0 && !observed.has(clusterParam))
+                  ? <span className="badge b-warn" title="Name not seen in the last 24h of telemetry — the service pivot will not match">not in telemetry</span>
+                  : <span className="badge b-ok">reachable</span>}
               {nsFilter && (
                 <span className="badge b-info" style={{ cursor: 'pointer' }}
                   onClick={clearNs}
@@ -366,6 +386,25 @@ export default function ClustersPage() {
                          border: '1px solid var(--border)', borderRadius: 4 }} />
             </div>
 
+            {/* v0.9.8 — sekme şeridi (OpenShift konsolu tarzı). Sayaçlar
+                yalnız veri yüklendiyse — sayaç için önden fetch YOK. */}
+            <div className="tab-strip" style={{ marginBottom: 12 }}>
+              <button className={section === 'overview' ? 'active' : ''}
+                onClick={() => setSection('overview')}>Overview</button>
+              <button className={section === 'nodes' ? 'active' : ''}
+                onClick={() => setSection('nodes')}>
+                Nodes{section === 'nodes' && nodeRows.length > 0 ? ` (${nodeRows.length})` : ''}
+              </button>
+              <button className={section === 'namespaces' ? 'active' : ''}
+                onClick={() => setSection('namespaces')}>
+                Namespaces{section === 'namespaces' && nsRows.length > 0 ? ` (${nsRows.length})` : ''}
+              </button>
+              <button className={section === 'pods' ? 'active' : ''}
+                onClick={() => setSection('pods')}>
+                Pods{section === 'pods' && rows.length > 0 ? ` (${rows.length})` : ''}
+              </button>
+            </div>
+
             {detailUnreachable ? (
               <Empty icon="✗" title={`${clusterParam} is unreachable`}>
                 Thanos Querier did not respond — check token expiry/route in{' '}
@@ -374,9 +413,7 @@ export default function ClustersPage() {
               </Empty>
             ) : (
               <>
-                <Card header={secHeader('nodes', `Nodes${nodeRows.length > 0 ? ` (${nodeRows.length})` : ''}`)}
-                  style={{ marginBottom: 14 }}>
-                  {!secOpen.nodes ? null : <>
+                {section === 'nodes' && <>
                   {nodeQs[0]?.isPending && <TableSkeleton cols={6} wideFirst />}
                   {nodeErr && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
@@ -418,20 +455,18 @@ export default function ClustersPage() {
                       </table>
                     </div>
                   )}
-                  </>}
-                </Card>
+                </>}
 
                 {/* v0.8.588 — namespace rollup: TAM toplamlar (pod
-                    topk kesmesinden bağımsız); satır tıklaması alt
-                    Pods tablosunu ?namespace= üzerinden süzer. */}
-                <Card header={secHeader('namespaces', `Namespaces${nsRows.length > 0 ? ` (${nsRows.length})` : ''}`)}
-                  style={{ marginBottom: 14 }}>
-                  {secOpen.namespaces && nsRows.length === 0 && (
+                    topk kesmesinden bağımsız); satır tıklaması filtre +
+                    Pods sekmesine geçiş (v0.9.8, audit §2). */}
+                {section === 'namespaces' && <>
+                  {nsRows.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      {nsQs[0]?.isPending ? 'Loading…' : 'No namespace samples.'}
+                      {nsQs[0]?.isPending ? 'Loading…' : nsErr ? 'Namespace rollup unavailable — check the cluster entry in Settings.' : 'No namespace samples.'}
                     </div>
                   )}
-                  {secOpen.namespaces && nsRows.length > 0 && (
+                  {nsRows.length > 0 && (
                     <div className="table-wrap">
                       <table style={{ tableLayout: 'fixed', width: '100%' }}>
                         <DataTableColgroup dt={nsdt} />
@@ -442,15 +477,13 @@ export default function ClustersPage() {
                             return (
                               <tr key={r.namespace}
                                 className={selected ? 'row-selected' : undefined}
-                                onClick={() => setParams(prev => {
-                                  const next = new URLSearchParams(prev);
-                                  if (selected) next.delete('namespace');
-                                  else next.set('namespace', r.namespace);
-                                  return next;
-                                }, { replace: true })}
+                                onClick={() => setSection(selected ? 'namespaces' : 'pods', p => {
+                                  if (selected) p.delete('namespace');
+                                  else p.set('namespace', r.namespace);
+                                })}
                                 title={selected
                                   ? 'Clear the namespace filter'
-                                  : 'Filter the pod table to this namespace'}
+                                  : 'Open the pod list filtered to this namespace'}
                                 style={{ cursor: 'pointer' }}>
                                 <td className="mono" style={{ fontSize: 12 }}>{r.namespace}</td>
                                 <td className="num mono">{r.pods ? fmtNum(r.pods) : '—'}</td>
@@ -473,10 +506,9 @@ export default function ClustersPage() {
                       </table>
                     </div>
                   )}
-                </Card>
+                </>}
 
-                <Card header={secHeader('pods', `Pods${rows.length > 0 ? ` (${rows.length})` : ''}`)}>
-                  {!secOpen.pods ? null : <>
+                {section === 'pods' && <>
                   {podQs[0]?.isPending && <TableSkeleton cols={7} wideFirst />}
                   {podErr && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
@@ -530,8 +562,34 @@ export default function ClustersPage() {
                       </table>
                     </div>
                   )}
-                  </>}
-                </Card>
+                </>}
+
+                {/* v0.9.8 — Overview sekmesi: 2 skaler kart (CPU/Mem;
+                    Net kartları + throughput grafiği L2/L3 probe
+                    sonrası — alan yokluğu yanlış sıfır okutmaz). */}
+                {section === 'overview' && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                    gap: 12,
+                  }}>
+                    <Card density="tight" header="CPU used (cores)">
+                      <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
+                        {detailSummaryQ.data?.cpuUsedCores ? fmtCores(detailSummaryQ.data.cpuUsedCores) : '—'}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                        {detailSummaryQ.data?.nodes ? `${fmtNum(detailSummaryQ.data.nodes)} nodes` : ''}
+                      </div>
+                    </Card>
+                    <Card density="tight" header="Memory used">
+                      <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
+                        {detailSummaryQ.data?.memUsedBytes ? fmtBytes(detailSummaryQ.data.memUsedBytes) : '—'}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                        {detailSummaryQ.data?.pods ? `${fmtNum(detailSummaryQ.data.pods)} pods` : ''}
+                      </div>
+                    </Card>
+                  </div>
+                )}
               </>
             )}
           </>

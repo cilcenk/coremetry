@@ -9,6 +9,7 @@ import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
 import { safePct } from '@/pages/clusters/thresholds';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
+import { NamespaceCombobox } from '@/pages/clusters/NamespaceCombobox';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -271,7 +272,9 @@ export default function ClustersPage() {
       queryFn: () => api.clusterNamespaces(name),
       staleTime: 60_000,
       retry: 1,
-      enabled: section === 'namespaces',
+      // v0.9.34 — combobox tüm sekmelerde namespace listesine ihtiyaç
+      // duyar; Namespaces sekmesiyle aynı cache slotu (tekrar fetch yok).
+      enabled: isDetail,
     })),
   });
 
@@ -581,6 +584,16 @@ export default function ClustersPage() {
                 onClick={() => setSection('pods')}>
                 Pods{section === 'pods' && rows.length > 0 ? ` (${rows.length})` : ''}
               </button>
+              {/* v0.9.34 (F3) — namespace typeahead, sağ hizalı. Seçim
+                  ?namespace= yazıp Namespaces (deployments) görünümüne
+                  geçer; native select DEĞİL. */}
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+                <NamespaceCombobox
+                  namespaces={(nsQs[0]?.data?.namespaces ?? []).map(r => r.namespace)}
+                  value={nsFilter}
+                  onPick={ns => setSection('namespaces', p => { p.set('namespace', ns); p.delete('deployment'); })}
+                  onClear={() => setSection('namespaces', p => { p.delete('namespace'); p.delete('deployment'); })} />
+              </div>
             </div>
 
             {detailUnreachable ? (

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Empty } from '@/components/Spinner';
@@ -74,13 +74,14 @@ export default function DeploymentReportPage() {
   const sinceNs = sinceParam ? Number(sinceParam) : null;
 
   const [report, setReport] = useState<DeploymentReport | null | undefined>(undefined);
-  useMemo(() => {
+  useEffect(() => {
     if (sinceNs === null) { setReport(undefined); return; }
+    let cancelled = false;
     setReport(undefined);
     api.deploymentReport(sinceNs, { ownerTeam, sreTeam })
-      .then(r => setReport(r))
-      .catch(() => setReport(null));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      .then(r => { if (!cancelled) setReport(r); })
+      .catch(() => { if (!cancelled) setReport(null); });
+    return () => { cancelled = true; };
   }, [sinceNs, ownerTeam, sreTeam]);
 
   return (
@@ -158,9 +159,13 @@ type ProblemRow = Problem & { __service: string };
 type AnomalyRow = AnomalyEvent & { __service: string };
 type ErrorRow = ExceptionGroup & { __service: string };
 
+// Health severity rank — worst-first. Sorting the raw string desc put
+// 'yellow' above 'red' (alphabetical), so a "worst first" default lied.
+const HEALTH_RANK: Record<string, number> = { red: 3, yellow: 2, green: 1 };
+
 const SERVICE_COLS: DataTableColumn<ServiceReportSection>[] = [
   { id: 'service', label: 'Service', sortValue: r => r.service, naturalDir: 'asc', width: 200 },
-  { id: 'health', label: 'Health', sortValue: r => r.health, naturalDir: 'asc', width: 90 },
+  { id: 'health', label: 'Health', sortValue: r => (HEALTH_RANK[r.health] ?? 0), numeric: true, naturalDir: 'desc', width: 90 },
   { id: 'errBefore', label: 'Err% before', sortValue: r => r.before.errorRate, numeric: true, width: 100 },
   { id: 'errAfter', label: 'Err% after', sortValue: r => r.after.errorRate, numeric: true, width: 100 },
   { id: 'p99Before', label: 'P99 before', sortValue: r => r.before.p99Ms, numeric: true, width: 100 },
@@ -229,7 +234,7 @@ function ReportBody({ report }: { report: DeploymentReport }) {
           <DataTableHead dt={svcDt} />
           <tbody>
             {svcDt.sortedRows.map(s => (
-              <tr key={s.service}>
+              <tr key={s.service} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                 <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{s.service}</td>
                 <td><span className={`badge ${healthBadgeClass(s.health)}`}>{s.health || 'n/a'}</span></td>
                 <td className="num mono">{fmtPct(s.before.errorRate)}</td>
@@ -257,7 +262,7 @@ function ReportBody({ report }: { report: DeploymentReport }) {
           <DataTableHead dt={problemDt} trailing={<th>AI review</th>} />
           <tbody>
             {problemDt.sortedRows.map(p => (
-              <tr key={p.id}>
+              <tr key={p.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                 <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{p.__service}</td>
                 <td><span className="badge b-gray">{p.severity}</span></td>
                 <td>{p.priority ?? 'P3'}</td>
@@ -282,7 +287,7 @@ function ReportBody({ report }: { report: DeploymentReport }) {
             <DataTableHead dt={anomalyDt} />
             <tbody>
               {anomalyDt.sortedRows.map(a => (
-                <tr key={a.id}>
+                <tr key={a.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                   <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{a.__service}</td>
                   <td><span className="badge b-gray">{a.kind}</span></td>
                   <td>{a.pattern}</td>
@@ -307,7 +312,7 @@ function ReportBody({ report }: { report: DeploymentReport }) {
             <DataTableHead dt={errorDt} />
             <tbody>
               {errorDt.sortedRows.map(e => (
-                <tr key={e.fingerprint}>
+                <tr key={e.fingerprint} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                   <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>{e.__service}</td>
                   <td>{e.type}</td>
                   <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.message}>

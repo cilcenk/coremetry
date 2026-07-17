@@ -108,14 +108,22 @@ export default function ClustersPage() {
   const openCluster = (name: string) => setParams(prev => {
     const next = new URLSearchParams(prev);
     next.set('cluster', name);
-    next.delete('tab');
+    // v0.9.17 — önceki cluster'ın sekmesi/drawer kimlikleri yeni
+    // cluster'a taşınmaz (filtre çipleri görünür+temizlenebilir
+    // olduklarından deep-link niyetine dokunulmaz).
+    for (const k of ['tab', 'section', 'pod', 'ns']) next.delete(k);
     return next;
   }, { replace: true });
+  // v0.9.17 — v0.9.12'nin ?service='i ve ?q/?section/?ns eklendikçe
+  // temizlik güncellenmemişti: geri dönüşte sızan filtre bir SONRAKİ
+  // cluster'a uygulanıyor, ?ns kalıntısı drawer'ı genel görünümün
+  // üstünde bırakıyordu. Detaya ait TÜM paramlar temizlenir (tw
+  // bilinçli kalır — drawer pencere tercihi, görünümü değiştirmez).
   const backToOverview = () => setParams(prev => {
     const next = new URLSearchParams(prev);
-    next.delete('cluster');
-    next.delete('namespace');
-    next.delete('pod');
+    for (const k of ['cluster', 'namespace', 'pod', 'service', 'q', 'section', 'ns']) {
+      next.delete(k);
+    }
     return next;
   }, { replace: true });
 
@@ -178,10 +186,15 @@ export default function ClustersPage() {
     if (raw === 'nodes' || raw === 'namespaces' || raw === 'pods' || raw === 'overview') return raw;
     return (nsFilterEarly || params.get('service')) ? 'pods' : 'overview';
   })();
+  // v0.9.17 (self-review fix) — 'overview' PARAM YOKLUĞU olarak
+  // kodlanmıştı; ?namespace=/?service= varken türetme 'pods'a
+  // düştüğünden Overview düğmesi ölüyordu (majör). Kullanıcı
+  // tıklaması artık overview dahil AÇIK yazar; yokluk-türetmesi
+  // yalnız deep-link'ler için kalır.
   const setSection = (sec: string, extra?: (p: URLSearchParams) => void) =>
     setParams(prev => {
       const next = new URLSearchParams(prev);
-      if (sec === 'overview') next.delete('section'); else next.set('section', sec);
+      next.set('section', sec);
       next.delete('tab');
       extra?.(next);
       return next;

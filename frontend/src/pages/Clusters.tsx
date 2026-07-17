@@ -10,6 +10,7 @@ import { safePct, restartColor } from '@/pages/clusters/thresholds';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
 import { NamespaceCombobox } from '@/pages/clusters/NamespaceCombobox';
+import { promQuote } from '@/pages/clusters/promQuote';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -969,8 +970,13 @@ export default function ClustersPage() {
                         </div>
                       </Card>
                     )}
+                    {/* v0.9.44 — yeşil 0'ın sınırı title'da: ALERTS
+                        serisi yalnız firing/pending alarm varken var
+                        olur; kural tanımsız cluster ile alarmsız
+                        sağlıklı cluster ayırt EDİLEMEZ. */}
                     {showAlerts && (
-                      <Card density="tight" header="Active alerts">
+                      <Card density="tight" header="Active alerts"
+                        title="Counts firing/pending ALERTS series from Prometheus. 0 also appears when the cluster has no alerting rules configured — the ALERTS metric cannot distinguish the two.">
                         <div className="mono" style={{
                           ...kpiVal,
                           color: alertCrit > 0 ? 'var(--err)' : alertWarn > 0 ? 'var(--warn)' : 'var(--ok)',
@@ -1256,8 +1262,8 @@ function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
           Overview kartıyla aynı display-only idiom. */}
       <DrawerSection title="Prometheus queries">
         <PromQLList queries={[
-          ['CPU (cores)', `rate(container_cpu_usage_seconds_total{cluster="${cluster}",namespace="${namespace}",pod="${pod}"}[5m])`],
-          ['Working-set memory', `container_memory_working_set_bytes{cluster="${cluster}",namespace="${namespace}",pod="${pod}"}`],
+          ['CPU (cores)', `rate(container_cpu_usage_seconds_total{cluster="${promQuote(cluster)}",namespace="${promQuote(namespace)}",pod="${promQuote(pod)}"}[5m])`],
+          ['Working-set memory', `container_memory_working_set_bytes{cluster="${promQuote(cluster)}",namespace="${promQuote(namespace)}",pod="${promQuote(pod)}"}`],
         ]} />
       </DrawerSection>
     </Drawer>
@@ -1386,7 +1392,7 @@ function AlertsPanel({ alerts, criticalOnly, onToggle }: {
 // $c yerine cluster adı). Operatörün canlıda çalıştırabileceği
 // referans sorgular.
 function ClusterPromQLCard({ cluster }: { cluster: string }) {
-  const c = cluster;
+  const c = promQuote(cluster); // v0.9.44 — operatör serbest metni, kaçışla
   const queries: [string, string][] = [
     ['CPU by namespace', `sum by (namespace) (rate(container_cpu_usage_seconds_total{cluster="${c}"}[5m]))`],
     ['Working-set memory', `sum by (namespace) (container_memory_working_set_bytes{cluster="${c}"})`],

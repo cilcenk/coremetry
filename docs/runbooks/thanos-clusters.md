@@ -19,19 +19,38 @@ Not: `create token` süreli token üretir — süre dolduğunda Settings'ten
 yenilenmeli. Süresiz istenirse platform ekibinden SA token Secret'ı
 (legacy) talep edilir.
 
-## 2. Metrik mevcudiyeti probe'u (varsaymadan doğrula — audit §4)
+## 2. Metrik mevcudiyeti probe'ları (varsaymadan doğrula — TEK LİSTE)
+
+UI, veri gelmeyen HER ekseni kendiliğinden gizler ("—" ya da bölüm
+hiç görünmez) — probe'lar yalnız "hangi eksenler görünür olacak"
+sorusunu cevaplar. Hepsi bir arada:
 
 ```bash
 TOK=<token>; HOST=https://<thanos-host>
-curl -sk -H "Authorization: Bearer $TOK" \
-  "$HOST/api/v1/query?query=count(container_cpu_usage_seconds_total)" | head -c 300
-# limits (Mem%/CPU% için, opsiyonel):
-curl -sk -H "Authorization: Bearer $TOK" \
-  "$HOST/api/v1/query?query=count(kube_pod_container_resource_limits)" | head -c 300
+probe() { curl -sk -H "Authorization: Bearer $TOK" \
+  "$HOST/api/v1/query?query=$1" | head -c 200; echo; }
+
+# ZORUNLU eksen — pod CPU/mem (cAdvisor):
+probe 'count(container_cpu_usage_seconds_total)'
+# Pod limit/request yüzdeleri + threshold çizgileri (kube-state-metrics):
+probe 'count(kube_pod_container_resource_limits)'
+probe 'count(kube_pod_container_resource_requests)'
+# Node sekmesi (node-exporter; tenancy-port'ta boş dönerse ana route gerekir):
+probe 'count(node_cpu_seconds_total)'
+probe 'count(node_memory_MemAvailable_bytes)'
+probe 'topk(1,node_memory_MemTotal_bytes)'      # instance label şekli (ip:port mu ad mı)
+probe 'count(kube_node_info)'                   # node adı güzelleştirme join'i
+# Network ekseni (Overview kartları/grafiği + Net in/out kolonları):
+probe 'count(container_network_receive_bytes_total)'   # pod net
+probe 'count(node_network_receive_bytes_total{device!="lo"})'  # node/cluster net
+# (İleride) deployment rollup'ı — şimdilik plan iskeleti, kod yok:
+probe 'count(kube_pod_owner{owner_kind="ReplicaSet"})'
 ```
 
-`"status":"success"` + sıfırdan büyük değer = hazır. İkincisi boşsa
-sayfa çalışır ama CPU%/Mem% kolonları "—" kalır (limit bilinmiyor).
+Okuma: `"status":"success"` + sıfırdan büyük değer = eksen hazır.
+Pod metrikleri ✓ ama node/net aileleri boşsa token büyük ihtimalle
+tenancy portuna (9092) bağlı — çözüm ayrı kimlik değil, ana
+thanos-querier route'u (platform ekibi sorusu).
 
 ## 3. Coremetry tarafında
 

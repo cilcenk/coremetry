@@ -21,7 +21,7 @@ import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploymentRow, ClusterSummary, TimeRange } from '@/lib/types';
+import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploymentRow, ClusterAlertRow, ClusterSummary, TimeRange } from '@/lib/types';
 
 // /clusters — uzak OpenShift cluster'larının Thanos metrikleri.
 // v0.8.587 redesign (audit: docs/audit/clusters-overview-redesign-
@@ -258,6 +258,13 @@ export default function ClustersPage() {
     queryFn: () => api.clusterResourceTrend(clusterParam, 'mem', memByNode, rangeFrom, rangeTo),
     staleTime: 60_000, retry: 1, enabled: isDetail && section === 'overview',
   });
+  // v0.9.36 (B3) — firing alerts (Overview panel).
+  const alertsQ = useQuery({
+    queryKey: ['cluster-alerts', clusterParam],
+    queryFn: () => api.clusterAlerts(clusterParam),
+    staleTime: 60_000, retry: 1, enabled: isDetail && section === 'overview',
+  });
+  const [alertsCriticalOnly, setAlertsCriticalOnly] = useState(false);
 
   // Detay: yalnız seçili cluster'ın AKTİF sekme sorguları.
   const detailList = isDetail ? [clusterParam] : [];
@@ -936,6 +943,16 @@ export default function ClustersPage() {
                     <NodeHeatmap nodes={nodeRows} />
                   </Card>
                 )}
+                {/* v0.9.36 (B3/F4) — firing alerts (1/2) + PromQL (1/2). */}
+                {section === 'overview' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+                    {(alertsQ.data?.alerts?.length ?? 0) > 0 && (
+                      <AlertsPanel alerts={alertsQ.data!.alerts!}
+                        criticalOnly={alertsCriticalOnly} onToggle={setAlertsCriticalOnly} />
+                    )}
+                    <ClusterPromQLCard cluster={clusterParam} />
+                  </div>
+                )}
               </>
             )}
           </>
@@ -1137,5 +1154,89 @@ function ResToggleHeader({ title, byNode, onToggle }: {
         ))}
       </span>
     </div>
+  );
+}
+
+// fmtAgeShort — saniye → "Nm"/"Nh"/"Nd" (design handoff alert "Nm ago").
+function fmtAgeShort(sec?: number): string {
+  if (!sec || sec <= 0) return '';
+  if (sec < 3600) return `${Math.round(sec / 60)}m`;
+  if (sec < 86400) return `${Math.round(sec / 3600)}h`;
+  return `${Math.round(sec / 86400)}d`;
+}
+
+// AlertsPanel — firing alerts (v0.9.36, design handoff). Kritik-önce
+// (backend sıralı), severity badge + alertname + ns/pod + yaş;
+// criticalOnly flag filtreler. Count badge başlıkta.
+function AlertsPanel({ alerts, criticalOnly, onToggle }: {
+  alerts: ClusterAlertRow[];
+  criticalOnly: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  const shown = criticalOnly ? alerts.filter(a => a.severity === 'critical') : alerts;
+  return (
+    <Card header={
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span>Firing alerts <span className="badge b-err" style={{ marginLeft: 4 }}>{alerts.length}</span></span>
+        <label style={{ fontSize: 11, color: 'var(--text3)', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontWeight: 400 }}>
+          <input type="checkbox" checked={criticalOnly} onChange={e => onToggle(e.target.checked)} />
+          critical only
+        </label>
+      </div>
+    }>
+      <div style={{ display: 'grid', gap: 2, maxHeight: 320, overflowY: 'auto' }}>
+        {shown.map((a, i) => {
+          const age = fmtAgeShort(a.ageSec);
+          return (
+            <div key={`${a.alertName}|${a.namespace}|${a.pod}|${i}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: 3 }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg2)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+              <span className={`badge ${a.severity === 'critical' ? 'b-err' : 'b-warn'}`}>{a.severity}</span>
+              <span style={{ fontWeight: 600, fontSize: 12 }}>{a.alertName}</span>
+              {(a.namespace || a.pod) && (
+                <span className="mono" style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {a.namespace}{a.pod ? `/${a.pod}` : ''}
+                </span>
+              )}
+              {age && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)', flexShrink: 0 }}>{age} ago</span>}
+            </div>
+          );
+        })}
+        {shown.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--text3)', padding: 6 }}>No critical alerts.</div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// ClusterPromQLCard — README §Overview PromQL bloğu (display-only,
+// $c yerine cluster adı). Operatörün canlıda çalıştırabileceği
+// referans sorgular.
+function ClusterPromQLCard({ cluster }: { cluster: string }) {
+  const c = cluster;
+  const queries: [string, string][] = [
+    ['CPU by namespace', `sum by (namespace) (rate(container_cpu_usage_seconds_total{cluster="${c}"}[5m]))`],
+    ['Working-set memory', `sum by (namespace) (container_memory_working_set_bytes{cluster="${c}"})`],
+    ['Pod phase count', `count by (phase) (kube_pod_status_phase{cluster="${c}"} == 1)`],
+    ['Restarts (1h)', `sum by (pod) (increase(kube_pod_container_status_restarts_total{cluster="${c}"}[1h]))`],
+  ];
+  return (
+    <Card header="Prometheus / Thanos queries">
+      <div style={{ display: 'grid', gap: 10 }}>
+        {queries.map(([label, q]) => (
+          <div key={label}>
+            <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 3 }}>{label}</div>
+            <pre style={{
+              margin: 0, padding: '7px 9px', borderRadius: 4,
+              background: 'var(--bg0)', border: '1px solid var(--border)',
+              fontFamily: 'ui-monospace, monospace', fontSize: 11,
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text2)',
+            }}>{q}</pre>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }

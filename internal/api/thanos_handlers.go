@@ -280,6 +280,38 @@ func (s *Server) getClusterNamespacePodsTrend(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// getClusterAlerts — GET /api/clusters/alerts?cluster=X (v0.9.36).
+// Firing-alerts paneli; ALERTS metriği (cluster-wide, ns filtresine
+// tabi değil). serveCached 60s.
+func (s *Server) getClusterAlerts(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	if name == "" {
+		http.Error(w, "cluster query param required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	h := fnv.New64a()
+	h.Write([]byte(cfg.URL))
+	key := fmt.Sprintf("cluster-alerts:%s:%x", name, h.Sum64())
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		alerts, err := s.thanos.FiringAlerts(qctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "alerts": alerts, "count": len(alerts)}, nil
+	})
+}
+
 // getClusterResourceTrend — GET /api/clusters/resource-trend?
 // cluster=X&metric=cpu|mem&byNode=0|1&from=&to= (v0.9.35). Overview
 // CPU/Mem area chart'ları; network-trend'in metrik-parametreli hali.

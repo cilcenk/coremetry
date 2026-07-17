@@ -305,6 +305,38 @@ func TestSummaryAllFailSurfaces(t *testing.T) {
 	}
 }
 
+func TestFiringAlertsSortAndAge(t *testing.T) {
+	alertSample := func(name, sev, ns, pod string) string {
+		return fmt.Sprintf(`{"metric":{"alertname":"%s","severity":"%s","namespace":"%s","pod":"%s"},"value":[1784271068,"1"]}`, name, sev, ns, pod)
+	}
+	ageSample := func(name, ns, pod, age string) string {
+		return fmt.Sprintf(`{"metric":{"alertname":"%s","namespace":"%s","pod":"%s"},"value":[1784271068,"%s"]}`, name, ns, pod, age)
+	}
+	srv := fakeQuerier(t, "", map[string]string{
+		`ALERTS{alertstate="firing"}`: vec(
+			alertSample("KubePodPending", "warning", "app", "p1"),
+			alertSample("KubePodCrashLooping", "critical", "app", "p2")),
+		`time() - ALERTS_FOR_STATE`: vec(
+			ageSample("KubePodCrashLooping", "app", "p2", "300")),
+	})
+	defer srv.Close()
+	s := New()
+	rows, err := s.FiringAlerts(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("FiringAlerts: %v %+v", err, rows)
+	}
+	// Kritik önce.
+	if rows[0].AlertName != "KubePodCrashLooping" || rows[0].Severity != "critical" {
+		t.Fatalf("kritik-önce sıralama bozuk: %+v", rows)
+	}
+	if rows[0].AgeSec != 300 {
+		t.Fatalf("yaş join'i yanlış: %+v", rows[0])
+	}
+	if rows[1].AgeSec != 0 {
+		t.Fatalf("yaş-eşleşmeyen 0 olmalı: %+v", rows[1])
+	}
+}
+
 func TestResourceTrend(t *testing.T) {
 	matrix := func(entries string) string {
 		return `{"status":"success","data":{"resultType":"matrix","result":[` + entries + `]}}`

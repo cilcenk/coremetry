@@ -931,6 +931,60 @@ type NetTrendPoint struct {
 	OutBps float64 `json:"outBps"`
 }
 
+// AlertRow — firing bir alert (v0.9.36, design handoff B3 + panel).
+// AgeSec best-effort (ALERTS_FOR_STATE join'i; yoksa 0).
+type AlertRow struct {
+	AlertName string `json:"alertName"`
+	Severity  string `json:"severity"`
+	Namespace string `json:"namespace,omitempty"`
+	Pod       string `json:"pod,omitempty"`
+	AgeSec    int64  `json:"ageSec,omitempty"`
+}
+
+// alertKey — (alertname, namespace, pod) üçlüsü; yaş join anahtarı.
+func alertKey(m map[string]string) string {
+	return m["alertname"] + "\x00" + m["namespace"] + "\x00" + m["pod"]
+}
+
+// FiringAlerts — firing alert listesi (kritik-önce). ALERTS
+// (authoritative firing set) + ALERTS_FOR_STATE (best-effort yaş,
+// join by label). Metrik yoksa boş liste; UI paneli gizler.
+func (s *Service) FiringAlerts(ctx context.Context, c ClusterConfig) ([]AlertRow, error) {
+	series, err := s.doQuery(ctx, c, "/api/v1/query",
+		url.Values{"query": {`ALERTS{alertstate="firing"}`}})
+	if err != nil {
+		return nil, err
+	}
+	// Best-effort yaş: time() - ALERTS_FOR_STATE → saniye.
+	ageBy := map[string]int64{}
+	if ages, err := s.doQuery(ctx, c, "/api/v1/query",
+		url.Values{"query": {`time() - ALERTS_FOR_STATE`}}); err == nil {
+		for _, ser := range ages {
+			if v, ok := sampleValue(ser.Value); ok && v >= 0 {
+				ageBy[alertKey(ser.Metric)] = int64(v)
+			}
+		}
+	}
+	out := make([]AlertRow, 0, len(series))
+	for _, ser := range series {
+		m := ser.Metric
+		out = append(out, AlertRow{
+			AlertName: m["alertname"], Severity: m["severity"],
+			Namespace: m["namespace"], Pod: m["pod"],
+			AgeSec: ageBy[alertKey(m)],
+		})
+	}
+	// Kritik-önce, sonra ad — deterministik.
+	sort.Slice(out, func(i, j int) bool {
+		ci, cj := out[i].Severity == "critical", out[j].Severity == "critical"
+		if ci != cj {
+			return ci
+		}
+		return out[i].AlertName < out[j].AlertName
+	})
+	return out, nil
+}
+
 // NamedSeries — adlandırılmış çok-serili trend (v0.9.35): total
 // modda tek seri (Name=""), byNode modda instance başına.
 type NamedSeries struct {

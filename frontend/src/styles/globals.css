@@ -1121,6 +1121,12 @@ canvas { max-width: 100%; }
   50%      { opacity: 1.0; transform: translateY(-50%) scale(1.2); }
 }
 
+/* Cluster fleet alert banner + live-refresh pulsing dot (v0.9.33,
+   design handoff). Opacity-only pulse (1→.3, 1.6s), reduced-motion
+   neutralized by the global rule below. */
+.pulse-dot { border-radius: 50%; animation: dot-pulse 1.6s ease-in-out infinite; }
+@keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
 /* Skeleton placeholder — content-shaped loading state. The
    shimmer is a single CSS animation so multiple placeholders
    on the page share GPU work. */

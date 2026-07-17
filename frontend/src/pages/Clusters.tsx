@@ -899,45 +899,86 @@ export default function ClustersPage() {
                 {/* v0.9.8 — Overview sekmesi: 2 skaler kart (CPU/Mem;
                     Net kartları + throughput grafiği L2/L3 probe
                     sonrası — alan yokluğu yanlış sıfır okutmaz). */}
-                {section === 'overview' && (
+                {section === 'overview' && (() => {
+                  // v0.9.41 (handoff §3 KPI polish) — 26/700 değer
+                  // tipografisi, kapasiteli alt yazılar, Running pods
+                  // + Active alerts kartları. Best-effort: kapasite/faz
+                  // yoksa alt yazı ve kart görünmez-düşer; alerts kartı
+                  // yalnız ALERTS ailesi cevap verdiyse (alertsQ.data).
+                  const d = detailSummaryQ.data;
+                  const kpiVal = { fontSize: 26, fontWeight: 700 } as const;
+                  const kpiSub = { fontSize: 11, color: 'var(--text3)', marginTop: 4 } as const;
+                  const phaseTotal = (d?.podsRunning ?? 0) + (d?.podsPending ?? 0) + (d?.podsFailed ?? 0);
+                  const alertCrit = d?.alertsCritical ?? 0;
+                  const alertWarn = d?.alertsWarning ?? 0;
+                  const showAlerts = alertsQ.data != null || alertCrit + alertWarn > 0;
+                  return (
                   <div style={{
                     display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                    gap: 12,
+                    gap: 14,
                   }}>
                     <Card density="tight" header="CPU used (cores)">
-                      <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
-                        {detailSummaryQ.data?.cpuUsedCores ? fmtCores(detailSummaryQ.data.cpuUsedCores) : '—'}
+                      <div className="mono" style={kpiVal}>
+                        {d?.cpuUsedCores ? fmtCores(d.cpuUsedCores) : '—'}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                        {detailSummaryQ.data?.nodes ? `${fmtNum(detailSummaryQ.data.nodes)} nodes` : ''}
+                      <div style={kpiSub}>
+                        {[
+                          d?.cpuCapacityCores ? `of ${fmtCores(d.cpuCapacityCores)} cores` : '',
+                          d?.nodes ? `${fmtNum(d.nodes)} nodes` : '',
+                        ].filter(Boolean).join(' · ')}
                       </div>
                     </Card>
                     <Card density="tight" header="Memory used">
-                      <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
-                        {detailSummaryQ.data?.memUsedBytes ? fmtBytes(detailSummaryQ.data.memUsedBytes) : '—'}
+                      <div className="mono" style={kpiVal}>
+                        {d?.memUsedBytes ? fmtBytes(d.memUsedBytes) : '—'}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                        {detailSummaryQ.data?.pods ? `${fmtNum(detailSummaryQ.data.pods)} pods` : ''}
+                      <div style={kpiSub}>
+                        {d?.memCapacityBytes ? `of ${fmtBytes(d.memCapacityBytes)}`
+                          : d?.pods ? `${fmtNum(d.pods)} pods` : ''}
                       </div>
                     </Card>
-                    {/* v0.9.10 — net kartları yalnız veri VARSA (alan
-                        yokluğu yanlış sıfır okutmaz — probe duruşu). */}
-                    {(detailSummaryQ.data?.netInBps ?? 0) > 0 && (
-                      <Card density="tight" header="Net in">
-                        <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
-                          {fmtBps(detailSummaryQ.data!.netInBps!)}
+                    {phaseTotal > 0 && (
+                      <Card density="tight" header="Running pods">
+                        <div className="mono" style={{ ...kpiVal, color: 'var(--ok)' }}>
+                          {fmtNum(d?.podsRunning ?? 0)}
+                        </div>
+                        <div style={kpiSub}>
+                          {`${fmtNum(d?.podsPending ?? 0)} pending · ${fmtNum(d?.podsFailed ?? 0)} failed`}
                         </div>
                       </Card>
                     )}
-                    {(detailSummaryQ.data?.netOutBps ?? 0) > 0 && (
+                    {showAlerts && (
+                      <Card density="tight" header="Active alerts">
+                        <div className="mono" style={{
+                          ...kpiVal,
+                          color: alertCrit > 0 ? 'var(--err)' : alertWarn > 0 ? 'var(--warn)' : 'var(--ok)',
+                        }}>
+                          {fmtNum(alertCrit + alertWarn)}
+                        </div>
+                        <div style={kpiSub}>
+                          {`${fmtNum(alertCrit)} critical · ${fmtNum(alertWarn)} warning`}
+                        </div>
+                      </Card>
+                    )}
+                    {/* v0.9.10 — net kartları yalnız veri VARSA (alan
+                        yokluğu yanlış sıfır okutmaz — probe duruşu). */}
+                    {(d?.netInBps ?? 0) > 0 && (
+                      <Card density="tight" header="Net in">
+                        <div className="mono" style={kpiVal}>
+                          {fmtBps(d!.netInBps!)}
+                        </div>
+                      </Card>
+                    )}
+                    {(d?.netOutBps ?? 0) > 0 && (
                       <Card density="tight" header="Net out">
-                        <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
-                          {fmtBps(detailSummaryQ.data!.netOutBps!)}
+                        <div className="mono" style={kpiVal}>
+                          {fmtBps(d!.netOutBps!)}
                         </div>
                       </Card>
                     )}
                   </div>
-                )}
+                  );
+                })()}
                 {/* v0.9.31 (design handoff F1) — Utilization gauges (2fr)
                     + Pod phase donut (1fr). Gauge'lar kapasite VARSA
                     (safePct null→gizli); donut herhangi bir faz sayısı

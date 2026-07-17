@@ -10,7 +10,7 @@ import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash,
-  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, type LucideIcon,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Rocket, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -60,6 +60,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
       { href: '/problems',  label: 'nav.problems',  icon: CircleAlert },
       { href: '/anomalies', label: 'nav.anomalies', icon: Activity },
+      { href: '/deployment-report', label: 'nav.deploymentReport', icon: Rocket },
     ],
   },
   {

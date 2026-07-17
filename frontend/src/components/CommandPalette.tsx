@@ -50,6 +50,7 @@ const PAGES: Result[] = [
   { kind: 'page', label: 'Incidents',   hint: 'Manual incident log', to: '/incidents' },
   { kind: 'page', label: 'Problems',    hint: 'Open alert + exception inbox', to: '/problems' },
   { kind: 'page', label: 'Anomalies',   hint: 'Log + trace anomaly streams', to: '/anomalies' },
+  { kind: 'page', label: 'Deployment Report', hint: 'What broke since a deploy', to: '/deployment-report' },
   // Services
   { kind: 'page', label: 'Services',    hint: 'Per-service RED + latency', to: '/services' },
   { kind: 'page', label: 'Endpoints',   hint: 'Per-route RED', to: '/endpoints' },

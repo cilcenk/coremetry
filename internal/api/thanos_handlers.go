@@ -109,6 +109,36 @@ func (s *Server) getClusterPodDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterNamespaces — GET /api/clusters/namespaces?cluster=<name>.
+// Namespace rollup'ı (v0.8.588) — pod topk kesmesinden bağımsız TAM
+// toplamlar; digest'e nsFilter dahil (sorgular ondan etkilenir).
+func (s *Server) getClusterNamespaces(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	if name == "" {
+		http.Error(w, "cluster query param required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	key := fmt.Sprintf("cluster-namespaces:%s:%s", name, clusterCfgDigest(cfg))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		rows, err := s.thanos.NamespaceMetrics(qctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "namespaces": rows, "count": len(rows)}, nil
+	})
+}
+
 // getClusterSummary — GET /api/clusters/summary?cluster=<name>.
 // Genel görünüm kartı (v0.8.586): skaler sayımlar, topk'li vektör
 // yok. Digest'e nsFilter DAHİL (pod sayısı ondan etkilenir).

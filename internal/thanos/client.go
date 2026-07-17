@@ -505,6 +505,72 @@ func (s *Service) Summary(ctx context.Context, c ClusterConfig) (ClusterSummary,
 	return out, nil
 }
 
+// NamespaceRow — bir namespace'in rollup satırı (v0.8.588, redesign
+// audit §3.3). Ayrı sorgudan gelir — pod listesinin topk kesmesinden
+// ETKİLENMEZ (toplamlar tam).
+type NamespaceRow struct {
+	Cluster   string  `json:"cluster"`
+	Namespace string  `json:"namespace"`
+	Pods      int     `json:"pods,omitempty"`
+	CPUCores  float64 `json:"cpuCores"`
+	MemBytes  float64 `json:"memBytes"`
+}
+
+// NamespaceMetrics — cpu+mem zorunlu (2 sorgu), pod sayısı
+// best-effort (1 sorgu; aynı metrik ailesi, pratikte hep döner).
+func (s *Service) NamespaceMetrics(ctx context.Context, c ClusterConfig) ([]NamespaceRow, error) {
+	type acc struct {
+		cpu, mem float64
+		pods     float64
+	}
+	byNS := map[string]*acc{}
+	get := func(m map[string]string) *acc {
+		k := m["namespace"]
+		a := byNS[k]
+		if a == nil {
+			a = &acc{}
+			byNS[k] = a
+		}
+		return a
+	}
+	for _, q := range []struct {
+		query string
+		set   func(*acc, float64)
+	}{
+		{nsCPUQuery(c.NamespaceFilter), func(a *acc, v float64) { a.cpu = v }},
+		{nsMemQuery(c.NamespaceFilter), func(a *acc, v float64) { a.mem = v }},
+	} {
+		series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {q.query}})
+		if err != nil {
+			return nil, err
+		}
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				q.set(get(ser.Metric), v)
+			}
+		}
+	}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query",
+		url.Values{"query": {nsPodCountQuery(c.NamespaceFilter)}}); err == nil {
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				get(ser.Metric).pods = v
+			}
+		}
+	}
+	out := make([]NamespaceRow, 0, len(byNS))
+	for ns, a := range byNS {
+		if ns == "" || (a.cpu == 0 && a.mem == 0) {
+			continue // count-only anahtarlar gürültü (kurulu eleme sözleşmesi)
+		}
+		out = append(out, NamespaceRow{
+			Cluster: c.Name, Namespace: ns,
+			Pods: int(a.pods), CPUCores: a.cpu, MemBytes: a.mem,
+		})
+	}
+	return out, nil
+}
+
 // NodeRow — bir node'un anlık CPU/memory kullanımı (v0.8.582,
 // audit: clusters-node-metrics-audit.md §3). Node = kube_node_info
 // eşleşirse gerçek node adı, yoksa instance (ip:port). Pct'ler

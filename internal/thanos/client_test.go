@@ -321,6 +321,55 @@ func TestSummaryFullCounts(t *testing.T) {
 	}
 }
 
+// v0.8.588 — namespace rollup: sum by (namespace) merge'i + pod
+// sayısı best-effort + boş-namespace eleme.
+func nsRollupSample(ns, v string) string {
+	return fmt.Sprintf(`{"metric":{"namespace":"%s"},"value":[1784271068,"%s"]}`, ns, v)
+}
+
+func TestNamespaceMetricsMerge(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		"rate(container_cpu_usage_seconds_total": vec(
+			nsRollupSample("payments", "3.5"),
+			nsRollupSample("infra", "0.5")),
+		"container_memory_working_set_bytes": vec(
+			nsRollupSample("payments", "1000")),
+		"count by (namespace) (count by (namespace, pod)": vec(
+			nsRollupSample("payments", "12")),
+	})
+	defer srv.Close()
+
+	s := New()
+	rows, err := s.NamespaceMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	if err != nil {
+		t.Fatalf("NamespaceMetrics: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("want 2 namespaces, got %+v", rows)
+	}
+	var pay *NamespaceRow
+	for i := range rows {
+		if rows[i].Namespace == "payments" {
+			pay = &rows[i]
+		}
+	}
+	if pay == nil || pay.CPUCores != 3.5 || pay.MemBytes != 1000 || pay.Pods != 12 || pay.Cluster != "c" {
+		t.Fatalf("payments rollup yanlış: %+v", pay)
+	}
+}
+
+func TestNamespaceMetricsMandatoryFailure(t *testing.T) {
+	srv := fakeQuerier(t, "", map[string]string{
+		"rate(container_cpu_usage_seconds_total": `{"status":"error","errorType":"x","error":"y"}`,
+	})
+	defer srv.Close()
+	s := New()
+	if _, err := s.NamespaceMetrics(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}); err == nil {
+		t.Fatal("zorunlu cpu sorgusu hatası yüzeye çıkmalı")
+	}
+}
+
 func TestSnapshotMasksTokens(t *testing.T) {
 	s := New()
 	s.Configure(Settings{Clusters: []ClusterConfig{

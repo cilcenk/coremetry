@@ -977,6 +977,20 @@ export interface ClusterNodesResponse {
   nodes: ClusterNodeRow[] | null;
   count: number;
 }
+// v0.8.588 — namespace rollup satırı (ayrı sorgudan; pod topk
+// kesmesinden bağımsız TAM toplamlar).
+export interface ClusterNamespaceRow {
+  cluster: string;
+  namespace: string;
+  pods?: number;
+  cpuCores: number;
+  memBytes: number;
+}
+export interface ClusterNamespacesResponse {
+  cluster: string;
+  namespaces: ClusterNamespaceRow[] | null;
+  count: number;
+}
 // v0.8.587 — genel görünüm kartı (skaler özet; alanlar best-effort:
 // tenancy-kısıtlı token'da node alanları 0/absent kalabilir).
 export interface ClusterSummary {

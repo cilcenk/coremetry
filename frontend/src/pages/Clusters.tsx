@@ -11,7 +11,7 @@ import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { ClusterPodRow, ClusterNodeRow, ClusterSummary, TimeRange } from '@/lib/types';
+import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterSummary, TimeRange } from '@/lib/types';
 
 // /clusters — uzak OpenShift cluster'larının Thanos metrikleri.
 // v0.8.587 redesign (audit: docs/audit/clusters-overview-redesign-
@@ -34,6 +34,14 @@ const NODE_COLS: DataTableColumn<ClusterNodeRow>[] = [
   { id: 'cpuPct',   label: 'CPU %',   sortValue: r => r.cpuPct ?? 0, numeric: true, width: 80 },
   { id: 'memBytes', label: 'Memory',  sortValue: r => r.memBytes, numeric: true, width: 100 },
   { id: 'memPct',   label: 'Mem %',   sortValue: r => r.memPct ?? 0, numeric: true, width: 80 },
+];
+
+// v0.8.588 — namespace rollup (satır tıklaması ?namespace= yazar).
+const NS_COLS: DataTableColumn<ClusterNamespaceRow>[] = [
+  { id: 'namespace', label: 'Namespace', sortValue: r => r.namespace, naturalDir: 'asc', width: 220 },
+  { id: 'pods',      label: 'Pods',      sortValue: r => r.pods ?? 0, numeric: true, width: 80 },
+  { id: 'cpuCores',  label: 'CPU',       sortValue: r => r.cpuCores,  numeric: true, width: 90 },
+  { id: 'memBytes',  label: 'Memory',    sortValue: r => r.memBytes,  numeric: true, width: 100 },
 ];
 
 const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
@@ -142,6 +150,14 @@ export default function ClustersPage() {
       retry: 1,
     })),
   });
+  const nsQs = useQueries({
+    queries: detailList.map(name => ({
+      queryKey: ['cluster-namespaces', name],
+      queryFn: () => api.clusterNamespaces(name),
+      staleTime: 60_000,
+      retry: 1,
+    })),
+  });
 
   const nsFilter = params.get('namespace') ?? '';
   const clearNs = () => setParams(prev => {
@@ -167,10 +183,23 @@ export default function ClustersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodeDataKey]);
 
+  const nsDatas = nsQs.map(q => q.data);
+  const nsDataKey = nsDatas.map(d => (d ? `${d.cluster}:${d.count}` : '-')).join('|');
+  const nsRows = useMemo(
+    () => nsDatas.flatMap(d => d?.namespaces ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nsDataKey]);
+
   const dt = useDataTable<ClusterPodRow>({
     storageKey: 'clusterpods',
     columns: POD_COLS,
     rows,
+    initialSort: { id: 'cpuCores', dir: 'desc' },
+  });
+  const nsdt = useDataTable<ClusterNamespaceRow>({
+    storageKey: 'clusternamespaces',
+    columns: NS_COLS,
+    rows: nsRows,
     initialSort: { id: 'cpuCores', dir: 'desc' },
   });
   const ndt = useDataTable<ClusterNodeRow>({
@@ -319,6 +348,44 @@ export default function ClustersPage() {
                     </div>
                   )}
                 </Card>
+
+                {/* v0.8.588 — namespace rollup: TAM toplamlar (pod
+                    topk kesmesinden bağımsız); satır tıklaması alt
+                    Pods tablosunu ?namespace= üzerinden süzer. */}
+                {nsRows.length > 0 && (
+                  <Card header={`Namespaces (${nsRows.length})`} style={{ marginBottom: 14 }}>
+                    <div className="table-wrap">
+                      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                        <DataTableColgroup dt={nsdt} />
+                        <DataTableHead dt={nsdt} />
+                        <tbody>
+                          {nsdt.sortedRows.map(r => {
+                            const selected = r.namespace === nsFilter;
+                            return (
+                              <tr key={r.namespace}
+                                className={selected ? 'row-selected' : undefined}
+                                onClick={() => setParams(prev => {
+                                  const next = new URLSearchParams(prev);
+                                  if (selected) next.delete('namespace');
+                                  else next.set('namespace', r.namespace);
+                                  return next;
+                                }, { replace: true })}
+                                title={selected
+                                  ? 'Namespace süzgecini kaldır'
+                                  : 'Pod tablosunu bu namespace ile süz'}
+                                style={{ cursor: 'pointer' }}>
+                                <td className="mono" style={{ fontSize: 12 }}>{r.namespace}</td>
+                                <td className="num mono">{r.pods ? fmtNum(r.pods) : '—'}</td>
+                                <td className="num mono">{fmtCores(r.cpuCores)}</td>
+                                <td className="num mono">{fmtBytes(r.memBytes)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
 
                 <Card header={`Pods${rows.length > 0 ? ` (${rows.length})` : ''}`}>
                   {podQs[0]?.isPending && <TableSkeleton cols={7} wideFirst />}

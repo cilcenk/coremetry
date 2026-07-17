@@ -164,6 +164,33 @@ func summaryPodCountQuery(nsFilter string) string {
 const summaryCPUUsedQuery = `sum(rate(node_cpu_seconds_total{mode!="idle"}[5m]))`
 const summaryMemUsedQuery = `sum(node_memory_MemTotal_bytes) - sum(node_memory_MemAvailable_bytes)`
 
+// ── namespace-rollup queries (v0.8.588, redesign audit §3.3) ────
+//
+// Rollup AYRI sorgudur, topk(500)'lük pod listesinden client-side
+// türetilmez: kesilmiş listeden toplanan namespace toplamı SESSİZCE
+// eksik kalırdı. Satır sayısı = namespace sayısı (≤yüzler); topk
+// kalkanı yine bedava tekdüzelik olarak durur.
+
+func nsCPUQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`topk(%d, sum by (namespace) (rate(container_cpu_usage_seconds_total{container!="",pod!=""%s}[5m])))`,
+		podListLimit, nsMatcher(nsFilter))
+}
+
+func nsMemQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`topk(%d, sum by (namespace) (container_memory_working_set_bytes{container!="",pod!=""%s}))`,
+		podListLimit, nsMatcher(nsFilter))
+}
+
+// nsPodCountQuery — namespace başına TAM pod sayısı (iç count
+// pod'ları teker sayar, dış count namespace'e toplar).
+func nsPodCountQuery(nsFilter string) string {
+	return fmt.Sprintf(
+		`topk(%d, count by (namespace) (count by (namespace, pod) (container_cpu_usage_seconds_total{container!="",pod!=""%s})))`,
+		podListLimit, nsMatcher(nsFilter))
+}
+
 // ── sample decoding ─────────────────────────────────────────────
 
 // sampleValue decodes an instant-vector sample pair [ts, "v"] and

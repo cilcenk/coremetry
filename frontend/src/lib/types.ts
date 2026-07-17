@@ -947,6 +947,23 @@ export interface ClusterPodRow {
   // requests not exposed on the cluster.
   cpuPctOfReq?: number;
   memPctOfReq?: number;
+  // v0.9.3 — raw limit/request values for threshold reference
+  // lines (absolute cores/bytes; absent = unknown).
+  cpuLimitCores?: number;
+  memLimitBytes?: number;
+  cpuRequestCores?: number;
+  memRequestBytes?: number;
+}
+// v0.9.3 — multi-pod trend serisi (top-10, sunucu keser).
+export interface ClusterPodSeriesTrend {
+  pod: string;
+  trend: ClusterPodTrendPoint[];
+}
+export interface ClusterPodsTrendResponse {
+  cluster: string;
+  namespace: string;
+  pods: ClusterPodSeriesTrend[] | null;
+  totalPods: number;
 }
 // Minute-bucket trend point (HostTrendPoint bucket contract:
 // unix SECONDS on minute boundaries).

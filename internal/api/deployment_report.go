@@ -71,6 +71,19 @@ type DeploymentReport struct {
 	Services    []ServiceReportSection `json:"services"`
 }
 
+// nonNilSlice ensures a possibly-nil slice serializes as `[]`, not
+// `null`, in the JSON response. A service with no anomalies/new-errors
+// left its map lookup (anomaliesBySvc[svc] / errorsBySvc[svc]) as a nil
+// slice; encoding/json renders nil slices as `null`, and the frontend's
+// `s.anomalies.map(...)` threw "Cannot read properties of null (reading
+// 'map')" on exactly that shape (operator-reported).
+func nonNilSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
+}
+
 // redStatsFor converts a ServiceSummary + window duration into the
 // compact REDStats shape. windowSec == 0 (since == now, the "deploy just
 // happened" edge case) yields Throughput 0 rather than dividing by zero.
@@ -185,9 +198,9 @@ func (s *Server) buildDeploymentReport(ctx context.Context, sinceNs int64) (*Dep
 			Health:    health,
 			Before:    redStatsFor(beforeBySvc[svc], beforeWindowSec),
 			After:     redStatsFor(afterSv, afterWindowSec),
-			Problems:  bySvc[svc],
-			Anomalies: anomaliesBySvc[svc],
-			NewErrors: errorsBySvc[svc],
+			Problems:  nonNilSlice(bySvc[svc]),
+			Anomalies: nonNilSlice(anomaliesBySvc[svc]),
+			NewErrors: nonNilSlice(errorsBySvc[svc]),
 		})
 	}
 

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,5 +87,49 @@ func TestRedComparisonWindow_DeployJustHappened(t *testing.T) {
 	}
 	if !beforeFrom.Equal(beforeTo) {
 		t.Fatalf("expected zero-width before window when since==now, got %s..%s", beforeFrom, beforeTo)
+	}
+}
+
+func TestNonNilSlice_NilBecomesEmpty(t *testing.T) {
+	var s []chstore.Problem
+	got := nonNilSlice(s)
+	if got == nil {
+		t.Fatal("expected a non-nil empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected an empty slice, got %d items", len(got))
+	}
+}
+
+func TestNonNilSlice_PreservesNonNil(t *testing.T) {
+	s := []chstore.Problem{{ID: "p1"}}
+	got := nonNilSlice(s)
+	if len(got) != 1 || got[0].ID != "p1" {
+		t.Fatalf("expected the original slice preserved, got %+v", got)
+	}
+}
+
+// Operator-reported: a service with no anomalies/new-errors serialized
+// those fields as JSON `null` (Go nil-slice default), and the frontend's
+// `s.anomalies.map(...)` threw "TypeError: Cannot read properties of
+// null (reading 'map')" on exactly that response shape. Locks the fix:
+// every array field on ServiceReportSection must marshal as `[]`.
+func TestServiceReportSection_EmptySlicesMarshalAsArrayNotNull(t *testing.T) {
+	sec := ServiceReportSection{
+		Service:   "checkout-service",
+		Health:    "red",
+		Problems:  nonNilSlice[chstore.Problem](nil),
+		Anomalies: nonNilSlice[chstore.AnomalyEvent](nil),
+		NewErrors: nonNilSlice[chstore.ExceptionGroup](nil),
+	}
+	b, err := json.Marshal(sec)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	got := string(b)
+	for _, want := range []string{`"problems":[]`, `"anomalies":[]`, `"newErrors":[]`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("regression: expected %s in JSON, got %s", want, got)
+		}
 	}
 }

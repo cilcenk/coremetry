@@ -1,0 +1,506 @@
+// Package thanos implements a read-only client for the Thanos
+// Querier endpoints of external OpenShift clusters (v0.8.575,
+// audit: docs/audit/thanos-multicluster-metrics-audit.md). It
+// powers the /clusters surface: per-(namespace, pod) CPU + memory
+// pulled straight from each cluster's platform monitoring stack —
+// telemetry the applications themselves never emit.
+//
+// Structure mirrors internal/tempo/client.go (the canonical
+// external-query-service template): typed Settings blob in
+// system_settings under "thanos_clusters", narrow settingsStore
+// interface, LoadPersisted at boot + StartConfigRefresh 30s poll
+// for multi-pod sync, SavePersisted + live Configure swap, and a
+// masked Snapshot for the settings UI. The one structural
+// difference: Settings holds a LIST of clusters, and TLS-verify
+// varies per cluster — so instead of tempo's rebuild-on-toggle
+// single client, this package uses the Zoom two-singleton pattern
+// (notify.go:1106): one verifying client + one lazily-built
+// insecure twin, picked per request via thanosClientFor.
+package thanos
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ClusterConfig is one remote cluster entry. Name doubles as the
+// APM join key: it must equal the cluster value spans carry
+// (k8s.cluster.name / openshift.cluster.name — clusterDeriveExpr)
+// for the service→cluster pivot to light up; the Settings UI
+// suggests observed names for exactly that reason.
+type ClusterConfig struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// AuthType — none | bearer. Bearer covers the standard
+	// OpenShift path: a ServiceAccount token with the
+	// cluster-monitoring-view ClusterRole against the
+	// oauth-proxy'd thanos-querier route.
+	AuthType string `json:"authType,omitempty"`
+	// Token — never echoed; Snapshot exposes HasToken only.
+	Token string `json:"token,omitempty"`
+	// NamespaceFilter is a PromQL regex injected as
+	// namespace=~"..." into every query — the cardinality shield
+	// that keeps a 10k-pod estate from riding home in one
+	// response. Empty = all namespaces (topk still caps rows).
+	NamespaceFilter    string `json:"namespaceFilter,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
+	Enabled            bool   `json:"enabled"`
+}
+
+// Settings is the persisted blob: the whole cluster list, written
+// atomically (custom_roles convention — no per-row races at the
+// realistic N≤20 scale).
+type Settings struct {
+	Clusters []ClusterConfig `json:"clusters"`
+}
+
+// ClusterSnapshot mirrors ClusterConfig with the token masked.
+type ClusterSnapshot struct {
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	AuthType           string `json:"authType,omitempty"`
+	HasToken           bool   `json:"hasToken"`
+	NamespaceFilter    string `json:"namespaceFilter,omitempty"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
+	Enabled            bool   `json:"enabled"`
+}
+
+// Snapshot is what GET /api/settings/thanos returns.
+type Snapshot struct {
+	Clusters []ClusterSnapshot `json:"clusters"`
+}
+
+// PodRow is one (cluster, namespace, pod) sample from the merged
+// instant queries. CPU is CORES (rate of cpu-seconds), not the
+// 0-1 utilization ratio HostRow carries — deliberately a separate
+// shape (audit §7). Pct fields are 0 when the cluster doesn't
+// expose kube-state-metrics limits — same "0 = unknown" contract
+// HostRow.MemPct already established.
+type PodRow struct {
+	Cluster   string  `json:"cluster"`
+	Namespace string  `json:"namespace"`
+	Pod       string  `json:"pod"`
+	CPUCores  float64 `json:"cpuCores"`
+	MemBytes  float64 `json:"memBytes"`
+	CPUPct    float64 `json:"cpuPct,omitempty"`
+	MemPct    float64 `json:"memPct,omitempty"`
+}
+
+// TrendPoint matches HostTrendPoint's bucket contract: unix
+// SECONDS on minute boundaries, so the frontend drawer reuses the
+// same rendering path.
+type TrendPoint struct {
+	Bucket   int64   `json:"bucket"`
+	CPUCores float64 `json:"cpuCores"`
+	MemBytes float64 `json:"memBytes"`
+}
+
+// Service holds the live cluster list. Concurrency contract is
+// tempo's: RWMutex around the config, background refresh poll
+// keeping multi-pod deployments in sync via the shared blob.
+type Service struct {
+	mu  sync.RWMutex
+	cfg Settings
+}
+
+func New() *Service { return &Service{} }
+
+// settingsStore — narrow chstore surface (tempo precedent; avoids
+// an import cycle if chstore ever depends back on thanos).
+type settingsStore interface {
+	GetThanosSettingsRaw(ctx context.Context) ([]byte, error)
+	PutThanosSettingsRaw(ctx context.Context, raw []byte) error
+}
+
+// LoadPersisted hydrates from system_settings. Missing blob =
+// empty list (HasEnabledClusters reports false; handlers 404).
+func (s *Service) LoadPersisted(ctx context.Context, store settingsStore) error {
+	if s == nil || store == nil {
+		return nil
+	}
+	raw, err := store.GetThanosSettingsRaw(ctx)
+	if err != nil {
+		return err
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	var cfg Settings
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return fmt.Errorf("thanos decode: %w", err)
+	}
+	s.Configure(cfg)
+	return nil
+}
+
+// StartConfigRefresh — multi-pod blob sync, 30s default (tempo
+// v0.5.324 precedent). Run as a goroutine from main().
+func (s *Service) StartConfigRefresh(ctx context.Context, store settingsStore, interval time.Duration) {
+	if s == nil || store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := s.LoadPersisted(ctx, store); err != nil {
+				log.Printf("[thanos] config refresh: %v", err)
+			}
+		}
+	}
+}
+
+// SavePersisted writes the merged config (handler does the
+// empty-token-preserves-stored merge first) and swaps it live.
+func (s *Service) SavePersisted(ctx context.Context, store settingsStore, cfg Settings) error {
+	if s == nil || store == nil {
+		return nil
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	if err := store.PutThanosSettingsRaw(ctx, raw); err != nil {
+		return err
+	}
+	s.Configure(cfg)
+	return nil
+}
+
+// Configure swaps the live cluster list.
+func (s *Service) Configure(cfg Settings) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.cfg = cfg
+	s.mu.Unlock()
+}
+
+// Snapshot returns the masked config for the settings UI.
+func (s *Service) Snapshot() Snapshot {
+	if s == nil {
+		return Snapshot{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := Snapshot{Clusters: make([]ClusterSnapshot, 0, len(s.cfg.Clusters))}
+	for _, c := range s.cfg.Clusters {
+		out.Clusters = append(out.Clusters, ClusterSnapshot{
+			Name: c.Name, URL: c.URL, AuthType: c.AuthType,
+			HasToken: c.Token != "", NamespaceFilter: c.NamespaceFilter,
+			InsecureSkipVerify: c.InsecureSkipVerify, Enabled: c.Enabled,
+		})
+	}
+	return out
+}
+
+// CurrentSettings — full config INCLUDING tokens; only for the
+// PUT handler's stored-token merge. Never echo over the wire
+// (tempo contract).
+func (s *Service) CurrentSettings() Settings {
+	if s == nil {
+		return Settings{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cp := Settings{Clusters: make([]ClusterConfig, len(s.cfg.Clusters))}
+	copy(cp.Clusters, s.cfg.Clusters)
+	return cp
+}
+
+// ClusterByName returns the ENABLED cluster entry for name.
+func (s *Service) ClusterByName(name string) (ClusterConfig, bool) {
+	if s == nil {
+		return ClusterConfig{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, c := range s.cfg.Clusters {
+		if c.Enabled && c.Name == name {
+			return c, true
+		}
+	}
+	return ClusterConfig{}, false
+}
+
+// HasEnabledClusters gates the /clusters surface: false → the
+// page shows its Empty state without any HTTP attempts.
+func (s *Service) HasEnabledClusters() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, c := range s.cfg.Clusters {
+		if c.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// ── HTTP transport — Zoom two-singleton pattern ─────────────────
+
+// thanosHTTPClient is the default verifying client. 15s hard
+// timeout (Zoom precedent): a wedged Querier must never pin a
+// serveCached singleflight slot indefinitely — handlers also pass
+// a tighter per-query ctx deadline on top.
+var thanosHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+var (
+	thanosInsecureOnce   sync.Once
+	thanosInsecureClient *http.Client
+)
+
+// thanosClientFor picks the verifying or the lazily-built
+// insecure client. Per-cluster TLS variance is a single bool, so
+// two shared clients cover every cluster (Zoom proof); building a
+// client per cluster would just fragment connection pools.
+func thanosClientFor(skipVerify bool) *http.Client {
+	if !skipVerify {
+		return thanosHTTPClient
+	}
+	thanosInsecureOnce.Do(func() {
+		thanosInsecureClient = &http.Client{
+			Timeout: 15 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	})
+	return thanosInsecureClient
+}
+
+// ── Prometheus query API ────────────────────────────────────────
+
+// promEnvelope is the /api/v1/query(_range) response shape. On
+// status!="success" Prometheus fills errorType/error instead of
+// data.
+type promEnvelope struct {
+	Status    string `json:"status"`
+	ErrorType string `json:"errorType"`
+	Error     string `json:"error"`
+	Data      struct {
+		ResultType string       `json:"resultType"`
+		Result     []promSeries `json:"result"`
+	} `json:"data"`
+}
+
+// promSeries — instant vectors fill Value ([ts, "v"]), range
+// matrices fill Values. Sample values arrive as STRINGS per the
+// Prometheus JSON contract.
+type promSeries struct {
+	Metric map[string]string   `json:"metric"`
+	Value  []json.RawMessage   `json:"value"`
+	Values [][]json.RawMessage `json:"values"`
+}
+
+// maxSeriesParsed is the defensive backstop behind the query-side
+// topk cap: even a misbehaving Querier can't hand us more rows
+// than this.
+const maxSeriesParsed = 1000
+
+func (s *Service) doQuery(ctx context.Context, c ClusterConfig, path string, params url.Values) ([]promSeries, error) {
+	u := strings.TrimRight(c.URL, "/") + path + "?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if c.AuthType == "bearer" && c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := thanosClientFor(c.InsecureSkipVerify).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("thanos %s: %w", c.Name, err)
+	}
+	defer resp.Body.Close()
+	// 8MB cap — a topk(500) vector is a few hundred KB; anything
+	// bigger means the cardinality shield failed upstream.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("thanos %s: HTTP %d: %s", c.Name, resp.StatusCode,
+			strings.TrimSpace(firstN(string(body), 200)))
+	}
+	var env promEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("thanos %s decode: %w", c.Name, err)
+	}
+	if env.Status != "success" {
+		return nil, fmt.Errorf("thanos %s: %s: %s", c.Name, env.ErrorType, env.Error)
+	}
+	if len(env.Data.Result) > maxSeriesParsed {
+		env.Data.Result = env.Data.Result[:maxSeriesParsed]
+	}
+	return env.Data.Result, nil
+}
+
+func firstN(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// PodMetrics runs the per-cluster instant queries (CPU rate,
+// working-set memory, cpu/mem limits) and merges them by
+// (namespace, pod). Exactly four queries per cluster regardless
+// of pod count — never a query per pod (audit §4).
+func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, error) {
+	type acc struct{ cpu, mem, cpuLim, memLim float64 }
+	byKey := map[string]*acc{}
+	get := func(m map[string]string) *acc {
+		k := m["namespace"] + "\x00" + m["pod"]
+		a := byKey[k]
+		if a == nil {
+			a = &acc{}
+			byKey[k] = a
+		}
+		return a
+	}
+
+	// CPU + memory are mandatory; limits are best-effort (clusters
+	// without kube-state-metrics simply leave Pct at 0 — the
+	// HostRow.MemPct contract).
+	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query",
+		url.Values{"query": {podCPUQuery(c.NamespaceFilter)}})
+	if err != nil {
+		return nil, err
+	}
+	memSeries, err := s.doQuery(ctx, c, "/api/v1/query",
+		url.Values{"query": {podMemQuery(c.NamespaceFilter)}})
+	if err != nil {
+		return nil, err
+	}
+	for _, ser := range cpuSeries {
+		if v, ok := sampleValue(ser.Value); ok {
+			get(ser.Metric).cpu = v
+		}
+	}
+	for _, ser := range memSeries {
+		if v, ok := sampleValue(ser.Value); ok {
+			get(ser.Metric).mem = v
+		}
+	}
+	for _, lim := range []struct {
+		query string
+		set   func(*acc, float64)
+	}{
+		{podLimitQuery("cpu", c.NamespaceFilter), func(a *acc, v float64) { a.cpuLim = v }},
+		{podLimitQuery("memory", c.NamespaceFilter), func(a *acc, v float64) { a.memLim = v }},
+	} {
+		series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {lim.query}})
+		if err != nil {
+			continue // best-effort — limits absent on many stacks
+		}
+		for _, ser := range series {
+			if v, ok := sampleValue(ser.Value); ok {
+				lim.set(get(ser.Metric), v)
+			}
+		}
+	}
+
+	out := make([]PodRow, 0, len(byKey))
+	for k, a := range byKey {
+		ns, pod, _ := strings.Cut(k, "\x00")
+		// Limit-only keys (limit configured, pod idle enough that
+		// cpu/mem series absent) are noise — skip.
+		if a.cpu == 0 && a.mem == 0 {
+			continue
+		}
+		row := PodRow{Cluster: c.Name, Namespace: ns, Pod: pod,
+			CPUCores: a.cpu, MemBytes: a.mem}
+		if a.cpuLim > 0 {
+			row.CPUPct = clampPct(a.cpu / a.cpuLim * 100)
+		}
+		if a.memLim > 0 {
+			row.MemPct = clampPct(a.mem / a.memLim * 100)
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// PodTrend returns per-minute CPU + memory for ONE pod (drawer
+// path — bounded by construction). step=60 mirrors the
+// HostTrendPoint minute-bucket contract.
+func (s *Service) PodTrend(ctx context.Context, c ClusterConfig, namespace, pod string, from, to time.Time) ([]TrendPoint, error) {
+	params := func(q string) url.Values {
+		return url.Values{
+			"query": {q},
+			"start": {fmt.Sprintf("%d", from.Unix())},
+			"end":   {fmt.Sprintf("%d", to.Unix())},
+			"step":  {"60"},
+		}
+	}
+	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
+		params(singlePodCPUQuery(namespace, pod)))
+	if err != nil {
+		return nil, err
+	}
+	memSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
+		params(singlePodMemQuery(namespace, pod)))
+	if err != nil {
+		return nil, err
+	}
+	byBucket := map[int64]*TrendPoint{}
+	collect := func(series []promSeries, set func(*TrendPoint, float64)) {
+		for _, ser := range series {
+			for _, pair := range ser.Values {
+				v, ts, ok := samplePair(pair)
+				if !ok {
+					continue
+				}
+				b := ts - ts%60
+				tp := byBucket[b]
+				if tp == nil {
+					tp = &TrendPoint{Bucket: b}
+					byBucket[b] = tp
+				}
+				set(tp, v)
+			}
+		}
+	}
+	collect(cpuSeries, func(tp *TrendPoint, v float64) { tp.CPUCores = v })
+	collect(memSeries, func(tp *TrendPoint, v float64) { tp.MemBytes = v })
+	out := make([]TrendPoint, 0, len(byBucket))
+	for _, tp := range byBucket {
+		out = append(out, *tp)
+	}
+	sortTrend(out)
+	return out, nil
+}
+
+func clampPct(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+func sortTrend(t []TrendPoint) {
+	for i := 1; i < len(t); i++ {
+		for j := i; j > 0 && t[j].Bucket < t[j-1].Bucket; j-- {
+			t[j], t[j-1] = t[j-1], t[j]
+		}
+	}
+}

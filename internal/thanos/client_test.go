@@ -260,6 +260,8 @@ func TestInstanceHost(t *testing.T) {
 		{"10.0.1.5", "10.0.1.5"},
 		{"worker-1.example:9100", "worker-1.example"},
 		{"[::1]:9100", "::1"},
+		// v0.9.19 — port'suz IPv6 kırpılMAmalı (eski kod 'fe80:' üretiyordu).
+		{"fe80::1", "fe80::1"},
 	}
 	for _, c := range cases {
 		if got := instanceHost(c.in); got != c.want {

@@ -1189,6 +1189,14 @@ function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
         <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod}
           row={row} fromNs={from} toNs={to} />
       </DrawerSection>
+      {/* v0.9.40 (handoff §7) — pod'a özel referans PromQL'ler;
+          Overview kartıyla aynı display-only idiom. */}
+      <DrawerSection title="Prometheus queries">
+        <PromQLList queries={[
+          ['CPU (cores)', `rate(container_cpu_usage_seconds_total{cluster="${cluster}",namespace="${namespace}",pod="${pod}"}[5m])`],
+          ['Working-set memory', `container_memory_working_set_bytes{cluster="${cluster}",namespace="${namespace}",pod="${pod}"}`],
+        ]} />
+      </DrawerSection>
     </Drawer>
   );
 }
@@ -1320,20 +1328,28 @@ function ClusterPromQLCard({ cluster }: { cluster: string }) {
   ];
   return (
     <Card header="Prometheus / Thanos queries">
-      <div style={{ display: 'grid', gap: 10 }}>
-        {queries.map(([label, q]) => (
-          <div key={label}>
-            <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 3 }}>{label}</div>
-            <pre style={{
-              margin: 0, padding: '7px 9px', borderRadius: 4,
-              background: 'var(--bg0)', border: '1px solid var(--border)',
-              fontFamily: 'ui-monospace, monospace', fontSize: 11,
-              whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text2)',
-            }}>{q}</pre>
-          </div>
-        ))}
-      </div>
+      <PromQLList queries={queries} />
     </Card>
+  );
+}
+
+// PromQLList — etiket + <pre> sorgu listesi (README'nin PromQL kart
+// idiomu). Overview kartı ve pod drawer'ı (v0.9.40) paylaşır.
+function PromQLList({ queries }: { queries: [string, string][] }) {
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {queries.map(([label, q]) => (
+        <div key={label}>
+          <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 3 }}>{label}</div>
+          <pre style={{
+            margin: 0, padding: '7px 9px', borderRadius: 4,
+            background: 'var(--bg0)', border: '1px solid var(--border)',
+            fontFamily: 'ui-monospace, monospace', fontSize: 11,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text2)',
+          }}>{q}</pre>
+        </div>
+      ))}
+    </div>
   );
 }
 

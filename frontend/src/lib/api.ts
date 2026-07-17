@@ -1624,9 +1624,10 @@ export const api = {
 
   // Deployment analysis report — fleet-wide, generated on demand.
   // `sinceNs` is unix nanoseconds (same convention as from/to
-  // elsewhere in this client), not milliseconds.
-  deploymentReport: (sinceNs: number) =>
-    get<DeploymentReport>(`/api/deployment-report?since=${sinceNs}`),
+  // elsewhere in this client), not milliseconds. ownerTeam/sreTeam
+  // mirror the Problems inbox's team filter (v0.8.310).
+  deploymentReport: (sinceNs: number, params: { ownerTeam?: string; sreTeam?: string } = {}) =>
+    get<DeploymentReport>(`/api/deployment-report?${qs({ since: sinceNs, ...params })}`),
 
   // ── SLOs ─────────────────────────────────────────────────────────────────
   listSLOs: () => get<SLORow[] | null>('/api/slos'),

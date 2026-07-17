@@ -54,6 +54,30 @@ func TestFilterOpenProblemsSince_SortedByStartedAtDesc(t *testing.T) {
 	}
 }
 
+func TestIntersectServices_NilTeamSvcsPassesThroughUnfiltered(t *testing.T) {
+	svcOrder := []string{"svcA", "svcB"}
+	got := intersectServices(svcOrder, nil)
+	if len(got) != 2 {
+		t.Fatalf("expected the unfiltered list when no team is selected, got %+v", got)
+	}
+}
+
+func TestIntersectServices_EmptyTeamSvcsCollapsesToEmpty(t *testing.T) {
+	svcOrder := []string{"svcA", "svcB"}
+	got := intersectServices(svcOrder, []string{}) // team selected, zero member services
+	if len(got) != 0 {
+		t.Fatalf("expected a team with no member services to collapse the result to empty, got %+v", got)
+	}
+}
+
+func TestIntersectServices_KeepsOnlyMatchingPreservesOrder(t *testing.T) {
+	svcOrder := []string{"svcC", "svcA", "svcB"}
+	got := intersectServices(svcOrder, []string{"svcA", "svcB"})
+	if len(got) != 2 || got[0] != "svcA" || got[1] != "svcB" {
+		t.Fatalf("expected [svcA, svcB] preserving svcOrder's order, got %+v", got)
+	}
+}
+
 func TestRedComparisonWindow_SymmetricDuration(t *testing.T) {
 	// Deploy was 10 minutes ago.
 	nowNs := int64(20 * time.Minute)

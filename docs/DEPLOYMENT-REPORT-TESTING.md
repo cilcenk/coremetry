@@ -142,7 +142,53 @@ timestamp the backend expects). Click **Generate report**.
 Re-generate the report (same `since`) — both should now appear under
 `checkout-service`'s sections.
 
-## 7. Confirm the inclusion gate — negative case (since too late)
+## 7. Confirm the owner/SRE team filter
+
+The report has the same `?owner=`/`?sre=` team filter as the Problems
+inbox — narrows the (already-computed) qualifying service set to
+services owned by / on-call'd by a given team, resolved from the
+operator-curated `service_metadata` catalog.
+
+Assign a team to one of your seeded services (skip if it already has
+one from real catalog data):
+
+```bash
+docker exec coremetry-clickhouse clickhouse-client --database=coremetry --query "
+INSERT INTO service_metadata (service, owner_team, sre_team)
+VALUES ('checkout-service', 'avengers', 'avengers-sre')
+"
+```
+
+```bash
+echo "=== ownerTeam=avengers (expect checkout-service) ==="
+curl -s "http://localhost:8088/api/deployment-report?since=$SINCE_NS&ownerTeam=avengers&refresh=1" \
+  -H "Authorization: Bearer $TOKEN" | python3 -c "import sys,json; print([s['service'] for s in json.load(sys.stdin)['services']])"
+
+echo "=== ownerTeam=Avengers, different casing (expect same result) ==="
+curl -s "http://localhost:8088/api/deployment-report?since=$SINCE_NS&ownerTeam=Avengers&refresh=1" \
+  -H "Authorization: Bearer $TOKEN" | python3 -c "import sys,json; print([s['service'] for s in json.load(sys.stdin)['services']])"
+
+echo "=== ownerTeam=some-other-team (expect empty) ==="
+curl -s "http://localhost:8088/api/deployment-report?since=$SINCE_NS&ownerTeam=some-other-team&refresh=1" \
+  -H "Authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['services'])"
+```
+
+**Expected:** the first two calls return `["checkout-service"]` (team
+match is case-insensitive), the third returns `[]` — a team with no
+matching qualifying service is an empty report, never an unfiltered
+one. In the UI, the "All owner teams"/"All SRE teams" dropdowns next
+to Generate report populate from the same catalog and re-filter
+immediately on pick (no need to click Generate again — only the
+deploy timestamp itself requires that).
+
+Clean up the catalog row afterwards:
+
+```bash
+docker exec coremetry-clickhouse clickhouse-client --database=coremetry --query \
+  "ALTER TABLE service_metadata DELETE WHERE service = 'checkout-service'"
+```
+
+## 8. Confirm the inclusion gate — negative case (since too late)
 
 Pick a `since` **after** the problem's `started_at` (e.g. 5 minutes
 ago, when the problem started 30 minutes ago):
@@ -157,7 +203,7 @@ curl -s "http://localhost:8088/api/deployment-report?since=$SINCE_NS&refresh=1" 
 `since`, so it no longer qualifies. This confirms the `StartedAt >=
 since` filter is doing real work, not just returning everything.
 
-## 8. Confirm the "still exists" gate — negative case (resolved)
+## 9. Confirm the "still exists" gate — negative case (resolved)
 
 Resolve the test problem (upsert with `status='resolved'` — ReplacingMergeTree,
 same `id`, higher version wins on the next `FINAL` read):
@@ -178,14 +224,14 @@ again — the service drops out of the report entirely once its problem
 resolves, even though it started after the deploy. This confirms
 resolved problems don't keep a service qualifying.
 
-## 9. Confirm no polling / no auto-refresh
+## 10. Confirm no polling / no auto-refresh
 
 Leave the report open (with a still-open problem) and watch the
 browser Network tab. **Expected:** one request to
 `/api/deployment-report` on Generate, then nothing — unlike the live
 dashboards, this is a point-in-time snapshot, not a poller.
 
-## 10. Clean up your test data
+## 11. Clean up your test data
 
 ```bash
 docker exec coremetry-clickhouse clickhouse-client --database=coremetry --query \

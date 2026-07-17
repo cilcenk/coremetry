@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -22,6 +23,30 @@ func filterOpenProblemsSince(snapshot map[string]*chstore.Problem, sinceNs int64
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
+	return out
+}
+
+// intersectServices keeps only the services in svcOrder that also appear
+// in teamSvcs, preserving svcOrder's ordering. nil teamSvcs (the
+// servicesForTeam "no team constraint" sentinel) is passed through
+// unfiltered; a non-nil-but-empty teamSvcs (a team with zero member
+// services) correctly collapses the result to empty rather than
+// leaving it unfiltered — that distinction is load-bearing, see
+// servicesForTeam's doc comment.
+func intersectServices(svcOrder, teamSvcs []string) []string {
+	if teamSvcs == nil {
+		return svcOrder
+	}
+	want := make(map[string]bool, len(teamSvcs))
+	for _, s := range teamSvcs {
+		want[s] = true
+	}
+	out := make([]string, 0, len(svcOrder))
+	for _, svc := range svcOrder {
+		if want[svc] {
+			out = append(out, svc)
+		}
+	}
 	return out
 }
 
@@ -96,9 +121,12 @@ func redStatsFor(sv chstore.ServiceSummary, windowSec float64) REDStats {
 }
 
 // buildDeploymentReport assembles the full report for a given deploy
-// timestamp. Pulled out of the HTTP handler so it's independently
-// testable against a real store without an http.Request in play.
-func (s *Server) buildDeploymentReport(ctx context.Context, sinceNs int64) (*DeploymentReport, error) {
+// timestamp, optionally narrowed to services owned by ownerTeam and/or
+// on-call'd by sreTeam (empty = no narrowing on that axis — same
+// semantics as the Problems/Services team filter). Pulled out of the
+// HTTP handler so it's independently testable against a real store
+// without an http.Request in play.
+func (s *Server) buildDeploymentReport(ctx context.Context, sinceNs int64, ownerTeam, sreTeam string) (*DeploymentReport, error) {
 	nowNs := time.Now().UnixNano()
 
 	// 1. Inclusion gate: services with a still-open Problem that
@@ -120,6 +148,21 @@ func (s *Server) buildDeploymentReport(ctx context.Context, sinceNs int64) (*Dep
 		}
 		bySvc[p.Service] = append(bySvc[p.Service], p)
 	}
+
+	// 1b. Owner/SRE team narrowing (mirrors the Problems inbox's
+	// ?owner=/?sre= — v0.8.310 servicesForTeam/matchesTeamFilter).
+	// Resolved from the operator-curated catalog, AND'd on top of the
+	// inclusion gate: "qualifies via an open post-deploy problem AND
+	// belongs to this team". A team with no matching qualifying
+	// service returns an empty report, never an unfiltered one.
+	if ownerTeam != "" || sreTeam != "" {
+		mds, err := s.store.ListServiceMetadata(ctx)
+		if err != nil {
+			return nil, err
+		}
+		svcOrder = intersectServices(svcOrder, servicesForTeam(mds, ownerTeam, sreTeam))
+	}
+
 	if len(svcOrder) == 0 {
 		return &DeploymentReport{Since: sinceNs, GeneratedAt: nowNs, Services: []ServiceReportSection{}}, nil
 	}
@@ -207,12 +250,15 @@ func (s *Server) buildDeploymentReport(ctx context.Context, sinceNs int64) (*Dep
 	return &DeploymentReport{Since: sinceNs, GeneratedAt: nowNs, Services: sections}, nil
 }
 
-// getDeploymentReport handles GET /api/deployment-report?since=<unix_ns>.
-// Read-only, no audit entry needed. `since` follows the codebase-wide
-// absolute-timestamp convention (unix nanoseconds, same as `from`/`to`
-// elsewhere — see parseTime) rather than milliseconds.
+// getDeploymentReport handles GET /api/deployment-report?since=<unix_ns>
+// [&ownerTeam=…][&sreTeam=…]. Read-only, no audit entry needed. `since`
+// follows the codebase-wide absolute-timestamp convention (unix
+// nanoseconds, same as `from`/`to` elsewhere — see parseTime) rather
+// than milliseconds. ownerTeam/sreTeam mirror the Problems inbox's
+// team filter (v0.8.310) — empty means no narrowing on that axis.
 func (s *Server) getDeploymentReport(w http.ResponseWriter, r *http.Request) {
-	sinceStr := r.URL.Query().Get("since")
+	q := r.URL.Query()
+	sinceStr := q.Get("since")
 	since := parseTime(sinceStr)
 	if since.IsZero() {
 		http.Error(w, "missing or invalid since query param (unix nanoseconds)", http.StatusBadRequest)
@@ -223,9 +269,11 @@ func (s *Server) getDeploymentReport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "since must be in the past", http.StatusBadRequest)
 		return
 	}
+	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
+	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
 
-	key := "deployment-report:since=" + sinceStr
+	key := "deployment-report:since=" + sinceStr + ":owner=" + ownerTeam + ":sre=" + sreTeam
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.buildDeploymentReport(ctx, sinceNs)
+		return s.buildDeploymentReport(ctx, sinceNs, ownerTeam, sreTeam)
 	})
 }

@@ -7,6 +7,8 @@ import { Button, Field } from '@/components/ui';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { api } from '@/lib/api';
+import { useServicesMetadata } from '@/lib/queries';
+import { teamOptionsCI } from '@/lib/teamOptions';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   DeploymentReport, ServiceReportSection, Problem, AnomalyEvent, ExceptionGroup,
@@ -22,6 +24,31 @@ import type {
 export default function DeploymentReportPage() {
   const [params, setParams] = useSearchParams();
   const sinceParam = params.get('since'); // unix ns, string
+  // Owner (ug-team) / SRE (sy-team) team filter — same ?owner=/?sre=
+  // URL params and semantics as the Problems inbox (v0.8.310): narrows
+  // to services belonging to the picked team, resolved server-side so
+  // it's correct against the full qualifying set, not just loaded rows.
+  // Unlike the deploy timestamp, a team pick re-fetches immediately —
+  // it's a cheap narrowing filter on an already-generated report, not
+  // a new report generation.
+  const ownerTeam = params.get('owner') || '';
+  const sreTeam   = params.get('sre')   || '';
+  const setTeam = (key: 'owner' | 'sre', v: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set(key, v); else next.delete(key);
+    return next;
+  }, { replace: true });
+
+  // Team dropdown options come from the service catalog, not the
+  // loaded report, so a pick never collapses the list of teams to
+  // choose from — same source the Problems/Services pages use.
+  const catalogQ = useServicesMetadata();
+  const ownerTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalogQ.data ?? {}).map(m => m.ownerTeam)),
+    [catalogQ.data]);
+  const sreTeamOptions = useMemo(
+    () => teamOptionsCI(Object.values(catalogQ.data ?? {}).map(m => m.sreTeam)),
+    [catalogQ.data]);
 
   // datetime-local has no native ns precision — the input works in local
   // ms, converted to ns (matching the codebase-wide absolute-timestamp
@@ -50,11 +77,11 @@ export default function DeploymentReportPage() {
   useMemo(() => {
     if (sinceNs === null) { setReport(undefined); return; }
     setReport(undefined);
-    api.deploymentReport(sinceNs)
+    api.deploymentReport(sinceNs, { ownerTeam, sreTeam })
       .then(r => setReport(r))
       .catch(() => setReport(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sinceNs]);
+  }, [sinceNs, ownerTeam, sreTeam]);
 
   return (
     <>
@@ -64,7 +91,8 @@ export default function DeploymentReportPage() {
           Pick the timestamp your deployment succeeded. The report shows every
           service that still has an open problem which started after that
           moment — plus its still-active anomalies, still-open new errors, and
-          a before/after health comparison. Fleet-wide, no service picker.
+          a before/after health comparison. Fleet-wide, no individual service
+          picker — narrow by owner/SRE team instead.
         </div>
 
         <div className="controls" style={{ marginBottom: 16, alignItems: 'flex-end', gap: 12 }}>
@@ -77,6 +105,20 @@ export default function DeploymentReportPage() {
           <Button variant="primary" size="sm" onClick={generate} disabled={!pendingLocal}>
             Generate report
           </Button>
+          {/* Owner (ug-team) / SRE (sy-team) team filter — plain <select>
+              for these small catalog-derived sets (frontend-conventions
+              §3), resolved server-side so the narrowing is correct
+              across the whole qualifying set, not just the loaded page. */}
+          <select value={ownerTeam} onChange={e => setTeam('owner', e.target.value)}
+            aria-label="Filter by owner team" style={{ minWidth: 130 }}>
+            <option value="">All owner teams</option>
+            {ownerTeamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <select value={sreTeam} onChange={e => setTeam('sre', e.target.value)}
+            aria-label="Filter by SRE team" style={{ minWidth: 130 }}>
+            <option value="">All SRE teams</option>
+            {sreTeamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
 
         {sinceNs === null && (
@@ -88,7 +130,9 @@ export default function DeploymentReportPage() {
         )}
         {sinceNs !== null && report && report.services.length === 0 && (
           <Empty icon="✓" title="No open problems since this deployment">
-            Every service is clean relative to the timestamp you picked.
+            {ownerTeam || sreTeam
+              ? 'No qualifying service matches the selected team filter — try clearing it or picking another team.'
+              : 'Every service is clean relative to the timestamp you picked.'}
           </Empty>
         )}
         {sinceNs !== null && report && report.services.length > 0 && (

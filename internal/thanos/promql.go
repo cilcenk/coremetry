@@ -351,6 +351,31 @@ func nsReplicaSetOwnerQuery(namespace string) string {
 		escapeLabelValue(namespace))
 }
 
+// ── deployment replicas/status (v0.9.39, design handoff §5) ─────────
+// kube-state-metrics aileleri; best-effort — aile yoksa satırın
+// Status'u boş kalır ve UI '—' basar. max by: HA'lı KSM çiftlerinin
+// (iki replika aynı seriyi basar) dublikasyonunu düzler.
+
+func nsDeployDesiredQuery(namespace string) string {
+	return fmt.Sprintf(
+		`max by (deployment) (kube_deployment_spec_replicas{namespace="%s"})`,
+		escapeLabelValue(namespace))
+}
+
+func nsDeployReadyQuery(namespace string) string {
+	return fmt.Sprintf(
+		`max by (deployment) (kube_deployment_status_replicas_ready{namespace="%s"})`,
+		escapeLabelValue(namespace))
+}
+
+// nsDeployAvailFalseQuery — Available koşulu status="false" değerinde
+// 1 olan (yani kubelet'in "kapasite altında" dediği) deployment'lar.
+func nsDeployAvailFalseQuery(namespace string) string {
+	return fmt.Sprintf(
+		`max by (deployment) (kube_deployment_status_condition{condition="Available",status="false",namespace="%s"} == 1)`,
+		escapeLabelValue(namespace))
+}
+
 // stripPodSuffixes — eşleme aileleri yokken pod adından iş yükü adı
 // sezgiseli: Deployment pod'u <ad>-<rs-hash 8-10 hex>-<5 rasgele>,
 // StatefulSet <ad>-<N>, DaemonSet <ad>-<5 rasgele>. Son segment

@@ -65,6 +65,9 @@ const NS_COLS: DataTableColumn<ClusterNamespaceRow>[] = [
 // v0.9.23 — namespace içi iş yükü kademesi (Namespace → Deployment → Pod).
 const DEP_COLS: DataTableColumn<ClusterDeploymentRow>[] = [
   { id: 'deployment', label: 'Workload', sortValue: r => r.deployment, naturalDir: 'asc', width: 240 },
+  // v0.9.39 — KSM replicas/status (handoff §5). status boş = '—'.
+  { id: 'replicas',   label: 'Replicas', sortValue: r => r.status ? r.readyReplicas / Math.max(1, r.desiredReplicas) : -1, numeric: true, width: 90 },
+  { id: 'status',     label: 'Status',   sortValue: r => r.status ?? '', naturalDir: 'asc', width: 110 },
   { id: 'pods',       label: 'Pods',     sortValue: r => r.pods,       numeric: true, width: 80 },
   { id: 'cpuCores',   label: 'CPU',      sortValue: r => r.cpuCores,   numeric: true, width: 90 },
   { id: 'memBytes',   label: 'Memory',   sortValue: r => r.memBytes,   numeric: true, width: 100 },
@@ -737,6 +740,16 @@ export default function ClustersPage() {
                               title="Open the pod list filtered to this workload"
                               style={{ cursor: 'pointer' }}>
                               <td className="mono" style={{ fontSize: 12 }}>{r.deployment}</td>
+                              {/* v0.9.39 — ready/desired rozeti (eşitse ok,
+                                  değilse warn) + statü; KSM yoksa '—'. */}
+                              <td>{r.status
+                                ? <span className={`badge ${r.readyReplicas === r.desiredReplicas ? 'b-ok' : 'b-warn'}`}>
+                                    {r.readyReplicas}/{r.desiredReplicas}
+                                  </span>
+                                : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                              <td>{r.status
+                                ? <span className={`badge ${depStatusBadge(r.status)}`}>{r.status}</span>
+                                : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
                               <td className="num mono">{fmtNum(r.pods)}</td>
                               <td className="num mono">{fmtCores(r.cpuCores)}</td>
                               <td className="num mono">{fmtBytes(r.memBytes)}</td>
@@ -1325,6 +1338,14 @@ function ClusterPromQLCard({ cluster }: { cluster: string }) {
 }
 
 // podPhaseBadge — kube_pod_status_phase → badge sınıfı (v0.9.37).
+// depStatusBadge — Deployment statü rozeti (v0.9.39, handoff §5):
+// Available yeşil, Progressing sarı (rollout sürüyor), Degraded kırmızı.
+function depStatusBadge(status: string): string {
+  if (status === 'Available') return 'b-ok';
+  if (status === 'Progressing') return 'b-warn';
+  return 'b-err';
+}
+
 function podPhaseBadge(phase: string): string {
   switch (phase) {
     case 'Running': return 'b-ok';

@@ -701,10 +701,31 @@ type DeploymentRow struct {
 	CPUCores   float64  `json:"cpuCores"`
 	MemBytes   float64  `json:"memBytes"`
 	PodNames   []string `json:"podNames"`
+	// v0.9.39 — KSM replicas/status (best-effort). Status boş = KSM
+	// ailesi bu iş yükü için yok (heuristik eşleşen StatefulSet/
+	// DaemonSet dahil); ready/desired yalnız Status doluyken anlamlı.
+	DesiredReplicas int    `json:"desiredReplicas"`
+	ReadyReplicas   int    `json:"readyReplicas"`
+	Status          string `json:"status,omitempty"`
 }
 
 // unassignedWorkload — eşlenemeyen pod'ların toplandığı satır adı.
 const unassignedWorkload = "(unassigned)"
+
+// deployStatus — KSM verisinden Deployment statü türetimi (v0.9.39,
+// design handoff §5). Available=false koşulu her şeyi ezer (kapasite
+// altı = Degraded); ready<desired rollout demektir (Progressing);
+// kalan her durum — scale-to-zero'nun 0/0'ı dahil — Available.
+func deployStatus(ready, desired int, availFalse bool) string {
+	switch {
+	case availFalse:
+		return "Degraded"
+	case ready < desired:
+		return "Progressing"
+	default:
+		return "Available"
+	}
+}
 
 // DeploymentMetrics — namespace'in pod başına cpu/mem'ini (zorunlu 2
 // sorgu) kube-state-metrics owner eşlemesiyle (best-effort 2 sorgu)
@@ -817,6 +838,51 @@ func (s *Service) DeploymentMetrics(ctx context.Context, c ClusterConfig, namesp
 		}
 		return out[i].Deployment < out[j].Deployment
 	})
+
+	// v0.9.39 (design handoff §5) — best-effort KSM replicas/status.
+	// desired boş dönerse (KSM yok) hiç dokunma: Status boş kalır,
+	// UI kolon hücrelerine '—' basar. Statü türetimi:
+	// Available=false koşulu → Degraded; ready<desired → Progressing;
+	// aksi → Available (scale-to-zero 0/0 dahil).
+	desired := map[string]int{}
+	if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsDeployDesiredQuery(namespace))); err == nil {
+		for _, ser := range series {
+			if d := ser.Metric["deployment"]; d != "" {
+				if v, ok := sampleValue(ser.Value); ok {
+					desired[d] = int(v)
+				}
+			}
+		}
+	}
+	if len(desired) > 0 {
+		ready := map[string]int{}
+		if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsDeployReadyQuery(namespace))); err == nil {
+			for _, ser := range series {
+				if d := ser.Metric["deployment"]; d != "" {
+					if v, ok := sampleValue(ser.Value); ok {
+						ready[d] = int(v)
+					}
+				}
+			}
+		}
+		availFalse := map[string]bool{}
+		if series, err := s.doQuery(ctx, c, "/api/v1/query", params(nsDeployAvailFalseQuery(namespace))); err == nil {
+			for _, ser := range series {
+				if d := ser.Metric["deployment"]; d != "" {
+					availFalse[d] = true
+				}
+			}
+		}
+		for i := range out {
+			d, ok := desired[out[i].Deployment]
+			if !ok {
+				continue
+			}
+			out[i].DesiredReplicas = d
+			out[i].ReadyReplicas = ready[out[i].Deployment]
+			out[i].Status = deployStatus(out[i].ReadyReplicas, d, availFalse[out[i].Deployment])
+		}
+	}
 	return out, nil
 }
 

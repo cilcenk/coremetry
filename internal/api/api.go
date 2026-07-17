@@ -451,6 +451,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/clusters/nodes", s.getClusterNodes) // v0.8.583 — node CPU/mem (dar kapsam)
 	mux.HandleFunc("GET /api/clusters/summary", s.getClusterSummary) // v0.8.586 — kart özeti (skaler)
 	mux.HandleFunc("GET /api/clusters/namespaces", s.getClusterNamespaces) // v0.8.588 — ns rollup
+	mux.HandleFunc("GET /api/clusters/namespaces/detail", s.getClusterNamespaceDetail) // v0.9.2 — ns trend
 	mux.HandleFunc("GET /api/clusters/sources", s.getClusterSources)
 	// v0.8.383 — distinct deploy_env values in the window; feeds the
 	// global Topbar environment picker (env-separation Phase 1).

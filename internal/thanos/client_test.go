@@ -321,6 +321,45 @@ func TestSummaryFullCounts(t *testing.T) {
 	}
 }
 
+// v0.9.2 — namespace trend: PodTrend'in pod pinsiz aynası (ortak
+// rangeTrend gövdesi); sorgu şekli + bucket sözleşmesi.
+func TestNamespaceTrendQueriesAndBuckets(t *testing.T) {
+	matrix := func(pairs string) string {
+		return `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[` + pairs + `]}]}}`
+	}
+	srv := fakeQuerier(t, "", map[string]string{
+		"container_cpu_usage_seconds_total":  matrix(`[1784271060,"1.5"]`),
+		"container_memory_working_set_bytes": matrix(`[1784271060,"512"]`),
+	})
+	defer srv.Close()
+	s := New()
+	pts, err := s.NamespaceTrend(context.Background(),
+		ClusterConfig{Name: "c", URL: srv.URL, Enabled: true},
+		"payments", time.Unix(1784271000, 0), time.Unix(1784271200, 0))
+	if err != nil {
+		t.Fatalf("NamespaceTrend: %v", err)
+	}
+	if len(pts) != 1 || pts[0].Bucket != 1784271060 || pts[0].CPUCores != 1.5 || pts[0].MemBytes != 512 {
+		t.Fatalf("trend yanlış: %+v", pts)
+	}
+}
+
+func TestSingleNamespaceQueriesShape(t *testing.T) {
+	q := singleNamespaceCPUQuery(`pay"ments`)
+	for _, sub := range []string{`namespace="pay\"ments"`, `pod!=""`, `sum(rate(`} {
+		if !strings.Contains(q, sub) {
+			t.Fatalf("query %q missing %q", q, sub)
+		}
+	}
+	if strings.Contains(q, `pod="`) {
+		t.Fatal("namespace sorgusu pod pini taşımamalı")
+	}
+	m := singleNamespaceMemQuery("x")
+	if !strings.Contains(m, `container_memory_working_set_bytes{container!="",pod!="",namespace="x"}`) {
+		t.Fatalf("mem sorgusu yanlış: %s", m)
+	}
+}
+
 // v0.8.588 — namespace rollup: sum by (namespace) merge'i + pod
 // sayısı best-effort + boş-namespace eleme.
 func nsRollupSample(ns, v string) string {

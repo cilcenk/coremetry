@@ -97,6 +97,22 @@ func singlePodMemQuery(namespace, pod string) string {
 		escapeLabelValue(namespace), escapeLabelValue(pod))
 }
 
+// singleNamespaceCPUQuery / singleNamespaceMemQuery — namespace-trend
+// drawer'ının range-query'leri (v0.9.2, namespace-trend audit §3):
+// singlePod* sorgularının pod pini kalkmış aynası — namespace'in TÜM
+// pod'larının toplamı tek seri olarak döner.
+func singleNamespaceCPUQuery(namespace string) string {
+	return fmt.Sprintf(
+		`sum(rate(container_cpu_usage_seconds_total{container!="",pod!="",namespace="%s"}[5m]))`,
+		escapeLabelValue(namespace))
+}
+
+func singleNamespaceMemQuery(namespace string) string {
+	return fmt.Sprintf(
+		`sum(container_memory_working_set_bytes{container!="",pod!="",namespace="%s"})`,
+		escapeLabelValue(namespace))
+}
+
 // ── node-scope queries (v0.8.582, audit: clusters-node-metrics-
 // audit.md §2) ──────────────────────────────────────────────────
 //

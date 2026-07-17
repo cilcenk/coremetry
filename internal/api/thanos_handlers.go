@@ -139,6 +139,43 @@ func (s *Server) getClusterNamespaces(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterNamespaceDetail — GET /api/clusters/namespaces/detail?
+// cluster=&namespace=&from=&to=. Tek namespace'in dakika-bucket'lı
+// toplam trendi (v0.9.2) — pods/detail'in birebir aynası.
+func (s *Server) getClusterNamespaceDetail(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("cluster"))
+	namespace := strings.TrimSpace(q.Get("namespace"))
+	if name == "" || namespace == "" {
+		http.Error(w, "cluster and namespace query params required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	if to.Sub(from) > 6*time.Hour {
+		from = to.Add(-6 * time.Hour)
+	}
+	key := fmt.Sprintf("cluster-ns-detail:%s:%s:%s:%s",
+		name, namespace, clusterCfgDigest(cfg), cacheBucket(from, to))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		trend, err := s.thanos.NamespaceTrend(qctx, cfg, namespace, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "namespace": namespace, "trend": trend}, nil
+	})
+}
+
 // getClusterSummary — GET /api/clusters/summary?cluster=<name>.
 // Genel görünüm kartı (v0.8.586): skaler sayımlar, topk'li vektör
 // yok. Digest'e nsFilter DAHİL (pod sayısı ondan etkilenir).

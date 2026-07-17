@@ -677,6 +677,20 @@ func (s *Service) NodeMetrics(ctx context.Context, c ClusterConfig) ([]NodeRow, 
 // path — bounded by construction). step=60 mirrors the
 // HostTrendPoint minute-bucket contract.
 func (s *Service) PodTrend(ctx context.Context, c ClusterConfig, namespace, pod string, from, to time.Time) ([]TrendPoint, error) {
+	return s.rangeTrend(ctx, c,
+		singlePodCPUQuery(namespace, pod), singlePodMemQuery(namespace, pod), from, to)
+}
+
+// NamespaceTrend — PodTrend'in namespace-scoped aynası (v0.9.2):
+// aynı dakika-bucket sözleşmesi, pod pini yok — namespace toplamı.
+func (s *Service) NamespaceTrend(ctx context.Context, c ClusterConfig, namespace string, from, to time.Time) ([]TrendPoint, error) {
+	return s.rangeTrend(ctx, c,
+		singleNamespaceCPUQuery(namespace), singleNamespaceMemQuery(namespace), from, to)
+}
+
+// rangeTrend — iki range-query'yi (cpu, mem) dakika bucket'larında
+// birleştiren ortak yol; Pod/NamespaceTrend'in tek gövdesi.
+func (s *Service) rangeTrend(ctx context.Context, c ClusterConfig, cpuQ, memQ string, from, to time.Time) ([]TrendPoint, error) {
 	params := func(q string) url.Values {
 		return url.Values{
 			"query": {q},
@@ -685,13 +699,11 @@ func (s *Service) PodTrend(ctx context.Context, c ClusterConfig, namespace, pod 
 			"step":  {"60"},
 		}
 	}
-	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
-		params(singlePodCPUQuery(namespace, pod)))
+	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query_range", params(cpuQ))
 	if err != nil {
 		return nil, err
 	}
-	memSeries, err := s.doQuery(ctx, c, "/api/v1/query_range",
-		params(singlePodMemQuery(namespace, pod)))
+	memSeries, err := s.doQuery(ctx, c, "/api/v1/query_range", params(memQ))
 	if err != nil {
 		return nil, err
 	}

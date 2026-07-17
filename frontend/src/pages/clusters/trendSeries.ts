@@ -1,4 +1,4 @@
-import type { SpanMetricSeries, ClusterPodTrendPoint, ClusterPodSeriesTrend } from '@/lib/types';
+import type { SpanMetricSeries, ClusterPodTrendPoint, ClusterPodSeriesTrend, ClusterNetTrendPoint } from '@/lib/types';
 import type { Threshold } from '@/components/MultiLineChart';
 
 // trendSeries — Thanos trend verisini MultiLineChart'ın beklediği
@@ -47,4 +47,14 @@ export function limitThresholds(limit?: number, request?: number, unit = ''): Th
     out.push({ value: request, label: `request${unit ? ` (${unit})` : ''}`, severity: 'warn' });
   }
   return out;
+}
+
+// netTrendToSeries — cluster throughput trendi → in/out iki seri
+// (v0.9.10, Overview grafiği). Aynı saniye→ns sözleşmesi.
+export function netTrendToSeries(trend: ClusterNetTrendPoint[]): SpanMetricSeries[] {
+  if (!trend.length) return [];
+  return [
+    { groupKey: ['Net in (B/s)'], points: trend.map(t => ({ time: t.bucket * 1e9, value: t.inBps })) },
+    { groupKey: ['Net out (B/s)'], points: trend.map(t => ({ time: t.bucket * 1e9, value: t.outBps })) },
+  ];
 }

@@ -3,6 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { ChartSpline } from 'lucide-react';
 import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
+import { netTrendToSeries } from '@/pages/clusters/trendSeries';
+import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -36,6 +38,9 @@ const NODE_COLS: DataTableColumn<ClusterNodeRow>[] = [
   { id: 'cpuPct',   label: 'CPU %',   sortValue: r => r.cpuPct ?? 0, numeric: true, width: 80 },
   { id: 'memBytes', label: 'Memory',  sortValue: r => r.memBytes, numeric: true, width: 100 },
   { id: 'memPct',   label: 'Mem %',   sortValue: r => r.memPct ?? 0, numeric: true, width: 80 },
+  // v0.9.10 — network (best-effort; seri yoksa hücre '—').
+  { id: 'netIn',    label: 'Net in',  sortValue: r => r.netInBps ?? 0, numeric: true, width: 90 },
+  { id: 'netOut',   label: 'Net out', sortValue: r => r.netOutBps ?? 0, numeric: true, width: 90 },
 ];
 
 // v0.8.588 — namespace rollup (satır tıklaması ?namespace= yazar);
@@ -56,6 +61,9 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'cpuPct',    label: 'CPU %',     sortValue: r => r.cpuPct ?? 0, numeric: true, width: 80 },
   { id: 'memBytes',  label: 'Memory',    sortValue: r => r.memBytes,  numeric: true, width: 100 },
   { id: 'memPct',    label: 'Mem %',     sortValue: r => r.memPct ?? 0, numeric: true, width: 80 },
+  // v0.9.10 — network (best-effort).
+  { id: 'netIn',     label: 'Net in',    sortValue: r => r.netInBps ?? 0, numeric: true, width: 90 },
+  { id: 'netOut',    label: 'Net out',   sortValue: r => r.netOutBps ?? 0, numeric: true, width: 90 },
 ];
 
 // fmtCores — 0.003 → "3m" (millicore okunuşu), 1.25 → "1.25".
@@ -63,6 +71,11 @@ function fmtCores(v: number): string {
   if (v < 0.01) return `${Math.round(v * 1000)}m`;
   if (v < 1) return `${(v * 1000).toFixed(0)}m`;
   return v.toFixed(2);
+}
+
+// fmtBps — ağ hızı: fmtBytes + '/s' (0 = bilinmiyor → çağıran '—' basar).
+function fmtBps(v: number): string {
+  return `${fmtBytes(v)}/s`;
 }
 
 // pctTitle — % hücresinin iki eksenli tooltip'i (v0.8.580): limit
@@ -180,6 +193,18 @@ export default function ClustersPage() {
     staleTime: 60_000,
     retry: 1,
     enabled: isDetail,
+  });
+
+  // v0.9.10 — Overview throughput grafiği: sayfa range'i penceresi
+  // (audit §4 kararı — ?tw= drawer-yerel kalır), fetch yalnız
+  // Overview sekmesi aktifken.
+  const { from: rangeFrom, to: rangeTo } = useMemo(() => timeRangeToNs(range), [range]);
+  const netTrendQ = useQuery({
+    queryKey: ['cluster-net-trend', clusterParam, rangeFrom, rangeTo],
+    queryFn: () => api.clusterNetworkTrend(clusterParam, rangeFrom, rangeTo),
+    staleTime: 60_000,
+    retry: 1,
+    enabled: isDetail && section === 'overview',
   });
 
   // Detay: yalnız seçili cluster'ın AKTİF sekme sorguları.
@@ -449,6 +474,8 @@ export default function ClustersPage() {
                               <td className="num mono" style={{
                                 color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
                               }}>{r.memPct ? r.memPct.toFixed(0) : '—'}</td>
+                              <td className="num mono">{r.netInBps ? fmtBps(r.netInBps) : '—'}</td>
+                              <td className="num mono">{r.netOutBps ? fmtBps(r.netOutBps) : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -556,6 +583,8 @@ export default function ClustersPage() {
                                 color: (r.memPct ?? 0) > 85 ? 'var(--err)' : (r.memPct ?? 0) > 60 ? 'var(--warn)' : 'var(--text3)',
                               }} title={pctTitle('Memory', r.memPct, r.memPctOfReq)}>
                                 {r.memPct ? r.memPct.toFixed(0) : '—'}</td>
+                              <td className="num mono">{r.netInBps ? fmtBps(r.netInBps) : '—'}</td>
+                              <td className="num mono">{r.netOutBps ? fmtBps(r.netOutBps) : '—'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -588,7 +617,32 @@ export default function ClustersPage() {
                         {detailSummaryQ.data?.pods ? `${fmtNum(detailSummaryQ.data.pods)} pods` : ''}
                       </div>
                     </Card>
+                    {/* v0.9.10 — net kartları yalnız veri VARSA (alan
+                        yokluğu yanlış sıfır okutmaz — probe duruşu). */}
+                    {(detailSummaryQ.data?.netInBps ?? 0) > 0 && (
+                      <Card density="tight" header="Net in">
+                        <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
+                          {fmtBps(detailSummaryQ.data!.netInBps!)}
+                        </div>
+                      </Card>
+                    )}
+                    {(detailSummaryQ.data?.netOutBps ?? 0) > 0 && (
+                      <Card density="tight" header="Net out">
+                        <div className="mono" style={{ fontSize: 22, fontWeight: 600 }}>
+                          {fmtBps(detailSummaryQ.data!.netOutBps!)}
+                        </div>
+                      </Card>
+                    )}
                   </div>
+                )}
+                {/* v0.9.10 — throughput grafiği: yalnız seri geldiyse
+                    (node_network erişilemezse bölüm hiç görünmez). */}
+                {section === 'overview' && (netTrendQ.data?.trend?.length ?? 0) > 0 && (
+                  <Card header="Network throughput" style={{ marginTop: 14 }}>
+                    <MultiLineChart
+                      series={netTrendToSeries(netTrendQ.data!.trend!)}
+                      height={200} />
+                  </Card>
                 )}
               </>
             )}

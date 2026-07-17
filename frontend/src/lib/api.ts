@@ -20,7 +20,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
-  ClusterPodsTrendResponse,
+  ClusterPodsTrendResponse, ClusterNetworkTrendResponse,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
   RelationResponse, RelationKind, FilterExpr,
@@ -963,6 +963,9 @@ export const api = {
   clusterNamespaceDetail: (cluster: string, namespace: string, fromNs: number, toNs: number) =>
     get<ClusterPodDetail>(`/api/clusters/namespaces/detail?cluster=${encodeURIComponent(cluster)}` +
       `&namespace=${encodeURIComponent(namespace)}&from=${fromNs}&to=${toNs}`),
+  clusterNetworkTrend: (cluster: string, fromNs: number, toNs: number) =>
+    get<ClusterNetworkTrendResponse>(`/api/clusters/network-trend?cluster=${encodeURIComponent(cluster)}` +
+      `&from=${fromNs}&to=${toNs}`),
   clusterNamespacePodsTrend: (cluster: string, namespace: string, fromNs: number, toNs: number) =>
     get<ClusterPodsTrendResponse>(`/api/clusters/namespaces/pods-trend?cluster=${encodeURIComponent(cluster)}` +
       `&namespace=${encodeURIComponent(namespace)}&from=${fromNs}&to=${toNs}`),

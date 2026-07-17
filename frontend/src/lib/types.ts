@@ -953,6 +953,9 @@ export interface ClusterPodRow {
   memLimitBytes?: number;
   cpuRequestCores?: number;
   memRequestBytes?: number;
+  // v0.9.10 — pod network rate (cAdvisor; absent = not exposed).
+  netInBps?: number;
+  netOutBps?: number;
 }
 // v0.9.3 — multi-pod trend serisi (top-10, sunucu keser).
 export interface ClusterPodSeriesTrend {
@@ -988,6 +991,9 @@ export interface ClusterNodeRow {
   memBytes: number;
   cpuPct?: number;
   memPct?: number;
+  // v0.9.10 — node network rate (node-exporter; absent = not exposed).
+  netInBps?: number;
+  netOutBps?: number;
 }
 export interface ClusterNodesResponse {
   cluster: string;
@@ -1016,6 +1022,18 @@ export interface ClusterSummary {
   pods?: number;
   cpuUsedCores?: number;
   memUsedBytes?: number;
+  netInBps?: number;
+  netOutBps?: number;
+}
+// v0.9.10 — cluster toplam ağ hızı trendi (Overview throughput).
+export interface ClusterNetTrendPoint {
+  bucket: number;
+  inBps: number;
+  outBps: number;
+}
+export interface ClusterNetworkTrendResponse {
+  cluster: string;
+  trend: ClusterNetTrendPoint[] | null;
 }
 export interface ClusterPodDetail {
   cluster: string;

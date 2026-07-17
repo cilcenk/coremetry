@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { limitThresholds, thanosPodSeriesToSeries, thanosTrendToSeries } from './trendSeries';
+import { limitThresholds, netTrendToSeries, thanosPodSeriesToSeries, thanosTrendToSeries } from './trendSeries';
 
 // v0.9.4 — Thanos→MultiLineChart dönüşüm sözleşmeleri: saniye→ns,
 // boş trend → boş seri, pod sırası korunur, 0-limit çizgi üretmez.
@@ -49,5 +49,17 @@ describe('limitThresholds', () => {
 
   it('unit rides the label', () => {
     expect(limitThresholds(2, 0, 'cores')[0].label).toBe('limit (cores)');
+  });
+});
+
+describe('netTrendToSeries', () => {
+  it('two series (in/out), seconds to ns', () => {
+    const s = netTrendToSeries([{ bucket: 1784271060, inBps: 100, outBps: 50 }]);
+    expect(s.map(x => x.groupKey[0])).toEqual(['Net in (B/s)', 'Net out (B/s)']);
+    expect(s[0].points[0]).toEqual({ time: 1784271060 * 1e9, value: 100 });
+    expect(s[1].points[0].value).toBe(50);
+  });
+  it('empty trend → empty', () => {
+    expect(netTrendToSeries([])).toEqual([]);
   });
 });

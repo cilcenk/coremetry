@@ -448,6 +448,7 @@ func (s *Server) Start() error {
 	// ayrı istek atar, her cluster kendi cache slotunda (audit §6).
 	mux.HandleFunc("GET /api/clusters/pods", s.getClusterPods)
 	mux.HandleFunc("GET /api/clusters/pods/detail", s.getClusterPodDetail)
+	mux.HandleFunc("GET /api/clusters/sources", s.getClusterSources)
 	// v0.8.383 — distinct deploy_env values in the window; feeds the
 	// global Topbar environment picker (env-separation Phase 1).
 	mux.HandleFunc("GET /api/environments", s.getEnvironments)

@@ -10,7 +10,7 @@ import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash,
-  Sparkles, LayoutGrid, FileClock, Terminal, Code, type LucideIcon,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -70,6 +70,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
       { href: '/databases',   label: 'nav.databases',  icon: Database },
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
+      // v0.8.578 — uzak cluster'ların Thanos pod metrikleri.
+      { href: '/clusters',    label: 'nav.clusters',   icon: Server },
       // v0.8.490 — External + Hosts sidebar'dan gizlendi (operatör:
       // "gerek yok, daha sonra attribute'lardan daha iyi planlarız").
       // Rotalar + sayfalar yaşıyor; geri gelirse tek satır.

@@ -951,6 +951,7 @@ export const api = {
   // Remote-cluster pod metrics (/clusters yüzeyi). Fan-out is the
   // CALLER's: one request per cluster so each rides its own cache
   // slot and fails independently (audit §6).
+  clusterSources: () => get<{ clusters: string[] }>(`/api/clusters/sources`),
   clusterPods: (cluster: string) =>
     get<ClusterPodsResponse>(`/api/clusters/pods?cluster=${encodeURIComponent(cluster)}`),
   clusterPodDetail: (cluster: string, namespace: string, pod: string, fromNs: number, toNs: number) =>

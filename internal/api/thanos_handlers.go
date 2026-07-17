@@ -109,6 +109,22 @@ func (s *Server) getClusterPodDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterSources — GET /api/clusters/sources. ENABLED cluster
+// adları (viewer+): /clusters sayfasının fan-out listesi. Settings
+// GET'i admin-only olduğundan bu dar, secret'sız uç ayrı; bellek-içi
+// snapshot'tan okur, cache gerekmez.
+func (s *Server) getClusterSources(w http.ResponseWriter, r *http.Request) {
+	names := []string{}
+	if s.thanos != nil {
+		for _, c := range s.thanos.Snapshot().Clusters {
+			if c.Enabled {
+				names = append(names, c.Name)
+			}
+		}
+	}
+	writeJSON(w, map[string]any{"clusters": names})
+}
+
 // getThanosSettings returns the masked cluster list (per-cluster
 // hasToken; tokens never round-trip — tempo contract).
 func (s *Server) getThanosSettings(w http.ResponseWriter, r *http.Request) {

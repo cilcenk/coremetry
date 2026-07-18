@@ -3,6 +3,7 @@ package thanos
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -374,6 +375,30 @@ func nsDeployAvailFalseQuery(namespace string) string {
 	return fmt.Sprintf(
 		`max by (deployment) (kube_deployment_status_condition{condition="Available",status="false",namespace="%s"} == 1)`,
 		escapeLabelValue(namespace))
+}
+
+// ── deployment-scoped trend queries (v0.9.50, design handoff §8) ────
+// Servis → Infrastructure sekmesinin CPU/Mem grafiği. Pod eşleşmesi
+// README sözleşmesi: pod adı "<deploy>-" öneklidir (Deployment→RS→Pod
+// adlandırması). Deploy adı =~ matcher'ına girdiğinden önce regex
+// meta'ları, sonra label kaçışı uygulanır. topk BİLEREK YOK (v0.9.3
+// notu: query_range'te topk adım-başına ayrı değerlendirilir, set
+// kayması serileri kırar) — top-N seçimi Go'da.
+
+func deployTrendQuery(namespace, deploy, metric string, byPod bool) string {
+	sel := fmt.Sprintf(`container!="",namespace="%s",pod=~"%s-.*"`,
+		escapeLabelValue(namespace), escapeLabelValue(regexp.QuoteMeta(deploy)))
+	var expr string
+	switch metric {
+	case "mem":
+		expr = fmt.Sprintf(`container_memory_working_set_bytes{%s}`, sel)
+	default: // cpu
+		expr = fmt.Sprintf(`rate(container_cpu_usage_seconds_total{%s}[5m])`, sel)
+	}
+	if byPod {
+		return fmt.Sprintf(`sum by (pod) (%s)`, expr)
+	}
+	return "sum(" + expr + ")"
 }
 
 // stripPodSuffixes — eşleme aileleri yokken pod adından iş yükü adı

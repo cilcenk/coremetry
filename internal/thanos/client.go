@@ -1204,6 +1204,63 @@ func (s *Service) ResourceTrend(ctx context.Context, c ClusterConfig, metric str
 	return out, nil
 }
 
+// DeployTrend — bir deployment'ın pod'larına kapsanmış CPU/Mem trendi
+// (v0.9.50, design handoff §8 — Servis → Infrastructure sekmesi).
+// ResourceTrend'in deployment-kapsamlı aynası: total tek seri, byPod
+// modunda sum by (pod) ham çekilir ve top-8 seçimi ortalamaya göre
+// Go'da yapılır (topk'siz — v0.9.3 adım-kayması notu). Metrik ailesi
+// yoksa boş döner; UI grafiği gizler (görünmez-düşer).
+func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, from, to time.Time) ([]NamedSeries, error) {
+	step := stepForWindow(from, to)
+	params := url.Values{
+		"query": {deployTrendQuery(namespace, deploy, metric, byPod)},
+		"start": {fmt.Sprintf("%d", from.Unix())},
+		"end":   {fmt.Sprintf("%d", to.Unix())},
+		"step":  {fmt.Sprintf("%d", step)},
+	}
+	series, err := s.doQuery(ctx, c, "/api/v1/query_range", params)
+	if err != nil {
+		return nil, err
+	}
+	type acc struct {
+		pts  []ValuePoint
+		sum  float64
+		name string
+	}
+	all := make([]acc, 0, len(series))
+	for _, ser := range series {
+		name := ""
+		if byPod {
+			name = ser.Metric["pod"]
+		}
+		pts := make([]ValuePoint, 0, len(ser.Values))
+		sum := 0.0
+		for _, pair := range ser.Values {
+			if v, ts, ok := samplePair(pair); ok {
+				pts = append(pts, ValuePoint{Bucket: ts - ts%int64(step), Value: v})
+				sum += v
+			}
+		}
+		if len(pts) > 0 {
+			all = append(all, acc{pts: pts, sum: sum / float64(len(pts)), name: name})
+		}
+	}
+	if byPod && len(all) > maxTrendSeries {
+		sort.Slice(all, func(i, j int) bool {
+			if all[i].sum != all[j].sum {
+				return all[i].sum > all[j].sum
+			}
+			return all[i].name < all[j].name
+		})
+		all = all[:maxTrendSeries]
+	}
+	out := make([]NamedSeries, 0, len(all))
+	for _, a := range all {
+		out = append(out, NamedSeries{Name: a.name, Points: a.pts})
+	}
+	return out, nil
+}
+
 // NetworkTrend — cluster toplam ağ hızının dakika-bucket trendi
 // (Overview throughput grafiği). rangeTrend'in net karşılığı; iki
 // sorgu da zorunlu (grafiğin kendisi bu — best-effort'luk üst

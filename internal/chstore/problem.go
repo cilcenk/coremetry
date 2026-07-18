@@ -378,14 +378,24 @@ func (s *Store) fetchDeploysByService(ctx context.Context, services map[string]s
 		}
 		holders += "?"
 	}
+	// v0.9.66 (operator-reported) — bu okuma effectiveVersionExpr
+	// zincirini BYPASS edip yalnız service.version okuyordu; filoda
+	// service.version sabit olduğundan "fresh deploy" sinyali (P1
+	// triage) hiç ateşlemiyordu. Artık merkez zincir (image-tag önde).
 	sql := `
 		SELECT service_name,
-		       res_values[indexOf(res_keys, 'service.version')] AS version,
+		       ` + effectiveVersionExpr + ` AS version,
 		       toUnixTimestamp64Nano(min(time))                 AS first_seen_ns
 		FROM spans
 		WHERE service_name IN (` + holders + `)
 		  AND time >= ? AND time <= ?
-		  AND has(res_keys, 'service.version')
+		  AND (has(res_keys, 'service.version')
+		    OR has(res_keys, 'container.image.tag')
+		    OR has(res_keys, 'k8s.container.image.tag')
+		    OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.deployment.labels.version')
+		    OR has(res_keys, 'helm.chart.version'))
 		GROUP BY service_name, version
 		HAVING version != ''
 		ORDER BY service_name, first_seen_ns ASC

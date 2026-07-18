@@ -62,26 +62,25 @@ const placeholderVersionList = `(
   )`
 
 // effectiveVersionExpr is the SQL fragment that picks a real
-// version per row: prefer service.version when non-placeholder;
-// fall back to container.image.tag / k8s.container.image.tag;
-// then to Helm convention labels (app.kubernetes.io/version,
-// projected by the OTel k8s receiver as
-// k8s.{pod,deployment}.labels.app_kubernetes_io_version);
-// otherwise empty (caller filters those out).
+// version per row.
 //
-// v0.5.283 — extended the chain with Helm / k8s label sources.
-// On platforms where the build pipeline doesn't override
-// service.version but DOES set the standard
-// app.kubernetes.io/version label on the Deployment (Helm
-// default), this is the only real version signal we'll see.
+// v0.9.66 (operator-reported) — ÖNCELİK TERSİNE DÖNDÜ: container
+// image tag'i artık service.version'ın ÖNÜNDE. Filoda service.version
+// placeholder DEĞİL ama SABİT ("hep aynı") — placeholder filtresi onu
+// elemediğinden zincir image tag'e hiç düşmüyor ve gerçek rollout'lar
+// (container.image.tag: release.20260707.1 → release.20260708.1)
+// görünmez kalıyordu. Image tag mevcutsa deployment gerçeğinin
+// kendisidir (tag değişimi ⇔ rollout); yoksa service.version, sonra
+// Helm/k8s label'ları (v0.5.283 zinciri) devrededir — image-tag'siz
+// kurulumlar (SDK-only) davranış değiştirmez.
 const effectiveVersionExpr = `
   multiIf(
-    res_values[indexOf(res_keys, 'service.version')] NOT IN ` + placeholderVersionList + `,
-      res_values[indexOf(res_keys, 'service.version')],
     res_values[indexOf(res_keys, 'container.image.tag')] NOT IN ` + placeholderVersionList + `,
       res_values[indexOf(res_keys, 'container.image.tag')],
     res_values[indexOf(res_keys, 'k8s.container.image.tag')] NOT IN ` + placeholderVersionList + `,
       res_values[indexOf(res_keys, 'k8s.container.image.tag')],
+    res_values[indexOf(res_keys, 'service.version')] NOT IN ` + placeholderVersionList + `,
+      res_values[indexOf(res_keys, 'service.version')],
     res_values[indexOf(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')] NOT IN ` + placeholderVersionList + `,
       res_values[indexOf(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')],
     res_values[indexOf(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')] NOT IN ` + placeholderVersionList + `,

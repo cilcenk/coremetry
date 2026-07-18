@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,5 +25,22 @@ func TestComparedPriorBoundaryAndRound2(t *testing.T) {
 		if got := round2(in); got != want {
 			t.Errorf("round2(%v)=%v, want %v", in, got, want)
 		}
+	}
+}
+
+// v0.9.66 (operator-reported) — deploy version zinciri image-tag-önde:
+// filoda service.version sabit (placeholder değil) olduğundan önde
+// olsaydı gerçek rollout'lar (container.image.tag: release.YYYYMMDD.N)
+// görünmez kalırdı. Sıra geri dönerse bu test kırılır.
+func TestEffectiveVersionExprImageTagFirst(t *testing.T) {
+	iTag := strings.Index(effectiveVersionExpr, "'container.image.tag'")
+	iK8s := strings.Index(effectiveVersionExpr, "'k8s.container.image.tag'")
+	iSvc := strings.Index(effectiveVersionExpr, "'service.version'")
+	if iTag < 0 || iK8s < 0 || iSvc < 0 {
+		t.Fatalf("zincirde beklenen anahtarlar eksik: tag=%d k8s=%d svc=%d", iTag, iK8s, iSvc)
+	}
+	if !(iTag < iK8s && iK8s < iSvc) {
+		t.Fatalf("öncelik sırası bozuk: container.image.tag(%d) < k8s.container.image.tag(%d) < service.version(%d) olmalı",
+			iTag, iK8s, iSvc)
 	}
 }

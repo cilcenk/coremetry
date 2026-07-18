@@ -986,12 +986,18 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	if bucketSec < 1 {
 		bucketSec = 1
 	}
+	// v0.9.60 — quantile merge 0.99'dan (0.5,0.95,0.99)'a genişledi +
+	// slot başına süre toplamı (avg serisi için): Elastic-parity latency
+	// hücresinin percentile-seçicili sparkline'ı. Aynı tek scan.
 	bucketRows, err := s.conn.Query(ctx, `
 		SELECT `+nameCol+` AS name,
 		       intDiv(toUInt32(time_bucket) - toUInt32(?), ?) AS bidx,
 		       countMerge(span_count_state)                   AS c,
 		       countMerge(error_count_state)                  AS e,
-		       arrayElement(quantilesTDigestMerge(0.99)(duration_q_state), 1) / 1e6 AS p99
+		       sumMerge(duration_sum_state) / 1e6             AS sum_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99
 		FROM `+mvTable+`
 		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
 		GROUP BY `+nameCol+`, bidx
@@ -1003,12 +1009,16 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		return out, nil
 	}
 	defer bucketRows.Close()
+	// Avg serisi için slot başına süre toplamı ayrı birikir; döngü
+	// sonunda count'a bölünür (aynı slota birden çok MV bucket'ı
+	// düşebildiğinden bölme en sonda yapılmalı).
+	sumByIdx := map[int][]float64{}
 	for bucketRows.Next() {
 		var name string
 		var bidx int64
 		var c, e uint64
-		var p99 *float64
-		if err := bucketRows.Scan(&name, &bidx, &c, &e, &p99); err != nil {
+		var sumMs, p50, p95, p99 *float64
+		if err := bucketRows.Scan(&name, &bidx, &c, &e, &sumMs, &p50, &p95, &p99); err != nil {
 			continue
 		}
 		i, ok := idxByName[name]
@@ -1019,20 +1029,89 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 			out[i].Sparkline = make([]uint64, SparklineBuckets)
 			out[i].ErrorsSparkline = make([]uint64, SparklineBuckets)
 			out[i].P99Sparkline = make([]float64, SparklineBuckets)
+			out[i].P95Sparkline = make([]float64, SparklineBuckets)
+			out[i].P50Sparkline = make([]float64, SparklineBuckets)
+			out[i].AvgSparkline = make([]float64, SparklineBuckets)
+			sumByIdx[i] = make([]float64, SparklineBuckets)
 		}
 		if bidx >= 0 && int(bidx) < SparklineBuckets {
 			out[i].Sparkline[bidx] += c
 			out[i].ErrorsSparkline[bidx] += e
-			// Per-bucket p99 — pick the max across coalesced MV
+			sumByIdx[i][bidx] += safeF(sumMs)
+			// Per-bucket quantiles — pick the max across coalesced MV
 			// buckets that map to the same sparkline slot, same
 			// idiom as the topology MV merges. Conservative read.
 			if v := safeF(p99); v > out[i].P99Sparkline[bidx] {
 				out[i].P99Sparkline[bidx] = v
 			}
+			if v := safeF(p95); v > out[i].P95Sparkline[bidx] {
+				out[i].P95Sparkline[bidx] = v
+			}
+			if v := safeF(p50); v > out[i].P50Sparkline[bidx] {
+				out[i].P50Sparkline[bidx] = v
+			}
+		}
+	}
+	for i, sums := range sumByIdx {
+		for b := 0; b < SparklineBuckets; b++ {
+			if out[i].Sparkline[b] > 0 {
+				out[i].AvgSparkline[b] = sums[b] / float64(out[i].Sparkline[b])
+			}
 		}
 	}
 	_ = apdexT // referenced by the raw-spans path; kept here so a future move keeps the constants together.
 	return out, nil
+}
+
+// GetOperationSummaryCompared — GetOperationSummary + bir-önceki
+// eş-uzunluklu pencerenin skalerleri ve calls/errors gölge serileri,
+// isimle merge edilmiş (v0.9.60, Endpoints ?compare=prior deseninin
+// operations karşılığı). Prior pencere okuma hatası soft-düşer:
+// current sonuç Prior'suz döner (karşılaştırma görünmez-düşer).
+func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string, since time.Duration, from, to time.Time, normalized bool) ([]OperationSummary, error) {
+	// Pencereyi BURADA mutlaklaştır ki current ve prior birebir aynı
+	// uzunlukta olsun (GetOperationSummary'nin kendi now()'u iki çağrı
+	// arasında kayardı).
+	winStart, winEnd := from, to
+	if winStart.IsZero() {
+		winEnd = time.Now()
+		if since <= 0 {
+			since = 24 * time.Hour
+		}
+		winStart = winEnd.Add(-since)
+	} else if winEnd.IsZero() {
+		winEnd = time.Now()
+	}
+	cur, err := s.GetOperationSummary(ctx, service, 0, winStart, winEnd, normalized)
+	if err != nil || len(cur) == 0 {
+		return cur, err
+	}
+	dur := winEnd.Sub(winStart)
+	prior, perr := s.GetOperationSummary(ctx, service, 0, winStart.Add(-dur), winStart, normalized)
+	if perr != nil {
+		return cur, nil
+	}
+	byName := make(map[string]OperationSummary, len(prior))
+	for _, p := range prior {
+		byName[p.Name] = p
+	}
+	for i := range cur {
+		p, ok := byName[cur[i].Name]
+		if !ok {
+			continue
+		}
+		cur[i].HasPrior = true
+		cur[i].PriorSpanCount = p.SpanCount
+		cur[i].PriorErrorCount = p.ErrorCount
+		cur[i].PriorErrorRate = p.ErrorRate
+		cur[i].PriorAvgMs = p.AvgMs
+		cur[i].PriorP50Ms = p.P50Ms
+		cur[i].PriorP95Ms = p.P95Ms
+		cur[i].PriorP99Ms = p.P99Ms
+		cur[i].PriorSparkline = p.Sparkline
+		cur[i].PriorErrorsSparkline = p.ErrorsSparkline
+	}
+	return cur, nil
 }
 
 // GetOperationSummary returns per-operation aggregates for a single

@@ -6953,9 +6953,11 @@ func (s *Server) svcSpanBreakdown(w http.ResponseWriter, r *http.Request) {
 // doesn't hash every input that changes the response). Extracted as a pure
 // function (v0.5.447 regression-test pattern) so op_group_cache_key_test.go can
 // pin the normalized-distinctness invariant without a live server.
-func svcOpsCacheKey(svc, since, from, to string, normalized bool) string {
-	return fmt.Sprintf("svc-ops:svc=%s:since=%s:from=%s:to=%s:norm=%t",
-		svc, since, from, to, normalized)
+// v0.9.60 — compare de anahtarda: prior'lu ve prior'suz yanıt farklı
+// gövdedir; anahtar dışı bırakmak iki modu çapraz-zehirlerdi (v0.5.187).
+func svcOpsCacheKey(svc, since, from, to string, normalized, compare bool) string {
+	return fmt.Sprintf("svc-ops:svc=%s:since=%s:from=%s:to=%s:norm=%t:cmp=%t",
+		svc, since, from, to, normalized, compare)
 }
 
 func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
@@ -6969,7 +6971,10 @@ func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	// so omitting it would cross-poison the two (the v0.5.187 class of
 	// bug: a key that doesn't hash all inputs).
 	normalized := q.Get("normalized") == "1"
-	key := svcOpsCacheKey(svc, q.Get("since"), q.Get("from"), q.Get("to"), normalized)
+	// v0.9.60 — compare=prior: bir-önceki eş-pencere skalerleri + gölge
+	// serileri (Elastic-parity Operations sekmesi).
+	compare := q.Get("compare") == "prior"
+	key := svcOpsCacheKey(svc, q.Get("since"), q.Get("from"), q.Get("to"), normalized, compare)
 	// 30s TTL — operation set changes on deploys (minutes
 	// apart), not seconds. With the SWR tier in cache.go, a
 	// 30s soft TTL still gives 90s of stale-but-usable
@@ -6979,6 +6984,9 @@ func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	// half-the-time forced an upstream re-fetch the operator
 	// would never notice if it was stale.
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		if compare {
+			return s.store.GetOperationSummaryCompared(ctx, svc, since, from, to, normalized)
+		}
 		return s.store.GetOperationSummary(ctx, svc, since, from, to, normalized)
 	})
 }

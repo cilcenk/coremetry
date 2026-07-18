@@ -176,6 +176,26 @@ type OperationSummary struct {
 	// path doesn't always compute them); UI tolerates absence.
 	ErrorsSparkline []uint64  `json:"errorsSparkline,omitempty"`
 	P99Sparkline    []float64 `json:"p99Sparkline,omitempty"`
+	// v0.9.60 (Elastic-parity Operations) — latency hücresinin
+	// percentile-seçicili sparkline'ı için avg/p50/p95 serileri (p99
+	// yukarıda zaten var); aynı SparklineBuckets ızgarası.
+	AvgSparkline []float64 `json:"avgSparkline,omitempty"`
+	P50Sparkline []float64 `json:"p50Sparkline,omitempty"`
+	P95Sparkline []float64 `json:"p95Sparkline,omitempty"`
+	// compare=prior alanları (Endpoints deseninin operations karşılığı):
+	// bir-önceki-eş-pencerenin skalerleri + calls/errors gölge serileri.
+	// HasPrior 0-değer belirsizliğini çözer (yeni operasyon ≠ sıfırlı
+	// eski operasyon) — TrendDelta'nın NEW rozeti buna bakar.
+	HasPrior             bool      `json:"hasPrior,omitempty"`
+	PriorSpanCount       uint64    `json:"priorSpanCount,omitempty"`
+	PriorErrorCount      uint64    `json:"priorErrorCount,omitempty"`
+	PriorErrorRate       float64   `json:"priorErrorRate,omitempty"`
+	PriorAvgMs           float64   `json:"priorAvgDurationMs,omitempty"`
+	PriorP50Ms           float64   `json:"priorP50DurationMs,omitempty"`
+	PriorP95Ms           float64   `json:"priorP95DurationMs,omitempty"`
+	PriorP99Ms           float64   `json:"priorP99DurationMs,omitempty"`
+	PriorSparkline       []uint64  `json:"priorSparkline,omitempty"`
+	PriorErrorsSparkline []uint64  `json:"priorErrorsSparkline,omitempty"`
 }
 
 type ServiceSummary struct {

@@ -17,8 +17,8 @@ jobs:
     name: Frontend (typecheck + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -57,8 +57,8 @@ jobs:
     needs: frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           # check-latest: the hosted runner's toolcache can lag a patch
@@ -102,8 +102,8 @@ jobs:
     # gate once `golangci-lint run` is clean.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           # check-latest: the hosted runner's toolcache can lag a patch
@@ -144,8 +144,8 @@ jobs:
       # upload-sarif writes code-scanning alerts (Trivy results → Security tab).
       security-events: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.25'
           # check-latest: the hosted runner's toolcache can lag a patch
@@ -212,7 +212,7 @@ jobs:
     name: Helm (lint + template)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
         with:
           version: 'v3.15.0'

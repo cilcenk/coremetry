@@ -286,8 +286,11 @@ function ServiceDetailInner() {
   });
   // The table's data source flips with the toggles: bundle ops when raw,
   // the op_group query when normalized, the compare query when compare.
-  const displayedOps = opsCompare ? (cmpOpsQ.data ?? [])
-    : normalized ? (normOpsQ.data ?? []) : operations;
+  // v0.9.65 (review MAJÖR) — compare sorgusu HATA verirse tablo
+  // boşalmasın: elimizdeki düz satırlara düşülür (karşılaştırma
+  // görünmez-düşer, tablo kalır — repo.go'daki sözleşmenin FE yarısı).
+  const plainOps = normalized ? (normOpsQ.data ?? []) : operations;
+  const displayedOps = opsCompare ? (cmpOpsQ.data ?? plainOps) : plainOps;
   const opsLoading = (normalized && normOpsQ.isLoading) || (opsCompare && cmpOpsQ.isLoading);
 
   if (!svc) {

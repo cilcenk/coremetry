@@ -34,6 +34,12 @@ interface Props {
   // sparkline becomes a button. Use for "drill into /metrics for
   // the full view".
   onClick?: () => void;
+  // v0.9.65 — paylaşılan y-ölçeği (compare gölge overlay'i): verilirse
+  // seri kendi min/max'ı yerine [0, domainMax]'a normalize edilir; iki
+  // Sparkline aynı domainMax ile üst üste bindiğinde seviye
+  // karşılaştırması gerçek olur (kendi-ölçeğinde iki seri aynı
+  // genlikte görünüp "değişmemiş" okutuyordu — review bulgusu).
+  domainMax?: number;
   // v0.5.485 — inline delta chip (`+35%`) next to the SVG. Compares
   // last non-zero bucket to first non-zero bucket. Caller-driven so
   // dense tables can opt out per-column.
@@ -42,7 +48,7 @@ interface Props {
 
 export function Sparkline({
   values, width = 80, height = 22, color, title, className,
-  unit, threshold, thresholdComparator = '>', onClick, showDelta,
+  unit, threshold, thresholdComparator = '>', onClick, showDelta, domainMax,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -60,8 +66,11 @@ export function Sparkline({
       >—</span>
     );
   }
-  const max = Math.max(...values);
-  const min = Math.min(...values);
+  // v0.9.65 — domainMax verildiyse [0, domainMax] sabit ölçeği
+  // (compare overlay'inin paylaşılan ekseni); yoksa eski kendi-aralığı
+  // davranışı birebir korunur.
+  const max = domainMax !== undefined ? domainMax : Math.max(...values);
+  const min = domainMax !== undefined ? 0 : Math.min(...values);
   // Avoid a divide-by-zero (perfectly flat series) by collapsing the
   // range to 1 — flat lines render along the bottom, which reads as
   // "stable, low" at a glance and matches the eye's expectation.

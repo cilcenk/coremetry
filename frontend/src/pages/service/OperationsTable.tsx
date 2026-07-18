@@ -35,11 +35,6 @@ function impactOf(r: OperationSummary): number {
 // once-an-hour 30s job doesn't. Default sort so the top of the
 // table answers "what should I optimise first" without the
 // operator combining columns by eye.
-// Apdex cell color (README Status semantics): ≥0.94 ok, ≥0.85 warn, else err.
-function apdexColor(a: number): string {
-  if (!isFinite(a)) return 'var(--text3)';
-  return a >= 0.94 ? 'var(--ok)' : a >= 0.85 ? 'var(--warn)' : 'var(--err)';
-}
 
 const OP_COLS: DataTableColumn<OperationSummary>[] = [
   { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 320 },
@@ -51,7 +46,9 @@ const OP_COLS: DataTableColumn<OperationSummary>[] = [
   { id: 'p50',       label: 'P50',       numeric: true,                     width: 84 },
   { id: 'p95',       label: 'P95',       numeric: true,                     width: 84 },
   { id: 'p99',       label: 'P99',       sortValue: r => r.p99DurationMs,   numeric: true,      width: 84 },
-  { id: 'apdex',     label: 'Apdex',     sortValue: r => r.apdex ?? 0,      numeric: true,      naturalDir: 'asc', width: 84 },
+  // v0.9.69 — Apdex kolonu operatör isteğiyle kalktı (klasik düzen
+  // korunur, yalnız bu kolon eksik); skor detay modalında yaşamaya
+  // devam edebilir gerekirse.
 ];
 
 export function OperationsTable({ service, rows, range, preset, onWiden, normalized, onToggleNormalized, loading }: {
@@ -339,9 +336,6 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                 <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
                 <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
                 <td className="mono" style={{ textAlign: 'right' }}>{agg.p99Ms.toFixed(1)}ms</td>
-                <td className="mono" style={{ textAlign: 'right', color: apdexColor(agg.apdex), fontWeight: 600 }}>
-                  {isFinite(agg.apdex) ? agg.apdex.toFixed(2) : '—'}
-                </td>
               </tr>
             )}
             {dt.sortedRows.map((op, i) => {
@@ -419,9 +413,6 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                   <td className="mono" style={{ textAlign: 'right' }}>{op.p50DurationMs.toFixed(1)}ms</td>
                   <td className="mono" style={{ textAlign: 'right' }}>{op.p95DurationMs.toFixed(1)}ms</td>
                   <td className="mono" style={{ textAlign: 'right' }}>{op.p99DurationMs.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right', color: apdexColor(op.apdex), fontWeight: 600 }}>
-                    {isFinite(op.apdex) ? op.apdex.toFixed(2) : '—'}
-                  </td>
                 </tr>
               );
             })}

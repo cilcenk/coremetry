@@ -25,16 +25,21 @@ func (s *Store) GetServiceNamespaces(ctx context.Context, since time.Duration) (
 		since = time.Hour
 	}
 	cutoff := time.Now().Add(-since)
+	// v0.9.53 (B2) — kubernetes.namespace.name / _name yedekleri
+	// (deriveNamespaceSQL ile aynı sözlük; standart anahtarlar önde).
 	rows, err := s.conn.Query(ctx, `
 		SELECT service_name,
 		       anyHeavy(coalesce(
 		         nullIf(res_values[indexOf(res_keys, 'k8s.namespace.name')], ''),
 		         nullIf(res_values[indexOf(res_keys, 'service.namespace')], ''),
+		         nullIf(res_values[indexOf(res_keys, 'kubernetes.namespace.name')], ''),
+		         nullIf(res_values[indexOf(res_keys, 'kubernetes.namespace_name')], ''),
 		         ''
 		       )) AS ns
 		FROM spans
 		WHERE time >= ?
-		  AND (has(res_keys, 'k8s.namespace.name') OR has(res_keys, 'service.namespace'))
+		  AND (has(res_keys, 'k8s.namespace.name') OR has(res_keys, 'service.namespace')
+		    OR has(res_keys, 'kubernetes.namespace.name') OR has(res_keys, 'kubernetes.namespace_name'))
 		GROUP BY service_name
 		LIMIT 5000
 		SETTINGS max_execution_time = 10`, cutoff)

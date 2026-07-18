@@ -417,6 +417,10 @@ func (s *Store) PopulateServiceTeamsFromSpans(ctx context.Context, since time.Du
 // the SDK-declared logical namespace) and `k8s.namespace.name` (the
 // k8s detector's container namespace) — checked in that order, resource
 // scope before span scope, same multiIf idiom as deriveTeamsSQL.
+// v0.9.53 (openshift-attr audit B2, operatör onayı) — OpenShift/legacy
+// agent yedekleri: kubernetes.namespace.name / kubernetes.namespace_name
+// (ES log zincirinin span karşılığı — filo sözlüğü). Standart anahtarlar
+// önde: semconv basan kurulumlarda davranış birebir aynı kalır.
 const deriveNamespaceSQL = `
 SELECT service_name, argMax(ns_val, c) AS ns
 FROM (
@@ -426,13 +430,19 @@ FROM (
       multiIf(
         has(res_keys, 'service.namespace'),  res_values[indexOf(res_keys, 'service.namespace')],
         has(res_keys, 'k8s.namespace.name'), res_values[indexOf(res_keys, 'k8s.namespace.name')],
+        has(res_keys, 'kubernetes.namespace.name'), res_values[indexOf(res_keys, 'kubernetes.namespace.name')],
+        has(res_keys, 'kubernetes.namespace_name'), res_values[indexOf(res_keys, 'kubernetes.namespace_name')],
         has(attr_keys, 'service.namespace'),  attr_values[indexOf(attr_keys, 'service.namespace')],
         has(attr_keys, 'k8s.namespace.name'), attr_values[indexOf(attr_keys, 'k8s.namespace.name')],
+        has(attr_keys, 'kubernetes.namespace.name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace.name')],
+        has(attr_keys, 'kubernetes.namespace_name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace_name')],
         '') AS ns_val
     FROM spans
     WHERE time >= ? AND time <= ?
       AND ( has(res_keys, 'service.namespace')  OR has(res_keys, 'k8s.namespace.name')
-         OR has(attr_keys, 'service.namespace') OR has(attr_keys, 'k8s.namespace.name') )
+         OR has(res_keys, 'kubernetes.namespace.name') OR has(res_keys, 'kubernetes.namespace_name')
+         OR has(attr_keys, 'service.namespace') OR has(attr_keys, 'k8s.namespace.name')
+         OR has(attr_keys, 'kubernetes.namespace.name') OR has(attr_keys, 'kubernetes.namespace_name') )
     LIMIT 2000000
   )
   WHERE ns_val != ''
@@ -468,6 +478,11 @@ func (s *Store) DeriveServiceNamespaces(ctx context.Context, since time.Duration
 
 // deriveDeploymentSQL — deriveNamespaceSQL'in tek-attribute eşleniği:
 // k8s.deployment.name (resource önce, sonra span attr). v0.9.25.
+// v0.9.53 (B2) — OpenShift/legacy yedekleri: kubernetes.deployment.name /
+// kubernetes.deployment_name + DeploymentConfig'li eski OpenShift için
+// openshift.deploymentconfig.name. ES'in kubernetes.labels.app takma adı
+// BİLİNÇLİ dışarıda: app label'ı deployment adıyla aynı olmak zorunda
+// değil, yanlış eşleşme infra pod korelasyonunu bozar.
 const deriveDeploymentSQL = `
 SELECT service_name, argMax(dep_val, c) AS dep
 FROM (
@@ -476,11 +491,21 @@ FROM (
     SELECT service_name,
       multiIf(
         has(res_keys, 'k8s.deployment.name'),  res_values[indexOf(res_keys, 'k8s.deployment.name')],
+        has(res_keys, 'kubernetes.deployment.name'), res_values[indexOf(res_keys, 'kubernetes.deployment.name')],
+        has(res_keys, 'kubernetes.deployment_name'), res_values[indexOf(res_keys, 'kubernetes.deployment_name')],
+        has(res_keys, 'openshift.deploymentconfig.name'), res_values[indexOf(res_keys, 'openshift.deploymentconfig.name')],
         has(attr_keys, 'k8s.deployment.name'), attr_values[indexOf(attr_keys, 'k8s.deployment.name')],
+        has(attr_keys, 'kubernetes.deployment.name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment.name')],
+        has(attr_keys, 'kubernetes.deployment_name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment_name')],
+        has(attr_keys, 'openshift.deploymentconfig.name'), attr_values[indexOf(attr_keys, 'openshift.deploymentconfig.name')],
         '') AS dep_val
     FROM spans
     WHERE time >= ? AND time <= ?
-      AND ( has(res_keys, 'k8s.deployment.name') OR has(attr_keys, 'k8s.deployment.name') )
+      AND ( has(res_keys, 'k8s.deployment.name') OR has(attr_keys, 'k8s.deployment.name')
+         OR has(res_keys, 'kubernetes.deployment.name') OR has(res_keys, 'kubernetes.deployment_name')
+         OR has(res_keys, 'openshift.deploymentconfig.name')
+         OR has(attr_keys, 'kubernetes.deployment.name') OR has(attr_keys, 'kubernetes.deployment_name')
+         OR has(attr_keys, 'openshift.deploymentconfig.name') )
     LIMIT 2000000
   )
   WHERE dep_val != ''

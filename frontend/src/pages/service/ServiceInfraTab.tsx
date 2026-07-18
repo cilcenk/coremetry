@@ -12,6 +12,7 @@ import { PodDrawer } from '@/pages/clusters/PodDrawer';
 import { PromQLList } from '@/pages/clusters/PromQLList';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
+import { podWorkloadName, workloadMatchesService } from '@/pages/clusters/podWorkload';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
@@ -23,6 +24,21 @@ import type { ClusterPodRow, TimeRange } from '@/lib/types';
 // tablosu ve Clusters'la AYNI PodDrawer ("Open in Clusters →" pivotlu).
 // Tüm görseller best-effort görünmez-düşer; fetch yalnız sekme
 // aktifken (bileşen ancak o zaman mount olur).
+
+// dominantNamespace — eşleşen pod'ların en sık namespace'i (v0.9.56):
+// metadata ns türetilememişse grafik sorgularının namespace parametresi
+// buradan gelir (yedek modda pod'lar zaten ada göre eşleşti).
+function dominantNamespace(rows: ClusterPodRow[]): string {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.namespace) counts.set(r.namespace, (counts.get(r.namespace) ?? 0) + 1);
+  }
+  let best = '', n = 0;
+  for (const [ns, c] of counts) {
+    if (c > n || (c === n && ns < best)) { best = ns; n = c; }
+  }
+  return best;
+}
 
 const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'cluster',  label: 'Cluster',  sortValue: r => r.cluster,  naturalDir: 'asc', width: 140 },
@@ -55,11 +71,18 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
     enabled: !!service && from > 0,
     staleTime: 30_000,
   });
+  // v0.9.56 (operatör: breakdown'dan gidince de çalışmıyor) — span
+  // attr'ları cluster çözemiyorsa (attr yok / ad Thanos kaynağıyla
+  // uyuşmuyor) TÜM kaynaklara bakılır; çipler yalnız eşleşen pod
+  // bulunan cluster'ları gösterir. Kaynak sayısı Settings'te sınırlı
+  // olduğundan fan-out bounded, sorgular Clusters cache'ini paylaşır.
   const matched = useMemo(() => {
-    const thanos = new Set(sourcesQ.data?.clusters ?? []);
-    return (svcClustersQ.data?.clusters ?? [])
+    const sources = sourcesQ.data?.clusters ?? [];
+    const thanos = new Set(sources);
+    const viaSpans = (svcClustersQ.data?.clusters ?? [])
       .map(c => c.cluster)
       .filter(c => thanos.has(c));
+    return viaSpans.length > 0 ? viaSpans : sources;
   }, [sourcesQ.data, svcClustersQ.data]);
 
   // Cluster başına deployment (podNames üyeliği) + pod metrikleri —
@@ -79,20 +102,38 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
     })),
   });
 
-  // Pod eşleşmesi: birincil kaynak DeploymentRow.podNames (gerçek KSM
-  // eşlemesi, v0.9.23); satır yoksa README sözleşmesi "<deploy>-" önek
-  // sezgiseli. ns dışı pod'lar hiç girmez. Bilinçli memo'suz: useQueries
-  // dizisinin kimliği her render'da değişir (memo hiçbir şey kazandırmaz)
-  // ve tarama ≤ birkaç bin satır — render başına ucuz.
+  // Pod eşleşme zinciri (v0.9.56 — operatör vakası: metadata ns/deploy
+  // türetilememiş servislerde sekme boştu; pod adı zaten servis adını
+  // taşıyor: bsa-adkservices-login-prep-<rs>-<rand>):
+  //   1. DeploymentRow.podNames (gerçek KSM eşlemesi) — ns+deploy varsa
+  //   2. "<deploy>-" önek + ns — deploy var, KSM satırı yoksa
+  //   3. YEDEK: pod'un zenginleştirilmiş service alanı (v0.9.12
+  //      korelasyonu) YA DA soyulmuş iş-yükü adı == servis adı
+  //      (podWorkloadName — prefix değil EŞİTLİK: kardeş servis
+  //      önekleri karışmaz). ns türetildiyse süzgeç olarak uygulanır.
+  // Bilinçli memo'suz: useQueries kimliği her render değişir, tarama
+  // ≤ birkaç bin satır.
   const rows: ClusterPodRow[] = [];
   matched.forEach((c, i) => {
-    const depRow = (depQs[i]?.data?.deployments ?? []).find(d => d.deployment === deploy);
+    const depRow = deploy
+      ? (depQs[i]?.data?.deployments ?? []).find(d => d.deployment === deploy)
+      : undefined;
     const podSet = depRow ? new Set(depRow.podNames) : null;
     for (const p of podQs[i]?.data?.pods ?? []) {
-      if (p.namespace !== ns) continue;
-      if (podSet ? podSet.has(p.pod) : p.pod.startsWith(deploy + '-')) rows.push(p);
+      if (ns && p.namespace !== ns) continue;
+      const hit = podSet ? podSet.has(p.pod)
+        : deploy ? p.pod.startsWith(deploy + '-')
+        : (p.service === service || workloadMatchesService(podWorkloadName(p.pod), service));
+      if (hit) rows.push(p);
     }
   });
+  // Çipler/grafikler için gerçek küme: eşleşen pod'u OLAN cluster'lar.
+  const clustersWithPods = [...new Set(rows.map(r => r.cluster))];
+  // Grafik parametreleri yedek modda da dolu: deploy yoksa servis adı
+  // (pod'lar zaten o önekle koşuyor), ns yoksa eşleşen pod'ların baskın
+  // namespace'i.
+  const effDeploy = deploy || service;
+  const effNs = ns || dominantNamespace(rows);
 
   // ?icluster= — çip filtresi (URL kaynak-of-truth, replace:true).
   const icluster = params.get('icluster') ?? '';
@@ -104,7 +145,7 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
   const visRows = icluster ? rows.filter(r => r.cluster === icluster) : rows;
 
   // Grafikler aktif çipin cluster'ını izler (çip yoksa ilk eşleşen).
-  const chartCluster = icluster || matched[0] || '';
+  const chartCluster = icluster || clustersWithPods[0] || '';
   const [cpuByPod, setCpuByPod] = useState(false);
   const [memByPod, setMemByPod] = useState(false);
   // Sunucu 6h clamp'i — Clusters Overview'la aynı dürüstlük (v0.9.21).
@@ -113,15 +154,17 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
     if (to - from > sixH) return { cFrom: to - sixH, cTo: to, clamped: true };
     return { cFrom: from, cTo: to, clamped: false };
   }, [from, to]);
-  const trendOK = chartCluster !== '' && ns !== '' && deploy !== '';
+  // v0.9.56 — yedek modda da grafik: deploy yoksa servis adı, ns yoksa
+  // eşleşen pod'ların baskın namespace'i (effDeploy/effNs yukarıda).
+  const trendOK = chartCluster !== '' && effNs !== '' && effDeploy !== '';
   const cpuTrendQ = useQuery({
-    queryKey: ['deploy-trend', chartCluster, ns, deploy, 'cpu', cpuByPod, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(chartCluster, ns, deploy, 'cpu', cpuByPod, cFrom, cTo),
+    queryKey: ['deploy-trend', chartCluster, effNs, effDeploy, 'cpu', cpuByPod, cFrom, cTo],
+    queryFn: () => api.clusterDeployTrend(chartCluster, effNs, effDeploy, 'cpu', cpuByPod, cFrom, cTo),
     staleTime: 60_000, retry: 1, enabled: trendOK,
   });
   const memTrendQ = useQuery({
-    queryKey: ['deploy-trend', chartCluster, ns, deploy, 'mem', memByPod, cFrom, cTo],
-    queryFn: () => api.clusterDeployTrend(chartCluster, ns, deploy, 'mem', memByPod, cFrom, cTo),
+    queryKey: ['deploy-trend', chartCluster, effNs, effDeploy, 'mem', memByPod, cFrom, cTo],
+    queryFn: () => api.clusterDeployTrend(chartCluster, effNs, effDeploy, 'mem', memByPod, cFrom, cTo),
     staleTime: 60_000, retry: 1, enabled: trendOK,
   });
 
@@ -150,15 +193,17 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
       Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.
     </Empty>;
   }
-  if (!ns || !deploy) {
-    return <Empty icon="▦" title="No Kubernetes mapping yet">
-      This service hasn't reported k8s.namespace.name / k8s.deployment.name resource
-      attributes, so its pods can't be matched to a cluster.
-    </Empty>;
-  }
-  if (matched.length === 0) {
-    return <Empty icon="▦" title="No matching Thanos cluster">
-      The service emits spans from clusters that aren't configured as Thanos sources.
+  // v0.9.56 — metadata'sızlık artık kapı DEĞİL: ad-tabanlı yedek zincir
+  // pod bulur. Tek terminal boş durum: hiçbir kaynakta eşleşen pod yok.
+  const podsLoading = podQs.some(q => q.isPending);
+  if (rows.length === 0) {
+    if (podsLoading) return <Spinner />;
+    return <Empty icon="▦" title="No pods matched">
+      Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
+      {' '}and pod-name matching (<span className="mono">{service}-*</span>) across{' '}
+      {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
+      Check that the pods follow the <span className="mono">&lt;service&gt;-&lt;hash&gt;-&lt;rand&gt;</span> naming
+      or curate namespace/deployment in the service catalog.
     </Empty>;
   }
 
@@ -172,14 +217,20 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
   return (
     <>
       <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
-        Pods matched to <span className="mono">{service}</span> via{' '}
-        k8s.namespace=<span className="mono">{ns}</span> · <span className="mono">{deploy}</span>{' '}
-        across {matched.length} cluster{matched.length > 1 ? 's' : ''}
+        {ns && deploy ? (
+          <>Pods matched to <span className="mono">{service}</span> via{' '}
+          k8s.namespace=<span className="mono">{ns}</span> · <span className="mono">{deploy}</span></>
+        ) : (
+          <>Pods matched to <span className="mono">{service}</span> by pod name{' '}
+          (<span className="mono">{service}-*</span>{effNs ? <> · ns:<span className="mono">{effNs}</span></> : null} — no k8s metadata from spans)</>
+        )}{' '}
+        across {clustersWithPods.length} cluster{clustersWithPods.length > 1 ? 's' : ''}
       </div>
 
-      {/* Cluster çipleri — tıklanınca tablo + grafikler o cluster'a daralır. */}
+      {/* Cluster çipleri — tıklanınca tablo + grafikler o cluster'a
+          daralır. Yalnız eşleşen pod'u OLAN cluster'lar (v0.9.56). */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        {matched.map(c => {
+        {clustersWithPods.map(c => {
           const rs = rows.filter(r => r.cluster === c);
           const failing = rs.filter(r =>
             r.phase && r.phase !== 'Running' && r.phase !== 'Succeeded').length;

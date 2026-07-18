@@ -136,13 +136,19 @@ export default function EndpointsPage() {
   // local mirror, so no sig-guard needed) so Copy-link and
   // SavedViewsBar reproduce the exact view.
   //
-  // limit (v0.5.389): 2000 default, explicit "top 5000" toggle;
-  // backend clamps. Snapped to the two rungs so the URL can't carry
-  // an unbounded cardinality into the server cache key.
-  const limit = params.get('limit') === '5000' ? 5000 : 2000;
+  // limit (v0.5.389; v0.9.70 operatör isteği): default 2000 → 100 —
+  // sayfanın ilk açılışı yavaştı, top-100 tipik triage'ı karşılar;
+  // gerisi açık seçimle. Sabit runglara snap'li — URL sınırsız
+  // kardinaliteyi server cache key'ine taşıyamaz (v0.8.270 disiplini).
+  // v0.9.70 ayrıca dropdown↔parser uyumsuzluğunu kapatır: 500/1000/
+  // 10000 seçimleri parser'da yoktu, sessizce default'a düşüyordu.
+  const LIMIT_RUNGS = [100, 500, 1000, 2000, 5000, 10000];
+  const limitRaw = Number(params.get('limit') ?? 100);
+  const limit = LIMIT_RUNGS.includes(limitRaw) ? limitRaw : 100;
   const setLimit = (v: number) => setParams(prev => {
     const next = new URLSearchParams(prev);
-    if (v === 5000) next.set('limit', '5000'); else next.delete('limit');
+    if (v !== 100 && LIMIT_RUNGS.includes(v)) next.set('limit', String(v));
+    else next.delete('limit');
     return next;
   }, { replace: true });
   // compare (v0.5.404): prior-window comparison, off by default —
@@ -348,6 +354,7 @@ export default function EndpointsPage() {
             onChange={e => setLimit(Number(e.target.value))}
             style={{ fontSize: 12 }}
             title="Maximum rows returned by the backend">
+            <option value={100}>top 100</option>
             <option value={500}>top 500</option>
             <option value={1000}>top 1000</option>
             <option value={2000}>top 2000</option>

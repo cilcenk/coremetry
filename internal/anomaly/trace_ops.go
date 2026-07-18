@@ -61,10 +61,13 @@ func classifyTraceOps(rows []traceOpBucket, windowRatio float64) []TraceOpAnomal
 			// yuvarlanıyor (çok seyrek tarihî hata). Eski SQL bu dalda
 			// cur/(base*ratio) ile KALİFİYE eder (payda <1 → oran şişer),
 			// raporlanan ratio'yu ise cur olarak verirdi — birebir aynı.
-			if float64(r.CurErrs)/(float64(r.BaseErrs)*windowRatio) >= 2 {
+			// v0.9.47 — CurErrs >= 3 tabanı (operatör: 1-2 occurrence
+			// anlık blip'tir, event olmasın; new_error'ın 3 tabanıyla
+			// simetrik).
+			if r.CurErrs >= 3 && float64(r.CurErrs)/(float64(r.BaseErrs)*windowRatio) >= 2 {
 				kind, ratio = "error_spike", float64(r.CurErrs)
 			}
-		case basePerWindow > 0 && float64(r.CurErrs)/float64(basePerWindow) >= 2:
+		case basePerWindow > 0 && r.CurErrs >= 3 && float64(r.CurErrs)/float64(basePerWindow) >= 2:
 			kind, ratio = "error_spike", float64(r.CurErrs)/float64(basePerWindow)
 		}
 		if kind == "" {

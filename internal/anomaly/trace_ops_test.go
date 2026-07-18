@@ -18,7 +18,12 @@ func TestClassifyTraceOps(t *testing.T) {
 		{"yeni hata eşik altı: base=0 cur=2", traceOpBucket{"s", "op", 2, 0}, "", 0},
 		{"spike: base 120→pencerede 10, cur 25 (2.5×)", traceOpBucket{"s", "op", 25, 120}, "error_spike", 10},
 		{"spike eşik altı: base 120→10, cur 19", traceOpBucket{"s", "op", 19, 120}, "", 10},
-		{"seyrek baseline: base=5 (pencerede 0'a yuvarlanır) cur=1 → 1/(5/12)=2.4 kalifiye", traceOpBucket{"s", "op", 1, 5}, "error_spike", 0},
+		// v0.9.47 — operatör isteği: 1-2 occurrence anlık blip'tir,
+		// event olmaz. Eski davranış cur=1'i seyrek-baseline dalından
+		// kalifiye ediyordu; artık her iki spike dalında CurErrs >= 3.
+		{"seyrek baseline v0.9.47 tabanı: base=5 cur=1 → oran 2.4 ama cur<3, kalifiye DEĞİL", traceOpBucket{"s", "op", 1, 5}, "", 0},
+		{"seyrek baseline v0.9.47 tabanı: base=5 cur=2 → kalifiye değil", traceOpBucket{"s", "op", 2, 5}, "", 0},
+		{"seyrek baseline taban üstü: base=5 cur=3 → 3/(5/12)=7.2 kalifiye", traceOpBucket{"s", "op", 3, 5}, "error_spike", 0},
 		{"seyrek baseline eşik altı: base=30 (pencerede 2.5→2) cur=4 → 4/2=2 kalifiye", traceOpBucket{"s", "op", 4, 30}, "error_spike", 2},
 		{"cur=0 hiç girmez", traceOpBucket{"s", "op", 0, 100}, "", 0},
 	}

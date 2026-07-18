@@ -72,6 +72,13 @@ func DetectNewLogTemplates(ctx context.Context, store *chstore.Store, window tim
 		if t.FirstSeen < sinceNs {
 			continue
 		}
+		// v0.9.47 — >= 3 tabanı: bir-iki kez görülen taze template
+		// anlık blip'tir (operatör isteği; new_error/new-pattern'ın
+		// 3 tabanıyla simetrik). Gerçek yeni hata hattı dakikalar
+		// içinde 3'ü geçer ve bir sonraki turda yakalanır.
+		if t.TotalCount < 3 {
+			continue
+		}
 		svc := ""
 		if len(t.Services) > 0 {
 			svc = t.Services[0]

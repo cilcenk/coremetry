@@ -196,7 +196,10 @@ func DetectLogPatterns(ctx context.Context, store logstore.Store, window time.Du
 				// requiring sustained volume to register.
 				ratio = float64(cur)
 				kind = "new"
-			case basePerWindow > 0 && float64(cur)/basePerWindow >= 2.0:
+			// v0.9.47 — cur >= 3 tabanı "new" dalıyla simetrik:
+			// base=1'e karşı cur=2 teknik olarak 2× ama tek satırlık
+			// gürültü; operatör 1-2 occurrence'ın event olmasını istemiyor.
+			case basePerWindow > 0 && cur >= 3 && float64(cur)/basePerWindow >= 2.0:
 				ratio = float64(cur) / basePerWindow
 				kind = "spike"
 			default:

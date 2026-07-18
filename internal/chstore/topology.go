@@ -40,6 +40,7 @@ func (s *Store) GetTopologyEdges(ctx context.Context, from, to time.Time, limit 
 		WHERE c.time >= ? AND c.time <= ?
 		  AND p.time >= ? AND p.time <= ?
 		  AND c.parent_id != ''
+		  AND ` + topoNoiseExcludeSQL("c.name") + `
 		GROUP BY parent_service, parent_op, child_service, child_op
 		ORDER BY calls DESC
 		LIMIT ?
@@ -437,6 +438,20 @@ func topoEnvChainSQL(prefix string) string {
 			)`
 }
 
+// topoNoiseExcludeSQL — yayın (broadcast) desenli trafiğin topoloji
+// kenarlarından dışlanması (v0.9.67, operatör direktifi): config-
+// server'ın TÜM deployment'lara yayınladığı cache-refresh mesajları
+// (örn. *.kafka.core.cache.refresh.<env> topic'i) her servisi
+// birbirine bağlı gösteriyordu — yanlış all-to-all graf. Desen
+// jenerik: verilen kolonda 'cache.refresh' / 'cache_refresh' geçen
+// satır kenar üretmez. Hem span adına hem messaging destination'a
+// uygulanır; üç WriteTopologyBucket pass'i + op-bucket ikizi +
+// ad-hoc GetTopologyEdges aynı yardımcıyı kullanır.
+func topoNoiseExcludeSQL(col string) string {
+	return `(positionCaseInsensitive(` + col + `, 'cache.refresh') = 0
+	  AND positionCaseInsensitive(` + col + `, 'cache_refresh') = 0)`
+}
+
 func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) error {
 	end := bucketStart.Add(5 * time.Minute)
 
@@ -516,6 +531,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
 		  AND c.parent_id != ''
 		  AND p.service_name != c.service_name
+		  AND ` + topoNoiseExcludeSQL("c.name") + `
 		GROUP BY parent_service, child_node, protocol
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',
@@ -673,6 +689,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		FROM spans
 		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		  AND child != ''
+		  AND ` + topoNoiseExcludeSQL("name") + `
+		  AND ` + topoNoiseExcludeSQL("msg_dest") + `
 		GROUP BY parent_service, child, proto, kind_out
 		SETTINGS max_execution_time = 120,
 		         distributed_product_mode = 'global'`,
@@ -754,6 +772,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		  AND kind = 'consumer'
 		  AND msg_system != ''
 		  AND queue_source != ''
+		  AND ` + topoNoiseExcludeSQL("name") + `
+		  AND ` + topoNoiseExcludeSQL("msg_dest") + `
 		GROUP BY parent_service, child_node
 		SETTINGS max_execution_time = 60,
 		         distributed_product_mode = 'global'`,
@@ -792,6 +812,7 @@ func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
 		  AND c.parent_id != ''
+		  AND ` + topoNoiseExcludeSQL("c.name") + `
 		GROUP BY parent_service, parent_op, child_service, child_op
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',

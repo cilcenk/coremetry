@@ -66,8 +66,12 @@ type Server struct {
 	// 30s process-geneli cache'i (v0.8.533, getServices audit fix B);
 	// getServices + /service-map paylaşır.
 	problemCounts *problemCountsCache
-	chPingAt      time.Time
-	chPingOK      bool
+	// svcRuntimes — /api/services-runtimes'ın merge+stale katmanı
+	// (v0.9.46): 15m taramalar birikir, CH hatasında son harita
+	// servis edilir; rozetler toptan sönmez.
+	svcRuntimes serviceRuntimesCache
+	chPingAt    time.Time
+	chPingOK    bool
 	// httpSrv is the live http.Server once Start() runs — kept so main
 	// can Shutdown() it during the ordered v0.8.336 teardown (stop
 	// ACCEPTING before draining consumers; a bare ListenAndServe had no
@@ -1995,7 +1999,10 @@ func (s *Server) getServiceRuntime(w http.ResponseWriter, r *http.Request) {
 // Cached 5 min — runtime changes only on deploy.
 func (s *Server) getAllServiceRuntimes(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, "all-service-runtimes", 5*time.Minute, func(ctx context.Context) (any, error) {
-		return s.store.GetAllServiceRuntimes(ctx)
+		// v0.9.46 — 15m tarama + merge + hata durumunda stale-serve
+		// (service_runtimes_cache.go): prod'da 1h taramanın timeout'u
+		// tüm rozetleri birden söndürüyordu.
+		return s.serviceRuntimesMerged(ctx)
 	})
 }
 

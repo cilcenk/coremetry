@@ -198,3 +198,20 @@ func TestNormalizeOperationCap200(t *testing.T) {
 		t.Fatalf("result not capped: len=%d > %d", len(got), opGroupMaxLen)
 	}
 }
+
+// v0.9.71 (operatör: url.path'ler /endpoints'te görünmüyordu) —
+// ingest'in http_route fallback şablonu: id/uuid soyulur, query
+// düşer, düz path'e dokunulmaz. Kardinalite sözleşmesi buradan geçer.
+func TestNormalizePathTemplate(t *testing.T) {
+	cases := map[string]string{
+		"/api/accounts/12345":                    "/api/accounts/:id",
+		"/api/accounts/12345/transactions?p=2":   "/api/accounts/:id/transactions",
+		"/api/v1/auth/login":                     "/api/v1/auth/login",
+		"/customers/550e8400-e29b-41d4-a716-446655440000/cards": "/customers/:id/cards",
+	}
+	for in, want := range cases {
+		if got := NormalizePathTemplate(in); got != want {
+			t.Errorf("NormalizePathTemplate(%q)=%q, want %q", in, got, want)
+		}
+	}
+}

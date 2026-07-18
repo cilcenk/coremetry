@@ -106,6 +106,19 @@ func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName strin
 	dbStmt := attrStr(sp.Attributes, "db.statement", "")
 	httpMethod := attrStr(sp.Attributes, "http.method", "")
 	httpRoute := attrStr(sp.Attributes, "http.route", attrStr(sp.Attributes, "http.target", ""))
+	// v0.9.71 (operatör: "url.path'ler /endpoints'te görünmüyor") —
+	// yeni semconv http.target'ı url.path/url.query'ye böldü; route
+	// templating'i olmayan enstrümantasyonlar yalnız url.path basar,
+	// http_route boş kalınca /endpoints o servisleri hiç listelemiyordu.
+	// Ham path LowCardinality kolona giremez (kardinalite) — op_group'un
+	// normalizePath'iyle id-soyulmuş ŞABLON yazılır
+	// (/api/accounts/12345 → /api/accounts/:id). Mevcut kolona yazım:
+	// ALTER yok, distributed-safe day-one; yalnız YENİ span'leri etkiler.
+	if httpRoute == "" {
+		if p := attrStr(sp.Attributes, "url.path", ""); p != "" {
+			httpRoute = templater.NormalizePathTemplate(p)
+		}
+	}
 	httpStatus := uint16(attrInt(sp.Attributes, "http.status_code", 0))
 	rpcSystem := attrStr(sp.Attributes, "rpc.system", "")
 	rpcMethod := attrStr(sp.Attributes, "rpc.method", "")

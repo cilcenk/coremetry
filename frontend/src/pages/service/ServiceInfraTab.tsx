@@ -51,7 +51,13 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'restarts', label: 'Restarts', sortValue: r => r.restarts ?? 0, numeric: true, width: 84 },
 ];
 
-export function ServiceInfraTab({ service, range }: { service: string; range: TimeRange }) {
+export function ServiceInfraTab({ service, range, onZoom }: {
+  service: string;
+  range: TimeRange;
+  // v0.9.58 — grafik drag-seçimi global time picker'a yazar
+  // (Service.tsx'in ServiceOverview'a verdiği handler'ın aynısı).
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+}) {
   const [params, setParams] = useSearchParams();
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
@@ -287,10 +293,10 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
       {((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
           <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
-            by={cpuByPod} onToggle={setCpuByPod}
+            by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom}
             series={cpuTrendQ.data?.series} seriesName="CPU" />
           <MetricArea title={`Memory · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
-            by={memByPod} onToggle={setMemByPod}
+            by={memByPod} onToggle={setMemByPod} onZoom={onZoom}
             series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
         </div>
       )}

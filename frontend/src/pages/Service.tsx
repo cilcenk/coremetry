@@ -467,7 +467,14 @@ function ServiceDetailInner() {
             {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
             {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}
-            {tab === 'infra' && <ServiceInfraTab service={svc} range={range} />}
+            {tab === 'infra' && <ServiceInfraTab service={svc} range={range}
+              onZoom={(fromUnixSec, toUnixSec) => {
+                setRange({
+                  preset: 'custom',
+                  fromMs: Math.round(fromUnixSec * 1000),
+                  toMs: Math.round(toUnixSec * 1000),
+                });
+              }} />}
             {tab === 'operations' && (
               <OperationsTable service={svc} rows={displayedOps} range={range}
                 preset={range.preset}

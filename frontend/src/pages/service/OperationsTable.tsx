@@ -208,9 +208,20 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
     return next;
   }, { replace: true });
   // rps payda penceresi — timeRangeToNs YALNIZ memo içinde (v0.5.184).
+  // v0.9.65 (review MAJÖR) — payda backend'in gerçek kapsamına
+  // hizalanır: MV yolu (pencere ≥ 5dk) başlangıcı 5dk'ya aşağı
+  // yuvarlar VE bitişi içeren bucket'ı dahil eder; pay o kapsamdan
+  // gelirken paydayı tam pencereyle bölmek 6dk'lık pencerede ~2.5x
+  // şişirilmiş rps okutuyordu. <5dk pencerede raw yol tam pencereyi
+  // kullanır — payda da tam kalır.
   const winSec = useMemo(() => {
     const { from, to } = timeRangeToNs(range);
-    return Math.max(1, (to - from) / 1e9);
+    const exact = Math.max(1, (to - from) / 1e9);
+    if (exact < 300) return exact;
+    const B = 300 * 1e9;
+    const start = Math.floor(from / B) * B;
+    const end = Math.floor(to / B) * B + B;
+    return (end - start) / 1e9;
   }, [range]);
   const opCols = useMemo<DataTableColumn<OperationSummary>[]>(() => [
     { id: 'name',       label: 'Operation',  sortValue: r => r.name,        naturalDir: 'asc', width: 300 },
@@ -689,20 +700,42 @@ function MetricCell({ values, priorValues, color, text, textColor, compare, hasP
   prior: number;
   kind: 'lowerBetter' | 'neutral';
 }) {
+  // v0.9.65 (review) — gölge overlay paylaşılan y-ölçeği: iki seri de
+  // ortak max'a normalize edilir, yoksa 10x fark aynı genlikte görünüp
+  // "değişmemiş" okutuyordu. Ghost yalnız compare'de çizildiğinden
+  // domainMax da yalnız o modda devreye girer (tek seri kendi ölçeğinde).
+  const ghost = compare && priorValues && priorValues.length > 0;
+  const shared = ghost
+    ? Math.max(...(values ?? [0]), ...priorValues!, 0.0001)
+    : undefined;
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
       <span style={{ display: 'grid', flexShrink: 0 }}>
-        {compare && priorValues && priorValues.length > 0 && (
+        {ghost && (
           <span style={{ gridArea: '1 / 1', opacity: .35 }}>
-            <Sparkline values={priorValues} color={color} title="previous period" />
+            <Sparkline values={priorValues!} color={color} title="previous period" domainMax={shared} />
           </span>
         )}
         <span style={{ gridArea: '1 / 1' }}>
-          <Sparkline values={values ?? []} color={color} title="" />
+          <Sparkline values={values ?? []} color={color} title="" domainMax={shared} />
         </span>
       </span>
       <b className="mono" style={{ fontSize: 12, minWidth: 56, textAlign: 'right', color: textColor }}>{text}</b>
-      {compare && hasPrior && <TrendDelta cur={cur} prior={prior} kind={kind} />}
+      {/* v0.9.65 (review MAJÖR) — NEW semantiği düzeltildi:
+          - hasPrior yoksa operasyon GERÇEKTEN yeni → NEW rozeti.
+          - hasPrior var ama prior değeri 0 iken cur>0 → TrendDelta'nın
+            prior===0 dalı yanlışlıkla NEW basardı; "was 0" çipi
+            (lowerBetter'da kırmızı — 0'dan hataya/latency'e çıkış
+            tam da compare'in yakalaması gereken sinyal).
+          - prior>0 → normal TrendDelta yüzdesi. */}
+      {compare && !hasPrior && (
+        <span className="badge b-info" style={{ fontSize: 9 }} title="Not present in the previous period">NEW</span>
+      )}
+      {compare && hasPrior && prior === 0 && cur > 0 && (
+        <span className={`badge b-${kind === 'lowerBetter' ? 'err' : 'info'}`}
+          style={{ fontSize: 9 }} title="Was 0 in the previous period">was 0</span>
+      )}
+      {compare && hasPrior && prior > 0 && <TrendDelta cur={cur} prior={prior} kind={kind} />}
     </div>
   );
 }

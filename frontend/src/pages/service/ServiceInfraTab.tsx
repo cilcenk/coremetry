@@ -207,6 +207,12 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
     </Empty>;
   }
 
+  // v0.9.57 (operatör raporu: "Running pods 0 ama grafikler dolu") —
+  // phase kube-state-metrics'ten gelir (best-effort), CPU/Mem
+  // cadvisor'dan; KSM o cluster'da yoksa her satırın phase'i boştur.
+  // Faz verisi HİÇ yokken 0 saymak fake-zero: kart "Pods" başlığıyla
+  // toplam sayıya düşer ve durumu açıkça söyler.
+  const phaseKnown = visRows.some(r => r.phase);
   const running = visRows.filter(r => r.phase === 'Running').length;
   const cpuSum = visRows.reduce((a, r) => a + r.cpuCores, 0);
   const memSum = visRows.reduce((a, r) => a + r.memBytes, 0);
@@ -256,9 +262,15 @@ export function ServiceInfraTab({ service, range }: { service: string; range: Ti
       {/* KPI satırı (§8): Running / CPU / Memory / Restarts. Restarts
           kube sayacının TOPLAMI (24h increase değil) — dürüst etiket. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
-        <Card density="tight" header="Running pods">
-          <div className="mono" style={{ ...kpiVal, color: 'var(--ok)' }}>{fmtNum(running)}</div>
-          <div style={kpiSub}>{visRows.length - running > 0 ? `${fmtNum(visRows.length - running)} not running` : 'all pods healthy'}</div>
+        <Card density="tight" header={phaseKnown ? 'Running pods' : 'Pods'}
+          title={phaseKnown ? undefined
+            : 'Pod status comes from kube_pod_status_phase (kube-state-metrics), which this cluster does not expose — the count shows matched pods instead.'}>
+          <div className="mono" style={{ ...kpiVal, color: phaseKnown ? 'var(--ok)' : undefined }}>
+            {fmtNum(phaseKnown ? running : visRows.length)}
+          </div>
+          <div style={kpiSub}>{phaseKnown
+            ? (visRows.length - running > 0 ? `${fmtNum(visRows.length - running)} not running` : 'all pods healthy')
+            : 'status unknown — kube-state-metrics not visible on this cluster'}</div>
         </Card>
         <Card density="tight" header="CPU used (cores)">
           <div className="mono" style={kpiVal}>{visRows.length ? fmtCores(cpuSum) : '—'}</div>

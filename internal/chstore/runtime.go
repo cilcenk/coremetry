@@ -60,13 +60,20 @@ type ServiceRuntime struct {
 // that exist. A service whose spans carry NO runtime attrs gets
 // empty fields → the badge stays hidden (honest, not lottery).
 func (s *Store) GetAllServiceRuntimes(ctx context.Context) (map[string]ServiceRuntime, error) {
+	// v0.9.46 — pencere 1h → 15m: sorgunun maliyeti res_keys/res_values
+	// Array kolonlarını taramaktan gelir; prod hacminde (1B+ span/gün,
+	// paylaşımlı yavaş CH) 1 saatlik tarama 10s bütçeyi aşıp endpoint'i
+	// KOMPLE boş düşürüyordu — listede hiç rozet yokken tekil (PK-pruned)
+	// detay sorgusu çalışıyordu, operatör raporu. 15 dakika aktif basan
+	// her servisi yakalar; boşta kalanları API katmanındaki merge-cache
+	// taşır (api/service_runtimes_cache.go).
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
 		SELECT
 		  service_name,
 		  argMaxIf(res_keys,   time, %[1]s) AS keys,
 		  argMaxIf(res_values, time, %[1]s) AS vals
 		FROM spans
-		WHERE time >= now() - INTERVAL 1 HOUR
+		WHERE time >= now() - INTERVAL 15 MINUTE
 		  AND service_name != ''
 		GROUP BY service_name
 		ORDER BY count() DESC

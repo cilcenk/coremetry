@@ -44,3 +44,19 @@ func TestEffectiveVersionExprImageTagFirst(t *testing.T) {
 			iTag, iK8s, iSvc)
 	}
 }
+
+// v0.9.68 (operatör direktifi) — cache-refresh broadcast'ı topoloji
+// kenarı üretmez: config-server'ın tüm deployment'lara yayını her
+// servisi ilişkili gösteriyordu (yanlış all-to-all). Yardımcı iki
+// yazımı da (nokta/altçizgi) case-insensitive dışlamalı.
+func TestTopoNoiseExcludeSQL(t *testing.T) {
+	q := topoNoiseExcludeSQL("c.name")
+	for _, frag := range []string{
+		"positionCaseInsensitive(c.name, 'cache.refresh') = 0",
+		"positionCaseInsensitive(c.name, 'cache_refresh') = 0",
+	} {
+		if !strings.Contains(q, frag) {
+			t.Errorf("dışlama parçası eksik: %s", frag)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -192,6 +192,36 @@ export function ServiceInfraTab({ service, range, onZoom }: {
     rows: visRows, initialSort: { id: 'cpuCores', dir: 'desc' },
   });
 
+  // v0.9.59 (operatör isteği, OpenShift konsol deseni) — KPI kartları
+  // tıklanınca ilgili metriğe götürür: CPU/Mem → kendi grafiği,
+  // Pods → pod tablosu, Restarts → tablo restarts-desc sıralanıp
+  // odaklanır. Hedef kısa bir accent çerçevesiyle yanıp söner;
+  // prefers-reduced-motion'da kaydırma anlık olur.
+  const cpuChartRef = useRef<HTMLDivElement>(null);
+  const memChartRef = useRef<HTMLDivElement>(null);
+  const podsRef = useRef<HTMLDivElement>(null);
+  const [flash, setFlash] = useState('');
+  const jumpTo = (key: 'cpu' | 'mem' | 'pods', opts?: { sortRestarts?: boolean }) => {
+    if (opts?.sortRestarts) dt.setSort({ id: 'restarts', dir: 'desc' });
+    const ref = key === 'cpu' ? cpuChartRef : key === 'mem' ? memChartRef : podsRef;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    ref.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    setFlash(key);
+    window.setTimeout(() => setFlash(''), 1400);
+  };
+  const kpiClick = (key: 'cpu' | 'mem' | 'pods', opts?: { sortRestarts?: boolean }) => ({
+    role: 'button' as const, tabIndex: 0,
+    onClick: () => jumpTo(key, opts),
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jumpTo(key, opts); }
+    },
+    style: { cursor: 'pointer' },
+  });
+  const flashStyle = (key: string): React.CSSProperties => ({
+    outline: flash === key ? '2px solid var(--accent)' : '2px solid transparent',
+    outlineOffset: 4, borderRadius: 8, transition: 'outline-color .35s',
+  });
+
   // ── Kapılar (hook'lardan SONRA) ──
   if (metaQ.isPending || sourcesQ.isPending || svcClustersQ.isPending) return <Spinner />;
   if ((sourcesQ.data?.clusters ?? []).length === 0) {
@@ -268,9 +298,9 @@ export function ServiceInfraTab({ service, range, onZoom }: {
       {/* KPI satırı (§8): Running / CPU / Memory / Restarts. Restarts
           kube sayacının TOPLAMI (24h increase değil) — dürüst etiket. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
-        <Card density="tight" header={phaseKnown ? 'Running pods' : 'Pods'}
-          title={phaseKnown ? undefined
-            : 'Pod status comes from kube_pod_status_phase (kube-state-metrics), which this cluster does not expose — the count shows matched pods instead.'}>
+        <Card density="tight" header={phaseKnown ? 'Running pods' : 'Pods'} {...kpiClick('pods')}
+          title={phaseKnown ? 'Go to the pod list'
+            : 'Pod status comes from kube_pod_status_phase (kube-state-metrics), which this cluster does not expose — the count shows matched pods instead. Click for the pod list.'}>
           <div className="mono" style={{ ...kpiVal, color: phaseKnown ? 'var(--ok)' : undefined }}>
             {fmtNum(phaseKnown ? running : visRows.length)}
           </div>
@@ -278,13 +308,14 @@ export function ServiceInfraTab({ service, range, onZoom }: {
             ? (visRows.length - running > 0 ? `${fmtNum(visRows.length - running)} not running` : 'all pods healthy')
             : 'status unknown — kube-state-metrics not visible on this cluster'}</div>
         </Card>
-        <Card density="tight" header="CPU used (cores)">
+        <Card density="tight" header="CPU used (cores)" {...kpiClick('cpu')} title="Go to the CPU chart">
           <div className="mono" style={kpiVal}>{visRows.length ? fmtCores(cpuSum) : '—'}</div>
         </Card>
-        <Card density="tight" header="Memory used">
+        <Card density="tight" header="Memory used" {...kpiClick('mem')} title="Go to the memory chart">
           <div className="mono" style={kpiVal}>{visRows.length ? fmtBytes(memSum) : '—'}</div>
         </Card>
-        <Card density="tight" header="Restarts (total)">
+        <Card density="tight" header="Restarts (total)" {...kpiClick('pods', { sortRestarts: true })}
+          title="Go to the pod list sorted by restarts">
           <div className="mono" style={{ ...kpiVal, color: restartColor(restartSum) }}>{fmtNum(restartSum)}</div>
         </Card>
       </div>
@@ -292,17 +323,21 @@ export function ServiceInfraTab({ service, range, onZoom }: {
       {/* CPU/Mem area — MetricArea (Clusters ile ortak), By pod toggle. */}
       {((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
-          <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
-            by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom}
-            series={cpuTrendQ.data?.series} seriesName="CPU" />
-          <MetricArea title={`Memory · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
-            by={memByPod} onToggle={setMemByPod} onZoom={onZoom}
-            series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
+          <div ref={cpuChartRef} style={flashStyle('cpu')}>
+            <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
+              by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom}
+              series={cpuTrendQ.data?.series} seriesName="CPU" />
+          </div>
+          <div ref={memChartRef} style={flashStyle('mem')}>
+            <MetricArea title={`Memory · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
+              by={memByPod} onToggle={setMemByPod} onZoom={onZoom}
+              series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
+          </div>
         </div>
       )}
 
       {/* Pod tablosu — cluster-gruplu (Cluster kolonu + çip filtresi). */}
-      <h3 style={{ fontSize: 13, margin: '18px 0 8px' }}>
+      <h3 ref={podsRef} style={{ fontSize: 13, margin: '18px 0 8px', ...flashStyle('pods') }}>
         Pods ({visRows.length}{icluster ? ` in ${icluster}` : ''})
       </h3>
       {visRows.length === 0 ? (

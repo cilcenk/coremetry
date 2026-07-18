@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
-import { useServicesMetadata } from '@/lib/queries';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 
@@ -51,9 +50,8 @@ export function ServiceClusterBreakdown({ service, range }: {
   });
   const thanosSet = useMemo(
     () => new Set(sourcesQ.data?.clusters ?? []), [sourcesQ.data]);
-  const metaQ = useServicesMetadata();
-  const serviceNs = metaQ.data?.[service]?.namespace ?? '';
-  const serviceDep = metaQ.data?.[service]?.deployment ?? '';
+  // v0.9.56 — ns/deploy artık pivotta kullanılmıyor (hedef Infrastructure
+  // sekmesi, eşleşmeyi kendi zinciri yapar); metaQ yalnız hasPivot için.
   const hasPivot = thanosSet.size > 0;
   const cols = useMemo(
     () => hasPivot
@@ -112,17 +110,16 @@ export function ServiceClusterBreakdown({ service, range }: {
                   {hasPivot && (
                     <td>
                       {thanosSet.has(c.cluster) ? (
+                        // v0.9.56 — hedef artık Infrastructure sekmesi:
+                        // /clusters pivotu metadata ns'ine bağımlıydı (ns
+                        // türetilmemişse filtre boş kalıyordu — operatör
+                        // raporu); sekme ad-tabanlı yedek zincirle her
+                        // durumda eşleştirir, ?icluster= çipi hazır gelir.
                         <Link
-                          to={`/clusters?cluster=${encodeURIComponent(c.cluster)}` +
-                              `&service=${encodeURIComponent(service)}` +
-                              (serviceNs ? `&namespace=${encodeURIComponent(serviceNs)}` : '') +
-                              // v0.9.25 — deployment türetildiyse pivot iş-yükü
-                              // hassasiyetinde iner; boşsa mevcut davranış (kırılma yok).
-                              (serviceDep ? `&deployment=${encodeURIComponent(serviceDep)}` : '')}
+                          to={`/service?name=${encodeURIComponent(service)}&tab=infra` +
+                              `&icluster=${encodeURIComponent(c.cluster)}`}
                           style={{ fontSize: 11, color: 'var(--accent2)' }}
-                          title={serviceNs
-                            ? `Pod CPU/memory — ${c.cluster}, namespace ${serviceNs}`
-                            : `Pod CPU/memory — ${c.cluster}`}>
+                          title={`Pod CPU/memory — ${c.cluster} (Infrastructure tab)`}>
                           pods →
                         </Link>
                       ) : (

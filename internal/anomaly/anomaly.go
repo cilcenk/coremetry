@@ -91,6 +91,29 @@ func policyFor(metric string) metricPolicy {
 	return metricPolicy{direction: "both", floorPct: 0.10}
 }
 
+// flatMADFloor — düz (MAD≈0) baseline'da modified z-score'u tanımlı
+// kılan metrik-farkındalı taban (v0.9.48). Birimler farklı olduğundan
+// tek mutlak taban üçüne birden uymaz:
+//   error_rate  : 0.5 yüzde puanı — %0 tabanlı serviste sürekli %3
+//     hata ~4σ (warning), %30 hata ~40σ (critical); %1'lik kıpırtı
+//     ~1.3σ ile sessiz.
+//   p99_ms      : max(1ms, medyanın %5'i) — sabit-2ms cache'li op
+//     10ms'e çıkınca ~5σ; 500ms'lik sabit servis 600ms'de sessiz.
+//   request_rate: max(0.1 rps, medyanın %5'i) — sıfır-trafik servis
+//     aniden trafik alınca açılır (direction both).
+func flatMADFloor(metric string, median float64) float64 {
+	switch metric {
+	case "error_rate":
+		return 0.5
+	case "p99_ms":
+		return math.Max(1, 0.05*math.Abs(median))
+	case "request_rate":
+		return math.Max(0.1, 0.05*math.Abs(median))
+	default:
+		return math.Max(1e-3, 0.05*math.Abs(median))
+	}
+}
+
 // anomalyDecision is the pure open/severity/direction verdict for one sample.
 type anomalyDecision struct {
 	open      bool
@@ -332,7 +355,15 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 	// openZ / resolveZ keep their σ meaning.
 	median, mad := medianMAD(baseline)
 	if mad < 1e-9 {
-		return // flat baseline → modified z-score undefined; skip
+		// v0.9.48 (operatör vakası: bsa-callcenter op %0 → %30, Problem
+		// yok) — düz baseline SKIP'i kör noktaydı: tarihi hiç hata
+		// görmemiş (MAD=0) bir servis %30 hataya fırladığında "z
+		// tanımsız" diye HİÇ değerlendirilmiyordu; en temiz servisler
+		// en görünmez olanlardı. Skip yerine MAD'e metrik-farkındalı
+		// taban: sapma z'ye çevrilebilir olur, gerçekten düz kalan seri
+		// (current == median) z≈0 ile yine sessizdir. openZ/dwell/
+		// yön/floor kapıları aynen geçerli — blip yine açamaz.
+		mad = flatMADFloor(metric, median)
 	}
 	z := madScale * (current - median) / mad
 

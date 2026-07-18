@@ -73,3 +73,48 @@ func TestModifiedZScore_NotMaskedByContaminatedBaseline(t *testing.T) {
 			modZ, openZ, median, mad)
 	}
 }
+
+// v0.9.48 — düz-baseline kör noktası: MAD=0 servisler (tarihi hiç
+// hata görmemiş) skip ediliyordu; %0→%30 hata Problem AÇMIYORDU
+// (operatör vakası). flatMADFloor MAD'e taban koyar; bu tablo hem
+// taban değerlerini hem de floored-MAD ile evalWindow'un açık/sessiz
+// kararlarını pinler.
+func TestFlatBaselineFloor(t *testing.T) {
+	if got := flatMADFloor("error_rate", 0); got != 0.5 {
+		t.Errorf("error_rate taban 0.5 olmalı, got %v", got)
+	}
+	if got := flatMADFloor("p99_ms", 2); got != 1 {
+		t.Errorf("p99_ms küçük medyanda 1ms tabanı, got %v", got)
+	}
+	if got := flatMADFloor("p99_ms", 500); got != 25 {
+		t.Errorf("p99_ms 500ms medyanda %%5 = 25, got %v", got)
+	}
+	if got := flatMADFloor("request_rate", 0); got != 0.1 {
+		t.Errorf("request_rate taban 0.1, got %v", got)
+	}
+
+	mad := flatMADFloor("error_rate", 0)
+	cases := []struct {
+		name     string
+		window   []float64
+		wantOpen bool
+		wantSev  string
+	}{
+		{"%0 → sürekli %30: critical açılır", []float64{30, 30, 30}, true, "critical"},
+		{"%0 → sürekli %3: warning açılır", []float64{3, 3, 3}, true, "warning"},
+		{"%0 → %1 kıpırtısı: sessiz", []float64{1, 1, 1}, false, ""},
+		{"tek bucket blip: dwell açtırmaz", []float64{0, 30, 0}, false, ""},
+		{"gerçekten düz seri: sessiz", []float64{0, 0, 0}, false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			allOpen, _, cur := evalWindow("error_rate", 0, mad, c.window)
+			if allOpen != c.wantOpen {
+				t.Fatalf("allOpen=%v bekleniyordu, got %v (cur=%+v)", c.wantOpen, allOpen, cur)
+			}
+			if c.wantOpen && cur.severity != c.wantSev {
+				t.Fatalf("severity=%s bekleniyordu, got %s", c.wantSev, cur.severity)
+			}
+		})
+	}
+}

@@ -492,31 +492,19 @@ function ServiceDetailInner() {
                   toMs: Math.round(toUnixSec * 1000),
                 });
               }} />}
+            {/* v0.9.63 — v0.9.62'nin sekme-tepesi RED üçlüsü OPERATÖR
+                KARARIYLA geri alındı ("gereksiz olmuş"): grafikler
+                Details'te (Performance) yaşar, Operations sekmesi
+                tabloya odaklı kalır. Yeniden ekleme. */}
             {tab === 'operations' && (
-              <>
-                {/* v0.9.62 (Elastic-parity 3/3, onaylı mockup) — sekme
-                    tepesinde 3'lü RED grafik satırı: Details'teki
-                    Performance üçlüsünün AYNISI (RQ anahtarları ortak —
-                    sekme geçişinde çift fetch yok); drag-zoom global
-                    range'e yazar, deploy marker + exemplar bedava. */}
-                <ServiceCharts service={svc} range={range} windowNs={rangeNs}
-                  opScope={opScope} onOpScopeChange={setOpScope}
-                  onZoom={(fromUnixSec, toUnixSec) => {
-                    setRange({
-                      preset: 'custom',
-                      fromMs: Math.round(fromUnixSec * 1000),
-                      toMs: Math.round(toUnixSec * 1000),
-                    });
-                  }} />
-                <OperationsTable service={svc} rows={displayedOps} range={range}
-                  preset={range.preset}
-                  onWiden={() => setRange({ preset: '1h' })}
-                  normalized={normalized}
-                  onToggleNormalized={setNormalized}
-                  compare={opsCompare}
-                  onToggleCompare={setOpsCompare}
-                  loading={opsLoading} />
-              </>
+              <OperationsTable service={svc} rows={displayedOps} range={range}
+                preset={range.preset}
+                onWiden={() => setRange({ preset: '1h' })}
+                normalized={normalized}
+                onToggleNormalized={setNormalized}
+                compare={opsCompare}
+                onToggleCompare={setOpsCompare}
+                loading={opsLoading} />
             )}
             {tab === 'details' && (
               <>

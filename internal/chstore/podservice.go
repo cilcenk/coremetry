@@ -21,11 +21,17 @@ import (
 // (canlı pod eşleşmesi için yeter) + LIMIT 5000. groupUniqArray(3):
 // tek pod'a birden çok servis yazan nadir durum (sidecar/agent) Go
 // tarafında çözülür, 3 aday yeter.
-const podServiceMapSQL = `
+// v0.9.52 (openshift-cluster-attr audit B1) — cluster filtresi yalnız
+// k8s.cluster.name okuyordu; salt openshift.cluster.name basan bir
+// OpenShift cluster'ında eşleşme sessizce boşalıyordu. Artık spans'ın
+// merkez clusterDeriveExpr'i (6-yollu, openshift dahil) AYNEN kullanılır
+// — iki yol yapısal olarak ayrışamaz (metric_points aynı res/attr array
+// kolonlarını taşır).
+var podServiceMapSQL = `
 	SELECT host_name, groupUniqArray(3)(service_name) AS services
 	FROM metric_points
 	WHERE time >= ? AND time <= ? AND host_name != ''
-	  AND (? = '' OR res_values[indexOf(res_keys, 'k8s.cluster.name')] = ?)
+	  AND (? = '' OR ` + clusterDeriveExpr + ` = ?)
 	GROUP BY host_name
 	LIMIT 5000
 	SETTINGS max_execution_time = 10`

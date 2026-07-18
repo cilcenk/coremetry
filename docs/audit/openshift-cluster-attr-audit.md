@@ -65,3 +65,13 @@ bağımsız; OpenShift-spesifik değişiklik gerekmez.
   Doğrulama sorgusu yine değerli: prod'da beklenmeyen bir anahtar
   görünürse zincir kanıtla genişletilir.
 - B3: kapalı.
+- B4 (v0.9.55, operatör: "birini bulamazsa diğerine baksın"):
+  pod↔servis cluster filtresi coalesce ÖNCELİĞİNDEN herhangi-biri-
+  eşleşirse (? IN) yapısına geçti — iki anahtar FARKLI değer bastığında
+  (k8s="prod-1", openshift="ocp-prod-1") öncelik ikinci adı maskeliyordu;
+  sorgu zaten satır başına array taradığından maliyet aynı. SINIR:
+  spans tarafındaki sıcak filtreler (services/endpoints) materialized
+  kolonun (k8s-öncelikli tek değer) hızlı yolunda BİLİNÇLİ bırakıldı —
+  her satıra 6 indexOf eklemek perf bütçesini yer. Bir cluster'ın
+  Thanos kaynağı adı çip/filtrelerde görünmüyorsa iki anahtarın farklı
+  değer bastığı anlaşılır; o kanıtla dual-name cluster map'ine geçilir.

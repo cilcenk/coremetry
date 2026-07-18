@@ -60,7 +60,7 @@ bağımsız; OpenShift-spesifik değişiklik gerekmez.
 - B1: v0.9.52'de düzeltildi (operatör talebinin kendisi).
 - B2: operatör onayıyla v0.9.53'te uygulandı — anahtarlar prod ES
   zincirinin span karşılığına demirlendi (kubernetes.namespace.name/_name,
-  kubernetes.deployment.name/_name, openshift.deploymentconfig.name);
+  kubernetes.deployment.name/_name, openshift.deployment.name);
   kubernetes.labels.app BİLİNÇLİ dışarıda (yanlış eşleşme riski).
   Doğrulama sorgusu yine değerli: prod'da beklenmeyen bir anahtar
   görünürse zincir kanıtla genişletilir.

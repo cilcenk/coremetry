@@ -43,7 +43,7 @@ func TestDeriverChainsCarryOpenShiftFallbacks(t *testing.T) {
 	depKeys := []string{
 		"k8s.deployment.name",
 		"kubernetes.deployment.name", "kubernetes.deployment_name",
-		"openshift.deploymentconfig.name",
+		"openshift.deployment.name",
 	}
 	for _, k := range depKeys {
 		if !strings.Contains(deriveDeploymentSQL, "'"+k+"'") {

@@ -233,6 +233,13 @@ export default function ClustersPage() {
     return next;
   }, { replace: true });
   const liveMs = live ? 10_000 : undefined;
+  // v0.9.58 — grafik drag-seçimi global time picker'a yazar (operatör
+  // isteği; Service.tsx onZoom emsali). setRange useUrlRange'ten.
+  const chartZoom = (fromUnixSec: number, toUnixSec: number) => setRange({
+    preset: 'custom',
+    fromMs: Math.round(fromUnixSec * 1000),
+    toMs: Math.round(toUnixSec * 1000),
+  });
   // v0.9.43 (review MAJÖR) — trend pencere ilerletici: [from,to]
   // memo'su Date.now()'u mount'ta bir kez yakalıyordu; live modda
   // 10s'lik her refetch AYNI geçmiş pencereyi sorguluyor (Prometheus
@@ -1043,11 +1050,14 @@ export default function ClustersPage() {
                     ortak bileşeni (§8 Service sekmesiyle paylaşılır). */}
                 {section === 'overview' && ((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+                    {/* v0.9.58 — drag-seçim global range'e yazar
+                        (Service.tsx emsali; sayfa range'i zaten
+                        useUrlRange'ten geliyor). */}
                     <MetricArea title="CPU usage (cores)" byLabel="By node"
-                      by={cpuByNode} onToggle={setCpuByNode}
+                      by={cpuByNode} onToggle={setCpuByNode} onZoom={chartZoom}
                       series={cpuTrendQ.data?.series} seriesName="CPU" />
                     <MetricArea title="Memory usage" byLabel="By node"
-                      by={memByNode} onToggle={setMemByNode}
+                      by={memByNode} onToggle={setMemByNode} onZoom={chartZoom}
                       series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
                   </div>
                 )}

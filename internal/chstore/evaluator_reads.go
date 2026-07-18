@@ -208,8 +208,9 @@ const evalReadTail = `
 // measureAllServicesPlan routes an alert metric to its batched query.
 // Pure — the routing + SQL shape are table-tested without a CH connection.
 // smSource is the FROM source for spanmetrics_1m reads (Store passes
-// spanmetricsSourceFor: bare name single-node, cluster() on a
-// chstore-owned cluster — v0.8.358, the per-shard undercount class).
+// spanmetricsSourceFor — v0.8.408'den beri HER modda bare name:
+// distributed'da bare ad Distributed wrapper'ın kendisi, cluster()
+// sarmak N× overcount olurdu; ayrıntı endpoints.go:300 bloğunda).
 func measureAllServicesPlan(metric, smSource string) (measureAllPlan, error) {
 	// Basic RED metrics — service_summary_5m merge states, the batched
 	// twins of the per-service v0.6.12 MV queries.

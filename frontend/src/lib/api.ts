@@ -1568,9 +1568,9 @@ export const api = {
   // the two views don't cross-poison. Default is forward-only: old
   // windows have no op_group yet, so normalized can legitimately be
   // empty (the page renders an honest empty state, not a blank panel).
-  serviceOperations: (svc: string, r: RangeParams, normalized = false) =>
+  serviceOperations: (svc: string, r: RangeParams, normalized = false, compare = false) =>
     get<OperationSummary[] | null>(
-      `/api/services/${encodeURIComponent(svc)}/operations?${qs(r)}${normalized ? '&normalized=1' : ''}`),
+      `/api/services/${encodeURIComponent(svc)}/operations?${qs(r)}${normalized ? '&normalized=1' : ''}${compare ? '&compare=prior' : ''}`),
   // serviceBundle — single round trip that returns the three
   // panels the Service detail mount needs (KPI summary,
   // recent problems, operations table). Server fans out to

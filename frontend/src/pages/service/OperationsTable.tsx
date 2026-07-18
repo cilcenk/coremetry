@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { TrendDelta } from '@/components/TrendDelta';
 import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Sparkline } from '@/components/Sparkline';
@@ -41,20 +42,36 @@ function apdexColor(a: number): string {
   return a >= 0.94 ? 'var(--ok)' : a >= 0.85 ? 'var(--warn)' : 'var(--err)';
 }
 
-const OP_COLS: DataTableColumn<OperationSummary>[] = [
-  { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 320 },
-  { id: 'trend',     label: 'Trend',     width: 92 },
-  { id: 'impact',    label: 'Impact',    sortValue: r => impactOf(r),       numeric: true,      width: 130 },
-  { id: 'spanCount', label: 'Calls',     sortValue: r => r.spanCount,       numeric: true,      width: 96 },
-  { id: 'errorRate', label: 'Err %',     sortValue: r => r.errorRate,       numeric: true,      width: 84 },
-  { id: 'avg',       label: 'Avg',       sortValue: r => r.avgDurationMs,   numeric: true,      width: 84 },
-  { id: 'p50',       label: 'P50',       numeric: true,                     width: 84 },
-  { id: 'p95',       label: 'P95',       numeric: true,                     width: 84 },
-  { id: 'p99',       label: 'P99',       sortValue: r => r.p99DurationMs,   numeric: true,      width: 84 },
-  { id: 'apdex',     label: 'Apdex',     sortValue: r => r.apdex ?? 0,      numeric: true,      naturalDir: 'asc', width: 84 },
-];
+// v0.9.61 (Elastic-parity 2/3, onaylı mockup) — 10 kolon → 5:
+// Avg/P50/P95/P99 tek "Latency" kolonuna indi (başlıkta percentile
+// seçici, ?lat= URL'de), Calls → Throughput (rps), Trend kolonu
+// kalktı (trend artık her metrik hücresinin içinde), Apdex
+// varsayılandan çıktı (operasyon detay modalında yaşıyor). Her metrik
+// hücresi Elastic'in ListMetric'i: sparkline + değer + TrendDelta.
+type LatKey = 'avg' | 'p50' | 'p95' | 'p99';
+const LAT_KEYS: LatKey[] = ['avg', 'p50', 'p95', 'p99'];
+function latOf(r: OperationSummary, k: LatKey): number {
+  return k === 'avg' ? r.avgDurationMs : k === 'p50' ? r.p50DurationMs
+    : k === 'p95' ? r.p95DurationMs : r.p99DurationMs;
+}
+function latSparkOf(r: OperationSummary, k: LatKey): number[] | undefined {
+  return k === 'avg' ? r.avgSparkline : k === 'p50' ? r.p50Sparkline
+    : k === 'p95' ? r.p95Sparkline : r.p99Sparkline;
+}
+function priorLatOf(r: OperationSummary, k: LatKey): number {
+  return k === 'avg' ? (r.priorAvgDurationMs ?? 0) : k === 'p50' ? (r.priorP50DurationMs ?? 0)
+    : k === 'p95' ? (r.priorP95DurationMs ?? 0) : (r.priorP99DurationMs ?? 0);
+}
+function fmtMsShort(v: number): string {
+  if (!isFinite(v)) return '—';
+  if (v >= 1000) return `${(v / 1000).toFixed(2)}s`;
+  return `${v.toFixed(v < 10 ? 1 : 0)}ms`;
+}
+function fmtRps(v: number): string {
+  return v >= 100 ? `${v.toFixed(0)} rps` : v >= 1 ? `${v.toFixed(1)} rps` : `${v.toFixed(2)} rps`;
+}
 
-export function OperationsTable({ service, rows, range, preset, onWiden, normalized, onToggleNormalized, loading }: {
+export function OperationsTable({ service, rows, range, preset, onWiden, normalized, onToggleNormalized, compare, onToggleCompare, loading }: {
   service: string;
   rows: OperationSummary[];
   range: TimeRange;
@@ -72,6 +89,10 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // shows a Spinner instead of flashing the previous mode's rows.
   normalized: boolean;
   onToggleNormalized: (v: boolean) => void;
+  // v0.9.61 — ?compare=prior: bir-önceki eş-pencere gölge serileri +
+  // delta çipleri. Parent fetch'i ve URL paramını sahiplenir.
+  compare: boolean;
+  onToggleCompare: (v: boolean) => void;
   loading: boolean;
 }) {
   // v0.5.374 — client-side filter. At 500+ operations on a
@@ -174,9 +195,36 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // Link's opHref); searchRef binds "/" to focus the filter input; j/k move
   // the row selection and Enter/o open. dt.rowProps(i) on each <tr> paints
   // the .row-selected accent + the data-row-idx the auto-scroll needs.
+  // v0.9.61 — Latency percentile seçimi URL'de (?lat=, default p95 —
+  // onaylı mockup). Kolon sortValue'su seçime bağlı olduğundan kolon
+  // seti lat'a memo'lu; id'ler sabit kaldığından persisted sort/resize
+  // seçim değişiminde bozulmaz.
+  const [sp, setSp] = useSearchParams();
+  const latRaw = sp.get('lat') ?? 'p95';
+  const lat: LatKey = (LAT_KEYS as string[]).includes(latRaw) ? latRaw as LatKey : 'p95';
+  const setLat = (k: LatKey) => setSp(prev => {
+    const next = new URLSearchParams(prev);
+    if (k === 'p95') next.delete('lat'); else next.set('lat', k);
+    return next;
+  }, { replace: true });
+  // rps payda penceresi — timeRangeToNs YALNIZ memo içinde (v0.5.184).
+  const winSec = useMemo(() => {
+    const { from, to } = timeRangeToNs(range);
+    return Math.max(1, (to - from) / 1e9);
+  }, [range]);
+  const opCols = useMemo<DataTableColumn<OperationSummary>[]>(() => [
+    { id: 'name',       label: 'Operation',  sortValue: r => r.name,        naturalDir: 'asc', width: 300 },
+    { id: 'latency',    label: 'Latency',    sortValue: r => latOf(r, lat), numeric: true,     width: 200 },
+    { id: 'throughput', label: 'Throughput', sortValue: r => r.spanCount,   numeric: true,     width: 180 },
+    { id: 'errorRate',  label: 'Error rate', sortValue: r => r.errorRate,   numeric: true,     width: 180 },
+    { id: 'impact',     label: 'Impact',     sortValue: r => impactOf(r),   numeric: true,     width: 130 },
+  ], [lat]);
+
   const dt = useDataTable<OperationSummary>({
-    storageKey: 'service-operations',
-    columns: OP_COLS,
+    // v2: kolon kimlikleri değişti (Elastic-parity) — eski persisted
+    // sort id'leri (spanCount/avg/p50…) yeni sette geçersiz.
+    storageKey: 'service-operations-v2',
+    columns: opCols,
     rows: filtered,
     initialSort: { id: 'impact', dir: 'desc' },
     onOpen: (op) => navigate(opHref(op.name)),
@@ -191,6 +239,13 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // styles. Viewer SEES the toggle — read-only data, no gating.
   const modeToggle = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
+      {/* v0.9.61 — Elastic-parity compare: bir-önceki eş-pencere gölge
+          serileri + delta çipleri (Endpoints ?compare=prior deseni). */}
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--text2)', cursor: 'pointer' }}
+        title="Overlay the previous period of the same length — ghost sparklines + change chips">
+        <input type="checkbox" checked={compare} onChange={e => onToggleCompare(e.target.checked)} />
+        Compare: previous period
+      </label>
       <span style={{ display: 'inline-flex', gap: 4 }}>
         <Button variant={normalized ? 'ghost' : 'secondary'} size="sm"
           onClick={() => onToggleNormalized(false)}
@@ -198,9 +253,6 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
         <Button variant={normalized ? 'secondary' : 'ghost'} size="sm"
           onClick={() => onToggleNormalized(true)}
           title="Collapse id-bearing operations into shapes (GET /users/:id)">Normalized</Button>
-      </span>
-      <span style={{ fontSize: 11, color: 'var(--text3)', maxWidth: 320, lineHeight: 1.3 }}>
-        collapse id-bearing operations into shapes — <code>GET /users/:id</code>
       </span>
     </div>
   );
@@ -305,58 +357,56 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
       <div className="table-wrap">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />
-          <DataTableHead dt={dt} />
+          {/* v0.9.61 — Latency başlığında percentile seçici (mockup):
+              tıklamalar sort'u tetiklememesi için stopPropagation. */}
+          <DataTableHead dt={dt} renderLabel={c => c.id !== 'latency' ? c.label : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              Latency
+              <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', gap: 2 }}>
+                {LAT_KEYS.map(k => (
+                  <button key={k} type="button"
+                    onClick={() => setLat(k)}
+                    title={`Show ${k} latency in this column`}
+                    style={{
+                      all: 'unset', cursor: 'pointer', padding: '0 4px', fontSize: 10,
+                      color: lat === k ? 'var(--accent2)' : 'var(--text3)',
+                      fontWeight: lat === k ? 700 : 400, textTransform: 'none',
+                    }}>{k}</button>
+                ))}
+              </span>
+            </span>
+          )} />
           <tbody>
             {agg && (
               <tr className="agg-row">
                 <td><span style={{ fontWeight: 700 }}>All ({rows.length})</span></td>
+                <td className="mono" style={{ textAlign: 'right' }}>
+                  {lat === 'avg' ? fmtMsShort(agg.avgMs) : lat === 'p99' ? fmtMsShort(agg.p99Ms)
+                    : <span style={{ color: 'var(--text3)' }} title="p50/p95 toplulaştırması yok — satırlara bak">—</span>}
+                </td>
                 <td>
-                  {/* Aggregate trend = element-wise sum across all
-                      per-operation sparklines so the "All" row
-                      shows the service-wide call rate at a glance,
-                      using the same window + bucket boundaries as
-                      every row beneath it.
-                      v0.6.13 — earlier (v0.6.10) wrapped this in a
-                      /metrics link, but /metrics needs a *metric
-                      name* to render and there's no natural pick
-                      from a spans-aggregate sparkline, so the
-                      drill landed on a blank page (operator-
-                      reported). Reverted to a plain Sparkline —
-                      this page is already the service detail, so
-                      a self-link wouldn't help anyway. */}
-                  <Sparkline values={aggSparkline} title={`total calls/bucket × ${rows.length} ops`} />
+                  {/* Servis-geneli çağrı trendi: satır sparkline'larının
+                      element-wise toplamı (aynı pencere/bucket sınırları). */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                    <Sparkline values={aggSparkline} title={`total calls/bucket × ${rows.length} ops`} />
+                    <b className="mono" style={{ fontSize: 12 }}>{fmtRps(agg.spans / winSec)}</b>
+                  </div>
                 </td>
-                <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>
-                  {fmtImpact(rows.reduce((n, r) => n + impactOf(r), 0))}
-                </td>
-                <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(agg.spans)}</td>
                 <td className="mono" style={{ textAlign: 'right' }}>
                   <span className={`badge b-${agg.errorRate > 5 ? 'err' : agg.errorRate > 0 ? 'warn' : 'ok'}`}>
                     {agg.errorRate.toFixed(2)}%
                   </span>
                 </td>
-                <td className="mono" style={{ textAlign: 'right' }}>{agg.avgMs.toFixed(1)}ms</td>
-                <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
-                <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>—</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{agg.p99Ms.toFixed(1)}ms</td>
-                <td className="mono" style={{ textAlign: 'right', color: apdexColor(agg.apdex), fontWeight: 600 }}>
-                  {isFinite(agg.apdex) ? agg.apdex.toFixed(2) : '—'}
+                <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>
+                  {fmtImpact(rows.reduce((n, r) => n + impactOf(r), 0))}
                 </td>
               </tr>
             )}
             {dt.sortedRows.map((op, i) => {
               const errCls = op.errorRate > 5 ? 'err' : op.errorRate > 0 ? 'warn' : 'ok';
-              // Tone the per-row sparkline with the same severity
-              // colour as the err-rate badge so the eye reads "this
-              // op is hot" from one glance at the trend column,
-              // before reading the numbers.
-              const sparkColor = errCls === 'err' ? 'var(--err)'
-                              : errCls === 'warn' ? 'var(--warn)'
-                              : undefined;
-              // dt.rowProps(i) → data-row-idx (auto-scroll target) +
-              // .row-selected accent when j/k lands here. Index tracks
-              // dt.sortedRows (the agg "All" row above is NOT counted).
               const rp = dt.rowProps(i);
+              const maxImpact = Math.max(...rows.map(impactOf));
+              const priorImpact = op.hasPrior ? (op.priorAvgDurationMs ?? 0) * (op.priorSpanCount ?? 0) : 0;
               return (
                 <tr key={op.name} {...rp}
                     style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
@@ -366,11 +416,8 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       style={{ fontWeight: 500 }}
                       title="Open this operation in Traces — service + name pre-filtered"
                     >{op.name}</Link>
-                    {/* v0.8.422 — raw rows only: in Normalized mode op.name is
-                        the op_group TEMPLATE ("GET /users/:id"), which matches
-                        no real span name, so ?op= scoping (spanmetrics `name`
-                        dim, legacy DSL, heatmap filter) would render three
-                        empty panels with no hint why. */}
+                    {/* v0.8.422 — raw rows only: Normalized modda op.name
+                        şablondur, ?op= kapsaması boş panele düşer. */}
                     {!normalized && (
                       <Link
                         to={detailsHref(op.name)}
@@ -391,36 +438,44 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                     )}
                   </td>
                   <td>
-                    <button
-                      type="button"
-                      onClick={() => setOpDetail(op)}
+                    <MetricCell values={latSparkOf(op, lat)}
+                      color="var(--purple)"
+                      text={fmtMsShort(latOf(op, lat))}
+                      compare={compare} hasPrior={op.hasPrior}
+                      cur={latOf(op, lat)} prior={priorLatOf(op, lat)} kind="lowerBetter" />
+                  </td>
+                  <td>
+                    {/* Throughput sparkline'ı tıklanınca detay modalı
+                        (calls/errors/p99) — eski Trend kolonunun mirası. */}
+                    <button type="button" onClick={() => setOpDetail(op)}
                       title={`${fmtNum(op.spanCount)} calls — click for calls / errors / p99 detail`}
-                      style={{
-                        background: 'transparent', border: 0, padding: 0,
-                        cursor: 'pointer', display: 'inline-block',
-                      }}
-                    >
-                      <Sparkline values={op.sparkline ?? []}
-                        color={sparkColor}
-                        title="" />
+                      style={{ background: 'transparent', border: 0, padding: 0, cursor: 'pointer', display: 'block', width: '100%' }}>
+                      <MetricCell values={op.sparkline}
+                        priorValues={op.priorSparkline}
+                        color="var(--accent2)"
+                        text={fmtRps(op.spanCount / winSec)}
+                        compare={compare} hasPrior={op.hasPrior}
+                        cur={op.spanCount} prior={op.priorSpanCount ?? 0} kind="neutral" />
                     </button>
                   </td>
-                  <td className="mono" style={{ textAlign: 'right' }}>
-                    <ImpactBar value={impactOf(op)}
-                               max={Math.max(...rows.map(impactOf))} />
+                  <td>
+                    <MetricCell values={op.errorsSparkline}
+                      priorValues={op.priorErrorsSparkline}
+                      color={errCls === 'ok' ? 'var(--text3)' : `var(--${errCls})`}
+                      textColor={errCls === 'ok' ? undefined : `var(--${errCls})`}
+                      text={`${op.errorRate.toFixed(2)}%`}
+                      compare={compare} hasPrior={op.hasPrior}
+                      cur={op.errorRate} prior={op.priorErrorRate ?? 0} kind="lowerBetter" />
                   </td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(op.spanCount)}</td>
                   <td className="mono" style={{ textAlign: 'right' }}>
-                    <span className={`badge b-${errCls === 'err' ? 'err' : errCls === 'warn' ? 'warn' : 'ok'}`}>
-                      {op.errorRate.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{op.avgDurationMs.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{op.p50DurationMs.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{op.p95DurationMs.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{op.p99DurationMs.toFixed(1)}ms</td>
-                  <td className="mono" style={{ textAlign: 'right', color: apdexColor(op.apdex), fontWeight: 600 }}>
-                    {isFinite(op.apdex) ? op.apdex.toFixed(2) : '—'}
+                    <ImpactBar value={impactOf(op)} max={maxImpact} />
+                    {compare && op.hasPrior && (
+                      <div style={{
+                        height: 3, borderRadius: 2, background: 'var(--accent2)', opacity: .35,
+                        width: `${maxImpact > 0 ? Math.min(100, priorImpact / maxImpact * 100) : 0}%`,
+                        marginTop: 2, marginLeft: 'auto',
+                      }} title="previous period impact (same scale)" />
+                    )}
                   </td>
                 </tr>
               );
@@ -523,6 +578,14 @@ function OperationMetricModal({
           <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
             ({service})
           </span>
+          {/* v0.9.61 — Apdex tablodan çıktı (5-kolon sadeleşmesi),
+              operasyon detayında yaşıyor. */}
+          {isFinite(op.apdex) && (
+            <span title="Apdex — user-satisfaction score (T=200ms)"
+              style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, color: apdexColor(op.apdex) }}>
+              apdex {op.apdex.toFixed(2)}
+            </span>
+          )}
         </span>
       }
     >
@@ -610,6 +673,40 @@ function OpMetricTile({
 // busiest operation always fills the cell. Keeps the heaviest
 // cumulative consumer visually obvious without forcing the
 // operator to read tabular numbers.
+// MetricCell — Elastic'in "ListMetric" hücresi (v0.9.61): sparkline +
+// sağa dayalı değer + (compare açıkken) TrendDelta çipi. Prior seri
+// varsa aynı kutuda %35 opaklıkta gölge olarak current'ın ALTINA
+// çizilir (grid-overlay — Sparkline bileşenine dokunmadan).
+function MetricCell({ values, priorValues, color, text, textColor, compare, hasPrior, cur, prior, kind }: {
+  values?: number[];
+  priorValues?: number[];
+  color?: string;
+  text: string;
+  textColor?: string;
+  compare: boolean;
+  hasPrior?: boolean;
+  cur: number;
+  prior: number;
+  kind: 'lowerBetter' | 'neutral';
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+      <span style={{ display: 'grid', flexShrink: 0 }}>
+        {compare && priorValues && priorValues.length > 0 && (
+          <span style={{ gridArea: '1 / 1', opacity: .35 }}>
+            <Sparkline values={priorValues} color={color} title="previous period" />
+          </span>
+        )}
+        <span style={{ gridArea: '1 / 1' }}>
+          <Sparkline values={values ?? []} color={color} title="" />
+        </span>
+      </span>
+      <b className="mono" style={{ fontSize: 12, minWidth: 56, textAlign: 'right', color: textColor }}>{text}</b>
+      {compare && hasPrior && <TrendDelta cur={cur} prior={prior} kind={kind} />}
+    </div>
+  );
+}
+
 function ImpactBar({ value, max }: { value: number; max: number }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
   return (

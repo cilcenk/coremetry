@@ -6,7 +6,9 @@ import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
 import { netTrendToSeries } from '@/pages/clusters/trendSeries';
 import { Gauge } from '@/pages/clusters/Gauge';
 import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
-import { safePct, restartColor } from '@/pages/clusters/thresholds';
+import { safePct, restartColor, fmtCores, fmtBps, podPhaseBadge } from '@/pages/clusters/thresholds';
+import { PodDrawer, TREND_WINDOWS } from '@/pages/clusters/PodDrawer';
+import { PromQLList } from '@/pages/clusters/PromQLList';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
 import { NamespaceCombobox } from '@/pages/clusters/NamespaceCombobox';
@@ -94,17 +96,10 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'restarts',  label: 'Restarts',  sortValue: r => r.restarts ?? 0, numeric: true, width: 84 },
 ];
 
-// fmtCores — 0.003 → "3m" (millicore okunuşu), 1.25 → "1.25".
-function fmtCores(v: number): string {
-  if (v < 0.01) return `${Math.round(v * 1000)}m`;
-  if (v < 1) return `${(v * 1000).toFixed(0)}m`;
-  return v.toFixed(2);
-}
+// fmtCores v0.9.51'de thresholds.ts'e taşındı (PodDrawer + §8 ortak).
 
 // fmtBps — ağ hızı: fmtBytes + '/s' (0 = bilinmiyor → çağıran '—' basar).
-function fmtBps(v: number): string {
-  return `${fmtBytes(v)}/s`;
-}
+// fmtBps v0.9.51'de thresholds.ts'e taşındı.
 
 // pctTitle — % hücresinin iki eksenli tooltip'i (v0.8.580): limit
 // ekseni (throttle/OOM) hücrede, request ekseni (provisioning
@@ -1158,115 +1153,9 @@ function NamespaceDrawer({ cluster, namespace, range, onClose }: {
   );
 }
 
-// PodDrawer — tek pod'un dakika-bucket'lı CPU/memory trendi.
-// Yalnız açılınca fetch (ES-cost disiplininin Thanos karşılığı);
-// staleTime = sunucu TTL'i.
-// TREND_WINDOWS — drawer-yerel adaptif pencere rung'ları (v0.9.1,
-// namespace-trend audit Dilim A). Sınırlı set → cache-key
-// kardinalitesi bounded (v0.8.270 disiplini); '' = sayfa range'i.
-const TREND_WINDOWS = [
-  { key: '', label: 'Page range' },
-  { key: '15m', label: '15m', ns: 15 * 60 * 1e9 },
-  { key: '1h', label: '1h', ns: 3600 * 1e9 },
-  { key: '6h', label: '6h', ns: 6 * 3600 * 1e9 },
-] as const;
+// PodDrawer + TREND_WINDOWS v0.9.51'de pages/clusters/PodDrawer.tsx'e
+// taşındı (§8 Service→Infrastructure sekmesiyle ortak).
 
-function PodDrawer({ cluster, namespace, pod, row, range, onClose }: {
-  cluster: string;
-  namespace: string;
-  pod: string;
-  row?: ClusterPodRow;
-  range: TimeRange;
-  onClose: () => void;
-}) {
-  // Adaptif pencere: ?tw= URL'de (kaynak-of-truth), sayfa range'inden
-  // bağımsız — AnomalyDetailDrawer'ın chartRange yaklaşımının
-  // kullanıcı-seçimli hali. Date.now() memo'su yalnız tw değişince
-  // koşar (timeRangeToNs'in kurulu semantiğiyle aynı).
-  const [params, setParams] = useSearchParams();
-  const tw = params.get('tw') ?? '';
-  const setTw = (v: string) => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    if (v) next.set('tw', v); else next.delete('tw');
-    return next;
-  }, { replace: true });
-  const { from, to } = useMemo(() => {
-    const w = TREND_WINDOWS.find(x => x.key === tw);
-    if (w && 'ns' in w && w.ns) {
-      const now = Date.now() * 1e6;
-      return { from: now - w.ns, to: now };
-    }
-    return timeRangeToNs(range);
-  }, [range, tw]);
-
-  return (
-    <Drawer onClose={onClose} header={
-      <>
-        <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 14, fontWeight: 600 }}>
-          {pod}
-        </span>
-        <span className="badge b-gray" title="namespace">{namespace}</span>
-        <span className="badge b-gray" title="cluster">{cluster}</span>
-      </>
-    }>
-      {/* v0.8.580 — iki eksenli anlık kırılım (limit + request). */}
-      {row && (
-        <DrawerSection title="Current">
-          <table style={{ width: '100%', fontSize: 12 }}>
-            <thead>
-              <tr style={{ color: 'var(--text3)', fontSize: 11, textAlign: 'left' }}>
-                <th></th><th className="num">Usage</th>
-                <th className="num">of limit</th><th className="num">of request</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>CPU</td>
-                <td className="num mono">{fmtCores(row.cpuCores)}</td>
-                <td className="num mono">{row.cpuPct ? `${row.cpuPct.toFixed(0)}%` : '—'}</td>
-                <td className="num mono" style={{
-                  color: (row.cpuPctOfReq ?? 0) > 100 ? 'var(--warn)' : undefined,
-                }}>{row.cpuPctOfReq ? `${row.cpuPctOfReq.toFixed(0)}%` : '—'}</td>
-              </tr>
-              <tr>
-                <td>Memory</td>
-                <td className="num mono">{fmtBytes(row.memBytes)}</td>
-                <td className="num mono">{row.memPct ? `${row.memPct.toFixed(0)}%` : '—'}</td>
-                <td className="num mono" style={{
-                  color: (row.memPctOfReq ?? 0) > 100 ? 'var(--warn)' : undefined,
-                }}>{row.memPctOfReq ? `${row.memPctOfReq.toFixed(0)}%` : '—'}</td>
-              </tr>
-            </tbody>
-          </table>
-        </DrawerSection>
-      )}
-      {/* v0.9.4 — Sparkline yerine tam MultiLineChart paneli
-          (trend-upgrade audit T2): eksen + hover + limit/request
-          threshold çizgileri; v0.9.1 tıkla-büyüt geçersiz kaldı. */}
-      <DrawerSection title="Trend (per minute)">
-        <div style={{ marginBottom: 8 }}>
-          <select value={tw} onChange={e => setTw(e.target.value)}
-            style={{ fontSize: 11 }}
-            title="Trend window — independent of the page range">
-            {TREND_WINDOWS.map(w => (
-              <option key={w.key} value={w.key}>{w.label}</option>
-            ))}
-          </select>
-        </div>
-        <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod}
-          row={row} fromNs={from} toNs={to} />
-      </DrawerSection>
-      {/* v0.9.40 (handoff §7) — pod'a özel referans PromQL'ler;
-          Overview kartıyla aynı display-only idiom. */}
-      <DrawerSection title="Prometheus queries">
-        <PromQLList queries={[
-          ['CPU (cores)', `rate(container_cpu_usage_seconds_total{cluster="${promQuote(cluster)}",namespace="${promQuote(namespace)}",pod="${promQuote(pod)}"}[5m])`],
-          ['Working-set memory', `container_memory_working_set_bytes{cluster="${promQuote(cluster)}",namespace="${promQuote(namespace)}",pod="${promQuote(pod)}"}`],
-        ]} />
-      </DrawerSection>
-    </Drawer>
-  );
-}
 
 // ResToggleHeader v0.9.49'da MetricArea'ya taşındı
 // (pages/clusters/MetricArea.tsx) — §8 Service sekmesiyle ortak.
@@ -1381,25 +1270,7 @@ function ClusterPromQLCard({ cluster }: { cluster: string }) {
   );
 }
 
-// PromQLList — etiket + <pre> sorgu listesi (README'nin PromQL kart
-// idiomu). Overview kartı ve pod drawer'ı (v0.9.40) paylaşır.
-function PromQLList({ queries }: { queries: [string, string][] }) {
-  return (
-    <div style={{ display: 'grid', gap: 10 }}>
-      {queries.map(([label, q]) => (
-        <div key={label}>
-          <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 3 }}>{label}</div>
-          <pre style={{
-            margin: 0, padding: '7px 9px', borderRadius: 4,
-            background: 'var(--bg0)', border: '1px solid var(--border)',
-            fontFamily: 'ui-monospace, monospace', fontSize: 11,
-            whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text2)',
-          }}>{q}</pre>
-        </div>
-      ))}
-    </div>
-  );
-}
+// PromQLList v0.9.51'de pages/clusters/PromQLList.tsx'e taşındı.
 
 // podPhaseBadge — kube_pod_status_phase → badge sınıfı (v0.9.37).
 // depStatusBadge — Deployment statü rozeti (v0.9.39, handoff §5):
@@ -1410,12 +1281,4 @@ function depStatusBadge(status: string): string {
   return 'b-err';
 }
 
-function podPhaseBadge(phase: string): string {
-  switch (phase) {
-    case 'Running': return 'b-ok';
-    case 'Succeeded': return 'b-info';
-    case 'Pending': return 'b-warn';
-    case 'Failed': case 'Unknown': return 'b-err';
-    default: return 'b-gray';
-  }
-}
+// podPhaseBadge v0.9.51'de thresholds.ts'e taşındı.

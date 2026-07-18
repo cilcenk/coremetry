@@ -7,6 +7,7 @@ import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/rec
 import { useUrlRange } from '@/lib/useUrlRange';
 import { ServiceOverview } from './service/Overview';
 import { ServiceTracesTab, ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
+import { ServiceInfraTab } from './service/ServiceInfraTab';
 import { OperationsTable } from './service/OperationsTable';
 import { ServiceClusterBreakdown } from './service/ServiceClusterBreakdown';
 import { ServiceLatencyHeatmap } from './service/ServiceLatencyHeatmap';
@@ -33,7 +34,7 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
-type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology';
+type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology' | 'infra';
 
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -98,6 +99,7 @@ function ServiceDetailInner() {
     : tabParam === 'traces' ? 'traces'
     : tabParam === 'logs' ? 'logs'
     : tabParam === 'topology' ? 'topology'
+    : tabParam === 'infra' ? 'infra'
     : 'overview';
   // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
   // the Details tab body actually exists in the DOM. Browser
@@ -465,6 +467,7 @@ function ServiceDetailInner() {
             {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
             {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}
+            {tab === 'infra' && <ServiceInfraTab service={svc} range={range} />}
             {tab === 'operations' && (
               <OperationsTable service={svc} rows={displayedOps} range={range}
                 preset={range.preset}
@@ -619,6 +622,7 @@ function TabStrip({ tab, onChange, opCount }: {
     { key: 'operations', label: 'Operations', hint: opCount > 0 ? `${opCount}` : undefined },
     { key: 'details',    label: 'Details' },
     { key: 'topology',   label: 'Topology' },
+    { key: 'infra',      label: 'Infrastructure' },
     { key: 'traces',     label: 'Traces' },
     { key: 'logs',       label: 'Logs' },
   ];

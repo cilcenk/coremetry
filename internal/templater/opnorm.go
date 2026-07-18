@@ -105,6 +105,17 @@ func NormalizeOperation(name, kind, httpMethod, httpRoute, dbSystem, dbStatement
 	return ""
 }
 
+// NormalizePathTemplate — ham bir URL path'ini id-soyulmuş şablona
+// indirir (v0.9.71): /api/accounts/12345?x=1 → /api/accounts/:id.
+// Ingest'in http_route fallback'i için dışa açıldı: yeni semconv'un
+// url.path'i route templating'i olmadan gelir; ham haliyle
+// LowCardinality http_route kolonuna GİREMEZ (kardinalite patlar),
+// bu şablon op_group'un kullandığı normalizePath'in aynısıdır —
+// kardinalite emsali kanıtlı.
+func NormalizePathTemplate(path string) string {
+	return cap200(normalizePath(path))
+}
+
 // splitMethodPath returns (method, path, true) when name starts with
 // a recognised HTTP method token followed by a space. Otherwise
 // ("","",false).

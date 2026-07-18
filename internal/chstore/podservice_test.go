@@ -21,8 +21,23 @@ func TestPodServiceMapSQLUsesClusterDeriveExpr(t *testing.T) {
 	if !strings.Contains(podServiceMapSQL, "attr_values") {
 		t.Error("attr-yolu yedeği kayıp (res-only'ye gerileme)")
 	}
-	if !strings.Contains(podServiceMapSQL, clusterDeriveExpr) {
-		t.Error("podServiceMapSQL merkez clusterDeriveExpr'i kullanmıyor — zincirler ayrışabilir")
+	// v0.9.55 — herhangi-biri-eşleşirse (? IN (...)): coalesce önceliği
+	// iki anahtar farklı değer bastığında ikinci adı maskeliyordu.
+	// IN seti derive zincirinin 6 anahtarının TAMAMINI taşımalı.
+	if !strings.Contains(podServiceMapSQL, "? IN (") {
+		t.Error("cluster filtresi any-of (? IN) formunda değil — öncelik maskelemesi geri gelir")
+	}
+	for _, frag := range []string{
+		"res_values[indexOf(res_keys, 'k8s.cluster.name')]",
+		"res_values[indexOf(res_keys, 'openshift.cluster.name')]",
+		"res_values[indexOf(res_keys, 'cluster')]",
+		"attr_values[indexOf(attr_keys, 'k8s.cluster.name')]",
+		"attr_values[indexOf(attr_keys, 'openshift.cluster.name')]",
+		"attr_values[indexOf(attr_keys, 'cluster')]",
+	} {
+		if !strings.Contains(podServiceMapSQL, frag) {
+			t.Errorf("any-of setinde eksik yol: %s", frag)
+		}
 	}
 }
 

@@ -23,15 +23,26 @@ import (
 // tarafında çözülür, 3 aday yeter.
 // v0.9.52 (openshift-cluster-attr audit B1) — cluster filtresi yalnız
 // k8s.cluster.name okuyordu; salt openshift.cluster.name basan bir
-// OpenShift cluster'ında eşleşme sessizce boşalıyordu. Artık spans'ın
-// merkez clusterDeriveExpr'i (6-yollu, openshift dahil) AYNEN kullanılır
-// — iki yol yapısal olarak ayrışamaz (metric_points aynı res/attr array
-// kolonlarını taşır).
+// OpenShift cluster'ında eşleşme sessizce boşalıyordu.
+// v0.9.55 (operatör: "birini bulamazsa diğerine baksın") — coalesce
+// ÖNCELİĞİ yerine herhangi-biri-eşleşirse: iki anahtar FARKLI
+// değerlerle basılırsa (k8s.cluster.name="prod-1",
+// openshift.cluster.name="ocp-prod-1") öncelik ikinci adı maskeler ve
+// o adla filtre boş dönerdi. Sorgu zaten satır başına array taraması
+// yapıyor — IN seti aynı maliyette, maskeleme yok. Anahtar seti
+// clusterDeriveExpr'inkiyle birebir (podservice_test pinler).
 var podServiceMapSQL = `
 	SELECT host_name, groupUniqArray(3)(service_name) AS services
 	FROM metric_points
 	WHERE time >= ? AND time <= ? AND host_name != ''
-	  AND (? = '' OR ` + clusterDeriveExpr + ` = ?)
+	  AND (? = '' OR ? IN (
+	    res_values[indexOf(res_keys, 'k8s.cluster.name')],
+	    res_values[indexOf(res_keys, 'openshift.cluster.name')],
+	    res_values[indexOf(res_keys, 'cluster')],
+	    attr_values[indexOf(attr_keys, 'k8s.cluster.name')],
+	    attr_values[indexOf(attr_keys, 'openshift.cluster.name')],
+	    attr_values[indexOf(attr_keys, 'cluster')]
+	  ))
 	GROUP BY host_name
 	LIMIT 5000
 	SETTINGS max_execution_time = 10`

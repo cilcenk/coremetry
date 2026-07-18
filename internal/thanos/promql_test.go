@@ -127,3 +127,36 @@ func TestSamplePairDecoding(t *testing.T) {
 		})
 	}
 }
+
+// v0.9.50 (design handoff §8) — deployment-kapsamlı trend builder:
+// pod regex'i "<deploy>-.*" önekli, deploy adı regex-meta + label
+// kaçışlı; byPod topk'siz sum by (pod) (v0.9.3 adım-kayması notu).
+func TestDeployTrendQuery(t *testing.T) {
+	cases := []struct {
+		name string
+		q    string
+		want []string
+	}{
+		{"cpu total", deployTrendQuery("payments", "api-gw", "cpu", false),
+			[]string{`sum(rate(container_cpu_usage_seconds_total{`, `namespace="payments"`, `pod=~"api-gw-.*"`}},
+		{"mem byPod", deployTrendQuery("payments", "api-gw", "mem", true),
+			[]string{`sum by (pod) (container_memory_working_set_bytes{`, `pod=~"api-gw-.*"`}},
+		{"regex meta kaçışı", deployTrendQuery("ns", "svc.v2", "cpu", false),
+			[]string{`pod=~"svc\\.v2-.*"`}},
+	}
+	for _, c := range cases {
+		for _, w := range c.want {
+			if !strings.Contains(c.q, w) {
+				t.Errorf("%s: %q içinde %q yok", c.name, c.q, w)
+			}
+		}
+	}
+	for _, q := range []string{
+		deployTrendQuery("ns", "d", "cpu", true),
+		deployTrendQuery("ns", "d", "mem", true),
+	} {
+		if strings.Contains(q, "topk") {
+			t.Errorf("byPod sorgusu topk içermemeli (adım-kayması): %q", q)
+		}
+	}
+}

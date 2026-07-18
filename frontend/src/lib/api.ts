@@ -20,7 +20,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
-  ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse,
+  ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
   RelationResponse, RelationKind, FilterExpr,
@@ -971,6 +971,11 @@ export const api = {
   clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number) =>
     get<ClusterResourceTrendResponse>(`/api/clusters/resource-trend?cluster=${encodeURIComponent(cluster)}` +
       `&metric=${metric}&byNode=${byNode ? 1 : 0}&from=${fromNs}&to=${toNs}`),
+  // v0.9.50 (handoff §8) — Service→Infra sekmesinin CPU/Mem grafiği.
+  clusterDeployTrend: (cluster: string, ns: string, deploy: string, metric: 'cpu' | 'mem', byPod: boolean, fromNs: number, toNs: number) =>
+    get<ClusterDeployTrendResponse>(`/api/clusters/deploy-trend?cluster=${encodeURIComponent(cluster)}` +
+      `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
+      `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
   clusterNetworkTrend: (cluster: string, fromNs: number, toNs: number) =>
     get<ClusterNetworkTrendResponse>(`/api/clusters/network-trend?cluster=${encodeURIComponent(cluster)}` +
       `&from=${fromNs}&to=${toNs}`),

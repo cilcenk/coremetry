@@ -1083,6 +1083,15 @@ export interface ClusterAlertsResponse {
   alerts: ClusterAlertRow[] | null;
   count: number;
 }
+// v0.9.50 — deployment-kapsamlı CPU/Mem trendi (Service→Infra §8).
+export interface ClusterDeployTrendResponse {
+  cluster: string;
+  namespace: string;
+  deployment: string;
+  metric: 'cpu' | 'mem';
+  byPod: boolean;
+  series: ClusterNamedSeries[] | null;
+}
 // v0.9.35 — cluster/per-node kaynak trendi (Overview CPU/Mem area).
 export interface ClusterNamedSeries {
   name: string;

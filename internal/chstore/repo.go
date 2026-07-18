@@ -867,6 +867,12 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 // enough to be readable, narrow enough to fit beside the numeric cols).
 const SparklineBuckets = 30
 
+// latSparkCap — avg/p50/p95 latency serileri yalnız ilk N satıra
+// (v0.9.64, review perf bulgusu): satırlar span_count desc sıralı,
+// 150+ sırası fold altında; skaler değer + TrendDelta her satırda
+// kalır. calls/errors/p99 serileri kapsam dışı (pre-v0.9.60 sözleşme).
+const latSparkCap = 150
+
 // queryOperationsFromMV reads the operation_summary_5m MV (added
 // in v0.4.99) instead of scanning raw spans for per-operation
 // aggregates over a wide window. The MV is an
@@ -1025,37 +1031,48 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		if !ok {
 			continue
 		}
+		// v0.9.64 (review perf) — YENİ latency serileri (avg/p50/p95)
+		// yalnız ilk latSparkCap satıra: satırlar span_count desc gelir,
+		// 150+ sırası fold altında ve değer+delta zaten skalerden.
+		// calls/errors/p99 TÜM satırlarda kalır (pre-v0.9.60 sözleşme —
+		// detay modalı onları okur).
+		wantLat := i < latSparkCap
 		if out[i].Sparkline == nil {
 			out[i].Sparkline = make([]uint64, SparklineBuckets)
 			out[i].ErrorsSparkline = make([]uint64, SparklineBuckets)
 			out[i].P99Sparkline = make([]float64, SparklineBuckets)
-			out[i].P95Sparkline = make([]float64, SparklineBuckets)
-			out[i].P50Sparkline = make([]float64, SparklineBuckets)
-			out[i].AvgSparkline = make([]float64, SparklineBuckets)
-			sumByIdx[i] = make([]float64, SparklineBuckets)
+			if wantLat {
+				out[i].P95Sparkline = make([]float64, SparklineBuckets)
+				out[i].P50Sparkline = make([]float64, SparklineBuckets)
+				out[i].AvgSparkline = make([]float64, SparklineBuckets)
+				sumByIdx[i] = make([]float64, SparklineBuckets)
+			}
 		}
 		if bidx >= 0 && int(bidx) < SparklineBuckets {
 			out[i].Sparkline[bidx] += c
 			out[i].ErrorsSparkline[bidx] += e
-			sumByIdx[i][bidx] += safeF(sumMs)
 			// Per-bucket quantiles — pick the max across coalesced MV
 			// buckets that map to the same sparkline slot, same
 			// idiom as the topology MV merges. Conservative read.
-			if v := safeF(p99); v > out[i].P99Sparkline[bidx] {
+			// round2: payload disiplini (v0.9.64).
+			if v := round2(safeF(p99)); v > out[i].P99Sparkline[bidx] {
 				out[i].P99Sparkline[bidx] = v
 			}
-			if v := safeF(p95); v > out[i].P95Sparkline[bidx] {
-				out[i].P95Sparkline[bidx] = v
-			}
-			if v := safeF(p50); v > out[i].P50Sparkline[bidx] {
-				out[i].P50Sparkline[bidx] = v
+			if wantLat {
+				sumByIdx[i][bidx] += safeF(sumMs)
+				if v := round2(safeF(p95)); v > out[i].P95Sparkline[bidx] {
+					out[i].P95Sparkline[bidx] = v
+				}
+				if v := round2(safeF(p50)); v > out[i].P50Sparkline[bidx] {
+					out[i].P50Sparkline[bidx] = v
+				}
 			}
 		}
 	}
 	for i, sums := range sumByIdx {
 		for b := 0; b < SparklineBuckets; b++ {
 			if out[i].Sparkline[b] > 0 {
-				out[i].AvgSparkline[b] = sums[b] / float64(out[i].Sparkline[b])
+				out[i].AvgSparkline[b] = round2(sums[b] / float64(out[i].Sparkline[b]))
 			}
 		}
 	}
@@ -1087,7 +1104,15 @@ func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string,
 		return cur, err
 	}
 	dur := winEnd.Sub(winStart)
-	prior, perr := s.GetOperationSummary(ctx, service, 0, winStart.Add(-dur), winStart, normalized)
+	// v0.9.64 (review MAJÖR) — prior pencerenin sonu, winStart'ı içeren
+	// 5dk MV bucket'ını DIŞLAMALI: queryOperationsFromMV başlangıcı
+	// aşağı yuvarlayıp sonu dahil ettiğinden floor5(winStart) bucket'ı
+	// her iki pencereye TAM olarak giriyordu — deploy-compare'de
+	// deploy-sonrası hatalar prior'a sızıp TrendDelta'yı sulandırıyordu
+	// (15dk pencerede ~1/3'e kadar). floor5(ws)-1s: bucket-start
+	// karşılaştırmasında önceki bucket'ta biter.
+	priorEnd := winStart.Truncate(5 * time.Minute).Add(-time.Second)
+	prior, perr := s.GetOperationSummary(ctx, service, 0, winStart.Add(-dur), priorEnd, normalized)
 	if perr != nil {
 		return cur, nil
 	}
@@ -1311,12 +1336,20 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	// mode select/filter/group by op_group (aliased back AS name so the
 	// scanner + idxByName lookup are shared). wc already carries the
 	// op_group != '' predicate appended above.
+	// v0.9.64 (review m7) — raw yol da avg/p50/p95 serilerini üretir:
+	// v0.9.61'in Latency kolonu p95 default'uyla sub-5dk pencerede
+	// (raw yol) en görünür hücre '—' basıyordu. MV yolundaki genişletmenin
+	// aynısı; quantileTDigest raw'da da ~%2 hata ile yeter (pitfall
+	// kuralı: 1M+ satırda quantile() değil).
 	sparkRows, err := s.conn.Query(ctx, `
 		SELECT `+rawNameCol+` AS name,
 		       intDiv(toUInt32(time) - toUInt32(?), ?) AS bidx,
 		       count()                                 AS c,
 		       countIf(status_code = 'error')          AS e,
-		       quantile(0.99)(duration) / 1e6          AS p99
+		       sum(duration) / 1e6                     AS sum_ms,
+		       quantileTDigest(0.5)(duration) / 1e6    AS p50,
+		       quantileTDigest(0.95)(duration) / 1e6   AS p95,
+		       quantileTDigest(0.99)(duration) / 1e6   AS p99
 		FROM spans `+wc.sql()+`
 		  AND `+rawNameCol+` IN (`+strings.Join(holders, ",")+`)
 		GROUP BY `+rawNameCol+`, bidx
@@ -1329,12 +1362,13 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		return out, nil
 	}
 	defer sparkRows.Close()
+	rawSums := map[int][]float64{}
 	for sparkRows.Next() {
 		var name string
 		var bidx int64
 		var c, e uint64
-		var p99 *float64
-		if err := sparkRows.Scan(&name, &bidx, &c, &e, &p99); err != nil {
+		var sumMs, p50, p95, p99 *float64
+		if err := sparkRows.Scan(&name, &bidx, &c, &e, &sumMs, &p50, &p95, &p99); err != nil {
 			continue
 		}
 		i, ok := idxByName[name]
@@ -1345,16 +1379,43 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 			out[i].Sparkline = make([]uint64, SparklineBuckets)
 			out[i].ErrorsSparkline = make([]uint64, SparklineBuckets)
 			out[i].P99Sparkline = make([]float64, SparklineBuckets)
+			out[i].P95Sparkline = make([]float64, SparklineBuckets)
+			out[i].P50Sparkline = make([]float64, SparklineBuckets)
+			out[i].AvgSparkline = make([]float64, SparklineBuckets)
+			rawSums[i] = make([]float64, SparklineBuckets)
 		}
 		if bidx >= 0 && int(bidx) < SparklineBuckets {
 			out[i].Sparkline[bidx] += c
 			out[i].ErrorsSparkline[bidx] += e
-			if v := safeF(p99); v > out[i].P99Sparkline[bidx] {
+			rawSums[i][bidx] += safeF(sumMs)
+			if v := round2(safeF(p99)); v > out[i].P99Sparkline[bidx] {
 				out[i].P99Sparkline[bidx] = v
+			}
+			if v := round2(safeF(p95)); v > out[i].P95Sparkline[bidx] {
+				out[i].P95Sparkline[bidx] = v
+			}
+			if v := round2(safeF(p50)); v > out[i].P50Sparkline[bidx] {
+				out[i].P50Sparkline[bidx] = v
+			}
+		}
+	}
+	for i, sums := range rawSums {
+		for b := 0; b < SparklineBuckets; b++ {
+			if out[i].Sparkline[b] > 0 {
+				out[i].AvgSparkline[b] = round2(sums[b] / float64(out[i].Sparkline[b]))
 			}
 		}
 	}
 	return out, nil
+}
+
+// round2 — sparkline float'ları 2 ondalığa yuvarlanır (v0.9.64, review
+// perf bulgusu): Go'nun shortest-round-trip marshal'ı tdigest/1e6
+// bölümlerinden 17-19 karakterlik float'lar basıyordu; 500-op tavanında
+// yanıt ~1.35MB'a şişmişti. 2 ondalık ms hassasiyeti sparkline için
+// fazlasıyla yeter, gövdeyi ~%60 küçültür.
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }
 
 

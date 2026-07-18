@@ -1456,6 +1456,21 @@ export interface OperationSummary {
   // / raw-spans path may omit them).
   errorsSparkline?: number[];
   p99Sparkline?: number[];
+  // v0.9.60 (Elastic-parity Operations) — latency hücresinin
+  // percentile-seçicili sparkline'ı + compare=prior alanları.
+  avgSparkline?: number[];
+  p50Sparkline?: number[];
+  p95Sparkline?: number[];
+  hasPrior?: boolean;
+  priorSpanCount?: number;
+  priorErrorCount?: number;
+  priorErrorRate?: number;
+  priorAvgDurationMs?: number;
+  priorP50DurationMs?: number;
+  priorP95DurationMs?: number;
+  priorP99DurationMs?: number;
+  priorSparkline?: number[];
+  priorErrorsSparkline?: number[];
 }
 
 // One 5-minute bucket from the service_summary_5m MV — used to render

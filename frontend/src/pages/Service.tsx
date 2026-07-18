@@ -267,11 +267,28 @@ function ServiceDetailInner() {
     enabled: !!svc && normalized,
     staleTime: 60_000,
   });
-  // The table's data source flips with the toggle: bundle ops when raw,
-  // the op_group query when normalized. Everything downstream (row
-  // renderer, useDataTable sort, sparkline) is unchanged — only `rows`.
-  const displayedOps = normalized ? (normOpsQ.data ?? []) : operations;
-  const opsLoading = normalized && normOpsQ.isLoading;
+  // v0.9.61 (Elastic-parity 2/3) — ?compare=prior URL'de (kaynak-of-
+  // truth): açıkken operations compare=prior ile yeniden fetch edilir
+  // (prior skalerler + gölge seriler); bundle'daki raw satırlar prior
+  // taşımadığından compare kendi query'sine biner. Key compare'i
+  // İÇERİR (hash-all-inputs).
+  const opsCompare = searchParams.get('compare') === 'prior';
+  const setOpsCompare = (v: boolean) => setSearchParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('compare', 'prior'); else next.delete('compare');
+    return next;
+  }, { replace: true });
+  const cmpOpsQ = useQuery({
+    queryKey: keys.services.operations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, normalized, true),
+    queryFn: () => api.serviceOperations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, normalized, true),
+    enabled: !!svc && opsCompare,
+    staleTime: 60_000,
+  });
+  // The table's data source flips with the toggles: bundle ops when raw,
+  // the op_group query when normalized, the compare query when compare.
+  const displayedOps = opsCompare ? (cmpOpsQ.data ?? [])
+    : normalized ? (normOpsQ.data ?? []) : operations;
+  const opsLoading = (normalized && normOpsQ.isLoading) || (opsCompare && cmpOpsQ.isLoading);
 
   if (!svc) {
     return (
@@ -481,6 +498,8 @@ function ServiceDetailInner() {
                 onWiden={() => setRange({ preset: '1h' })}
                 normalized={normalized}
                 onToggleNormalized={setNormalized}
+                compare={opsCompare}
+                onToggleCompare={setOpsCompare}
                 loading={opsLoading} />
             )}
             {tab === 'details' && (

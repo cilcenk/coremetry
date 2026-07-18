@@ -479,10 +479,12 @@ func (s *Store) DeriveServiceNamespaces(ctx context.Context, since time.Duration
 // deriveDeploymentSQL — deriveNamespaceSQL'in tek-attribute eşleniği:
 // k8s.deployment.name (resource önce, sonra span attr). v0.9.25.
 // v0.9.53 (B2) — OpenShift/legacy yedekleri: kubernetes.deployment.name /
-// kubernetes.deployment_name + DeploymentConfig'li eski OpenShift için
-// openshift.deploymentconfig.name. ES'in kubernetes.labels.app takma adı
-// BİLİNÇLİ dışarıda: app label'ı deployment adıyla aynı olmak zorunda
-// değil, yanlış eşleşme infra pod korelasyonunu bozar.
+// kubernetes.deployment_name + openshift.deployment.name (v0.9.54 —
+// operatör düzeltmesi: filo openshift.deployment.name basar,
+// deploymentconfig değil; openshift.cluster.name ile simetrik).
+// ES'in kubernetes.labels.app takma adı BİLİNÇLİ dışarıda: app label'ı
+// deployment adıyla aynı olmak zorunda değil, yanlış eşleşme infra pod
+// korelasyonunu bozar.
 const deriveDeploymentSQL = `
 SELECT service_name, argMax(dep_val, c) AS dep
 FROM (
@@ -493,19 +495,19 @@ FROM (
         has(res_keys, 'k8s.deployment.name'),  res_values[indexOf(res_keys, 'k8s.deployment.name')],
         has(res_keys, 'kubernetes.deployment.name'), res_values[indexOf(res_keys, 'kubernetes.deployment.name')],
         has(res_keys, 'kubernetes.deployment_name'), res_values[indexOf(res_keys, 'kubernetes.deployment_name')],
-        has(res_keys, 'openshift.deploymentconfig.name'), res_values[indexOf(res_keys, 'openshift.deploymentconfig.name')],
+        has(res_keys, 'openshift.deployment.name'), res_values[indexOf(res_keys, 'openshift.deployment.name')],
         has(attr_keys, 'k8s.deployment.name'), attr_values[indexOf(attr_keys, 'k8s.deployment.name')],
         has(attr_keys, 'kubernetes.deployment.name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment.name')],
         has(attr_keys, 'kubernetes.deployment_name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment_name')],
-        has(attr_keys, 'openshift.deploymentconfig.name'), attr_values[indexOf(attr_keys, 'openshift.deploymentconfig.name')],
+        has(attr_keys, 'openshift.deployment.name'), attr_values[indexOf(attr_keys, 'openshift.deployment.name')],
         '') AS dep_val
     FROM spans
     WHERE time >= ? AND time <= ?
       AND ( has(res_keys, 'k8s.deployment.name') OR has(attr_keys, 'k8s.deployment.name')
          OR has(res_keys, 'kubernetes.deployment.name') OR has(res_keys, 'kubernetes.deployment_name')
-         OR has(res_keys, 'openshift.deploymentconfig.name')
+         OR has(res_keys, 'openshift.deployment.name')
          OR has(attr_keys, 'kubernetes.deployment.name') OR has(attr_keys, 'kubernetes.deployment_name')
-         OR has(attr_keys, 'openshift.deploymentconfig.name') )
+         OR has(attr_keys, 'openshift.deployment.name') )
     LIMIT 2000000
   )
   WHERE dep_val != ''

@@ -3,6 +3,8 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
+import { resolveVar } from '@/lib/chart/resolveVar';
+import { yRangeHeadroom } from '@/lib/chart/yRange';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
@@ -46,20 +48,8 @@ interface Props {
   onZoom?: (fromSec: number, toSec: number) => void;
 }
 
-function cssVar(v: string): string {
-  // Resolve a var(--x) token to its computed value for canvas strokes.
-  const m = /^var\((--[\w-]+)\)$/.exec(v.trim());
-  if (!m) return v;
-  return getComputedStyle(document.documentElement).getPropertyValue(m[1]).trim() || v;
-}
-
-// y range derived from the LIVE data extremes (0-based, 10% headroom, floor 1)
-// — a function so u.setData() re-fits the axis on the fast-path. In stacked
-// mode uPlot's auto dataMax is the top cumulative line (largest layer), which
-// matches the old explicit "max of cum[last]".
-function yRange(_u: uPlot, _min: number, max: number): [number, number] {
-  return [0, max > 0 ? max * 1.1 : 1];
-}
+// v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a
+// çıkarıldı (dört bileşende byte-identical kopyaydı).
 
 export function OverviewChart({
   times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom,
@@ -115,10 +105,10 @@ export function OverviewChart({
     const el = hostRef.current;
     if (!el || times.length < 2 || series.length === 0) return;
 
-    const colors = series.map(s => cssVar(s.color));
-    const gridc = cssVar('var(--border)');
-    const text3 = cssVar('var(--text3)');
-    const purple = cssVar('var(--purple)');
+    const colors = series.map(s => resolveVar(s.color));
+    const gridc = resolveVar('var(--border)');
+    const text3 = resolveVar('var(--text3)');
+    const purple = resolveVar('var(--purple)');
 
     const stacked = mode === 'stacked';
 
@@ -159,7 +149,7 @@ export function OverviewChart({
         drag: { x: true, y: false, setScale: true },
       },
       legend: { show: false },
-      scales: { x: { time: true }, y: { range: yRange } },
+      scales: { x: { time: true }, y: { range: yRangeHeadroom } },
       axes: [
         { stroke: text3, grid: { show: false }, ticks: { show: false }, size: 22, font: '10px ui-monospace, monospace' },
         {

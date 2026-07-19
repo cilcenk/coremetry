@@ -7,6 +7,7 @@ import { escapeHTML } from '@/lib/utils';
 import { placeTooltip } from '@/components/MultiLineChart';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { timeSeriesPanelBuildSignature } from '@/lib/chartBuildSig';
+import { resolveVar as resolveColor } from '@/lib/chart/resolveVar';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -105,13 +106,9 @@ interface TimeSeriesPanelProps {
   onExemplarClick?: (traceId: string) => void;
 }
 
-// Resolve a var(--x) token (or a raw colour) to a concrete hex/rgb for canvas
-// strokes. uPlot draws to a 2D canvas which can't read CSS vars directly.
-function resolveColor(c: string): string {
-  const m = /^var\((--[\w-]+)\)$/.exec(c.trim());
-  if (!m) return c;
-  return getComputedStyle(document.documentElement).getPropertyValue(m[1]).trim() || c;
-}
+// v0.9.75 (chart-consolidation Adım 0) — resolveColor lib/chart/
+// resolveVar'a çıkarıldı (OVC/TC cssVar ile aynı regex + fallback);
+// import dosya başında, `resolveColor` alias'ı ile kullanım aynı kaldı.
 
 // Append an alpha byte to a #rrggbb colour for fills. Non-hex colours pass
 // through unchanged (uPlot still strokes/fills, just opaque-ish — acceptable).

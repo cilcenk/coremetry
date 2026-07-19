@@ -4,6 +4,8 @@ import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtXTicks } from '@/lib/chartFmt';
 import { timeChartBuildSignature } from '@/lib/chartBuildSig';
+import { resolveVar } from '@/lib/chart/resolveVar';
+import { yRangeHeadroom } from '@/lib/chart/yRange';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Generalises the proven
 // OverviewChart uPlot wrapper (Canvas, so it also lands the "charts to Canvas"
@@ -56,19 +58,9 @@ interface Props {
   fmtX?: (tsSec: number) => string;
 }
 
-function cssVar(v: string): string {
-  const m = /^var\((--[\w-]+)\)$/.exec(v.trim());
-  if (!m) return v;
-  return getComputedStyle(document.documentElement).getPropertyValue(m[1]).trim() || v;
-}
+// v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a
+// çıkarıldı (OVC ile byte-identical'dı).
 const kfmt = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(v < 10 && v % 1 !== 0 ? 1 : 0));
-
-// y range derived from the LIVE data extremes (0-based, 10% headroom, floor 1)
-// — reproduces the old maxOf() constant but as a function so u.setData() re-fits
-// the axis on the data fast-path instead of pinning a stale build-time max.
-function yRange(_u: uPlot, _min: number, max: number): [number, number] {
-  return [0, max > 0 ? max * 1.1 : 1];
-}
 
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
@@ -112,9 +104,9 @@ export function TimeChart({
     const el = hostRef.current;
     if (!el || times.length < 2 || series.length === 0) return;
 
-    const colors = series.map(s => cssVar(s.color));
-    const gridc = cssVar('var(--border)');
-    const text3 = cssVar('var(--text3)');
+    const colors = series.map(s => resolveVar(s.color));
+    const gridc = resolveVar('var(--border)');
+    const text3 = resolveVar('var(--text3)');
     const hasRight = series.some(s => s.axis === 'right');
 
     const barPath = uPlot.paths.bars!({ size: [0.86, Infinity], align: 0 });
@@ -127,7 +119,7 @@ export function TimeChart({
           if (!deployMarkers?.length) return;
           const ctx = u.ctx;
           ctx.save();
-          ctx.strokeStyle = cssVar('var(--err)');
+          ctx.strokeStyle = resolveVar('var(--err)');
           ctx.globalAlpha = 0.8;
           ctx.lineWidth = 1.4 * devicePixelRatio;
           ctx.setLineDash([4 * devicePixelRatio, 3 * devicePixelRatio]);
@@ -183,8 +175,8 @@ export function TimeChart({
       legend: { show: false },
       scales: {
         x: { time: true },
-        y: { range: yRange },
-        ...(hasRight ? { y2: { range: yRange } } : {}),
+        y: { range: yRangeHeadroom },
+        ...(hasRight ? { y2: { range: yRangeHeadroom } } : {}),
       },
       axes,
       series: [

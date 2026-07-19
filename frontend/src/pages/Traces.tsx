@@ -8,8 +8,9 @@
 //   • The trace table renders through VirtualTable (windowed) with a Duration
 //     BAR, service-coloured badges, error tints, row-expand mini-waterfall,
 //     j/k/Enter/"/" keyboard nav.
-//   • Quick-filter chips (Errors / Slow>1s / per-top-service), "+ Add filter"
-//     otel-attr chips, "+ Column" via ColumnManager, full filter row.
+//   • Quick-filter chips (Errors / Slow>1s / per-top-service), the advanced
+//     FilterBuilder ("+ Add filter" → attribute/op/value, with a grouped
+//     AND/OR mode), "+ Column" via ColumnManager, full filter row.
 //   • Aggregated + Shapes tabs preserved.
 //
 // Range is the SINGLE-source-of-truth via useUrlRange; timeRangeToNs(range)
@@ -46,19 +47,6 @@ import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { MiniWaterfall } from '@/components/traces/MiniWaterfall';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, QuickChip, svcColor, fmtDur } from '@/components/traces/shared';
-
-// Attribute keys offered by the "+ Add filter" menu. Each appends a FilterExpr
-// to advFilters (server-narrowing + URL-reflected). Mirrors the OTel semconv
-// keys the task calls out (http.status_code/http.route/rpc.method/db.system/
-// k8s.pod.name/cloud.region).
-const QUICK_ATTR_KEYS = [
-  'http.status_code', 'http.route', 'rpc.method', 'db.system',
-  'k8s.pod.name', 'cloud.region',
-];
-const QUICK_ATTR_DEFAULT: Record<string, string> = {
-  'http.status_code': '500',
-  'db.system': 'oracle',
-};
 
 type View = 'list' | 'aggregate' | 'shapes' | 'relations';
 type GroupBy =
@@ -245,8 +233,6 @@ function TracesPageInner() {
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
   const [quick, setQuick] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [addFilterOpen, setAddFilterOpen] = useState(false);
-  const addFilterRef = useRef<HTMLDivElement>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
   // Scatter brush narrows the page range; stash the pre-brush range for restore.
   const [brushPrev, setBrushPrev] = useState<TimeRange | null>(null);
@@ -332,14 +318,19 @@ function TracesPageInner() {
     // v0.8.300 (quality bar S3) — stale-overwrite guard, same pattern as the
     // volume-strip effect below.
     let cancelled = false;
+    // Only a FULL 32-hex trace id is honoured server-side (prefix search
+    // removed v0.9.X — startsWith defeats the trace_id bloom index and runs
+    // unbounded). A partial id is ignored here so the normal time-bounded
+    // list still renders; a complete id navigates away via apply().
     const tid = filter.traceId.trim().toLowerCase();
-    const useTimeRange = tid.length === 0;
+    const traceIdExact = /^[0-9a-f]{32}$/.test(tid) ? tid : undefined;
+    const useTimeRange = !traceIdExact;
     const { from, to } = useTimeRange ? listRangeNs : { from: undefined, to: undefined };
     api.traces({
       limit: 50, offset: page * 50, from, to, sort, order,
       service: filter.service || undefined,
       search: filter.search || undefined,
-      traceId: tid || undefined,
+      traceId: traceIdExact,
       minMs: filter.minMs || undefined,
       maxMs: filter.maxMs || undefined,
       hasError: filter.hasError || undefined,
@@ -353,7 +344,7 @@ function TracesPageInner() {
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
       extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
-      count: showTotal && !tid ? 'exact' : 'skip',
+      count: showTotal && !traceIdExact ? 'exact' : 'skip',
     }).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
       if (cancelled) return;
       setListErr(e instanceof Error ? e.message : 'Request failed');
@@ -511,21 +502,6 @@ function TracesPageInner() {
   const toggleAggSort = (col: AggSort) => {
     if (aggSort === col) setAggOrder(aggOrder === 'desc' ? 'asc' : 'desc');
     else { setAggSort(col); setAggOrder(AGG_NATURAL[col]); }
-  };
-
-  // Close the "+ Add filter" menu on outside click.
-  useEffect(() => {
-    if (!addFilterOpen) return;
-    const onDoc = (e: MouseEvent) => { if (!addFilterRef.current?.contains(e.target as Node)) setAddFilterOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [addFilterOpen]);
-
-  const addAttrFilter = (k: string) => {
-    if (advFilters.some(f => f.k === k)) { setAddFilterOpen(false); return; }
-    setAdvFilters([...advFilters, { k, op: '=', v: [QUICK_ATTR_DEFAULT[k] ?? ''] }]);
-    setAddFilterOpen(false);
-    setPage(0);
   };
 
   const traces = data?.traces ?? [];
@@ -764,7 +740,8 @@ function TracesPageInner() {
 
           <div className="trace-lookup" style={{ marginLeft: 'auto' }}>
             <span className="tl-icon" aria-hidden><IconSearch size={14} /></span>
-            <input placeholder="Trace ID (full or prefix)…" value={draft.traceId}
+            <input placeholder="Trace ID…" title="Paste a full 32-character trace ID"
+              value={draft.traceId}
               onChange={e => setDraft({ ...draft, traceId: e.target.value })}
               onKeyDown={e => e.key === 'Enter' && apply()} />
             {draft.traceId && (
@@ -835,27 +812,6 @@ function TracesPageInner() {
             style={{ padding: '5px 10px', fontSize: 12, textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--accent2)', background: 'var(--bg2)' }}>
             ⬇ CSV
           </a>
-
-          {/* "+ Add filter" otel-attr menu. */}
-          <div ref={addFilterRef} style={{ position: 'relative' }}>
-            <Button variant="secondary" size="sm" onClick={() => setAddFilterOpen(o => !o)}>+ Add filter</Button>
-            {addFilterOpen && (
-              <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 60, minWidth: 210, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.30)', padding: 6 }}>
-                <div style={{ fontSize: 10, color: 'var(--text3)', padding: '4px 8px', fontWeight: 700, letterSpacing: '0.4px' }}>ATTRIBUTE</div>
-                {QUICK_ATTR_KEYS.map(k => {
-                  const already = advFilters.some(f => f.k === k);
-                  return (
-                    <div key={k} onClick={() => !already && addAttrFilter(k)}
-                      style={{ padding: '6px 8px', fontSize: 11.5, borderRadius: 4, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', cursor: already ? 'default' : 'pointer', color: already ? 'var(--text3)' : 'var(--text)' }}
-                      onMouseEnter={e => { if (!already) e.currentTarget.style.background = 'var(--bg3)'; }}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                      {k}{already ? ' ✓' : ''}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
 
           {view === 'list' && data && (
             <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text3)' }}>

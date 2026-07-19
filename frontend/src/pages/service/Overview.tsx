@@ -43,6 +43,8 @@ interface Props {
   // ?range=. Passed down to every ChartCard/OverviewChart (mirrors the
   // sibling Performance/ServiceCharts wiring in Service.tsx).
   onZoom?: (fromSec: number, toSec: number) => void;
+  // v0.9.83 — sorgu penceresi (unix sec): x-ekseni pencereye sabitlenir.
+  xRange?: { from: number; to: number } | null;
 }
 
 function vals(s?: SpanMetricSeries[] | null): number[] {
@@ -124,7 +126,7 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
 // comes from the first non-empty line — all aggs share the WHERE + step so
 // the points align index-for-index.
 interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
-function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom }: {
+function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom, xRange }: {
   title: string; lines: ChartLine[]; unit: string;
   mode?: 'line' | 'area' | 'stacked'; deploy?: { sec: number; label: string } | null;
   // RED series fetch state — distinguishes loading/error from a genuinely
@@ -132,6 +134,8 @@ function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready'
   status?: 'loading' | 'error' | 'ready';
   // v0.8.534 — threaded to OverviewChart for drag-zoom → global range.
   onZoom?: (fromSec: number, toSec: number) => void;
+  // v0.9.83 — sorgu penceresi (unix sec): x-ekseni pencereye sabitlenir.
+  xRange?: { from: number; to: number } | null;
 }) {
   const times = useMemo(() => {
     const base = lines.find(l => (l.series[0]?.points ?? []).length)?.series[0]?.points ?? [];
@@ -162,7 +166,7 @@ function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready'
           </div>
         ) : (
           <OverviewChart times={times} series={ovSeries} unit={unit} mode={mode}
-            deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} onZoom={onZoom} />
+            deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} onZoom={onZoom} xRange={xRange} />
         )}
       </div>
     </div>
@@ -177,6 +181,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   const computed = useMemo(() => timeRangeToNs(range), [range]);
   const { from, to } = windowNs ?? computed;
   const windowSec = Math.max(1, (to - from) / 1e9);
+  // v0.9.83 — grafiklerin x-ekseni sorgu penceresine sabitlenir (madde 2).
+  const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);
 
   // One batched span-metric call: rate + error_rate + p99 + p50 over the
   // same WHERE (service.name = svc). Feeds the KPI sparklines + RED charts.
@@ -274,17 +280,17 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           its viz:'line' descriptor through the compact MetricPanel doorway. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={redStatus} onZoom={onZoom} lines={[
+          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={redStatus} onZoom={onZoom} xRange={xRange} lines={[
             { series: s?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
             { series: s?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
             { series: s?.p99 ?? [], color: 'var(--err)', label: 'P99' },
           ]} />
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>
-          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} onZoom={onZoom} lines={throughputBands} />
+          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} onZoom={onZoom} xRange={xRange} lines={throughputBands} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} lines={[
+          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} xRange={xRange} lines={[
             { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
         </MetricPanel>

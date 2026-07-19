@@ -7,6 +7,7 @@ import { timeChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
+import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Generalises the proven
 // OverviewChart uPlot wrapper (Canvas, so it also lands the "charts to Canvas"
@@ -57,6 +58,10 @@ interface Props {
   // stays the house day-boundary formatter (fmtXTicks); the Problems
   // detail passes its windowed rule (problemTime.fmtHistTick) here.
   fmtX?: (tsSec: number) => string;
+  // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini sorgu penceresine
+  // sabitle (unix sec); veri erken bitse de eksen pencereyi gösterir.
+  // Zoom/brush isteği aynen geçer. Verilmezse eski davranış.
+  xRange?: XPin | null;
 }
 
 // v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a
@@ -65,7 +70,7 @@ const kfmt = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed
 
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
-  deployMarkers, onBrush, syncKey, fmtLeft, fmtRight, fmtX,
+  deployMarkers, onBrush, syncKey, fmtLeft, fmtRight, fmtX, xRange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -76,6 +81,7 @@ export function TimeChart({
   // its PRESENCE (which flips an axis path or the brush affordance) is tracked
   // in the build signature.
   const onBrushRef = useRef(onBrush); onBrushRef.current = onBrush;
+  const xRangeRef = useRef(xRange); xRangeRef.current = xRange;
   const fmtLeftRef = useRef(fmtLeft); fmtLeftRef.current = fmtLeft;
   const fmtRightRef = useRef(fmtRight); fmtRightRef.current = fmtRight;
   const fmtXRef = useRef(fmtX); fmtXRef.current = fmtX;
@@ -175,7 +181,7 @@ export function TimeChart({
       },
       legend: { show: false },
       scales: {
-        x: { time: true },
+        x: { time: true, range: (u, mn, mx) => xRangePinned(u.data[0] as number[], xRangeRef.current, mn, mx) },
         y: { range: yRangeHeadroom },
         ...(hasRight ? { y2: { range: yRangeHeadroom } } : {}),
       },

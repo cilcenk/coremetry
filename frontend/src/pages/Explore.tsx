@@ -148,6 +148,8 @@ function ExploreInner() {
   >(null);
 
   const exploreRange = useMemo(() => timeRangeToNs(range), [range]);
+  // v0.9.83 — panellerin x-ekseni sorgu penceresine sabit (madde 2).
+  const xRangeSec = useMemo(() => ({ from: exploreRange.from / 1e9, to: exploreRange.to / 1e9 }), [exploreRange]);
 
   // Recent-queries ring + entry-screen gate (Phase-1 behaviour preserved).
   const { history, save: saveHistory } = useQueryHistory();
@@ -685,6 +687,7 @@ name ~ checkout`}
                     hiddenKeys={hiddenKeys}
                     focusKey={focusKey}
                     zoomWindow={zoomWindow}
+                    xRange={xRangeSec}
                     onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
                     onExemplarClick={(id) => setCorrelateAnchor({ kind: 'trace', traceId: id })}
                     pinnableLetters={pinnableLetters}

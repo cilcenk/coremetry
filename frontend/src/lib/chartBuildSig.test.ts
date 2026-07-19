@@ -98,6 +98,37 @@ describe('chartBuildSignature — optional-field normalisation', () => {
   });
 });
 
+// v0.9.100 (chart-consolidation Adım 4) — colorOf folded into the signature.
+// MLC used to track the colorOf function by IDENTITY in its build-effect deps;
+// migrating to useChartEngine (rebuild on [signature, themeTick]) means the
+// per-label colour override now rides the signature, exactly like TC/OVC/TSP
+// fold their static series.color. Contract: a poll with the same overrides
+// keeps the signature identical (fast-path holds); a changed override colour
+// moves it (rebuild re-resolves the stroke).
+describe('chartBuildSignature — colorOf folded via colorOverrides (Adım 4)', () => {
+  const withOv: ChartBuildSigInput = { ...base, colorOverrides: ['#f00', null, 'var(--accent)'] };
+
+  it('undefined vs empty array normalise equal (no colorOf caller)', () => {
+    expect(chartBuildSignature({ ...base, colorOverrides: undefined }))
+      .toBe(chartBuildSignature({ ...base, colorOverrides: [] }));
+  });
+
+  it('same overrides, fresh array → identical signature (setData fast-path)', () => {
+    expect(chartBuildSignature({ ...withOv, colorOverrides: ['#f00', null, 'var(--accent)'] }))
+      .toBe(chartBuildSignature(withOv));
+  });
+
+  it('an override colour changed → different signature (rebuild)', () => {
+    expect(chartBuildSignature({ ...withOv, colorOverrides: ['#0f0', null, 'var(--accent)'] }))
+      .not.toBe(chartBuildSignature(withOv));
+  });
+
+  it('null→colour on one label (override appears) → different signature', () => {
+    expect(chartBuildSignature({ ...withOv, colorOverrides: ['#f00', '#00f', 'var(--accent)'] }))
+      .not.toBe(chartBuildSignature(withOv));
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // timeChartBuildSignature — v0.8.531 (perf #5/#15). The <TimeChart> seam
 // (VolumeChart + ProblemDetail occurrences). Same contract: a data-only poll

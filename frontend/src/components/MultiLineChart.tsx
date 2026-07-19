@@ -7,7 +7,7 @@ import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { placeTooltip } from '@/lib/chartTooltip';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { chartBuildSignature } from '@/lib/chartBuildSig';
-import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
+import { useChartEngine } from '@/lib/chart/engine';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 
@@ -225,8 +225,9 @@ export function MultiLineChart({
   // (unix sec); zoom isteği aynen geçer. Verilmezse eski davranış.
   xRange?: XPin | null;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const plotRef = useRef<uPlot | null>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  // plotRef, motorun döndürdüğü uPlot örneğidir (aşağıda useChartEngine ile
+  // atanır) — isolate-click + selectedOps efektleri canlı örneğe buradan erişir.
 
   // Latest onBucketClick held in a ref so the click listener
   // (registered once per plot build) always calls the current
@@ -295,25 +296,23 @@ export function MultiLineChart({
     hasBucketClick: !!onBucketClick,
     compareOffsetNs, compareLabel,
     deploys, thresholds,
+    // v0.9.100 (Adım 4) — colorOf, motora göçte artık build-effect dep'i değil;
+    // her label'ın çözülen override rengini imzaya kat (yoksa null; folded
+    // "others" tail colorOf'u yok sayar → null). Böylece motorun [signature,
+    // themeTick] rebuild tetikleyicisi eski colorOf-identity dep'ini karşılar.
+    colorOverrides: bundle.labels.map(l => (l === OTHERS_KEY ? null : (colorOf?.(l) ?? null))),
   });
 
-  // Build / re-create effect (v0.8.520). Runs ONLY when the build signature,
-  // the colorOf override, or the theme flips — NOT on a data-only poll (that
-  // rides the setData fast-path below). Reads the current data bundle through
-  // bundleRef so a rebuild always paints fresh data without listing it as a dep.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    plotRef.current?.destroy();
-    plotRef.current = null;
-    const { eff, allSeries, data, compareEnabled } = bundleRef.current;
-    // visibleRef tracks BOTH current and compare series so the legend toggle
-    // still works on either set (compare lines sit after current lines). A
-    // rebuild resets isolation to all-visible; the data-only fast-path
-    // deliberately preserves it (setData keeps series `show` flags), so an
-    // isolated view now survives a 30s poll.
-    visibleRef.current = allSeries.map(() => true);
-    if (eff.length === 0 && !compareEnabled) return;
+  // buildOptions (v0.9.100, chart-consolidation Adım 4) — renkleri REBUILD
+  // ANINDA çöz (tema flip'te motor bu fn'i yeniden çağırır, CSS-var'lar taze)
+  // ve tam uPlot.Options üret. Eski build effect'in opts'unun BİREBİRİ. new
+  // uPlot / destroy / ResizeObserver / setData fast-path (v0.9.78/79 zoom-koruma)
+  // İSKELETİ artık useChartEngine'de; visibleRef reset afterBuild'e taşındı.
+  // `el` motorun buildOptions'ı yalnız hostRef.current varken çağırmasıyla
+  // garanti (engine.ts §renderable guard) → non-null.
+  const buildOptions = (width: number): uPlot.Options => {
+    const el = hostRef.current!;
+    const { eff, allSeries } = bundle;
 
     const css = getComputedStyle(document.documentElement);
     const text3 = css.getPropertyValue('--text3').trim() || '#484f58';
@@ -357,12 +356,9 @@ export function MultiLineChart({
     };
 
     const opts: uPlot.Options = {
-      // clientWidth is sometimes 0 at first paint (StrictMode
-      // double-mount or display:none parent). Fall back to
-      // 600px so the initial render still produces a visible
-      // canvas; the ResizeObserver below corrects the width on
-      // the next layout pass.
-      width: el.clientWidth || 600,
+      // width motordan gelir (el.clientWidth || 320); ilk paint'te 0 ise motor
+      // 320 verir, ResizeObserver sonraki layout'ta düzeltir (OVC/TC ile aynı).
+      width,
       height,
       // Tells uPlot the x values are unix seconds → "HH:MM"
       // tick format instead of raw integers. Single most
@@ -800,74 +796,35 @@ export function MultiLineChart({
       },
     };
 
-    plotRef.current = new uPlot(opts, data, el);
+    return opts;
+  };
 
-    const ro = new ResizeObserver(() => {
-      if (plotRef.current && el) {
-        // height stays fixed (the prop). Width tracks the
-        // parent — sidebar collapse, browser resize, dashboard
-        // panel re-grid all flow through here without a
-        // chart rebuild.
-        plotRef.current.setSize({ width: el.clientWidth, height });
-      }
-    });
-    ro.observe(el);
-
-    return () => {
-      ro.disconnect();
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
-    // Deps (v0.8.520): the pure build signature (series structure + unit +
-    // height + overlays + zoom/bucket PRESENCE + compare alignment), plus the
-    // colorOf override identity and the theme tick. Everything callback-shaped
-    // (onZoom / onBucketClick / onLegendClick) is tracked by presence only and
-    // read live through refs, so a fresh arrow each render never churns a
-    // rebuild. Series DATA POINTS are absent on purpose — they ride the setData
-    // fast-path below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildSig, colorOf, themeTick]);
-
-  // Data fast-path (v0.8.520 / proposal #15). A 30s poll changes only the
-  // series' point VALUES, not their count/labels/options, so buildSig is
-  // unchanged and the build effect above does NOT run. Here we push the fresh
-  // data into the LIVE plot with setData() — the same <1ms redraw path
-  // click-to-isolate uses — instead of destroy()+new uPlot() (~30ms of canvas
-  // flicker that dropped the hover cursor and reset isolation every 30s).
-  // Guard on column count: a count change means the build effect is
-  // (re)creating the plot this same commit and owns the data; setData() with a
-  // mismatched width would throw. resetScales stays uPlot's default (true) so
-  // the y-axis auto-refits exactly as the old rebuild did.
-  // v0.9.78 (uPlot Aşama 1 bug fix) — operatör drag-zoom yaptıysa
-  // (x-scale tüm veriden daralmışsa) setData(data,false) ile x'i KORU
-  // + y'yi elle refit; aksi halde eski davranış (setData reset ile x
-  // yeni bucket'lara genişler + y auto-refit). Eskiden koşulsuz
-  // setData(true) 30s poll'de operatörü zoom'undan atıyordu. Tek y
-  // ekseni: tüm seriler (1..len-1) refit'e girer. Aynı düzeltme OVC/TC'ye
-  // de kopyalandı — motor çıkarımında (konsolidasyon Adım 1-4) tek yere
-  // inecek.
-  useEffect(() => {
-    const u = plotRef.current;
-    if (!u) return;
-    if (u.data.length !== bundle.data.length) return;
-    const xs = u.data[0] as number[];
-    if (isXZoomed(xs, u.scales.x.min, u.scales.x.max)) {
-      const idxs = bundle.data.map((_, i) => i).slice(1);
-      u.batch(() => {
-        u.setData(bundle.data, false);
-        u.setScale('y', yRefitScale(bundle.data as (number | null)[][], idxs));
-      });
-    } else {
-      u.setData(bundle.data);
-    }
-  }, [bundle]);
+  // Yaşam döngüsü motorda (v0.9.100, chart-consolidation Adım 4). new uPlot /
+  // destroy / ResizeObserver / setData fast-path + v0.9.78/79 drag-zoom-koruma
+  // İSKELETİ engine.ts::useChartEngine'de tek kopya. MLC tek y ekseni →
+  // refitScales VERİLMEZ: motor varsayılanı (tüm seriler 1..n tek y eksenine
+  // yRefitScale) eski fast-path'in birebiri. afterBuild: rebuild isolation'ı
+  // sıfırlar (allSeries hepsi görünür) — eski build effect'in visibleRef
+  // reset'i; data-only fast-path setData ile series `show` flag'lerini KORUR,
+  // o yüzden reset yalnız rebuild'de. MLC'de DOM deploy bayrağı yok →
+  // afterData/onResize gereksiz. colorOf artık imzada (colorOverrides), o
+  // yüzden motorun [signature, themeTick] tetikleyicisi eski
+  // [buildSig, colorOf, themeTick]'i birebir karşılar.
+  const plotRef = useChartEngine(hostRef, {
+    signature: buildSig,
+    height,
+    renderable: bundle.eff.length > 0 || bundle.compareEnabled,
+    data: bundle.data,
+    buildOptions,
+    afterBuild: () => { visibleRef.current = bundle.allSeries.map(() => true); },
+  }, themeTick);
 
   // Click-to-isolate: hide every other series on first click,
   // restore all on second. We bypass React state — toggling
   // the live plot's visibility via setSeries(idx, {show})
   // re-renders the canvas in <1ms without rebuilding.
   useEffect(() => {
-    const el = containerRef.current;
+    const el = hostRef.current;
     if (!el) return;
     const onClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -944,7 +901,9 @@ export function MultiLineChart({
     // closed-over series/totalCount stays accurate when the
     // operator toggles compare on/off; pre-fix the handler kept
     // a stale length reference and click did nothing for the
-    // appended compare rows.
+    // appended compare rows. plotRef is useChartEngine's stable
+    // ref (never re-identifies) → intentionally NOT a dep (v0.9.100).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series.length, compareSeries?.length]);
 
   // Apply the controlled selection to the live plot WITHOUT a rebuild
@@ -959,6 +918,8 @@ export function MultiLineChart({
       u.setSeries(i + 1, { show: vis });
       if (visibleRef.current[i] != null) visibleRef.current[i] = vis;
     }
+    // plotRef = useChartEngine'in stabil ref'i → deps'e girmez (v0.9.100).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedOps]);
 
   // Container does NOT pin its height — uPlot creates a canvas
@@ -971,7 +932,7 @@ export function MultiLineChart({
   // default; the hook flips it on when the cursor enters the
   // chart and updates content + position on every move.
   return (
-    <div ref={containerRef} className="mlc-chart" style={{
+    <div ref={hostRef} className="mlc-chart" style={{
       position: 'relative', width: '100%',
       // Subtle "this chart is clickable" affordance — only when
       // the spike→exemplar hook is wired (opt-in). Absent the

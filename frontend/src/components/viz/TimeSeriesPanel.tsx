@@ -9,6 +9,7 @@ import { useThemeTick } from '@/lib/useThemeTick';
 import { timeSeriesPanelBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar as resolveColor } from '@/lib/chart/resolveVar';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
+import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -333,6 +334,9 @@ export function TimeSeriesPanel({
           if (s.stepped && mode !== 'bars' && !stacked && uPlot.paths.stepped) {
             base.paths = uPlot.paths.stepped({ align: 1 });
           }
+          // v0.9.84 (madde 3) — line/area: tek kaçmış scrape köprülenir,
+          // gerçek kesinti kırık kalır. bars/stacked'e dokunma.
+          if (mode !== 'bars' && !stacked) base.gaps = stepGapsRefiner;
           return base;
         }),
       ],
@@ -368,6 +372,12 @@ export function TimeSeriesPanel({
       cursor: {
         x: true, y: true, focus: { prox: 15 },
         drag: { x: true, y: false, setScale: true },
+        // v0.9.84 (madde 4) — line/area modda hover en yakın DOLU örneğe
+        // snap'ler (±2 bucket); bars/stacked kendi hizasında kalır.
+        ...(mode === 'line' || mode === 'area' ? {
+          dataIdx: (u: uPlot, sidx: number, idx: number) =>
+            nearestFilledIdx(u.data[sidx] as (number | null)[], idx, 2),
+        } : {}),
         sync: syncKey ? { key: syncKey } : undefined,
       },
       legend: { show: false }, // our own interactive legend table renders below
@@ -559,7 +569,10 @@ export function TimeSeriesPanel({
             const rawY = bundleRef.current.ySeries;
             for (let i = 0; i < series.length; i++) {
               if (!visibleRef.current[i]) continue;
-              const v = stacked ? rawY[i]?.[idx] : (u.data[i + 1] as (number | null)[])?.[idx];
+              // v0.9.84 (madde 4) — dataIdx snap'i seri başına idxs'te; tooltip
+              // aynı dolu örneği okur (seyrek seri artık "—" değil).
+              const si = u.cursor.idxs?.[i + 1] ?? idx;
+              const v = stacked ? rawY[i]?.[idx] : (u.data[i + 1] as (number | null)[])?.[si];
               if (v == null) continue;
               rows.push({ label: series[i].label, color: colors[i], v: v as number, unit: series[i].unit ?? anyUnit });
             }

@@ -9,6 +9,7 @@ import { useThemeTick } from '@/lib/useThemeTick';
 import { chartBuildSignature } from '@/lib/chartBuildSig';
 import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
+import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 
 // Re-exported so existing importers (TimeSeriesPanel) keep working after the
 // placement logic moved into the pure, unit-tested lib/chartTooltip module.
@@ -407,6 +408,8 @@ export function MultiLineChart({
               width: 1.5,
               dash: [4, 4],
               points: { show: false },
+              // v0.9.84 (madde 3) — kısa boşluk köprülenir, kesinti kırık.
+              gaps: stepGapsRefiner,
               show: isVis(label),
               value: (_u: uPlot, v: number | null) => fmtSmart(v, unit) +
                 (v != null ? ` (${compareLabel ?? 'past'})` : ''),
@@ -423,6 +426,10 @@ export function MultiLineChart({
             // No always-on markers — uPlot paints a point on the
             // focused series at the cursor, so dots appear on hover only.
             points: { show: false },
+            // v0.9.84 (madde 3) — union x-ekseni + tek kaçmış scrape'in
+            // yarattığı 1-bucket'lık delikler köprülenir; gerçek kesinti
+            // (≥ 1.5×step null-run) kırık kalır.
+            gaps: stepGapsRefiner,
             show: isVis(label),
             value: (_u: uPlot, v: number | null) => fmtSmart(v, unit),
             values: mkValues,
@@ -469,6 +476,9 @@ export function MultiLineChart({
         // at ~15px; 30 was a wider catch-net that made dense
         // multi-series charts feel "imprecise".
         x: true, y: true, focus: { prox: 15 },
+        // v0.9.84 (madde 4) — hover en yakın DOLU örneğe snap (±2 bucket);
+        // union ekseninin null'ları tooltip'te "—" üretmesin.
+        dataIdx: (u, sidx, idx) => nearestFilledIdx(u.data[sidx] as (number | null)[], idx, 2),
         // Drag-zoom: x-axis only. uPlot's built-in select
         // mechanism + setScale=true handles the visual zoom;
         // onZoom (below, in hooks.setSelect) propagates the
@@ -703,7 +713,9 @@ export function MultiLineChart({
             for (let i = 0; i < effRows.length; i++) {
               const yArr = u.data[i + 1];
               if (!yArr) continue;
-              const v = yArr[idx];
+              // v0.9.84 (madde 4) — seri başına snap'lenmiş idx (dataIdx).
+              const si = u.cursor.idxs?.[i + 1] ?? idx;
+              const v = yArr[si];
               if (v == null) continue;
               const s = effRows[i];
               const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';

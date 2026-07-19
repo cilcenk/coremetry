@@ -8,6 +8,8 @@ import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
+import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { placeTooltip } from '@/lib/chartTooltip';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
@@ -211,18 +213,39 @@ export function OverviewChart({
             const xs = u.data[0] as number[];
             const tSec = xs[idx] as number;
             if (tSec == null) { tt.style.display = 'none'; return; }
-            const mx = u.scales.y.max ?? 1;
             // Read RAW values from the ref (stacked draws cumulative into u.data)
             // — fresh on the fast-path; labels/colours are structural.
             const raw = rawRef.current.series;
-            const rows = series.map((s, i) =>
-              `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${colors[i]}"></i>${s.label}</span><b>${(raw[i]?.data[idx] ?? 0).toFixed(mx < 10 ? 2 : 0)}${unit}</b></div>`,
-            ).join('');
+            // v0.9.101 (Grafana-parity Adım 1) — sorted "all series" tooltip via
+            // the shared model: value desc + fmtSmart units (was naive in-order
+            // toFixed); empty series drop out.
+            const rows = sortedTooltipRows(
+              series.map((s, i) => ({ label: s.label, color: colors[i], value: raw[i]?.data[idx] ?? null, unit })),
+            );
+            if (rows.length === 0) { tt.style.display = 'none'; return; }
             const ts = new Date(tSec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            tt.innerHTML = `<div class="ov-tt-t">${ts}</div>${rows}`;
+            tt.innerHTML = `<div class="ov-tt-t">${ts}</div>` + rows.map(r =>
+              `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
+            ).join('');
             tt.style.display = 'block';
-            tt.style.left = `${u.cursor.left}px`;
-            tt.style.top = `${Math.max(8, (u.cursor.top ?? 20))}px`;
+            // placeTooltip: flip/clamp so the panel never sits under the cursor
+            // or off-canvas (MLC/TSP parity). Host is the uPlot mount; the
+            // tooltip is absolute in the same wrapper at the host's origin.
+            const host = hostRef.current;
+            if (host) {
+              const p = placeTooltip(
+                u.cursor.left ?? 0, u.cursor.top ?? 0,
+                tt.offsetWidth, tt.offsetHeight,
+                u.over.clientWidth, u.over.clientHeight,
+                u.over.offsetLeft, u.over.offsetTop,
+                host.clientWidth, host.clientHeight,
+              );
+              tt.style.left = `${p.x}px`;
+              tt.style.top = `${p.y}px`;
+            } else {
+              tt.style.left = `${u.cursor.left}px`;
+              tt.style.top = `${Math.max(8, u.cursor.top ?? 20)}px`;
+            }
           },
         ],
       },

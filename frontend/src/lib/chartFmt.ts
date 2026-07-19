@@ -53,6 +53,31 @@ export function fmtSmart(v: number | null | undefined, unit?: string): string {
   return fmtCount(v) + (u ? ' ' + u : '');
 }
 
+// fmtAxisTick — the compact y-axis tick label for the uPlot charts (Grafana-
+// parity #3). Grafana puts a smart, unit-aware, SI-abbreviated value on the
+// axis; we do the same but tuned for our NARROW gutter (OVC 34px / TC 38px):
+//   • 0 → a clean "0" (bare fmtSmart would print "0.00ms" / "0.00%").
+//   • short units (ms/s/%/B) ride the shared fmtSmart, so a tick reads the
+//     same as the hover tooltip ("125ms", "12.5%", "1.5 kB").
+//   • counts + WIDE throughput units ("req/s", "ops/s") → SI number ONLY.
+//     Appending "1.2k req/s" would overrun the fixed gutter and force a wider
+//     axis — a LAYOUT change this format-only pass must not make; the unit
+//     stays in the chart title + tooltip. Whole counts stay whole ("5", not
+//     the count formatter's "5.00") so integer axes don't regress vs kfmt.
+export function fmtAxisTick(v: number, unit?: string): string {
+  if (v === 0) return '0';
+  const u = (unit || '').trim();
+  if (u === 'ms' || u === 's' || u === '%' || u === 'B' || u === 'bytes') {
+    return fmtSmart(v, u);
+  }
+  const abs = Math.abs(v);
+  if (abs >= 1e12) return trim(v / 1e12) + 'T';
+  if (abs >= 1e9)  return trim(v / 1e9)  + 'G';
+  if (abs >= 1e6)  return trim(v / 1e6)  + 'M';
+  if (abs >= 1e3)  return trim(v / 1e3)  + 'k';
+  return Number.isInteger(v) ? String(v) : String(+v.toFixed(2));
+}
+
 // fmtCount — k / M / G / T suffix. Two-decimal precision under
 // the next decade so the eye reads "1.23k" not "1230".
 function fmtCount(v: number): string {

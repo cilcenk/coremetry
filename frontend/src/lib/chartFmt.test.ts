@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtSmart, niceTickValues, fmtXTicks } from './chartFmt';
+import { fmtSmart, niceTickValues, fmtXTicks, fmtAxisTick } from './chartFmt';
 
 // v0.8.58 — fmtXTicks regression (operator-reported: multi-day metric x-axis
 // labels overlapped). Same-day ranges stay HH:MM; multi-day ranges keep HH:MM
@@ -90,6 +90,39 @@ describe('fmtSmart — throughput + default count', () => {
   it('rps carries the unit suffix', () => expect(fmtSmart(1500, 'rps')).toBe('1.5k rps'));
   it('bare count promotes with k', () => expect(fmtSmart(1234)).toBe('1.23k'));
   it('unknown unit appends after the count', () => expect(fmtSmart(50, 'widgets')).toBe('50.0 widgets'));
+});
+
+// fmtAxisTick — v0.9.102 (Grafana-parity #3). Compact axis ticks: clean "0",
+// short units via fmtSmart, counts + wide throughput units as SI number only
+// (no gutter overflow), whole counts kept whole (no kfmt→"5.00" regression).
+describe('fmtAxisTick — compact y-axis ticks', () => {
+  it('0 → clean "0" for every unit (never "0.00ms"/"0.00%")', () => {
+    for (const u of ['ms', 's', '%', 'B', '', 'req/s', 'ops/s', ' ms']) {
+      expect(fmtAxisTick(0, u)).toBe('0');
+    }
+  });
+
+  it('short units ride fmtSmart (unit on the axis, ms→s promotion)', () => {
+    expect(fmtAxisTick(125, 'ms')).toBe('125ms');
+    expect(fmtAxisTick(1500, 'ms')).toBe('1.5s');
+    expect(fmtAxisTick(12.5, '%')).toBe('12.5%');
+    expect(fmtAxisTick(1500, 'B')).toBe('1.5 kB');
+    expect(fmtAxisTick(250, ' ms')).toBe('250ms'); // leading-space unit trimmed
+  });
+
+  it('counts stay clean integers with SI (no "5.00"; matches old kfmt)', () => {
+    expect(fmtAxisTick(5, '')).toBe('5');
+    expect(fmtAxisTick(50, '')).toBe('50');
+    expect(fmtAxisTick(1200, '')).toBe('1.2k');
+    expect(fmtAxisTick(1_500_000, '')).toBe('1.5M');
+    expect(fmtAxisTick(5.3, '')).toBe('5.3');
+  });
+
+  it('wide throughput units → SI number only (compact gutter, no unit suffix)', () => {
+    expect(fmtAxisTick(1200, 'req/s')).toBe('1.2k');
+    expect(fmtAxisTick(1200, 'ops/s')).toBe('1.2k');
+    expect(fmtAxisTick(600, ' req/s')).toBe('600');
+  });
 });
 
 describe('niceTickValues — snap-to-decade gridlines', () => {

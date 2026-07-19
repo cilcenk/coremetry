@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
-import { fmtXTicks } from '@/lib/chartFmt';
+import { fmtXTicks, fmtAxisTick } from '@/lib/chartFmt';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
@@ -157,10 +157,13 @@ export function OverviewChart({
           stroke: text3, size: 34, font: '10px ui-monospace, monospace',
           grid: { stroke: gridc, width: 1, dash: [3, 4] },
           ticks: { show: false },
-          // splits + decimal count derive from the LIVE scale max so a setData
-          // re-fit updates the gridlines (the old build-time `max` went stale).
+          // splits derive from the LIVE scale max so a setData re-fit updates
+          // the gridlines (the old build-time `max` went stale). Positions stay
+          // [0, mid, max] (layout unchanged); only the FORMAT is now smart.
           splits: u => { const mx = u.scales.y.max ?? 1; return [0, mx / 2, mx]; },
-          values: (u, sp) => { const mx = u.scales.y.max ?? 1; return sp.map(v => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(mx < 10 ? 1 : 0))); },
+          // v0.9.102 (Grafana-parity #3) — smart unit-aware ticks (fmtAxisTick):
+          // "125ms" / "12.5%" / "1.2k"; was unitless inline toFixed.
+          values: (_u, sp) => sp.map(v => fmtAxisTick(v, unit)),
         },
       ],
       series: [

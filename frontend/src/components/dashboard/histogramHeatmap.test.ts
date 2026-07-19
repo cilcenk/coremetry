@@ -23,6 +23,22 @@ describe('histogramResultToHeatmap', () => {
     expect(r.counts).toEqual([[10, 5, 2, 1], [0, 1, 3, 0]]);
     expect(r.times).toEqual([100, 200]);
     expect(r.maxCount).toBe(10);
+    // The top bin is the +Inf overflow — flagged so the viz labels it ">5",
+    // not "≤8" (v0.9.110 review fix). Counts are metric samples, not spans.
+    expect(r.overflowTop).toBe(true);
+    expect(r.countNoun).toBe('samples');
+  });
+
+  it('flags overflowTop only when there are real bounds (empty → false)', () => {
+    expect(histogramResultToHeatmap(hr({})).overflowTop).toBe(false);
+    expect(histogramResultToHeatmap(hr({ bounds: [10], times: [1], counts: [[1, 0]] })).overflowTop).toBe(true);
+  });
+
+  it('keeps overflow strictly above the top bound even for non-increasing bounds', () => {
+    // Spec-violating equal adjacent top bounds: overflow would collapse to 200
+    // without the guard → durationBins non-ascending. Guard forces > top.
+    const r = histogramResultToHeatmap(hr({ bounds: [100, 200, 200], times: [1], counts: [[1, 2, 3, 4]] }));
+    expect(r.durationBins[3]).toBeGreaterThan(200);
   });
 
   it('scales seconds-valued bounds ×1000 to ms', () => {

@@ -113,6 +113,17 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 	if f.Aggregation == "rate" || f.Aggregation == "increase" {
 		return s.QueryMetricRate(ctx, f, f.Aggregation)
 	}
+	// v0.9.107 (F3) — histogram metrikte p50/p95/p99 = histogram_quantile
+	// (bucket dağılımından, reset-korumalı delta + lineer interp). Eski yol
+	// quantile(value): value per-export ORTALAMA olduğundan histogram'da
+	// yanlış. Explicit + exponential histogram'ın ikisi de (aynı bucket
+	// kolonları). gauge/sum p-quantile'ları value-quantile'da kalır (doğru).
+	switch strings.ToLower(f.Aggregation) {
+	case "p50", "p95", "p99":
+		if isHistogramInstrument(s.metricInstrument(ctx, f.Name, f.Service, f.From, f.To)) {
+			return s.QueryMetricHistogramPercentile(ctx, f, f.Aggregation)
+		}
+	}
 
 	// v0.8.243 — min-step clamp: never bucket finer than the metric's
 	// observed export cadence (Grafana's $__rate_interval equivalent —

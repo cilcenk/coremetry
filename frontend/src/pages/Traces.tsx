@@ -656,7 +656,8 @@ function TracesPageInner() {
             ) : viz === 'volume' ? (
               // slimmer + recedes — it's the brush/overview "tool", not the
               // headline chart; the RED strip below carries the filtered numbers.
-              <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null} height={140} onBrush={applyBrush} />
+              <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null} height={140} onBrush={applyBrush}
+                xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }} />
             ) : (
               <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, padding: '0 2px' }}>

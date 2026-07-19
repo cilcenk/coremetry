@@ -374,6 +374,7 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
     spanmetric: 'Span aggregation (line)',
     stat: 'Stat (single value)',
     gauge: 'Gauge',
+    heatmap: 'Heatmap (latency density)',
     markdown: 'Markdown / notes',
   };
   return (

@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type {
   Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
+  HeatmapPanelConfig, HistogramResult, LatencyHeatmap as HeatmapData,
   SpanMetricSeries, TimeRange,
 } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
 import { MultiLineChart } from '../MultiLineChart';
 import { DashboardViz } from '../DashboardViz';
+import { LatencyHeatmap } from '../LatencyHeatmap';
+import { histogramResultToHeatmap } from './histogramHeatmap';
 import { Spinner } from '../Spinner';
 import { effectivePanelStep } from './panelStep';
 import { usePanelWidth } from './usePanelWidth';
@@ -72,6 +75,8 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverrid
       return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={effectiveRange} />;
     case 'gauge':
       return <GaugePanel cfg={applyVarsToGauge(panel.config as GaugePanelConfig, vars)} range={effectiveRange} />;
+    case 'heatmap':
+      return <HeatmapPanel cfg={applyVarsToHeatmap(panel.config as HeatmapPanelConfig, vars)} range={effectiveRange} />;
     case 'markdown':
       return <MarkdownPanel cfg={panel.config as MarkdownPanelConfig} />;
     case 'row':
@@ -133,6 +138,19 @@ function applyVarsToGauge(cfg: GaugePanelConfig, vars?: Record<string, string>):
   return { ...cfg, span: cfg.span ? applyVarsToSpan(cfg.span, vars) : cfg.span };
 }
 
+// v0.9.109 (C2) — expand ${vars} in the heatmap's metric/service/filters,
+// same contract as the metric panel (empty var → the shared `expand` helper
+// drops the predicate rather than producing service.name = "").
+function applyVarsToHeatmap(cfg: HeatmapPanelConfig, vars?: Record<string, string>): HeatmapPanelConfig {
+  if (!vars) return cfg;
+  return {
+    ...cfg,
+    metricName: expand(cfg.metricName, vars) ?? '',
+    service:    expand(cfg.service, vars),
+    filters:    expand(cfg.filters, vars),
+  };
+}
+
 // ── Metric line chart ───────────────────────────────────────────────────────
 
 function MetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
@@ -187,6 +205,42 @@ function MetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
         : <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} />}
+    </div>
+  );
+}
+
+// ── Metric histogram heatmap (C2, v0.9.109) ─────────────────────────────────
+// The first dashboard surface for the metric-histogram path: fetches
+// /api/metrics/histogram (bounds + per-time bucket counts), adapts to the
+// LatencyHeatmap viz. Global distribution (no agg/groupBy — a heatmap blends
+// the whole distribution). Width-aware auto step like the metric panels.
+function HeatmapPanel({ cfg, range }: {
+  cfg: HeatmapPanelConfig; range: TimeRange;
+}) {
+  const [data, setData] = useState<HeatmapData | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const { ref, widthPx } = usePanelWidth();
+
+  useEffect(() => {
+    if (!cfg.metricName) { setError('Configure a metric name'); return; }
+    const { from, to } = timeRangeToNs(range);
+    const step = effectivePanelStep(cfg.step, (to - from) / 1e9, widthPx);
+    if (step === null) return; // panel width not measured yet — defer
+    setData(undefined); setError(null);
+    api.metricHistogram({
+      name: cfg.metricName, service: cfg.service,
+      filters: cfg.filters, from, to, step,
+    })
+      .then(r => setData(r ? histogramResultToHeatmap(r, cfg.unit) : null))
+      .catch(e => setError(e.message));
+  }, [JSON.stringify(cfg), range, widthPx]);
+
+  if (error) return <PanelError msg={error} />;
+  return (
+    <div ref={ref}>
+      {data === undefined ? <PanelLoading />
+        : !data || data.maxCount === 0 ? <PanelEmpty />
+        : <LatencyHeatmap data={data} height={280} />}
     </div>
   );
 }

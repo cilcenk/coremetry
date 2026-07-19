@@ -92,6 +92,10 @@ type MetricPoint struct {
 	// metric→trace pivot is a primary-key scan. 0 = legacy row
 	// (pre-v0.8.328) — readers treat 0 as "no identity", never match it.
 	SeriesFingerprint uint64
+	// v0.9.106 (F2) — OTLP Sum monotonicity (1 = monotonic counter, rate/
+	// increase-valid; 0 = UpDownCounter, rate meaningless). Default 1 for
+	// non-Sum (gauge/histogram; irrelevant — rate filters instrument='sum').
+	IsMonotonic uint8
 }
 
 // ExemplarRow is one OTLP metric exemplar normalised for the `exemplars`

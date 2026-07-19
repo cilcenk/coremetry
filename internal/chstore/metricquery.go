@@ -108,6 +108,11 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 	if f.Name == "" {
 		return nil, fmt.Errorf("metric name required")
 	}
+	// v0.9.106 (F2) — rate/increase counter'da ayrı per-seri delta yolundan
+	// gider (reset-korumalı; PromQL semantiği). Diğer agg'ler tek-pass GROUP BY.
+	if f.Aggregation == "rate" || f.Aggregation == "increase" {
+		return s.QueryMetricRate(ctx, f, f.Aggregation)
+	}
 
 	// v0.8.243 — min-step clamp: never bucket finer than the metric's
 	// observed export cadence (Grafana's $__rate_interval equivalent —

@@ -26,39 +26,53 @@ func TestMetricsInsert_SeriesFingerprintAlignment(t *testing.T) {
 		AttrKeys: []string{"route"}, AttrValues: []string{"/x"},
 		ResKeys: []string{"service.name"}, ResValues: []string{"svc"},
 		BucketBounds: []float64{0.1, 1}, BucketCounts: []uint64{1, 1, 1},
-		Temporality: "delta", SeriesFingerprint: 0xDEADBEEF,
+		Temporality: "delta", SeriesFingerprint: 0xDEADBEEF, IsMonotonic: 1,
 	}
 
+	// v0.9.106 (F2) — iki conditional kolon (series_fingerprint + is_monotonic).
+	// Kolon/değer hizası HER kombinasyonda korunmalı; sıra: …temporality
+	// [, series_fingerprint] [, is_monotonic].
 	for _, withFp := range []bool{true, false} {
-		sql := metricsInsertSQL(withFp)
-		args := metricAppendArgs(p, withFp)
+		for _, withIM := range []bool{true, false} {
+			sql := metricsInsertSQL(withFp, withIM)
+			args := metricAppendArgs(p, withFp, withIM)
 
-		// Column count from the statement's parenthesised list.
-		open := strings.Index(sql, "(")
-		if open < 0 || !strings.HasSuffix(sql, ")") {
-			t.Fatalf("withFp=%v: malformed insert statement: %s", withFp, sql)
-		}
-		cols := strings.Split(sql[open+1:len(sql)-1], ",")
-		if len(cols) != len(args) {
-			t.Fatalf("withFp=%v: POSITIONAL MISALIGNMENT — %d columns vs %d values",
-				withFp, len(cols), len(args))
-		}
-
-		hasFp := strings.Contains(sql, "series_fingerprint")
-		if hasFp != withFp {
-			t.Fatalf("withFp=%v: series_fingerprint presence in SQL = %v", withFp, hasFp)
-		}
-		if withFp {
+			open := strings.Index(sql, "(")
+			if open < 0 || !strings.HasSuffix(sql, ")") {
+				t.Fatalf("fp=%v im=%v: malformed insert: %s", withFp, withIM, sql)
+			}
+			cols := strings.Split(sql[open+1:len(sql)-1], ",")
+			if len(cols) != len(args) {
+				t.Fatalf("fp=%v im=%v: POSITIONAL MISALIGNMENT — %d cols vs %d vals",
+					withFp, withIM, len(cols), len(args))
+			}
+			if strings.Contains(sql, "series_fingerprint") != withFp {
+				t.Fatalf("fp=%v: series_fingerprint presence = %v", withFp, !withFp)
+			}
+			if strings.Contains(sql, "is_monotonic") != withIM {
+				t.Fatalf("im=%v: is_monotonic presence = %v", withIM, !withIM)
+			}
+			// is_monotonic her zaman EN SON (fingerprint'ten sonra).
 			last := strings.TrimSpace(cols[len(cols)-1])
-			if last != "series_fingerprint" {
-				t.Fatalf("series_fingerprint must be the LAST column, got %q", last)
-			}
-			if got, ok := args[len(args)-1].(uint64); !ok || got != 0xDEADBEEF {
-				t.Fatalf("last value must be the fingerprint, got %v", args[len(args)-1])
-			}
-		} else {
-			if got, ok := args[len(args)-1].(string); !ok || got != "delta" {
-				t.Fatalf("without fp the last value must be temporality, got %v", args[len(args)-1])
+			switch {
+			case withIM:
+				if last != "is_monotonic" {
+					t.Fatalf("is_monotonic must be LAST col, got %q", last)
+				}
+				if got, ok := args[len(args)-1].(uint8); !ok || got != 1 {
+					t.Fatalf("last value must be is_monotonic=1, got %v", args[len(args)-1])
+				}
+			case withFp:
+				if last != "series_fingerprint" {
+					t.Fatalf("series_fingerprint must be LAST col, got %q", last)
+				}
+				if got, ok := args[len(args)-1].(uint64); !ok || got != 0xDEADBEEF {
+					t.Fatalf("last value must be fingerprint, got %v", args[len(args)-1])
+				}
+			default:
+				if got, ok := args[len(args)-1].(string); !ok || got != "delta" {
+					t.Fatalf("no fp/im: last value must be temporality, got %v", args[len(args)-1])
+				}
 			}
 		}
 	}

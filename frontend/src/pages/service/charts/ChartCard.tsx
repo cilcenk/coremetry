@@ -35,11 +35,9 @@ export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 
     <div className="card">
       <div className="ov-card-h">
         <h3>{title}</h3>
-        <div className="ov-right">
-          <span className="ov-legend">
-            {lines.map(l => <span key={l.label}><i className="ov-sw" style={{ background: l.color }} />{l.label}</span>)}
-          </span>
-        </div>
+        {/* v0.9.103 (Grafana-parity #1) — header swatch lejantı kaldırıldı;
+            OverviewChart artık altında StatsLegend (swatch+label+istatistik)
+            gösteriyor, çift lejant olmasın. */}
       </div>
       <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
         {times.length < 2 ? (

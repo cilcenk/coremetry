@@ -162,6 +162,11 @@ export function OverviewChart({
         drag: { x: true, y: false, setScale: true },
       },
       legend: { show: false },
+      // v0.9.93 (uPlot Aşama 3) — stacked modda komşu bant dolguları
+      // farklı piksel sınırlarına snap'lenince aralarında 1px saç-teli
+      // beyaz çizgi kalıyordu; stacked'te pxAlign:0 dolguları sürekli
+      // hizalar. Non-stacked'te crisp gridline için 1 (default).
+      pxAlign: stacked ? 0 : 1,
       scales: {
         x: { time: true, range: (u, mn, mx) => xRangePinned(u.data[0] as number[], xRangeRef.current, mn, mx) },
         y: { range: yRangeHeadroom },

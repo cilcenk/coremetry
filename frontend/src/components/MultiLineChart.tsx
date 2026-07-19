@@ -10,6 +10,7 @@ import { chartBuildSignature } from '@/lib/chartBuildSig';
 import { useChartEngine } from '@/lib/chart/engine';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
+import { isAdditiveUnit } from '@/lib/chart/legendStats';
 
 // Re-exported so existing importers (TimeSeriesPanel) keep working after the
 // placement logic moved into the pure, unit-tested lib/chartTooltip module.
@@ -336,6 +337,13 @@ export function MultiLineChart({
     // cursor dataIdx is ignored on purpose — the floating tooltip owns
     // the live cursor readout; this table is the range summary.
     const fmt1 = (v: number) => fmtSmart(v, unit);
+    // v0.9.108 (C1) — toplanabilir birimlerde (rps/sayaç/bytes) native stats
+    // lejantı Σ Sum kolonunu da gösterir → OVC/TC'nin paylaşımlı StatsLegend'i
+    // ile TAM kolon parity (Last/Min/Max/Avg/Σ). Toplanamaz birimler (%/ms/s)
+    // Σ'yı atlar: yüzde/percentile toplamak anlamsız (StatsLegend ile aynı
+    // kural, isAdditiveUnit ortak kaynak). Birim grafik-geneli → tüm seriler
+    // aynı kolon setini döndürür (uПlot header tutarlı).
+    const additive = isAdditiveUnit(unit);
     const mkValues = (u: uPlot, sidx: number): Record<string, string> => {
       const xa = u.data[0] as number[];
       const ya = u.data[sidx] as (number | null)[];
@@ -351,8 +359,13 @@ export function MultiLineChart({
         if (v > mx) mx = v;
         sum += v; cnt++; last = v;
       }
-      if (cnt === 0) return { Last: '—', Min: '—', Max: '—', Avg: '—' };
-      return { Last: fmt1(last as number), Min: fmt1(mn), Max: fmt1(mx), Avg: fmt1(sum / cnt) };
+      if (cnt === 0) {
+        return additive
+          ? { Last: '—', Min: '—', Max: '—', Avg: '—', 'Σ': '—' }
+          : { Last: '—', Min: '—', Max: '—', Avg: '—' };
+      }
+      const base = { Last: fmt1(last as number), Min: fmt1(mn), Max: fmt1(mx), Avg: fmt1(sum / cnt) };
+      return additive ? { ...base, 'Σ': fmt1(sum) } : base;
     };
 
     const opts: uPlot.Options = {

@@ -1,0 +1,11 @@
+# Trivy filesystem scan — bilinçli kabul edilen bulgular.
+# Trivy 0.72.0 bu dosyayı cwd'den otomatik okur (ek YAML input yok).
+
+# CVE-2026-39883 — go.opentelemetry.io/otel/sdk PATH hijack, YALNIZ
+# BSD/Solaris. Coremetry Linux container ship eder; govulncheck
+# (erişilebilirlik kapısı) bunu UNREACHABLE raporluyor (aynı CI job'unda
+# geçiyor) — Trivy'nin sürüm-tabanlı tarayıcısı erişilebilirlik-kör
+# olduğu için işaretliyor. Bilinçli açık (operatör "7 lib CVE bilinçli
+# açık" duruşu); bir sonraki prod-doğrulanmış OTel SDK v1.43.0 bump'ında
+# yeniden değerlendir. 2026-07-19.
+CVE-2026-39883

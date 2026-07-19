@@ -1,36 +1,29 @@
-// xRangePinned — x-scale'i SORGU penceresine sabitleme kararının saf
-// çekirdeği (v0.9.8x, uPlot Aşama 2 madde 2).
+// xRangePinned — x-scale aralık kararı.
 //
-// Sorun: dört grafik bileşeninde de x sadece { time: true } — uPlot
-// ekseni VERİYE fit eder. Emit etmeyi bırakmış servisin grafiği erken
-// biter ve seçili aralık dar görünür; operatör "veri yok"u "aralık
-// farklı"dan ayıramaz. from/to zaten URL'den (?range=) geliyor.
+// v0.9.93 GERİ ALMA (operatör prod raporu): v0.9.83'te x-ekseni SORGU
+// penceresine ([from, now]) sabitleniyordu. Prod'da veri ingest gecikmesi
+// + seyrek scrape yüzünden son bucket `now`'un birkaç dakika gerisinde
+// kalıyor; eksen yine de `now`'a uzayınca veri "belirli bir alana"
+// sıkışıyor, sağ tarafta boş şerit + o boşlukta hover'da nokta yok gibi
+// görünüyordu ("son 1 saat dediğimde metrikler arası boşluklar,
+// sadece belirli bir alanı gösteriyor"). Operatör eski VERİYE-FİT
+// davranışını istiyor.
 //
-// Tasarım: x-scale'e SABİT min/max koymak drag-zoom'u kırar (uPlot her
-// setScale'i range fonksiyonundan geçirir). Bu yüzden karar ikili:
-//   - AUTO-FIT isteği (istek tüm veri aralığını kapsıyor — ilk çizim /
-//     setData refit / çift-tık reset) → sorgu penceresi ∪ veri aralığı.
-//     Union, pencere dışına taşan veriyi (saat kayması, geniş fetch)
-//     asla gizlemez.
-//   - ZOOM isteği (veriden dar) → istek AYNEN geçer; drag-zoom çalışır.
+// Artık her zaman veriye fit (uPlot'un mn/mx'i = veri uçları). Pin
+// parametresi + plumbing şimdilik inert bırakıldı (temiz kaldırma ayrı
+// bir sadeleştirme); imza korunuyor ki dört bileşenin range fn'i ve
+// tüketici prop'ları geçerli kalsın. Stopped-service görünürlüğü
+// gerekirse ileride ÖLÇÜLEREN, eşikli bir yaklaşımla geri gelebilir.
 export interface XPin {
   from: number; // unix saniye
   to: number;
 }
 
 export function xRangePinned(
-  times: ReadonlyArray<number>,
-  pin: XPin | null | undefined,
+  _times: ReadonlyArray<number>,
+  _pin: XPin | null | undefined,
   reqMin: number,
   reqMax: number,
-  tolSec = 0.5,
 ): [number, number] {
-  if (!pin || !(pin.to > pin.from)) return [reqMin, reqMax];
-  if (!times.length) return [pin.from, pin.to];
-  const fullMin = times[0];
-  const fullMax = times[times.length - 1];
-  const autoFit = reqMin <= fullMin + tolSec && reqMax >= fullMax - tolSec;
-  return autoFit
-    ? [Math.min(pin.from, fullMin), Math.max(pin.to, fullMax)]
-    : [reqMin, reqMax];
+  return [reqMin, reqMax];
 }

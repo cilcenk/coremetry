@@ -152,8 +152,11 @@ export function ServiceInfraTab({ service, range, onZoom }: {
 
   // Grafikler aktif çipin cluster'ını izler (çip yoksa ilk eşleşen).
   const chartCluster = icluster || clustersWithPods[0] || '';
-  const [cpuByPod, setCpuByPod] = useState(false);
-  const [memByPod, setMemByPod] = useState(false);
+  // v0.9.72 (operatör isteği) — CPU/Mem default pod-bazlı (By pod):
+  // servis-infra sekmesinde asıl soru "hangi pod sıcak", tek toplam
+  // çizgi bunu gizliyordu. Total'a toggle'la geçilir.
+  const [cpuByPod, setCpuByPod] = useState(true);
+  const [memByPod, setMemByPod] = useState(true);
   // Sunucu 6h clamp'i — Clusters Overview'la aynı dürüstlük (v0.9.21).
   const { cFrom, cTo, clamped } = useMemo(() => {
     const sixH = 6 * 3600 * 1e9;

@@ -4,6 +4,7 @@ import { STEP_OPTIONS } from '@/pages/explore/presets';
 import type {
   Panel, PanelType, PanelWidth,
   MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
+  HeatmapPanelConfig,
 } from '@/lib/types';
 
 const TYPE_LABELS: Record<PanelType, string> = {
@@ -15,6 +16,9 @@ const TYPE_LABELS: Record<PanelType, string> = {
   // / warning / breached bands". Same data source pattern as
   // Stat — point either at a metric_points key or a span agg.
   gauge:      'Gauge (semicircle dial)',
+  // v0.9.109 (C2) — time×bucket latency density for a histogram metric.
+  // Reuses the LatencyHeatmap viz + /api/metrics/histogram (the F3 machine).
+  heatmap:    'Heatmap (latency density)',
   markdown:   'Markdown / notes',
   row:        'Row (collapsible group)',
 };
@@ -143,6 +147,9 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
         {panel.type === 'gauge' && (
           <GaugeFields cfg={panel.config as GaugePanelConfig} onChange={updateConfig} />
         )}
+        {panel.type === 'heatmap' && (
+          <HeatmapFields cfg={panel.config as HeatmapPanelConfig} onChange={updateConfig} />
+        )}
         {panel.type === 'markdown' && (
           <Field label="Markdown text">
             <textarea
@@ -198,6 +205,40 @@ function MetricFields({ cfg, onChange }: {
         <input value={cfg.groupBy ?? ''}
           onChange={e => update('groupBy', e.target.value)} style={{ width: '100%' }} />
       </Field>
+    </>
+  );
+}
+
+// v0.9.109 (C2) — Heatmap panel editor. A histogram metric + optional
+// service/unit/step. No agg/groupBy: a heatmap renders the whole bucket
+// distribution over time (global), not a reduced series.
+function HeatmapFields({ cfg, onChange }: {
+  cfg: HeatmapPanelConfig; onChange: (c: HeatmapPanelConfig) => void;
+}) {
+  const update = <K extends keyof HeatmapPanelConfig>(k: K, v: HeatmapPanelConfig[K]) =>
+    onChange({ ...cfg, [k]: v });
+  return (
+    <>
+      <Field label="Histogram metric name">
+        <MetricNamePicker service="" value={cfg.metricName ?? ''}
+          onChange={v => update('metricName', v)}
+          placeholder="search histogram metrics…" width="100%" />
+      </Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <Field label="Service (optional)">
+          <input value={cfg.service ?? ''}
+            onChange={e => update('service', e.target.value)} />
+        </Field>
+        <Field label="Bounds unit (y-axis)">
+          <select value={cfg.unit ?? 'ms'} onChange={e => update('unit', e.target.value)}>
+            <option value="ms">ms (bounds already ms)</option>
+            <option value="s">s (bounds in seconds → ms)</option>
+          </select>
+        </Field>
+        <Field label="Step">
+          <StepSelect value={cfg.step} onChange={v => update('step', v)} />
+        </Field>
+      </div>
     </>
   );
 }
@@ -439,6 +480,11 @@ export function defaultConfig(t: PanelType): Panel['config'] {
         { value: 95, color: 'red' },
       ],
     };
+    // v0.9.109 (C2) — empty metricName → HeatmapPanel shows the "configure a
+    // metric" prompt (same as MetricPanel), never a blank panel. unit 'ms' is
+    // the common latency-histogram default; operator flips to 's' for
+    // seconds-valued bounds (http.server.request.duration).
+    case 'heatmap':    return { metricName: '', unit: 'ms' };
     case 'markdown':   return { text: '## Notes\n\nDescribe what this dashboard shows.' };
     // Row panels carry no config of their own — title is on the panel
     // itself, default-collapsed is opt-in.

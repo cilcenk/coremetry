@@ -2211,7 +2211,7 @@ export interface SLORow extends SLO {
 
 // ── Dashboards ───────────────────────────────────────────────────────────────
 
-export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row';
+export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row' | 'heatmap';
 export type PanelWidth = 1 | 2 | 3 | 4;  // 1=quarter … 4=full (12-col grid)
 
 // Each panel type has a different config shape. Kept as a tagged union so
@@ -2288,6 +2288,21 @@ export interface GaugePanelConfig {
   thresholds?: { value: number; color: 'green' | 'amber' | 'red' }[];
 }
 
+// v0.9.109 (C2) — Heatmap panel. Renders an explicit/exponential-
+// histogram METRIC's latency distribution as a time×bucket density grid
+// (reuses LatencyHeatmap viz + the /api/metrics/histogram machine that F3
+// works on — the first dashboard surface for the metric histogram path).
+// Global distribution (no agg/groupBy — a heatmap blends the whole
+// distribution, PromQL histogram-heatmap default). Bucket bounds come
+// from the metric's own explicit bounds; the y-axis is the metric unit.
+export interface HeatmapPanelConfig {
+  metricName: string;      // histogram-instrument metric (e.g. http.server.duration)
+  service?: string;
+  unit?: string;           // bounds unit for the y-axis label ('ms' default; 's' → ×1000)
+  step?: number;           // bucket seconds; absent/0 = width-aware auto (see MetricPanelConfig.step)
+  filters?: string;        // JSON FilterExpr[]
+}
+
 export interface MarkdownPanelConfig {
   text: string;
 }
@@ -2309,7 +2324,7 @@ export interface Panel {
   // a "last 15min" incident chart on the same dashboard.
   // undefined / missing → fall back to the dashboard's range.
   rangeOverride?: TimeRange;
-  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig;
+  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig | HeatmapPanelConfig;
 }
 
 // DashboardVariable — Grafana-style variable. Referenced as ${name} in

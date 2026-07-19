@@ -8,6 +8,7 @@ import { placeTooltip } from '@/components/MultiLineChart';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { timeSeriesPanelBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar as resolveColor } from '@/lib/chart/resolveVar';
+import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -109,6 +110,9 @@ interface TimeSeriesPanelProps {
   // explore-v2 Phase 3.2 — click an exemplar ◆ to open its trace. Receives the
   // exemplar's trace_id; the page navigates to the trace view.
   onExemplarClick?: (traceId: string) => void;
+  // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini sorgu penceresine sabitle
+  // (unix sec); zoomWindow/drag isteği aynen geçer. Verilmezse eski davranış.
+  xRange?: XPin | null;
 }
 
 // v0.9.75 (chart-consolidation Adım 0) — resolveColor lib/chart/
@@ -141,7 +145,7 @@ interface LegendRow {
 
 export function TimeSeriesPanel({
   series, deploys, events, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend,
-  zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick,
+  zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick, xRange,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -157,6 +161,7 @@ export function TimeSeriesPanel({
   // rebuild dep list (that would force a full rebuild per zoom/hover).
   const zoomRef = useRef(zoomWindow);
   zoomRef.current = zoomWindow;
+  const xRangeRef = useRef(xRange); xRangeRef.current = xRange;
   const hiddenRef = useRef(hiddenLabels);
   hiddenRef.current = hiddenLabels;
   const focusedRef = useRef(focusedLabel);
@@ -290,7 +295,7 @@ export function TimeSeriesPanel({
       width: el.clientWidth || 600,
       height,
       scales: {
-        x: { time: true },
+        x: { time: true, range: (u, mn, mx) => xRangePinned(u.data[0] as number[], xRangeRef.current, mn, mx) },
         y: logScale ? { distr: 3, log: 10 } : {},
         ...(hasRight ? { yr: logScale ? { distr: 3, log: 10 } : {} } : {}),
       },

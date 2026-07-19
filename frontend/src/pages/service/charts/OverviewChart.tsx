@@ -6,6 +6,7 @@ import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
+import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
@@ -47,18 +48,26 @@ interface Props {
   // MultiLineChart / ServiceCharts). Absent → uPlot's default local
   // setScale zoom (isolated), the pre-v0.8.534 behaviour.
   onZoom?: (fromSec: number, toSec: number) => void;
+  // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini SORGU penceresine
+  // sabitle (unix sec). Emit etmeyi bırakmış servisin grafiği erken
+  // bitmez; veri boşluğu boşluk olarak görünür. Zoom isteği aynen
+  // geçer (xRangePinned). Verilmezse eski davranış (veriye fit).
+  xRange?: XPin | null;
 }
 
 // v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a
 // çıkarıldı (dört bileşende byte-identical kopyaydı).
 
 export function OverviewChart({
-  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom,
+  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom, xRange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // onZoom in a ref (v0.8.520 pattern) so the once-per-build setSelect hook
   // always calls the latest without re-registering (identity-stable deps).
   const onZoomRef = useRef(onZoom); onZoomRef.current = onZoom;
+  // Sorgu penceresi ref'te (canlı): range fn her auto-fit'te günceli okur,
+  // pencere değişimi rebuild tetiklemez (setData refit'iyle akar).
+  const xRangeRef = useRef(xRange); xRangeRef.current = xRange;
   const ttRef = useRef<HTMLDivElement>(null);
   const flagRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -150,7 +159,10 @@ export function OverviewChart({
         drag: { x: true, y: false, setScale: true },
       },
       legend: { show: false },
-      scales: { x: { time: true }, y: { range: yRangeHeadroom } },
+      scales: {
+        x: { time: true, range: (u, mn, mx) => xRangePinned(u.data[0] as number[], xRangeRef.current, mn, mx) },
+        y: { range: yRangeHeadroom },
+      },
       axes: [
         { stroke: text3, grid: { show: false }, ticks: { show: false }, size: 22, font: '10px ui-monospace, monospace' },
         {

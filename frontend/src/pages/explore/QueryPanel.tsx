@@ -15,13 +15,14 @@ const SYNC_KEY = 'explore-v2';
 const PANEL_HEIGHT = 200;
 
 export const QueryPanel = memo(function QueryPanel({
-  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom, onExemplarClick, logScale, onPin,
+  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom, onExemplarClick, logScale, onPin, xRange,
 }: {
   panel: PanelData;
   mode: TSMode;
   hiddenLabels: Set<string>;
   focusedLabel: string | null;
   zoomWindow: { from: number; to: number } | null;
+  xRange?: { from: number; to: number } | null;
   onZoom: (fromSec: number, toSec: number) => void;
   onExemplarClick?: (traceId: string) => void;
   logScale?: boolean;   // v0.8.418 (DE3) — TimeSeriesPanel's log10 y-axis
@@ -86,6 +87,7 @@ export const QueryPanel = memo(function QueryPanel({
           syncKey={SYNC_KEY}
           hideLegend
           zoomWindow={zoomWindow}
+          xRange={xRange}
           hiddenLabels={hiddenLabels}
           focusedLabel={focusedLabel}
           onCursorTime={publishCursor}

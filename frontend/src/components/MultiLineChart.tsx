@@ -8,6 +8,7 @@ import { placeTooltip } from '@/lib/chartTooltip';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { chartBuildSignature } from '@/lib/chartBuildSig';
 import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
+import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 
 // Re-exported so existing importers (TimeSeriesPanel) keep working after the
 // placement logic moved into the pure, unit-tested lib/chartTooltip module.
@@ -154,7 +155,7 @@ function computeChartData(
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
   compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
-  selectedOps, onLegendClick,
+  selectedOps, onLegendClick, xRange,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -219,6 +220,9 @@ export function MultiLineChart({
   // parent can sync every sibling chart to one selection.
   selectedOps?: Set<string> | null;
   onLegendClick?: (label: string, additive: boolean) => void;
+  // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini sorgu penceresine sabitle
+  // (unix sec); zoom isteği aynen geçer. Verilmezse eski davranış.
+  xRange?: XPin | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -256,6 +260,7 @@ export function MultiLineChart({
   // bucketClickRef / onLegendClickRef above.
   const onZoomRef = useRef(onZoom);
   onZoomRef.current = onZoom;
+  const xRangeRef = useRef(xRange); xRangeRef.current = xRange;
 
   // Theme tick — a data-theme toggle must re-resolve the canvas CSS-var colors,
   // which only happens on a rebuild. So the theme counter is a BUILD dep (never
@@ -367,7 +372,7 @@ export function MultiLineChart({
       // axis floor — fine for the count/latency metrics SREs
       // toggle log for (always non-negative).
       scales: {
-        x: { time: true },
+        x: { time: true, range: (u, mn, mx) => xRangePinned(u.data[0] as number[], xRangeRef.current, mn, mx) },
         y: logScale ? { distr: 3, log: 10 } : {},
       },
       // Hovering a legend row focuses that series and dims the others

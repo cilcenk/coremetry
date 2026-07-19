@@ -671,7 +671,8 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
           </Empty>
         ) : (
           <TimeSeriesPanel series={series} height={340} deploys={deploys}
-            mode={model.viz} logScale={model.logScale} syncKey="mqe-preview" />
+            mode={model.viz} logScale={model.logScale} syncKey="mqe-preview"
+            xRange={{ from: from / 1e9, to: to / 1e9 }} />
         )}
       </div>
 

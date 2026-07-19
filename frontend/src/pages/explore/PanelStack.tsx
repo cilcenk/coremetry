@@ -188,12 +188,14 @@ export function buildPanels(
   return out;
 }
 
-export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick, logScale, onPin, pinnableLetters }: {
+export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick, logScale, onPin, pinnableLetters, xRange }: {
   panels: PanelData[];
   viz: 'line' | 'area' | 'bars' | 'stacked';
   hiddenKeys: Set<string>;          // `${letter}:${label}`
   focusKey: string | null;          // `${letter}:${label}`
   zoomWindow: { from: number; to: number } | null;
+  // v0.9.83 — sorgu penceresi (unix sec); panellerin x-ekseni buna sabitlenir.
+  xRange?: { from: number; to: number } | null;
   onZoom: (fromSec: number, toSec: number) => void;
   onExemplarClick?: (traceId: string) => void;   // open an exemplar ◆ trace
   logScale?: boolean;               // v0.8.418 (DE3) — log10 y-axis, all panels
@@ -222,6 +224,7 @@ export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZo
           hiddenLabels={perPanel[i].hidden}
           focusedLabel={perPanel[i].focused}
           zoomWindow={zoomWindow}
+          xRange={xRange}
           onZoom={onZoom}
           onExemplarClick={onExemplarClick}
           logScale={logScale}

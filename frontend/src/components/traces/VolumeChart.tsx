@@ -19,13 +19,15 @@ function fmtDurRight(v: number): string {
 }
 
 export function VolumeChart({
-  count, errors, p50, height = 140, onBrush,
+  count, errors, p50, height = 140, onBrush, xRange,
 }: {
   count: SpanMetricSeries[] | null;
   errors: SpanMetricSeries[] | null;
   p50: SpanMetricSeries[] | null;
   height?: number;
   onBrush?: (fromMs: number, toMs: number) => void;
+  // v0.9.83 — sorgu penceresi (unix sec); histogram x-ekseni buna sabitlenir.
+  xRange?: { from: number; to: number } | null;
 }) {
   const { times, series, bucketMin } = useMemo(() => {
     const cPts = count?.[0]?.points ?? [];
@@ -83,6 +85,7 @@ export function VolumeChart({
           rightUnit=""
           onBrush={onBrush}
           fmtRight={fmtDurRight}
+          xRange={xRange}
         />
       )}
     </div>

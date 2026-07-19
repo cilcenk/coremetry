@@ -56,6 +56,11 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
   // query keys (same trick the Logs page uses — Date.now() in
   // timeRangeToNs makes naive use unstable).
   const computed = useMemo(() => timeRangeToNs(range), [range]);
+  // v0.9.83 — x-ekseni sorgu penceresine sabit (uPlot Aşama 2 madde 2).
+  const xRangeSec = useMemo(() => {
+    const w = windowNs ?? computed;
+    return { from: w.from / 1e9, to: w.to / 1e9 };
+  }, [windowNs, computed]);
   const { from, to } = windowNs ?? computed;
 
   // D5 doorway descriptors (v0.8.69) — each RED chart carries its MetricQuery so
@@ -452,7 +457,7 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
         <ChartCard title={rpsTitle}>
           <MetricPanel compact menuOnly title={rpsTitle} metricQuery={rpsMq}>
             <div style={{ position: 'relative' }}>
-              <MultiLineChart series={rpsSeries ?? []} unit="rps"
+              <MultiLineChart xRange={xRangeSec} series={rpsSeries ?? []} unit="rps"
                               height={180}
                               deploys={deployMarkers}
                               syncKey={syncKey}
@@ -467,7 +472,7 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
         <ChartCard title={errTitle}>
           <MetricPanel compact menuOnly title={errTitle} metricQuery={errMq}>
             <div style={{ position: 'relative' }}>
-              <MultiLineChart series={errSeries ?? []} unit="%"
+              <MultiLineChart xRange={xRangeSec} series={errSeries ?? []} unit="%"
                               height={180}
                               deploys={deployMarkers}
                               thresholds={errorThresholds}
@@ -484,7 +489,7 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
         <ChartCard title={durTitle}>
           <MetricPanel compact menuOnly title={durTitle} metricQuery={p99Mq}>
             <div style={{ position: 'relative' }}>
-              <MultiLineChart series={p99Series ?? []} unit="ms"
+              <MultiLineChart xRange={xRangeSec} series={p99Series ?? []} unit="ms"
                               height={180}
                               deploys={deployMarkers}
                               thresholds={latencyThresholds}

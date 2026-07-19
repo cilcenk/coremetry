@@ -268,6 +268,7 @@ export function RuntimeCharts({ service, from, to, onZoom }: {
                   height={240}
                   syncKey={`runtime:${service}`}
                   onZoom={onZoom}
+                  smooth
                 />
               )}
             </div>

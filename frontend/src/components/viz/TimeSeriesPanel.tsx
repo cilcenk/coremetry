@@ -114,6 +114,11 @@ interface TimeSeriesPanelProps {
   // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini sorgu penceresine sabitle
   // (unix sec); zoomWindow/drag isteği aynen geçer. Verilmezse eski davranış.
   xRange?: XPin | null;
+  // v0.9.99 (operatör: runtime pod grafikleri) — pürüzsüz + kesintisiz
+  // gösterim: line/area serilerde spline path (zigzag azalır) + spanGaps
+  // (eksik bucket'lar köprülenir, kopukluk kalkar). Metrik "gerçek değer"
+  // disiplini için VARSAYILAN kapalı; yalnız çağıran (RuntimeCharts) açar.
+  smooth?: boolean;
 }
 
 // v0.9.75 (chart-consolidation Adım 0) — resolveColor lib/chart/
@@ -145,7 +150,7 @@ interface LegendRow {
 }
 
 export function TimeSeriesPanel({
-  series, deploys, events, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend,
+  series, deploys, events, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend, smooth,
   zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick, xRange,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -335,12 +340,23 @@ export function TimeSeriesPanel({
           // v0.9.80 (Aşama 2 madde 1) — adım çizim: line/area modunda
           // stepped seri (scrape gauge/counter) değeri sonraki örneğe
           // kadar sabit tutar. bars/stacked kendi path'ini kullanır.
-          if (s.stepped && mode !== 'bars' && !stacked && uPlot.paths.stepped) {
+          // smooth istenmişse spline kazanır (aşağıda).
+          if (s.stepped && mode !== 'bars' && !stacked && !smooth && uPlot.paths.stepped) {
             base.paths = uPlot.paths.stepped({ align: 1 });
           }
-          // v0.9.84 (madde 3) — line/area: tek kaçmış scrape köprülenir,
-          // gerçek kesinti kırık kalır. bars/stacked'e dokunma.
-          if (mode !== 'bars' && !stacked) base.gaps = stepGapsRefiner;
+          if (mode !== 'bars' && !stacked) {
+            if (smooth && uPlot.paths.spline) {
+              // v0.9.99 (operatör: runtime pod grafikleri) — pürüzsüz +
+              // kesintisiz: spline path zigzag'ı azaltır, spanGaps eksik
+              // bucket'ları köprüler (kopukluk kalkar). Gap-refiner'ı ezer.
+              base.paths = uPlot.paths.spline();
+              base.spanGaps = true;
+            } else {
+              // v0.9.84 (madde 3) — tek kaçmış scrape köprülenir, gerçek
+              // kesinti kırık kalır. bars/stacked'e dokunma.
+              base.gaps = stepGapsRefiner;
+            }
+          }
           return base;
         }),
       ],
@@ -877,14 +893,30 @@ export function TimeSeriesPanel({
 }
 
 // ── Interactive legend table ────────────────────────────────────────────────
+// v0.9.99 (operatör: çok-pod'lu servisler) — >8 seride lejand VARSAYILAN
+// KAPALI (30+ pod'da sayfa aşırı uzuyordu); tıkla-aç başlık. Az-serili
+// grafiklerde (Explore) açık kalır — kısa lejand sayfa-boyu sorunu değil.
+const LEGEND_COLLAPSE_THRESHOLD = 8;
 function TimeSeriesLegend({ rows, isVisible, onToggle }: {
   rows: LegendRow[];
   visTick: number;                                  // re-render trigger only
   isVisible: (dataIdx0: number) => boolean;
   onToggle: (dataIdx0: number, additive: boolean) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(rows.length > LEGEND_COLLAPSE_THRESHOLD);
   return (
-    <div style={{ marginTop: 8, overflowX: 'auto' }}>
+    <div style={{ marginTop: 8 }}>
+      <button type="button" onClick={() => setCollapsed(c => !c)}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
+          fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4,
+        }}
+        title={collapsed ? 'Show series legend' : 'Hide series legend'}>
+        <span style={{ fontSize: 9 }}>{collapsed ? '▶' : '▼'}</span>
+        Series ({rows.length})
+      </button>
+      {!collapsed && (
+      <div style={{ overflowX: 'auto', marginTop: 4 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>
           <tr style={{ color: 'var(--text3)', textAlign: 'right' }}>
@@ -916,6 +948,8 @@ function TimeSeriesLegend({ rows, isVisible, onToggle }: {
           })}
         </tbody>
       </table>
+      </div>
+      )}
     </div>
   );
 }

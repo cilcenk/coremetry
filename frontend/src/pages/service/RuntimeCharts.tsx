@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { alignToUnion } from '@/lib/chart/alignSeries';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import type { FilterExpr, SpanMetricSeries } from '@/lib/types';
+import { podLineLabel } from './runtimePodLabel';
 
 // RuntimeCharts (v0.9.87, operatör talebi) — Service Overview'da dil
 // ailesine göre JVM / .NET / Go heap+GC runtime grafikleri.
@@ -45,35 +46,52 @@ interface LineSpec {
   groupBy?: string;
   scale?: number;     // değer çarpanı (By→MB, s→ms, ns→ms)
   fanout?: boolean;   // groupBy fan-out: dönen her seri ayrı çizgi
+  // Fanout etiketi üreticisi (pod kırılımı); yoksa groupKey.join('/').
+  labelOf?: (gk: string[], service: string, fallback: string) => string;
 }
+
+// v0.9.89 (operatör talebi) — JVM/.NET kartları POD BAZLI: "herhangi
+// bir pod heap dolduğunda ya da GC yaptığında ayırt edebileyim".
+// İkili groupBy: k8s.pod.name (collector k8sattributes'a bağlı, her
+// ortamda yok) + service.instance.id (javaagent 2.x her zaman basar) —
+// hangisi doluysa etiket ondan (podLineLabel). İkisi de boşsa tek
+// çizgiye düşer (aggregate görünüm), kart yine çalışır.
+const POD_GROUP = 'resource.k8s.pod.name,resource.service.instance.id';
 interface CardSpec { key: string; title: string; unit: string; lines: LineSpec[] }
 
 const FANOUT_PALETTE = ['var(--accent)', 'var(--purple)', 'var(--teal)', 'var(--warn)', 'var(--orange)', 'var(--err)'];
-const FANOUT_MAX = 6; // groupBy patlamasına karşı üst sınır (legend okunur kalsın)
+const FANOUT_MAX = 8; // groupBy patlamasına karşı üst sınır (legend okunur kalsın)
 
 const FAMILY_CARDS: Record<string, CardSpec[]> = {
   jvm: [
-    { key: 'heap', title: 'JVM heap', unit: ' MB', lines: [
-      { metric: 'jvm.memory.used', label: 'used', color: 'var(--accent)', filters: HEAP, scale: MB },
-      { metric: 'jvm.memory.committed', label: 'committed', color: 'var(--purple)', filters: HEAP, scale: MB },
+    { key: 'heap', title: 'JVM heap (by pod)', unit: ' MB', lines: [
+      { metric: 'jvm.memory.used', label: 'used', color: 'var(--accent)', filters: HEAP,
+        scale: MB, groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel },
+      // limit tüm pod'larda aynı JVM ayarı — tek referans çizgisi;
+      // pod çizgisi limite yaklaşınca "doldu" gözle okunur.
       { metric: 'jvm.memory.limit', label: 'limit', color: 'var(--err)', filters: HEAP, scale: MB },
     ] },
-    { key: 'gc', title: 'GC pause (avg)', unit: ' ms', lines: [
-      { metric: 'jvm.gc.duration', label: 'gc', color: 'var(--warn)', groupBy: 'jvm.gc.name', fanout: true, scale: 1000 },
+    { key: 'gc', title: 'GC pause by pod (avg)', unit: ' ms', lines: [
+      { metric: 'jvm.gc.duration', label: 'gc', color: 'var(--warn)',
+        groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel, scale: 1000 },
     ] },
-    { key: 'threads', title: 'Threads', unit: '', lines: [
-      { metric: 'jvm.thread.count', label: 'threads', color: 'var(--teal)' },
+    { key: 'threads', title: 'Threads (by pod)', unit: '', lines: [
+      { metric: 'jvm.thread.count', label: 'threads', color: 'var(--teal)',
+        groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel },
     ] },
   ],
   dotnet: [
-    { key: 'heap', title: '.NET heap (by gen)', unit: ' MB', lines: [
-      { metric: 'process.runtime.dotnet.gc.heap.size', label: 'heap', color: 'var(--accent)', groupBy: 'generation', fanout: true, scale: MB },
+    { key: 'heap', title: '.NET heap (by pod)', unit: ' MB', lines: [
+      { metric: 'process.runtime.dotnet.gc.heap.size', label: 'heap', color: 'var(--accent)',
+        groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel, scale: MB },
     ] },
-    { key: 'committed', title: 'GC committed', unit: ' MB', lines: [
-      { metric: 'process.runtime.dotnet.gc.committed_memory.size', label: 'committed', color: 'var(--purple)', scale: MB },
+    { key: 'committed', title: 'GC committed (by pod)', unit: ' MB', lines: [
+      { metric: 'process.runtime.dotnet.gc.committed_memory.size', label: 'committed', color: 'var(--purple)',
+        groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel, scale: MB },
     ] },
-    { key: 'threads', title: 'ThreadPool threads', unit: '', lines: [
-      { metric: 'process.runtime.dotnet.thread_pool.threads.count', label: 'threads', color: 'var(--teal)' },
+    { key: 'threads', title: 'ThreadPool threads (by pod)', unit: '', lines: [
+      { metric: 'process.runtime.dotnet.thread_pool.threads.count', label: 'threads', color: 'var(--teal)',
+        groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel },
     ] },
   ],
   go: [
@@ -127,7 +145,8 @@ export function RuntimeCharts({ service, from, to, onZoom, xRange }: {
   );
   const queries = useQueries({
     queries: specs.map(({ line }) => ({
-      queryKey: ['svc-runtime-metric', service, line.metric, line.groupBy ?? '', from, to],
+      queryKey: ['svc-runtime-metric', service, line.metric, line.groupBy ?? '',
+        line.filters ? JSON.stringify(line.filters) : '', from, to],
       queryFn: () => api.metricQuery({
         name: line.metric,
         service,
@@ -154,7 +173,9 @@ export function RuntimeCharts({ service, from, to, onZoom, xRange }: {
         const seriesList = line.fanout ? data.slice(0, FANOUT_MAX) : data.slice(0, 1);
         seriesList.forEach((s, si) => {
           const label = line.fanout
-            ? (s.groupKey.filter(Boolean).join('/') || line.label)
+            ? (line.labelOf
+                ? line.labelOf(s.groupKey, service, line.label)
+                : (s.groupKey.filter(Boolean).join('/') || line.label))
             : line.label;
           const color = line.fanout ? FANOUT_PALETTE[si % FANOUT_PALETTE.length] : line.color;
           raw.push({

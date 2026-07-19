@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
@@ -6,28 +6,21 @@ import { fmtXTicks } from '@/lib/chartFmt';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
-import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
+import { useChartEngine } from '@/lib/chart/engine';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
 // (no axes chrome beyond 0/50/100 gridlines), a dashed-purple deploy marker
-// with a ▼ flag, and a hover crosshair + per-series tooltip. Replaces the
-// reuse of the full MultiLineChart, which is built for full-width detail
-// panels and threw a uPlot ResizeObserver/teardown race when squeezed into
-// the 3-column card grid.
+// with a ▼ flag, and a hover crosshair + per-series tooltip.
 //
-// Robustness: the ResizeObserver callback bails if the instance was
-// destroyed (ref nulled on cleanup), which is what the MultiLineChart reuse
-// tripped on under StrictMode's double-mount in a 0-width card.
-//
-// v0.8.531 (perf #5/#15) — rebuild-vs-setData split. The build effect keyed on
-// `times`/`series`, so every 30s RED poll destroyed + recreated the uPlot
-// (canvas flicker, dropped hover). Now it keys on a pure STRUCTURE signature
-// (series shape + mode + unit + deploy + height) and the theme tick; a
-// data-only refresh rides u.setData(). The y range + splits re-fit from the
-// LIVE scale so setData re-scales exactly as the old rebuild did; the DOM ▼
-// flag is repositioned on the fast-path so it tracks the shifted window.
+// v0.9.97 (chart-consolidation Adım 1) — new uPlot / destroy / ResizeObserver
+// / setData fast-path (v0.8.531 rebuild-vs-setData + v0.9.78/79 zoom-koruma)
+// İSKELETİ lib/chart/engine.ts::useChartEngine'e çıkarıldı. Bu bileşen artık
+// bir PRESET: buildOptions (renk çözümü + opts) + data + signature + flag
+// hook'ları verir; yaşam döngüsü motorda. DAVRANIŞ birebir korunur (aynı
+// opts/data/hook'lar); kanıt: overviewChartBuildSignature kontratı +
+// engine.seam.test. Motoru kullanan İLK preset — TC/MLC/TSP Adım 2-4'te.
 
 export interface OvChartSeries {
   label: string;
@@ -45,43 +38,26 @@ interface Props {
   unit?: string;              // " ms", "%", " req/s" …
   deployAtSec?: number | null; // deploy time (unix sec) → dashed vline + flag
   deployLabel?: string;       // e.g. "v1.0.0"
-  // v0.8.534 — drag-select zoom → parent range. Fires (fromSec, toSec)
-  // on release of a horizontal selection; the parent maps it to the
-  // global ?range= so EVERY Overview chart + the top picker sync (mirrors
-  // MultiLineChart / ServiceCharts). Absent → uPlot's default local
-  // setScale zoom (isolated), the pre-v0.8.534 behaviour.
+  // v0.8.534 — drag-select zoom → parent range (fromSec, toSec).
   onZoom?: (fromSec: number, toSec: number) => void;
-  // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini SORGU penceresine
-  // sabitle (unix sec). Emit etmeyi bırakmış servisin grafiği erken
-  // bitmez; veri boşluğu boşluk olarak görünür. Zoom isteği aynen
-  // geçer (xRangePinned). Verilmezse eski davranış (veriye fit).
+  // v0.9.83 pin — v0.9.94'te inert (veriye-fit revert); imza korunuyor.
   xRange?: XPin | null;
 }
-
-// v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a
-// çıkarıldı (dört bileşende byte-identical kopyaydı).
 
 export function OverviewChart({
   times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom, xRange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // onZoom in a ref (v0.8.520 pattern) so the once-per-build setSelect hook
-  // always calls the latest without re-registering (identity-stable deps).
+  // always calls the latest without re-registering.
   const onZoomRef = useRef(onZoom); onZoomRef.current = onZoom;
-  // Sorgu penceresi ref'te (canlı): range fn her auto-fit'te günceli okur,
-  // pencere değişimi rebuild tetiklemez (setData refit'iyle akar).
   const xRangeRef = useRef(xRange); xRangeRef.current = xRange;
   const ttRef = useRef<HTMLDivElement>(null);
   const flagRef = useRef<HTMLDivElement>(null);
-  const plotRef = useRef<uPlot | null>(null);
-  // Re-resolve CSS-var stroke/grid colors when the theme flips (cssVar()
-  // bakes concrete hex at build time, so the canvas would otherwise stay
-  // stale on light↔dark toggle until remount).
   const themeTick = useThemeTick();
 
-  // uPlot aligned data (stacked-aware) — memoised on the data inputs + mode so a
-  // poll recomputes once and either seeds a rebuild or rides setData. The
-  // tooltip reads RAW per-series values, so keep the raw series in a ref too.
+  // uPlot aligned data (stacked-aware) — memoised on the data inputs + mode.
+  // Tooltip reads RAW per-series values, so keep the raw series in a ref too.
   const built = useMemo(() => {
     const stacked = mode === 'stacked';
     let matrix: (number | null)[][];
@@ -97,16 +73,10 @@ export function OverviewChart({
     }
     return { data: [times, ...matrix] as uPlot.AlignedData };
   }, [times, series, mode]);
-  const builtRef = useRef(built); builtRef.current = built;
-  // Raw series for the tooltip (stacked draws cumulative into u.data, so the
-  // tooltip must read the untransformed values); fresh on the fast-path.
   const rawRef = useRef({ series }); rawRef.current = { series };
-  // Repositions the DOM ▼ flag; assigned in the build effect, called by the
-  // fast-path so the flag follows the window without a rebuild.
-  const placeFlagRef = useRef<() => void>(() => {});
 
-  // Build signature — series shape + mode + unit + deploy + height. Point VALUES
-  // ride setData; `renderable` (≥2 x points) flips the sig for empty→data.
+  // Build signature — series shape + mode + unit + deploy + height. Point
+  // VALUES ride setData; `renderable` (≥2 x points) flips the sig for empty→data.
   const buildSig = overviewChartBuildSignature({
     series,
     height, mode, unit, deployAtSec, deployLabel,
@@ -114,19 +84,29 @@ export function OverviewChart({
     hasZoom: !!onZoom,
   });
 
-  useEffect(() => {
-    const el = hostRef.current;
-    if (!el || times.length < 2 || series.length === 0) return;
+  // Repositions the DOM ▼ deploy flag (above the canvas) at the marker x.
+  // Called after build + after the setData fast-path + on resize (engine hooks).
+  const placeFlag = (u: uPlot) => {
+    const flag = flagRef.current;
+    if (!flag) return;
+    if (deployAtSec == null) { flag.style.display = 'none'; return; }
+    const x = u.valToPos(deployAtSec, 'x', false);
+    if (x < 0 || x > u.over.clientWidth) { flag.style.display = 'none'; return; }
+    flag.style.display = 'block';
+    flag.style.left = `${x}px`;
+  };
 
+  // buildOptions — renkleri REBUILD ANINDA çöz (tema flip'inde motor bu fn'i
+  // yeniden çağırır, CSS-var'lar taze). Eski build effect'in opts'unun birebiri.
+  const buildOptions = (width: number): uPlot.Options => {
     const colors = series.map(s => resolveVar(s.color));
     const gridc = resolveVar('var(--border)');
     const text3 = resolveVar('var(--text3)');
     const purple = resolveVar('var(--purple)');
-
     const stacked = mode === 'stacked';
 
     // Dashed-purple deploy marker, drawn under the series (re-paints on every
-    // redraw incl. setData, so the canvas line tracks the live x-scale).
+    // redraw incl. setData, tracking the live x-scale).
     const deployPlugin: uPlot.Plugin = {
       hooks: {
         draw: u => {
@@ -148,24 +128,17 @@ export function OverviewChart({
       },
     };
 
-    const opts: uPlot.Options = {
-      width: el.clientWidth || 320,
+    return {
+      width,
       height,
       cursor: {
         x: true, y: false, points: { show: true, size: 7 },
-        // v0.8.534 — x-only drag-zoom with instant local rescale (setScale
-        // preserves the pre-v0.8.534 default; the Incident impact chart, which
-        // passes no onZoom, keeps its standalone zoom). When onZoom IS wired
-        // (Overview), the setSelect hook below ALSO propagates the range to the
-        // page so the sibling charts + global picker re-sync via ?range=,
-        // mirroring MultiLineChart / ServiceCharts.
+        // v0.8.534 — x-only drag-zoom with instant local rescale.
         drag: { x: true, y: false, setScale: true },
       },
       legend: { show: false },
-      // v0.9.93 (uPlot Aşama 3) — stacked modda komşu bant dolguları
-      // farklı piksel sınırlarına snap'lenince aralarında 1px saç-teli
-      // beyaz çizgi kalıyordu; stacked'te pxAlign:0 dolguları sürekli
-      // hizalar. Non-stacked'te crisp gridline için 1 (default).
+      // v0.9.93 (uPlot Aşama 3) — stacked'te pxAlign:0 komşu bant dolguları
+      // arası 1px saç-teli beyaz çizgiyi kaldırır; non-stacked'te crisp 1.
       pxAlign: stacked ? 0 : 1,
       scales: {
         x: { time: true, range: (u, mn, mx) => xRangePinned(u.data[0] as number[], xRangeRef.current, mn, mx) },
@@ -175,9 +148,7 @@ export function OverviewChart({
         {
           stroke: text3, grid: { show: false }, ticks: { show: false }, size: 22,
           font: '10px ui-monospace, monospace',
-          // v0.9.88 (operatör raporu) — uPlot varsayılan zaman etiketi
-          // dakika kırılımlarında çıplak ":30" basıyordu; ev formatlayıcı
-          // fmtXTicks (gün sınırı + HH:MM, v0.8.402 TimeChart emsali).
+          // v0.9.88 — çıplak ":30" yerine ev formatlayıcı fmtXTicks.
           values: (_u, sp) => fmtXTicks(sp as number[]),
         },
         {
@@ -197,9 +168,8 @@ export function OverviewChart({
           stroke: colors[i],
           width: 1.8,
           points: { show: false },
-          // area → gradient fill to baseline; stacked → only the BOTTOM
-          // series fills to baseline (flat translucent), the rest are filled
-          // by the bands between adjacent cumulative lines below.
+          // area → gradient fill to baseline; stacked → only the BOTTOM series
+          // fills to baseline, the rest via the bands between cumulative lines.
           ...(mode === 'area'
             ? { fill: (u: uPlot, si: number) => {
                 const ctx = u.ctx;
@@ -219,9 +189,8 @@ export function OverviewChart({
         ? series.slice(1).map((_s, k) => ({ series: [k + 2, k + 1] as [number, number], fill: colors[k + 1] + '47' }))
         : undefined,
       hooks: {
-        // v0.8.534 — drag-zoom release → hand the selected [from,to] (unix
-        // sec) to the parent, which updates ?range=; reset the grey band so
-        // it doesn't stick. Only registered when onZoom is set.
+        // v0.8.534 — drag-zoom release → hand [from,to] (unix sec) to parent
+        // (updates ?range=); reset the grey band. Only when onZoom is set.
         setSelect: onZoom ? [
           (u: uPlot) => {
             const sel = u.select;
@@ -244,7 +213,7 @@ export function OverviewChart({
             if (tSec == null) { tt.style.display = 'none'; return; }
             const mx = u.scales.y.max ?? 1;
             // Read RAW values from the ref (stacked draws cumulative into u.data)
-            // — fresh on the fast-path; labels/colours are structural (close over).
+            // — fresh on the fast-path; labels/colours are structural.
             const raw = rawRef.current.series;
             const rows = series.map((s, i) =>
               `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${colors[i]}"></i>${s.label}</span><b>${(raw[i]?.data[idx] ?? 0).toFixed(mx < 10 ? 2 : 0)}${unit}</b></div>`,
@@ -259,66 +228,20 @@ export function OverviewChart({
       },
       plugins: [deployPlugin],
     };
+  };
 
-    plotRef.current?.destroy();
-    plotRef.current = new uPlot(opts, builtRef.current.data, el);
-
-    // Position the ▼ deploy flag (DOM, above the canvas) at the marker x.
-    const placeFlag = () => {
-      const u = plotRef.current, flag = flagRef.current;
-      if (!u || !flag) return;
-      if (deployAtSec == null) { flag.style.display = 'none'; return; }
-      const x = u.valToPos(deployAtSec, 'x', false);
-      if (x < 0 || x > u.over.clientWidth) { flag.style.display = 'none'; return; }
-      flag.style.display = 'block';
-      flag.style.left = `${x}px`;
-    };
-    placeFlagRef.current = placeFlag;
-    placeFlag();
-
-    const ro = new ResizeObserver(() => {
-      // Bail if the instance was torn down (StrictMode double-mount / unmount
-      // race in a 0-width card) — calling setSize on a destroyed uPlot is
-      // what threw "Cannot read properties of undefined (reading 'forEach')".
-      const u = plotRef.current;
-      if (!u || !el.clientWidth) return;
-      u.setSize({ width: el.clientWidth, height });
-      placeFlag();
-    });
-    ro.observe(el);
-
-    return () => {
-      ro.disconnect();
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildSig, themeTick]);
-
-  // Data fast-path (v0.8.531) — a poll changes only the point VALUES, not the
-  // series shape/mode/unit/deploy, so buildSig is unchanged and the build effect
-  // does NOT run. Push the fresh (stacked-aware) data with setData() (resetScales
-  // default true → the range function re-fits y) and reposition the DOM ▼ flag.
-  // Guard on column count so a series add/remove stays a rebuild.
-  useEffect(() => {
-    const u = plotRef.current;
-    if (!u) return;
-    if (u.data.length !== built.data.length) return;
-    // v0.9.78 (uPlot Aşama 1) — drag-zoom'u 30s poll'de koru: x daralmışsa
-    // setData(false) + y elle refit; değilse eski davranış (reset). Flag
-    // her iki dalda da yeniden konumlanır (x-pozisyonu kaydı).
-    const xs = u.data[0] as number[];
-    if (isXZoomed(xs, u.scales.x.min, u.scales.x.max)) {
-      const idxs = built.data.map((_, i) => i).slice(1);
-      u.batch(() => {
-        u.setData(built.data, false);
-        u.setScale('y', yRefitScale(built.data as (number | null)[][], idxs));
-      });
-    } else {
-      u.setData(built.data);
-    }
-    placeFlagRef.current();
-  }, [built]);
+  // Yaşam döngüsü motorda (v0.9.97). refitScales verilmez → varsayılan tüm
+  // seriler tek y eksenine (OVC tek eksenli); flag üç noktada da yeniden konumlanır.
+  useChartEngine(hostRef, {
+    signature: buildSig,
+    height,
+    renderable: times.length >= 2 && series.length > 0,
+    data: built.data,
+    buildOptions,
+    afterBuild: placeFlag,
+    afterData: placeFlag,
+    onResize: placeFlag,
+  }, themeTick);
 
   return (
     <div className="ov-chart-wrap" style={{ position: 'relative' }}>

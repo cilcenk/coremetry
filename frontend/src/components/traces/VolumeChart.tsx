@@ -58,18 +58,11 @@ export function VolumeChart({
 
   return (
     <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
-      {/* Legend — ABOVE the plot. Colour only for status (errors); ok = accent. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, fontSize: 10.5, color: 'var(--text-faint)' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'var(--accent)' }} /> ok spans
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: statusColor('error') }} /> errors
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 14, height: 2, background: 'var(--orange)' }} /> p50 latency
-        </span>
-        <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono, ui-monospace)' }}>spans / {bucketMin}m bucket · sürükle = zaman seç</span>
+      {/* v0.9.103 (Grafana-parity #1) — renk-anahtarı kaldırıldı; TimeChart
+          artık altında StatsLegend (swatch+label+istatistik) gösteriyor.
+          Yalnız bucket/sürükle ipucu üstte kalır (StatsLegend'de yok). */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8, fontSize: 10.5, color: 'var(--text-faint)' }}>
+        <span style={{ fontFamily: 'var(--font-mono, ui-monospace)' }}>spans / {bucketMin}m bucket · sürükle = zaman seç</span>
       </div>
 
       {times.length === 0 ? (

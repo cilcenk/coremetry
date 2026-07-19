@@ -8,6 +8,7 @@ import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
+import { StatsLegend } from '@/components/chart/StatsLegend';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { placeTooltip } from '@/lib/chartTooltip';
 
@@ -270,12 +271,16 @@ export function OverviewChart({
   }, themeTick);
 
   return (
-    <div className="ov-chart-wrap" style={{ position: 'relative' }}>
-      <div ref={hostRef} style={{ width: '100%' }} />
-      <div ref={ttRef} className="ov-tt" style={{ display: 'none' }} />
-      {deployAtSec != null && (
-        <div ref={flagRef} className="ov-deploy-flag" style={{ top: 0, display: 'none' }}>▼ {deployLabel}</div>
-      )}
-    </div>
+    <>
+      <div className="ov-chart-wrap" style={{ position: 'relative' }}>
+        <div ref={hostRef} style={{ width: '100%' }} />
+        <div ref={ttRef} className="ov-tt" style={{ display: 'none' }} />
+        {deployAtSec != null && (
+          <div ref={flagRef} className="ov-deploy-flag" style={{ top: 0, display: 'none' }}>▼ {deployLabel}</div>
+        )}
+      </div>
+      {/* v0.9.103 (Grafana-parity #1) — grafik altında seri istatistikleri */}
+      <StatsLegend series={series.map(s => ({ label: s.label, color: s.color, values: s.data, unit }))} />
+    </>
   );
 }

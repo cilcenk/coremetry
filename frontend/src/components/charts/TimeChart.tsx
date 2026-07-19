@@ -9,6 +9,7 @@ import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { yRefitScale } from '@/lib/chart/zoomState';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
+import { StatsLegend } from '@/components/chart/StatsLegend';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { placeTooltip } from '@/lib/chartTooltip';
@@ -290,9 +291,17 @@ export function TimeChart({
   }, themeTick);
 
   return (
-    <div className="ov-chart-wrap" style={{ position: 'relative' }}>
-      <div ref={hostRef} style={{ width: '100%' }} />
-      <div ref={ttRef} className="ov-tt" style={{ display: 'none' }} />
-    </div>
+    <>
+      <div className="ov-chart-wrap" style={{ position: 'relative' }}>
+        <div ref={hostRef} style={{ width: '100%' }} />
+        <div ref={ttRef} className="ov-tt" style={{ display: 'none' }} />
+      </div>
+      {/* v0.9.103 (Grafana-parity #1) — grafik altında seri istatistikleri;
+          birim seri-başı (dual eksende left/right). */}
+      <StatsLegend series={series.map(s => ({
+        label: s.label, color: s.color, values: s.data,
+        unit: s.axis === 'right' ? rightUnit : leftUnit,
+      }))} />
+    </>
   );
 }

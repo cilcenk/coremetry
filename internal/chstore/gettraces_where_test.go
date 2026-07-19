@@ -112,18 +112,25 @@ func TestBuildGetTracesWhere_TimeBoundsAlignTo5Min(t *testing.T) {
 	}
 }
 
-func TestBuildGetTracesWhere_TraceIDLengthDispatch(t *testing.T) {
-	// 32-char hex → exact equality; shorter → prefix match. Bloom
-	// filter index on trace_id makes both efficient, but the
-	// distinction matters for the operator pasting a partial ID.
-	full := "0123456789abcdef0123456789abcdef"
-	wcFull := buildGetTracesWhere(TraceFilter{TraceID: full})
-	if sqlFull := wcFull.sql(); !strings.Contains(sqlFull, "trace_id = ?") {
-		t.Fatalf("32-char trace ID should use equality; got:\n%s", sqlFull)
+func TestBuildGetTracesWhere_TraceIDExactOnly(t *testing.T) {
+	// v0.9.82 (operator-reported): prefix search removed. trace_id has a
+	// bloom_filter skip index (idx_trace) that serves `=` but NOT startsWith();
+	// a prefix predicate defeated the index and full-scanned spans. EVERY
+	// trace-id filter — full or partial — must now emit `trace_id = ?` and
+	// NEVER startsWith(). A partial id matches nothing, which is intended.
+	cases := []string{
+		"0123456789abcdef0123456789abcdef", // full 32-hex
+		"0123abcd",                         // partial (was startsWith)
+		"0",                                // single char
 	}
-
-	wcPrefix := buildGetTracesWhere(TraceFilter{TraceID: "0123abcd"})
-	if sqlPrefix := wcPrefix.sql(); !strings.Contains(sqlPrefix, "startsWith(trace_id, ?)") {
-		t.Fatalf("partial trace ID should use startsWith; got:\n%s", sqlPrefix)
+	for _, tid := range cases {
+		wc := buildGetTracesWhere(TraceFilter{TraceID: tid})
+		sql := wc.sql()
+		if !strings.Contains(sql, "trace_id = ?") {
+			t.Fatalf("trace ID %q should use equality; got:\n%s", tid, sql)
+		}
+		if strings.Contains(sql, "startsWith(") {
+			t.Fatalf("v0.9.82 regression: trace ID %q re-introduced prefix startsWith(); got:\n%s", tid, sql)
+		}
 	}
 }

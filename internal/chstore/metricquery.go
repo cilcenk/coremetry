@@ -17,6 +17,12 @@ type MetricQueryFilter struct {
 	Aggregation string       // avg | sum | min | max | last | p50 | p95 | p99 (default: avg)
 	From, To    time.Time
 	StepSeconds int
+	// MaxDataPoints (F1, v0.9.105) — panel pixel width ≈ target bucket count.
+	// When > 0 and StepSeconds is auto (≤0), the step is pixel-adaptive
+	// (rangeSec/maxDataPoints, snapped) instead of the fixed span ladder, so
+	// wide windows expose the sub-bucket resolution OTLP metrics carry. 0 =
+	// px unknown → fixed ladder. clampStepToExport still caps the LOWER bound.
+	MaxDataPoints int
 }
 
 // buildMetricQuerySQL builds the metric_points query SQL + bound args for a
@@ -55,23 +61,11 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, err
 
 	step := f.StepSeconds
 	if step <= 0 {
-		// v0.5.259 — sub-10s auto-steps for short windows. ≤2min
-		// now picks 1s (120 buckets), ≤10min picks 5s (120
-		// buckets) — exposing the point-precision OTel metrics
-		// actually carry instead of folding them into 10s
-		// smears. Existing wider-window rungs unchanged so
-		// 24h/7d/30d performance budgets stay intact.
-		span := f.To.Sub(f.From).Seconds()
-		switch {
-		case span <= 120:        step = 1   // ≤2m   → 1s  (120 buckets)
-		case span <= 600:        step = 5   // ≤10m  → 5s  (120 buckets)
-		case span <= 1800:       step = 10  // ≤30m  → 10s (180 buckets)
-		case span <= 3600:       step = 30  // ≤1h   → 30s
-		case span <= 6*3600:     step = 60  // ≤6h   → 1m
-		case span <= 24*3600:    step = 300 // ≤1d   → 5m
-		case span <= 7*24*3600:  step = 1800
-		default:                 step = 3600
-		}
+		// Fallback for direct/test callers that didn't pre-resolve the step
+		// (QueryMetric sets f.StepSeconds first). v0.9.105 (F1) — pixel-
+		// adaptive when MaxDataPoints>0, else the fixed span ladder (which
+		// still exposes sub-10s resolution for short windows, v0.5.259).
+		step = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
 
 	aggExpr, err := metricAggToSQL(f.Aggregation)
@@ -128,7 +122,8 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		f.From = f.To.Add(-24 * time.Hour)
 	}
 	if f.StepSeconds <= 0 {
-		f.StepSeconds = metricAutoStep(f.From, f.To)
+		// v0.9.105 (F1) — pixel-adaptif; MaxDataPoints=0 ise eski ladder.
+		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
 	if iv := s.metricExportInterval(ctx, f.Name, f.Service); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)

@@ -1509,8 +1509,10 @@ export const api = {
     }
   },
 
+  // v0.9.105 (F1) — default maxDataPoints=1500 (geniş panel px'i yaklaşık;
+  // tek sabit → cache-key parçalanmaz). Çağıran açıkça geçerse o kazanır.
   metricQuery: (params: MetricQueryParams) =>
-    get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs(params)}`),
+    get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`),
   // v0.6.56 — explicit-histogram heatmap + percentile bands. Reuses
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
   metricHistogram: (params: MetricQueryParams) =>
@@ -2106,6 +2108,11 @@ export interface MetricQueryParams {
   from?: number;
   to?: number;
   step?: number;
+  // v0.9.105 (F1 display fidelity) — panel px width ≈ hedef bucket sayısı;
+  // step auto iken piksel-adaptif çözünürlük sürer (geniş pencerede 1s
+  // verinin ~5s'e inmesi, eski 30s ladder yerine). metricQuery default 1500
+  // enjekte eder (cache-dostu sabit); çağıran özel panel genişliği geçebilir.
+  maxDataPoints?: number;
 }
 
 export interface SpanMetricParams {

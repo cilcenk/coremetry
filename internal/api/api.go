@@ -3868,6 +3868,15 @@ func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
 func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	step, _ := strconv.Atoi(q.Get("step"))
+	// v0.9.105 (F1) — panel px width ≈ target bucket count; drives pixel-
+	// adaptive step when step is auto. Bounded [0,4000] so a rogue value can't
+	// blow up the bucket count / cache-key cardinality.
+	maxDP, _ := strconv.Atoi(q.Get("maxDataPoints"))
+	if maxDP < 0 {
+		maxDP = 0
+	} else if maxDP > 4000 {
+		maxDP = 4000
+	}
 	name := q.Get("name")
 	svc := q.Get("service")
 	agg := q.Get("agg")
@@ -3875,18 +3884,19 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	filtersRaw := q.Get("filters")
 	from := parseTime(q.Get("from"))
 	to := parseTime(q.Get("to"))
-	key := fmt.Sprintf("metric-query:name=%s:svc=%s:agg=%s:step=%d:gb=%s:f=%s:from=%d:to=%d",
-		name, svc, agg, step, groupByRaw, filtersRaw, from.Unix()/60, to.Unix()/60)
+	key := fmt.Sprintf("metric-query:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:from=%d:to=%d",
+		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, from.Unix()/60, to.Unix()/60)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.QueryMetric(ctx, chstore.MetricQueryFilter{
-			Name:        name,
-			Service:     svc,
-			Filters:     parseFilters(filtersRaw),
-			GroupBy:     splitNonEmpty(groupByRaw, ','),
-			Aggregation: agg,
-			From:        from,
-			To:          to,
-			StepSeconds: step,
+			Name:          name,
+			Service:       svc,
+			Filters:       parseFilters(filtersRaw),
+			GroupBy:       splitNonEmpty(groupByRaw, ','),
+			Aggregation:   agg,
+			From:          from,
+			To:            to,
+			StepSeconds:   step,
+			MaxDataPoints: maxDP,
 		})
 	})
 }

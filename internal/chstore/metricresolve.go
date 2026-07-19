@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -155,6 +156,42 @@ func metricAutoStep(from, to time.Time) int {
 	default:
 		return 3600
 	}
+}
+
+// metricStepLadder — cache-friendly + clean-gridline bucket steps (seconds).
+// metricAutoStepPx snaps the pixel-derived step UP to one of these so bucket
+// boundaries align across queries and the step (hence cache key) stays a small
+// bounded set instead of every raw px ratio.
+var metricStepLadder = []int{1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400}
+
+// metricAutoStepPx — pixel-adaptive bucket step (F1 display fidelity, v0.9.105).
+// Grafana model: step ≈ rangeSec / maxDataPoints where maxDataPoints ≈ the
+// panel's pixel width, snapped UP to a nice ladder value. This exposes the
+// sub-bucket resolution OTLP metrics actually carry — a 1h window drops from
+// the fixed 30s (120 pts) to ~5s (~720 pts) — instead of the span ladder that
+// smeared second-level data into coarse buckets ("Grafana kadar smooth değil"
+// kök nedeni). maxDataPoints ≤ 0 (px unknown — direct/test callers) falls back
+// to the fixed metricAutoStep ladder (pre-F1 behavior). The export-cadence
+// LOWER bound is applied separately by clampStepToExport, so we never claim
+// finer resolution than the metric reports (a 15s-scrape metric stays ≥15s).
+func metricAutoStepPx(from, to time.Time, maxDataPoints int) int {
+	if maxDataPoints <= 0 {
+		return metricAutoStep(from, to)
+	}
+	span := to.Sub(from).Seconds()
+	if span <= 0 {
+		return 1
+	}
+	raw := int(math.Ceil(span / float64(maxDataPoints)))
+	if raw < 1 {
+		raw = 1
+	}
+	for _, s := range metricStepLadder {
+		if s >= raw {
+			return s
+		}
+	}
+	return metricStepLadder[len(metricStepLadder)-1]
 }
 
 // referencesRoute reports whether any filter or groupBy key resolves to the

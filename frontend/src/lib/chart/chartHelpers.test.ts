@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolveVar } from './resolveVar';
 import { yRangeHeadroom } from './yRange';
+import { isSteppedInstrument } from './steppedInstrument';
 import type uPlot from 'uplot';
 
 // v0.9.75 (chart-consolidation Adım 0) — dört chart bileşeninden
@@ -36,5 +37,21 @@ describe('yRangeHeadroom', () => {
   });
   it('always pins the bottom at 0 (never uses min)', () => {
     expect(yRangeHeadroom(u, 50, 100)[0]).toBe(0);
+  });
+});
+
+// v0.9.80 (uPlot Aşama 2 madde 1) — scrape gauge/counter stepped,
+// histogram/span-metriği smooth. Backend MetricInfo.type değerleri.
+describe('isSteppedInstrument', () => {
+  it('gauge and sum (counter) render stepped', () => {
+    expect(isSteppedInstrument('gauge')).toBe(true);
+    expect(isSteppedInstrument('sum')).toBe(true);
+    expect(isSteppedInstrument('Gauge')).toBe(true); // case-insensitive
+  });
+  it('histogram / empty / unknown render smooth', () => {
+    expect(isSteppedInstrument('histogram')).toBe(false);
+    expect(isSteppedInstrument('')).toBe(false);
+    expect(isSteppedInstrument(undefined)).toBe(false);
+    expect(isSteppedInstrument('summary')).toBe(false); // 'sum' değil
   });
 });

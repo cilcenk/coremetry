@@ -183,6 +183,20 @@ jobs:
       # sees the findings that failed the gate.
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
+        env:
+          # offline-scan (v0.8.559 niyeti, v0.9.74'te DÜZELTİLDİ):
+          # java-demo/jboss-demo pom'larının parent BOM'larını tararken
+          # Maven Central'a çıkılıyor; runner IP'si Central'ın rate-limit
+          # havuzunu tüm GitHub'la paylaştığından 429 (Retry-After: 1800)
+          # trivy'yi FATAL'lıyor ve gate'i bir dış servisin keyfine göre
+          # kırmızıya çeviriyordu. offline-scan trivy-action'ın GEÇERLİ
+          # bir INPUT'u DEĞİL (sessizce warn'layıp yok sayıyordu — CI hep
+          # 429'a düşüyordu); trivy binary --offline-scan'i BU env
+          # değişkeninden okur ve action onu geçirir. Lockfile taramaları
+          # (go.sum, package-lock) aynen sürer; yalnız uzak pom inheritance
+          # atlanır ve o pom'lar shipped binary'nin değil demo
+          # üreteçlerinin.
+          TRIVY_OFFLINE_SCAN: 'true'
         with:
           scan-type: fs
           scan-ref: .
@@ -191,15 +205,6 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           skip-dirs: frontend/node_modules,frontend/dist
-          # offline-scan (v0.8.559): resolving java-demo/jboss-demo poms
-          # pulls parent BOMs from Maven Central at scan time, and the
-          # runner IP shares Central's rate-limit pool with all of GitHub —
-          # a 429 with Retry-After: 1800 FATALs trivy and red-balls the
-          # gate on an external service's mood, not a finding. Offline
-          # keeps every lockfile-based scan (go.sum, package-lock) intact;
-          # only remote pom inheritance is skipped, and those poms belong
-          # to demo load generators, not the shipped binary.
-          offline-scan: true
       - name: Upload Trivy results to the Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()

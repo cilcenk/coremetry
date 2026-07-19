@@ -204,7 +204,11 @@ jobs:
           exit-code: '1'
           format: sarif
           output: trivy-results.sarif
-          skip-dirs: frontend/node_modules,frontend/dist
+          # v0.9.77 — java-demo/jboss-demo: pom-taşıyan demo yük üreteçleri,
+          # shipped Go binary DEĞİL. tomcat/spring bulguları (24 HIGH/CRIT)
+          # ürünle alakasız; taramaya dahil etmek gate'i demo bağımlılığına
+          # bağlıyor. node_modules/dist zaten build çıktısı.
+          skip-dirs: frontend/node_modules,frontend/dist,java-demo,jboss-demo
       - name: Upload Trivy results to the Security tab
         uses: github/codeql-action/upload-sarif@v4
         if: always()

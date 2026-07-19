@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
+import { fmtXTicks } from '@/lib/chartFmt';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
@@ -166,7 +167,14 @@ export function OverviewChart({
         y: { range: yRangeHeadroom },
       },
       axes: [
-        { stroke: text3, grid: { show: false }, ticks: { show: false }, size: 22, font: '10px ui-monospace, monospace' },
+        {
+          stroke: text3, grid: { show: false }, ticks: { show: false }, size: 22,
+          font: '10px ui-monospace, monospace',
+          // v0.9.88 (operatör raporu) — uPlot varsayılan zaman etiketi
+          // dakika kırılımlarında çıplak ":30" basıyordu; ev formatlayıcı
+          // fmtXTicks (gün sınırı + HH:MM, v0.8.402 TimeChart emsali).
+          values: (_u, sp) => fmtXTicks(sp as number[]),
+        },
         {
           stroke: text3, size: 34, font: '10px ui-monospace, monospace',
           grid: { stroke: gridc, width: 1, dash: [3, 4] },

@@ -4,14 +4,12 @@ import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/l
 import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useServiceDeploys } from '@/lib/queries';
-import { OverviewChart, type OvChartSeries } from './charts/OverviewChart';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { RuntimeCharts } from './RuntimeCharts';
 import { OpsCard, DbCard } from './OverviewTables';
 import { MetricPanel } from '@/components/MetricPanel';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
-import { Spinner } from '@/components/Spinner';
 import { metricQuery, type MetricQuery } from '@/lib/metricQuery';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
@@ -247,7 +245,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
       </div>
 
       {/* v0.9.87 (operatör talebi) — dil ailesine göre JVM/.NET/Go runtime grafikleri */}
-      <RuntimeCharts service={service} from={from} to={to} onZoom={onZoom} xRange={xRange} />
+      <RuntimeCharts service={service} from={from} to={to} onZoom={onZoom} />
 
       {/* Upstream / downstream neighbours — the richer panel that used
           to open the Details tab, moved here v0.8.366 (operator: the

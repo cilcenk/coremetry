@@ -52,6 +52,11 @@ export interface TSSeries {
   unit?: string;           // per-series unit (drives the axis it's bound to)
   axis?: 'left' | 'right'; // which y-axis this series reads against (default 'left')
   dash?: number[];         // canvas dash pattern (explore-v2: the formula series)
+  // v0.9.80 (uPlot Aşama 2 madde 1) — adım çizim: scrape gauge/counter
+  // örnekler arası sabittir; düz çizgi olmayan geçiş uydurur. line/area
+  // modunda uPlot.paths.stepped(align:1) ile değeri sonraki örneğe kadar
+  // tutar. bars/stacked'te yok sayılır (zaten adım/katman).
+  stepped?: boolean;
   // explore-v2 Phase 3.2 — exemplar trace markers (◆) anchored on this series.
   // time is unix NANOS (bucket start); value is the series value to pin the
   // glyph at; kind tints it (error = red, slow = accent; 'otlp' — v0.8.332
@@ -316,6 +321,12 @@ export function TimeSeriesPanel({
           } else if (stacked) {
             base.fill = i === 0 ? withAlpha(color, '47') : undefined;
             base.points = { show: false };
+          }
+          // v0.9.80 (Aşama 2 madde 1) — adım çizim: line/area modunda
+          // stepped seri (scrape gauge/counter) değeri sonraki örneğe
+          // kadar sabit tutar. bars/stacked kendi path'ini kullanır.
+          if (s.stepped && mode !== 'bars' && !stacked && uPlot.paths.stepped) {
+            base.paths = uPlot.paths.stepped({ align: 1 });
           }
           return base;
         }),

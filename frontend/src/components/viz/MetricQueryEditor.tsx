@@ -6,6 +6,7 @@ import { encodeFilters } from '@/lib/urlState';
 import { timeRangeToNs } from '@/lib/utils';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
+import { isSteppedInstrument } from '@/lib/chart/steppedInstrument';
 import { GroupedMetricPicker } from '@/components/viz/GroupedMetricPicker';
 import { seriesColor } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -55,6 +56,10 @@ interface MQQuery {
   enabled: boolean;
   metric: string;
   unit: string;          // from MetricInfo.unit, for the y-axis + display
+  // v0.9.80 (uPlot Aşama 2 madde 1) — MetricInfo.type (OTel instrument:
+  // gauge/sum/histogram). gauge/counter → adım çizim. URL'de (mt) taşınır
+  // ki restore'da picker tetiklenmeden de doğru kalsın.
+  metricType?: string;
   agg: Agg;
   filters: FilterExpr[]; // AND-ed label filters
   groupBy: string[];     // label keys → fan-out
@@ -89,7 +94,7 @@ function encodeModel(m: MQModel): string {
   return JSON.stringify({
     n: m.topN, ls: m.logScale ? 1 : 0, un: m.unit, vz: m.viz,
     q: m.queries.map(q => ({
-      i: q.id, k: q.kind === 'formula' ? 'f' : 'm', e: q.enabled ? 1 : 0, m: q.metric, u: q.unit, a: q.agg,
+      i: q.id, k: q.kind === 'formula' ? 'f' : 'm', e: q.enabled ? 1 : 0, m: q.metric, u: q.unit, mt: q.metricType, a: q.agg,
       f: q.filters, g: q.groupBy, s: q.step, l: q.alias, c: q.color, x: q.expr,
     })),
   });
@@ -105,6 +110,7 @@ function decodeModel(s: string | null): MQModel | null {
       enabled: q.e !== 0,
       metric: String(q.m ?? ''),
       unit: String(q.u ?? ''),
+      metricType: q.mt != null ? String(q.mt) : undefined,
       agg: (AGGS.includes(q.a as Agg) ? q.a : 'avg') as Agg,
       filters: Array.isArray(q.f) ? (q.f as FilterExpr[]) : [],
       groupBy: Array.isArray(q.g) ? (q.g as string[]) : [],
@@ -191,7 +197,11 @@ function parseDSL(text: string, prev: MQModel): { model?: MQModel; error?: strin
     const q = blankQuery(id);
     q.enabled = enabled;
     q.metric = metric === '<metric>' ? '' : metric;
-    q.unit = prev.queries.find(p => p.metric === q.metric)?.unit ?? '';
+    // unit + metricType önceki modelden metrik adıyla eşleşir (Code
+    // modunda picker tetiklenmez; v0.9.80 metricType de unit gibi taşınır).
+    const prevSame = prev.queries.find(p => p.metric === q.metric);
+    q.unit = prevSame?.unit ?? '';
+    q.metricType = prevSame?.metricType;
     for (const seg of segs.slice(1)) {
       const eq = seg.indexOf('=');
       if (eq < 0) continue;
@@ -307,7 +317,7 @@ function QueryRow({ q, canRemove, onChange, onDuplicate, onRemove }: {
       ) : (
         <>
           <GroupedMetricPicker value={q.metric} unit={q.unit}
-            onPick={m => onChange({ ...q, metric: m.name, unit: m.unit })} />
+            onPick={m => onChange({ ...q, metric: m.name, unit: m.unit, metricType: m.type })} />
           <select className="mqe-agg" value={q.agg} onChange={e => onChange({ ...q, agg: e.target.value as Agg })} aria-label="Aggregation">
             {AGGS.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
@@ -431,6 +441,9 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
           color: q.color || seriesColor(label),
           unit: q.unit || undefined,
           points: s.points.map(p => ({ time: p.time, value: p.value })),
+          // v0.9.80 (Aşama 2 madde 1) — scrape gauge/counter adım çizilir;
+          // histogram/formula smooth. Metriğin OTel instrument tipinden.
+          stepped: isSteppedInstrument(q.metricType),
         });
       }
     });

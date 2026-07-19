@@ -10,6 +10,8 @@ import { yRefitScale } from '@/lib/chart/zoomState';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
+import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { placeTooltip } from '@/lib/chartTooltip';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Per-series type
 // (bar | line | area), an optional right (dual) axis, drag-to-brush, deploy
@@ -224,18 +226,39 @@ export function TimeChart({
           const hm = dd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           const ts = sameDay ? hm
             : `${String(dd.getMonth() + 1).padStart(2, '0')}-${String(dd.getDate()).padStart(2, '0')} ${hm}`;
-          const rows = series.map((s, i) => {
-            const unit = s.axis === 'right' ? rightUnit : leftUnit;
-            // v0.9.84 (madde 4) — dataIdx snap'i seri başına u.cursor.idxs'e
-            // düşer; tooltip da aynı dolu örneği okur ("—"/0 yerine değer).
+          // v0.9.101 (Grafana-parity Adım 1) — sorted "all series" tooltip via
+          // the shared model: value desc + fmtSmart units (per-axis left/right
+          // unit); was naive in-order kfmt with 0-for-gap. Per-series snapped
+          // idx (v0.9.84); a genuine gap now drops out instead of reading "0".
+          const rows = sortedTooltipRows(series.map((s, i) => {
             const si = u.cursor.idxs?.[i + 1] ?? idx;
-            const v = (u.data[i + 1] as (number | null)[])?.[si] ?? 0;
-            return `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${colors[i]}"></i>${s.label}</span><b>${kfmt(v ?? 0)}${unit}</b></div>`;
-          }).join('');
-          tt.innerHTML = `<div class="ov-tt-t">${ts}</div>${rows}`;
+            return {
+              label: s.label, color: colors[i],
+              value: (u.data[i + 1] as (number | null)[])?.[si] ?? null,
+              unit: s.axis === 'right' ? rightUnit : leftUnit,
+            };
+          }));
+          if (rows.length === 0) { tt.style.display = 'none'; return; }
+          tt.innerHTML = `<div class="ov-tt-t">${ts}</div>` + rows.map(r =>
+            `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
+          ).join('');
           tt.style.display = 'block';
-          tt.style.left = `${u.cursor.left}px`;
-          tt.style.top = `${Math.max(8, u.cursor.top ?? 20)}px`;
+          // placeTooltip flip/clamp (MLC/TSP parity) — host is the uPlot mount.
+          const host = hostRef.current;
+          if (host) {
+            const p = placeTooltip(
+              u.cursor.left ?? 0, u.cursor.top ?? 0,
+              tt.offsetWidth, tt.offsetHeight,
+              u.over.clientWidth, u.over.clientHeight,
+              u.over.offsetLeft, u.over.offsetTop,
+              host.clientWidth, host.clientHeight,
+            );
+            tt.style.left = `${p.x}px`;
+            tt.style.top = `${p.y}px`;
+          } else {
+            tt.style.left = `${u.cursor.left}px`;
+            tt.style.top = `${Math.max(8, u.cursor.top ?? 20)}px`;
+          }
         }],
       },
       plugins: [deployPlugin],

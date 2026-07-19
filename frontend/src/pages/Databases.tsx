@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useMemo } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Turtle } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner } from '@/components/Spinner';
+import { Button } from '@/components/ui/Button';
 import { DependenciesTable } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';
-import type { TimeRange, DBInstance } from '@/lib/types';
+import type { DBInstance } from '@/lib/types';
 
 // /databases — two distinct panels driven by data origin:
 //
@@ -30,6 +31,22 @@ import type { TimeRange, DBInstance } from '@/lib/types';
 // audience scans the panel that matches their question.
 export default function DatabasesPage() {
   const [range, setRange] = useUrlRange('1h');
+  // v0.9.86 (operatör talebi) — db tipi (?dbsys=) + db.name (?dbname=)
+  // filtreleri. URL source-of-truth (replace:true, yabancı paramlar
+  // korunur); seçenekler zaten çekilmiş satırlardan türetilir — ekstra
+  // sorgu/katalog fetch'i YOK (satır sayısı sınırlı, client-side yeterli).
+  const [sp, setSp] = useSearchParams();
+  const dbsys = sp.get('dbsys') ?? '';
+  const dbname = sp.get('dbname') ?? '';
+  const setFilter = (key: 'dbsys' | 'dbname', value: string) => {
+    setSp(prev => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set(key, value); else next.delete(key);
+      // Tip değişince önceki tipe ait db.name seçimi anlamsız kalır.
+      if (key === 'dbsys') next.delete('dbname');
+      return next;
+    }, { replace: true });
+  };
   // Memoize on range identity — without this, a relative range
   // resolved fresh every render reshuffles the useQuery key
   // and the table refetches on every paint.
@@ -45,16 +62,28 @@ export default function DatabasesPage() {
   // panel; receiver-discovered rows go to the bottom. Either
   // panel can be empty — we render the heading + an empty
   // state so the operator sees that we did look.
-  const { spanRows, receiverRows } = useMemo(() => {
+  const { spanRows, receiverRows, systems, dbNames } = useMemo(() => {
     const all = (q.data ?? []) as DBInstance[];
+    const sysSet = new Set<string>();
+    const nameSet = new Set<string>();
+    for (const d of all) {
+      if (d.system) sysSet.add(d.system);
+      // db.name seçenekleri seçili tipe göre daralır (bağımlı liste).
+      if (d.dbName && (!dbsys || d.system === dbsys)) nameSet.add(d.dbName);
+    }
     const span: DBInstance[] = [];
     const recv: DBInstance[] = [];
     for (const d of all) {
+      if (dbsys && d.system !== dbsys) continue;
+      if (dbname && d.dbName !== dbname) continue;
       if (d.source === 'receiver') recv.push(d);
       else span.push(d);
     }
-    return { spanRows: span, receiverRows: recv };
-  }, [q.data]);
+    return {
+      spanRows: span, receiverRows: recv,
+      systems: [...sysSet].sort(), dbNames: [...nameSet].sort(),
+    };
+  }, [q.data, dbsys, dbname]);
 
   const toRow = (d: DBInstance) => ({
     system: d.system,
@@ -73,7 +102,27 @@ export default function DatabasesPage() {
     <>
       <Topbar title="Databases" range={range} onRangeChange={setRange} />
       <div id="content">
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+          <select value={dbsys} onChange={e => setFilter('dbsys', e.target.value)}
+            style={{ fontSize: 12, padding: '3px 8px' }}
+            title="db.system'e göre filtrele">
+            <option value="">All types</option>
+            {systems.map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <select value={dbname} onChange={e => setFilter('dbname', e.target.value)}
+            style={{ fontSize: 12, padding: '3px 8px' }}
+            title="db.name'e göre filtrele">
+            <option value="">All db names</option>
+            {dbNames.map(x => <option key={x} value={x}>{x}</option>)}
+          </select>
+          {(dbsys || dbname) && (
+            <Button variant="secondary" size="sm"
+              onClick={() => setSp(prev => {
+                const next = new URLSearchParams(prev);
+                next.delete('dbsys'); next.delete('dbname');
+                return next;
+              }, { replace: true })}>Clear</Button>
+          )}
           <Link to="/databases/slow-queries" className="sec"
             style={{
               fontSize: 12, padding: '5px 12px', borderRadius: 6,
@@ -100,8 +149,9 @@ export default function DatabasesPage() {
               tail=" attribute. Click a row to drill into matching traces." />
             {spanRows.length === 0 ? (
               <EmptyHint>
-                No service-emitted database spans in this window.
-                Wire an OTel SDK into one of the application services to see this section populate.
+                {dbsys || dbname
+                  ? 'No service-called databases match the current filter.'
+                  : 'No service-emitted database spans in this window. Wire an OTel SDK into one of the application services to see this section populate.'}
               </EmptyHint>
             ) : (
               <DependenciesTable rows={spanRows.map(toRow)} kind="db" range={range} />
@@ -116,9 +166,9 @@ export default function DatabasesPage() {
               tail=" metric_points. Expand a row to see receiver-specific drill-downs (sessions, wait classes, buffer pool, keyspaces…)." />
             {receiverRows.length === 0 ? (
               <EmptyHint>
-                No receiver-detected instances in this window.
-                Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis)
-                at one of your databases and the discovered instance will appear here.
+                {dbsys || dbname
+                  ? 'No receiver instances match the current filter.'
+                  : 'No receiver-detected instances in this window. Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis) at one of your databases and the discovered instance will appear here.'}
               </EmptyHint>
             ) : (
               <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} />

@@ -6,6 +6,7 @@ import { fmtXTicks } from '@/lib/chartFmt';
 import { timeChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
+import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Generalises the proven
 // OverviewChart uPlot wrapper (Canvas, so it also lands the "charts to Canvas"
@@ -260,12 +261,34 @@ export function TimeChart({
   // both y axes) instead of destroy()+new. Guard on column count: a series
   // add/remove is a rebuild (which owns the data this commit); setData with a
   // mismatched width would throw.
+  // v0.9.78 (uPlot Aşama 1 bug fix) — brush ile daraltılmış x aralığını
+  // 30s poll'de koru (isXZoomed): daralmışsa setData(false) + y/y2 elle
+  // refit; değilse eski davranış (reset). NOT: TC drag'i setScale:false
+  // (brush, görsel zoom yapmaz) olsa da uPlot select sonrası scale
+  // değişebilir; controlled-range prop'u olmadığından mevcut x-scale
+  // tek doğruluk kaynağı. Dual eksende y/y2 seri-kümeleri ayrı refit.
   useEffect(() => {
     const u = plotRef.current;
     if (!u) return;
     if (u.data.length !== chartData.length) return;
-    u.setData(chartData);
-  }, [chartData]);
+    const xs = u.data[0] as number[];
+    if (isXZoomed(xs, u.scales.x.min, u.scales.x.max)) {
+      const leftIdxs: number[] = [];
+      const rightIdxs: number[] = [];
+      series.forEach((s, i) => (s.axis === 'right' ? rightIdxs : leftIdxs).push(i + 1));
+      u.batch(() => {
+        u.setData(chartData, false);
+        u.setScale('y', yRefitScale(chartData as (number | null)[][], leftIdxs));
+        if (rightIdxs.length && u.scales.y2) {
+          u.setScale('y2', yRefitScale(chartData as (number | null)[][], rightIdxs));
+        }
+      });
+    } else {
+      u.setData(chartData);
+    }
+    // series: zoomlu dalda y/y2 seri-kümesi ayrımı için okunur; chartData
+    // zaten series'ten türer (aynı anda değişir), çift-çalışma yok.
+  }, [chartData, series]);
 
   return (
     <div className="ov-chart-wrap" style={{ position: 'relative' }}>

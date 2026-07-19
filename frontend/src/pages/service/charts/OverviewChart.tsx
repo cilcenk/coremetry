@@ -5,6 +5,7 @@ import { useThemeTick } from '@/lib/useThemeTick';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
+import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
 // A purpose-built uPlot wrapper matching the design handoff: ~150px, clean
@@ -276,7 +277,19 @@ export function OverviewChart({
     const u = plotRef.current;
     if (!u) return;
     if (u.data.length !== built.data.length) return;
-    u.setData(built.data);
+    // v0.9.78 (uPlot Aşama 1) — drag-zoom'u 30s poll'de koru: x daralmışsa
+    // setData(false) + y elle refit; değilse eski davranış (reset). Flag
+    // her iki dalda da yeniden konumlanır (x-pozisyonu kaydı).
+    const xs = u.data[0] as number[];
+    if (isXZoomed(xs, u.scales.x.min, u.scales.x.max)) {
+      const idxs = built.data.map((_, i) => i).slice(1);
+      u.batch(() => {
+        u.setData(built.data, false);
+        u.setScale('y', yRefitScale(built.data as (number | null)[][], idxs));
+      });
+    } else {
+      u.setData(built.data);
+    }
     placeFlagRef.current();
   }, [built]);
 

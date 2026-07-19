@@ -7,6 +7,7 @@ import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { placeTooltip } from '@/lib/chartTooltip';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { chartBuildSignature } from '@/lib/chartBuildSig';
+import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
 
 // Re-exported so existing importers (TimeSeriesPanel) keep working after the
 // placement logic moved into the pure, unit-tested lib/chartTooltip module.
@@ -820,11 +821,28 @@ export function MultiLineChart({
   // (re)creating the plot this same commit and owns the data; setData() with a
   // mismatched width would throw. resetScales stays uPlot's default (true) so
   // the y-axis auto-refits exactly as the old rebuild did.
+  // v0.9.78 (uPlot Aşama 1 bug fix) — operatör drag-zoom yaptıysa
+  // (x-scale tüm veriden daralmışsa) setData(data,false) ile x'i KORU
+  // + y'yi elle refit; aksi halde eski davranış (setData reset ile x
+  // yeni bucket'lara genişler + y auto-refit). Eskiden koşulsuz
+  // setData(true) 30s poll'de operatörü zoom'undan atıyordu. Tek y
+  // ekseni: tüm seriler (1..len-1) refit'e girer. Aynı düzeltme OVC/TC'ye
+  // de kopyalandı — motor çıkarımında (konsolidasyon Adım 1-4) tek yere
+  // inecek.
   useEffect(() => {
     const u = plotRef.current;
     if (!u) return;
     if (u.data.length !== bundle.data.length) return;
-    u.setData(bundle.data);
+    const xs = u.data[0] as number[];
+    if (isXZoomed(xs, u.scales.x.min, u.scales.x.max)) {
+      const idxs = bundle.data.map((_, i) => i).slice(1);
+      u.batch(() => {
+        u.setData(bundle.data, false);
+        u.setScale('y', yRefitScale(bundle.data as (number | null)[][], idxs));
+      });
+    } else {
+      u.setData(bundle.data);
+    }
   }, [bundle]);
 
   // Click-to-isolate: hide every other series on first click,

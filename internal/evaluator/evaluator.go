@@ -371,6 +371,12 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	// pipeline like every other Problem.
 	e.evaluateDBCapacity(ctx)
 
+	// Runtime pod detector (v0.9.90) — JVM heap saturation + GC pause per
+	// pod. Overview's Runtime panel only SHOWS these; this pass makes them
+	// PAGEABLE. MetricExists-gated so a non-JVM install (local included)
+	// never sees spurious Problems; same leader-lock / notify / dedup path.
+	e.evaluateRuntimePods(ctx)
+
 	// Escalation sweep — bump severity on problems that have
 	// been open past the configured threshold without
 	// acknowledgement. Refires SendProblemAlert with the new

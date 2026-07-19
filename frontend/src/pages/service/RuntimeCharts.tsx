@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { alignToUnion } from '@/lib/chart/alignSeries';
-import { ChartCard, type ChartLine } from './charts/ChartCard';
+import { Spinner } from '@/components/Spinner';
+import { TimeSeriesPanel, type TSSeries } from '@/components/viz/TimeSeriesPanel';
 import type { FilterExpr, SpanMetricSeries } from '@/lib/types';
 import { podLineLabel } from './runtimePodLabel';
 
@@ -48,6 +48,9 @@ interface LineSpec {
   fanout?: boolean;   // groupBy fan-out: dönen her seri ayrı çizgi
   // Fanout etiketi üreticisi (pod kırılımı); yoksa groupKey.join('/').
   labelOf?: (gk: string[], service: string, fallback: string) => string;
+  // Referans çizgisi (ör. heap limit) — kesikli çizilir, pod çizgileri
+  // ona yaklaşınca "doldu" gözle okunur.
+  ref?: boolean;
 }
 
 // v0.9.89 (operatör talebi) — JVM/.NET kartları POD BAZLI: "herhangi
@@ -60,17 +63,21 @@ interface LineSpec {
 const POD_GROUP = 'resource.k8s.pod.name,resource.host.name,resource.service.instance.id';
 interface CardSpec { key: string; title: string; unit: string; lines: LineSpec[] }
 
-const FANOUT_PALETTE = ['var(--accent)', 'var(--purple)', 'var(--teal)', 'var(--warn)', 'var(--orange)', 'var(--err)'];
-const FANOUT_MAX = 8; // groupBy patlamasına karşı üst sınır (legend okunur kalsın)
+// v0.9.95 — 30+ pod'lu servisler için üst sınır yükseldi (eski 8, operatör
+// "sadece 8 pod gösteriyor"); pod çizgilerinin rengini TimeSeriesPanel'in
+// stabil seriesColor paleti verir (etiket→renk sabit), interaktif lejand
+// tablosu pod ayırt/seç eder. Aşırı yüksek pod sayısında (>cap) grafik
+// erimesin diye sınır + "N of M" notu.
+const FANOUT_MAX = 40;
 
 const FAMILY_CARDS: Record<string, CardSpec[]> = {
   jvm: [
     { key: 'heap', title: 'JVM heap (by pod)', unit: ' MB', lines: [
       { metric: 'jvm.memory.used', label: 'used', color: 'var(--accent)', filters: HEAP,
         scale: MB, groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel },
-      // limit tüm pod'larda aynı JVM ayarı — tek referans çizgisi;
+      // limit tüm pod'larda aynı JVM ayarı — tek kesikli referans çizgisi;
       // pod çizgisi limite yaklaşınca "doldu" gözle okunur.
-      { metric: 'jvm.memory.limit', label: 'limit', color: 'var(--err)', filters: HEAP, scale: MB },
+      { metric: 'jvm.memory.limit', label: 'limit', color: 'var(--err)', filters: HEAP, scale: MB, ref: true },
     ] },
     { key: 'gc', title: 'GC pause by pod (avg)', unit: ' ms', lines: [
       { metric: 'jvm.gc.duration', label: 'gc', color: 'var(--warn)',
@@ -120,12 +127,11 @@ function familyOf(language: string | undefined): string | null {
 
 const FAMILY_TITLE: Record<string, string> = { jvm: 'JVM', dotnet: '.NET', go: 'Go' };
 
-export function RuntimeCharts({ service, from, to, onZoom, xRange }: {
+export function RuntimeCharts({ service, from, to, onZoom }: {
   service: string;
   from: number; // unix ns (parent'ın çözülmüş penceresi — RQ anahtarı hizalı)
   to: number;
   onZoom?: (fromSec: number, toSec: number) => void;
-  xRange?: { from: number; to: number } | null;
 }) {
   // Parent Service.tsx ile AYNI anahtar → RQ cache'inden dolar, ek istek yok.
   const runtimeQ = useQuery({
@@ -165,36 +171,41 @@ export function RuntimeCharts({ service, from, to, onZoom, xRange }: {
     if (!family) return null;
     let anyData = false;
     const byCard = cards.map(card => {
-      // Bu karta ait çizgi sonuçlarını topla (fanout genişletmesiyle).
-      const raw: { label: string; color: string; points: { time: number; value: number | null }[] }[] = [];
+      // Her çizgi → bir TSSeries. TSP x-eksenini KENDİ union'lar (ayrı
+      // fetch'lerin farklı bucket kümeleri iç hizalanır) — elle alignToUnion
+      // GEREKMEZ. points ns cinsinde kalır (TSSeries ns bekler). Fanout pod
+      // çizgilerinin rengini vermeyiz → TSP seriesColor(label) stabil palet
+      // atar; lejand tablosu pod ayırt/seç eder.
+      const tsSeries: TSSeries[] = [];
+      let podTotal = 0;
+      let capped = false;
       specs.forEach(({ card: c, line }, qi) => {
         if (c.key !== card.key) return;
         const data = (queries[qi]?.data ?? []) as SpanMetricSeries[];
         const scale = line.scale ?? 1;
-        const seriesList = line.fanout ? data.slice(0, FANOUT_MAX) : data.slice(0, 1);
-        seriesList.forEach((s, si) => {
-          const label = line.fanout
-            ? (line.labelOf
-                ? line.labelOf(s.groupKey, service, line.label)
-                : (s.groupKey.filter(Boolean).join('/') || line.label))
-            : line.label;
-          const color = line.fanout ? FANOUT_PALETTE[si % FANOUT_PALETTE.length] : line.color;
-          raw.push({
-            label, color,
+        if (line.fanout) {
+          podTotal += data.length;
+          if (data.length > FANOUT_MAX) capped = true;
+          data.slice(0, FANOUT_MAX).forEach(s => {
+            const label = line.labelOf
+              ? line.labelOf(s.groupKey, service, line.label)
+              : (s.groupKey.filter(Boolean).join('/') || line.label);
+            tsSeries.push({
+              label,
+              points: s.points.map(p => ({ time: p.time, value: p.value == null ? null : p.value * scale })),
+            });
+          });
+        } else {
+          const s = data[0];
+          if (s) tsSeries.push({
+            label: line.label,
+            color: line.color,
+            dash: line.ref ? [5, 4] : undefined, // referans (limit) kesikli
             points: s.points.map(p => ({ time: p.time, value: p.value == null ? null : p.value * scale })),
           });
-        });
+        }
       });
-      if (raw.some(r => r.points.length)) anyData = true;
-      // Ayrı fetch'ler → union eksene hizala; ChartCard index-eşler.
-      const aligned = alignToUnion(raw.map(r => r.points));
-      const lines: ChartLine[] = raw.map((r, i) => ({
-        label: r.label, color: r.color,
-        series: [{
-          groupKey: [r.label],
-          points: aligned.times.map((t, j) => ({ time: t, value: aligned.cols[i][j] })),
-        } as SpanMetricSeries],
-      }));
+      if (tsSeries.some(s => s.points.length)) anyData = true;
       const cardQs = specs
         .map(({ card: c }, qi) => ({ c, q: queries[qi] }))
         .filter(x => x.c.key === card.key);
@@ -202,10 +213,10 @@ export function RuntimeCharts({ service, from, to, onZoom, xRange }: {
         cardQs.some(x => x.q.isError) ? 'error'
         : cardQs.some(x => x.q.isPending) ? 'loading'
         : 'ready';
-      return { card, lines, status };
+      return { card, series: tsSeries, status, podTotal, capped };
     });
     return { byCard, anyData };
-  }, [family, cards, specs, queries]);
+  }, [family, cards, specs, queries, service]);
 
   // Aile bilinmiyor ya da (yüklendi + hiç veri yok) → section hiç yok
   // (ServiceInfraTab:327 emsali — runtime metriği göndermeyen servise
@@ -221,15 +232,46 @@ export function RuntimeCharts({ service, from, to, onZoom, xRange }: {
           Runtime — {FAMILY_TITLE[family]}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-          {family === 'jvm' && <>Auto-instrumentation <code>jvm.*</code> metrics (heap · GC · threads).</>}
-          {family === 'dotnet' && <>Runtime instrumentation <code>process.runtime.dotnet.*</code> metrics.</>}
+          {family === 'jvm' && <>Auto-instrumentation <code>jvm.*</code> metrics per pod (heap · GC · threads). Lejantta bir pod'a tıkla = izole.</>}
+          {family === 'dotnet' && <>Runtime instrumentation <code>process.runtime.dotnet.*</code> metrics per pod.</>}
           {family === 'go' && <>Go runtime <code>process.runtime.go.*</code> metrics.</>}
         </div>
       </div>
-      <div className="ov-charts-3">
-        {built.byCard.map(({ card, lines, status }) => (
-          <ChartCard key={card.key} title={card.title} unit={card.unit}
-            lines={lines} status={status} onZoom={onZoom} xRange={xRange} />
+      {/* Full-width istifli kartlar — 30+ pod çizgisi + lejand tablosu için
+          3-across dar kalıyordu (operatör raporu). Ortak syncKey: bir karta
+          hover TÜM kartlarda crosshair çizer (heap spike ↔ GC pause korele). */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {built.byCard.map(({ card, series, status, podTotal, capped }) => (
+          <div key={card.key} className="card">
+            <div className="ov-card-h">
+              <h3>{card.title}{card.unit ? ` (${card.unit.trim()})` : ''}</h3>
+              {capped && (
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  {FANOUT_MAX} / {podTotal} pod gösteriliyor
+                </span>
+              )}
+            </div>
+            <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
+              {status === 'loading' && series.length === 0 ? (
+                <div style={{ height: 240, display: 'grid', placeItems: 'center' }}><Spinner /></div>
+              ) : status === 'error' && series.length === 0 ? (
+                <div style={{ height: 240, display: 'grid', placeItems: 'center', color: 'var(--err)', fontSize: 12 }}>
+                  Failed to load metrics
+                </div>
+              ) : series.length === 0 ? (
+                <div style={{ height: 240, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
+                  No data in this window
+                </div>
+              ) : (
+                <TimeSeriesPanel
+                  series={series}
+                  height={240}
+                  syncKey={`runtime:${service}`}
+                  onZoom={onZoom}
+                />
+              )}
+            </div>
+          </div>
         ))}
       </div>
     </>

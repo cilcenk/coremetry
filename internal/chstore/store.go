@@ -69,6 +69,12 @@ type Store struct {
 	// to the metric+service fallback read — ingest never breaks.
 	hasSeriesFpCol bool
 
+	// hasIsMonotonicCol records whether metric_points carries is_monotonic
+	// (v0.9.106, F2). False on an external Distributed install where the ALTER
+	// never reached the shards → INSERT omits it + rate() runs without the
+	// UpDownCounter guard (best-effort). Probed once at boot.
+	hasIsMonotonicCol bool
+
 	// hasDBStmtHashCol records whether the spans table actually carries the
 	// `db_stmt_hash` column (v0.8.375, Stage-2 D1 — persistent DB-statement
 	// identity). Unlike op_group / series_fingerprint the column is
@@ -2044,6 +2050,31 @@ func (s *Store) migrate(ctx context.Context) error {
 	s.hasSeriesFpCol = sfErr == nil
 	if !s.hasSeriesFpCol {
 		log.Printf("[chstore] `series_fingerprint` column not present on metric_points (%v) — INSERT omits it; exemplar reads fall back to metric+service (expected on an external Distributed cluster with cluster_name unset)", sfErr)
+	}
+
+	// is_monotonic — v0.9.106 (F2, PromQL rate/increase). OTLP Sum'ın
+	// d.Sum.IsMonotonic'i (monotonic counter mı, yoksa UpDownCounter mı —
+	// active_requests/queue-depth). metric_points instrument='sum'u İKİSİ için
+	// de basıyor; rate() UpDownCounter'da her düşüşü "reset" sanıp garbage
+	// üretiyordu (adversarial review, major). Kolon rate'i is_monotonic=1'e
+	// gate eder. DEFAULT 1 = eski data + gauge/histogram monotonic sayılır
+	// (rate zaten instrument='sum'a filtreli). series_fingerprint'in BİREBİR
+	// distributed-safe deseni: external Distributed + cluster_name unset'te
+	// ALTER metric_points_local'e ulaşmaz → wrapper-only ALTER her INSERT'i
+	// code 16 ile öldürür (v0.8.186 sınıfı, prod'u 2× kırdı) → SKIP + log;
+	// probe INSERT kolon listesini dürüst tutar.
+	const isMonotonicAlter = `ALTER TABLE metric_points ADD COLUMN IF NOT EXISTS is_monotonic UInt8 DEFAULT 1`
+	if s.tableIsExternalDistributed(ctx, "metric_points") {
+		log.Printf("[chstore] external Distributed `metric_points` with cluster_name unset — SKIPPING is_monotonic ALTER (can't reach metric_points_local; wrapper-only would break every metric INSERT with code 16). rate()/increase() degrades to no-monotonicity-guard; set config.clickhouse.cluster_name to enable it.")
+	} else if err := s.execDDL(ctx, isMonotonicAlter); err != nil {
+		return fmt.Errorf("alter table (is_monotonic): %w", err)
+	}
+	imRows, imErr := s.conn.Query(ctx,
+		`SELECT is_monotonic FROM metric_points WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(imRows, imErr)
+	s.hasIsMonotonicCol = imErr == nil
+	if !s.hasIsMonotonicCol {
+		log.Printf("[chstore] `is_monotonic` column not present on metric_points (%v) — INSERT omits it; rate()/increase() runs WITHOUT the monotonic guard (UpDownCounter rate may be wrong; expected on an external Distributed cluster with cluster_name unset)", imErr)
 	}
 
 	// db_stmt_hash — v0.8.375, Stage-2 D1: persistent DB-statement identity

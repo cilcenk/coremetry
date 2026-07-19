@@ -275,6 +275,9 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			Value: val, Count: cnt, SumValue: sum, MinValue: mn, MaxValue: mx,
 			AttrKeys: attrK, AttrValues: attrV, ResKeys: resK, ResValues: resV,
 			SeriesFingerprint: SeriesFingerprint(m.Name, attrs, svcName, svcInstance),
+			// v0.9.106 (F2) — default monotonic (1); Sum dalı d.Sum.IsMonotonic
+			// ile ezer. gauge/histogram için anlamsız (rate instrument='sum'a filtreli).
+			IsMonotonic: 1,
 		}
 	}
 	var out []*chstore.MetricPoint
@@ -292,6 +295,10 @@ func convertMetric(m *metricspb.Metric, svcName, svcInstance, hostName string, r
 			p := base("sum", dp.StartTimeUnixNano, dp.TimeUnixNano,
 				numberVal(dp), 0, 0, 0, 0, dp.Attributes)
 			p.Temporality = temporalityStr(d.Sum.AggregationTemporality)
+			// v0.9.106 (F2) — monotonic counter mı (rate-valid) UpDownCounter mı.
+			if !d.Sum.IsMonotonic {
+				p.IsMonotonic = 0
+			}
 			out = append(out, p)
 			exs = appendExemplars(exs, dp.Exemplars, p, dp.TimeUnixNano)
 		}

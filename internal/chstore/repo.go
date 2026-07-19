@@ -169,7 +169,7 @@ func (s *Store) InsertLogs(ctx context.Context, logs []*Log) error {
 // Distributed install where the ALTER never reached metric_points_local,
 // binding it would kill every metric batch with code 16 (the op_group /
 // v0.8.186 failure shape). Pure so the column/value alignment is unit-tested.
-func metricsInsertSQL(withSeriesFp bool) string {
+func metricsInsertSQL(withSeriesFp, withIsMonotonic bool) string {
 	sql := `INSERT INTO metric_points
 		(metric, instrument, description, unit,
 		 service_name, host_name, time, start_time,
@@ -179,6 +179,12 @@ func metricsInsertSQL(withSeriesFp bool) string {
 	if withSeriesFp {
 		sql += ", series_fingerprint"
 	}
+	// v0.9.106 (F2) — is_monotonic conditional, series_fingerprint'ten SONRA
+	// (append sırası metricAppendArgs ile lockstep; external-distributed'da
+	// kolon yoksa her ikisi de atlanır).
+	if withIsMonotonic {
+		sql += ", is_monotonic"
+	}
 	return sql + ")"
 }
 
@@ -186,7 +192,7 @@ func metricsInsertSQL(withSeriesFp bool) string {
 // point in the EXACT order of metricsInsertSQL, appending series_fingerprint
 // LAST iff withSeriesFp — the same lockstep guarantee spanAppendArgs gives
 // the spans INSERT (v0.8.186 discipline).
-func metricAppendArgs(p *MetricPoint, withSeriesFp bool) []any {
+func metricAppendArgs(p *MetricPoint, withSeriesFp, withIsMonotonic bool) []any {
 	// Histogram-only payloads come through with arrays
 	// populated; everything else uses empty slices so the
 	// CH default-array behaviour kicks in.
@@ -208,21 +214,27 @@ func metricAppendArgs(p *MetricPoint, withSeriesFp bool) []any {
 	if withSeriesFp {
 		args = append(args, p.SeriesFingerprint)
 	}
+	// is_monotonic — series_fingerprint'ten SONRA (metricsInsertSQL kolon
+	// sırasıyla lockstep).
+	if withIsMonotonic {
+		args = append(args, p.IsMonotonic)
+	}
 	return args
 }
 
 func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 	ctx = asyncInsertCtx(ctx)
-	// series_fingerprint is bound ONLY when the column is actually present
-	// on the table the write fans out to (s.hasSeriesFpCol, probed once at
-	// boot) — see metricsInsertSQL for the failure mode this prevents.
+	// series_fingerprint + is_monotonic are bound ONLY when the columns are
+	// actually present on the table the write fans out to (probed once at boot)
+	// — see metricsInsertSQL for the failure mode this prevents.
 	withSeriesFp := s.hasSeriesFpCol
-	batch, err := s.conn.PrepareBatch(ctx, metricsInsertSQL(withSeriesFp))
+	withIsMonotonic := s.hasIsMonotonicCol
+	batch, err := s.conn.PrepareBatch(ctx, metricsInsertSQL(withSeriesFp, withIsMonotonic))
 	if err != nil {
 		return fmt.Errorf("prepare metrics: %w", err)
 	}
 	for _, p := range pts {
-		if err := batch.Append(metricAppendArgs(p, withSeriesFp)...); err != nil {
+		if err := batch.Append(metricAppendArgs(p, withSeriesFp, withIsMonotonic)...); err != nil {
 			return fmt.Errorf("append metric: %w", err)
 		}
 	}

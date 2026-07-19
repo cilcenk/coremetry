@@ -30,12 +30,12 @@ import type { MetricInfo, SpanMetricSeries, FilterExpr, TimeRange, Panel, Dashbo
 // `unit` prop) and colours group series by a stable label→colour palette
 // (seriesColor), so the same group value keeps its colour across re-runs.
 
-type Agg = 'avg' | 'sum' | 'min' | 'max' | 'last' | 'p50' | 'p95' | 'p99';
-// Backend-supported aggregations (internal/api metric query). NOTE: p90 /
-// count / rate are NOT in the server agg set — offering them would 400, so
-// they're intentionally omitted (count is `sum` on a counter; rate needs a
-// rate() the backend doesn't expose yet).
-const AGGS: Agg[] = ['avg', 'sum', 'min', 'max', 'last', 'p50', 'p95', 'p99'];
+type Agg = 'avg' | 'sum' | 'min' | 'max' | 'last' | 'p50' | 'p95' | 'p99' | 'rate' | 'increase';
+// Backend-supported aggregations (internal/api metric query). v0.9.106 (F2) —
+// rate/increase eklendi: counter (instrument='sum') üstünde reset-korumalı
+// PromQL rate()/increase(); backend QueryMetricRate'e route eder (gauge/
+// histogram'da boş döner). p90/count hâlâ yok (count = sum on a counter).
+const AGGS: Agg[] = ['avg', 'sum', 'min', 'max', 'last', 'p50', 'p95', 'p99', 'rate', 'increase'];
 
 const STEPS: { label: string; v: number }[] = [
   { label: 'Auto', v: 0 }, { label: '15s', v: 15 }, { label: '1m', v: 60 }, { label: '5m', v: 300 },

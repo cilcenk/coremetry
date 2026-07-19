@@ -9,9 +9,11 @@ import (
 // detector'ı için (v0.9.90, operatör talebi: "sorunlu pod olursa haber
 // versin / problem tetiklesin").
 //
-// Overview'daki Runtime paneliyle (v0.9.89) AYNI pod anahtarı: k8s.pod.name
-// (collector k8sattributes'a bağlı, her ortamda yok) → service.instance.id
-// ilk 8 karakteri (javaagent 2.x her zaman basar) → '' (aggregate; problem
+// Overview'daki Runtime paneliyle (v0.9.91) AYNI pod anahtar zinciri
+// (deploys.go instanceIdExpr emsali): k8s.pod.name (collector
+// k8sattributes'a bağlı, her ortamda yok) → host.name (container
+// hostname = k8s pod adı, javaagent default; podservice.go:11) →
+// service.instance.id ilk 8 (UUID son çare) → '' (aggregate; problem
 // yine servis düzeyinde açılır, kırılmaz).
 //
 // Distributed-güvenli: yalnız metric_points'in HER kurulumda var olan
@@ -19,6 +21,7 @@ import (
 // hasXCol probe gerekmez.
 const runtimePodExpr = `coalesce(
 	nullIf(res_values[indexOf(res_keys, 'k8s.pod.name')], ''),
+	nullIf(res_values[indexOf(res_keys, 'host.name')], ''),
 	nullIf(substring(res_values[indexOf(res_keys, 'service.instance.id')], 1, 8), ''),
 	''
 )`

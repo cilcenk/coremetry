@@ -52,11 +52,12 @@ interface LineSpec {
 
 // v0.9.89 (operatör talebi) — JVM/.NET kartları POD BAZLI: "herhangi
 // bir pod heap dolduğunda ya da GC yaptığında ayırt edebileyim".
-// İkili groupBy: k8s.pod.name (collector k8sattributes'a bağlı, her
-// ortamda yok) + service.instance.id (javaagent 2.x her zaman basar) —
-// hangisi doluysa etiket ondan (podLineLabel). İkisi de boşsa tek
-// çizgiye düşer (aggregate görünüm), kart yine çalışır.
-const POD_GROUP = 'resource.k8s.pod.name,resource.service.instance.id';
+// ÜÇLÜ groupBy (v0.9.91 — operatör "4abcd5 UUID görünüyor, pod ismi
+// yazmıyor" raporu): k8s.pod.name (collector k8sattributes'a bağlı, her
+// ortamda yok) + host.name (container hostname = k8s pod adı, javaagent
+// default) + service.instance.id (UUID son çare). Etiket önceliği
+// podLineLabel'da okunabilir pod adına yeğler.
+const POD_GROUP = 'resource.k8s.pod.name,resource.host.name,resource.service.instance.id';
 interface CardSpec { key: string; title: string; unit: string; lines: LineSpec[] }
 
 const FANOUT_PALETTE = ['var(--accent)', 'var(--purple)', 'var(--teal)', 'var(--warn)', 'var(--orange)', 'var(--err)'];

@@ -110,7 +110,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<{
     x: number; y: number;
-    time: number; durMs: number; count: number;
+    time: number; durMs: number; count: number; row: number;
     z: number; isOutlier: boolean;
   } | null>(null);
   // Phase 4.2 box-select — start + current cell while dragging (null = idle).
@@ -208,9 +208,13 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
       const yLabels = 4;
       for (let i = 0; i <= yLabels; i++) {
         const j = Math.floor((rows - 1) * (i / yLabels));
-        const ms = data.durationBins[j];
         const y = padT + (rows - 1 - j) * cellH + cellH / 2;
-        ctx.fillText(fmtSmart(ms, 'ms'), padL - 4, y);
+        // +Inf overflow top bin: label "> {top explicit bound}", not the
+        // synthetic finite bound (v0.9.110 review fix).
+        const label = data.overflowTop && j === rows - 1 && rows >= 2
+          ? '>' + fmtSmart(data.durationBins[rows - 2], 'ms')
+          : fmtSmart(data.durationBins[j], 'ms');
+        ctx.fillText(label, padL - 4, y);
       }
 
       // X-axis labels — first, last, and a midpoint
@@ -344,6 +348,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
       time: data.times[col],
       durMs: data.durationBins[row],
       count: c,
+      row,
       z,
       isOutlier: stats.outliers.has(col + ',' + row),
     });
@@ -455,7 +460,9 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
             {new Date(hover.time / 1e6).toLocaleTimeString()}
           </div>
           <div style={{ color: 'var(--text2)' }}>
-            ≤ {fmtSmart(hover.durMs, 'ms')} · {hover.count.toLocaleString()} spans
+            {data.overflowTop && hover.row === data.durationBins.length - 1 && data.durationBins.length >= 2
+              ? '> ' + fmtSmart(data.durationBins[data.durationBins.length - 2], 'ms')
+              : '≤ ' + fmtSmart(hover.durMs, 'ms')} · {hover.count.toLocaleString()} {data.countNoun ?? 'spans'}
           </div>
           {hover.count > 0 && (
             <div style={{

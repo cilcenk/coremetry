@@ -18,14 +18,20 @@ export function histogramResultToHeatmap(hr: HistogramResult, unit?: string): He
   const bounds = (hr.bounds ?? []).map(b => b * toMs);
 
   // Synthetic upper bound for the +Inf overflow bin: one bounds-step above the
-  // top bound (or 2× when a single bound), so the y-axis stays finite and the
-  // ">top" band is visibly distinct. No bounds → a single unit bin.
+  // top bound (or 2× when a single bound). This value only positions the top
+  // y-axis TICK — the viz labels the row "> {top}" via overflowTop, never
+  // asserting this synthetic number as a real ceiling (v0.9.110 review fix).
+  const top = bounds.length ? bounds[bounds.length - 1] : 0;
   let overflow = 1;
   if (bounds.length >= 2) {
-    overflow = bounds[bounds.length - 1] + (bounds[bounds.length - 1] - bounds[bounds.length - 2]);
+    overflow = top + (top - bounds[bounds.length - 2]);
   } else if (bounds.length === 1) {
-    overflow = bounds[0] * 2 || 1;
+    overflow = top * 2 || 1;
   }
+  // Defensive: keep overflow strictly above the top bound even if a
+  // non-conformant SDK emitted non-increasing bounds — the log-scale tick must
+  // not collapse onto the top bound.
+  if (bounds.length && overflow <= top) overflow = top > 0 ? top * 1.5 : 1;
   const durationBins = bounds.length ? [...bounds, overflow] : [1];
 
   let maxCount = 0;
@@ -35,5 +41,12 @@ export function histogramResultToHeatmap(hr: HistogramResult, unit?: string): He
     return row;
   });
 
-  return { times: hr.times ?? [], durationBins, counts, maxCount };
+  return {
+    times: hr.times ?? [], durationBins, counts, maxCount,
+    // The top bin is the histogram's +Inf overflow (">top explicit bound"),
+    // labeled as such by LatencyHeatmap — not a finite ceiling.
+    overflowTop: bounds.length > 0,
+    // metric-histogram datapoints, not spans.
+    countNoun: 'samples',
+  };
 }

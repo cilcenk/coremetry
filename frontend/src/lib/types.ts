@@ -3139,6 +3139,15 @@ export interface LatencyHeatmap {
   durationBins: number[];   // upper bound in ms per bin, len = M
   counts: number[][];       // [N][M] grid
   maxCount: number;
+  // v0.9.110 (C2 review fix) — when the TOP bin is a +Inf overflow (a
+  // histogram's ">highest explicit bound" bucket), its durationBins entry is
+  // synthetic. Set true so the viz labels it "> {prev}" / "+∞" instead of
+  // asserting a fabricated finite ceiling ("≤ 1.5s") — the top band lights up
+  // during a latency incident and the axis is the only magnitude cue.
+  overflowTop?: boolean;
+  // Noun for the per-cell count in the tooltip ('spans' default for the
+  // span-derived heatmap; 'samples' for a metric-histogram heatmap).
+  countNoun?: string;
   // Fraction of trace IDs the backend actually scanned to
   // produce this heatmap (v0.5.238). 1.0 = full pass; <1.0 =
   // hash-sampled to keep wide-window queries under the

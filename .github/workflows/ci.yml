@@ -201,6 +201,22 @@ jobs:
           scan-type: fs
           scan-ref: .
           severity: HIGH,CRITICAL
+          # v0.9.93 — limit-severities-for-sarif: trivy-action format=sarif
+          # iken bu input false (varsayılan) olduğunda TRIVY_SEVERITY'yi
+          # sessizce UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL'e GENİŞLETİYOR
+          # (log: "Building SARIF report with all severities") ve exit-code'u
+          # O küme üzerinden hesaplıyor — yani severity: HIGH,CRITICAL yazsak
+          # bile gate pratikte HER severity'de kırmızıya dönüyordu. v0.9.85'ten
+          # beri taze açıklanan MEDIUM/UNKNOWN CVE'ler gate'i düşürdü:
+          # x/text CVE-2026-56852, x/net CVE-2026-46600, x/crypto GO-2026-5932
+          # (fix YOK, UNKNOWN), go-ntlmssp CVE-2026-32952, @otel/core
+          # CVE-2026-54285 (frontend build dep) — dep sürümleri v0.9.84'ten
+          # beri DEĞİŞMEDİ, yani salt-DB kaynaklı yeni disclosure'lar.
+          # govulncheck (erişilebilirlik kapısı, aynı job) HEPSİNİ UNREACHABLE
+          # bırakıp GEÇİYOR ve hiçbiri HIGH/CRITICAL değil. true = SARIF ve
+          # exit-code YENİDEN sadece HIGH,CRITICAL'e bakar (ci.yml'in belgelenen
+          # niyeti). Gerçek bir HIGH/CRITICAL çıkarsa gate yine kırmızı yapar.
+          limit-severities-for-sarif: true
           exit-code: '1'
           format: sarif
           output: trivy-results.sarif

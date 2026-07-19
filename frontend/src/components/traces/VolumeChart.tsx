@@ -10,6 +10,14 @@ import type { SpanMetricSeries } from '@/lib/types';
 import { TimeChart, type TimeChartSeries } from '@/components/charts/TimeChart';
 import { statusColor } from '@/lib/statusColor';
 
+// fmtDurRight — sağ eksen p50 süre formatı (v0.9.73): <1000ms ms,
+// aksi s. "3100 ms" gibi okunmaz büyük değerleri "3.1s" yapar; küçük
+// gecikmelerde tam sayı ms okunur.
+function fmtDurRight(v: number): string {
+  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}s`;
+  return `${v.toFixed(v < 10 ? 1 : 0)}ms`;
+}
+
 export function VolumeChart({
   count, errors, p50, height = 140, onBrush,
 }: {
@@ -27,14 +35,21 @@ export function VolumeChart({
     const t = cPts.map(p => Math.round(p.time / 1e9)); // ns → unix sec
     const total = cPts.map(p => p.value);
     const err = cPts.map(p => Math.min(eMap.get(p.time) ?? 0, p.value));
-    const p50d = cPts.map(p => pMap.get(p.time) ?? 0);
+    // v0.9.73 — p50 GAP'li: örnek olmayan (ya da 0 dönen) bucket'ta
+    // null → çizgi tabana çakmaz, gerçek boşluk gösterir. Eski `?? 0`
+    // her boş bucket'ı 0ms'e çekip sahte iniş-çıkış üretiyordu.
+    const p50d: (number | null)[] = cPts.map(p => {
+      const v = pMap.get(p.time);
+      return v && v > 0 ? v : null;
+    });
     const dt = t.length > 1 ? Math.round((t[1] - t[0]) / 60) : 1;
     // Draw order = overlay order: full bar (accent) first, then the error
     // share (red) on top so it reads at the bottom of each bar; p50 line last.
     const s: TimeChartSeries[] = [
       { key: 'total', label: 'ok spans', data: total, color: 'var(--accent)', type: 'bar', axis: 'left' },
       { key: 'error', label: 'errors', data: err, color: statusColor('error'), type: 'bar', axis: 'left' },
-      { key: 'p50', label: 'p50 latency', data: p50d, color: 'var(--orange)', type: 'line', axis: 'right', width: 1.6 },
+      // v0.9.73 — kalın çizgi + nokta: seyrek p50 örnekleri artık okunur.
+      { key: 'p50', label: 'p50 latency', data: p50d, color: 'var(--orange)', type: 'line', axis: 'right', width: 2.2, pointsShow: true },
     ];
     return { times: t, series: s, bucketMin: Math.max(1, dt) };
   }, [count, errors, p50]);
@@ -65,9 +80,9 @@ export function VolumeChart({
           series={series}
           height={height}
           leftUnit=""
-          rightUnit=" ms"
+          rightUnit=""
           onBrush={onBrush}
-          fmtRight={(v) => v.toFixed(0)}
+          fmtRight={fmtDurRight}
         />
       )}
     </div>

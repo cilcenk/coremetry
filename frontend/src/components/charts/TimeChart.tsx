@@ -26,11 +26,17 @@ import { timeChartBuildSignature } from '@/lib/chartBuildSig';
 export interface TimeChartSeries {
   key: string;
   label: string;
-  data: number[];          // aligned to `times`
+  // aligned to `times`. null = veri yok → line/area GAP çizer (bar 0).
+  // v0.9.73 — sparse metrik serilerinde (p50 gibi trafik-boş bucket)
+  // 0 basıp çizgiyi tabana çakmak yerine gerçek boşluk gösterir.
+  data: (number | null)[];
   color: string;           // a CSS var() token, resolved at draw time
   type: 'bar' | 'line' | 'area';
   axis?: 'left' | 'right'; // default 'left'
   width?: number;          // line width (line/area)
+  // v0.9.73 — line/area üzerinde nokta göster (seyrek serilerde her
+  // gerçek örnek okunur; bar'da yok sayılır).
+  pointsShow?: boolean;
 }
 
 interface Props {
@@ -188,7 +194,12 @@ export function TimeChart({
           if (s.type === 'bar') {
             return { label: s.label, scale, stroke: colors[i], fill: colors[i], width: 0, paths: barPath, points: { show: false } } as uPlot.Series;
           }
-          const base: uPlot.Series = { label: s.label, scale, stroke: colors[i], width: s.width ?? 1.8, points: { show: false } };
+          const base: uPlot.Series = {
+            label: s.label, scale, stroke: colors[i], width: s.width ?? 1.8,
+            points: s.pointsShow ? { show: true, size: 4 } : { show: false },
+            // null = gap (spanGaps false = varsayılan); seyrek seri
+            // gerçek boşluğu gösterir, tabana çakmaz.
+          };
           if (s.type === 'area') base.fill = colors[i] + '33';
           return base;
         }),

@@ -195,7 +195,12 @@ function TracesPageInner() {
     minMs:    searchParams.get('minMs')   ?? '',
     maxMs:    searchParams.get('maxMs')   ?? '',
     hasError: searchParams.get('hasError') === 'true',
-    rootOnly: searchParams.get('rootOnly') !== 'false',
+    // v0.9.78 — Operator-reported: default OFF. A root-only default hid every
+    // non-root operation pick (DB call, internal-service span…), so a fresh
+    // /traces + service/operation returned zero rows. URL stays source of
+    // truth: an explicit ?rootOnly=true keeps it on; ?rootOnly=false (the
+    // existing deep-links) and absence both mean off.
+    rootOnly: searchParams.get('rootOnly') === 'true',
     requireServices: (searchParams.get('services') ?? '').split(',').map(s => s.trim()).filter(Boolean),
   }));
   const [draft, setDraft] = useState(filter);
@@ -290,7 +295,10 @@ function TracesPageInner() {
       ['minMs',    filter.minMs],
       ['maxMs',    filter.maxMs],
       ['hasError', filter.hasError ? 'true' : ''],
-      ['rootOnly', filter.rootOnly ? '' : 'false'],
+      // Default is OFF now, so only serialize when explicitly ON. buildQuery
+      // drops '' → a fresh (off) session keeps the URL clean; ?rootOnly=true
+      // round-trips back to the reader above (=== 'true').
+      ['rootOnly', filter.rootOnly ? 'true' : ''],
       ['services', filter.requireServices.join(',')],
       // Grouped (OR / nested) → filterGroup param; flat → legacy filters param.
       // Never both: a non-empty filterGroup suppresses filters so the URL has a
@@ -496,7 +504,7 @@ function TracesPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, filter]);
   const reset = () => {
-    const empty = { service: '', search: '', traceId: '', minMs: '', maxMs: '', hasError: false, rootOnly: true, requireServices: [] as string[] };
+    const empty = { service: '', search: '', traceId: '', minMs: '', maxMs: '', hasError: false, rootOnly: false, requireServices: [] as string[] };
     setDraft(empty); setFilter(empty); setPage(0);
     setAdvFilters([]); setAdvGroup(null); setQuick(null); setExpanded(null);
   };

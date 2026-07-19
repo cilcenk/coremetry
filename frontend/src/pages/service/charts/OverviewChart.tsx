@@ -31,7 +31,9 @@ import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 export interface OvChartSeries {
   label: string;
   color: string;  // a CSS var() string, resolved at draw time
-  data: number[];
+  // v0.9.87 — null = veri yok (Runtime paneli union-align boşlukları);
+  // line/area GAP çizer, stacked 0 sayar (v0.9.73 TimeChart emsali).
+  data: (number | null)[];
 }
 
 interface Props {
@@ -81,12 +83,12 @@ export function OverviewChart({
   // tooltip reads RAW per-series values, so keep the raw series in a ref too.
   const built = useMemo(() => {
     const stacked = mode === 'stacked';
-    let matrix: number[][];
+    let matrix: (number | null)[][];
     if (stacked) {
-      const cum: number[][] = [];
+      const cum: (number | null)[][] = [];
       for (let i = 0; i < series.length; i++) {
         const below = cum[i - 1];
-        cum[i] = series[i].data.map((v, j) => (below ? below[j] : 0) + (v ?? 0));
+        cum[i] = series[i].data.map((v, j) => (below ? (below[j] ?? 0) : 0) + (v ?? 0));
       }
       matrix = cum;
     } else {

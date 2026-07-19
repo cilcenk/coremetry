@@ -319,7 +319,7 @@ function TracesPageInner() {
     // volume-strip effect below.
     let cancelled = false;
     // Only a FULL 32-hex trace id is honoured server-side (prefix search
-    // removed v0.9.X — startsWith defeats the trace_id bloom index and runs
+    // removed v0.9.82 — startsWith defeats the trace_id bloom index and runs
     // unbounded). A partial id is ignored here so the normal time-bounded
     // list still renders; a complete id navigates away via apply().
     const tid = filter.traceId.trim().toLowerCase();

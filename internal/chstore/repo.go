@@ -1598,7 +1598,7 @@ var WellKnownTraceCol = map[string]string{
 type TraceFilter struct {
 	Service  string
 	Search   string
-	TraceID  string // exact match or prefix (16+ hex chars)
+	TraceID  string // exact 32-hex match only (prefix search removed v0.9.82)
 	From, To time.Time
 	HasError bool
 	// RootOnly hides traces where the root span ((parent_id = '' OR parent_id = '0000000000000000')) was
@@ -1761,13 +1761,14 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 		wc.add("service_name = ?", f.Service)
 	}
 	if f.TraceID != "" {
-		// Exact match for full 32-char trace ID, prefix match for shorter.
-		// Bloom filter index on trace_id makes this efficient.
-		if len(f.TraceID) == 32 {
-			wc.add("trace_id = ?", f.TraceID)
-		} else {
-			wc.add("startsWith(trace_id, ?)", f.TraceID)
-		}
+		// Exact match ONLY — prefix search removed (v0.9.82, operator-reported).
+		// trace_id carries a bloom_filter skip index (idx_trace) that prunes
+		// granules for `=`/`IN` but CANNOT serve startsWith(): a prefix
+		// predicate defeated the index and full-scanned the spans table — and
+		// the trace-id lookup drops the time bound in the UI, so it ran
+		// unbounded across the whole retention window. A full 32-hex id is a
+		// bloom point-lookup; a partial id matches nothing (still fast).
+		wc.add("trace_id = ?", f.TraceID)
 	}
 	if len(f.TraceIDs) > 0 {
 		// Explicit trace-id set (relations view). `trace_id IN (…)` rides

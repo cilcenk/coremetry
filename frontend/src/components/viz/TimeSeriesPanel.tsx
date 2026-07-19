@@ -295,6 +295,10 @@ export function TimeSeriesPanel({
     const opts: uPlot.Options = {
       width: el.clientWidth || 600,
       height,
+      // v0.9.93 (uPlot Aşama 3) — stacked bant dolguları arası saç-teli
+      // beyaz çizgileri kaldırır (pxAlign:0 dolguları sürekli hizalar);
+      // non-stacked'te crisp gridline için 1 (default).
+      pxAlign: stacked ? 0 : 1,
       scales: {
         x: { time: true, range: (u, mn, mx) => xRangePinned(u.data[0] as number[], xRangeRef.current, mn, mx) },
         y: logScale ? { distr: 3, log: 10 } : {},

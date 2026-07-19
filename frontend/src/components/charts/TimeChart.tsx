@@ -8,6 +8,7 @@ import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { isXZoomed, yRefitScale } from '@/lib/chart/zoomState';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
+import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Generalises the proven
 // OverviewChart uPlot wrapper (Canvas, so it also lands the "charts to Canvas"
@@ -177,6 +178,13 @@ export function TimeChart({
       cursor: {
         x: true, y: false, points: { show: true, size: 7 },
         drag: { x: !!onBrush, y: false, setScale: false },
+        // v0.9.84 (madde 4) — seyrek (null'lu) line/area seride hover en
+        // yakın DOLU örneğe snap'ler (±2 bucket, sınırsız arama yok).
+        dataIdx: (u, sidx, idx) => {
+          const st = series[sidx - 1];
+          if (!st || st.type === 'bar') return idx;
+          return nearestFilledIdx(u.data[sidx] as (number | null)[], idx, 2);
+        },
         ...(syncKey ? { sync: { key: syncKey } } : {}),
       },
       legend: { show: false },
@@ -196,8 +204,9 @@ export function TimeChart({
           const base: uPlot.Series = {
             label: s.label, scale, stroke: colors[i], width: s.width ?? 1.8,
             points: s.pointsShow ? { show: true, size: 4 } : { show: false },
-            // null = gap (spanGaps false = varsayılan); seyrek seri
-            // gerçek boşluğu gösterir, tabana çakmaz.
+            // null = gap; v0.9.84 (madde 3) — tek kaçmış scrape köprülenir
+            // (< 1.5×step), gerçek kesinti kırık kalır (stepGapsRefiner).
+            gaps: stepGapsRefiner,
           };
           if (s.type === 'area') base.fill = colors[i] + '33';
           return base;
@@ -234,7 +243,10 @@ export function TimeChart({
             : `${String(dd.getMonth() + 1).padStart(2, '0')}-${String(dd.getDate()).padStart(2, '0')} ${hm}`;
           const rows = series.map((s, i) => {
             const unit = s.axis === 'right' ? rightUnit : leftUnit;
-            const v = (u.data[i + 1] as (number | null)[])?.[idx] ?? 0;
+            // v0.9.84 (madde 4) — dataIdx snap'i seri başına u.cursor.idxs'e
+            // düşer; tooltip da aynı dolu örneği okur ("—"/0 yerine değer).
+            const si = u.cursor.idxs?.[i + 1] ?? idx;
+            const v = (u.data[i + 1] as (number | null)[])?.[si] ?? 0;
             return `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${colors[i]}"></i>${s.label}</span><b>${kfmt(v ?? 0)}${unit}</b></div>`;
           }).join('');
           tt.innerHTML = `<div class="ov-tt-t">${ts}</div>${rows}`;

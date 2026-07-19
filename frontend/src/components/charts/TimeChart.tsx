@@ -2,7 +2,7 @@ import { useMemo, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
-import { fmtXTicks } from '@/lib/chartFmt';
+import { fmtXTicks, fmtAxisTick } from '@/lib/chartFmt';
 import { timeChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
@@ -61,9 +61,9 @@ interface Props {
   xRange?: XPin | null;
 }
 
-// v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a
-// çıkarıldı (OVC ile byte-identical'dı).
-const kfmt = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(v < 10 && v % 1 !== 0 ? 1 : 0));
+// v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a çıkarıldı
+// (OVC ile byte-identical'dı). v0.9.102 (#3) — local kfmt yerine paylaşılan
+// fmtAxisTick (birim-farkında, SI); tek tick formatlayıcı tüm panellerde.
 
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
@@ -137,12 +137,15 @@ export function TimeChart({
     // Axis whose ticks/splits derive from the LIVE scale max so a setData
     // re-fit updates the gridlines (the old build-time `max` closure would go
     // stale on the fast-path). fmt read through its ref for live formatting.
-    const yAxis = (scale: string, side: 0 | 1, fmtRef: React.MutableRefObject<((v: number) => string) | undefined>, showGrid: boolean): uPlot.Axis => ({
+    const yAxis = (scale: string, side: 0 | 1, fmtRef: React.MutableRefObject<((v: number) => string) | undefined>, showGrid: boolean, unit: string): uPlot.Axis => ({
       scale, side, stroke: text3, size: 38, font: '10px ui-monospace, monospace',
       grid: showGrid ? { stroke: gridc, width: 1, dash: [3, 4] } : { show: false },
       ticks: { show: false },
       splits: u => { const mx = (u.scales[scale].max ?? 1); return [0, mx / 2, mx]; },
-      values: (_u, sp) => sp.map(v => (fmtRef.current ? fmtRef.current(v) : kfmt(v))),
+      // Consumer fmtLeft/fmtRight still wins; v0.9.102 (Grafana-parity #3) the
+      // FALLBACK is now the shared unit-aware fmtAxisTick (was local kfmt) —
+      // "125ms" / "1.2k" instead of a bare count.
+      values: (_u, sp) => sp.map(v => (fmtRef.current ? fmtRef.current(v) : fmtAxisTick(v, unit))),
     });
 
     const axes: uPlot.Axis[] = [
@@ -155,9 +158,9 @@ export function TimeChart({
         values: (_u, sp) => (fmtXRef.current ? sp.map(fmtXRef.current) : fmtXTicks(sp)),
         space: fmtX ? 90 : 70,
       },
-      yAxis('y', 0, fmtLeftRef, true),
+      yAxis('y', 0, fmtLeftRef, true, leftUnit),
     ];
-    if (hasRight) axes.push(yAxis('y2', 1, fmtRightRef, false));
+    if (hasRight) axes.push(yAxis('y2', 1, fmtRightRef, false, rightUnit));
 
     return {
       width,

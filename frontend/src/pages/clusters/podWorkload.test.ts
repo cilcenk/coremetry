@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { podWorkloadName, workloadMatchesService } from './podWorkload';
+import { podWorkloadName, workloadMatchesService, podMatchesService } from './podWorkload';
 
 // v0.9.56 — servis-adı↔pod-adı yedek eşleşmesinin çekirdeği; backend
 // stripPodSuffixes ile aynı davranış (operatör vakası:
@@ -49,4 +49,62 @@ describe('workloadMatchesService (gerçek filo adları)', () => {
       expect(workloadMatchesService(podWorkloadName(pod), svc)).toBe(want);
     });
   }
+});
+
+// v0.9.130 — operatör raporu: "infrastructure tabında bazı cluster'ları
+// buluyor bazılarını bulamıyor". Zincir eskiden depRow bulununca podSet'e
+// KİLİTLENİP "<deploy>-" prefix yedeğine düşmüyordu; KSM'i kısmi/boş olan
+// cluster'da pod'lar podSet'te olmadığından hiç eşleşmiyordu. Düzeltme:
+// deploy varken podSet ADDİTİF (üyelik ⋃ prefix).
+describe('podMatchesService', () => {
+  const P = (pod: string, namespace = 'callcenter', service?: string) =>
+    ({ pod, namespace, service });
+  const opts = (o: Partial<{ service: string; deploy: string; ns: string; podNames: Set<string> | null }>) =>
+    ({ service: 'bsa-core-prep', deploy: '', ns: '', podNames: null, ...o });
+
+  it('REGRESYON: depRow var ama podNames prefix-eşleşen pod\'u kaçırıyor → yine eşleşir', () => {
+    // Eski kilitli zincirde bu FALSE dönerdi (podSet.has=false, prefix
+    // yedeğine düşmezdi) — cluster boş görünürdü. Şimdi prefix yakalar.
+    const pod = P('bsa-core-prep-6f8744665f-k2tcj');
+    const podNames = new Set(['bsa-core-prep-aaaa111111-zzzzz']); // farklı pod
+    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames })))
+      .toBe(true);
+  });
+
+  it('REGRESYON: applyDeployKSM zero-serisi → podNames boş Set → prefix yine eşleşir', () => {
+    const pod = P('bsa-core-prep-6f8744665f-k2tcj');
+    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames: new Set() })))
+      .toBe(true);
+  });
+
+  it('podSet, prefix\'in kaçırdığı özel-adlı pod\'u yakalar (union geniş)', () => {
+    const pod = P('legacy-worker-xyz'); // "<deploy>-" öneki taşımıyor
+    const podNames = new Set(['legacy-worker-xyz']);
+    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames })))
+      .toBe(true);
+  });
+
+  it('ns süzgeci: farklı namespace\'in pod\'u dışlanır (ns türetildiyse)', () => {
+    const pod = P('bsa-core-prep-6f8744665f-k2tcj', 'other-ns');
+    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames: new Set() })))
+      .toBe(false);
+  });
+
+  it('deploy var, ne üyelik ne prefix → eşleşmez (daraltma korunur)', () => {
+    const pod = P('unrelated-app-6f8744665f-k2tcj');
+    expect(podMatchesService(pod, opts({ deploy: 'bsa-core-prep', ns: 'callcenter', podNames: new Set() })))
+      .toBe(false);
+  });
+
+  it('yedek mod (deploy yok): isim-eşitliği eşleşir, kardeş eşleşmez', () => {
+    const hit = P('bsa-core-prep-6f8744665f-k2tcj');
+    expect(podMatchesService(hit, opts({ service: 'bsa-core-prep' }))).toBe(true);
+    const sibling = P('bsa-core-prep-batch-7f5c96cd4b-gtg2f');
+    expect(podMatchesService(sibling, opts({ service: 'bsa-core-prep' }))).toBe(false);
+  });
+
+  it('yedek mod: enrichment service alanı eşleşir', () => {
+    const pod = P('renamed-pod-abc', 'callcenter', 'bsa-core-prep');
+    expect(podMatchesService(pod, opts({ service: 'bsa-core-prep' }))).toBe(true);
+  });
 });

@@ -41,3 +41,44 @@ export function workloadMatchesService(workload: string, service: string): boole
   }
   return false;
 }
+
+// PodMatchInput — podMatchesService'in ihtiyaç duyduğu ClusterPodRow
+// alt kümesi (test edilebilirlik için dar tip; ClusterPodRow bunu karşılar).
+export interface PodMatchInput {
+  pod: string;
+  namespace: string;
+  service?: string;
+}
+
+// podMatchesService — Servis → Infrastructure sekmesinin pod-eşleşme
+// zincirinin SAF kararı (v0.9.130 — operatör raporu: "infrastructure
+// tabında bazı cluster'ları buluyor bazılarını bulamıyor").
+//
+// Kök neden: zincir eskiden ServiceInfraTab içinde kilitli bir if/else'ti —
+// `depRow` (o cluster'ın KSM ns-rollup'unda deployment satırı) bulununca
+// pod'lar YALNIZCA `podSet.has(pod)` ile eşleşir, `<deploy>-` prefix
+// yedeğine hiç DÜŞMEZDİ. Bir cluster'da KSM owner ailesi kısmi/yoksa —
+// ya da applyDeployKSM cpu/mem serisi olmayan bir deployment'ı
+// PodNames:[] ile eklediyse — o cluster'ın pod'ları podSet'te bulunmadığı
+// için HİÇ eşleşmiyor; depRow bulunmayan cluster ise prefix yedeğiyle
+// buluyordu → "bazı cluster buluyor, bazısı bulamıyor".
+//
+// Düzeltme: deploy varken podSet ADDİTİF (kilit değil) — üyelik VEYA
+// prefix. Union, prefix-yalnızdan da (özel-adlı pod'u KSM üyeliği yakalar)
+// podSet-yalnızdan da (eksik KSM'i prefix yakalar) geniş; eşleşmeyi asla
+// daraltmaz, yalnız genişletir.
+export function podMatchesService(
+  p: PodMatchInput,
+  opts: { service: string; deploy: string; ns: string; podNames: Set<string> | null },
+): boolean {
+  const { service, deploy, ns, podNames } = opts;
+  // Namespace süzgeci — metadata ns türetildiyse aynı adlı başka
+  // namespace'in pod'unu dışlar; ns boşsa (yedek mod) uygulanmaz.
+  if (ns && p.namespace !== ns) return false;
+  if (deploy) {
+    return (podNames?.has(p.pod) ?? false) || p.pod.startsWith(deploy + '-');
+  }
+  // deploy yoksa: enrichment servis alanı YA DA soyulmuş iş-yükü adı ==
+  // servis (prefix DEĞİL eşitlik — kardeş-öneki tuzağı yok).
+  return p.service === service || workloadMatchesService(podWorkloadName(p.pod), service);
+}

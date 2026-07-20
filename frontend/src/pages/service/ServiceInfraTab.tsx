@@ -12,7 +12,7 @@ import { PodDrawer } from '@/pages/clusters/PodDrawer';
 import { PromQLList } from '@/pages/clusters/PromQLList';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
-import { podWorkloadName, workloadMatchesService } from '@/pages/clusters/podWorkload';
+import { podMatchesService } from '@/pages/clusters/podWorkload';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
@@ -108,15 +108,11 @@ export function ServiceInfraTab({ service, range, onZoom }: {
     })),
   });
 
-  // Pod eşleşme zinciri (v0.9.56 — operatör vakası: metadata ns/deploy
-  // türetilememiş servislerde sekme boştu; pod adı zaten servis adını
-  // taşıyor: bsa-adkservices-login-prep-<rs>-<rand>):
-  //   1. DeploymentRow.podNames (gerçek KSM eşlemesi) — ns+deploy varsa
-  //   2. "<deploy>-" önek + ns — deploy var, KSM satırı yoksa
-  //   3. YEDEK: pod'un zenginleştirilmiş service alanı (v0.9.12
-  //      korelasyonu) YA DA soyulmuş iş-yükü adı == servis adı
-  //      (podWorkloadName — prefix değil EŞİTLİK: kardeş servis
-  //      önekleri karışmaz). ns türetildiyse süzgeç olarak uygulanır.
+  // Pod eşleşme zinciri (v0.9.56 → saf podMatchesService'e taşındı,
+  // v0.9.130 operatör raporu: "bazı cluster'ları buluyor bazılarını
+  // bulamıyor"). Karar podMatchesService'te (podWorkload.ts, testli):
+  // ns süzgeci + deploy varken podSet ÜYELİĞİ ⋃ "<deploy>-" prefix
+  // (podSet artık ADDİTİF, kilit değil) VEYA yedek modda isim-eşitliği.
   // Bilinçli memo'suz: useQueries kimliği her render değişir, tarama
   // ≤ birkaç bin satır.
   const rows: ClusterPodRow[] = [];
@@ -126,11 +122,7 @@ export function ServiceInfraTab({ service, range, onZoom }: {
       : undefined;
     const podSet = depRow ? new Set(depRow.podNames) : null;
     for (const p of podQs[i]?.data?.pods ?? []) {
-      if (ns && p.namespace !== ns) continue;
-      const hit = podSet ? podSet.has(p.pod)
-        : deploy ? p.pod.startsWith(deploy + '-')
-        : (p.service === service || workloadMatchesService(podWorkloadName(p.pod), service));
-      if (hit) rows.push(p);
+      if (podMatchesService(p, { service, deploy, ns, podNames: podSet })) rows.push(p);
     }
   });
   // Çipler/grafikler için gerçek küme: eşleşen pod'u OLAN cluster'lar.

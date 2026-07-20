@@ -208,6 +208,44 @@ func metricAggToSQL(agg string) (string, error) {
 	return "", fmt.Errorf("unknown aggregation %q", agg)
 }
 
+// MetricAttrKeys returns the distinct DATAPOINT attribute keys observed on a
+// metric (v0.9.124) — powers PromQL `without(L)`, which groups by every label
+// EXCEPT L and so must first discover what the labels are. Bounded (LIMIT +
+// max_execution_time + time-bounded WHERE); the key COUNT is tiny (a metric has
+// a handful of attr keys). Resource attrs like service.name aren't in
+// attr_keys; the caller adds them to the candidate set separately.
+func (s *Store) MetricAttrKeys(ctx context.Context, metric, service string, since time.Duration) ([]string, error) {
+	if metric == "" {
+		return nil, nil
+	}
+	cutoff := time.Now().Add(-since)
+	q := `SELECT DISTINCT arrayJoin(attr_keys) AS k
+	      FROM metric_points
+	      WHERE metric = ? AND time >= ?`
+	args := []any{metric, cutoff}
+	if service != "" {
+		q += ` AND service_name = ?`
+		args = append(args, service)
+	}
+	q += ` ORDER BY k LIMIT 100 SETTINGS max_execution_time = 5`
+	rows, err := s.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		if k != "" {
+			out = append(out, k)
+		}
+	}
+	return out, rows.Err()
+}
+
 // MetricLabelValues returns distinct values for a single attribute key
 // observed in the given metric — fuels the value-suggestions in the UI.
 func (s *Store) MetricLabelValues(ctx context.Context, metric, key string, since time.Duration) ([]string, error) {

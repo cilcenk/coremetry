@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -16,7 +17,8 @@ type fakeStore struct {
 	lastQ      float64 // histogram quantile
 	called     string  // which method
 	ret        []chstore.SpanMetricSeries
-	nSeries    int // if >0, return this many empty series (for the MaxSeries cap)
+	nSeries    int      // if >0, return this many empty series (for the MaxSeries cap)
+	attrKeys   []string // MetricAttrKeys override (default pod,area)
 }
 
 func (f *fakeStore) result() []chstore.SpanMetricSeries {
@@ -40,6 +42,12 @@ func (f *fakeStore) QueryMetricRate(ctx context.Context, flt chstore.MetricQuery
 func (f *fakeStore) QueryMetricHistogramQuantile(ctx context.Context, flt chstore.MetricQueryFilter, q float64) ([]chstore.SpanMetricSeries, error) {
 	f.lastFilter, f.lastQ, f.called = flt, q, "QueryMetricHistogramQuantile"
 	return f.result(), nil
+}
+func (f *fakeStore) MetricAttrKeys(ctx context.Context, metric, service string, since time.Duration) ([]string, error) {
+	if f.attrKeys != nil {
+		return f.attrKeys, nil
+	}
+	return []string{"pod", "area"}, nil
 }
 
 func mustEval(t *testing.T, fs *fakeStore, q string) []chstore.SpanMetricSeries {
@@ -343,6 +351,39 @@ func groupKeys(s []chstore.SpanMetricSeries) []string {
 	return out
 }
 
+func TestEvalWithout(t *testing.T) {
+	// withoutGroupBy: (attr keys ∪ service.name) − without-set, deduped.
+	got := withoutGroupBy([]string{"pod", "area", "id"}, []string{"pod"})
+	want := map[string]bool{"area": true, "id": true, "service.name": true}
+	if len(got) != 3 {
+		t.Fatalf("withoutGroupBy = %v, want 3 labels", got)
+	}
+	for _, k := range got {
+		if !want[k] {
+			t.Errorf("unexpected label %q in %v", k, got)
+		}
+	}
+
+	// sum without(pod)(metric) → QueryMetric grouped by the remaining labels.
+	fs := &fakeStore{attrKeys: []string{"pod", "area"}}
+	mustEval(t, fs, `sum without (pod) (jvm.memory.used)`)
+	if fs.called != "QueryMetric" || fs.lastFilter.Aggregation != "sum" {
+		t.Errorf("without → %s agg=%s, want QueryMetric/sum", fs.called, fs.lastFilter.Aggregation)
+	}
+	// GroupBy = {area, service.name} (pod dropped); order = keys then service.name.
+	gb := strings.Join(fs.lastFilter.GroupBy, ",")
+	if gb != "area,service.name" {
+		t.Errorf("without(pod) GroupBy = %q, want area,service.name", gb)
+	}
+
+	// without(service.name) drops the resource label too.
+	fs = &fakeStore{attrKeys: []string{"pod"}}
+	mustEval(t, fs, `sum without (service.name) (x)`)
+	if strings.Join(fs.lastFilter.GroupBy, ",") != "pod" {
+		t.Errorf("without(service.name) GroupBy = %v, want [pod]", fs.lastFilter.GroupBy)
+	}
+}
+
 func TestEvalScalarFunctions(t *testing.T) {
 	// abs(x) applies per-point over the fetched series.
 	fs := &fakeStore{ret: []chstore.SpanMetricSeries{{Points: []chstore.SpanMetricPoint{{Time: 1, Value: -5}, {Time: 2, Value: 3}}}}}
@@ -378,7 +419,6 @@ func TestEvalCapsAndErrors(t *testing.T) {
 	bad := []struct{ q, wantSub string }{
 		{`{code="500"}`, "must name a metric"},          // nameless selector
 		{`foo[5m]`, "must be inside a function"},         // bare range vector
-		{`sum without (pod) (foo)`, "without"},           // without deferred
 		{`avg(rate(foo[5m]))`, "only sum"},               // avg-of-rate deferred
 		{`sum(a + b)`, "can only aggregate"},             // complex inner deferred
 		{`histogram_quantile(1.5, foo)`, "out of range"}, // quantile out of [0,1]

@@ -131,7 +131,7 @@ func (s *Store) GetInfraMetrics(ctx context.Context, service string, since, buck
 		  AND metric IN (`+strings.Join(holders, ",")+`)
 		GROUP BY metric, bucket
 		ORDER BY metric, bucket
-		SETTINGS `+s.shardSkipSetting(), args...)
+		SETTINGS `+s.shardSkipSetting()+`, max_execution_time = 8`, args...)
 	if err != nil {
 		return nil, err
 	}

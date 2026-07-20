@@ -175,7 +175,7 @@ func (s *Store) queryMysqlGauges(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'mysql.')
 		` + mysqlInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -192,7 +192,7 @@ func (s *Store) queryMysqlRates(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'mysql.')
 		` + mysqlInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{windowSec, from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -208,7 +208,7 @@ func (s *Store) queryMysqlRowLockTime(
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND metric IN ('mysql.innodb.row_lock.time', 'mysql.row_locks_time')
-		` + mysqlInstanceClause(withInstance)
+		` + mysqlInstanceClause(withInstance) + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)

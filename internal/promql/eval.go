@@ -37,7 +37,7 @@ func nsToTime(ns int64) time.Time {
 type MetricStore interface {
 	QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error)
 	QueryMetricRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error)
-	QueryMetricHistogramPercentile(ctx context.Context, f chstore.MetricQueryFilter, agg string) ([]chstore.SpanMetricSeries, error)
+	QueryMetricHistogramQuantile(ctx context.Context, f chstore.MetricQueryFilter, q float64) ([]chstore.SpanMetricSeries, error)
 }
 
 // EvalOptions bounds one evaluation. Zero values get safe defaults.
@@ -172,9 +172,8 @@ func (ev *evaluator) evalCall(c *Call) ([]chstore.SpanMetricSeries, error) {
 		if !ok {
 			return nil, fmt.Errorf("promql: histogram_quantile's first argument must be a scalar quantile")
 		}
-		agg, err := quantileToAgg(ql.Val)
-		if err != nil {
-			return nil, err
+		if ql.Val < 0 || ql.Val > 1 {
+			return nil, fmt.Errorf("promql: histogram_quantile quantile %g out of range [0,1]", ql.Val)
 		}
 		vs := underlyingHistogramSelector(c.Args[1])
 		if vs == nil {
@@ -184,7 +183,8 @@ func (ev *evaluator) evalCall(c *Call) ([]chstore.SpanMetricSeries, error) {
 		if err != nil {
 			return nil, err
 		}
-		return ev.store.QueryMetricHistogramPercentile(ev.ctx, f, agg)
+		// Arbitrary quantile (v0.9.119) — not just p50/p95/p99.
+		return ev.store.QueryMetricHistogramQuantile(ev.ctx, f, ql.Val)
 
 	// Cheap per-point scalar functions — evaluate the vector then map in Go.
 	case "abs", "ceil", "floor", "round", "sgn":
@@ -365,22 +365,6 @@ func underlyingHistogramSelector(e Expr) *VectorSelector {
 		return underlyingHistogramSelector(x.Expr)
 	default:
 		return nil
-	}
-}
-
-// quantileToAgg maps a PromQL quantile to the chstore percentile agg. Only the
-// three the F3 machine exposes for now; arbitrary quantiles land in a later
-// phase (a float-quantile chstore variant).
-func quantileToAgg(q float64) (string, error) {
-	switch q {
-	case 0.5:
-		return "p50", nil
-	case 0.95:
-		return "p95", nil
-	case 0.99:
-		return "p99", nil
-	default:
-		return "", fmt.Errorf("promql: histogram_quantile currently supports 0.5, 0.95, 0.99 (got %g)", q)
 	}
 }
 

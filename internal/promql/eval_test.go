@@ -12,9 +12,9 @@ import (
 // the tests pin the AST→chstore ROUTING + the perf caps without a database.
 type fakeStore struct {
 	lastFilter chstore.MetricQueryFilter
-	lastMode   string // rate/increase
-	lastAgg    string // histogram percentile
-	called     string // which method
+	lastMode   string  // rate/increase
+	lastQ      float64 // histogram quantile
+	called     string  // which method
 	ret        []chstore.SpanMetricSeries
 	nSeries    int // if >0, return this many empty series (for the MaxSeries cap)
 }
@@ -37,8 +37,8 @@ func (f *fakeStore) QueryMetricRate(ctx context.Context, flt chstore.MetricQuery
 	f.lastFilter, f.lastMode, f.called = flt, mode, "QueryMetricRate"
 	return f.result(), nil
 }
-func (f *fakeStore) QueryMetricHistogramPercentile(ctx context.Context, flt chstore.MetricQueryFilter, agg string) ([]chstore.SpanMetricSeries, error) {
-	f.lastFilter, f.lastAgg, f.called = flt, agg, "QueryMetricHistogramPercentile"
+func (f *fakeStore) QueryMetricHistogramQuantile(ctx context.Context, flt chstore.MetricQueryFilter, q float64) ([]chstore.SpanMetricSeries, error) {
+	f.lastFilter, f.lastQ, f.called = flt, q, "QueryMetricHistogramQuantile"
 	return f.result(), nil
 }
 
@@ -80,11 +80,12 @@ func TestEvalRouting(t *testing.T) {
 		t.Errorf("increase() mode=%s, want increase", fs.lastMode)
 	}
 
-	// histogram_quantile → QueryMetricHistogramPercentile with the mapped agg.
+	// histogram_quantile → QueryMetricHistogramQuantile with the float quantile
+	// (arbitrary q, v0.9.119 — 0.9 is no longer rejected).
 	fs = &fakeStore{}
-	mustEval(t, fs, `histogram_quantile(0.95, http.server.duration)`)
-	if fs.called != "QueryMetricHistogramPercentile" || fs.lastAgg != "p95" {
-		t.Errorf("histogram_quantile(0.95) → %s agg=%s, want …Percentile/p95", fs.called, fs.lastAgg)
+	mustEval(t, fs, `histogram_quantile(0.9, http.server.duration)`)
+	if fs.called != "QueryMetricHistogramQuantile" || fs.lastQ != 0.9 {
+		t.Errorf("histogram_quantile(0.9) → %s q=%g, want …Quantile/0.9", fs.called, fs.lastQ)
 	}
 	if fs.lastFilter.Name != "http.server.duration" {
 		t.Errorf("dotted histogram metric name = %q", fs.lastFilter.Name)
@@ -206,7 +207,7 @@ func TestEvalCapsAndErrors(t *testing.T) {
 		{`topk(5, foo)`, "not supported yet"},            // topk deferred
 		{`avg(rate(foo[5m]))`, "only sum"},               // avg-of-rate deferred
 		{`sum(a + b)`, "can only aggregate"},             // complex inner deferred
-		{`histogram_quantile(0.9, foo)`, "0.5, 0.95"},    // unsupported quantile
+		{`histogram_quantile(1.5, foo)`, "out of range"}, // quantile out of [0,1]
 		{`histogram_quantile(0.95, sum(foo))`, "Phase 3"},// nested hist arg
 		{`rate(foo)`, "range vector"},                    // rate needs a matrix
 	}

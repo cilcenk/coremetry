@@ -60,7 +60,10 @@ export default function PublicStatusPage() {
       return r.json() as Promise<StatusResp>;
     },
     refetchInterval: 30_000,
-    staleTime: 10_000,
+    // staleTime trails the interval (scale-audit 2026-07-20) — a
+    // re-mount inside the window shouldn't refetch early; the public
+    // status page has high fan-out (many concurrent embeds).
+    staleTime: 25_000,
   });
   const data: StatusResp | null | undefined =
     q.isPending ? undefined : q.isError ? null : q.data;

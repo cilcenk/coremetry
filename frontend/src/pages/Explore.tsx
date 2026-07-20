@@ -217,9 +217,14 @@ function ExploreInner() {
 
   // Service options for the traces/repeats filter suggestions. Gated on
   // hasParams (entry screen fires no workspace fetches — Phase-1 finding).
+  // v0.9.134 (scale-audit 2026-07-20 CHECK 1) — bounded to top-500 by
+  // traffic: this list is only a SEED for FilterBuilder's service.name
+  // autocomplete; the builder already runs a debounced live server search
+  // (api.attributeValues, substring-aware) for the long tail, so at 1000s
+  // of services an unbounded all-window catalogue was pure waste.
   useEffect(() => {
     if (!hasParams || source !== 'spans' || resultMode === 'metric') return;
-    api.services(timeRangeToNs(range))
+    api.services(timeRangeToNs(range), 500)
       .then(s => setServices((s ?? []).map(x => x.name)))
       .catch(() => setServices([]));
   }, [range, hasParams, source, resultMode]);

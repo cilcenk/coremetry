@@ -3,6 +3,7 @@ package promql
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -15,7 +16,9 @@ import (
 //   - arithmetic (+ - * / % ^), comparison (== != < <= > >=) with the `bool`
 //     modifier (1/0) or filter semantics (drop non-matching points).
 //   - set ops and/or/unless (default matching by groupKey).
-// Deferred (clear errors): explicit vector matching on/ignoring/group_left/right.
+//   - on()/ignoring() 1:1 matching by a label subset (labels derived from the
+//     AST's by() lists). Deferred (clear errors): group_left/right many-to-one;
+//     on()/ignoring() over a without() operand.
 //
 // Performance: no new fetches — operates on operand vectors bounded by the leaf
 // fetches (chstore LIMIT 50000 + top-N fold). Note MaxSeries caps the FINAL
@@ -27,11 +30,11 @@ func (ev *evaluator) evalBinary(be *BinaryExpr) ([]chstore.SpanMetricSeries, err
 	if op == "and" || op == "or" || op == "unless" {
 		return ev.evalSetOp(be, op)
 	}
-	// group_left/right (Card != one-to-one) must be caught even with an empty
-	// on()/ignoring() and no include list, or a many-to-one join silently
-	// degrades to positional 1:1 → wrong/empty result (review MAJOR, v0.9.122).
-	if vm := be.VectorMatching; vm != nil && (len(vm.MatchingLabels) > 0 || vm.On || len(vm.Include) > 0 || vm.Card != CardOneToOne) {
-		return nil, fmt.Errorf("promql: on()/ignoring()/group_left/right matching is not supported yet — default 1:1 label matching only")
+	// group_left/right (many-to-one) still deferred — must be caught even with
+	// an empty on()/ignoring() (review MAJOR, v0.9.122). on()/ignoring() 1:1 is
+	// handled in the vector-vector path below.
+	if vm := be.VectorMatching; vm != nil && (len(vm.Include) > 0 || vm.Card != CardOneToOne) {
+		return nil, fmt.Errorf("promql: group_left/right (many-to-one) matching is not supported yet")
 	}
 
 	lv, lScalar := scalarValue(be.LHS)
@@ -68,8 +71,116 @@ func (ev *evaluator) evalBinary(be *BinaryExpr) ([]chstore.SpanMetricSeries, err
 		if err != nil {
 			return nil, err
 		}
+		if vm := be.VectorMatching; vm != nil && (len(vm.MatchingLabels) > 0 || vm.On) {
+			// on()/ignoring() 1:1 — match by a label SUBSET. The operand label
+			// NAMES come from the query AST (an aggregation's by() list); the
+			// series' groupKey values are positional to them.
+			lLabels, lok := operandLabels(be.LHS)
+			rLabels, rok := operandLabels(be.RHS)
+			if !lok || !rok {
+				return nil, fmt.Errorf("promql: on()/ignoring() is only supported over by()-aggregations for now (not without()/complex operands)")
+			}
+			return applyVectorVectorMatched(op, ls, rs, lLabels, rLabels, vm, be.ReturnBool)
+		}
 		return applyVectorVector(op, ls, rs, be.ReturnBool), nil
 	}
+}
+
+// operandLabels returns the label NAMES positional to a vector expression's
+// series groupKey, derivable from the AST: an aggregation contributes its by()
+// list; a bare selector / rate collapses to one label-less series. Returns
+// ok=false where the labels are not statically known (without(), unsupported
+// shapes) so on()/ignoring() over them errors cleanly instead of mis-matching.
+func operandLabels(e Expr) ([]string, bool) {
+	switch x := e.(type) {
+	case *ParenExpr:
+		return operandLabels(x.Expr)
+	case *UnaryExpr:
+		return operandLabels(x.Expr)
+	case *VectorSelector, *MatrixSelector, *NumberLiteral, *StringLiteral:
+		return []string{}, true // collapsed single (or label-less) series
+	case *Call:
+		return []string{}, true // rate/increase/histogram_quantile/scalar-fn → label-less here
+	case *AggregateExpr:
+		if x.Without {
+			return nil, false // computed at runtime, not statically known
+		}
+		return x.Grouping, true
+	case *BinaryExpr:
+		return operandLabels(x.LHS) // result carries LHS labels
+	default:
+		return nil, false
+	}
+}
+
+// applyVectorVectorMatched is applyVectorVector with on()/ignoring() 1:1
+// matching: the match key is the subset of each series' labels selected by
+// on(L) (keep L) or ignoring(L) (drop L), built by NAME so label order doesn't
+// matter. A match key appearing on >1 RHS series is a many-to-one situation →
+// error (that needs group_left/right).
+func applyVectorVectorMatched(op string, lhs, rhs []chstore.SpanMetricSeries, lLabels, rLabels []string, vm *VectorMatching, returnBool bool) ([]chstore.SpanMetricSeries, error) {
+	ml := make(map[string]bool, len(vm.MatchingLabels))
+	for _, l := range vm.MatchingLabels {
+		ml[l] = true
+	}
+	matchKey := func(gk, labels []string) string {
+		parts := make([]string, 0, len(labels))
+		for i, name := range labels {
+			if i >= len(gk) {
+				break
+			}
+			in := ml[name]
+			if (vm.On && in) || (!vm.On && !in) {
+				parts = append(parts, name+"="+gk[i])
+			}
+		}
+		sort.Strings(parts)
+		return strings.Join(parts, "\x1f")
+	}
+
+	rhsIdx := make(map[string]map[int64]float64, len(rhs))
+	dupe := make(map[string]bool)
+	for _, s := range rhs {
+		key := matchKey(s.GroupKey, rLabels)
+		if _, seen := rhsIdx[key]; seen {
+			dupe[key] = true // >1 RHS series map to the same match set
+		}
+		m := rhsIdx[key]
+		if m == nil {
+			m = make(map[int64]float64, len(s.Points))
+			rhsIdx[key] = m
+		}
+		for _, p := range s.Points {
+			m[p.Time] = p.Value
+		}
+	}
+	out := make([]chstore.SpanMetricSeries, 0, len(lhs))
+	for _, s := range lhs {
+		key := matchKey(s.GroupKey, lLabels)
+		if dupe[key] {
+			return nil, fmt.Errorf("promql: many RHS series match one LHS series on this label set — needs group_left/right (not supported yet)")
+		}
+		rm := rhsIdx[key]
+		if rm == nil {
+			continue
+		}
+		pts := make([]chstore.SpanMetricPoint, 0, len(s.Points))
+		for _, p := range s.Points {
+			rval, ok := rm[p.Time]
+			if !ok {
+				continue
+			}
+			v, keep := applyBinary(op, p.Value, rval, returnBool)
+			if !keep {
+				continue
+			}
+			pts = append(pts, chstore.SpanMetricPoint{Time: p.Time, Value: v})
+		}
+		if len(pts) > 0 {
+			out = append(out, chstore.SpanMetricSeries{GroupKey: s.GroupKey, Points: pts})
+		}
+	}
+	return out, nil
 }
 
 // scalarValue folds a constant sub-expression (literal, unary/paren of a

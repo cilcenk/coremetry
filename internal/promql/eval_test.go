@@ -226,18 +226,52 @@ func TestEvalBinary(t *testing.T) {
 		t.Errorf("foo-foo = %v, want [0 0]", firstPts(s))
 	}
 
-	// deferred: explicit vector matching errors clearly.
+	// deferred: group_left/right (many-to-one) + on() on set ops error clearly.
 	for _, bad := range []struct{ q, sub string }{
-		{`foo / on (le) bar`, "matching is not supported"},
 		// review MAJOR: group_left with empty ignoring() must NOT slip through.
-		{`foo / ignoring () group_left bar`, "matching is not supported"},
-		{`foo / ignoring () group_right bar`, "matching is not supported"},
+		{`foo / ignoring () group_left bar`, "group_left"},
+		{`foo / ignoring () group_right bar`, "group_left"},
 		{`foo and on (le) bar`, "not supported"}, // on() on a set op
+		{`sum without(a)(x) / on(le) sum by(le)(y)`, "without"}, // on() over without() operand
 	} {
 		if _, err := run(bad.q, one(1)); err == nil || !strings.Contains(err.Error(), bad.sub) {
 			t.Errorf("%q err = %v, want %q", bad.q, err, bad.sub)
 		}
 	}
+}
+
+func TestEvalOnIgnoring(t *testing.T) {
+	// operandLabels derives label names from the AST.
+	if l, ok := operandLabels(mustParse(t, `sum by (le, code) (foo)`)); !ok || strings.Join(l, ",") != "le,code" {
+		t.Errorf("operandLabels(sum by(le,code)) = %v,%v", l, ok)
+	}
+	if l, ok := operandLabels(mustParse(t, `rate(foo[5m])`)); !ok || len(l) != 0 {
+		t.Errorf("operandLabels(rate) = %v,%v, want []", l, ok)
+	}
+	if _, ok := operandLabels(mustParse(t, `sum without (a) (foo)`)); ok {
+		t.Errorf("operandLabels(without) should be not-ok")
+	}
+
+	// on(le) 1:1: LHS by(le), RHS by(le,extra) — match on le, so the same-le
+	// series pair. Both operands return the fake series (groupKey ["g"]); with
+	// labels [le] on each, they match → division yields 1.0.
+	fs := &fakeStore{ret: []chstore.SpanMetricSeries{{GroupKey: []string{"g"}, Points: []chstore.SpanMetricPoint{{Time: 1, Value: 8}}}}}
+	s, err := EvalString(context.Background(), fs, `sum by (le) (a) / on (le) sum by (le) (b)`, EvalOptions{FromNs: 1, ToNs: 9})
+	if err != nil {
+		t.Fatalf("on(le) division: %v", err)
+	}
+	if len(s) != 1 || s[0].Points[0].Value != 1 {
+		t.Errorf("on(le) a/b (same series) = %v, want [1]", s)
+	}
+}
+
+func mustParse(t *testing.T, q string) Expr {
+	t.Helper()
+	e, err := Parse(q)
+	if err != nil {
+		t.Fatalf("Parse(%q): %v", q, err)
+	}
+	return e
 }
 
 func TestEvalSetOps(t *testing.T) {

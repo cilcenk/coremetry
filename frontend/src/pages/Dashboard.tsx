@@ -375,6 +375,7 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
     stat: 'Stat (single value)',
     gauge: 'Gauge',
     heatmap: 'Heatmap (latency density)',
+    promql: 'PromQL query',
     markdown: 'Markdown / notes',
   };
   return (
@@ -387,7 +388,7 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
           borderRadius: 6, padding: 4, zIndex: 50, minWidth: 180,
           boxShadow: 'var(--shadow-pop)',
         }}>
-          {(['row', 'metric', 'spanmetric', 'stat', 'markdown'] as PanelType[]).map(t => (
+          {(['row', 'metric', 'spanmetric', 'promql', 'stat', 'markdown'] as PanelType[]).map(t => (
             <button key={t} className="ghost"
               onClick={() => { onAdd(t); setOpen(false); }}
               style={{

@@ -4,7 +4,7 @@ import { STEP_OPTIONS } from '@/pages/explore/presets';
 import type {
   Panel, PanelType, PanelWidth,
   MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
-  HeatmapPanelConfig,
+  HeatmapPanelConfig, PromqlPanelConfig,
 } from '@/lib/types';
 
 const TYPE_LABELS: Record<PanelType, string> = {
@@ -19,6 +19,8 @@ const TYPE_LABELS: Record<PanelType, string> = {
   // v0.9.109 (C2) — time×bucket latency density for a histogram metric.
   // Reuses the LatencyHeatmap viz + /api/metrics/histogram (the F3 machine).
   heatmap:    'Heatmap (latency density)',
+  // v0.9.117 (F4) — a chart driven by a raw PromQL query.
+  promql:     'PromQL query',
   markdown:   'Markdown / notes',
   row:        'Row (collapsible group)',
 };
@@ -150,6 +152,9 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
         {panel.type === 'heatmap' && (
           <HeatmapFields cfg={panel.config as HeatmapPanelConfig} onChange={updateConfig} />
         )}
+        {panel.type === 'promql' && (
+          <PromqlFields cfg={panel.config as PromqlPanelConfig} onChange={updateConfig} />
+        )}
         {panel.type === 'markdown' && (
           <Field label="Markdown text">
             <textarea
@@ -234,6 +239,34 @@ function HeatmapFields({ cfg, onChange }: {
             <option value="ms">ms (bounds already ms)</option>
             <option value="s">s (bounds in seconds → ms)</option>
           </select>
+        </Field>
+        <Field label="Step">
+          <StepSelect value={cfg.step} onChange={v => update('step', v)} />
+        </Field>
+      </div>
+    </>
+  );
+}
+
+// v0.9.117 (F4) — PromQL panel editor: a query textarea + optional unit/step.
+function PromqlFields({ cfg, onChange }: {
+  cfg: PromqlPanelConfig; onChange: (c: PromqlPanelConfig) => void;
+}) {
+  const update = <K extends keyof PromqlPanelConfig>(k: K, v: PromqlPanelConfig[K]) =>
+    onChange({ ...cfg, [k]: v });
+  return (
+    <>
+      <Field label="PromQL query">
+        <textarea value={cfg.query ?? ''} spellCheck={false}
+          onChange={e => update('query', e.target.value)}
+          rows={3}
+          style={{ width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12 }}
+          placeholder={'sum by (service.name) (rate(http.server.duration[5m]))'} />
+      </Field>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <Field label="Unit (optional)">
+          <input value={cfg.unit ?? ''} onChange={e => update('unit', e.target.value)}
+            placeholder="ms / % / rps" />
         </Field>
         <Field label="Step">
           <StepSelect value={cfg.step} onChange={v => update('step', v)} />
@@ -485,6 +518,9 @@ export function defaultConfig(t: PanelType): Panel['config'] {
     // the common latency-histogram default; operator flips to 's' for
     // seconds-valued bounds (http.server.request.duration).
     case 'heatmap':    return { metricName: '', unit: 'ms' };
+    // v0.9.117 (F4) — empty query → PromqlPanel shows the "type a query"
+    // prompt (never a blank panel).
+    case 'promql':     return { query: '', viz: 'line' };
     case 'markdown':   return { text: '## Notes\n\nDescribe what this dashboard shows.' };
     // Row panels carry no config of their own — title is on the panel
     // itself, default-collapsed is opt-in.

@@ -2211,7 +2211,7 @@ export interface SLORow extends SLO {
 
 // ── Dashboards ───────────────────────────────────────────────────────────────
 
-export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row' | 'heatmap';
+export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row' | 'heatmap' | 'promql';
 export type PanelWidth = 1 | 2 | 3 | 4;  // 1=quarter … 4=full (12-col grid)
 
 // Each panel type has a different config shape. Kept as a tagged union so
@@ -2303,6 +2303,17 @@ export interface HeatmapPanelConfig {
   filters?: string;        // JSON FilterExpr[]
 }
 
+// v0.9.117 (F4) — PromQL panel. A dashboard chart driven by a raw PromQL
+// query against the OTel metric store (/api/metrics/promql, Phases 1-3) —
+// Grafana-style. Renders line/area like the metric panel. Dashboard variables
+// (${service}) expand into the query at render time.
+export interface PromqlPanelConfig {
+  query: string;
+  unit?: string;           // y-axis unit override (ms | % | rps | free text)
+  step?: number;           // bucket seconds; absent/0 = width-aware auto
+  viz?: PanelVizType;      // line (default) / bar / area / stacked
+}
+
 export interface MarkdownPanelConfig {
   text: string;
 }
@@ -2324,7 +2335,7 @@ export interface Panel {
   // a "last 15min" incident chart on the same dashboard.
   // undefined / missing → fall back to the dashboard's range.
   rangeOverride?: TimeRange;
-  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig | HeatmapPanelConfig;
+  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig | HeatmapPanelConfig | PromqlPanelConfig;
 }
 
 // DashboardVariable — Grafana-style variable. Referenced as ${name} in

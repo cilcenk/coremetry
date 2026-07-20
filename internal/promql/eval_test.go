@@ -108,6 +108,42 @@ func TestEvalRouting(t *testing.T) {
 	}
 }
 
+func TestEvalAggregation(t *testing.T) {
+	// sum by(le)(rate(bucket[5m])) → QueryMetricRate with GroupBy pushed down.
+	fs := &fakeStore{}
+	mustEval(t, fs, `sum by (le) (rate(http_bucket[5m]))`)
+	if fs.called != "QueryMetricRate" || fs.lastMode != "rate" {
+		t.Fatalf("sum(rate) → %s/%s, want QueryMetricRate/rate", fs.called, fs.lastMode)
+	}
+	if len(fs.lastFilter.GroupBy) != 1 || fs.lastFilter.GroupBy[0] != "le" {
+		t.Errorf("by(le) should push GroupBy=[le], got %v", fs.lastFilter.GroupBy)
+	}
+
+	// sum without by → global (GroupBy empty).
+	fs = &fakeStore{}
+	mustEval(t, fs, `sum(rate(x[5m]))`)
+	if len(fs.lastFilter.GroupBy) != 0 {
+		t.Errorf("sum without by → GroupBy empty, got %v", fs.lastFilter.GroupBy)
+	}
+
+	// avg by(pod)(gauge) → QueryMetric GroupBy=[pod] agg=avg.
+	fs = &fakeStore{}
+	mustEval(t, fs, `avg by (pod) (jvm.memory.used)`)
+	if fs.called != "QueryMetric" || fs.lastFilter.Aggregation != "avg" {
+		t.Errorf("avg by(pod) → %s agg=%s, want QueryMetric/avg", fs.called, fs.lastFilter.Aggregation)
+	}
+	if len(fs.lastFilter.GroupBy) != 1 || fs.lastFilter.GroupBy[0] != "pod" {
+		t.Errorf("by(pod) should push GroupBy=[pod], got %v", fs.lastFilter.GroupBy)
+	}
+
+	// max by(instance)(gauge) → agg=max.
+	fs = &fakeStore{}
+	mustEval(t, fs, `max by (instance) (system.cpu.utilization)`)
+	if fs.lastFilter.Aggregation != "max" {
+		t.Errorf("max agg = %q, want max", fs.lastFilter.Aggregation)
+	}
+}
+
 func TestEvalScalarFunctions(t *testing.T) {
 	// abs(x) applies per-point over the fetched series.
 	fs := &fakeStore{ret: []chstore.SpanMetricSeries{{Points: []chstore.SpanMetricPoint{{Time: 1, Value: -5}, {Time: 2, Value: 3}}}}}
@@ -143,8 +179,11 @@ func TestEvalCapsAndErrors(t *testing.T) {
 	bad := []struct{ q, wantSub string }{
 		{`{code="500"}`, "must name a metric"},          // nameless selector
 		{`foo[5m]`, "must be inside a function"},         // bare range vector
-		{`sum(rate(foo[5m]))`, "Phase 3"},                // aggregation deferred
 		{`rate(a[5m]) / rate(b[5m])`, "Phase 4"},         // binary deferred
+		{`sum without (pod) (foo)`, "without"},           // without deferred
+		{`topk(5, foo)`, "not supported yet"},            // topk deferred
+		{`avg(rate(foo[5m]))`, "only sum"},               // avg-of-rate deferred
+		{`sum(a + b)`, "can only aggregate"},             // complex inner deferred
 		{`foo{bar=~"x.*"}`, "regex matcher"},             // regex deferred
 		{`histogram_quantile(0.9, foo)`, "0.5, 0.95"},    // unsupported quantile
 		{`histogram_quantile(0.95, sum(foo))`, "Phase 3"},// nested hist arg

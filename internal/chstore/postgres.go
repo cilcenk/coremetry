@@ -179,7 +179,7 @@ func (s *Store) queryPgGauges(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'postgresql.')
 		` + pgInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -196,7 +196,7 @@ func (s *Store) queryPgRates(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'postgresql.')
 		` + pgInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{windowSec, from, to}
 	if withInstance {
 		args = append(args, instance, instance)

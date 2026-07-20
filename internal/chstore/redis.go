@@ -159,7 +159,7 @@ func (s *Store) queryRedisGauges(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'redis.')
 		` + redisInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -176,7 +176,7 @@ func (s *Store) queryRedisRates(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'redis.')
 		` + redisInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{windowSec, from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -195,7 +195,7 @@ func (s *Store) queryRedisRole(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'redis.')
 		  AND has(attr_keys, 'role')
-		` + redisInstanceClause(withInstance)
+		` + redisInstanceClause(withInstance) + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -222,7 +222,7 @@ func (s *Store) queryRedisKeyspaces(
 		  AND metric IN ('redis.db.keys', 'redis.db.expires', 'redis.keys', 'redis.keys.expires')
 		  AND has(attr_keys, 'db')
 		` + redisInstanceClause(withInstance) + `
-		GROUP BY db, metric`
+		GROUP BY db, metric` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)

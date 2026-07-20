@@ -292,6 +292,16 @@ func (s *Store) GetOracleMetrics(
 	return out, nil
 }
 
+// dbInstanceQuerySettings caps every DB-instance metric_points read
+// (oracle/redis/mysql/postgres gauges + rates). These filter by an
+// instance attribute (attr_values[indexOf(...)]) NOT by service_name,
+// so they can't use the (service_name, metric, time) PK prefix — within
+// the day-partition-pruned window it's a wide scan. The ceiling bounds
+// worst-case wall-clock (scale-audit 2026-07-20, CLAUDE.md invariant #3;
+// mirrors queryPgDatabases' existing max_execution_time=8). No LIMIT:
+// all are GROUP BY over a bounded metric set (or already carry a top-N).
+const dbInstanceQuerySettings = "\n\t\tSETTINGS max_execution_time = 8"
+
 func (s *Store) queryOracleGauges(
 	ctx context.Context, from, to time.Time, instance string, withInstance bool,
 ) (map[string]float64, error) {
@@ -303,7 +313,7 @@ func (s *Store) queryOracleGauges(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'oracledb.')
 		` + oracleInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -337,7 +347,7 @@ func (s *Store) queryOracleRates(
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, 'oracledb.')
 		` + oracleInstanceClause(withInstance) + `
-		GROUP BY metric`
+		GROUP BY metric` + dbInstanceQuerySettings
 	args := []any{windowSec, from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -380,7 +390,7 @@ func (s *Store) queryOracleTablespaces(
 		  AND has(attr_keys, 'tablespace_name')
 		` + oracleInstanceClause(withInstance) + `
 		GROUP BY ts, metric
-		ORDER BY ts`
+		ORDER BY ts` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -467,7 +477,7 @@ func (s *Store) queryOracleSessionsByStatus(
 		    ` + oracleInstanceClause(withInstance) + `
 		    GROUP BY status_key, type_key
 		)
-		GROUP BY st`
+		GROUP BY st` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -510,7 +520,7 @@ func (s *Store) queryOracleWaitClasses(
 		  AND (startsWith(metric, 'oracledb.wait_time.') OR startsWith(metric, 'oracledb_wait_time_'))
 		` + oracleInstanceClause(withInstance) + `
 		GROUP BY metric
-		ORDER BY rate DESC`
+		ORDER BY rate DESC` + dbInstanceQuerySettings
 	args := []any{windowSec, from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -554,7 +564,7 @@ func (s *Store) queryOracleRowLockWaits(
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND metric IN ('oracledb.row_lock_waits', 'oracledb_row_lock_waits', 'oracledb.enq.tx.row_lock_contention')
-		` + oracleInstanceClause(withInstance)
+		` + oracleInstanceClause(withInstance) + dbInstanceQuerySettings
 	args := []any{windowSec, from, to}
 	if withInstance {
 		args = append(args, instance, instance)
@@ -584,7 +594,7 @@ func (s *Store) queryOracleTopSQL(
 		` + oracleInstanceClause(withInstance) + `
 		GROUP BY sql_text
 		ORDER BY elapsed DESC
-		LIMIT 10`
+		LIMIT 10` + dbInstanceQuerySettings
 	args := []any{from, to}
 	if withInstance {
 		args = append(args, instance, instance)

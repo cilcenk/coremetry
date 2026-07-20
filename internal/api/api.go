@@ -468,6 +468,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/clusters/network-trend", s.getClusterNetworkTrend)               // v0.9.9 — Overview throughput
 	mux.HandleFunc("GET /api/clusters/resource-trend", s.getClusterResourceTrend)             // v0.9.35 — Overview CPU/Mem
 	mux.HandleFunc("GET /api/clusters/deploy-trend", s.getClusterDeployTrend)                 // v0.9.50 — Service→Infra CPU/Mem (§8)
+	mux.HandleFunc("GET /api/clusters/jmx-trend", s.getClusterJMXTrend)                       // v0.9.140 — Service→Metrics JBoss/JVM JMX
 	mux.HandleFunc("GET /api/clusters/alerts", s.getClusterAlerts)                            // v0.9.36 — firing alerts
 	mux.HandleFunc("GET /api/clusters/namespaces", s.getClusterNamespaces)                    // v0.8.588 — ns rollup
 	mux.HandleFunc("GET /api/clusters/namespaces/detail", s.getClusterNamespaceDetail)        // v0.9.2 — ns trend

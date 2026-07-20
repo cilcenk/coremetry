@@ -5,6 +5,7 @@ import { Spinner } from '@/components/Spinner';
 import { TimeSeriesPanel, type TSSeries } from '@/components/viz/TimeSeriesPanel';
 import type { FilterExpr, SpanMetricSeries } from '@/lib/types';
 import { podLineLabel } from './runtimePodLabel';
+import { smoothPoints } from './runtimeSmooth';
 
 // RuntimeCharts (v0.9.87, operatör talebi) — Service Overview'da dil
 // ailesine göre JVM / .NET / Go heap+GC runtime grafikleri.
@@ -183,6 +184,10 @@ export function RuntimeCharts({ service, from, to, onZoom }: {
         if (c.key !== card.key) return;
         const data = (queries[qi]?.data ?? []) as SpanMetricSeries[];
         const scale = line.scale ?? 1;
+        // v0.9.127 (operatör: "çok zigzag") — heap/GC gauge'u gerçek GC
+        // sawtooth'u; hareketli-ortalama ile yumuşat (smoothPoints, pencere
+        // serinin kendi nokta sayısından). Referans çizgisi (limit) sabit →
+        // SMA değiştirmez. Ölçek önce, sonra smooth.
         if (line.fanout) {
           podTotal += data.length;
           if (data.length > FANOUT_MAX) capped = true;
@@ -192,7 +197,7 @@ export function RuntimeCharts({ service, from, to, onZoom }: {
               : (s.groupKey.filter(Boolean).join('/') || line.label);
             tsSeries.push({
               label,
-              points: s.points.map(p => ({ time: p.time, value: p.value == null ? null : p.value * scale })),
+              points: smoothPoints(s.points.map(p => ({ time: p.time, value: p.value == null ? null : p.value * scale }))),
             });
           });
         } else {
@@ -201,7 +206,7 @@ export function RuntimeCharts({ service, from, to, onZoom }: {
             label: line.label,
             color: line.color,
             dash: line.ref ? [5, 4] : undefined, // referans (limit) kesikli
-            points: s.points.map(p => ({ time: p.time, value: p.value == null ? null : p.value * scale })),
+            points: smoothPoints(s.points.map(p => ({ time: p.time, value: p.value == null ? null : p.value * scale }))),
           });
         }
       });

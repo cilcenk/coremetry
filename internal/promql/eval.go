@@ -39,6 +39,9 @@ type MetricStore interface {
 	QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error)
 	QueryMetricRate(ctx context.Context, f chstore.MetricQueryFilter, mode string) ([]chstore.SpanMetricSeries, error)
 	QueryMetricHistogramQuantile(ctx context.Context, f chstore.MetricQueryFilter, q float64) ([]chstore.SpanMetricSeries, error)
+	// MetricAttrKeys discovers a metric's datapoint attribute keys — needed for
+	// without(L) grouping (v0.9.124).
+	MetricAttrKeys(ctx context.Context, metric, service string, since time.Duration) ([]string, error)
 }
 
 // EvalOptions bounds one evaluation. Zero values get safe defaults.
@@ -245,9 +248,6 @@ func (ev *evaluator) evalAggregate(a *AggregateExpr) ([]chstore.SpanMetricSeries
 	default:
 		return nil, fmt.Errorf("promql: aggregation %q is not supported yet (have: sum/avg/min/max/topk/bottomk)", a.Op)
 	}
-	if a.Without {
-		return nil, fmt.Errorf("promql: without(…) is not supported yet — use by(…)")
-	}
 
 	leaf, isRate, rateMode, err := aggLeaf(a.Expr)
 	if err != nil {
@@ -257,7 +257,17 @@ func (ev *evaluator) evalAggregate(a *AggregateExpr) ([]chstore.SpanMetricSeries
 	if err != nil {
 		return nil, err
 	}
-	f.GroupBy = a.Grouping // by(L) → the leaf's GroupBy (nil/[] = global one series)
+	if a.Without {
+		// without(L) groups by every label EXCEPT L; discover the metric's
+		// labels (bounded), then GroupBy = (attr keys ∪ service.name) − L.
+		keys, err := ev.store.MetricAttrKeys(ev.ctx, leaf.Name, f.Service, ev.lookback())
+		if err != nil {
+			return nil, err
+		}
+		f.GroupBy = withoutGroupBy(keys, a.Grouping)
+	} else {
+		f.GroupBy = a.Grouping // by(L) → the leaf's GroupBy (nil/[] = global one series)
+	}
 
 	if isRate {
 		if op != "sum" {
@@ -267,6 +277,41 @@ func (ev *evaluator) evalAggregate(a *AggregateExpr) ([]chstore.SpanMetricSeries
 	}
 	f.Aggregation = op // sum/avg/min/max → QueryMetric's grouped reduction
 	return ev.store.QueryMetric(ev.ctx, f)
+}
+
+// lookback is how far back MetricAttrKeys should scan to discover labels — the
+// query window (from its start to now), floored at nothing and defaulting to
+// 24h when the window is open.
+func (ev *evaluator) lookback() time.Duration {
+	if ev.opt.FromNs > 0 {
+		if d := time.Since(nsToTime(ev.opt.FromNs)); d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
+}
+
+// withoutGroupBy computes the GroupBy for without(L): every candidate label
+// (the metric's discovered attr keys plus service.name) except those in L,
+// de-duplicated.
+func withoutGroupBy(keys, without []string) []string {
+	drop := make(map[string]bool, len(without))
+	for _, w := range without {
+		drop[w] = true
+	}
+	cand := make([]string, 0, len(keys)+1)
+	cand = append(cand, keys...)
+	cand = append(cand, "service.name")
+	out := make([]string, 0, len(cand))
+	seen := make(map[string]bool, len(cand))
+	for _, k := range cand {
+		if drop[k] || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	return out
 }
 
 // aggLeaf unwraps an aggregation's argument to the underlying selector, and

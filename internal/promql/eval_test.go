@@ -218,19 +218,68 @@ func TestEvalBinary(t *testing.T) {
 		t.Errorf("foo-foo = %v, want [0 0]", firstPts(s))
 	}
 
-	// deferred: set ops + explicit matching error clearly.
+	// deferred: explicit vector matching errors clearly.
 	for _, bad := range []struct{ q, sub string }{
-		{`foo and bar`, "set operator"},
-		{`foo or bar`, "set operator"},
 		{`foo / on (le) bar`, "matching is not supported"},
 		// review MAJOR: group_left with empty ignoring() must NOT slip through.
 		{`foo / ignoring () group_left bar`, "matching is not supported"},
 		{`foo / ignoring () group_right bar`, "matching is not supported"},
+		{`foo and on (le) bar`, "not supported"}, // on() on a set op
 	} {
 		if _, err := run(bad.q, one(1)); err == nil || !strings.Contains(err.Error(), bad.sub) {
 			t.Errorf("%q err = %v, want %q", bad.q, err, bad.sub)
 		}
 	}
+}
+
+func TestEvalSetOps(t *testing.T) {
+	// Two series with the SAME groupKey but different point coverage:
+	// LHS has t1,t2,t3; RHS has t2 only.
+	lhs := []chstore.SpanMetricSeries{{GroupKey: []string{"g"}, Points: []chstore.SpanMetricPoint{{Time: 1, Value: 10}, {Time: 2, Value: 20}, {Time: 3, Value: 30}}}}
+	rhs := []chstore.SpanMetricSeries{{GroupKey: []string{"g"}, Points: []chstore.SpanMetricPoint{{Time: 2, Value: 99}}}}
+	times := func(s []chstore.SpanMetricSeries) []int64 {
+		if len(s) == 0 {
+			return nil
+		}
+		out := make([]int64, len(s[0].Points))
+		for i, p := range s[0].Points {
+			out[i] = p.Time
+		}
+		return out
+	}
+
+	// `and`: keep LHS points where RHS has a point at that timestamp → t2 only,
+	// with the LHS value (20, not 99).
+	s := setAndUnless(lhs, rhs, false)
+	if len(times(s)) != 1 || times(s)[0] != 2 || s[0].Points[0].Value != 20 {
+		t.Errorf("and = %v (vals), want [t2@20]", s)
+	}
+	// `unless`: keep LHS points with NO RHS point → t1,t3.
+	s = setAndUnless(lhs, rhs, true)
+	if !eqI(times(s), []int64{1, 3}) {
+		t.Errorf("unless times = %v, want [1 3]", times(s))
+	}
+	// `or`: union — RHS series with a NEW groupKey is added.
+	rhs2 := []chstore.SpanMetricSeries{{GroupKey: []string{"h"}, Points: []chstore.SpanMetricPoint{{Time: 1, Value: 5}}}}
+	if s := setOr(lhs, rhs2); len(s) != 2 {
+		t.Errorf("or (distinct keys) = %d series, want 2", len(s))
+	}
+	// `or`: RHS series with a groupKey already in LHS is NOT duplicated.
+	if s := setOr(lhs, rhs); len(s) != 1 {
+		t.Errorf("or (same key) = %d series, want 1", len(s))
+	}
+}
+
+func eqI(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func eqF(a, b []float64) bool {

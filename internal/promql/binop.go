@@ -14,8 +14,8 @@ import (
 //   - vector ⊙ vector with DEFAULT 1:1 matching by the full label set (groupKey)
 //   - arithmetic (+ - * / % ^), comparison (== != < <= > >=) with the `bool`
 //     modifier (1/0) or filter semantics (drop non-matching points).
-// Deferred (clear errors): set ops and/or/unless; explicit vector matching
-// (on/ignoring/group_left/right).
+//   - set ops and/or/unless (default matching by groupKey).
+// Deferred (clear errors): explicit vector matching on/ignoring/group_left/right.
 //
 // Performance: no new fetches — operates on operand vectors bounded by the leaf
 // fetches (chstore LIMIT 50000 + top-N fold). Note MaxSeries caps the FINAL
@@ -25,7 +25,7 @@ import (
 func (ev *evaluator) evalBinary(be *BinaryExpr) ([]chstore.SpanMetricSeries, error) {
 	op := be.Op
 	if op == "and" || op == "or" || op == "unless" {
-		return nil, fmt.Errorf("promql: set operator %q is not supported yet", op)
+		return ev.evalSetOp(be, op)
 	}
 	// group_left/right (Card != one-to-one) must be caught even with an empty
 	// on()/ignoring() and no include list, or a many-to-one join silently
@@ -211,6 +211,81 @@ func applyVectorVector(op string, lhs, rhs []chstore.SpanMetricSeries, returnBoo
 		}
 		if len(pts) > 0 {
 			out = append(out, chstore.SpanMetricSeries{GroupKey: s.GroupKey, Points: pts})
+		}
+	}
+	return out
+}
+
+// evalSetOp handles the PromQL set operators and/or/unless with DEFAULT matching
+// (by full label set / groupKey). and/unless are per-timestamp; or is a
+// series-level union (RHS series whose label set is absent from LHS). Explicit
+// on()/ignoring() matching is deferred with a clear error.
+func (ev *evaluator) evalSetOp(be *BinaryExpr, op string) ([]chstore.SpanMetricSeries, error) {
+	if vm := be.VectorMatching; vm != nil && (len(vm.MatchingLabels) > 0 || vm.On || vm.Card != CardOneToOne) {
+		return nil, fmt.Errorf("promql: on()/ignoring()/group_left on %q is not supported yet — default matching only", op)
+	}
+	ls, err := ev.eval(be.LHS)
+	if err != nil {
+		return nil, err
+	}
+	rs, err := ev.eval(be.RHS)
+	if err != nil {
+		return nil, err
+	}
+	switch op {
+	case "and":
+		return setAndUnless(ls, rs, false), nil
+	case "unless":
+		return setAndUnless(ls, rs, true), nil
+	default: // or
+		return setOr(ls, rs), nil
+	}
+}
+
+// setAndUnless keeps LHS points whose (groupKey, timestamp) has a RHS point
+// (and) or has NO RHS point (unless). Values are always the LHS values.
+func setAndUnless(ls, rs []chstore.SpanMetricSeries, unless bool) []chstore.SpanMetricSeries {
+	rhsIdx := make(map[string]map[int64]struct{}, len(rs))
+	for _, s := range rs {
+		key := strings.Join(s.GroupKey, "\x1f")
+		m := rhsIdx[key]
+		if m == nil {
+			m = make(map[int64]struct{}, len(s.Points))
+			rhsIdx[key] = m
+		}
+		for _, p := range s.Points {
+			m[p.Time] = struct{}{}
+		}
+	}
+	out := make([]chstore.SpanMetricSeries, 0, len(ls))
+	for _, s := range ls {
+		rm := rhsIdx[strings.Join(s.GroupKey, "\x1f")]
+		pts := make([]chstore.SpanMetricPoint, 0, len(s.Points))
+		for _, p := range s.Points {
+			_, present := rm[p.Time]
+			if present != unless { // and: keep when present; unless: keep when absent
+				pts = append(pts, p)
+			}
+		}
+		if len(pts) > 0 {
+			out = append(out, chstore.SpanMetricSeries{GroupKey: s.GroupKey, Points: pts})
+		}
+	}
+	return out
+}
+
+// setOr returns all LHS series plus the RHS series whose label set (groupKey)
+// does not appear in LHS.
+func setOr(ls, rs []chstore.SpanMetricSeries) []chstore.SpanMetricSeries {
+	seen := make(map[string]struct{}, len(ls))
+	out := make([]chstore.SpanMetricSeries, 0, len(ls)+len(rs))
+	for _, s := range ls {
+		seen[strings.Join(s.GroupKey, "\x1f")] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range rs {
+		if _, ok := seen[strings.Join(s.GroupKey, "\x1f")]; !ok {
+			out = append(out, s)
 		}
 	}
 	return out

@@ -206,7 +206,7 @@ func (s *Store) QueryMetricRate(ctx context.Context, f MetricQueryFilter, mode s
 		parts := make([]string, len(f.GroupBy))
 		var groupArgs []any
 		for i, k := range f.GroupBy {
-			expr, args := groupKeyExpr(k, true)
+			expr, args := groupKeyExprMetric(k)
 			parts[i] = expr
 			groupArgs = append(groupArgs, args...)
 		}

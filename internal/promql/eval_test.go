@@ -265,6 +265,26 @@ func TestEvalOnIgnoring(t *testing.T) {
 	}
 }
 
+func TestManyToOneMatching(t *testing.T) {
+	vm := &VectorMatching{On: true, MatchingLabels: []string{"le"}, Card: CardOneToOne}
+	p := func(v float64) []chstore.SpanMetricPoint { return []chstore.SpanMetricPoint{{Time: 1, Value: v}} }
+	// LHS: two series share le=1 (differ in pod). RHS: one series le=1.
+	lhs := []chstore.SpanMetricSeries{
+		{GroupKey: []string{"1", "podA"}, Points: p(10)},
+		{GroupKey: []string{"1", "podB"}, Points: p(20)},
+	}
+	rhs := []chstore.SpanMetricSeries{{GroupKey: []string{"1"}, Points: p(5)}}
+	_, err := applyVectorVectorMatched("/", lhs, rhs, []string{"le", "pod"}, []string{"le"}, vm, false)
+	if err == nil || !strings.Contains(err.Error(), "group_left") {
+		t.Errorf("many-to-one (2 LHS ↔ 1 RHS) should error group_left, got %v", err)
+	}
+	// one-to-many (2 RHS ↔ 1 LHS) → group_right.
+	_, err = applyVectorVectorMatched("/", rhs, lhs, []string{"le"}, []string{"le", "pod"}, vm, false)
+	if err == nil || !strings.Contains(err.Error(), "group_right") {
+		t.Errorf("one-to-many should error group_right, got %v", err)
+	}
+}
+
 func mustParse(t *testing.T, q string) Expr {
 	t.Helper()
 	e, err := Parse(q)

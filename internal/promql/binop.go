@@ -155,15 +155,22 @@ func applyVectorVectorMatched(op string, lhs, rhs []chstore.SpanMetricSeries, lL
 		}
 	}
 	out := make([]chstore.SpanMetricSeries, 0, len(lhs))
+	lhsSeen := make(map[string]bool, len(lhs))
 	for _, s := range lhs {
 		key := matchKey(s.GroupKey, lLabels)
 		if dupe[key] {
-			return nil, fmt.Errorf("promql: many RHS series match one LHS series on this label set — needs group_left/right (not supported yet)")
+			return nil, fmt.Errorf("promql: many RHS series match one LHS series on this label set — needs group_right (not supported yet)")
 		}
 		rm := rhsIdx[key]
 		if rm == nil {
 			continue
 		}
+		// >1 LHS series sharing a match key that matches RHS = many-to-one;
+		// PromQL requires an explicit group_left (review MINOR, v0.9.126).
+		if lhsSeen[key] {
+			return nil, fmt.Errorf("promql: many LHS series match one RHS series on this label set — needs group_left (not supported yet)")
+		}
+		lhsSeen[key] = true
 		pts := make([]chstore.SpanMetricPoint, 0, len(s.Points))
 		for _, p := range s.Points {
 			rval, ok := rm[p.Time]

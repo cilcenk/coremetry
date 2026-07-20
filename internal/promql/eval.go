@@ -283,8 +283,12 @@ func (ev *evaluator) evalAggregate(a *AggregateExpr) ([]chstore.SpanMetricSeries
 // query window (from its start to now), floored at nothing and defaulting to
 // 24h when the window is open.
 func (ev *evaluator) lookback() time.Duration {
+	const maxLookback = 7 * 24 * time.Hour // cap the key-discovery scan (review perf)
 	if ev.opt.FromNs > 0 {
 		if d := time.Since(nsToTime(ev.opt.FromNs)); d > 0 {
+			if d > maxLookback {
+				return maxLookback
+			}
 			return d
 		}
 	}

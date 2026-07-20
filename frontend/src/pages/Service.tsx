@@ -8,6 +8,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { ServiceOverview } from './service/Overview';
 import { ServiceTracesTab, ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { ServiceInfraTab } from './service/ServiceInfraTab';
+import { ServiceMetricsTab } from './service/ServiceMetricsTab';
 import { OperationsTable } from './service/OperationsTable';
 import { ServiceClusterBreakdown } from './service/ServiceClusterBreakdown';
 import { ServiceLatencyHeatmap } from './service/ServiceLatencyHeatmap';
@@ -34,7 +35,7 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
-type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology' | 'infra';
+type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology' | 'infra' | 'metrics';
 
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -100,6 +101,7 @@ function ServiceDetailInner() {
     : tabParam === 'logs' ? 'logs'
     : tabParam === 'topology' ? 'topology'
     : tabParam === 'infra' ? 'infra'
+    : tabParam === 'metrics' ? 'metrics'
     : 'overview';
   // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
   // the Details tab body actually exists in the DOM. Browser
@@ -480,6 +482,16 @@ function ServiceDetailInner() {
                   toMs: Math.round(toUnixSec * 1000),
                 });
               }} />}
+            {/* v0.9.139 — Metrics sekmesi: Overview'dan taşınan OTel runtime
+                çizelgeleri (Faz 1); Faz 2'de JBoss JMX panelleri eklenecek. */}
+            {tab === 'metrics' && <ServiceMetricsTab service={svc} range={range}
+              onZoom={(fromUnixSec, toUnixSec) => {
+                setRange({
+                  preset: 'custom',
+                  fromMs: Math.round(fromUnixSec * 1000),
+                  toMs: Math.round(toUnixSec * 1000),
+                });
+              }} />}
             {/* v0.9.63 — v0.9.62'nin sekme-tepesi RED üçlüsü OPERATÖR
                 KARARIYLA geri alındı ("gereksiz olmuş"): grafikler
                 Details'te (Performance) yaşar, Operations sekmesi
@@ -637,8 +649,9 @@ function TabStrip({ tab, onChange, opCount }: {
     { key: 'overview',   label: 'Overview' },
     { key: 'operations', label: 'Operations', hint: opCount > 0 ? `${opCount}` : undefined },
     { key: 'details',    label: 'Details' },
-    { key: 'topology',   label: 'Topology' },
     { key: 'infra',      label: 'Infrastructure' },
+    { key: 'metrics',    label: 'Metrics' },
+    { key: 'topology',   label: 'Topology' },
     { key: 'traces',     label: 'Traces' },
     { key: 'logs',       label: 'Logs' },
   ];

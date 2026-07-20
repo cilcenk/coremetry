@@ -19,7 +19,6 @@ import type { SLIType, SLORow } from '@/lib/types';
 
 export default function SLOsPage() {
   const { user } = useAuth();
-  const [services, setServices] = useState<string[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [showAuto, setShowAuto] = useState(false);
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
@@ -54,13 +53,6 @@ export default function SLOsPage() {
     rows: items ?? [],
     initialSort: { id: 'name', dir: 'asc' },
   });
-
-  // Service list for the picker — one-shot lookup, not
-  // worth a hook abstraction.
-  useEffect(() => {
-    api.services({ from: 0, to: 0 })
-      .then(s => setServices((s ?? []).map(x => x.name))).catch(() => {});
-  }, []);
 
   const onDelete = async (id: string) => {
     if (!confirm('Delete this SLO?')) return;
@@ -146,7 +138,7 @@ export default function SLOsPage() {
         )}
 
         {showNew && isAdmin && (
-          <NewSLOModal services={services}
+          <NewSLOModal
             onClose={() => setShowNew(false)}
             onCreated={() => setShowNew(false)} />
         )}
@@ -342,8 +334,8 @@ function fmtHoursToExhaust(h: number): string {
   return `${Math.round(days)}d`;
 }
 
-function NewSLOModal({ services, onClose, onCreated }: {
-  services: string[]; onClose: () => void; onCreated: () => void;
+function NewSLOModal({ onClose, onCreated }: {
+  onClose: () => void; onCreated: () => void;
 }) {
   const [name, setName] = useState('');
   const [service, setService] = useState('');

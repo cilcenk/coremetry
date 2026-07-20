@@ -29,7 +29,6 @@ export default function AlertsPage() {
   // viewer SEES state read-only — rules render, mutations hide.
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [range, setRange] = useUrlRange('30m');
-  const [services, setServices] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [draft, setDraft] = useState<Partial<AlertRule>>(emptyDraft);
   // User-saved presets (v0.5.157). Loaded once per mount; mutations
@@ -193,15 +192,6 @@ export default function AlertsPage() {
   const deleteRule  = useDeleteAlertRule();
   const enableRule  = useEnableAlertRule();
   const disableRule = useDisableAlertRule();
-
-  // Service list for the picker — kept on raw fetch since
-  // it's a one-shot lookup and the cache value doesn't really
-  // need sharing across pages.
-  useEffect(() => {
-    api.services({ from: 0, to: 0 })
-      .then(s => setServices((s ?? []).map(x => x.name)))
-      .catch(() => {});
-  }, []);
 
   // Open the edit form pre-filled from a noisy-rules suggestion.
   // NoisyRulesPanel owns the report + bulk-apply state; this single

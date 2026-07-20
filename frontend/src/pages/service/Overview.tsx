@@ -5,7 +5,6 @@ import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useServiceDeploys } from '@/lib/queries';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
-import { RuntimeCharts } from './RuntimeCharts';
 import { OpsCard, DbCard } from './OverviewTables';
 import { MetricPanel } from '@/components/MetricPanel';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
@@ -270,8 +269,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
         </MetricPanel>
       </div>
 
-      {/* v0.9.87 (operatör talebi) — dil ailesine göre JVM/.NET/Go runtime grafikleri */}
-      <RuntimeCharts service={service} from={from} to={to} onZoom={onZoom} />
+      {/* v0.9.139 — dil-runtime grafikleri (JVM/.NET/Go) Overview'dan yeni
+          "Metrics" sekmesine taşındı (ServiceMetricsTab). Operatör talebi. */}
 
       {/* Upstream / downstream neighbours — the richer panel that used
           to open the Details tab, moved here v0.8.366 (operator: the

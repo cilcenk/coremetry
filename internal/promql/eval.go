@@ -122,7 +122,7 @@ func (ev *evaluator) eval(expr Expr) ([]chstore.SpanMetricSeries, error) {
 	case *AggregateExpr:
 		return ev.evalAggregate(e)
 	case *BinaryExpr:
-		return nil, fmt.Errorf("promql: binary operator %q is not supported yet (Phase 4)", e.Op)
+		return ev.evalBinary(e)
 	case *SubqueryExpr:
 		return nil, fmt.Errorf("promql: subqueries are not supported yet")
 	default:

@@ -47,10 +47,26 @@ func Parse(input string) (Expr, error) {
 }
 
 type parser struct {
-	toks []token
-	pos  int
-	src  string
+	toks  []token
+	pos   int
+	src   string
+	depth int // recursion depth guard (review CRITICAL, v0.9.122)
 }
+
+// maxParseDepth bounds expression nesting DURING descent — a deeply-nested
+// query like ((((…)))) or -----… would otherwise recurse the parser into a
+// fatal stack overflow (a runtime throw net/http's recover cannot catch → whole
+// process crash). Checked at each recursion entry, before the stack grows.
+const maxParseDepth = 120
+
+func (p *parser) enter() error {
+	p.depth++
+	if p.depth > maxParseDepth {
+		return p.errf("expression nested too deeply (max %d)", maxParseDepth)
+	}
+	return nil
+}
+func (p *parser) leave() { p.depth-- }
 
 func (p *parser) cur() token  { return p.toks[p.pos] }
 func (p *parser) peek() token {
@@ -80,7 +96,13 @@ func (p *parser) isKeyword(kw string) bool {
 
 // ── precedence levels ───────────────────────────────────────────────────────
 
-func (p *parser) parseExpr() (Expr, error) { return p.parseOr() }
+func (p *parser) parseExpr() (Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
+	return p.parseOr()
+}
 
 func (p *parser) parseOr() (Expr, error) {
 	lhs, err := p.parseAnd()
@@ -210,6 +232,10 @@ func (p *parser) parseMulDiv() (Expr, error) {
 // parseUnary — prefix +/-; the operand is a pow-level expr so `-2^2 == -4`.
 func (p *parser) parseUnary() (Expr, error) {
 	if p.cur().kind == tSub || p.cur().kind == tAdd {
+		if err := p.enter(); err != nil { // guard `-----…` chains
+			return nil, err
+		}
+		defer p.leave()
 		op := p.advance().val
 		operand, err := p.parseUnary()
 		if err != nil {

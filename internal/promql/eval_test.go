@@ -167,6 +167,84 @@ func TestEvalAggregation(t *testing.T) {
 	}
 }
 
+func TestEvalBinary(t *testing.T) {
+	one := func(vals ...float64) []chstore.SpanMetricSeries {
+		pts := make([]chstore.SpanMetricPoint, len(vals))
+		for i, v := range vals {
+			pts[i] = chstore.SpanMetricPoint{Time: int64(i + 1), Value: v}
+		}
+		return []chstore.SpanMetricSeries{{GroupKey: []string{"g"}, Points: pts}}
+	}
+	firstPts := func(s []chstore.SpanMetricSeries) []float64 {
+		if len(s) == 0 {
+			return nil
+		}
+		out := make([]float64, len(s[0].Points))
+		for i, p := range s[0].Points {
+			out[i] = p.Value
+		}
+		return out
+	}
+	run := func(q string, ret []chstore.SpanMetricSeries) ([]chstore.SpanMetricSeries, error) {
+		return EvalString(context.Background(), &fakeStore{ret: ret}, q, EvalOptions{FromNs: 1, ToNs: 9})
+	}
+
+	// scalar ⊙ vector / vector ⊙ scalar (order matters for non-commutative ops).
+	if s, _ := run(`2 * foo`, one(5, 10)); !eqF(firstPts(s), []float64{10, 20}) {
+		t.Errorf("2*foo = %v, want [10 20]", firstPts(s))
+	}
+	if s, _ := run(`foo / 10`, one(50, 100)); !eqF(firstPts(s), []float64{5, 10}) {
+		t.Errorf("foo/10 = %v, want [5 10]", firstPts(s))
+	}
+	if s, _ := run(`100 - foo`, one(30, 40)); !eqF(firstPts(s), []float64{70, 60}) {
+		t.Errorf("100-foo = %v, want [70 60]", firstPts(s))
+	}
+
+	// comparison: bool → 1/0; filter → drop false points.
+	if s, _ := run(`foo > bool 0`, one(-5, 5)); !eqF(firstPts(s), []float64{0, 1}) {
+		t.Errorf("foo>bool 0 = %v, want [0 1]", firstPts(s))
+	}
+	if s, _ := run(`foo > 0`, one(-5, 5)); !eqF(firstPts(s), []float64{5}) {
+		t.Errorf("foo>0 (filter) = %v, want [5] (negative dropped)", firstPts(s))
+	}
+
+	// scalar ⊙ scalar → flat line.
+	if s, _ := run(`3 + 4`, nil); len(s) != 1 || s[0].Points[0].Value != 7 {
+		t.Errorf("3+4 = %v, want flat 7", firstPts(s))
+	}
+
+	// vector ⊙ vector, default 1:1 by groupKey (same series → foo-foo = 0).
+	if s, _ := run(`foo - foo`, one(10, 20)); !eqF(firstPts(s), []float64{0, 0}) {
+		t.Errorf("foo-foo = %v, want [0 0]", firstPts(s))
+	}
+
+	// deferred: set ops + explicit matching error clearly.
+	for _, bad := range []struct{ q, sub string }{
+		{`foo and bar`, "set operator"},
+		{`foo or bar`, "set operator"},
+		{`foo / on (le) bar`, "matching is not supported"},
+		// review MAJOR: group_left with empty ignoring() must NOT slip through.
+		{`foo / ignoring () group_left bar`, "matching is not supported"},
+		{`foo / ignoring () group_right bar`, "matching is not supported"},
+	} {
+		if _, err := run(bad.q, one(1)); err == nil || !strings.Contains(err.Error(), bad.sub) {
+			t.Errorf("%q err = %v, want %q", bad.q, err, bad.sub)
+		}
+	}
+}
+
+func eqF(a, b []float64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestEvalTopK(t *testing.T) {
 	mk := func(label string, v float64) chstore.SpanMetricSeries {
 		return chstore.SpanMetricSeries{GroupKey: []string{label}, Points: []chstore.SpanMetricPoint{{Time: 1, Value: v}}}
@@ -251,7 +329,6 @@ func TestEvalCapsAndErrors(t *testing.T) {
 	bad := []struct{ q, wantSub string }{
 		{`{code="500"}`, "must name a metric"},          // nameless selector
 		{`foo[5m]`, "must be inside a function"},         // bare range vector
-		{`rate(a[5m]) / rate(b[5m])`, "Phase 4"},         // binary deferred
 		{`sum without (pod) (foo)`, "without"},           // without deferred
 		{`avg(rate(foo[5m]))`, "only sum"},               // avg-of-rate deferred
 		{`sum(a + b)`, "can only aggregate"},             // complex inner deferred

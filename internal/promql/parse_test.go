@@ -285,3 +285,26 @@ func TestParseDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestParseDepthGuard(t *testing.T) {
+	// 500-deep parens must be rejected cleanly (not a stack overflow / OOM).
+	deep := ""
+	for i := 0; i < 500; i++ {
+		deep += "("
+	}
+	deep += "up"
+	for i := 0; i < 500; i++ {
+		deep += ")"
+	}
+	if _, err := Parse(deep); err == nil {
+		t.Errorf("500-deep parens should error (depth guard)")
+	}
+	// A deep unary chain likewise.
+	if _, err := Parse("--------------------------------------------------------------------------------------------------------------------------------------up"); err == nil {
+		t.Errorf("deep unary chain should error")
+	}
+	// Normal shallow nesting still parses.
+	if _, err := Parse("((up + 1) * 2)"); err != nil {
+		t.Errorf("shallow nesting must still parse: %v", err)
+	}
+}

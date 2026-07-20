@@ -45,7 +45,10 @@ probe 'count(kube_node_info)'                   # node adı güzelleştirme join
 # Network ekseni (Overview kartları/grafiği + Net in/out kolonları):
 probe 'count(container_network_receive_bytes_total)'   # pod net
 probe 'count(node_network_receive_bytes_total{device!="lo"})'  # node/cluster net
-# (İleride) deployment rollup'ı — şimdilik plan iskeleti, kod yok:
+# Deployment rollup owner join (GEMİDE v0.9.22-25: DeploymentMetrics +
+# /clusters Workload tier'ı Namespace→Deployment→Pod) — bu eksen
+# kube_pod_owner + kube_replicaset_owner'a bağlı; boşsa Workload
+# tablosu ad-heuristik fallback'e (stripPodSuffixes) düşer:
 probe 'count(kube_pod_owner{owner_kind="ReplicaSet"})'
 ```
 

@@ -12,9 +12,9 @@ import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { isAdditiveUnit } from '@/lib/chart/legendStats';
 
-// Re-exported so existing importers (TimeSeriesPanel) keep working after the
-// placement logic moved into the pure, unit-tested lib/chartTooltip module.
-export { placeTooltip } from '@/lib/chartTooltip';
+// v0.9.131 (chart-consolidation Adım 3) — TimeSeriesPanel artık placeTooltip'i
+// doğrudan lib/chartTooltip'ten alıyor (MLC↔TSP bağımlılığı koptu, audit §4);
+// buradaki re-export kaldırıldı.
 
 // Multi-series line chart on uPlot. Renders the same hover-
 // crosshair + per-series tooltip experience as the previous

@@ -88,15 +88,30 @@ func pickPercentile(hs *HistogramSeries, agg string) ([]float64, bool) {
 	}
 }
 
-// QueryMetricHistogramPercentile — histogram metrikte p50/p95/p99 =
-// histogram_quantile (bucket dağılımından). Step F1 disiplini (metricAutoStepPx
-// + clampStepToExport) uygulanıp alt yollara geçer. Boş zaman-bucket'ları
-// (gözlem yok) nokta ÜRETMEZ → sahte p=0 spike yerine gap (PromQL semantiği).
+// QueryMetricHistogramPercentile — the p50/p95/p99 agg-string entry (chart
+// picker). Maps to a quantile ratio and delegates to the float core.
 func (s *Store) QueryMetricHistogramPercentile(ctx context.Context, f MetricQueryFilter, agg string) ([]SpanMetricSeries, error) {
 	q, ok := aggQuantile(agg)
 	if !ok {
 		return nil, fmt.Errorf("histogram percentile: unsupported agg %q", agg)
 	}
+	return s.queryHistogramQuantile(ctx, f, q)
+}
+
+// QueryMetricHistogramQuantile — arbitrary-quantile entry (v0.9.119, PromQL
+// histogram_quantile with any q ∈ [0,1], not just 0.5/0.95/0.99).
+func (s *Store) QueryMetricHistogramQuantile(ctx context.Context, f MetricQueryFilter, q float64) ([]SpanMetricSeries, error) {
+	if q < 0 || q > 1 {
+		return nil, fmt.Errorf("histogram_quantile: quantile %g out of range [0,1]", q)
+	}
+	return s.queryHistogramQuantile(ctx, f, q)
+}
+
+// queryHistogramQuantile — histogram_quantile core (bucket dağılımından, q ∈
+// [0,1]). Step F1 disiplini (metricAutoStepPx + clampStepToExport + nTime cap)
+// uygulanıp alt yollara geçer. Boş zaman-bucket'ları (gözlem yok) nokta
+// ÜRETMEZ → sahte p=0 spike yerine gap (PromQL semantiği).
+func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter, q float64) ([]SpanMetricSeries, error) {
 	now := time.Now()
 	if f.To.IsZero() {
 		f.To = now
@@ -122,25 +137,23 @@ func (s *Store) QueryMetricHistogramPercentile(ctx context.Context, f MetricQuer
 		return s.queryHistogramPercentileGrouped(ctx, f, q)
 	}
 
-	// Global: test'li QueryMetricHistogram'ı yeniden kullan.
+	// Global: test'li QueryMetricHistogram'ı yeniden kullan; keyfi q'yu onun
+	// per-time-bucket accum'undan (hs.Counts) + bounds'undan hesapla
+	// (percentileFromBuckets — precomputed p50/p95/p99'a bağlı kalmadan).
 	hs, err := s.QueryMetricHistogram(ctx, f)
 	if err != nil {
 		return nil, err
 	}
-	pct, _ := pickPercentile(hs, agg)
 	if hs == nil || len(hs.Times) == 0 {
 		return []SpanMetricSeries{}, nil
 	}
 	pts := make([]SpanMetricPoint, 0, len(hs.Times))
 	for i, t := range hs.Times {
-		if i >= len(pct) {
-			break
-		}
 		// Boş bucket (gözlem yok) → nokta atla (gap), sahte 0 DEĞİL.
-		if i < len(hs.Counts) && bucketTotal(hs.Counts[i]) == 0 {
+		if i >= len(hs.Counts) || bucketTotal(hs.Counts[i]) == 0 {
 			continue
 		}
-		pts = append(pts, SpanMetricPoint{Time: t, Value: pct[i]})
+		pts = append(pts, SpanMetricPoint{Time: t, Value: percentileFromBuckets(hs.Bounds, hs.Counts[i], q)})
 	}
 	return []SpanMetricSeries{{GroupKey: nil, Points: pts}}, nil
 }

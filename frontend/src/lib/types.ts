@@ -1092,6 +1092,16 @@ export interface ClusterDeployTrendResponse {
   byPod: boolean;
   series: ClusterNamedSeries[] | null;
 }
+// v0.9.140 — Service→Metrics sekmesi JBoss/JVM JMX trendi (Thanos).
+export type JMXMetricKey = 'heap' | 'nonheap' | 'gc' | 'threads' | 'ds_inuse' | 'ds_active' | 'ds_available';
+export interface ClusterJMXTrendResponse {
+  cluster: string;
+  namespace: string;
+  deployment: string;
+  metric: JMXMetricKey;
+  byPod: boolean;
+  series: ClusterNamedSeries[] | null;
+}
 // v0.9.35 — cluster/per-node kaynak trendi (Overview CPU/Mem area).
 export interface ClusterNamedSeries {
   name: string;

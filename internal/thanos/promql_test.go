@@ -160,3 +160,52 @@ func TestDeployTrendQuery(t *testing.T) {
 		}
 	}
 }
+
+// TestJMXTrendQuery (v0.9.140) — Service→Metrics JBoss/JVM JMX sorgu şekli.
+// Selector JMX-özel: pod `instance=` label'ında (cAdvisor pod= değil),
+// `namespace` var, `container` yok. JVM adları jmx_exporter standardı;
+// datasource `jboss_` + data_source grouping. Regex-meta kaçışı korunur.
+func TestJMXTrendQuery(t *testing.T) {
+	cases := []struct {
+		name string
+		q    string
+		want []string
+	}{
+		{"heap byPod", jmxTrendQuery("prod", "bsa-login", "heap", true),
+			[]string{`sum by (instance) (jvm_memory_bytes_used{area="heap",`, `namespace="prod"`, `instance=~"bsa-login-.*"`}},
+		{"nonheap total", jmxTrendQuery("prod", "bsa-login", "nonheap", false),
+			[]string{`sum(jvm_memory_bytes_used{area="nonheap",`, `instance=~"bsa-login-.*"`}},
+		{"gc rate", jmxTrendQuery("prod", "d", "gc", true),
+			[]string{`rate(jvm_gc_collection_seconds_sum{`, `sum by (instance)`}},
+		{"threads", jmxTrendQuery("prod", "d", "threads", true),
+			[]string{`jvm_threads_current{`, `sum by (instance)`}},
+		{"ds_inuse data_source grouping", jmxTrendQuery("prod", "d", "ds_inuse", true),
+			[]string{`jboss_pool_in_use_count{`, `sum by (data_source)`}},
+		{"ds_active", jmxTrendQuery("prod", "d", "ds_active", true),
+			[]string{`jboss_pool_active_count{`, `sum by (data_source)`}},
+		{"regex meta kaçışı", jmxTrendQuery("ns", "svc.v2", "heap", true),
+			[]string{`instance=~"svc\\.v2-.*"`}},
+	}
+	for _, c := range cases {
+		for _, w := range c.want {
+			if !strings.Contains(c.q, w) {
+				t.Errorf("%s: %q içinde %q yok", c.name, c.q, w)
+			}
+		}
+	}
+	// JMX selector cAdvisor pod=/container= TAŞIMAMALI (yanlış düzlem).
+	if q := jmxTrendQuery("ns", "d", "heap", true); strings.Contains(q, "container!=") || strings.Contains(q, "pod=~") {
+		t.Errorf("JMX sorgusu cAdvisor selector taşımamalı: %q", q)
+	}
+	// datasource metrikleri data_source'a, JVM metrikleri instance'a grouplanır.
+	if jmxTrendNameLabel("ds_inuse") != "data_source" {
+		t.Errorf("ds_inuse name label data_source olmalı")
+	}
+	if jmxTrendNameLabel("heap") != "instance" {
+		t.Errorf("heap name label instance olmalı")
+	}
+	// ValidJMXMetric kapısı: bilinen anahtarlar geçer, uydurma reddedilir.
+	if !ValidJMXMetric("heap") || ValidJMXMetric("cpu") || ValidJMXMetric("") {
+		t.Errorf("ValidJMXMetric kapısı yanlış")
+	}
+}

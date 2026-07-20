@@ -401,6 +401,66 @@ func deployTrendQuery(namespace, deploy, metric string, byPod bool) string {
 	return "sum(" + expr + ")"
 }
 
+// ── JMX/JVM trend queries (v0.9.140, Service→Metrics sekmesi) ───────────
+// JBoss 8.x / JVM JMX metrikleri Thanos'tan (Prometheus JMX exporter).
+// deployTrendQuery'nin JMX aynası ama SELECTOR FARKLI (operatör doğruladı
+// 2026-07-20): JMX serileri pod'u `instance=` label'ında taşır (cAdvisor
+// `pod=` değil), `container` label'ı yok, `namespace` var, XA-datasource
+// pool'u `data_source=` label'ında. JVM adları jmx_exporter STANDARDI
+// ("jvm standart"). JBoss datasource adları `jboss_` prefix + `data_source`
+// label (operatör onaylı); tam ad BEST-GUESS — prod'da uymazsa panel
+// görünmez-düşer, adı BURADAN tek satır düzelt.
+//   sel = namespace="<ns>",instance=~"<deploy>-.*"
+func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
+	sel := fmt.Sprintf(`namespace="%s",instance=~"%s-.*"`,
+		escapeLabelValue(namespace), escapeLabelValue(regexp.QuoteMeta(deploy)))
+	var expr string
+	switch metric {
+	case "heap":
+		expr = fmt.Sprintf(`jvm_memory_bytes_used{area="heap",%s}`, sel)
+	case "nonheap":
+		expr = fmt.Sprintf(`jvm_memory_bytes_used{area="nonheap",%s}`, sel)
+	case "gc":
+		// Summary _sum'ın rate'i = saniyede GC'de geçen saniye (pause yükü).
+		expr = fmt.Sprintf(`rate(jvm_gc_collection_seconds_sum{%s}[5m])`, sel)
+	case "threads":
+		expr = fmt.Sprintf(`jvm_threads_current{%s}`, sel)
+	case "ds_inuse":
+		expr = fmt.Sprintf(`jboss_pool_in_use_count{%s}`, sel)
+	case "ds_active":
+		expr = fmt.Sprintf(`jboss_pool_active_count{%s}`, sel)
+	case "ds_available":
+		expr = fmt.Sprintf(`jboss_pool_available_count{%s}`, sel)
+	default:
+		expr = fmt.Sprintf(`jvm_memory_bytes_used{area="heap",%s}`, sel)
+	}
+	if byPod {
+		return fmt.Sprintf(`sum by (%s) (%s)`, jmxTrendNameLabel(metric), expr)
+	}
+	return "sum(" + expr + ")"
+}
+
+// jmxTrendNameLabel — JMXTrend'in per-seri adını (ve grouping'i) hangi
+// label'dan okuyacağı: JVM metrikleri pod başına (instance), XA-datasource
+// pool başına (data_source).
+func jmxTrendNameLabel(metric string) string {
+	switch metric {
+	case "ds_inuse", "ds_active", "ds_available":
+		return "data_source"
+	default:
+		return "instance"
+	}
+}
+
+// jmxMetricKeys — geçerli JMX metrik anahtarları (handler doğrulaması).
+var jmxMetricKeys = map[string]bool{
+	"heap": true, "nonheap": true, "gc": true, "threads": true,
+	"ds_inuse": true, "ds_active": true, "ds_available": true,
+}
+
+// ValidJMXMetric — handler'ın metric parametresi kapısı.
+func ValidJMXMetric(m string) bool { return jmxMetricKeys[m] }
+
 // stripPodSuffixes — eşleme aileleri yokken pod adından iş yükü adı
 // sezgiseli: Deployment pod'u <ad>-<rs-hash 8-10 hex>-<5 rasgele>,
 // StatefulSet <ad>-<N>, DaemonSet <ad>-<5 rasgele>. Son segment

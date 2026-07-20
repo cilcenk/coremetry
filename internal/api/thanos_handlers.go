@@ -398,6 +398,53 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterJMXTrend — GET /api/clusters/jmx-trend?cluster=X&ns=Y&
+// deploy=Z&metric=heap|nonheap|gc|threads|ds_inuse|ds_active|ds_available&
+// byPod=0|1&from=&to= (v0.9.140, Service→Metrics sekmesi). deploy-trend'in
+// JBoss/JVM JMX aynası; metric sabit bir anahtar kümesinden (ValidJMXMetric
+// kapısı — ham metrik adı DIŞARIDAN alınmaz, sorgu şekli sunucuda).
+func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("cluster"))
+	ns := strings.TrimSpace(q.Get("ns"))
+	deploy := strings.TrimSpace(q.Get("deploy"))
+	if name == "" || ns == "" || deploy == "" {
+		http.Error(w, "cluster, ns and deploy query params required", http.StatusBadRequest)
+		return
+	}
+	metric := strings.TrimSpace(q.Get("metric"))
+	if !thanos.ValidJMXMetric(metric) {
+		http.Error(w, "invalid jmx metric", http.StatusBadRequest)
+		return
+	}
+	byPod := q.Get("byPod") == "1"
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	if to.Sub(from) > 6*time.Hour {
+		from = to.Add(-6 * time.Hour)
+	}
+	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%s:%t:%s:%s",
+		name, ns, deploy, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		series, err := s.thanos.JMXTrend(qctx, cfg, ns, deploy, metric, byPod, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "namespace": ns, "deployment": deploy,
+			"metric": metric, "byPod": byPod, "series": series}, nil
+	})
+}
+
 // getClusterNetworkTrend — GET /api/clusters/network-trend?cluster=
 // &from=&to= (v0.9.9). Overview throughput grafiği: cluster toplam
 // in/out, dakika bucket'lı; pods/detail sözleşmesinin aynası.

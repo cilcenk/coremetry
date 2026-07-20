@@ -216,7 +216,10 @@ export default function AuditPage() {
                 {dt.sortedRows.map(e => {
                   const isExpanded = expanded.has(e.id);
                   return (
-                    <tr key={e.id}>
+                    // v0.9.137 (scale-audit 2026-07-20) — server caps to 200
+                    // rows but that's above the 100-row content-visibility
+                    // threshold (CLAUDE.md); skip off-screen row layout.
+                    <tr key={e.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 44px' }}>
                       <td className="mono" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
                         {tsLong(e.time)}
                       </td>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyVarsToPromql } from './PanelRenderer';
+import { applyVarsToPromql, applyVarsToMetric } from './PanelRenderer';
 
 // v0.9.118 — regression for the review MAJOR: routing a PromQL query through the
 // line-based substituteVars deleted the WHOLE query when a referenced variable
@@ -49,6 +49,25 @@ describe('applyVarsToPromql', () => {
   it('no vars map → query unchanged', () => {
     const q = 'sum by (le) (rate(x[5m]))';
     expect(applyVarsToPromql(cfg(q), undefined).query).toBe(q);
+  });
+
+  it('metric panel PromQL mode expands the same way (v0.9.121)', () => {
+    const m = applyVarsToMetric(
+      { metricName: '', promql: 'up{service.name="${service}"}' },
+      { service: '' },
+    );
+    expect(m.promql).toBe('up{}'); // empty var strips the matcher, not deletes
+    const m2 = applyVarsToMetric(
+      { metricName: '', promql: 'up{service.name="${service}"}' },
+      { service: 'checkout' },
+    );
+    expect(m2.promql).toBe('up{service.name="checkout"}');
+  });
+
+  it('metric builder mode (no promql) is untouched by promql expansion', () => {
+    const m = applyVarsToMetric({ metricName: 'up', service: '${service}' }, { service: 'x' });
+    expect(m.promql).toBeUndefined();
+    expect(m.service).toBe('x');
   });
 
   it('never returns an empty query for a non-empty input with an empty var', () => {

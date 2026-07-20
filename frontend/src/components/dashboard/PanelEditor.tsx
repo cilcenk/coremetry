@@ -185,31 +185,52 @@ function MetricFields({ cfg, onChange }: {
   // the picker usable.
   const update = <K extends keyof MetricPanelConfig>(k: K, v: MetricPanelConfig[K]) =>
     onChange({ ...cfg, [k]: v });
+  // v0.9.121 (F4) — Builder ↔ PromQL toggle. PromQL mode when cfg.promql is
+  // defined (even ''); switching to Builder clears it.
+  const promqlMode = cfg.promql !== undefined;
   return (
     <>
-      <Field label="Metric name">
-        <MetricNamePicker service="" value={cfg.metricName ?? ''}
-          onChange={v => update('metricName', v)}
-          placeholder="search metrics…" width="100%" />
-      </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-        <Field label="Aggregation">
-          <select value={cfg.agg ?? 'avg'} onChange={e => update('agg', e.target.value)}>
-            {METRIC_AGGS.map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
-        </Field>
-        <Field label="Service (optional)">
-          <input value={cfg.service ?? ''}
-            onChange={e => update('service', e.target.value)} />
-        </Field>
-        <Field label="Step">
-          <StepSelect value={cfg.step} onChange={v => update('step', v)} />
-        </Field>
+      <div className="segmented" style={{ marginBottom: 8 }}>
+        <button type="button" className={!promqlMode ? 'active' : ''}
+          onClick={() => update('promql', undefined)}>Builder</button>
+        <button type="button" className={promqlMode ? 'active' : ''}
+          onClick={() => { if (cfg.promql === undefined) update('promql', ''); }}>PromQL</button>
       </div>
-      <Field label="Group by (comma-sep keys, optional)">
-        <input value={cfg.groupBy ?? ''}
-          onChange={e => update('groupBy', e.target.value)} style={{ width: '100%' }} />
-      </Field>
+      {promqlMode ? (
+        <Field label="PromQL query">
+          <textarea value={cfg.promql ?? ''} spellCheck={false}
+            onChange={e => update('promql', e.target.value)}
+            rows={3}
+            style={{ width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12 }}
+            placeholder={'sum by (service.name) (rate(http.server.duration[5m]))'} />
+        </Field>
+      ) : (
+        <>
+          <Field label="Metric name">
+            <MetricNamePicker service="" value={cfg.metricName ?? ''}
+              onChange={v => update('metricName', v)}
+              placeholder="search metrics…" width="100%" />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <Field label="Aggregation">
+              <select value={cfg.agg ?? 'avg'} onChange={e => update('agg', e.target.value)}>
+                {METRIC_AGGS.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </Field>
+            <Field label="Service (optional)">
+              <input value={cfg.service ?? ''}
+                onChange={e => update('service', e.target.value)} />
+            </Field>
+            <Field label="Step">
+              <StepSelect value={cfg.step} onChange={v => update('step', v)} />
+            </Field>
+          </div>
+          <Field label="Group by (comma-sep keys, optional)">
+            <input value={cfg.groupBy ?? ''}
+              onChange={e => update('groupBy', e.target.value)} style={{ width: '100%' }} />
+          </Field>
+        </>
+      )}
     </>
   );
 }
@@ -263,7 +284,17 @@ function PromqlFields({ cfg, onChange }: {
           style={{ width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12 }}
           placeholder={'sum by (service.name) (rate(http.server.duration[5m]))'} />
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <Field label="Viz">
+          <select value={cfg.viz ?? 'line'}
+            onChange={e => update('viz', e.target.value as PromqlPanelConfig['viz'])}>
+            <option value="line">Line</option>
+            <option value="area">Area</option>
+            <option value="bar">Bar</option>
+            <option value="stacked-bar">Stacked bar</option>
+            <option value="stacked-area">Stacked area</option>
+          </select>
+        </Field>
         <Field label="Unit (optional)">
           <input value={cfg.unit ?? ''} onChange={e => update('unit', e.target.value)}
             placeholder="ms / % / rps" />

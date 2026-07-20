@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import type {
   Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
-  HeatmapPanelConfig, HistogramResult, LatencyHeatmap as HeatmapData,
+  HeatmapPanelConfig, HistogramResult, LatencyHeatmap as HeatmapData, PromqlPanelConfig,
   SpanMetricSeries, TimeRange,
 } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
@@ -77,6 +77,8 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverrid
       return <GaugePanel cfg={applyVarsToGauge(panel.config as GaugePanelConfig, vars)} range={effectiveRange} />;
     case 'heatmap':
       return <HeatmapPanel cfg={applyVarsToHeatmap(panel.config as HeatmapPanelConfig, vars)} range={effectiveRange} />;
+    case 'promql':
+      return <PromqlPanel cfg={applyVarsToPromql(panel.config as PromqlPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} />;
     case 'markdown':
       return <MarkdownPanel cfg={panel.config as MarkdownPanelConfig} />;
     case 'row':
@@ -149,6 +151,29 @@ function applyVarsToHeatmap(cfg: HeatmapPanelConfig, vars?: Record<string, strin
     service:    expand(cfg.service, vars),
     filters:    expand(cfg.filters, vars),
   };
+}
+
+// v0.9.117 (F4) — expand ${vars} inside a PromQL query. NOT the shared
+// line-based `expand` (substituteVars): that DROPS any line whose vars all
+// resolve empty, which for a single-line PromQL expression deletes the whole
+// query (review MAJOR, v0.9.118). Instead:
+//   1. A label matcher whose value IS an empty/unset variable is STRIPPED, so
+//      an "(all)"/cleared dashboard variable selects everything — a literal
+//      label="" would match only empty-label series, not all.
+//   2. Remaining ${var} tokens are substituted in place.
+//   3. Dangling commas from a stripped first/last matcher are tidied.
+export function applyVarsToPromql(cfg: PromqlPanelConfig, vars?: Record<string, string>): PromqlPanelConfig {
+  if (!vars || !cfg.query) return cfg;
+  let q = cfg.query.replace(
+    /,?\s*[\w.]+\s*(?:=~|!~|=|!=)\s*"\$\{([^}]+)\}"/g,
+    (m, name: string) => {
+      const v = vars[name];
+      return v != null && v !== '' ? m.replace('${' + name + '}', v) : '';
+    },
+  );
+  q = q.replace(/\$\{([^}]+)\}/g, (_, name: string) => vars[name] ?? '');
+  q = q.replace(/\{\s*,/g, '{').replace(/,\s*\}/g, '}').replace(/,\s*,/g, ',');
+  return { ...cfg, query: q };
 }
 
 // ── Metric line chart ───────────────────────────────────────────────────────
@@ -241,6 +266,54 @@ function HeatmapPanel({ cfg, range }: {
       {data === undefined ? <PanelLoading />
         : !data || data.maxCount === 0 ? <PanelEmpty />
         : <LatencyHeatmap data={data} height={280} />}
+    </div>
+  );
+}
+
+// ── PromQL panel (F4, v0.9.117) ─────────────────────────────────────────────
+// A dashboard chart driven by a raw PromQL query (/api/metrics/promql, the
+// Phase 1-3 engine). Own-fetch, width-aware step, standard loading/empty/error
+// states; a parse/eval error surfaces inline (the backend message).
+function PromqlPanel({ cfg, range, syncKey, onZoom }: {
+  cfg: PromqlPanelConfig; range: TimeRange; syncKey?: string;
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+}) {
+  const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const { ref, widthPx } = usePanelWidth();
+
+  // Debounce the (free-text) query so editing it in the panel editor doesn't
+  // fire a CH-backed fetch per keystroke (review MINOR, v0.9.118). Starts equal
+  // to cfg.query so the first paint fetches immediately; only edits wait 400ms.
+  const [debouncedQuery, setDebouncedQuery] = useState(cfg.query);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQuery(cfg.query), 400);
+    return () => window.clearTimeout(t);
+  }, [cfg.query]);
+
+  useEffect(() => {
+    if (!debouncedQuery || !debouncedQuery.trim()) {
+      setSeries(undefined);
+      setError('Configure a PromQL query');
+      return;
+    }
+    const { from, to } = timeRangeToNs(range);
+    const step = effectivePanelStep(cfg.step, (to - from) / 1e9, widthPx);
+    if (step === null) return; // panel width not measured yet — defer
+    setSeries(undefined);
+    setError(null);
+    api.metricPromql({ query: debouncedQuery, from, to, step })
+      .then(s => setSeries(s ?? []))
+      .catch(e => setError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery, cfg.step, range, widthPx]);
+
+  if (error) return <PanelError msg={error} />;
+  return (
+    <div ref={ref}>
+      {series === undefined ? <PanelLoading />
+        : !series || series.length === 0 ? <PanelEmpty />
+        : <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} />}
     </div>
   );
 }

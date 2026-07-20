@@ -336,15 +336,17 @@ func (ev *evaluator) selectorFilter(vs *VectorSelector) (chstore.MetricQueryFilt
 }
 
 // matcherToFilter maps a PromQL label matcher to a chstore FilterExpr. Regex
-// matchers (=~/!~) are deferred (a later phase adds the CH match() op).
+// matchers (=~/!~, v0.9.118) map to the CH match() op (RE2, anchored).
 func matcherToFilter(m *LabelMatcher) (chstore.FilterExpr, error) {
 	switch m.Type {
 	case MatchEqual:
 		return chstore.FilterExpr{Key: m.Name, Op: "=", Values: []string{m.Value}}, nil
 	case MatchNotEqual:
 		return chstore.FilterExpr{Key: m.Name, Op: "!=", Values: []string{m.Value}}, nil
-	case MatchRegexp, MatchNotRegexp:
-		return chstore.FilterExpr{}, fmt.Errorf("promql: regex matcher %s%s is not supported yet — use = / != for now", m.Name, m.Type)
+	case MatchRegexp:
+		return chstore.FilterExpr{Key: m.Name, Op: "=~", Values: []string{m.Value}}, nil
+	case MatchNotRegexp:
+		return chstore.FilterExpr{Key: m.Name, Op: "!~", Values: []string{m.Value}}, nil
 	default:
 		return chstore.FilterExpr{}, fmt.Errorf("promql: unknown matcher type")
 	}

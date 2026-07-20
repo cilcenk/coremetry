@@ -119,7 +119,7 @@ func (ev *evaluator) eval(expr Expr) ([]chstore.SpanMetricSeries, error) {
 	case *Call:
 		return ev.evalCall(e)
 	case *AggregateExpr:
-		return nil, fmt.Errorf("promql: aggregation %q is not supported yet (Phase 3)", e.Op)
+		return ev.evalAggregate(e)
 	case *BinaryExpr:
 		return nil, fmt.Errorf("promql: binary operator %q is not supported yet (Phase 4)", e.Op)
 	case *SubqueryExpr:
@@ -218,6 +218,79 @@ func (ev *evaluator) evalCall(c *Call) ([]chstore.SpanMetricSeries, error) {
 
 	default:
 		return nil, fmt.Errorf("promql: function %q is not supported yet", c.Func)
+	}
+}
+
+// evalAggregate handles sum/avg/min/max over a LEAF (selector or
+// rate/increase/irate), pushing the by(L) grouping down into the leaf fetch's
+// GroupBy. This is the PERFORMANCE-SAFE shape: the fetch groups by exactly the
+// aggregation labels (bounded by L's cardinality, not the full label set) and
+// does the reduction in ClickHouse, so `sum by(le)(rate(bucket[5m]))` is a
+// single grouped rate query — no per-series fan-out into Go.
+//
+// Deferred (clear errors): without(…); topk/bottomk/quantile/stddev/count/
+// count_values/group; avg/min/max OF a rate (QueryMetricRate only sums);
+// aggregating a complex (non-leaf) inner like sum(a+b) — those need the
+// per-series Go path / binary ops of a later phase.
+func (ev *evaluator) evalAggregate(a *AggregateExpr) ([]chstore.SpanMetricSeries, error) {
+	op := strings.ToLower(a.Op)
+	switch op {
+	case "sum", "avg", "min", "max":
+	default:
+		return nil, fmt.Errorf("promql: aggregation %q is not supported yet (have: sum/avg/min/max by(…))", a.Op)
+	}
+	if a.Without {
+		return nil, fmt.Errorf("promql: without(…) is not supported yet — use by(…)")
+	}
+
+	leaf, isRate, rateMode, err := aggLeaf(a.Expr)
+	if err != nil {
+		return nil, err
+	}
+	f, err := ev.selectorFilter(leaf)
+	if err != nil {
+		return nil, err
+	}
+	f.GroupBy = a.Grouping // by(L) → the leaf's GroupBy (nil/[] = global one series)
+
+	if isRate {
+		if op != "sum" {
+			return nil, fmt.Errorf("promql: %s of a rate/increase is not supported yet — only sum by(…)(rate(…))", op)
+		}
+		return ev.store.QueryMetricRate(ev.ctx, f, rateMode)
+	}
+	f.Aggregation = op // sum/avg/min/max → QueryMetric's grouped reduction
+	return ev.store.QueryMetric(ev.ctx, f)
+}
+
+// aggLeaf unwraps an aggregation's argument to the underlying selector, and
+// reports whether it is wrapped in rate/increase/irate (so the caller routes to
+// QueryMetricRate). Anything more complex is rejected for a later phase.
+func aggLeaf(e Expr) (leaf *VectorSelector, isRate bool, rateMode string, err error) {
+	switch x := e.(type) {
+	case *ParenExpr:
+		return aggLeaf(x.Expr)
+	case *VectorSelector:
+		return x, false, "", nil
+	case *Call:
+		fn := strings.ToLower(x.Func)
+		if fn == "rate" || fn == "increase" || fn == "irate" {
+			if len(x.Args) != 1 {
+				return nil, false, "", fmt.Errorf("promql: %s() takes one range-vector argument", fn)
+			}
+			ms, ok := x.Args[0].(*MatrixSelector)
+			if !ok {
+				return nil, false, "", fmt.Errorf("promql: %s() expects a range vector like foo[5m]", fn)
+			}
+			mode := "rate"
+			if fn == "increase" {
+				mode = "increase"
+			}
+			return ms.VectorSelector, true, mode, nil
+		}
+		return nil, false, "", fmt.Errorf("promql: aggregating %s() is not supported yet", x.Func)
+	default:
+		return nil, false, "", fmt.Errorf("promql: can only aggregate a metric selector or rate()/increase() for now, got %s", e.String())
 	}
 }
 

@@ -358,9 +358,12 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   const navigate = useNavigate();
   const [model, setModel] = useState<MQModel>(() =>
     decodeModel(searchParams.get('mq')) ?? EMPTY_MODEL());
-  const [view, setView] = useState<'builder' | 'code'>('builder');
+  const [view, setView] = useState<'builder' | 'code' | 'promql'>('builder');
   const [codeText, setCodeText] = useState('');
   const [codeErr, setCodeErr] = useState<string | null>(null);
+  // PromQL mode (v0.9.116, F4 Phase 5) — raw PromQL text → /api/metrics/promql.
+  const [promqlText, setPromqlText] = useState('');
+  const [promqlQ, setPromqlQ] = useState('');
   // "Add to dashboard" (step 3) — picker modal state.
   const [dashOpen, setDashOpen] = useState(false);
   const [dashList, setDashList] = useState<DashboardSummary[] | null>(null);
@@ -375,6 +378,12 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
     const t = window.setTimeout(() => setDebounced(model), 250);
     return () => clearTimeout(t);
   }, [model]);
+  // Debounce the PromQL text separately (300ms) so typing doesn't fire a query
+  // per keystroke — same v0.5.184 posture as the builder.
+  useEffect(() => {
+    const t = window.setTimeout(() => setPromqlQ(promqlText.trim()), 300);
+    return () => clearTimeout(t);
+  }, [promqlText]);
 
   // Serialise the model to ?mq= (replace — refining a query shouldn't spam
   // history). Coexists with the Metrics page's other params untouched.
@@ -403,6 +412,23 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
       staleTime: 30_000,
     })),
   });
+
+  // PromQL fetch — only when the PromQL tab is active + a query is typed. No
+  // retry: a syntax/eval error is a user error, not a transient failure.
+  const promqlRes = useQuery({
+    queryKey: ['mqe-promql', from, to, promqlQ] as const,
+    queryFn: () => api.metricPromql({ query: promqlQ, from, to }),
+    enabled: view === 'promql' && !!promqlQ && from > 0,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const promqlSeries: TSSeries[] = useMemo(
+    () => (promqlRes.data ?? []).map(s => ({
+      label: s.groupKey && s.groupKey.length ? s.groupKey.join(' / ') : 'value',
+      points: s.points,
+    })),
+    [promqlRes.data],
+  );
 
   // Combine all enabled queries' series into one overlay: relabel each
   // series to "<query>: key=value, key=value", cap to top-N BY AREA (biggest
@@ -516,6 +542,18 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   const anyError = results.find((r, i) => debounced.queries[i]?.enabled && debounced.queries[i]?.metric && r.isError);
   const noMetric = debounced.queries.every(q => !q.enabled || (q.kind === 'metric' ? !q.metric : !q.expr.trim()));
 
+  // Effective chart inputs — the PromQL tab feeds its own fetch into the same
+  // TimeSeriesPanel; builder/code tabs use the multi-query overlay.
+  const isPromql = view === 'promql';
+  const chartSeries = isPromql ? promqlSeries : series;
+  const chartLoading = isPromql
+    ? (promqlRes.isFetching && promqlSeries.length === 0)
+    : (anyLoading && series.length === 0);
+  const chartErrMsg = isPromql
+    ? (promqlRes.error ? (promqlRes.error instanceof Error ? promqlRes.error.message : String(promqlRes.error)) : null)
+    : (anyError ? (anyError.error instanceof Error ? anyError.error.message : String(anyError.error)) : null);
+  const chartEmpty = isPromql ? !promqlQ : noMetric;
+
   // ── mutators ──
   const setQuery = (i: number, q: MQQuery) => setModel(m => ({ ...m, queries: m.queries.map((x, j) => j === i ? q : x) }));
   const addQuery = () => setModel(m => ({ ...m, queries: [...m.queries, blankQuery(nextId(m.queries))] }));
@@ -589,6 +627,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
         <div className="segmented">
           <button className={view === 'builder' ? 'active' : ''} onClick={() => setView('builder')}>Builder</button>
           <button className={view === 'code' ? 'active' : ''} onClick={openCode}>Code</button>
+          <button className={view === 'promql' ? 'active' : ''} onClick={() => setView('promql')}>PromQL</button>
         </div>
         <span className="mqe-spacer" />
         <label className="mqe-topn" title="Override the y-axis unit (e.g. % for a ratio formula)">
@@ -630,7 +669,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             <button type="button" className="mqe-addq" onClick={addFormula}>+ Add formula</button>
           </div>
         </div>
-      ) : (
+      ) : view === 'code' ? (
         <div className="mqe-code">
           <textarea spellCheck={false} value={codeText} onChange={e => applyCode(e.target.value)}
             rows={Math.max(3, model.queries.length + 1)}
@@ -641,36 +680,53 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
               : <span className="mqe-hint">Compiled query — edits sync back to the builder. One line per query; prefix the id with # to disable.</span>}
           </div>
         </div>
+      ) : (
+        <div className="mqe-code">
+          <textarea spellCheck={false} value={promqlText} onChange={e => setPromqlText(e.target.value)}
+            rows={3}
+            placeholder={'histogram_quantile(0.95, http.server.duration)\nsum by (service.name) (rate(http.server.duration[5m]))'} />
+          <div className="mqe-code-foot">
+            {promqlRes.error
+              ? <span className="mqe-code-err">⚠ {promqlRes.error instanceof Error ? promqlRes.error.message : String(promqlRes.error)}</span>
+              : <span className="mqe-hint">PromQL over the OTel metric store — selectors, rate()/increase(), histogram_quantile(0.5/0.95/0.99, …), sum/avg/min/max by(…). Dotted OTel names (http.server.duration) and {'{service.name="checkout"}'} matchers.</span>}
+          </div>
+        </div>
       )}
 
       <div className="card mqe-chart">
         <div className="row-between" style={{ marginBottom: 8 }}>
           <h3 style={{ margin: 0, fontSize: 13 }}>Preview</h3>
           <span className="ov-sub">
-            {series.length} series{hidden > 0 ? ` · +${hidden} more (capped by area)` : ''}
+            {chartSeries.length} series{!isPromql && hidden > 0 ? ` · +${hidden} more (capped by area)` : ''}
             {unit ? ` · ${unit}` : ''}
           </span>
         </div>
-        {noMetric ? (
-          <Empty icon="📈" title="Build a query to preview">
-            <p>Pick a metric on query A — add filters, group by a label to fan out into series, and overlay more queries.</p>
-          </Empty>
-        ) : anyError ? (
-          <Empty icon="⚠" title="Metric query failed">
-            <p>One of the queries errored or timed out. Try a narrower window or fewer group keys, then retry.</p>
+        {chartEmpty ? (
+          isPromql ? (
+            <Empty icon="📈" title="Type a PromQL query">
+              <p>e.g. <span className="mono">histogram_quantile(0.95, http.server.duration)</span> or <span className="mono">sum by (service.name) (rate(http.server.duration[5m]))</span>.</p>
+            </Empty>
+          ) : (
+            <Empty icon="📈" title="Build a query to preview">
+              <p>Pick a metric on query A — add filters, group by a label to fan out into series, and overlay more queries.</p>
+            </Empty>
+          )
+        ) : chartErrMsg ? (
+          <Empty icon="⚠" title={isPromql ? 'PromQL error' : 'Metric query failed'}>
+            <p>{isPromql ? 'The PromQL query could not be parsed or evaluated.' : 'One of the queries errored or timed out. Try a narrower window or fewer group keys, then retry.'}</p>
             <p className="mono" style={{ fontSize: 12, color: 'var(--text2)', margin: '8px 0', wordBreak: 'break-word' }}>
-              {anyError.error instanceof Error ? anyError.error.message : String(anyError.error)}
+              {chartErrMsg}
             </p>
-            <Button variant="secondary" size="sm" onClick={retry}>↻ Retry</Button>
+            {!isPromql && <Button variant="secondary" size="sm" onClick={retry}>↻ Retry</Button>}
           </Empty>
-        ) : anyLoading && series.length === 0 ? (
-          <div style={{ height: 320, display: 'grid', placeItems: 'center' }}><Spinner label="Running metric queries…" /></div>
-        ) : series.length === 0 ? (
+        ) : chartLoading ? (
+          <div style={{ height: 320, display: 'grid', placeItems: 'center' }}><Spinner label={isPromql ? 'Running PromQL…' : 'Running metric queries…'} /></div>
+        ) : chartSeries.length === 0 ? (
           <Empty icon="∅" title="No data in this window">
             <p>The query returned no series. Widen the time range or relax the filters.</p>
           </Empty>
         ) : (
-          <TimeSeriesPanel series={series} height={340} deploys={deploys}
+          <TimeSeriesPanel series={chartSeries} height={340} deploys={deploys}
             mode={model.viz} logScale={model.logScale} syncKey="mqe-preview"
             xRange={{ from: from / 1e9, to: to / 1e9 }} />
         )}
